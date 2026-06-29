@@ -56,6 +56,9 @@ harness.
   accepted completion as content.
 - `X-Nudge-Session-Id` header for the few stateful bits (classifier cache, `/stats`);
   stateless fallback when absent.
+- **Indicators** (chosen route, model, guards fired, context moves) are surfaced as
+  out-of-band telemetry, **never in the model's context** and trivially stripped
+  before the upstream call — see [`docs/indicators.md`](docs/indicators.md).
 - **Harness pre-pins file contents** into the transcript, so the service isn't locked
   to co-location.
 - Config (models, failover chains, budgets, temperatures) lives in the **service**.
