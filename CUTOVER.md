@@ -19,8 +19,10 @@ acceptable answer; the harness is the answer.*
 The Rust fork (`../codex-local`) is the **research vehicle**; the **specs are the
 deliverable**. Port from them, not by guessing:
 
-1. `../codex-local/docs/spec/shephard.md` — the **catalog**: every Nudge / Massage /
-   Context-shaping move, one line each. This is the feature list to port.
+1. [`docs/shephard.md`](docs/shephard.md) — the **catalog**: every Nudge / Massage /
+   Context-shaping move, one line each. This is the feature list to port. (Copied
+   in-repo from `../codex-local/docs/spec/shephard.md`, which stays the source of
+   truth — re-sync when it changes.)
 2. `../codex-local/docs/spec/nudge-service.md` — the **service architecture**:
    OpenAI-compatible streaming boundary, heartbeats, session header, file-pinning,
    what stays in the harness.
