@@ -55,6 +55,20 @@ they can't accrete in context or confuse the model.
 **Stats**
 - Local-vs-cloud tokens + savings (the `/stats` data), per session.
 
+**Onboarding / config (one-time, session start)**
+- **Model-name mismatch** — Shepherd sees the `model` field the harness sends on
+  every request. If it doesn't match the model actually serving (e.g. harness says
+  `gpt-5.5`, Shepherd is `ornith-9b`), surface a one-time tip: *"set `model =
+  ornith-9b` for an accurate display."* Shepherd can DETECT it (from the request) but
+  not FIX it on a config-name-display harness (Codex shows its configured name, not
+  the response's) — so it's advisory. (The harness's own promo/announcement banners
+  are NOT a channel — they're harness-internal fetches Shepherd can't touch.)
+- **Window not reported** — if the harness's context window looks wrong (its gauge
+  never moves, or it overflows past where it should), advise configuring the real
+  window (the harness learns the window from config, not the server — see CUTOVER
+  "Compaction"). The gauge itself goes honest once Shepherd reports real usage + the
+  harness has the real window.
+
 ## For the port
 
 Pick the channel early — an SSE indicator event is cheap and keeps `content` clean,

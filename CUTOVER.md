@@ -63,6 +63,27 @@ harness.
   to co-location.
 - Config (models, failover chains, budgets, temperatures) lives in the **service**.
 
+## Compaction — persist, don't reinvent (a key decision)
+
+The Rust vehicle does **transient** compaction every turn (re-summarizing a growing
+turn from scratch — a GPU-pegging "storm"). For a **local-only** service the right
+model is to **persist**: summarize once, write it back.
+
+Compaction is always **trigger → summarize → persist**, and the split decides whether
+Shepherd is stateful:
+- **Harness has native compaction (Codex-grade):** *tap it.* Configure its trigger at
+  the **real local window** + hand it the prompt; the harness persists. Shepherd =
+  **trigger + shape, not do.** (Codex knobs: `model_context_window`,
+  `model_auto_compact_token_limit`, `compact_prompt`.)
+- **Bare harness (no native compaction):** Shepherd does it, and to persist it must
+  hold **session state** (the conversation, keyed by `X-Nudge-Session-Id`).
+
+**Window-reporting is the universal lever.** Harnesses learn the window from their
+**config/registry, not the server** — so they're blind to a small local model until
+told. Shepherd knows it (probe `/props`); report it (config the operator sets, or
+expose it on `/v1/models`). This also makes the harness's **context-% gauge** honest
+(gauge = real usage ÷ real window; Shepherd reports the real usage in the response).
+
 ## Stack — vanilla Python, low-to-no dependencies
 
 **Standard library first.** The whole service fits in the stdlib; reach for a
