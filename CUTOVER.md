@@ -38,11 +38,18 @@ deliverable**. Port from them, not by guessing:
   (the model never knows). **Bidirectional:** rewrite the call to a harness primitive
   outbound, re-present the result as the original tool inbound.
 - **Context-shaping** — manage what the model sees and how much.
+- **Probes** *(forward, not yet built)* — Shepherd makes its *own* tool calls back to
+  the harness for supervisory purposes (verify "done" by running the test itself,
+  ground a stuck-detector nudge in freshly-read state, probe code-bug-vs-environment).
+  *Verify by doing, not by reading* — it sidesteps "can't judge without parsing the
+  model's noisy output." Read-only/idempotent, triggered-not-constant, hidden from the
+  model's context. Still "owns no executors" — it *borrows* the harness's. Detail +
+  guardrails in [`docs/shephard.md`](docs/shephard.md#probes).
 
 **Core principle — Shepherd owns no executors.** It is a transform on the
-message/tool-call stream. The harness keeps tool *execution* + the workspace. `shell`
-is the one primitive every harness has; rich tools face the model, `shell` faces the
-harness.
+message/tool-call stream (and, for probes, an *actor* that borrows the harness's
+executors). The harness keeps tool *execution* + the workspace. `shell` is the one
+primitive every harness has; rich tools face the model, `shell` faces the harness.
 
 ## The service boundary (from nudge-service.md)
 

@@ -9,11 +9,12 @@
 
 > **Shephard** (working name) is the layer that sits between a small local model
 > (9B-class) and an agent harness and keeps the two working together to do real
-> agentic coding. Everything it does falls into three kinds:
+> agentic coding. Everything it does falls into four kinds:
 >
 > - **Nudges** — in-context directives that steer the *model* (the model sees them).
 > - **Massages** — silent repairs of the model's *output* so the *harness* accepts it (the model never knows).
 > - **Context shaping** — managing what the model sees and how much, so it fits the window and stays grounded.
+> - **Probes** *(forward)* — Shephard makes its OWN tool calls back to the harness to get ground truth, rather than only relaying the model's. Verify by *doing*, not by reading. (See below — not yet built.)
 
 Name first, one line each. Detail + code pointers in [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md).
 
@@ -75,11 +76,59 @@ the harness only ever runs its irreducible primitives (ideally just `shell`).
 - **Window auto-detect + derived budget** — read real `n_ctx` from `/props`; budget = window − reserves.
 - **Real-token calibration** — learn the model's real chars→token ratio over the FULL prompt (incl. tool schemas), rise-fast/fall-slow EWMA; reserve schemas in real tokens; budget against truth, not chars/4.
 - **Transcript trim** — keep active turn, summarize older turns, drop stale reads, sticky errors.
-- **Active-turn compaction** — summarize a long turn's middle when it alone won't fit.
+- **Active-turn compaction (incremental)** — summarize a long turn's middle; reuse a rolling summary for the unchanged prefix and only re-compact the new tail, so a growing turn isn't re-summarized from scratch every overflow (the GPU-pegging "storm").
+- **Compaction hardening** — per-chunk timeout (a small compactor can wedge in a loop and freeze the turn) + fence-strip the extractor (it wraps JSON in ```` ```json ````).
+- **Persist via native compaction** — for a local-only harness, tap its NATIVE compaction (Codex: `model_context_window` + `model_auto_compact_token_limit` + `compact_prompt`) so the summary is written back ONCE, instead of re-doing transient compaction every turn. The harness owns persistence; Shephard supplies the real window + the prompt.
+- **Loop-excision inline collapse** — when a loop is excised, replace it with ONE coherent marker ("tried N times, result unchanged, don't repeat"), never a gap that reads as "I haven't acted yet".
+- **Guard observability** — loop-guard firings (repetition / forced-diagnosis / context-reset) are logged, not just queued to the TUI, so the logs don't make a firing guard look dead.
 - **Overflow re-trim** — context overflow → re-trim to the server's numbers and retry, no crash.
-- **Last-resort drop** — drop oldest messages (always keep the request) as the fit floor.
+- **Last-resort drop** — drop oldest messages (always keep the request, strip orphan tool-results) as the fit floor.
 - **Oversized-output guard** — output over a dynamic ceiling (% of detected window) is losslessly reduced, or omitted with a "re-run narrower / grep / find=" pointer — never a broken or info-stripped fragment.
 - **web_fetch navigation** — paginate (`cursor`), `find=` a section, real HTTP status + body.
 - **Current-file pin** — live on-disk contents pinned so the model edits the real file.
 - **Browser UA** — auto-add a real User-Agent so sites don't block `curl`.
 - **Better errors** — patch/network errors rewritten to say what to try next.
+
+## Probes — Shephard acts for itself *(forward — not yet built)*
+
+Everything above is a *transform on the stream*. Probes are different: Shephard
+makes its **own** tool calls back to the harness — not to relay the model's, but for
+its own supervisory purposes — and reads the result on **its** terms.
+
+**Why it matters.** It dissolves the recurring wall "the harness can't judge X
+without parsing the model's noisy output or *being* a model." If Shephard can
+**act**, it gets **ground truth deterministically** — it picks the command *and* the
+output format. **Verify by *doing*, not by reading.**
+
+**Doors it opens** (all things we hit in practice):
+- **Ground-truth completion gate** — on a "done" claim, Shephard runs the test
+  ITSELF (`pytest --exit-code` etc.) and ends the turn only if it really passes —
+  instead of trusting the claim or parsing the model's transcript.
+- **Active grounding on a stuck/tunnel-vision trigger** — the structural detector
+  says *when* (footprint stalled); the probe gets the *truth*: re-read the live file,
+  run the failing check, and feed fresh verified state into the nudge ("step back —
+  here's the actual state I just checked"), so the model can't work from stale context.
+- **Environment probing** — code-bug vs environment (e.g. curl the real endpoint to
+  see if a 4xx is the code or a missing header), instead of guessing.
+- **On-demand fresh-state pin / pre-flight checks.**
+
+**Pairs with the tunnel-vision detector** (a content-blind structural signal:
+*N tool calls with no new well-defined `path`/`url` target* → the model's footprint
+stopped expanding). That signal decides *when* to probe; the probe supplies the *what*.
+
+**Guardrails** (these calls EXECUTE):
+- **Read-only / idempotent only** — run tests, read files, `git status`, `curl`;
+  never let a probe mutate the workspace.
+- **Triggered, not constant** — only on a "done" claim, a stuck trigger, a
+  suspected-stale moment. Each probe is real work on the box.
+- **Hidden from the model's context** — probes go through the strip/indicator channel
+  so they never accrete in the transcript.
+
+**Open protocol question:** can Shephard do a *private* call→result round-trip the
+model (and ideally the user's UI) never sees? It controls the model's view in the
+bidirectional model; whether the harness's UI/record shows it is per-harness.
+
+**Architecturally consistent with "owns no executors":** Shephard still owns none —
+it **borrows the harness's** executors, now for its own supervisory ends, not just to
+relay the model. That makes Shephard an **actor / supervisor**, not merely a stream
+transform. The first concrete use is almost certainly the ground-truth completion gate.
