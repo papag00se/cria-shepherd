@@ -26,43 +26,44 @@ Overview: [shephard.md](shephard.md). In-context directives that steer the *mode
 - **write_file-default steering** — prompt makes whole-file write the default; apply_patch/diff disabled.
 - **Tunnel-vision detector** — N calls with no new well-defined target (footprint stopped expanding); forces a step-back. Catches circling a fixed target set (incl. re-editing one file).
 
-## Forward — read-mode / research-loop detectors
+## Read-mode / research-loop detectors
 
-Not yet built. They catch a failure mode the built detectors miss: the model spins in **read / research mode** — searching, fetching, reading forever without ever acting.
+All three are **built**. They catch a failure mode the exact-match / same-file guards miss: the model spins in **read / research mode** — searching, fetching, reading forever without ever acting.
 
 *Motivating loop:* `web_search "api.handle.me swagger.yml …"` + `web_fetch raw.githubusercontent.com` dozens of times — every call a variation of the same question, all fetches 404, never a file written.
 
 ### Governing rule: reset on a change of APPROACH, not of target
 
-`detect_tunnel_vision` resets on any new target, so a stream of *different* queries kept resetting it and it never fired. The fix, for every detector below — the counter resets only on a genuinely different *approach*:
+The existing exact-match guards reset on any change of *target* (full query / full URL), so a stream of *different* queries never accumulates. Each detector below instead resets only on a genuinely different *approach*:
 
-| detector | resets on |
-|---|---|
-| read-without-write | a **write** |
-| same-prefix searches | a **different search prefix** |
-| failing fetches | a **2xx result** |
+| detector | resets on | layer |
+|---|---|---|
+| read-without-write | a **write** | trim chain (`detect_read_without_write`) |
+| same-prefix searches | a **different search prefix** | tool (`local_web_search::format_results`) |
+| failing fetches | a **2xx result** | tool (`web_fetch::append_guess_hint`) |
 
 All deterministic — counting ops, comparing a query prefix, reading an HTTP status. No fuzzy inference.
 
-### Relation to tunnel-vision `NEW`
+**Why two layers.** Same-prefix and failing-fetch are single-tool signals, so they live *in* that tool's result formatter (co-located, and the nudge rides in the exact output the model reads). Read-without-write is inherently **cross-tool** — it weighs reads of any kind against writes of any kind — so it can't live in one handler; it's a transcript-derived detector in the trim `.or_else()` chain, ordered *after* exact-repeat and tunnel-vision so a tighter loop is claimed first.
 
-Complementary, not substitutes. Tunnel-vision catches revisiting a **fixed** target set (incl. write loops); read-without-write catches many reads with **zero** writes even when every target differs — the varied loop tunnel-vision misses. #1 is the additive one; #2/#3 are narrower cases between them.
+### Relation to tunnel-vision
 
-### 1. Read-without-write loop `NEW`
+Complementary, not substitutes. Tunnel-vision catches revisiting a **fixed** target set (incl. write loops); read-without-write catches many reads with **zero** writes even when every target differs — the varied loop tunnel-vision misses. Because read-without-write closes that blind spot directly, tunnel-vision's own target-reset is left intact (its low threshold is only safe *because* of that reset).
 
-- **Signal:** N read ops (`web_search`, `web_fetch`, `read_file`, `list_dir`, grep) with **zero writes** (`write_file` / `edit_file` / `apply_patch`) among them.
-- **Nudge:** *"You seem to be looking for answers you aren't finding. Try something else or take a different approach."*
-- **Reset:** any write. The counter is "reads since the last write."
+### 1. Read-without-write loop — *built* (trim chain, threshold 12)
 
-### 2. Same-prefix search loop (nudge → hard block)
+- **Signal:** N read ops (`web_search`, `web_fetch`, `read_file`, `list_dir`, `grep_files`) with **zero writes** (`write_file` / `edit_file` / `apply_patch` / …) among them.
+- **Nudge:** `[GATHERING WITHOUT ACTING]` — name what you already know that's enough to make a first change, then make the one concrete edit that moves the task forward.
+- **Reset:** any write. The counter is "reads since the last write." High threshold so legitimate exploration isn't nagged.
 
-- **Signal:** N `web_search` calls whose first `X` words match (`X` ≈ 3–5, tunable).
-- **Nudge:** *"Your search isn't yielding results. Change your search string — your next search starting with '&lt;X&gt;' will be denied."*
-- **Enforcement (massage):** if the prefix repeats after the warning, **block the call** — return the denial as the tool result.
-- **Reset:** a search whose prefix differs from the warned one.
+### 2. Same-prefix search loop — *built* (tool layer, threshold 3)
 
-### 3. Failing-fetch loop
+- **Signal:** N `web_search` calls whose first 4 words match (the model rephrasing one question — same lead-in, varied tail — which the exact-repeat guard can't see).
+- **Nudge:** appended to the search result — *"N searches in a row started with '&lt;prefix&gt;' — change your search STRING (new keywords, a different angle), not just the tail."*
+- **Reset:** a search whose prefix differs. *(Forward: escalate to a hard block on the warned prefix, like the repeated-call override.)*
 
-- **Signal:** N `web_fetch` calls with **no 2xx** — all 4xx/5xx/errors (guessing at URLs that don't exist).
-- **Nudge:** *"You seem to be guessing at what to fetch. Try searching instead."*
-- **Reset:** a 2xx fetch.
+### 3. Failing-fetch loop — *built* (tool layer, threshold 3; pre-existing)
+
+- **Signal:** N consecutive `web_fetch` with **no 2xx** — all 4xx/5xx/errors (guessing at URLs that don't exist).
+- **Nudge:** appended to the fetch result — *"N fetches in a row failed; if you're guessing URLs, STOP — find the correct one via search or take a different step."*
+- **Reset:** a 2xx fetch. *(A single 404 is not nudged — its body may be real content.)*

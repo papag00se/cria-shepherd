@@ -31,7 +31,7 @@ Name first, one line each. Detail + code pointers in [local-coder-massaging.md](
 
 ## Nudges — steer the model
 
-In-context directives the model sees, to break loops and force progress. The full catalog — built guards plus forward read-mode detectors — lives in [nudges.md](nudges.md).
+In-context directives the model sees, to break loops and force progress. The full catalog — the built guards plus the read-mode / research-loop detectors — lives in [nudges.md](nudges.md).
 
 ## Massages — repair the output so the harness runs it
 - **write_file → shell base64 (bidirectional)** — model's `write_file` lowered to `printf … | base64 -d > path` (the agent-agnostic shell substrate, escaping-proof); inbound the recorded shell call is re-presented as `write_file` so the model only sees its own tool.
