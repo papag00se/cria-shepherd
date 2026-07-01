@@ -19,28 +19,15 @@
 Name first, one line each. Detail + code pointers in [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md).
 
 ## Principle: Shephard owns no executors
+- **What it is** — never touches the workspace; a bidirectional transform on the tool-call stream. Model works with rich tools (`write_file`, `web_fetch`); harness only runs primitives (ideally just `shell`).
+- **Outbound** — `write_file` → `printf %s '<base64>' | base64 -d > path` (byte-exact, escaping-proof); `web_fetch` → `curl`. `shell`, not `write_file`, is the one primitive every harness exposes — lowering to it is what ports.
+- **Inbound** — re-present the recorded `shell` call + result as the original tool, so the model never sees the shell. Recognized statelessly from a `# shephard-write:<path>` sentinel (survives restarts). The old one-way `write_file → printf` failed by skipping this half.
+- **Why it ports** — harness supplies only executors (Rust vehicle: `codex-core`); all intelligence is stream transforms (`codex-routing`).
 
-Shephard never touches the workspace or runs anything. It is a **bidirectional
-transform on the message / tool-call stream**: it rewrites the model's call into a
-primitive the *harness* already has on the way **out**, and rewrites that
-primitive's result back into the model's high-level tool on the way **in** — so the
-model always works with rich tools (`write_file`, `edit_file`, `web_fetch`) while
-the harness only ever runs its irreducible primitives (ideally just `shell`).
-
-- **Outbound:** `write_file` → `printf %s '<base64>' | base64 -d > path` (base64 is
-  byte-exact and immune to the whole shell escaping/quoting/marker bug-class);
-  `web_fetch` → `curl`. The agnostic insight: `shell` — not `write_file` — is the
-  one primitive *every* harness exposes, so lowering to it is what makes Shephard
-  portable; `write_file`-as-a-tool is harness-specific convenience.
-- **Inbound:** re-present the recorded `shell` call (and its result) as the
-  original tool, so the model never sees the `shell` underneath. (The old one-way
-  `write_file → shell printf` failed precisely because it skipped this half — the
-  model saw the mangled shell command and panicked.) Recognized statelessly from a
-  `# shephard-write:<path>` sentinel, so it survives restarts.
-- **Why it ports:** Shephard requires the harness to provide only execution
-  primitives (every harness has `shell`/file-IO); all intelligence is stream
-  transforms. The Rust vehicle already reflects this — executors live in
-  `codex-core` (the harness), the transforms in `codex-routing` (the brain).
+## Principle: Shephard owns no rendering either
+- **The rule** — every tool Shephard exposes must reduce to a primitive the harness already knows how to both *run* and *display*. A custom tool/event is a bet the harness will draw something it was never taught to.
+- **Cautionary example** — the fork's custom `local_web_search` (Brave) emitted `WebSearchBegin`/`End`; searches ran and hit the rollout but the TUI never rendered them. Lower to `curl` over `shell` and it shows as an ordinary exec cell — visible everywhere.
+- **Preference order** — native structured tool (`text_editor.create`, richest) → native file handler → `shell` (universal, always rendered). Never a Shephard-only tool the harness must be taught to draw.
 
 ## Nudges — steer the model
 - **Repetition guard** — same tool + same args 3×; injects a STOP directive.
@@ -58,6 +45,8 @@ the harness only ever runs its irreducible primitives (ideally just `shell`).
 - **Tool-call constraint** — bail/stall retry forces a valid (or specific) tool call at the sampler.
 - **Failed-patch → rewrite** — failed patch pins the file and forces a whole-file write_file rewrite.
 - **write_file-default steering** — prompt makes whole-file write the default; apply_patch/diff disabled.
+- **Tunnel-vision detector** — N calls with no new well-defined target (footprint stopped expanding); forces a step-back. Catches circling a fixed target set (incl. re-editing one file).
+- **Read-mode loop detectors** *(forward)* — read-without-write, same-prefix-search, failing-fetch; catch circling in *read* space where tunnel-vision can't. Detail: [nudges.md](../../codex-local/docs/spec/nudges.md).
 
 ## Massages — repair the output so the harness runs it
 - **write_file → shell base64 (bidirectional)** — model's `write_file` lowered to `printf … | base64 -d > path` (the agent-agnostic shell substrate, escaping-proof); inbound the recorded shell call is re-presented as `write_file` so the model only sees its own tool.

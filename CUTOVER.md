@@ -1,4 +1,4 @@
-# llama-shepherd — Cutover Kickoff
+# cria-shepherd — Cutover Kickoff
 
 > A brief for the agent/engineer beginning the port. Read this, then the three spec
 > docs it points to, before writing code.
