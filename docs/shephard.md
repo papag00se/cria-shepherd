@@ -30,23 +30,8 @@ Name first, one line each. Detail + code pointers in [local-coder-massaging.md](
 - **Preference order** — native structured tool (`text_editor.create`, richest) → native file handler → `shell` (universal, always rendered). Never a Shephard-only tool the harness must be taught to draw.
 
 ## Nudges — steer the model
-- **Repetition guard** — same tool + same args 3×; injects a STOP directive.
-- **Forced-diagnosis guard** — same file/goal failing repeatedly; make it read the failure before acting.
-- **Thrash guard** — same goal via varying commands, still failing; force a diagnosis.
-- **Context-reset guard** — loop ignored past threshold; excise it from context and reframe the task.
-- **Rumination guard** — self-doubt spiral mid-generation; abort the stream and re-prompt.
-- **Loop-text guard** — same assistant preamble repeated; re-prompt at turn end.
-- **Cyclic-pattern guard** — patch→test→cat cycle; block the call and redirect.
-- **Dangling-intent guard** — "now I'll do X" then stops; re-prompt to actually act.
-- **Announce-without-act escalation** — repeated stalling escalates to "one tool call, no prose."
-- **Quality gate** — empty/short/echo/refusal response; re-prompt before spending a verifier call.
-- **Completion verifier** — judge "done" claims; only a real Complete ends the turn.
-- **Ground-truth gate** — a coder turn ends only if it actually changed files.
-- **Tool-call constraint** — bail/stall retry forces a valid (or specific) tool call at the sampler.
-- **Failed-patch → rewrite** — failed patch pins the file and forces a whole-file write_file rewrite.
-- **write_file-default steering** — prompt makes whole-file write the default; apply_patch/diff disabled.
-- **Tunnel-vision detector** — N calls with no new well-defined target (footprint stopped expanding); forces a step-back. Catches circling a fixed target set (incl. re-editing one file).
-- **Read-mode loop detectors** *(forward)* — read-without-write, same-prefix-search, failing-fetch; catch circling in *read* space where tunnel-vision can't. Detail: [nudges.md](../../codex-local/docs/spec/nudges.md).
+
+In-context directives the model sees, to break loops and force progress. The full catalog — built guards plus forward read-mode detectors — lives in [nudges.md](nudges.md).
 
 ## Massages — repair the output so the harness runs it
 - **write_file → shell base64 (bidirectional)** — model's `write_file` lowered to `printf … | base64 -d > path` (the agent-agnostic shell substrate, escaping-proof); inbound the recorded shell call is re-presented as `write_file` so the model only sees its own tool.
