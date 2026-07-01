@@ -56,11 +56,12 @@ Complementary, not substitutes. Tunnel-vision catches revisiting a **fixed** tar
 - **Nudge:** `[GATHERING WITHOUT ACTING]` — name what you already know that's enough to make a first change, then make the one concrete edit that moves the task forward.
 - **Reset:** any write. The counter is "reads since the last write." High threshold so legitimate exploration isn't nagged.
 
-### 2. Same-prefix search loop — *built* (tool layer, threshold 3)
+### 2. Same-prefix search loop — *built* (tool layer; nudge at 3, hard block at 4)
 
 - **Signal:** N `web_search` calls whose first 4 words match (the model rephrasing one question — same lead-in, varied tail — which the exact-repeat guard can't see).
-- **Nudge:** appended to the search result — *"N searches in a row started with '&lt;prefix&gt;' — change your search STRING (new keywords, a different angle), not just the tail."*
-- **Reset:** a search whose prefix differs. *(Forward: escalate to a hard block on the warned prefix, like the repeated-call override.)*
+- **Nudge (streak 3):** appended to the search result — *"N searches started with '&lt;prefix&gt;' — change your search STRING (new keywords, a different angle), not just the tail. Your NEXT search with this prefix will be DENIED."*
+- **Hard block (streak ≥ 4):** warned and repeated → the call is **denied before it runs** (no network hit, no phantom search cell); the refusal is returned as the tool result. Advisory first, hard stop second — same escalation as the repeated-call override. Gated in `gate_search_prefix`, enforced in the core handler.
+- **Reset:** a search whose prefix differs (the warned prefix stays "hot" until the model moves off it).
 
 ### 3. Failing-fetch loop — *built* (tool layer, threshold 3; pre-existing)
 
