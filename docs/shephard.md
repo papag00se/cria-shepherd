@@ -106,3 +106,22 @@ bidirectional model; whether the harness's UI/record shows it is per-harness.
 it **borrows the harness's** executors, now for its own supervisory ends, not just to
 relay the model. That makes Shephard an **actor / supervisor**, not merely a stream
 transform. The first concrete use is almost certainly the ground-truth completion gate.
+
+## Reasoner-assisted redirect *(forward — speculative, captured so it isn't lost)*
+
+The deterministic guards detect a stuck pattern and fire a **fixed** nudge. This is
+the smarter successor: on the same structural trigger, escalate to the **light
+reasoner** (a separate, cheap local role) to (1) infer what the coder is actually
+*trying to do* from its recent transcript, and (2) propose a concrete new path — then
+inject that as the nudge, instead of a canned message.
+
+- **Structural detector says WHEN** (loop / tunnel-vision / read-without-write /
+  repeated failure); the reasoner supplies a **context-aware WHAT**.
+- **Kin to Probes.** Probes get *ground truth* by acting; this gets a *redirect* by
+  reasoning. Best combined — probe for the real state, hand it to the reasoner, and
+  let it suggest the path grounded in fact so it can't invent a dead end.
+- **Guardrails, like probes:** only on a confirmed stuck signal (a real model call,
+  not every turn); the reasoner is itself a small local model, so ground it with
+  probe truth rather than trusting its guess.
+- **Status:** may or may not earn its keep — same open question as Probes. Noted now
+  because the pattern-triggers it would ride on (the detectors) already exist.
