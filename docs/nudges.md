@@ -28,43 +28,38 @@ Overview: [shephard.md](shephard.md). In-context directives that steer the *mode
 
 ## Read-mode / research-loop detectors
 
-All three are **built**. They catch a failure mode the exact-match / same-file guards miss: the model spins in **read / research mode** — searching, fetching, reading forever without ever acting.
+All **built**. They catch a failure mode the exact-match / same-file guards miss: the model spins in **read / research mode** — searching, fetching, reading — instead of acting.
 
-*Motivating loop:* `web_search "api.handle.me swagger.yml …"` + `web_fetch raw.githubusercontent.com` dozens of times — every call a variation of the same question, all fetches 404, never a file written.
+*Motivating loop:* `web_search "api.handle.me …"` re-worded dozens of ways + `web_fetch …/swagger.json` re-issued over and over — every call a variation of one hunt, the model burning ~60s of inference per redundant call.
 
-### Governing rule: reset on a change of APPROACH, not of target
+### State is session-scoped
 
-The existing exact-match guards reset on any change of *target* (full query / full URL), so a stream of *different* queries never accumulates. Each detector below instead resets only on a genuinely different *approach*:
-
-| detector | resets on | layer |
-|---|---|---|
-| read-without-write | a **write** | trim chain (`detect_read_without_write`) |
-| same-prefix searches | a **different search prefix** | tool (`local_web_search::format_results`) |
-| failing fetches | a **2xx result** | tool (`web_fetch::append_guess_hint`) |
-
-All deterministic — counting ops, comparing a query prefix, reading an HTTP status. No fuzzy inference.
-
-**Why two layers.** Same-prefix and failing-fetch are single-tool signals, so they live *in* that tool's result formatter (co-located, and the nudge rides in the exact output the model reads). Read-without-write is inherently **cross-tool** — it weighs reads of any kind against writes of any kind — so it can't live in one handler; it's a transcript-derived detector in the trim `.or_else()` chain, ordered *after* exact-repeat and tunnel-vision so a tighter loop is claimed first.
-
-### Relation to tunnel-vision
-
-Complementary, not substitutes. Tunnel-vision catches revisiting a **fixed** target set (incl. write loops); read-without-write catches many reads with **zero** writes even when every target differs — the varied loop tunnel-vision misses. Because read-without-write closes that blind spot directly, tunnel-vision's own target-reset is left intact (its low threshold is only safe *because* of that reset).
+The search/fetch guards remember what's been done **this turn**, keyed by the harness `conversation_id` and reset on a new `sub_id` (a new user turn = a new task). In this Rust fork that's a `conversation_id`-keyed map (`guard_state::SessionTurnStore`, capped at 32 sessions); in Shepherd it's just a field on the session object. See [shephard.md](shephard.md), *"guard state is session-scoped"*.
 
 ### 1. Read-without-write loop — *built* (trim chain, threshold 12)
 
 - **Signal:** N read ops (`web_search`, `web_fetch`, `read_file`, `list_dir`, `grep_files`) with **zero writes** (`write_file` / `edit_file` / `apply_patch` / …) among them.
-- **Nudge:** `[GATHERING WITHOUT ACTING]` — name what you already know that's enough to make a first change, then make the one concrete edit that moves the task forward.
-- **Reset:** any write. The counter is "reads since the last write." High threshold so legitimate exploration isn't nagged.
+- **Nudge:** `[GATHERING WITHOUT ACTING]` — name what you already know that's enough to make a first change, then make it.
+- **Reset:** any write. Cross-tool, so it lives in the trim `.or_else()` chain, ordered *after* exact-repeat and tunnel-vision so a tighter loop is claimed first. High threshold so legitimate exploration isn't nagged.
 
-### 2. Same-prefix search loop — *built* (tool layer; nudge at 3, hard block at 4)
+### 2. Search-rumination — *built* (tool layer, `local_web_search::gate_search`)
 
-- **Signal:** N `web_search` calls whose first 4 words match (the model rephrasing one question — same lead-in, varied tail — which the exact-repeat guard can't see).
-- **Nudge (streak 3):** appended to the search result — *"N searches started with '&lt;prefix&gt;' — change your search STRING (new keywords, a different angle), not just the tail. Your NEXT search with this prefix will be DENIED."*
-- **Hard block (streak ≥ 4):** warned and repeated → the call is **denied before it runs** (no network hit, no phantom search cell); the refusal is returned as the tool result. Advisory first, hard stop second — same escalation as the repeated-call override. Gated in `gate_search_prefix`, enforced in the core handler.
-- **Reset:** a search whose prefix differs (the warned prefix stays "hot" until the model moves off it).
+- **Signal:** a new search is essentially one already made this turn. Each query is normalized (lowercase, drop stopwords, light-stem, keep `.`/`_`/`-` tokens like `api.handle.me` whole — reusing `loop_detector`'s `STOPWORDS`+`stem`), then compared by word-set: **overlap ≥ 5 → same**, or **both ≤ 5 words AND identical sets → same**, else different. Catches re-wording ("resolve a handle on api.handle.me" ≈ "api.handle.me get_handle endpoint") that a prefix match can't.
+- **Action — HTTP 400 on the *first* repeat.** Refused before the network hit, returned as `HTTP 400 Bad Request · web_search "…"` + *"You've searched this before. Make a major change to your search, or try something else."* Results don't change turn-to-turn, so a repeat is pure wasted inference — the previous result was already the right one.
+- **Reset:** the per-turn memory clears on a new user turn.
 
-### 3. Failing-fetch loop — *built* (tool layer, threshold 3; pre-existing)
+### 3a. Fetch exact-repeat — *built* (tool layer, `web_fetch::gate_fetch`)
 
-- **Signal:** N consecutive `web_fetch` with **no 2xx** — all 4xx/5xx/errors (guessing at URLs that don't exist).
-- **Nudge:** appended to the fetch result — *"N fetches in a row failed; if you're guessing URLs, STOP — find the correct one via search or take a different step."*
-- **Reset:** a 2xx fetch. *(A single 404 is not nudged — its body may be real content.)*
+- **Signal:** an **external** fetch of the *identical* `(url, find, cursor)` already made this turn — a pure no-op re-request.
+- **Action — HTTP 400** before the network: `HTTP 400 Bad Request · web_fetch <url>` + *"You already fetched this exact request … Use what you have, or fetch something different."* Navigating the same doc with a **different** `find`/`cursor` is not a repeat, so it proceeds (and `DOC_CACHE` serves it).
+- **Internal hosts are never blocked** (`localhost` / `127.*` / `::1` / `10.*` / `192.168.*` / `172.16–31.*` / `*.local`) — the model may be polling its own dev server.
+
+### 3b. Failing-fetch (URL-roulette) — *built* (tool layer, `web_fetch::append_guess_hint`)
+
+- **Signal:** N consecutive **external** `web_fetch` with **no 2xx** — guessing at URLs that don't exist.
+- **Nudge:** appended to the result — *"N fetches in a row failed; if you're guessing URLs, stop — find the right one via search, or take a different step."* Soft (a 404 body may be real content).
+- **Localhost is exempt entirely** — a dev server that's momentarily down (refused/5xx) is the model waiting for its *own* server, not guessing, so it's never nagged.
+
+### Relation to tunnel-vision
+
+Complementary. Tunnel-vision catches revisiting a **fixed** target set (incl. write loops); read-without-write catches many reads with **zero** writes even when every target differs. The search/fetch guards above are the *focused* first line — they 400 the specific repeat before the generic detectors ever fire.

@@ -29,6 +29,11 @@ Name first, one line each. Detail + code pointers in [local-coder-massaging.md](
 - **Cautionary example** — the fork's custom `local_web_search` (Brave) emitted `WebSearchBegin`/`End`; searches ran and hit the rollout but the TUI never rendered them. Lower to `curl` over `shell` and it shows as an ordinary exec cell — visible everywhere.
 - **Preference order** — native structured tool (`text_editor.create`, richest) → native file handler → `shell` (universal, always rendered). Never a Shephard-only tool the harness must be taught to draw.
 
+## Principle: guard state is session-scoped
+- **The rule** — anything a guard remembers (searches made this turn, URLs fetched, streaks) belongs to **one session's current turn**, never a process global. It resets on a new user turn (new task = clean slate) and never bleeds between sessions, sub-agents, or forks.
+- **In Shepherd** it's just a field on the **session object** — the service already holds per-session state, so there's no keying and no eviction.
+- **In this Rust fork** the tool backends are stateless module fns, so we *simulate* it: a map keyed by the harness `conversation_id`, scoped to the turn `sub_id`, capped (`guard_state::SessionTurnStore`). The map is a fork wart, not the design — the seam that makes the port trivial.
+
 ## Nudges — steer the model
 
 In-context directives the model sees, to break loops and force progress. The full catalog — the built guards plus the read-mode / research-loop detectors — lives in [nudges.md](nudges.md).
