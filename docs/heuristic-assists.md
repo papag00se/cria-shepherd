@@ -30,6 +30,7 @@ Every assist Shephard applies to keep a small local model (9B-class) + an agent 
 - **Completion verifier** — a small model judges "done" claims; only a real Complete ends the turn.
 - **Ground-truth gate** — a coder turn ends only if it actually changed files.
 - **Tool-call constraint** — a bail/stall retry forces a valid (or specific) tool call at the sampler.
+- **Malformed-tool-call recovery** — an unparseable `<tool_call>` (bad quote/newline escaping in a multi-line command) → re-prompt to re-issue cleanly, steering multi-line work to write_file.
 - **Failed-patch → rewrite** — a failed patch pins the file and forces a whole-file write_file rewrite.
 - **write_file-default steering** — the prompt makes whole-file write the default; apply_patch Add disabled.
 - **Tunnel-vision detector** — N calls with no new well-defined target (footprint stalled) → force a step-back.
@@ -62,8 +63,7 @@ Every assist Shephard applies to keep a small local model (9B-class) + an agent 
 - **Tool-menu trim** — ~9 curated tools instead of the full ~120.
 - **Tool cheat-sheet** — plain-language per-tool usage + examples in the prompt (built-in schemas synthesized).
 - **Window auto-detect + derived budget** — read real `n_ctx` from `/props`; budget = window − reserves.
-- **Real-token calibration (EWMA)** — learn the model's real chars→token ratio, rise-fast/fall-slow; budget against truth, not chars/4.
-- **Token-estimate safety factor** — budget at ~1.8× to cover BPE undercount on code/JSON.
+- **Real-token calibration** — learn the model's real chars→token ratio via a rise-fast/fall-slow EWMA (~1.8× initial, up to 3.5×); budget against truth, not chars/4, covering BPE undercount on code/JSON.
 - **Transcript trim** — keep the active turn, collapse older turns, drop stale reads, keep errors.
 - **Stale-read detection** — drop reads superseded by later writes; keep the latest per target.
 - **Error stickiness** — always preserve any tool output with `success=false`, regardless of age.
@@ -88,7 +88,8 @@ Every assist Shephard applies to keep a small local model (9B-class) + an agent 
 - **Language-aware syntax floor** — always-available `py_compile` / `node --check` over disk files → the exact `file:line` for parse errors the model can't localize.
 - **Repo probe discovery** — inventory the repo's ecosystems (JS/TS, Python, Rust, Go, JVM, .NET, PHP, Ruby, Elixir) → a ranked list of SAFE diagnostic commands.
 - **Package-script vetting** — read `package.json` / Make / etc. scripts and vet each body (reject install/mutate/watch/service) before offering it.
-- **Safe-command ranking** — confidence → run-first tier (typecheck/build → lint → unit → full → e2e) → value → cost; package manager chosen from lockfiles.
+- **Safe-command ranking** — confidence → run-first tier (typecheck/build → lint → unit → full → e2e) → value → cost; package manager chosen from lockfiles, tool confidence raised by config files (`tsconfig.json`, `ruff.toml`, `mypy.ini`, …).
+- **Config/glue probes** — `shellcheck` (shell), `actionlint` (CI workflows), `terraform validate` (infra), anchored at the repo root.
 - **Bounded probe runner** — run the top-ranked safe probes with a hard timeout, deadlock-free capture, never mutating the workspace.
 - **Diagnostic parsers** — rustc/cargo, tsc, ESLint, pytest, and generic `file:line` output → structured findings + a one-line summary.
 - **Command safety classifier** — unwrap wrappers (`sudo`/`npx`/`poetry run`/…), reject installers/mutators/watch, identify probe kind — never fooled by shell syntax, filenames, or branch names.
