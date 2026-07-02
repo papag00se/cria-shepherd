@@ -65,6 +65,7 @@ In-context directives the model sees, to break loops and force progress. The ful
 - **Oversized-output guard** — output over a dynamic ceiling (% of detected window) is losslessly reduced, or omitted with a "re-run narrower / grep / find=" pointer — never a broken or info-stripped fragment.
 - **web_fetch navigation** — paginate (`cursor`), `find=` a section, real HTTP status + body.
 - **Current-file pin** — live on-disk contents pinned so the model edits the real file.
+- **Workspace manifest pin** — a disk-derived list of files already in the working dir, pinned into the system prompt EVERY request ("work in progress — don't start over; read these, don't re-create under new names"). Unlike the current-file pin (transcript-derived, so it dies at compaction), this is re-read from disk, so it survives ANY context loss — compaction, context-reset, last-resort drop. Fixes the observed failure where every compaction was followed by "I'll start by researching…" and a fresh, differently-named implementation (one 2-hour session left 3 parallel resolvers on disk).
 - **Browser UA** — auto-add a real User-Agent so sites don't block `curl`.
 - **Better errors** — patch/network errors rewritten to say what to try next.
 
