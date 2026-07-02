@@ -7,16 +7,19 @@
 > [the "why" + code pointers](../../codex-local/docs/spec/local-coder-massaging.md).
 > Re-sync this file when the catalog there changes.
 
+[< Spec Index](../../codex-local/docs/spec/index.md) | service plan: [nudge-service.md](../../codex-local/docs/spec/nudge-service.md) | the "why" + code pointers: [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md)
+
 > **Shephard** (working name) is the layer that sits between a small local model
 > (9B-class) and an agent harness and keeps the two working together to do real
-> agentic coding. Everything it does falls into four kinds:
+> agentic coding. Everything it does falls into five kinds:
 >
 > - **Nudges** — in-context directives that steer the *model* (the model sees them).
 > - **Massages** — silent repairs of the model's *output* so the *harness* accepts it (the model never knows).
 > - **Context shaping** — managing what the model sees and how much, so it fits the window and stays grounded.
-> - **Probes** *(forward)* — Shephard makes its OWN tool calls back to the harness to get ground truth, rather than only relaying the model's. Verify by *doing*, not by reading. (See below — not yet built.)
+> - **Probes** — Shephard makes its OWN read-only tool calls back to the harness to get ground truth, rather than only relaying the model's. Verify by *doing*, not by reading. (The first Probes — the repo-diagnostic completion gate — are **built**; see below.)
+> - **Reasoned guidance** *(mostly forward)* — on a stuck trigger, query the light reasoner (grounded by a probe) for a context-aware redirect instead of a canned nudge.
 
-Name first, one line each. Detail + code pointers in [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md).
+The marketable catalog of every assist — name first, one line each — is in [heuristic-assists.md](heuristic-assists.md); the why + code pointers in [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md).
 
 ## Principle: Shephard owns no executors
 - **What it is** — never touches the workspace; a bidirectional transform on the tool-call stream. Model works with rich tools (`write_file`, `web_fetch`); harness only runs primitives (ideally just `shell`).
@@ -35,83 +38,65 @@ Name first, one line each. Detail + code pointers in [local-coder-massaging.md](
 - **In this Rust fork** the tool backends are stateless module fns, so we *simulate* it: a map keyed by the harness `conversation_id`, scoped to the turn `sub_id`, capped (`guard_state::SessionTurnStore`). The map is a fork wart, not the design — the seam that makes the port trivial.
 
 ## Nudges — steer the model
-
-In-context directives the model sees, to break loops and force progress. The full catalog — the built guards plus the read-mode / research-loop detectors — lives in [nudges.md](nudges.md).
+In-context directives the model sees, to break loops and force progress. The full catalog — the built guards plus the read-mode / research-loop detectors — lives in [/heuristic-assists.md](heuristic-assists.md).
 
 ## Massages — repair the output so the harness runs it
-- **write_file → shell base64 (bidirectional)** — model's `write_file` lowered to `printf … | base64 -d > path` (the agent-agnostic shell substrate, escaping-proof); inbound the recorded shell call is re-presented as `write_file` so the model only sees its own tool.
-- **Leaked-call recovery** — tool calls emitted as text (Hermes/XML/fenced JSON) → promoted to real calls.
-- **Shell-name rewrite** — `ls`/`cat`/`grep` emitted as tool names → proper `shell` calls.
-- **exec_command array fix** — `cmd` given as `["bash","-lc",…]` → routed to `shell` (else execs a `[`).
-- **Malformed-JSON repair** — botched write_file args (raw newlines/quotes) → path+content recovered.
-- **apply_patch normalize** — unified-diff → native; add missing `+`/`-`/space prefixes + end markers.
-- **apply_patch Add → write_file** — a file-creating patch → robust whole-file write.
-- **Fenced-JSON tolerance** — control-model JSON wrapped in ``` fences → extracted.
+Fixing model outputs before sending them back to the agent harness. The full catalog — lives in [heuristic-assists.md](heuristic-assists.md).
 
 ## Context shaping — manage what the model sees
-- **Own concise base prompt** — ~25 lines, write_file-first; replaces the harness's ~351-line one.
-- **Tool-menu trim** — show ~10 curated tools instead of the full ~120.
-- **Tool cheat-sheet** — plain-language per-tool usage + examples in the prompt.
-- **Window auto-detect + derived budget** — read real `n_ctx` from `/props`; budget = window − reserves.
-- **Real-token calibration** — learn the model's real chars→token ratio over the FULL prompt (incl. tool schemas), rise-fast/fall-slow EWMA; reserve schemas in real tokens; budget against truth, not chars/4.
-- **Transcript trim** — keep active turn, summarize older turns, drop stale reads, sticky errors.
-- **Active-turn compaction (incremental)** — summarize a long turn's middle; reuse a rolling summary for the unchanged prefix and only re-compact the new tail, so a growing turn isn't re-summarized from scratch every overflow (the GPU-pegging "storm").
-- **Compaction hardening** — per-chunk timeout (a small compactor can wedge in a loop and freeze the turn) + fence-strip the extractor (it wraps JSON in ```` ```json ````).
-- **Persist via native compaction** — for a local-only harness, let its OWN, stock compaction run — the harness already compacts an OpenAI-compat endpoint purely from `usage.total_tokens` (off the wire) vs 90% of the model's `context_window`. Two things broke that flow for a local model; both are fixed so it works **through the harness's normal path, no special-casing**: (1) the fork rebuilt the response and dropped `total_tokens` (only `input`/`output` were set), so the usage-driven trigger saw an empty context — now `total_tokens = input + output`, reported like any OpenAI-compat server; (2) an unknown local slug defaults to a huge advertised `context_window` (~272k), ~5× the real llama.cpp `n_ctx`, so the 90% threshold was never reached — the real `n_ctx` (probed from `/props` at startup) is auto-filled into `model_context_window` via the **stock config-override path** (`to_models_manager_config` → `with_config_overrides`), exactly as a hand-set value would be. The harness then compacts and persists on its own; Shephard only supplies honest usage + the true window.
-- **Loop-excision inline collapse** — when a loop is excised, replace it with ONE coherent marker ("tried N times, result unchanged, don't repeat"), never a gap that reads as "I haven't acted yet".
-- **Guard observability** — loop-guard firings (repetition / forced-diagnosis / context-reset) are logged, not just queued to the TUI, so the logs don't make a firing guard look dead.
-- **Overflow re-trim** — context overflow → re-trim to the server's numbers and retry, no crash.
-- **Last-resort drop** — drop oldest messages (always keep the request, strip orphan tool-results) as the fit floor.
-- **Oversized-output guard** — output over a dynamic ceiling (% of detected window) is losslessly reduced, or omitted with a "re-run narrower / grep / find=" pointer — never a broken or info-stripped fragment.
-- **web_fetch navigation** — paginate (`cursor`), `find=` a section, real HTTP status + body.
-- **Current-file pin** — live on-disk contents pinned so the model edits the real file.
-- **Workspace manifest pin** — a disk-derived list of files already in the working dir, pinned into the system prompt EVERY request ("work in progress — don't start over; read these, don't re-create under new names"). Unlike the current-file pin (transcript-derived, so it dies at compaction), this is re-read from disk, so it survives ANY context loss — compaction, context-reset, last-resort drop. Fixes the observed failure where every compaction was followed by "I'll start by researching…" and a fresh, differently-named implementation (one 2-hour session left 3 parallel resolvers on disk).
-- **Browser UA** — auto-add a real User-Agent so sites don't block `curl`.
-- **Better errors** — patch/network errors rewritten to say what to try next.
+Intelligent context manipulation to assist models through their own mishaps. The full catalog — lives in [heuristic-assists.md](heuristic-assists.md).
 
-## Probes — Shephard acts for itself *(forward — not yet built)*
+## Probes — Shephard acts for itself *(the first Probes are BUILT)*
 
-Everything above is a *transform on the stream*. Probes are different: Shephard
-makes its **own** tool calls back to the harness — not to relay the model's, but for
+Everything above is a *transform on the stream*. Probes are different: Shephard makes
+its **own** read-only tool calls back to the harness — not to relay the model's, but for
 its own supervisory purposes — and reads the result on **its** terms.
 
-**Why it matters.** It dissolves the recurring wall "the harness can't judge X
-without parsing the model's noisy output or *being* a model." If Shephard can
-**act**, it gets **ground truth deterministically** — it picks the command *and* the
-output format. **Verify by *doing*, not by reading.**
+**Why it matters.** It dissolves the recurring wall "the harness can't judge X without
+parsing the model's noisy output or *being* a model." If Shephard can **act**, it gets
+**ground truth deterministically** — it picks the command *and* the output format.
+**Verify by *doing*, not by reading.** The eval showed why this is the highest-value
+move: weak local models rewrote a whole file 9× chasing an `IndentationError` they
+couldn't localize — the exact `file:line` a probe hands over is what they couldn't
+generate for themselves.
 
-**Doors it opens** (all things we hit in practice):
-- **Ground-truth completion gate** — on a "done" claim, Shephard runs the test
-  ITSELF (`pytest --exit-code` etc.) and ends the turn only if it really passes —
-  instead of trusting the claim or parsing the model's transcript.
-- **Active grounding on a stuck/tunnel-vision trigger** — the structural detector
-  says *when* (footprint stalled); the probe gets the *truth*: re-read the live file,
-  run the failing check, and feed fresh verified state into the nudge ("step back —
-  here's the actual state I just checked"), so the model can't work from stale context.
-- **Environment probing** — code-bug vs environment (e.g. curl the real endpoint to
-  see if a 4xx is the code or a missing header), instead of guessing.
+**Built — the repo-diagnostic probe system + ground-truth completion gate:**
+- **Language-aware syntax floor** — `py_compile` / `node --check` over the files on disk,
+  always available, giving the exact `file:line` for parse errors (`linter_probe`).
+- **Repo probe discovery** — inventory the repo's ecosystems (JS/TS, Python, Rust, Go,
+  JVM, .NET, PHP, Ruby, Elixir) → a RANKED list of SAFE diagnostic commands
+  (typecheck/build/lint before tests), the package manager chosen from lockfiles, and
+  `package.json`/Make scripts vetted (install/mutate/watch/service rejected) before they're
+  offered (`probe_discovery`, `probe_classifier`).
+- **Bounded runner + parsers** — run the top-ranked safe probes with a hard timeout,
+  capture without deadlock, parse rustc/tsc/ESLint/pytest/generic output into `file:line`
+  findings (`probe_run`, `probe_parse`).
+- **Ground-truth completion gate** — on a "done" claim, Shephard runs the syntax floor +
+  the top probe ITSELF and ends the turn only if the code passes; a real diagnosis becomes
+  the re-prompt (the exact line to fix), so the model stops rewriting whole files blind
+  (`probe_run::completion_block_nudge`, wired in `local_routing.rs`).
+- Detection is **disk-based, never prompt-based** — Shephard lints what the model actually
+  wrote; whether the chosen language honors the task (incl. "don't use Python") is a
+  *reasoning* call left to the completion verifier, not a keyword match.
+
+**Forward — more supervisory probes on the same substrate:**
+- **Active grounding on a stuck/tunnel-vision trigger** — the structural detector says
+  *when* (footprint stalled); a probe gets the *truth* (re-read the live file, run the
+  failing check) and feeds fresh verified state into the nudge, so the model can't work
+  from stale context.
+- **Environment probing** — code-bug vs environment (curl the real endpoint to see if a
+  4xx is the code or a missing header), instead of guessing.
 - **On-demand fresh-state pin / pre-flight checks.**
+- **Open protocol question** — a *private* call→result round-trip the model (and ideally
+  the user's UI) never sees.
 
-**Pairs with the tunnel-vision detector** (a content-blind structural signal:
-*N tool calls with no new well-defined `path`/`url` target* → the model's footprint
-stopped expanding). That signal decides *when* to probe; the probe supplies the *what*.
+**Guardrails** (these calls EXECUTE): read-only / idempotent only (never mutate the
+workspace); triggered, not constant (a "done" claim, a stuck trigger — each probe is real
+work on the box); hidden from the model's context so they never accrete in the transcript.
 
-**Guardrails** (these calls EXECUTE):
-- **Read-only / idempotent only** — run tests, read files, `git status`, `curl`;
-  never let a probe mutate the workspace.
-- **Triggered, not constant** — only on a "done" claim, a stuck trigger, a
-  suspected-stale moment. Each probe is real work on the box.
-- **Hidden from the model's context** — probes go through the strip/indicator channel
-  so they never accrete in the transcript.
-
-**Open protocol question:** can Shephard do a *private* call→result round-trip the
-model (and ideally the user's UI) never sees? It controls the model's view in the
-bidirectional model; whether the harness's UI/record shows it is per-harness.
-
-**Architecturally consistent with "owns no executors":** Shephard still owns none —
-it **borrows the harness's** executors, now for its own supervisory ends, not just to
-relay the model. That makes Shephard an **actor / supervisor**, not merely a stream
-transform. The first concrete use is almost certainly the ground-truth completion gate.
+**Architecturally consistent with "owns no executors":** Shephard still owns none — it
+**borrows the harness's** executors for its own supervisory ends, which makes it an
+**actor / supervisor**, not merely a stream transform.
 
 ## Reasoner-assisted redirect *(forward — speculative, captured so it isn't lost)*
 
