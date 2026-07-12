@@ -162,9 +162,11 @@ Residual gaps (each with its trigger):
 - **A compaction with NO prior briefing and a non-task classification is proxied,
   not continued** (deliberate: don't hijack a compacted question-chat).
   - **Trigger:** observed mis-handling of a real task in this state.
-- **Live PlanSession does not survive a cria restart** — only briefings/shapes do.
-  A restart mid-plan still re-plans (now grounded, but fresh).
-  - **Trigger:** restarts stop being routine; then serialize Plan + step state.
+- ~~Live PlanSession does not survive a cria restart~~ — CLOSED 2026-07-12: restarts
+  proved routine (7 in one morning; one mid-plan restart re-planned blind and produced
+  duplicate near-identical files). Live plans now persist in loopstate.json (durable
+  subset: plan + step status + summary; transient turn state reset on resume) and a
+  restart RESUMES at the current step — the planner is not consulted.
 - **Moment A (the summarize request itself) stays a blind proxy** — it works (the
   local model writes the summary), but cria doesn't label/route it specially.
   - **Trigger:** a harness whose summarize request breaks under the loop's decline

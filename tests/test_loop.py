@@ -417,11 +417,18 @@ class HistoryRewriteTests(unittest.TestCase):
             s1 = LoopStore(state_path=p)
             s1.observe_shape("sid:x", "rootfp", 4)
             s1.mark_done("sid:x")
-            s1.put("sid:x", PlanSession(plan=_plan(1)))
+            plan = _plan(2)
+            plan.items[0].done = True                                    # step 1 finished mid-plan
+            s1.put("sid:x", PlanSession(plan=plan, summary="1. did the thing"))
             s2 = LoopStore(state_path=p)                                 # "restart"
             self.assertTrue(s2.shape_done("sid:x"))                      # done bit survived
             self.assertTrue(s2.observe_shape("sid:x", "NEWROOT", 2))     # rewrite still detected post-restart
-            self.assertIsNone(s2.get("sid:x"))                           # live plans deliberately not persisted
+            resumed = s2.get("sid:x")                                    # live plans RESUME (restart-amnesia fix)
+            self.assertIsNotNone(resumed)
+            self.assertTrue(resumed.plan.items[0].done)                  # finished steps stay finished
+            self.assertEqual(resumed.plan.current().text, "step 2")      # picks up where it left off
+            self.assertEqual(resumed.summary, "1. did the thing")
+            self.assertFalse(resumed.awaiting_probe)                     # transient turn state reset
 
 
 class _FlakyPlanner:
@@ -747,6 +754,36 @@ class RunFolderTests(unittest.TestCase):
         names = sorted(os.listdir(run))
         self.assertTrue(any(n.startswith("plan-") and n.endswith(".md") for n in names), names)
         self.assertTrue(any(n.startswith("verify-step-") for n in names), names)
+
+
+class ResumeTests(unittest.TestCase):
+    def test_restart_mid_plan_resumes_instead_of_replanning(self):
+        # The restart-amnesia bug: cria restarted mid-plan → fresh blind plan → new filenames →
+        # duplicate files. Now: a new Loop over the SAME state file resumes the plan at the
+        # current step; the planner is never consulted.
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "loopstate.json")
+            store1 = LoopStore(state_path=state)
+            loop1 = Loop(_ctx(_Scripted([_toolcall(), _done()]), _Scripted([_verdict(True)]), _plan(2)), store1)
+            C = _Classification()
+            loop1.drive(_body(), "sid:r", C, _Rlog())                    # step 1: coder acts
+            c2 = loop1.drive(_body(), "sid:r", C, _Rlog())               # done → gate
+            loop1.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "sid:r", C, _Rlog())  # step 1 done → step 2
+
+            # "restart": fresh store from the same file, fresh Loop with a planner that MUST not run
+            class _NoPlanner:
+                def plan_for(self, *a, **k):
+                    raise AssertionError("re-planned after restart — resume failed")
+            store2 = LoopStore(state_path=state)
+            ctx2 = LoopContext(planner=_NoPlanner(), coder_chat=_Recorder([_toolcall()]), coder_model="c",
+                               reasoner_chat=_Scripted([_verdict(True)]), reasoner_model="r", runs_dir="")
+            loop2 = Loop(ctx2, store2)
+            rlog = _Rlog()
+            out = loop2.drive(_body(), "sid:r", C, rlog)                 # resumes: drives step 2
+            self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
+            items = [kw for k, kw in rlog.events if k == "loop.item"]
+            self.assertEqual(items[0]["step"], 2)                        # picked up at step 2, not step 1
 
 
 class _Classification:

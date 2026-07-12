@@ -35,7 +35,7 @@ from pathlib import Path
 from . import massage, probegate, proberun, prompts
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
-from .plan import Plan
+from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .shelltool import find_shell_tool, shell_args
 
@@ -146,10 +146,20 @@ class LoopStore:
     def put(self, key: str, sess: PlanSession) -> None:
         with self._lock:
             self._sessions[key] = sess
+            self._save_locked()
+
+    def persist(self, key: str) -> None:
+        """Re-save after in-place PlanSession mutations (step advanced, nudge recorded) — a cria
+        restart mid-plan then RESUMES the plan instead of re-planning blind (the restart-amnesia
+        bug: a fresh plan chose new filenames → duplicate near-identical files in the workspace)."""
+        with self._lock:
+            if key in self._sessions:
+                self._save_locked()
 
     def drop(self, key: str) -> None:
         with self._lock:
             self._sessions.pop(key, None)
+            self._save_locked()
 
     def mark_done(self, key: str) -> None:
         """Record that this session COMPLETED a plan — a one-bit detection signal (the briefing
@@ -217,8 +227,14 @@ class LoopStore:
             if isinstance(shapes, dict):
                 self._shapes = {str(k): v for k, v in list(shapes.items())[-_MAX_SHAPES:]
                                 if isinstance(v, dict) and isinstance(v.get("fp"), str)}
+            sessions = state.get("sessions") if isinstance(state, dict) else None
+            if isinstance(sessions, dict):
+                for k, v in sessions.items():
+                    sess = _session_from_dict(v)
+                    if sess is not None:
+                        self._sessions[str(k)] = sess
         except Exception:  # noqa: BLE001 — a corrupt/wrong-shape state file must NEVER block startup
-            self._shapes = {}
+            self._shapes, self._sessions = {}, {}
 
     def _save_locked(self) -> None:
         """Write the shapes atomically (tmp + rename). Caller holds the lock. DETECTION state
@@ -228,7 +244,10 @@ class LoopStore:
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"shapes": self._shapes}, ensure_ascii=False), encoding="utf-8")
+            tmp.write_text(json.dumps({"shapes": self._shapes,
+                                       "sessions": {k: _session_to_dict(v)
+                                                    for k, v in self._sessions.items()}},
+                                      ensure_ascii=False), encoding="utf-8")
             tmp.replace(self._state_path)
         except OSError:
             pass  # persistence is a nicety — never break the request path
@@ -294,7 +313,9 @@ class Loop:
         """Return the completion (OpenAI dict) cria should send, or ``None`` to fall
         through to the normal proxy (not a plan-driven task)."""
         with self._session_lock(session_key):
-            return self._drive_locked(body, session_key, classification, rlog)
+            out = self._drive_locked(body, session_key, classification, rlog)
+            self._store.persist(session_key)  # durable plan progress → restarts RESUME, not re-plan
+            return out
 
     def _drive_locked(self, body: dict, session_key: str, classification, rlog) -> dict | None:
         messages = body.get("messages", [])
@@ -913,6 +934,39 @@ def _briefing_from_history(messages: list[dict]) -> str:
             block = c.split(BRIEFING_OPEN, 1)[1]
             return block.split(BRIEFING_CLOSE, 1)[0].strip()
     return ""
+
+
+def _session_to_dict(sess: PlanSession) -> dict:
+    """The DURABLE subset of a live PlanSession — the plan + progress. Transient turn state
+    (awaiting flags, gate plans, streaks) is deliberately dropped: on resume the loop simply
+    re-drives the current step from a clean turn."""
+    return {
+        "plan": {
+            "id": sess.plan.id, "task": sess.plan.task, "created": sess.plan.created,
+            "status": sess.plan.status,
+            "items": [{"text": it.text, "done": it.done, "note": it.note,
+                       "fail_reason": it.fail_reason} for it in sess.plan.items],
+        },
+        "summary": sess.summary,
+        "prior_work": sess.prior_work,
+        "verify_fails": sess.verify_fails,
+    }
+
+
+def _session_from_dict(d) -> PlanSession | None:
+    """Rebuild a resumable PlanSession; None on any shape mismatch (never block startup)."""
+    try:
+        p = d["plan"]
+        plan = Plan(id=str(p["id"]), task=str(p["task"]), created=str(p["created"]),
+                    status=str(p.get("status", "in_progress")),
+                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")),
+                                    note=it.get("note"), fail_reason=it.get("fail_reason"))
+                           for it in p["items"]])
+        return PlanSession(plan=plan, summary=str(d.get("summary", "")),
+                           prior_work=str(d.get("prior_work", "")),
+                           verify_fails=int(d.get("verify_fails", 0)))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _history_root(messages: list[dict]) -> tuple[str, str]:
