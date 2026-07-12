@@ -38,7 +38,7 @@ from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .planner_tools import normalize_search
-from .shelltool import find_shell_tool, shell_args
+from .shelltool import _CMD_FIELDS, find_shell_tool, shell_args
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
 # request — a step that fails verification is now re-nudged INDEFINITELY; it never advances
@@ -1540,40 +1540,56 @@ _SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)[\w./~$-]|<<-?\s*\
 # there, so tolerate a leading backslash — and never quote-mask raw blobs (the JSON string
 # delimiters would mask the entire command away).
 _SHELL_WRITE_RAW_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
-_COMMAND_KEYS = ("command", "cmd", "script", "input")
+# The shell tool's command fields, shared with shelltool.shell_args so they can't drift
+# (round 4: shell_command was missing here, blinding progress detection on such harnesses).
+_COMMAND_KEYS = tuple(dict.fromkeys(_CMD_FIELDS + ("script",)))
 
 
 def _command_text(args) -> str | None:
-    """The command-carrying text of a call's arguments (decoded), or None when the args don't
-    parse — callers then fall back to raw-blob rules. A parsed call with no command field
-    returns '' (nothing to redirect-scan; prose fields are deliberately not scanned)."""
-    try:
-        parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    for k in _COMMAND_KEYS:
-        v = parsed.get(k)
-        if v:
-            return " ".join(str(x) for x in _flat_values(v))
-    return ""
+    """The command-carrying text of a call's arguments (decoded). Dicts yield their command
+    field only — prose sidecars (justification/description) are deliberately excluded.
+    Decodable non-dict shapes (bare shell text, a JSON argv array — shapes cria's own
+    leaked-tool-call recovery mints) ARE the command, with real balanced quotes. None means
+    an undecodable JSON FRAGMENT (truncated object/array) — only then do raw-blob rules apply."""
+    if not isinstance(args, str):
+        parsed = args
+    else:
+        try:
+            parsed = json.loads(args)
+        except ValueError:
+            s = args.strip()
+            # bare shell text IS the command; a cut-off {…/[… is a fragment → raw rules
+            return None if s[:1] in ("{", "[") else args
+    if isinstance(parsed, dict):
+        for k in _COMMAND_KEYS:
+            v = parsed.get(k)
+            if v:
+                return " ".join(str(x) for x in _flat_values(v))
+        return ""
+    if parsed is None:
+        return ""
+    return " ".join(str(x) for x in _flat_values(parsed))
 
 
 def _is_progress(sig: tuple, raw: str = "") -> bool:
-    """Does this action CHANGE the workspace? A write always; a shell call whose words carry
-    a known mutator (or a sed -i), or whose command writes via redirect/heredoc. Progress
-    on new ground resets the repetition hunt — a healthy edit→test→edit→test cycle must never
-    trip on its repeated test runs, whichever write route the model favors."""
+    """Does this action CHANGE the workspace? A write always; a shell call whose COMMAND
+    carries a known mutator (or a sed -i) or writes via redirect/heredoc. Mutator words and
+    the redirect scan both read the command text only — never prose sidecars ("don't touch
+    the config" in a justification is not a `touch`). Progress on new ground resets the
+    repetition hunt — a healthy edit→test→edit→test cycle must never trip on its repeated
+    test runs, whichever write route the model favors."""
     if sig[0] == "write":
         return True
-    words = sig[2]
-    if isinstance(words, frozenset):
+    text = _command_text(raw)
+    if text is None:  # undecodable fragment — escape-tolerant raw scan
+        blob = raw if isinstance(raw, str) else ""
+        words = frozenset(normalize_search(blob))
         if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
             return True
-    text = _command_text(raw)
-    if text is None:  # unparseable blob — scan raw with the escape-tolerant pattern
-        return bool(_SHELL_WRITE_RAW_RE.search(raw if isinstance(raw, str) else ""))
+        return bool(_SHELL_WRITE_RAW_RE.search(blob))
+    words = frozenset(normalize_search(text))
+    if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
+        return True
     return bool(_SHELL_WRITE_RE.search(_QUOTED_SPAN_RE.sub(" q ", text)))
 
 

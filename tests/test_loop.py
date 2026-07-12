@@ -1075,6 +1075,33 @@ class RepetitionRedirectTests(unittest.TestCase):
         raw = '{"command": ["bash", "-lc", "echo x > f.py"]'   # cut off — invalid JSON
         self.assertTrue(_is_progress(_action_signature("shell", raw), raw))
 
+    def test_decodable_non_dict_args_are_quote_masked(self):
+        # Round-4 verify: bare shell text and JSON argv arrays (the shapes leaked-tool-call
+        # recovery mints) have REAL balanced quotes — they take the masked path, so quoted
+        # comparisons are reads, while their real redirects still count as writes.
+        from cria.loop import _action_signature, _is_progress
+        for read in ("grep 'count > 1' src/module.py",              # bare shell text
+                     '["bash", "-lc", "awk \'$3 > 100\' data.txt"]'):  # JSON argv array
+            self.assertFalse(_is_progress(_action_signature("shell", read), read), read)
+        for write in ("echo x > f.py",
+                      '["bash", "-lc", "echo done > out.txt"]'):
+            self.assertTrue(_is_progress(_action_signature("shell", write), write), write)
+
+    def test_shell_command_field_counts_as_command(self):
+        # Round-4 verify: _COMMAND_KEYS is derived from shelltool._CMD_FIELDS — a harness
+        # whose shell tool uses `shell_command` gets the same progress detection.
+        from cria.loop import _action_signature, _is_progress
+        args = json.dumps({"shell_command": "echo done > result.txt"})
+        self.assertTrue(_is_progress(_action_signature("shell", args), args))
+
+    def test_prose_mutator_words_are_not_progress(self):
+        # Round-4 verify: "don't touch the config" in a justification is not a `touch` —
+        # mutator words come from the COMMAND text only.
+        from cria.loop import _action_signature, _is_progress
+        args = json.dumps({"command": "grep -n handler src/module.py",
+                           "justification": "checking we don't touch the config"})
+        self.assertFalse(_is_progress(_action_signature("shell", args), args))
+
     def test_identical_writes_far_apart_age_out(self):
         # Round-3 verify: preserved write signatures must not be immortal — identical writes
         # ~15 calls apart are NOT "3× within the last 12 calls".
