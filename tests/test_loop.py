@@ -1010,6 +1010,85 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("Try a different approach now.", coder.last_user())
 
+    def test_compliance_write_after_redirect_does_not_trip_spin(self):
+        # Round-2 verify: _track_write_streak runs AFTER _track_repetition on the SAME
+        # completion — without the in-flight freeze it repopulated the flushed window with the
+        # very writes that fired the redirect, and the coder's single compliance write re-tripped
+        # a spin probe steering it away from the file it had just fixed.
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        tc = {"type": "function", "function": {"name": "write_file",
+              "arguments": json.dumps({"path": "h.py", "content": "same"})}}
+        five = {"choices": [{"message": {"role": "assistant",
+                "tool_calls": [dict(tc, id=f"w{i}") for i in range(5)]}}]}
+        fix = _write("h.py", "the compliant fix")           # ONE new-content write
+        coder = _Recorder([five, five, fix])                # five... gate... [gate result → fix]
+        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
+                                            "content": "Fix the mock target instead."}}]}])
+        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        loop.drive(_body(), "k", _Classification(), rlog)   # 5 identical writes → repetition
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        loop.drive(_body(), "k", _Classification(), rlog)   # the compliance write is forwarded
+        self.assertNotIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.spin_probe", rlog.kinds())
+
+    def test_comparison_operators_are_not_progress(self):
+        # `awk '$3 > 100'` / `grep 'n > 0'` are READS: quoted comparisons must not reset the
+        # hunt, or a real read-loop interleaved with >-laden diagnostics never trips.
+        ws = self._ws()
+        seq = []
+        for i in range(3):
+            seq.append(_shell_cmd("cat src/parser.py"))                    # the stuck read
+            seq.append(_shell_cmd(f"awk '$3 > {100 + i}' data_{i}.txt"))   # distinct diagnostics
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(5):                                  # the 3rd identical read is call 5
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+
+    def test_dev_null_redirect_is_not_progress(self):
+        from cria.loop import _action_signature, _is_progress
+        args = json.dumps({"command": ["bash", "-lc", "pytest -q > /dev/null 2>&1"]})
+        self.assertFalse(_is_progress(_action_signature("shell", args), args))
+        args2 = json.dumps({"command": ["bash", "-lc", "echo done > out.txt"]})
+        self.assertTrue(_is_progress(_action_signature("shell", args2), args2))
+
+    def test_identical_writes_survive_interleaved_progress(self):
+        # The operator's per-file rule: a.py written 3× with the SAME content fires even with
+        # productive other-file writes in between (progress resets the ACTION hunt, not the
+        # write signatures).
+        ws = self._ws()
+        seq = [_write("a.py", "same"), _write("b.py", "real work 1"),
+               _write("a.py", "same"), _write("c.py", "real work 2"),
+               _write("a.py", "same")]
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq)):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+
+    def test_no_gate_still_delivers_a_canned_steer(self):
+        # The gate can't compose (unreadable workspace → _gate_op returns None). The tripped
+        # intervention must NEVER be swallowed: the coder's next turn carries the canned
+        # redirect as a nudge.
+        from unittest import mock
+        ws = self._ws()
+        coder = _Recorder([_write("h.py", "same bytes")])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+        with mock.patch("cria.loop.probegate.plan_gate", side_effect=OSError("unreadable")):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.redirect", rlog.kinds())        # canned, not silent
+        self.assertIn("repeated the same action", coder.last_user())
+
     def test_shell_native_writes_are_progress(self):
         # The coder writes via heredoc/redirect instead of write_file: still progress, so the
         # identical pytest runs between genuinely different shell writes never accrue.
@@ -1088,6 +1167,14 @@ class WritePathTests(unittest.TestCase):
         comp = {"choices": [{"message": {"tool_calls": [{"function": {
             "name": "write_file", "arguments": '{"file_path": "big.py", "content": "xxx'}}]}}]}
         self.assertEqual(_truncated_write_path(comp), "big.py")
+
+    def test_patch_header_in_write_file_content_is_not_a_path(self):
+        # Round-2 verify: a truncated write_file whose CONTENT contains patch-example text
+        # must not yield that example's file — the steer would name a file the model never
+        # touched. The patch fallback applies to apply_patch calls only.
+        from cria.loop import _write_path
+        raw = '{"content": "How to patch:\\n*** Update File: src/parser.py\\n+fixed line\\nthen run te'
+        self.assertIsNone(_write_path({"name": "write_file", "arguments": raw}))
 
 
 class _Classification:

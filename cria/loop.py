@@ -457,6 +457,13 @@ class Loop:
                 sess.probe_call_id = probe_tc["id"]
                 rlog.emit("loop.redirect_probe", step=idx)
                 return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
+            # no gate available (no shell tool / unreadable workspace): NEVER swallow a tripped
+            # intervention — deliver the canned steer through this turn's nudge instead
+            sess.nudge_reason = (
+                f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
+                f"({_clip(sess.repeat_action, 160)}) — repeating it will not change the outcome. "
+                "Choose a DIFFERENT next action and take it now via a tool call.")
+            rlog.emit("loop.redirect", step=idx, canned=True, chars=len(sess.nudge_reason))
         if sess.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
             sess.spin_probe_due = False
             probe_tc = self._gate_op(body, sess, rlog)
@@ -466,6 +473,11 @@ class Loop:
                 sess.probe_call_id = probe_tc["id"]
                 rlog.emit("loop.spin_probe", step=idx, path=sess.spin_path)
                 return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
+            sess.nudge_reason = (  # same no-gate fallback: a steer, never silence
+                f"you have rewritten `{sess.spin_path}` repeatedly; the repo's checks could not "
+                "run here. Stop rewriting it — re-read the step and verify a DIFFERENT part of "
+                "the work before touching that file again.")
+            rlog.emit("loop.spin_probe_result", step=idx, canned=True)
         framed = dict(body)
         framed["model"] = self._ctx.coder_model
         framed["stream"] = False
@@ -582,6 +594,13 @@ class Loop:
             # then reads as a non-acting turn and the loop gates on the ground-truth probe.
             rlog.emit("loop.truncated_dropped", step=idx)
             _drop_tool_calls(coder)
+        # A RETRY here runs after the rumination guard already finished — if the retried
+        # completion itself ruminated, its internal marker and sentinel finish_reason must
+        # still never reach the harness.
+        coder.pop("cria_rumination", None)
+        for ch in coder.get("choices", []):
+            if ch.get("finish_reason") == "rumination":
+                ch["finish_reason"] = "stop"
         return coder
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
@@ -720,6 +739,11 @@ class Loop:
             sess.recent_actions = []
         for ch in coder.get("choices", []):
             for tc in (ch.get("message") or {}).get("tool_calls") or []:
+                if (sess.redirect_due or sess.redirect_probe
+                        or sess.spin_probe_due or sess.spin_probe):
+                    return  # an intervention is in flight — it consumed the evidence; nothing
+                    # accrues until it's delivered (a fire mid-completion must not let the
+                    # completion's REMAINING calls repopulate the just-flushed windows)
                 fn = tc.get("function") or {}
                 name = fn.get("name") or "?"
                 args = fn.get("arguments") or ""
@@ -729,7 +753,11 @@ class Loop:
                 del sess.recent_actions[:-(REPEAT_WINDOW - 1)]
                 matches = sum(1 for s in sess.recent_actions if _actions_match(sig, s))
                 if not matches and _is_progress(sig, args):
-                    sess.recent_actions = [sig]  # new ground changed — a real move, not a loop
+                    # a real move — reset the hunt for ACTIONS, but keep write signatures: the
+                    # per-file rule ("same file, same content, 3× in the window") must survive
+                    # interleaved progress on OTHER files
+                    sess.recent_actions = [s for s in sess.recent_actions if s[0] == "write"]
+                    sess.recent_actions.append(sig)
                     continue
                 sess.recent_actions.append(sig)
                 if (matches + 1 >= REPEAT_FINGERPRINT_N
@@ -790,6 +818,13 @@ class Loop:
             sess.recent_writes = []
         for ch in coder.get("choices", []):
             for tc in (ch.get("message") or {}).get("tool_calls") or []:
+                if (sess.redirect_due or sess.redirect_probe
+                        or sess.spin_probe_due or sess.spin_probe):
+                    return  # intervention in flight — nothing accrues (this tracker runs AFTER
+                    # _track_repetition on the SAME completion: without this check it would
+                    # repopulate the flushed window with the very writes that fired the redirect,
+                    # and the coder's single compliance write would re-trip a spin probe steering
+                    # it away from the file it just fixed)
                 path = _write_path(tc.get("function") or {})
                 sess.recent_writes.append(path)  # None for non-writes — the window is CALLS
                 del sess.recent_writes[:-REPEAT_WINDOW]
@@ -1288,12 +1323,14 @@ _PATCH_FILE_RAW_RE = re.compile(r'\*\*\* (?:Add|Update) File: ((?:[^"\\\n]|\\[^n
 _PATH_KEY_RAW_RE = re.compile(r'"(?:path|file_path|file|filename)"\s*:\s*"((?:[^"\\]|\\.)+)"')
 
 
-def _path_of_args(args) -> str | None:
-    """The target file named by a write-class call's arguments — a path-key alias, or the
-    (first) Add/Update target of an apply_patch body (the writeproxy lowers edit_file →
-    apply_patch BEFORE tracking, so the patch route is the COMMON one for edits). Lenient:
-    malformed JSON falls back to boundary-bounded regexes; None when no path is recoverable
-    (skipped, never guessed)."""
+def _path_of_args(args, patch_ok: bool = True) -> str | None:
+    """The target file named by a write-class call's arguments — a path-key alias, or (when
+    ``patch_ok``, i.e. the call IS an apply_patch) the first Add/Update target of the patch
+    body (the writeproxy lowers edit_file → apply_patch BEFORE tracking, so the patch route is
+    the COMMON one for edits). ``patch_ok`` must be False for write_file/edit_file calls: their
+    CONTENT can legitimately contain patch-example text, and a truncated write's raw blob would
+    otherwise yield a file the model never touched. Lenient: malformed JSON falls back to
+    boundary-bounded regexes; None when no path is recoverable (skipped, never guessed)."""
     try:
         obj = json.loads(args) if isinstance(args, str) else dict(args or {})
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -1303,6 +1340,8 @@ def _path_of_args(args) -> str | None:
             p = obj.get(k)
             if isinstance(p, str) and p:
                 return p
+        if not patch_ok:
+            return None
         blob = obj.get("input") or obj.get("patch") or ""
         m = _PATCH_FILE_RE.search(blob) if isinstance(blob, str) else None
         return (m.group(1).strip() or None) if m else None
@@ -1311,6 +1350,8 @@ def _path_of_args(args) -> str | None:
     m = _PATH_KEY_RAW_RE.search(args)
     if m:
         return m.group(1)
+    if not patch_ok:
+        return None
     m = _PATCH_FILE_RAW_RE.search(args)
     return (m.group(1).strip() or None) if m else None
 
@@ -1319,7 +1360,7 @@ def _write_path(fn: dict) -> str | None:
     """The file a single write-class tool call targets; None for non-write calls."""
     if fn.get("name") not in _WRITE_TOOLS:
         return None
-    return _path_of_args(fn.get("arguments") or "")
+    return _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
 
 
 def _write_paths(completion: dict) -> list:
@@ -1439,7 +1480,7 @@ def _action_signature(name: str, args: str) -> tuple:
     if not isinstance(parsed, dict):
         parsed = {}
     if _WRITE_TOOL_RE.search(name):
-        path = _path_of_args(args) or ""
+        path = _path_of_args(args, patch_ok="patch" in name.lower()) or ""
         body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")
                    or parsed.get("input") or parsed.get("patch") or args)
         return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])
@@ -1479,14 +1520,29 @@ def _actions_match(a: tuple, b: tuple) -> bool:
     return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
 
 
-# A shell-native write: an output redirect (`> file`, `>> file` — not ->, >=, 2>&1) or a
-# heredoc (`<<EOF`, `<< "EOF"`). Quotes may be JSON-escaped in raw arg blobs (\").
-_SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
+# A shell-native write: an output redirect (`> file`, `>> file`) or a heredoc (`<<EOF`).
+# Checked on the DECODED, quote-masked command text: quoted spans hide comparison operators
+# (`awk '$3 > 100'`, `grep 'n > 0'`, `python -c "1 << 20"` are reads), and `>/dev/null`,
+# `2>&1`, `->`, `>=` are not workspace writes.
+_QUOTED_SPAN_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+_SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)[\w./~$-]|<<-?\s*\w')
+
+
+def _args_text(args) -> str:
+    """The human text of a call's arguments — flattened leaf values of the parsed JSON
+    (REAL quotes and newlines, not their escaped forms), or the raw string when unparseable."""
+    try:
+        parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
+    except (ValueError, TypeError):
+        return args if isinstance(args, str) else ""
+    if not isinstance(parsed, dict):
+        return args if isinstance(args, str) else ""
+    return " ".join(str(v) for v in _flat_values(parsed))
 
 
 def _is_progress(sig: tuple, raw: str = "") -> bool:
     """Does this action CHANGE the workspace? A write always; a shell call whose words carry
-    a known mutator (or a sed -i), or whose raw command writes via redirect/heredoc. Progress
+    a known mutator (or a sed -i), or whose command writes via redirect/heredoc. Progress
     on new ground resets the repetition hunt — a healthy edit→test→edit→test cycle must never
     trip on its repeated test runs, whichever write route the model favors."""
     if sig[0] == "write":
@@ -1495,7 +1551,8 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
     if isinstance(words, frozenset):
         if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
             return True
-    return bool(_SHELL_WRITE_RE.search(raw or ""))
+    masked = _QUOTED_SPAN_RE.sub(" q ", _args_text(raw))
+    return bool(_SHELL_WRITE_RE.search(masked))
 
 
 def _clip(s: str, n: int) -> str:
