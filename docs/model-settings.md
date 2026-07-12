@@ -32,7 +32,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
-| **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | — |
+| **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
 | **lfm25** (8B A1B MoE) | Q6_K | ⚠ **no published recommendation** | — | LiquidAI LFM2.5; test before relying |
 
