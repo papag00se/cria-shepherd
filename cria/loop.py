@@ -125,7 +125,8 @@ class PlanSession:
     spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
-    recent_actions: list = None  # rolling window of forwarded tool-call nature signatures
+    recent_actions: list = None  # rolling window of (seq, nature-signature) per forwarded call
+    action_seq: int = 0  # forwarded-call counter — ages recent_actions entries out of the window
     repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
     redirect_due: bool = False  # repetition tripped → gate + reasoner redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner redirect
@@ -749,17 +750,22 @@ class Loop:
                 args = fn.get("arguments") or ""
                 args = args if isinstance(args, str) else json.dumps(args)
                 sig = _action_signature(name, args)
-                # trim BEFORE counting so this call + the kept tail span exactly REPEAT_WINDOW
-                del sess.recent_actions[:-(REPEAT_WINDOW - 1)]
-                matches = sum(1 for s in sess.recent_actions if _actions_match(sig, s))
+                sess.action_seq += 1
+                # AGE-based trim (entries are (seq, sig)): an entry expires REPEAT_WINDOW
+                # forwarded calls after it was seen — even across progress resets. A length
+                # trim alone made preserved write signatures immortal: identical writes 60
+                # calls apart counted as "3× in the last 12".
+                cutoff = sess.action_seq - REPEAT_WINDOW
+                sess.recent_actions = [e for e in sess.recent_actions if e[0] > cutoff]
+                matches = sum(1 for e in sess.recent_actions if _actions_match(sig, e[1]))
                 if not matches and _is_progress(sig, args):
-                    # a real move — reset the hunt for ACTIONS, but keep write signatures: the
-                    # per-file rule ("same file, same content, 3× in the window") must survive
-                    # interleaved progress on OTHER files
-                    sess.recent_actions = [s for s in sess.recent_actions if s[0] == "write"]
-                    sess.recent_actions.append(sig)
+                    # a real move — reset the hunt for ACTIONS, but keep (in-window) write
+                    # signatures: the per-file rule ("same file, same content, 3× in the
+                    # window") must survive interleaved progress on OTHER files
+                    sess.recent_actions = [e for e in sess.recent_actions if e[1][0] == "write"]
+                    sess.recent_actions.append((sess.action_seq, sig))
                     continue
-                sess.recent_actions.append(sig)
+                sess.recent_actions.append((sess.action_seq, sig))
                 if (matches + 1 >= REPEAT_FINGERPRINT_N
                         and not sess.redirect_due and not sess.redirect_probe
                         and not sess.spin_probe_due and not sess.spin_probe):
@@ -1380,7 +1386,9 @@ def _truncated_write_path(completion: dict) -> str | None:
             fn = tc.get("function") or {}
             if fn.get("name") not in _WRITE_TOOLS:
                 continue
-            p = _path_of_args(fn.get("arguments") or "")
+            # same patch_ok gate as _write_path: a truncated write_file whose CONTENT contains
+            # patch-example text must not steer the coder to a file it never touched
+            p = _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
             if p:
                 return p
     return None
@@ -1521,23 +1529,35 @@ def _actions_match(a: tuple, b: tuple) -> bool:
 
 
 # A shell-native write: an output redirect (`> file`, `>> file`) or a heredoc (`<<EOF`).
-# Checked on the DECODED, quote-masked command text: quoted spans hide comparison operators
-# (`awk '$3 > 100'`, `grep 'n > 0'`, `python -c "1 << 20"` are reads), and `>/dev/null`,
-# `2>&1`, `->`, `>=` are not workspace writes.
+# Checked on the DECODED, quote-masked COMMAND text only: quoted spans hide comparison
+# operators (`awk '$3 > 100'`, `grep 'n > 0'`, `python -c "1 << 20"` are reads), `>/dev/null`,
+# `2>&1`, `->`, `>=` are not workspace writes — and prose sidecar fields (justification,
+# description) are excluded entirely, because one apostrophe there (don't) would unbalance the
+# quote masking in both directions.
 _QUOTED_SPAN_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
 _SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)[\w./~$-]|<<-?\s*\w')
+# Raw-blob variant for UNPARSEABLE args (truncated JSON): quotes/newlines are still escaped
+# there, so tolerate a leading backslash — and never quote-mask raw blobs (the JSON string
+# delimiters would mask the entire command away).
+_SHELL_WRITE_RAW_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
+_COMMAND_KEYS = ("command", "cmd", "script", "input")
 
 
-def _args_text(args) -> str:
-    """The human text of a call's arguments — flattened leaf values of the parsed JSON
-    (REAL quotes and newlines, not their escaped forms), or the raw string when unparseable."""
+def _command_text(args) -> str | None:
+    """The command-carrying text of a call's arguments (decoded), or None when the args don't
+    parse — callers then fall back to raw-blob rules. A parsed call with no command field
+    returns '' (nothing to redirect-scan; prose fields are deliberately not scanned)."""
     try:
         parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
     except (ValueError, TypeError):
-        return args if isinstance(args, str) else ""
+        return None
     if not isinstance(parsed, dict):
-        return args if isinstance(args, str) else ""
-    return " ".join(str(v) for v in _flat_values(parsed))
+        return None
+    for k in _COMMAND_KEYS:
+        v = parsed.get(k)
+        if v:
+            return " ".join(str(x) for x in _flat_values(v))
+    return ""
 
 
 def _is_progress(sig: tuple, raw: str = "") -> bool:
@@ -1551,8 +1571,10 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
     if isinstance(words, frozenset):
         if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
             return True
-    masked = _QUOTED_SPAN_RE.sub(" q ", _args_text(raw))
-    return bool(_SHELL_WRITE_RE.search(masked))
+    text = _command_text(raw)
+    if text is None:  # unparseable blob — scan raw with the escape-tolerant pattern
+        return bool(_SHELL_WRITE_RAW_RE.search(raw if isinstance(raw, str) else ""))
+    return bool(_SHELL_WRITE_RE.search(_QUOTED_SPAN_RE.sub(" q ", text)))
 
 
 def _clip(s: str, n: int) -> str:

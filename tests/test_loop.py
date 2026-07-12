@@ -1057,6 +1057,40 @@ class RepetitionRedirectTests(unittest.TestCase):
         args2 = json.dumps({"command": ["bash", "-lc", "echo done > out.txt"]})
         self.assertTrue(_is_progress(_action_signature("shell", args2), args2))
 
+    def test_prose_sidecar_fields_do_not_corrupt_progress_detection(self):
+        # Round-3 verify: one apostrophe in a justification field unbalanced the quote masking.
+        # Only COMMAND fields are scanned — prose never hides a real write or fakes one.
+        from cria.loop import _action_signature, _is_progress
+        read = json.dumps({"command": ["bash", "-lc", "cat a.py"],
+                           "justification": "we can't miss Bob's edge > case"})
+        self.assertFalse(_is_progress(_action_signature("shell", read), read))
+        write = json.dumps({"command": ["bash", "-lc", "echo hi > f.txt"],
+                            "justification": "don't skip"})
+        self.assertTrue(_is_progress(_action_signature("shell", write), write))
+
+    def test_unparseable_args_still_detect_shell_writes(self):
+        # Round-3 verify: a truncated arg blob (invalid JSON, still escape-encoded) must use
+        # the raw-tolerant pattern — quote-masking raw JSON would mask the whole command away.
+        from cria.loop import _action_signature, _is_progress
+        raw = '{"command": ["bash", "-lc", "echo x > f.py"]'   # cut off — invalid JSON
+        self.assertTrue(_is_progress(_action_signature("shell", raw), raw))
+
+    def test_identical_writes_far_apart_age_out(self):
+        # Round-3 verify: preserved write signatures must not be immortal — identical writes
+        # ~15 calls apart are NOT "3× within the last 12 calls".
+        ws = self._ws()
+        seq = []
+        for burst in range(3):
+            seq.append(_write("a.py", "same bytes"))           # the recurring identical write
+            for j in range(13):                                # 13 distinct reads age it out
+                seq.append(_shell_cmd(f"cat part_{burst}_{j}.py"))
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq)):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
+
     def test_identical_writes_survive_interleaved_progress(self):
         # The operator's per-file rule: a.py written 3× with the SAME content fires even with
         # productive other-file writes in between (progress resets the ACTION hunt, not the
@@ -1171,10 +1205,14 @@ class WritePathTests(unittest.TestCase):
     def test_patch_header_in_write_file_content_is_not_a_path(self):
         # Round-2 verify: a truncated write_file whose CONTENT contains patch-example text
         # must not yield that example's file — the steer would name a file the model never
-        # touched. The patch fallback applies to apply_patch calls only.
-        from cria.loop import _write_path
+        # touched. The patch fallback applies to apply_patch calls only — at BOTH callsites
+        # (round 3 caught _truncated_write_path, the truncation steer itself, ungated).
+        from cria.loop import _truncated_write_path, _write_path
         raw = '{"content": "How to patch:\\n*** Update File: src/parser.py\\n+fixed line\\nthen run te'
         self.assertIsNone(_write_path({"name": "write_file", "arguments": raw}))
+        comp = {"choices": [{"message": {"tool_calls": [{"function": {
+            "name": "write_file", "arguments": raw}}]}}]}
+        self.assertIsNone(_truncated_write_path(comp))
 
 
 class _Classification:
