@@ -647,10 +647,28 @@ class GateFlowTests(unittest.TestCase):
         self.assertNotIn("loop.step_done", rlog.kinds())        # ...but never auto-accepted (no-cap)
 
 
-def _write(path="handler.py"):
+def _write(path="handler.py", content="x = 1"):
     return {"choices": [{"message": {"role": "assistant", "tool_calls": [
         {"id": "w", "type": "function", "function": {"name": "write_file",
-         "arguments": json.dumps({"path": path, "content": "x = 1"})}}]}}]}
+         "arguments": json.dumps({"path": path, "content": content})}}]}}]}
+
+
+class _VaryingWriter:
+    """Rewrites the same file with DIFFERENT content each turn — trips the wheel-spin
+    same-file streak without tripping the (stricter, identical-args) repetition guard."""
+
+    def __init__(self, path="handler.py"):
+        self._path = path
+        self._n = 0
+        self.bodies = []
+
+    def __call__(self, body, rlog):
+        self.bodies.append(body)
+        self._n += 1
+        return json.dumps(_write(self._path, f"x = {self._n}")).encode()
+
+    def last_user(self):
+        return self.bodies[-1]["messages"][-1]["content"]
 
 
 class WheelSpinTests(unittest.TestCase):
@@ -668,7 +686,7 @@ class WheelSpinTests(unittest.TestCase):
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
-        coder = _Recorder([_write()])              # rewrites handler.py forever
+        coder = _VaryingWriter()                   # rewrites handler.py forever (content varies)
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         c = None
@@ -695,7 +713,7 @@ class WheelSpinTests(unittest.TestCase):
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
-        coder = _Recorder([_write()])
+        coder = _VaryingWriter()
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         for _ in range(WHEEL_SPIN_WRITES):
@@ -721,9 +739,13 @@ class WheelSpinTests(unittest.TestCase):
         from cria.loop import WHEEL_SPIN_WRITES
         ws = self._ws()
         seq = []
-        for _ in range(WHEEL_SPIN_WRITES):
-            seq.append(_write("h.py"))
-            seq.append(_toolcall())   # run tests between rewrites — still "in a row"
+        for i in range(WHEEL_SPIN_WRITES):
+            seq.append(_write("h.py", f"v = {i}"))   # varying content — streak, not repetition
+            # varying command args too (identical ones would rightly trip the repetition
+            # redirect first — that precedence is by design)
+            seq.append({"choices": [{"message": {"role": "assistant", "tool_calls": [
+                {"id": f"t{i}", "type": "function",
+                 "function": {"name": "shell", "arguments": json.dumps({"command": ["pytest", f"-k{i}"]})}}]}}]})
         coder = _Recorder(seq)
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
@@ -784,6 +806,79 @@ class ResumeTests(unittest.TestCase):
             self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
             items = [kw for k, kw in rlog.events if k == "loop.item"]
             self.assertEqual(items[0]["step"], 2)                        # picked up at step 2, not step 1
+
+
+class RepetitionRedirectTests(unittest.TestCase):
+    """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →
+    the REASONER authors the redirect → delivered as the coder's next nudge."""
+
+    def _ws(self):
+        import tempfile, os
+        t = tempfile.mkdtemp()
+        with open(os.path.join(t, "x.py"), "w") as f:
+            f.write("print(1)\n")
+        return t
+
+    def test_identical_calls_trip_redirect_and_reasoner_authors_it(self):
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        captured = {}
+
+        class _Reasoner:
+            calls = 0
+            def __call__(self, body, rlog):
+                _Reasoner.calls += 1
+                captured.setdefault("user", body["messages"][-1]["content"])
+                return json.dumps({"choices": [{"message": {"role": "assistant", "content":
+                    "Stop rewriting test_handle.py — the mock target is wrong. Patch handler.requests instead."}}]}).encode()
+
+        coder = _Recorder([_write("h.py", "same bytes")])   # IDENTICAL write forever
+        loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        c = None
+        for _ in range(3):                                  # 3 identical forwarded writes
+            c = loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+        # next turn: the gate fires for ground truth
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.redirect_probe", rlog.kinds())
+        args = json.loads(gate["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+        self.assertIn(P.rstrip("_"), " ".join(args["command"]))
+        # gate result (failing floor) → reasoner authors the redirect → coder is re-driven with it
+        result = f'{P}probe-0{S}\n  File "x.py", line 3\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        self.assertIn("loop.redirect", rlog.kinds())
+        self.assertIn("[REDIRECT]", coder.last_user())
+        self.assertIn("Patch handler.requests", coder.last_user())   # the reasoner's words
+        # ...and the reasoner SAW the evidence: step, repeated action, ground truth
+        self.assertIn("THE ACTION IT KEEPS REPEATING", captured["user"])
+        self.assertIn("write_file", captured["user"])
+        self.assertIn("SyntaxError", captured["user"])
+
+    def test_reasoner_failure_falls_back_to_canned_redirect(self):
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        coder = _Recorder([_write("h.py", "same bytes")])
+        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty forever
+        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        self.assertIn("[REDIRECT]", coder.last_user())
+        self.assertIn("repeated the same action", coder.last_user())  # canned fallback
+        self.assertIn("ALL CLEAN", coder.last_user())                 # clean-checks truth included
+
+    def test_varying_args_do_not_trip(self):
+        ws = self._ws()
+        coder = _VaryingWriter("h.py")                      # same file, different bytes each time
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
 
 
 class _Classification:

@@ -60,6 +60,13 @@ MAX_RUMINATION_RETRIES = 3
 # needed, no judging — pure ground truth, aimed at the rewrite-loop pathology (a file rewritten
 # 5× while the actual bug sits elsewhere).
 WHEEL_SPIN_WRITES = 5
+# REPETITION REDIRECT (operator, 2026-07-12): the same tool call (name + args fingerprint)
+# REPEAT_FINGERPRINT_N times within the last REPEAT_WINDOW forwarded calls → run the gate for
+# fresh ground truth, then the REASONER authors a redirect (codex-local's reasoned-guidance
+# pattern: detect → ground truth → reason). Windowed, not consecutive-only, so interleaved
+# loops (write, test, write, test — byte-identical writes) are caught.
+REPEAT_FINGERPRINT_N = 3
+REPEAT_WINDOW = 12
 # Probe re-issues after a history rewrite erased the result. A harness compacting EVERY turn
 # would otherwise re-issue forever; past the cap the absent result falls back to fail-open (the
 # pre-existing don't-wedge behavior).
@@ -103,6 +110,10 @@ class PlanSession:
     write_streak: int = 0  # consecutive writes to write_streak_path
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
+    recent_actions: list = None  # rolling window of forwarded tool-call fingerprints
+    repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
+    redirect_due: bool = False  # repetition tripped → gate + reasoner redirect before next coder turn
+    redirect_probe: bool = False  # the in-flight gate feeds a reasoner redirect
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
     nudge_reason: str = ""  # a failed-check reason to hand the coder on its next work turn
 
@@ -419,6 +430,15 @@ class Loop:
 
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
+        if sess.redirect_due:  # repetition tripped → ground truth, then the reasoner redirects
+            sess.redirect_due = False
+            probe_tc = self._gate_op(body, sess, rlog)
+            if probe_tc is not None:
+                sess.awaiting_probe = True
+                sess.redirect_probe = True
+                sess.probe_call_id = probe_tc["id"]
+                rlog.emit("loop.redirect_probe", step=idx)
+                return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
         if sess.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
             sess.spin_probe_due = False
             probe_tc = self._gate_op(body, sess, rlog)
@@ -450,6 +470,7 @@ class Loop:
             _clean_completion(coder, self._ctx.coder_role)
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
+            self._track_repetition(sess, coder, idx, rlog)
             self._track_write_streak(sess, coder, idx, rlog)
             return coder  # coder is acting → forward; the harness runs it, then loops back here
 
@@ -573,6 +594,11 @@ class Loop:
         # Interpret the gate output through the ported probe modules (floor + probes + git).
         outcome = probegate.interpret_gate(sess.gate_plan, probe) if sess.gate_plan is not None \
             else probegate.GateOutcome(ran=False)
+        if sess.redirect_probe:  # repetition: ground truth → the REASONER authors the redirect
+            sess.redirect_probe = False
+            redirect = self._author_redirect(sess, outcome, body, rlog)
+            rlog.emit("loop.redirect", step=idx, chars=len(redirect))
+            return self._renudge(sess, key, body, f"[REDIRECT]\n{redirect}", rlog)
         if sess.spin_probe:  # wheel-spinning ground truth: INSERT the results and keep working —
             sess.spin_probe = False  # no verdict, no critic, the step stays open
             findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
@@ -648,6 +674,8 @@ class Loop:
         sess.leg0_nudged = False
         sess.write_streak, sess.write_streak_path = 0, ""
         sess.spin_probe_due = False
+        sess.recent_actions = []
+        sess.redirect_due = False
         sess.last_gate_flag = ""   # convergence tracking is per step
         rlog.emit("loop.step_done", step=idx, verified=ok, accepted_unverified=not ok)
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
@@ -661,6 +689,61 @@ class Loop:
         harness turn (stopping the session) and render as an empty ⟦cria⟧ line."""
         sess.nudge_reason = reason
         return self._work(sess, key, body, rlog)
+
+    def _track_repetition(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
+        """Repetition detection: fingerprint every forwarded tool call (name + args); the SAME
+        fingerprint REPEAT_FINGERPRINT_N times within the last REPEAT_WINDOW calls trips the
+        reasoned redirect. Windowed, not consecutive-only, so write→test→write→test loops with
+        byte-identical writes are caught (the canonical small-model spiral)."""
+        if sess.recent_actions is None:
+            sess.recent_actions = []
+        for ch in coder.get("choices", []):
+            for tc in (ch.get("message") or {}).get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                name = fn.get("name") or "?"
+                args = fn.get("arguments") or ""
+                args = args if isinstance(args, str) else json.dumps(args)
+                fp = f"{name}:{hashlib.sha1(args.encode('utf-8', 'replace')).hexdigest()[:16]}"
+                sess.recent_actions.append(fp)
+                del sess.recent_actions[:-REPEAT_WINDOW]
+                if (sess.recent_actions.count(fp) >= REPEAT_FINGERPRINT_N
+                        and not sess.redirect_due and not sess.redirect_probe):
+                    sess.redirect_due = True
+                    sess.recent_actions = []  # fresh window — a genuinely new loop can re-fire
+                    sess.repeat_action = f"{name} {_clip(args, 300)}"
+                    rlog.emit("loop.repetition", step=idx, tool=name,
+                              count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
+
+    def _author_redirect(self, sess: PlanSession, outcome, body: dict, rlog) -> str:
+        """The reasoned redirect (codex-local's reasoned-guidance pattern): hand the reasoner the
+        step, the REPEATED ACTION, its recent tool results, and the fresh probe findings; it
+        authors the coder's next instruction. Falls back to a canned redirect when the reasoner
+        produces nothing — a stuck coder must never be left without a steer."""
+        item = sess.plan.current()
+        step_text = item.text if item is not None else sess.plan.task
+        if outcome.ran:
+            findings = proberun.completion_block_nudge(outcome.report)
+            truth = findings or ("the repo's checks are ALL CLEAN — the problem is not where "
+                                 "the repeated action keeps looking")
+        else:
+            truth = "(the checks could not run)"
+        evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
+        user = (f"STEP THE CODER IS ON:\n{step_text}\n\n"
+                f"THE ACTION IT KEEPS REPEATING ({REPEAT_FINGERPRINT_N}x):\n{sess.repeat_action}\n\n"
+                f"ITS RECENT TOOL RESULTS:\n{evidence or '(none)'}\n\n"
+                f"GROUND TRUTH FROM THE REPO'S CHECKS:\n{_clip_tail(truth, 1200)}\n\n"
+                "Write the redirect now.")
+        text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=False)
+        if not text:
+            text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=True)
+        if text:
+            return _clip(text, 1200)
+        # Reasoner unavailable → the canned fallback (upstream keeps canned directives for
+        # exactly this case).
+        return (f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
+                f"({_clip(sess.repeat_action, 160)}) — repeating it will not change the outcome. "
+                f"Ground truth: {_clip_tail(truth, 600)}. Choose a DIFFERENT next action and take "
+                "it now via a tool call.")
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
         """Wheel-spinning detection: count consecutive writes to the SAME file across forwarded
