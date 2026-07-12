@@ -723,7 +723,10 @@ class WheelSpinTests(unittest.TestCase):
         self.assertNotIn("loop.step_done", rlog.kinds())   # inserted, never judged
         self.assertIn("loop.spin_probe_result", rlog.kinds())
 
-    def test_clean_checks_tell_the_coder_to_look_elsewhere(self):
+    def test_clean_checks_report_the_pass_without_editorializing(self):
+        # Round-6: the clean-gate message must NOT claim "the problem is elsewhere" — a
+        # content-blind streak can't distinguish a spiral from an honest sequence of edits to
+        # one file (applying review findings one by one). It states the checks pass, no more.
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
@@ -735,8 +738,10 @@ class WheelSpinTests(unittest.TestCase):
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
-        self.assertIn("ALL CLEAN", coder.last_user())
-        self.assertIn("probably NOT in the file", coder.last_user())
+        msg = coder.last_user()
+        self.assertIn("PASS", msg)
+        self.assertNotIn("NOT in the file", msg)          # no false "look elsewhere" steer
+        self.assertNotIn("elsewhere", msg)
 
     def test_other_file_writes_do_not_shield_the_count(self):
         # WINDOWED (operator, 2026-07-12), not consecutive: the tiny-edit spiral interleaves
@@ -956,7 +961,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("repeated the same action", coder.last_user())  # canned fallback
-        self.assertIn("ALL CLEAN", coder.last_user())                 # clean-checks truth included
+        self.assertIn("PASS", coder.last_user())                      # clean-checks truth included
 
     def test_varying_args_do_not_trip(self):
         ws = self._ws()
@@ -1154,17 +1159,40 @@ class RepetitionRedirectTests(unittest.TestCase):
                      "{ grep 'n > 0' f.py; } | wc -l"):
             self.assertFalse(_is_progress(_action_signature("shell", read), read), read)
 
-    def test_reads_of_different_files_same_flags_do_not_trip(self):
-        # Round-5 verify: `head -50 a.py/b.py/c.py` share verb+flag (2 shared, 2 jitter) but
-        # target DISJOINT files — exploration, vetoed before the jitter rule.
+    def test_jittered_parameter_sweep_fires(self):
+        # Round-6: a version-pin retry loop is "the same nature, one thing jittered" — exactly
+        # what the redesign exists to catch. The round-5 file-target veto SILENCED this (it read
+        # 1.0.1/1.0.2/1.0.3 as disjoint "files"); removing the veto restores the catch.
         ws = self._ws()
-        coder = _Recorder([_shell_cmd("head -50 src/a.py"), _shell_cmd("head -50 src/b.py"),
-                           _shell_cmd("head -50 src/c.py")])
+        coder = _Recorder([_shell_cmd("pip install cryptg==1.0.1"),
+                           _shell_cmd("pip install cryptg==1.0.2"),
+                           _shell_cmd("pip install cryptg==1.0.3")])
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         for _ in range(3):
             loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
+        self.assertIn("loop.repetition", rlog.kinds())
+
+    def test_survey_with_shared_flag_fires_and_is_reasoner_mediated(self):
+        # Round-6 tradeoff (documented): `head -50 a.py/b.py/c.py` share verb+flag and DO fire —
+        # the veto that spared this couldn't be made sound without silencing real loops. A
+        # survey false-positive is cheap: the gate confirms clean and the reasoner sees the 3
+        # distinct files in the evidence. The redirect is delivered, not suppressed.
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("head -50 src/a.py"), _shell_cmd("head -50 src/b.py"),
+                           _shell_cmd("head -50 src/c.py")])
+        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
+                              "content": "You're surveying different files — nothing is broken, proceed."}}]}])
+        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        self.assertIn("proceed", coder.last_user())        # the reasoner's benign steer, not a canned scold
 
     def test_identical_writes_far_apart_age_out(self):
         # Round-3 verify: preserved write signatures must not be immortal — identical writes

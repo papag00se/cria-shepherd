@@ -655,8 +655,13 @@ class Loop:
             if findings:
                 truth = findings
             elif outcome.ran:
-                truth = ("the repo's checks are ALL CLEAN — your recent edits pass; if the problem "
-                         "persists, it is probably NOT in the file you keep rewriting")
+                # NEUTRAL report (round 6): the spec for this tier is "surface the lint/type-check
+                # results", NOT "the bug is elsewhere". A content-blind streak can't tell a spiral
+                # from an honest sequence of edits to one file (applying review findings one by
+                # one), so it must NOT claim the problem isn't here — that mis-steers the coder off
+                # the correct file. Just state the checks pass and let it decide.
+                truth = ("the repo's checks (lint + type-check + syntax) all PASS on your current "
+                         "edits — no error-class findings in this file")
             else:
                 truth = "the checks could not run"
             rlog.emit("loop.spin_probe_result", step=idx, clean=findings is None and outcome.ran)
@@ -801,8 +806,9 @@ class Loop:
         step_text = item.text if item is not None else sess.plan.task
         if outcome.ran:
             findings = proberun.completion_block_nudge(outcome.report)
-            truth = findings or ("the repo's checks are ALL CLEAN — the problem is not where "
-                                 "the repeated action keeps looking")
+            # a FACT for the reasoner, not an inference: it sees the recent tool results (which
+            # reveal whether the repeats hit the same or different targets) and decides.
+            truth = findings or "the repo's checks (lint + type-check + syntax) all PASS — no error-class findings"
         else:
             truth = "(the checks could not run)"
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
@@ -1535,13 +1541,14 @@ def _actions_match(a: tuple, b: tuple) -> bool:
         return sa == sb
     if sa == sb:
         return True
-    # File-target veto (round 5): `head -50 a.py` / `head -50 b.py` / `head -50 c.py` is
-    # exploration, not a loop — when both commands name files and the files are DISJOINT,
-    # the shared verb+flags must not make them "the same hunt".
-    pa = {t for t in sa if "." in t or "/" in t}
-    pb = {t for t in sb if "." in t or "/" in t}
-    if pa and pb and not (pa & pb):
-        return False
+    # NOTE (round 6): a "file-target veto" was tried here — treat commands naming DISJOINT
+    # files as different hunts, to spare `head a.py/b.py/c.py` exploration. It was removed: a
+    # token bag can't tell a file target from a version pin or a decimal, so it (a) still
+    # fired on any survey sharing one dotted token (python3.11, --cov=app.py) and (b) SILENCED
+    # the exact loops we exist to catch — `pip install ==1.0.1/1.0.2/1.0.3`, a parameter sweep,
+    # is "the same nature, one thing jittered". Missing that is the expensive failure; a survey
+    # false-positive is cheap (the reasoner sees 3 different files in the evidence and waves it
+    # through, and the gate confirms clean first). Bias to firing — the reasoner mediates.
     shared = len(sa & sb)
     jitter = len(sa ^ sb)
     return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
