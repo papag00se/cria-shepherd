@@ -296,3 +296,54 @@ class PortFidelityTests(unittest.TestCase):
         self.assertIn("+new bare line", fixed)   # bare content line in an Update hunk → addition
         self.assertIn(" context", fixed)          # existing context untouched
         self.assertIn("-old line", fixed)         # existing removal untouched
+
+
+class GemmaDialectTests(unittest.TestCase):
+    """The gemma-fable bespoke tool-call syntax (ported from codex-local): recursive descent,
+    NOT regex — nested objects, `<|"|>`-delimited strings that may contain `}`/`,`, bare
+    bools/ints, arrays, and truncation tolerance."""
+
+    def test_nested_numbers_bools_arrays_and_hostile_strings(self):
+        from cria.massage import _extract_gemma
+        c = ('<|tool_call>call:write_file{path:<|"|>a}b,c.py<|"|>,'
+             'opts:{indent:2,force:true},lines:[<|"|>x<|"|>,<|"|>y<|"|>]}<tool_call|> done')
+        calls, cleaned = _extract_gemma(c)
+        args = json.loads(calls[0]["function"]["arguments"])
+        self.assertEqual(args, {"path": "a}b,c.py",
+                                "opts": {"indent": 2, "force": True}, "lines": ["x", "y"]})
+        self.assertEqual(cleaned.strip(), "done")
+
+    def test_truncated_call_recovers_earlier_args(self):
+        from cria.massage import _extract_gemma
+        calls, _ = _extract_gemma('<|tool_call>call:shell{command:<|"|>pytest -q<|"|>,cwd:<|"|>/ho')
+        args = json.loads(calls[0]["function"]["arguments"])
+        self.assertEqual(args["command"], "pytest -q")   # earlier arg fully intact
+        self.assertEqual(args["cwd"], "/ho")             # truncated remainder still captured
+
+    def test_multiple_calls_and_shell_aliasing(self):
+        from cria.massage import _extract_gemma
+        c = ('a <|tool_call>call:python{code:<|"|>print(1)<|"|>}<tool_call|> '
+             'b <|tool_call>call:read_file{path:<|"|>x.py<|"|>}<tool_call|>')
+        calls, _ = _extract_gemma(c)
+        self.assertEqual([x["function"]["name"] for x in calls], ["shell", "read_file"])
+
+    def test_end_to_end_recovery_promotes_to_tool_calls(self):
+        comp = {"choices": [{"message": {"role": "assistant", "content":
+                '<|channel>let me think<channel|><|tool_call>call:shell{command:<|"|>ls<|"|>}<tool_call|>'},
+                "finish_reason": "stop"}]}
+        out = recover_leaked_tool_calls(comp)
+        msg = out["choices"][0]["message"]
+        self.assertEqual(msg["tool_calls"][0]["function"]["name"], "shell")
+        self.assertFalse((msg.get("content") or "").strip())      # dialect + channel fully stripped
+        self.assertEqual(out["choices"][0]["finish_reason"], "tool_calls")
+
+    def test_fable_channel_stripping_including_truncated(self):
+        from cria.massage import _strip_channel
+        self.assertEqual(_strip_channel("<|channel>thought...<channel|>Answer."), "Answer.")
+        self.assertEqual(_strip_channel("Answer. <|channel>cut-off thought"), "Answer.")
+
+    def test_float_stays_string_upstream_quirk(self):
+        from cria.massage import _extract_gemma
+        calls, _ = _extract_gemma("<|tool_call>call:t{x:1.5,y:2}<tool_call|>")
+        args = json.loads(calls[0]["function"]["arguments"])
+        self.assertEqual(args, {"x": "1.5", "y": 2})     # i64-only bare parsing, preserved

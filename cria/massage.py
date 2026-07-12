@@ -61,8 +61,15 @@ _HERMES = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 _XML_FN = re.compile(r"<function=([A-Za-z0-9_.-]+)\s*>(.*?)</function>", re.DOTALL)
 _XML_PARAM = re.compile(r"<parameter=([A-Za-z0-9_.-]+)\s*>(.*?)</parameter>", re.DOTALL)
 # Gemma's bespoke dialect: <|tool_call>call:NAME{ key:<|"|>value<|"|> }<tool_call|>
-_GEMMA = re.compile(r"<\|tool_call\|?>\s*call:\s*([A-Za-z0-9_.-]+)\s*\{(.*?)\}\s*<\|?/?tool_call\|?>", re.DOTALL)
-_GEMMA_ARG = re.compile(r'([A-Za-z0-9_.-]+)\s*:\s*<\|"\|>(.*?)<\|"\|>', re.DOTALL)
+# Gemma-fable dialect (ported from codex-local tool_aliases.rs): a bespoke syntax, NOT JSON —
+#   <|tool_call>call:NAME{key:<|"|>string val<|"|>,key2:123,key3:[<|"|>a<|"|>]}<tool_call|>
+# STRING values are delimited by the `<|"|>` token (so a value may contain `}`, `,`, quotes —
+# anything but the delimiter); bare tokens are bools/ints; `{}`/`[]` nest; a TRUNCATED call
+# (generation cut off) is parsed as far as it goes so earlier args still recover. A regex cannot
+# parse this (the old one here silently dropped nested/numeric args) — recursive descent only.
+_GEMMA_TC_OPEN = "<|tool_call>"
+_GEMMA_TC_CLOSE = "<tool_call|>"
+_GEMMA_STR = '<|"|>' 
 
 
 def apply(completion: dict, tools=None, rlog=None) -> dict:
@@ -320,11 +327,14 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
 
 
 _CHANNEL = re.compile(r"<\|channel\|?>.*?<\|message\|?>", re.DOTALL)
+_CHANNEL_FABLE = re.compile(r"<\|channel>.*?(?:<channel\|>|$)", re.DOTALL)
 
 
 def _strip_channel(content: str) -> str:
-    """Drop Gemma's `<|channel>thought…<|message>` wrapper, keeping the answer."""
-    return _CHANNEL.sub("", content).strip()
+    """Drop Gemma's thinking wrappers, keeping the answer: the `<|channel>…<|message>` harmony
+    variant AND the gemma-fable `<|channel>thought…<channel|>` variant (an unterminated open —
+    truncated thinking — drops to the end, as upstream)."""
+    return _CHANNEL_FABLE.sub("", _CHANNEL.sub("", content)).strip()
 
 
 def _extract_leaked(content: str) -> tuple[list[dict], str]:
@@ -346,13 +356,156 @@ def _extract_leaked(content: str) -> tuple[list[dict], str]:
         calls.append(_toolcall(_alias(name), args))
         cleaned = cleaned.replace(m.group(0), "")
 
-    for m in _GEMMA.finditer(content):
-        name, argblock = m.group(1), m.group(2)
-        args = {k: v for k, v in _GEMMA_ARG.findall(argblock)}
-        calls.append(_toolcall(_alias(name), args))
-        cleaned = cleaned.replace(m.group(0), "")
+    gemma_calls, cleaned = _extract_gemma(cleaned)
+    calls.extend(gemma_calls)
 
-    return calls, cleaned.strip()
+    return calls, cleaned.replace(_GEMMA_STR, "").strip()
+
+
+def _extract_gemma(content: str) -> tuple[list[dict], str]:
+    """Every `<|tool_call>call:NAME{…}<tool_call|>` block → a recovered tool call; blocks are
+    stripped from the returned content. A block with no close token (truncated generation) is
+    parsed to the end and stripped to the end."""
+    calls: list[dict] = []
+    out: list[str] = []
+    rest = content
+    while True:
+        open_at = rest.find(_GEMMA_TC_OPEN)
+        if open_at < 0:
+            out.append(rest)
+            break
+        out.append(rest[:open_at])
+        after = rest[open_at + len(_GEMMA_TC_OPEN):]
+        close_at = after.find(_GEMMA_TC_CLOSE)
+        inner, rest = (after[:close_at], after[close_at + len(_GEMMA_TC_CLOSE):]) \
+            if close_at >= 0 else (after, "")
+        call = _parse_gemma_call(inner.strip())
+        if call is not None:
+            calls.append(call)
+        if not rest:
+            break
+    return calls, "".join(out)
+
+
+def _parse_gemma_call(inner: str) -> dict | None:
+    body = inner[5:].lstrip() if inner.startswith("call:") else inner
+    brace = body.find("{")
+    if brace < 0:
+        return None
+    name = body[:brace].strip()
+    if not name:
+        return None
+    parsed = _gemma_object(body[brace:])
+    if parsed is None:
+        return None
+    return _toolcall(_alias(name), parsed[0])
+
+
+def _gemma_object(s: str):
+    """Parse `{key:value,…}` at s[0]=='{' → (dict, chars consumed incl. '}'). An unterminated
+    object (truncation) returns what was recovered so far — never drops the whole call."""
+    if not s.startswith("{"):
+        return None
+    obj: dict = {}
+    i = 1
+    while True:
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i >= len(s):
+            break
+        if s[i] == "}":
+            return obj, i + 1
+        colon = s.find(":", i)
+        if colon < 0:
+            break
+        key = s[i:colon].strip()
+        i = colon + 1
+        val = _gemma_value(s[i:])
+        if val is None:  # unparseable value (junk/truncation) → keep what we have
+            break
+        v, consumed = val
+        i += consumed
+        if key:
+            obj[key] = v
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i >= len(s):
+            break
+        if s[i] == ",":
+            i += 1
+        elif s[i] == "}":
+            return obj, i + 1
+        else:
+            break
+    return obj, len(s)
+
+
+def _gemma_array(s: str):
+    if not s.startswith("["):
+        return None
+    arr: list = []
+    i = 1
+    while True:
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i >= len(s):
+            break
+        if s[i] == "]":
+            return arr, i + 1
+        val = _gemma_value(s[i:])
+        if val is None:
+            break
+        v, consumed = val
+        i += consumed
+        arr.append(v)
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i >= len(s):
+            break
+        if s[i] == ",":
+            i += 1
+        elif s[i] == "]":
+            return arr, i + 1
+        else:
+            break
+    return arr, len(s)
+
+
+def _gemma_value(s: str):
+    """ONE value: a `<|"|>…<|"|>` string (opaque — any char but the delimiter), a nested
+    `{}`/`[]`, or a bare bool/int/scalar up to the next `,`/`}`/`]`. → (value, chars consumed)."""
+    ws = len(s) - len(s.lstrip())
+    t = s[ws:]
+    if t.startswith(_GEMMA_STR):
+        after = t[len(_GEMMA_STR):]
+        end = after.find(_GEMMA_STR)
+        if end >= 0:
+            return after[:end], ws + len(_GEMMA_STR) * 2 + end
+        # truncated string (cut off mid-value) — take the remainder so earlier args survive
+        return after, ws + len(_GEMMA_STR) + len(after)
+    if t.startswith("{"):
+        r = _gemma_object(t)
+        return (r[0], ws + r[1]) if r else None
+    if t.startswith("["):
+        r = _gemma_array(t)
+        return (r[0], ws + r[1]) if r else None
+    end = len(t)
+    for ch in (",", "}", "]"):
+        pos = t.find(ch)
+        if 0 <= pos < end:
+            end = pos
+    return _gemma_scalar(t[:end].strip()), ws + end
+
+
+def _gemma_scalar(raw: str):
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    try:
+        return int(raw)  # upstream parses i64 only — floats stay strings, quirk preserved
+    except ValueError:
+        return raw
 
 
 def _alias(name: str) -> str:
