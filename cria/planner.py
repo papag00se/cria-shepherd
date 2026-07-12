@@ -17,7 +17,7 @@ import re
 import threading
 from datetime import datetime, timezone
 
-from . import planner_tools, prompts
+from . import massage, planner_tools, prompts
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -63,6 +63,7 @@ class Planner:
         # re-run (e.g. after deleting the files) does the work rather than reusing a prior plan (a
         # cached MUTABLE Plan previously leaked all-`done` state across sessions → immediate exit).
         self._plans: dict[str, None] = {}
+        self._retriable_failure = False  # set when a plan failure is a gather overrun, not unplannable
         self._lock = threading.Lock()
 
     def plan_for(self, messages: list[dict], rlog, prior_work: str = "",
@@ -90,11 +91,19 @@ class Planner:
         with self._lock:
             if key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
                 return None
+        self._retriable_failure = False
         steps = self._gather_and_plan(task, _extract_cwd(messages), rlog,
                                       prior_work=prior_work, rewrite_summary=rewrite_summary)
         if not steps:
-            # Negative cache: an unplannable task (unparsed / model emitted a tool call instead of a
-            # plan) must not re-call the reasoner on every subsequent turn of the session.
+            if self._retriable_failure:
+                # The model WANTED to keep working (its last response was a tool call, recovered or
+                # native) — a gather overrun, not an unplannable task. Don't poison the cache; the
+                # next turn retries planning. (Observed live: one bad forced-plan permanently
+                # downgraded a whole session to the proxy path.)
+                rlog.emit("plan.retriable", level="info")
+                return None
+            # Negative cache: an unplannable task (unparsed prose, no plan) must not re-call the
+            # reasoner on every subsequent turn of the session.
             with self._lock:
                 self._plans[key] = None
             return None
@@ -160,7 +169,17 @@ class Planner:
     def _forced_plan(self, messages: list[dict], rlog) -> list[str] | None:
         """One last call with tools OFF: stop gathering, output only the plan."""
         msg = self._reason(messages + [{"role": "user", "content": _FORCE_PLAN}], rlog, tools=False)
-        return self._parse(msg, rlog) if msg is not None else None
+        if msg is None:
+            self._retriable_failure = True  # transport/model error, not an unplannable task
+            return None
+        if msg.get("tool_calls") and not (msg.get("content") or "").strip():
+            # The model answered the "output the plan" ask with ANOTHER tool call (native or
+            # recovered from a leaked dialect) — it wants to keep working. Retriable: don't let
+            # one overrun poison the negative cache for the whole session.
+            self._retriable_failure = True
+            rlog.emit("plan.unparsed", level="warn", sample="(tool call instead of a plan)")
+            return None
+        return self._parse(msg, rlog)
 
     def _reason(self, messages: list[dict], rlog, *, tools: bool) -> dict | None:
         body: dict = {
@@ -178,7 +197,14 @@ class Planner:
             body["tools"] = planner_tools.PLANNER_TOOLS
         try:
             rlog.phase = "planner"
-            return _assistant_message(self._provider.chat(body, rlog))
+            completion = json.loads(self._provider.chat(body, rlog))
+            # Recover tool calls the model LEAKED as text (Hermes/XML/gemma-fable dialects) before
+            # reading the message — llama.cpp doesn't parse the gemma `<|tool_call>call:NAME{…}`
+            # syntax, so without this a quirky reasoner's gather call lands in content, the plan
+            # parse fails, and the task gets negative-cached (observed live: gemma4's forced-plan
+            # leaked `call:web_search{…}` → plan.unparsed → the whole session fell to proxy).
+            completion = massage.recover_leaked_tool_calls(completion, body.get("tools"), rlog)
+            return _assistant_message_obj(completion)
         except Exception as e:
             rlog.emit("plan.error", level="warn", error=str(e))
             return None
@@ -212,6 +238,10 @@ def _extract_cwd(messages: list[dict]) -> str:
         if mt:
             return mt.group(1).strip()
     return "."
+
+
+def _assistant_message_obj(obj) -> dict:
+    return ((obj.get("choices") or [{}])[0].get("message")) or {} if isinstance(obj, dict) else {}
 
 
 def _assistant_message(raw: bytes) -> dict:

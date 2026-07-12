@@ -188,3 +188,43 @@ class GatherLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GemmaLeakRecoveryTests(unittest.TestCase):
+    """The planner recovers leaked tool-call dialects (codex-local: 'quirky reasoners gather
+    too') and never poison-caches a gather overrun (observed live: gemma4's forced-plan leaked
+    `call:web_search{…}` → plan.unparsed → the whole session fell to the proxy path)."""
+
+    def test_gemma_dialect_gather_call_is_recovered_and_executed(self):
+        # Round 1: the model LEAKS its gather call in the gemma dialect (llama.cpp can't parse
+        # it). The planner must recover it, run the tool, and continue to the plan.
+        leak = _content_resp('<|tool_call>call:read_file{path:<|"|>x.py<|"|>}<tool_call|>')
+        prov = _ScriptedProvider([leak, _content_resp("1. do the thing\n2. verify")])
+        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        plan = p.plan_for(_msgs("build it"), _Rlog())
+        self.assertIsNotNone(plan)                       # gather continued → plan landed
+        self.assertEqual(len(plan.items), 2)
+        # the recovered call's RESULT was fed back as protocol (a role:tool message)
+        roles = [m["role"] for m in prov.bodies[-1]["messages"]]
+        self.assertIn("tool", roles)
+
+    def test_forced_plan_tool_call_is_retriable_not_poisoned(self):
+        # The model answers the forced "output the plan" with ANOTHER tool call, every time.
+        leak = _content_resp('<|tool_call>call:web_search{query:<|"|>docs<|"|>}<tool_call|>')
+        prov = _ScriptedProvider([leak])                 # repeats forever → gather cap → forced plan → leak again
+        p = Planner(prov, "reasoner-model", max_gather_rounds=2, clock=lambda: _FIXED)
+        rlog = _Rlog()
+        self.assertIsNone(p.plan_for(_msgs("task x"), rlog))
+        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        calls_before = prov.calls
+        # NOT negative-cached: the next turn tries planning again (reasoner re-consulted)
+        self.assertIsNone(p.plan_for(_msgs("task x"), _Rlog()))
+        self.assertGreater(prov.calls, calls_before)
+
+    def test_unparsed_prose_is_still_negative_cached(self):
+        prov = _ScriptedProvider([_content_resp("I think this task is about lambdas and such.")])
+        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        self.assertIsNone(p.plan_for(_msgs("task y"), _Rlog()))
+        calls_before = prov.calls
+        self.assertIsNone(p.plan_for(_msgs("task y"), _Rlog()))
+        self.assertEqual(prov.calls, calls_before)       # cached — no re-call
