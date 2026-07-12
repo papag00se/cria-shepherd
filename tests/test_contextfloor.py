@@ -165,3 +165,41 @@ class TestFits(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProtectedOverflowTests(unittest.TestCase):
+    """Lever 5: when the PROTECTED span alone is over budget (last user message near the top of
+    a long agentic conversation), drop its oldest turns rather than send a known-doomed request
+    (observed live: 259 messages, 171 trimmable tokens, guaranteed llama 400 retried forever)."""
+
+    def _long_convo(self, turns=80):
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "user", "content": "THE TASK: build the thing"}]
+        for i in range(turns):
+            msgs.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function",
+                 "function": {"name": "shell", "arguments": json.dumps({"command": ["x" * 300]})}}]})
+            msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "y" * 600})
+        return msgs
+
+    def test_drops_inside_protected_span_instead_of_sending_doomed(self):
+        msgs = self._long_convo()
+        out, tools, rep = contextfloor.fit(msgs, None, window=8000, reserve=1000, safety=1.8)
+        self.assertFalse(rep.over_budget)                 # fits now
+        self.assertGreater(rep.protected_dropped, 0)      # lever 5 did the work
+        self.assertEqual(out[0]["role"], "system")        # system survives
+        self.assertEqual(out[1]["content"], "THE TASK: build the thing")  # the request survives
+        # the newest tail survives (active work)
+        self.assertEqual(out[-1]["role"], "tool")
+        self.assertEqual(out[-1]["tool_call_id"], "c79")
+        # no orphaned tool results
+        ids = {tc["id"] for m in out for tc in (m.get("tool_calls") or [])}
+        for m in out:
+            if m.get("role") == "tool":
+                self.assertIn(m["tool_call_id"], ids)
+
+    def test_irreducible_core_still_reports_over_budget(self):
+        msgs = [{"role": "system", "content": "s" * 40000},
+                {"role": "user", "content": "task"}]
+        out, tools, rep = contextfloor.fit(msgs, None, window=8000, reserve=1000, safety=1.8)
+        self.assertTrue(rep.over_budget)                  # honest: nothing droppable remained

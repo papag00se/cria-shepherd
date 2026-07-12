@@ -46,6 +46,9 @@ SAFETY_FACTOR = 1.8
 # must leave room for the model's reply inside the same window (llama.cpp n_ctx covers
 # prompt + generation).
 DEFAULT_GEN_RESERVE = 4096
+# Lever 5 keeps this many trailing messages when forced to drop inside the protected span —
+# the active work (the newest tool call/result pairs) survives even a hard overflow.
+OVERFLOW_KEEP_TAIL = 8
 # Never trim the conversation below this estimate — the active turn must survive even
 # when tool schemas are pathologically large; if it still won't fit, that's surfaced,
 # not hidden.
@@ -71,6 +74,7 @@ class FloorReport:
     msg_tokens_after: int = 0
     outputs_reduced: int = 0
     turns_dropped: int = 0
+    protected_dropped: int = 0  # lever 5: turns dropped INSIDE the protected span (last resort)
     orphans_removed: int = 0
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     fields: dict = field(default_factory=dict)
@@ -81,6 +85,7 @@ class FloorReport:
             "tool_tokens_before": self.tool_tokens_before, "tools_compressed": self.tools_compressed,
             "msg_before": self.msg_tokens_before, "msg_after": self.msg_tokens_after,
             "outputs_reduced": self.outputs_reduced, "turns_dropped": self.turns_dropped,
+            "protected_dropped": self.protected_dropped,
             "orphans_removed": self.orphans_removed, "over_budget": self.over_budget,
         }
 
@@ -175,10 +180,26 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         work, rep.orphans_removed = _strip_orphan_tools(work)
 
     rep.msg_tokens_after = _msgs_tokens(work)
+    over = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
+    if over:
+        # --- Lever 5 (LAST RESORT, ported from codex-local §27 drop_to_fit): the PROTECTED span
+        # itself is over budget. That happens on long agentic conversations whose last USER
+        # message sits near the top — "protect last-user→end" then protects nearly everything,
+        # and levers 3-4 have almost nothing to work with (observed live: 259 messages, 171
+        # trimmable tokens, a guaranteed llama 400 retried forever = "not connecting"). Sending a
+        # known-doomed request helps no one: drop the OLDEST turns INSIDE the protected span —
+        # always keeping system messages, the last user message (the request), and the most
+        # recent tail — then re-strip orphans.
+        msg_budget = max(target_est - tool_tokens, MIN_MSG_BUDGET)
+        work, rep.protected_dropped = _drop_protected_overflow(work, msg_budget)
+        work, more_orphans = _strip_orphan_tools(work)
+        rep.orphans_removed += more_orphans
+        rep.msg_tokens_after = _msgs_tokens(work)
+        over = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
     rep.applied = not fits_at_start
-    # Honest signal: if the protected content (system + active turn) plus the bounded tool
-    # schema STILL won't fit, we've done all we can — surface it rather than pretend.
-    rep.over_budget = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
+    # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
+    # tail alone exceed the window), surface it rather than pretend.
+    rep.over_budget = over
     return work, tools, rep
 
 
@@ -262,6 +283,29 @@ def _protected_mask(messages: list[dict]) -> list[bool]:
         if last_user >= 0 and i >= last_user:
             prot[i] = True
     return prot
+
+
+def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+    """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
+    never touching (a) system/developer messages, (b) the last user message — the request
+    being answered, (c) the trailing OVERFLOW_KEEP_TAIL messages — the active work. Drops
+    from the oldest end of the span until the estimate fits or nothing droppable remains."""
+    work = list(messages)
+    dropped = 0
+    while _msgs_tokens(work) > msg_budget:
+        last_user = -1
+        for i, m in enumerate(work):
+            if m.get("role") == "user":
+                last_user = i
+        tail_start = max(len(work) - OVERFLOW_KEEP_TAIL, 0)
+        victim = next((i for i, m in enumerate(work)
+                       if i > last_user and i < tail_start
+                       and m.get("role") not in ("system", "developer")), None)
+        if victim is None:
+            break  # only the irreducible core remains
+        work.pop(victim)
+        dropped += 1
+    return work, dropped
 
 
 def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
