@@ -947,6 +947,43 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertIn("write_file", captured["user"])
         self.assertIn("SyntaxError", captured["user"])
 
+    def test_redirect_prompt_does_not_order_a_look_elsewhere_steer(self):
+        # Round-7: de-editorializing the code-side fact was nullified because redirect.txt
+        # (the reasoner's SYSTEM prompt) still ordered "say the problem is NOT in the file".
+        # The prompt must not instruct any where-the-problem-is claim on a clean gate.
+        from cria import prompts
+        txt = prompts.load("redirect").lower()
+        self.assertNotIn("not in the file", txt)
+        self.assertNotIn("look elsewhere", txt)
+
+    def test_reasoner_sees_neutral_system_and_fact_on_clean_gate(self):
+        # The reasoner's inputs on a clean gate carry no "problem is elsewhere" premise, in
+        # EITHER the system prompt or the ground-truth fact.
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        seen = {}
+
+        class _Recorder2:
+            def __call__(self, body, rlog):
+                msgs = body["messages"]
+                seen["system"] = next(m["content"] for m in msgs if m["role"] == "system")
+                seen["user"] = msgs[-1]["content"]
+                return json.dumps({"choices": [{"message": {"role": "assistant",
+                        "content": "Different next step."}}]}).encode()
+
+        coder = _Recorder([_write("h.py", "same bytes")])
+        loop = Loop(_ctx(coder, _Recorder2(), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        for blob in (seen["system"].lower(), seen["user"].lower()):
+            self.assertNotIn("not in the file", blob)
+            self.assertNotIn("look elsewhere", blob)
+        self.assertIn("pass", seen["user"].lower())        # the neutral clean fact
+
     def test_reasoner_failure_falls_back_to_canned_redirect(self):
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
