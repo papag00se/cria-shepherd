@@ -659,6 +659,12 @@ def _shell_cmd(cmd):
          "arguments": json.dumps({"command": ["bash", "-lc", cmd]})}}]}}]}
 
 
+def _edit(path, old, new):
+    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "e", "type": "function", "function": {"name": "edit_file",
+         "arguments": json.dumps({"path": path, "old_string": old, "new_string": new})}}]}}]}
+
+
 class _VaryingWriter:
     """Rewrites the same file with DIFFERENT content each turn — trips the wheel-spin
     same-file streak without tripping the repetition guard (new content = progress)."""
@@ -678,8 +684,10 @@ class _VaryingWriter:
 
 
 class WheelSpinTests(unittest.TestCase):
-    """Trigger 2: the same file written WHEEL_SPIN_WRITES times in a row → cria runs the
-    gate mid-work and INSERTS the results into the coder's next turn. No judging."""
+    """Trigger 2: the same file written WHEEL_SPIN_WRITES times — any content — within the
+    last REPEAT_WINDOW forwarded calls → cria runs the gate mid-work and INSERTS the results
+    into the coder's next turn. No judging. (Byte-identical rewrites trip the stricter 3×
+    repetition redirect first; this is the varying-content tier.)"""
 
     def _ws(self):
         import tempfile, os
@@ -730,7 +738,9 @@ class WheelSpinTests(unittest.TestCase):
         self.assertIn("ALL CLEAN", coder.last_user())
         self.assertIn("probably NOT in the file", coder.last_user())
 
-    def test_different_file_resets_the_streak(self):
+    def test_other_file_writes_do_not_shield_the_count(self):
+        # WINDOWED (operator, 2026-07-12), not consecutive: the tiny-edit spiral interleaves
+        # other work — 5 writes to a.py within the window fire even with b.py written between.
         from cria.loop import WHEEL_SPIN_WRITES
         ws = self._ws()
         writes = ([_write("a.py", f"v = {i}") for i in range(WHEEL_SPIN_WRITES - 1)]
@@ -740,7 +750,42 @@ class WheelSpinTests(unittest.TestCase):
         rlog = _Rlog()
         for _ in range(len(writes)):
             loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.wheel_spinning", rlog.kinds())  # 4×a, then b, then a → no streak of 5
+        self.assertIn("loop.wheel_spinning", rlog.kinds())     # 4×a, b, a → 5×a within 6 calls
+
+    def test_edit_file_spiral_counts_toward_wheel_spin(self):
+        # The tiny-edit route: the writeproxy lowers edit_file → apply_patch BEFORE tracking,
+        # so the patch target must count as a write to that file. (The old greedy patch-tail
+        # regex made every edit look like a different garbage path — the trigger's own target
+        # pathology, tiny varying edits, was invisible on this route.)
+        from cria.loop import WHEEL_SPIN_WRITES
+        ws = self._ws()
+        edits = [_edit("h.py", f"x = {i}", f"x = {i + 1}") for i in range(WHEEL_SPIN_WRITES)]
+        coder = _Recorder(edits)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(WHEEL_SPIN_WRITES):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.repetition", rlog.kinds())  # contents vary — the identical tier stays silent
+
+    def test_writes_spread_past_the_window_do_not_fire(self):
+        # The window is the last REPEAT_WINDOW forwarded CALLS: a file revisited occasionally
+        # across a long stretch of real work never accrues 5 in-window writes.
+        from cria.loop import WHEEL_SPIN_WRITES
+        ws = self._ws()
+        seq = []
+        for i in range(WHEEL_SPIN_WRITES):
+            seq.append(_write("a.py", f"v = {i}"))
+            seq.extend(_shell_cmd(f"cat part_{i}_{j}.py") for j in range(3))  # distinct actions
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq)):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.wheel_spinning", rlog.kinds())  # ≤3 a.py writes in any 12-call span
+        # ...and the distinct cat reads never false-fire repetition (which would consume drives
+        # on gate turns and desync this fixture — the vacuous-pass the verify pass caught)
+        self.assertNotIn("loop.repetition", rlog.kinds())
 
     def test_interleaved_non_write_calls_do_not_break_the_streak(self):
         from cria.loop import WHEEL_SPIN_WRITES
@@ -900,6 +945,89 @@ class RepetitionRedirectTests(unittest.TestCase):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.repetition", rlog.kinds())
 
+    def test_reads_of_different_files_do_not_trip(self):
+        # Wrapper boilerplate (bash -lc) must not count as shared intent: three reads of three
+        # DIFFERENT files share only {cat} once it's stripped — that's exploration, not a loop.
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("cat a.py"), _shell_cmd("cat b.py"), _shell_cmd("cat c.py")])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
+
+    def test_identical_reads_still_trip(self):
+        # The live incident: "stuck on reading package.json" — the SAME read over and over.
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("cat package.json")])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+
+    def test_symbol_only_args_match_exact_bytes_only(self):
+        # Args that normalize to an EMPTY word-set (symbol-only/non-ASCII commands) must not
+        # wildcard-match each other — exact bytes only.
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("→"), _shell_cmd("←"), _shell_cmd("↔")])  # three DIFFERENT
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
+        coder2 = _Recorder([_shell_cmd("→")])                     # the SAME one, three times
+        loop2 = Loop(_ctx(coder2, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog2 = _Rlog()
+        for _ in range(3):
+            loop2.drive(_body(), "k", _Classification(), rlog2)
+        self.assertIn("loop.repetition", rlog2.kinds())
+
+    def test_parallel_identical_writes_fire_one_redirect_no_spin(self):
+        # One completion carrying 5 IDENTICAL write_file calls (parallel tool calls are real):
+        # exactly one intervention — the redirect fires and consumes BOTH windows; the spin
+        # probe stays silent. Previously both fired, two gates ran back-to-back, and the spin
+        # renudge overwrote the reasoner-authored redirect.
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        tc = {"type": "function", "function": {"name": "write_file",
+              "arguments": json.dumps({"path": "h.py", "content": "same"})}}
+        five = {"choices": [{"message": {"role": "assistant",
+                "tool_calls": [dict(tc, id=f"w{i}") for i in range(5)]}}]}
+        coder = _Recorder([five])
+        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
+                                            "content": "Try a different approach now."}}]}])
+        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+        self.assertNotIn("loop.wheel_spinning", rlog.kinds())
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.redirect_probe", rlog.kinds())
+        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        self.assertNotIn("loop.spin_probe", rlog.kinds())         # no second gate hijack
+        self.assertIn("[REDIRECT]", coder.last_user())
+        self.assertIn("Try a different approach now.", coder.last_user())
+
+    def test_shell_native_writes_are_progress(self):
+        # The coder writes via heredoc/redirect instead of write_file: still progress, so the
+        # identical pytest runs between genuinely different shell writes never accrue.
+        ws = self._ws()
+        bodies = ["import json\ndef parse():\n    return 1",
+                  "class Handler:\n    def run(self):\n        pass",
+                  "from x import y\nVALUE = 42"]
+        seq = []
+        for i, b in enumerate(bodies):
+            seq.append(_shell_cmd(f"cat > mod_{i}.py <<'EOF'\n{b}\nEOF"))
+            seq.append(_shell_cmd("pytest -q"))
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq)):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
+
     def test_healthy_edit_test_cycle_never_trips(self):
         # write(NEW content) → pytest -q → write(NEW) → pytest -q …: each real edit is progress
         # and resets the hunt, so the identical test runs never accrue. THE false positive the
@@ -915,6 +1043,51 @@ class RepetitionRedirectTests(unittest.TestCase):
         for _ in range(len(seq)):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertNotIn("loop.repetition", rlog.kinds())
+        self.assertNotIn("loop.wheel_spinning", rlog.kinds())  # 4 writes — under the threshold
+
+
+class WritePathTests(unittest.TestCase):
+    """_path_of_args: what file does a write-class call target? Bounded extraction — the old
+    greedy patch regex swallowed the whole escaped patch body, and rstrip('\\n\"') was a
+    CHARACTER-SET strip that mangled real paths (config.json → config.jso)."""
+
+    def test_json_suffix_path_not_mangled(self):
+        from cria.loop import _write_path
+        fn = {"name": "write_file", "arguments": json.dumps({"path": "config.json", "content": "{}"})}
+        self.assertEqual(_write_path(fn), "config.json")
+
+    def test_alias_keys(self):
+        from cria.loop import _write_path
+        for k in ("path", "file_path", "file", "filename"):
+            fn = {"name": "write_file", "arguments": json.dumps({k: "a.py", "content": "x"})}
+            self.assertEqual(_write_path(fn), "a.py", k)
+
+    def test_lowered_patch_target(self):
+        # the writeproxy's edit_file → apply_patch route: {"input": "*** Begin Patch\n..."}
+        from cria.loop import _write_path
+        patch = "*** Begin Patch\n*** Update File: handler.py\n-a\n+b\n*** End Patch"
+        fn = {"name": "apply_patch", "arguments": json.dumps({"input": patch})}
+        self.assertEqual(_write_path(fn), "handler.py")
+
+    def test_raw_escaped_patch_stops_at_newline(self):
+        # malformed/truncated JSON: the raw blob has ESCAPED \n — the path must not swallow
+        # the patch tail
+        from cria.loop import _write_path
+        raw = '{"input": "*** Begin Patch\\n*** Update File: handler.py\\n-a\\n+b'
+        fn = {"name": "apply_patch", "arguments": raw}
+        self.assertEqual(_write_path(fn), "handler.py")
+
+    def test_non_write_tools_return_none(self):
+        from cria.loop import _write_path
+        self.assertIsNone(_write_path({"name": "shell",
+                                       "arguments": json.dumps({"command": ["cat", "a.py"]})}))
+
+    def test_truncated_write_uses_alias_keys(self):
+        # a cut-off write with a file_path alias still gets the incremental-write steer
+        from cria.loop import _truncated_write_path
+        comp = {"choices": [{"message": {"tool_calls": [{"function": {
+            "name": "write_file", "arguments": '{"file_path": "big.py", "content": "xxx'}}]}}]}
+        self.assertEqual(_truncated_write_path(comp), "big.py")
 
 
 class _Classification:

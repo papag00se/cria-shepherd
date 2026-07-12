@@ -55,11 +55,14 @@ MAX_TRUNCATION_RETRIES = 3
 # Rumination guard retry budget — how many times to re-prompt a reasoning-loop turn to refocus
 # before accepting whatever it produced. Same MAX_BAIL_RETRIES ceiling.
 MAX_RUMINATION_RETRIES = 3
-# WHEEL-SPINNING trigger (operator, 2026-07-11): the same file written this many times IN A ROW
-# (non-write tool calls between writes don't break the streak; a write to a DIFFERENT file resets
-# it) → run the gate mid-work and INSERT the results into the coder's next turn. No done-claim
-# needed, no judging — pure ground truth, aimed at the rewrite-loop pathology (a file rewritten
-# 5× while the actual bug sits elsewhere).
+# WHEEL-SPINNING trigger (operator, 2026-07-11; windowed 2026-07-12): the same file written this
+# many times — ANY content — within the last REPEAT_WINDOW forwarded calls → run the gate mid-work
+# and INSERT the results into the coder's next turn. No done-claim needed, no judging — pure
+# ground truth, aimed at the tiny-edit spiral: the file's indentation is wrong, and the model
+# rewrites it ten times changing SOMETHING each time but never the fault, so content-hashing
+# (the repetition trigger) can't see it and a consecutive streak undercounts it (reads/tests/
+# other-file writes interleave). Byte-identical rewrites trip the (stricter, 3×) repetition
+# redirect first; this is the varying-content tier.
 WHEEL_SPIN_WRITES = 5
 # REPETITION REDIRECT (operator, 2026-07-12): the same tool call BY NATURE — not by exact
 # bytes; exact fingerprints were tried on the codex-local side and failed, because the model
@@ -118,11 +121,11 @@ class PlanSession:
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
-    write_streak_path: str = ""  # file of the current consecutive-write streak
-    write_streak: int = 0  # consecutive writes to write_streak_path
+    recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
+    spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
-    recent_actions: list = None  # rolling window of forwarded tool-call fingerprints
+    recent_actions: list = None  # rolling window of forwarded tool-call nature signatures
     repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
     redirect_due: bool = False  # repetition tripped → gate + reasoner redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner redirect
@@ -444,6 +447,9 @@ class Loop:
         total = len(sess.plan.items)
         if sess.redirect_due:  # repetition tripped → ground truth, then the reasoner redirects
             sess.redirect_due = False
+            sess.spin_probe_due = False  # the redirect's gate supersedes a pending spin probe —
+            # never run two back-to-back gates, and never let the spin renudge overwrite the
+            # reasoner-authored redirect parked in nudge_reason
             probe_tc = self._gate_op(body, sess, rlog)
             if probe_tc is not None:
                 sess.awaiting_probe = True
@@ -458,7 +464,7 @@ class Loop:
                 sess.awaiting_probe = True
                 sess.spin_probe = True
                 sess.probe_call_id = probe_tc["id"]
-                rlog.emit("loop.spin_probe", step=idx, path=sess.write_streak_path)
+                rlog.emit("loop.spin_probe", step=idx, path=sess.spin_path)
                 return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
         framed = dict(body)
         framed["model"] = self._ctx.coder_model
@@ -623,7 +629,7 @@ class Loop:
                 truth = "the checks could not run"
             rlog.emit("loop.spin_probe_result", step=idx, clean=findings is None and outcome.ran)
             return self._renudge(sess, key, body,
-                                 f"you have rewritten `{sess.write_streak_path}` repeatedly; "
+                                 f"you have rewritten `{sess.spin_path}` repeatedly; "
                                  f"ground truth from the repo's own checks:\n{_clip_tail(truth, 1800)}", rlog)
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
@@ -684,7 +690,7 @@ class Loop:
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
         sess.leg0_nudged = False
-        sess.write_streak, sess.write_streak_path = 0, ""
+        sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
         sess.recent_actions = []
         sess.redirect_due = False
@@ -719,16 +725,23 @@ class Loop:
                 args = fn.get("arguments") or ""
                 args = args if isinstance(args, str) else json.dumps(args)
                 sig = _action_signature(name, args)
+                # trim BEFORE counting so this call + the kept tail span exactly REPEAT_WINDOW
+                del sess.recent_actions[:-(REPEAT_WINDOW - 1)]
                 matches = sum(1 for s in sess.recent_actions if _actions_match(sig, s))
-                if not matches and _is_progress(sig):
+                if not matches and _is_progress(sig, args):
                     sess.recent_actions = [sig]  # new ground changed — a real move, not a loop
                     continue
                 sess.recent_actions.append(sig)
-                del sess.recent_actions[:-REPEAT_WINDOW]
                 if (matches + 1 >= REPEAT_FINGERPRINT_N
-                        and not sess.redirect_due and not sess.redirect_probe):
+                        and not sess.redirect_due and not sess.redirect_probe
+                        and not sess.spin_probe_due and not sess.spin_probe):
                     sess.redirect_due = True
-                    sess.recent_actions = []  # fresh window — a genuinely new loop can re-fire
+                    # flush BOTH windows: one intervention consumes the evidence — the writes
+                    # that fired this redirect must not ALSO count toward a wheel-spin right
+                    # after the coder complies (that steer would point away from the very file
+                    # it just fixed).
+                    sess.recent_actions = []
+                    sess.recent_writes = []
                     sess.repeat_action = f"{name} {_clip(args, 300)}"
                     rlog.emit("loop.repetition", step=idx, tool=name,
                               count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
@@ -765,19 +778,33 @@ class Loop:
                 "it now via a tool call.")
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
-        """Wheel-spinning detection: count consecutive writes to the SAME file across forwarded
-        coder turns. Non-write tool calls never reset the streak (write → run tests → write is
-        still 'in a row'); a write to a different file starts a new streak. At WHEEL_SPIN_WRITES
-        the next loop turn runs the gate and inserts the results (see _work / _verify_after_probe)."""
-        for path in _write_paths(coder):
-            if path == sess.write_streak_path:
-                sess.write_streak += 1
-            else:
-                sess.write_streak_path, sess.write_streak = path, 1
-            if sess.write_streak >= WHEEL_SPIN_WRITES and not sess.spin_probe_due and not sess.spin_probe:
-                sess.spin_probe_due = True
-                sess.write_streak = 0  # fresh count — another 5 in a row re-fires
-                rlog.emit("loop.wheel_spinning", step=idx, path=path, writes=WHEEL_SPIN_WRITES)
+        """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
+        WHEEL_SPIN_WRITES times — ANY content — within the last REPEAT_WINDOW forwarded tool
+        calls. Consecutive is not required: the tiny-edit spiral rewrites the file with small
+        varying changes (never fixing the actual fault, e.g. indentation) while interleaving
+        reads, tests, and other-file writes, so a consecutive streak undercounts it and the
+        repetition trigger's content-hash can't see it. At the threshold the next loop turn
+        runs the gate and INSERTS the lint/type-check findings (see _verify_after_probe) —
+        ground truth on the next call, not more rewriting."""
+        if sess.recent_writes is None:
+            sess.recent_writes = []
+        for ch in coder.get("choices", []):
+            for tc in (ch.get("message") or {}).get("tool_calls") or []:
+                path = _write_path(tc.get("function") or {})
+                sess.recent_writes.append(path)  # None for non-writes — the window is CALLS
+                del sess.recent_writes[:-REPEAT_WINDOW]
+                if (path is not None
+                        and sess.recent_writes.count(path) >= WHEEL_SPIN_WRITES
+                        and not sess.spin_probe_due and not sess.spin_probe
+                        and not sess.redirect_due and not sess.redirect_probe):
+                    sess.spin_probe_due = True
+                    sess.spin_path = path
+                    # flush BOTH windows (one intervention at a time — a pending redirect's
+                    # gate would otherwise be hijacked and its reasoner-authored nudge
+                    # overwritten by the spin renudge)
+                    sess.recent_writes = []
+                    sess.recent_actions = []
+                    rlog.emit("loop.wheel_spinning", step=idx, path=path, writes=WHEEL_SPIN_WRITES)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """Compose the completion gate (probegate.plan_gate: syntax floor + discovered top probe +
@@ -1250,52 +1277,71 @@ def _has_tool_calls(completion: dict) -> bool:
     return False
 
 
+_PATH_KEYS = ("path", "file_path", "file", "filename")  # aliases the writeproxy itself accepts
+# Patch-body target on PARSED text (real newlines bound the path).
+_PATCH_FILE_RE = re.compile(r"\*\*\* (?:Add|Update) File: ([^\n]+)")
+# Patch-body target on RAW arg blobs, where \n is two ESCAPED characters: the path ends at an
+# escaped newline, a quote, or a real newline. A greedy `.+` here swallows the whole patch tail —
+# every tiny edit then "targets" a different garbage path and the wheel-spin count never accrues
+# (and rstrip('\\n"') is a CHARACTER-SET strip that mangles real paths ending in n/quote: .json).
+_PATCH_FILE_RAW_RE = re.compile(r'\*\*\* (?:Add|Update) File: ((?:[^"\\\n]|\\[^n])+)')
+_PATH_KEY_RAW_RE = re.compile(r'"(?:path|file_path|file|filename)"\s*:\s*"((?:[^"\\]|\\.)+)"')
+
+
+def _path_of_args(args) -> str | None:
+    """The target file named by a write-class call's arguments — a path-key alias, or the
+    (first) Add/Update target of an apply_patch body (the writeproxy lowers edit_file →
+    apply_patch BEFORE tracking, so the patch route is the COMMON one for edits). Lenient:
+    malformed JSON falls back to boundary-bounded regexes; None when no path is recoverable
+    (skipped, never guessed)."""
+    try:
+        obj = json.loads(args) if isinstance(args, str) else dict(args or {})
+    except (json.JSONDecodeError, TypeError, ValueError):
+        obj = None
+    if isinstance(obj, dict):
+        for k in _PATH_KEYS:
+            p = obj.get(k)
+            if isinstance(p, str) and p:
+                return p
+        blob = obj.get("input") or obj.get("patch") or ""
+        m = _PATCH_FILE_RE.search(blob) if isinstance(blob, str) else None
+        return (m.group(1).strip() or None) if m else None
+    if not isinstance(args, str):
+        return None
+    m = _PATH_KEY_RAW_RE.search(args)
+    if m:
+        return m.group(1)
+    m = _PATCH_FILE_RAW_RE.search(args)
+    return (m.group(1).strip() or None) if m else None
+
+
+def _write_path(fn: dict) -> str | None:
+    """The file a single write-class tool call targets; None for non-write calls."""
+    if fn.get("name") not in _WRITE_TOOLS:
+        return None
+    return _path_of_args(fn.get("arguments") or "")
+
+
 def _write_paths(completion: dict) -> list:
-    """Paths of the files this completion WRITES, in call order — write_file/edit_file args, and
-    an apply_patch's (first) target. Lenient JSON (an arg blob may be malformed); a write with no
-    recoverable path is skipped rather than guessed."""
-    out = []
-    for ch in completion.get("choices", []):
-        for tc in (ch.get("message") or {}).get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            if fn.get("name") not in _WRITE_TOOLS:
-                continue
-            args = fn.get("arguments") or ""
-            path = None
-            try:
-                path = json.loads(args).get("path")
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                pass
-            if not isinstance(path, str) or not path:
-                m = re.search(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"', args)
-                path = m.group(1) if m else None
-            if not path:  # apply_patch: the patch body names the file
-                m = re.search(r"\*\*\* (?:Add|Update) File: (.+)", args)
-                path = m.group(1).strip().rstrip('\\n"') if m else None
-            if path:
-                out.append(path)
-    return out
+    """Paths of the files this completion WRITES, in call order."""
+    return [p for ch in completion.get("choices", [])
+            for tc in (ch.get("message") or {}).get("tool_calls") or []
+            if (p := _write_path(tc.get("function") or {}))]
 
 
 def _truncated_write_path(completion: dict) -> str | None:
     """The path of a file the model was writing when it hit the token cap, read from the
-    (possibly cut-off) tool-call arguments. Lenient: a truncated response can leave the args
-    themselves as invalid JSON, so fall back to a regex for the ``path`` field."""
+    (possibly cut-off) tool-call arguments. Same lenient extraction as _path_of_args — a
+    truncated response can leave the args as invalid JSON, and alias-keyed writes
+    (file_path/file) must keep their incremental-write steer too."""
     for ch in completion.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             fn = tc.get("function") or {}
             if fn.get("name") not in _WRITE_TOOLS:
                 continue
-            args = fn.get("arguments") or ""
-            try:
-                p = json.loads(args).get("path")
-                if isinstance(p, str) and p:
-                    return p
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                pass
-            m = re.search(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"', args)
-            if m:
-                return m.group(1)
+            p = _path_of_args(fn.get("arguments") or "")
+            if p:
+                return p
     return None
 
 
@@ -1373,11 +1419,19 @@ def _extend_summary(summary: str, idx: int, item: str) -> str:
     return f"{summary}\n{line}".strip() if summary else line
 
 
+# Shell wrapper boilerplate carries no intent: without stripping it, `bash -lc cat a.py` and
+# `bash -lc cat b.py` share {bash, -lc, cat} and false-match as "the same hunt" — three reads
+# of three DIFFERENT files would fire the redirect.
+_BOILERPLATE_WORDS = frozenset({"bash", "sh", "zsh", "dash", "-lc", "-c", "-l", "-e", "env"})
+
+
 def _action_signature(name: str, args: str) -> tuple:
     """The NATURE of a tool call, for repetition matching — not its bytes. A write is its
     target + content (path, content-hash); everything else is its tool name + a normalized
-    word-set of its argument values (flag/word jitter survives, per the codex-local lesson
-    that exact fingerprints don't)."""
+    word-set of its argument values minus shell boilerplate (flag/word jitter survives, per
+    the codex-local lesson that exact fingerprints don't). Args that normalize to NOTHING
+    (symbol-only/non-ASCII) fall back to an exact-bytes hash — an empty set must not match
+    every other empty set of the same tool."""
     try:
         parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
     except (ValueError, TypeError):
@@ -1385,11 +1439,16 @@ def _action_signature(name: str, args: str) -> tuple:
     if not isinstance(parsed, dict):
         parsed = {}
     if _WRITE_TOOL_RE.search(name):
-        path = str(parsed.get("path") or parsed.get("file_path") or parsed.get("filename") or "")
-        body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text") or args)
+        path = _path_of_args(args) or ""
+        body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")
+                   or parsed.get("input") or parsed.get("patch") or args)
         return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])
     text = " ".join(str(v) for v in _flat_values(parsed)) or (args if isinstance(args, str) else "")
-    return ("act", name, frozenset(normalize_search(text)))
+    words = frozenset(normalize_search(text)) - _BOILERPLATE_WORDS
+    if not words:  # nothing survived normalization → exact bytes only (never a wildcard)
+        raw = args if isinstance(args, str) else json.dumps(args or {})
+        return ("act", name, hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:16])
+    return ("act", name, words)
 
 
 def _flat_values(obj) -> list:
@@ -1411,6 +1470,8 @@ def _actions_match(a: tuple, b: tuple) -> bool:
     if a[0] == "write":
         return a[2] == b[2]
     sa, sb = a[2], b[2]
+    if isinstance(sa, str) or isinstance(sb, str):  # exact-bytes fallback signatures
+        return sa == sb
     if sa == sb:
         return True
     shared = len(sa & sb)
@@ -1418,14 +1479,23 @@ def _actions_match(a: tuple, b: tuple) -> bool:
     return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
 
 
-def _is_progress(sig: tuple) -> bool:
-    """Does this action CHANGE the workspace? A write always; a shell call whose words carry a
-    known mutator (or a sed -i). Progress on new ground resets the repetition hunt — a healthy
-    edit→test→edit→test cycle must never trip on its repeated test runs."""
+# A shell-native write: an output redirect (`> file`, `>> file` — not ->, >=, 2>&1) or a
+# heredoc (`<<EOF`, `<< "EOF"`). Quotes may be JSON-escaped in raw arg blobs (\").
+_SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
+
+
+def _is_progress(sig: tuple, raw: str = "") -> bool:
+    """Does this action CHANGE the workspace? A write always; a shell call whose words carry
+    a known mutator (or a sed -i), or whose raw command writes via redirect/heredoc. Progress
+    on new ground resets the repetition hunt — a healthy edit→test→edit→test cycle must never
+    trip on its repeated test runs, whichever write route the model favors."""
     if sig[0] == "write":
         return True
     words = sig[2]
-    return bool(words & _MUTATOR_WORDS) or ("sed" in words and "-i" in words)
+    if isinstance(words, frozenset):
+        if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
+            return True
+    return bool(_SHELL_WRITE_RE.search(raw or ""))
 
 
 def _clip(s: str, n: int) -> str:
