@@ -1,0 +1,127 @@
+# cria configuration — copy to `~/.cria/cria.toml` and edit.
+#
+# cria searches, in order: ~/.cria/cria.toml  →  ./cria.toml  →  ~/.config/cria/config.toml
+# (or pass --config / set CRIA_CONFIG). ~/.cria/ is cria's home — its logs, plans, and
+# verify dumps live there too, so the config sits alongside its output.
+#
+# This `.example` is the tracked template; your real config is git-ignored. NO SECRETS
+# go in here — web-search / provider keys come from the environment (e.g. BRAVE_API_KEY).
+
+# --- cria's own HTTP bind -----------------------------------------------------
+[server]
+host = "127.0.0.1"
+port = 18085          # cria fronts llama.cpp; think "18084 = raw model, 18085 = cria"
+heartbeat_seconds = 5 # SSE keepalive during dead time (classify/plan/verify); 0 disables
+
+# --- the model server cria proxies to ----------------------------------------
+# The OpenAI-compatible upstream (llama.cpp today). cria appends
+# /v1/chat/completions. In phase 1 the request's own `model` is forwarded as-is;
+# phase-2 routing will pick the model per request instead.
+[upstream]
+base_url = "http://127.0.0.1:18084"
+timeout_seconds = 600
+
+# --- observability ------------------------------------------------------------
+# `jsonl` is the complete machine record (never filtered) at
+# <dir>/cria-YYYYMMDD.jsonl — the troubleshooting source of truth. `console` is a
+# human-readable stderr line, filtered by `level`.
+[logging]
+level = "info"        # debug | info | warn | error
+dir = "~/.cria/logs"
+console = true
+jsonl = true
+
+# --- cria's messaging into the completion (which model, tok/s, later: assists) ---
+# cria decorates the response with its own status lines and strips them from the
+# history before the model sees them. off = pure passthrough, no decoration.
+[indicators]
+enabled = true
+metrics = true        # the trailing "N tok · X tok/s" line on streamed responses
+
+# --- tool-menu shaping ---------------------------------------------------------
+[tools]
+cheatsheet = true     # inject a terse per-tool usage note (system message) for the model
+
+# --- the reasoned planner ------------------------------------------------------
+[planner]
+enabled = true        # on a fresh coding task, draft a plan via the reasoner.
+                      # (requires a `reasoner` in [models.local]). cria writes NO
+                      # file itself — phase 6 persists .cria/<id>.md via the harness.
+search_api_key_env = "BRAVE_API_KEY"  # env var holding the planner's web_search key (never the key)
+max_gather_rounds = 12                # cap the planner's read-only investigate loop
+
+
+# =============================================================================
+# ROUTING (phase 2). All optional — omit every section below and cria is a plain
+# passthrough. Reorg from the Rust `.codex-multi/config.toml`: ONE local upstream
+# (above) instead of repeating an endpoint on every role, and secrets in the
+# environment, not here.
+
+[routing]
+local_only = true          # the research posture: cloud roles become unresolvable,
+                           # so failover chains collapse to their local links.
+
+# Per-role local models (codex-local style). Each block gives the `model` alias served
+# by [upstream] plus the sampling + reasoning cria attaches to EVERY request for that
+# role — applied PER REQUEST, so a change is a cria restart, never a model reload.
+# Keys: model (required) · reasoning ("on"/"off"/"auto") · temperature · top_p · top_k ·
+#   repeat_penalty · min_p · max_tokens · output_reserve.  (`temp` aliases temperature.)
+# max_tokens vs output_reserve are SEPARATE, on purpose: max_tokens is the HARD output cap
+#   (leave UNSET on file-writing roles so a big write_file finishes instead of truncating mid-
+#   content); output_reserve is the INPUT-side window reserve — the floor trims input to
+#   `window − output_reserve − margin`, guaranteeing that much room to generate. Give the coder
+#   a generous output_reserve; it also seeds the rumination detector's reasoning budget.
+# `provider` and `timeout_seconds` are NOT per-role — cria has one [upstream] (its base_url +
+#   timeout_seconds), so those are set once up top, not repeated per role.
+# (ctx / quant / GPU are launch-time only and live with the model server, not here.)
+[models.local.classifier]
+model       = "fabliq_8b_reasoning_q6"
+reasoning   = "on"
+temperature = 0.0
+
+[models.local.reasoner]    # the planner + the step critic
+model       = "fabliq_8b_reasoning_q6"
+reasoning   = "on"
+temperature = 0.0
+
+[models.local.coder]
+model          = "fabliq_8b_reasoning_q6"
+reasoning      = "on"
+temperature    = 0.0
+repeat_penalty = 1.05
+output_reserve = 8192    # generous input-side reserve for a file-writing role (max_tokens left unset)
+
+[models.local.compactor]
+model       = "fabliq_8b_reasoning_q6"
+reasoning   = "on"
+temperature = 0.0
+
+[engagement]
+bias = "task"              # when the classifier is unsure, err toward the plan loop
+
+[failover]                 # task_type -> ordered role chain (walked to first resolvable)
+coding    = ["coder", "reasoner", "cloud.coder"]
+reasoning = ["reasoner", "cloud.reasoner"]
+
+# --- cloud (only used when local_only = false and the provider is resolvable) ---
+[providers.openai]                 # kind = "openai" (default): OpenAI-compatible HTTP
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"     # the KEY itself lives in the environment
+
+[models.cloud.coder]               # addressed as role "cloud.coder" above
+entries = [
+  { provider = "openai", model = "gpt-5.3-codex-spark", weight = 100, reasoning = "xhigh" },
+]
+
+# Anthropic escalation is NOT the Anthropic API — it drives the `claude` CLI
+# (Claude Code), the same mechanism as codex-local. Claude runs its own loop in
+# `cwd` and returns its result as the completion. Resolvable when the binary is on
+# PATH (or an absolute path) and local_only = false.
+# [providers.claude]
+# kind = "claude_cli"
+# binary = "claude"                # on PATH, or an absolute path
+# # cwd = "/path/to/workspace"     # where claude runs; omit to use cria's cwd
+#
+# [models.cloud.claude]            # role "cloud.claude" — add it to a failover chain
+# entries = [ { provider = "claude", model = "sonnet-4.6", weight = 100 } ]
+

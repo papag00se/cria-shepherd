@@ -1,0 +1,9 @@
+This session already completed earlier work. Here is a summary of what is DONE:
+
+{{PRIOR}}
+
+The user's NEW request is:
+
+{{TASK}}
+
+Plan ONLY the new request. Do NOT re-plan or redo the work already completed above — those files already exist in the workspace. Inspect the existing files with your read-only tools before planning; never guess filenames. Keep the plan minimal: only the steps the new request actually needs on top of what is already done.

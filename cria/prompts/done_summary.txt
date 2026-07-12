@@ -1,0 +1,11 @@
+You are compacting a COMPLETED coding session into a clean handoff, so the user's NEXT request can start from a compact, accurate context instead of the full noisy transcript.
+
+Summarize ONLY the work that is DONE. Be concise and concrete:
+- What was built or changed, naming EVERY file created or modified and its purpose.
+- How the code is run and tested (entry points, commands) and what actually passed.
+- Key facts discovered that a follow-up would need (API endpoints, response formats, data shapes, gotchas).
+
+Rules:
+- Report the truth. If a step finished but its checks never passed, say so plainly — do not claim success.
+- No next steps, no suggestions, no narration of your own process. Only the state of the finished work.
+- Write it as a compact briefing the next request can build directly on.

@@ -1,0 +1,10 @@
+# The tool cheat-sheet cria folds into the model's system message (one per turn, on the
+# OUTBOUND request only). One entry per tool cria may describe; only tools the harness
+# actually advertises are included, in this order. {{SHELL}} = the harness's shell tool
+# name (e.g. shell, exec_command, bash). Format is `key = value`, one per line.
+header = Tool usage (prefer these; keep files small and focused):
+write_file = - write_file(path, content): create or OVERWRITE a file with its FULL content — the most reliable way to write a file (you supply the whole file, nothing to escape).
+shell = - {{SHELL}}(command): run a shell command.
+apply_patch = - apply_patch: edit an existing file. Format: `*** Begin Patch` / `*** Update File: <path>` / `-old` / `+new` / `*** End Patch`.
+read_file = - read_file(path): read a file.
+read_via_shell = - read a file with `{{SHELL}}` running `cat <path>`.

@@ -1,0 +1,397 @@
+"""Probe orchestration: selection, the per-probe result contract, and the two
+model-facing renderings (block nudge + digest).
+
+The seven upstream Rust tests (probe_run.rs) port verbatim; the rest pin the
+cria-specific surface — the pure selection helpers and the proxy path
+(compose_probe_command / scrape_exit / interpret_probe_output). LocalRunner and
+the bash roundtrip — the only things here that spawn a process — live in THIS
+file only: cria's own modules never execute anything.
+"""
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+from cria.linterprobe import LinterFinding, LinterReport
+from cria.probeparse import Finding, ProbeResult
+from cria.proberun import (
+    BLOCK_NUDGE_PREAMBLE,
+    PROBE_EXIT_SENTINEL,
+    PROBE_OUTPUT_CAP_BYTES,
+    ProbeReport,
+    completion_block_nudge,
+    completion_probe_digest,
+    compose_probe_command,
+    family_of,
+    interpret_probe_output,
+    run_candidate,
+    run_probes_with,
+    scrape_exit,
+    select_completion_probes,
+)
+
+from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
+
+
+def synth(cmd, kind=ProbeKind.BuildCheck):
+    """The upstream test fixture: a cheap, safe, synthetic BuildCheck candidate."""
+    return ProbeCandidate(
+        kind=kind,
+        command=list(cmd),
+        working_dir=tempfile.gettempdir(),
+        confidence=90,
+        expected_value=80,
+        cost=ProbeCost.Cheap,
+        mutates_code=False,
+        may_hang=False,
+        may_need_services=False,
+        reason="test",
+    )
+
+
+# ---------------------------------------------------------------------------
+# LocalRunner: subprocess-based, defined HERE only (cria owns no executors).
+# ---------------------------------------------------------------------------
+
+def _text(v):
+    if v is None:
+        return ""
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "replace")
+    return v
+
+
+class LocalRunner:
+    """Reference Runner for tests: subprocess.run with drain + kill-on-timeout."""
+
+    def __call__(self, argv, cwd, timeout_s):
+        try:
+            proc = subprocess.run(
+                list(argv), cwd=cwd, capture_output=True, text=True,
+                timeout=timeout_s, stdin=subprocess.DEVNULL)
+            return proc.returncode, proc.stdout, proc.stderr, False
+        except subprocess.TimeoutExpired as e:
+            return None, _text(e.stdout), _text(e.stderr), True
+
+
+class _FakeFloor:
+    """Duck-typed LinterReport for branches a real report cannot reach
+    (is_clean() False with nudge_text() None)."""
+
+    def __init__(self, clean, nudge):
+        self._clean = clean
+        self._nudge = nudge
+
+    def is_clean(self):
+        return self._clean
+
+    def nudge_text(self):
+        return self._nudge
+
+
+# ---------------------------------------------------------------------------
+# The seven upstream tests, verbatim.
+# ---------------------------------------------------------------------------
+
+class TestUpstreamProbeRun(unittest.TestCase):
+    def test_runs_and_captures_exit_zero(self):
+        r = run_candidate(LocalRunner(), synth(["python3", "-c", "print('ok')"]), 10.0)
+        self.assertEqual(r.exit_code, 0)
+        self.assertEqual(r.summary, "no problems reported")
+
+    def test_captures_stderr_and_nonzero_exit(self):
+        code = "import sys; sys.stderr.write('src/x.py:9: error: boom\\n'); sys.exit(1)"
+        r = run_candidate(LocalRunner(), synth(["python3", "-c", code]), 10.0)
+        self.assertEqual(r.exit_code, 1)
+        self.assertEqual(len(r.findings), 1)
+        self.assertEqual(r.findings[0].file, "src/x.py")
+        self.assertEqual(r.findings[0].line, 9)
+
+    def test_enforces_timeout(self):
+        r = run_candidate(LocalRunner(),
+                          synth(["python3", "-c", "import time; time.sleep(30)"]), 0.4)
+        self.assertTrue(r.summary.startswith("TIMEOUT"))
+        # upstream quirk, preserved: as_secs() truncation — 0.4s reads "after 0s"
+        self.assertTrue(r.summary.startswith("TIMEOUT after 0s"))
+        self.assertIsNone(r.exit_code)
+
+    def test_missing_tool_is_reported_not_panicked(self):
+        r = run_candidate(LocalRunner(),
+                          synth(["definitely-not-a-real-binary-xyz", "check"]), 5.0)
+        self.assertIsNone(r.exit_code)
+        self.assertIn("failed to launch", r.summary)
+
+    def test_family_selection(self):
+        self.assertEqual(family_of(["cargo", "check"]), "cargo")
+        # token match anywhere in argv, not just argv[0]
+        self.assertEqual(family_of(["pnpm", "exec", "tsc", "--noEmit"]), "tsc")
+        self.assertEqual(family_of(["ruff", "check", "."]), "")
+
+    def test_end_to_end_on_a_python_repo(self):
+        # upstream name is stale — the fixture is a go repo; kept verbatim.
+        d = os.path.join(tempfile.gettempdir(), f"probe_run_e2e_{os.getpid()}")
+        if os.path.exists(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
+        try:
+            with open(os.path.join(d, "go.mod"), "w", encoding="utf-8") as fh:
+                fh.write("module x\n")
+            report = run_probes_with(LocalRunner(), d, 1, 10.0)
+            self.assertEqual(report.project_type, ["go"])
+            self.assertEqual(len(report.selected), 1)
+            self.assertEqual(len(report.results), 1)
+            # go may or may not be installed; we only assert the orchestration shape
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_digest_distinguishes_ran_clean_from_did_not_run(self):
+        clean_floor = LinterReport(findings=[], skipped=[])
+        report = ProbeReport(
+            project_type=["python"],
+            selected=[],
+            results=[
+                ProbeResult("pytest -q", 0, "3 passed", []),
+                ProbeResult("python -c import", 1,
+                            "ModuleNotFoundError: No module named 'requests'", []),
+            ],
+        )
+        digest = completion_probe_digest(report, clean_floor)
+        self.assertIn("SYNTAX FLOOR: clean", digest)
+        self.assertIn("exit 0 (ran clean)", digest)
+        self.assertIn("ModuleNotFoundError", digest)
+        self.assertIn("exit 1", digest)
+        digest = completion_probe_digest(ProbeReport([], [], []), clean_floor)
+        self.assertIn("none ran", digest)
+
+
+# ---------------------------------------------------------------------------
+# Completion selection (pure; discovery mocked at the module seam).
+# ---------------------------------------------------------------------------
+
+class TestCompletionSelection(unittest.TestCase):
+    def test_top_plus_first_test_deduped_by_argv(self):
+        lint = synth(["ruff", "check", "."], kind=ProbeKind.Lint)
+        test1 = synth(["pytest", "-q"], kind=ProbeKind.Test)
+        test2 = synth(["python3", "-m", "unittest"], kind=ProbeKind.Test)
+        with mock.patch("cria.probediscovery.discover",
+                        return_value=[lint, test1, test2]):
+            selected = select_completion_probes("/nonexistent")
+        # overall top + FIRST Test in rank order (test2 never selected)
+        self.assertEqual([c.command for c in selected],
+                         [["ruff", "check", "."], ["pytest", "-q"]])
+
+    def test_top_candidate_is_the_test_runs_once(self):
+        test1 = synth(["pytest", "-q"], kind=ProbeKind.Test)
+        with mock.patch("cria.probediscovery.discover", return_value=[test1]):
+            selected = select_completion_probes("/nonexistent")
+        self.assertEqual(len(selected), 1)
+
+    def test_no_candidates_selects_nothing(self):
+        with mock.patch("cria.probediscovery.discover", return_value=[]):
+            self.assertEqual(select_completion_probes("/nonexistent"), [])
+
+
+# ---------------------------------------------------------------------------
+# completion_block_nudge (pure rendering).
+# ---------------------------------------------------------------------------
+
+class TestCompletionBlockNudge(unittest.TestCase):
+    def _dirty_floor(self):
+        return LinterReport(findings=[LinterFinding(
+            language="python", tool="py_compile", passed=False,
+            errors="src/a.py:3: invalid syntax")])
+
+    def test_dirty_floor_takes_precedence(self):
+        floor = self._dirty_floor()
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "ruff check .", 1, "src/b.py:1: boom", [Finding("src/b.py", 1, None, "boom")])])
+        self.assertEqual(completion_block_nudge(report, floor), floor.nudge_text())
+
+    def test_dirty_floor_with_none_nudge_returned_as_is(self):
+        # upstream returns floor.nudge_text() unconditionally when the floor is
+        # dirty — even a None passes through (LinterReport contract allows it).
+        floor = _FakeFloor(clean=False, nudge=None)
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "ruff check .", 1, "boom", [Finding("src/b.py", 1, None, "boom")])])
+        self.assertIsNone(completion_block_nudge(report, floor))
+
+    def test_structured_findings_block_with_exact_format(self):
+        floor = LinterReport()
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "ruff check .", 1, "src/b.py:9: boom (+1 more)",
+            [Finding("src/b.py", 9, 1, "boom"), Finding("src/c.py", None, None, "bad")])])
+        nudge = completion_block_nudge(report, floor)
+        self.assertTrue(nudge.startswith(BLOCK_NUDGE_PREAMBLE))
+        lines = nudge[len(BLOCK_NUDGE_PREAMBLE):].split("\n")
+        self.assertEqual(lines[0], "$ ruff check . — src/b.py:9: boom (+1 more)")
+        self.assertEqual(lines[1], "  • src/b.py:9: boom")
+        self.assertEqual(lines[2], "  • src/c.py: bad")  # line=None -> bare file
+
+    def test_findings_capped_at_five_per_probe(self):
+        findings = [Finding("f.py", i, None, f"m{i}") for i in range(1, 8)]
+        report = ProbeReport(["python"], [], [ProbeResult("ruff check .", 1, "s", findings)])
+        nudge = completion_block_nudge(report, LinterReport())
+        bullets = [l for l in nudge.split("\n") if l.startswith("  • ")]
+        self.assertEqual(len(bullets), 5)
+
+    def test_timeouts_and_launch_failures_never_block(self):
+        report = ProbeReport(["python"], [], [
+            ProbeResult("pytest -q", None,
+                        "TIMEOUT after 120s — probe did not finish"
+                        " (consider a narrower target)", []),
+            ProbeResult("mypy .", None,
+                        "failed to launch (nope) — tool not installed?", []),
+        ])
+        self.assertIsNone(completion_block_nudge(report, LinterReport()))
+
+    def test_all_clean_allows_completion(self):
+        report = ProbeReport(["python"], [], [ProbeResult("pytest -q", 0, "clean", [])])
+        self.assertIsNone(completion_block_nudge(report, LinterReport()))
+
+
+# ---------------------------------------------------------------------------
+# completion_probe_digest extras (the upstream test covers the main shape).
+# ---------------------------------------------------------------------------
+
+class TestDigestExtras(unittest.TestCase):
+    def test_dirty_floor_renders_its_nudge(self):
+        floor = LinterReport(findings=[LinterFinding(
+            language="python", tool="py_compile", passed=False,
+            errors="src/a.py:3: invalid syntax")])
+        digest = completion_probe_digest(ProbeReport([], [], []), floor)
+        self.assertTrue(digest.startswith("SYNTAX FLOOR: "))
+        self.assertIn("src/a.py:3: invalid syntax", digest)
+
+    def test_dirty_floor_without_nudge_uses_fallback(self):
+        floor = _FakeFloor(clean=False, nudge=None)
+        digest = completion_probe_digest(ProbeReport([], [], []), floor)
+        self.assertIn("SYNTAX FLOOR: parse/syntax issues found", digest)
+
+    def test_did_not_launch_rendering(self):
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "mypy .", None, "failed to launch (x) — tool not installed?", [])])
+        digest = completion_probe_digest(report, LinterReport())
+        self.assertIn("did NOT launch (tool missing?)", digest)
+        self.assertIn("0 structured finding(s)", digest)
+
+
+# ---------------------------------------------------------------------------
+# Proxy path: compose / scrape / interpret (pure).
+# ---------------------------------------------------------------------------
+
+class TestComposeProbeCommand(unittest.TestCase):
+    def test_composed_line_has_every_mechanic(self):
+        c = synth(["echo", "a b"])
+        c.working_dir = "/tmp/with space"
+        line = compose_probe_command(c, 10.0)
+        self.assertIn("cd '/tmp/with space' && ", line)        # cwd, quoted
+        self.assertIn("timeout -k 5 10 echo 'a b'", line)      # hard timeout + quoted argv
+        self.assertIn("</dev/null 2>&1", line)                 # stdin null, merged streams
+        self.assertIn(f"tail -c {PROBE_OUTPUT_CAP_BYTES}", line)  # context-bomb cap
+        self.assertIn(PROBE_EXIT_SENTINEL, line)               # exit-code sentinel
+
+    def test_fractional_timeout_is_not_truncated_to_zero(self):
+        # int-truncating 0.4 would compose `timeout 0`, which DISABLES the timeout.
+        line = compose_probe_command(synth(["sleep", "5"]), 0.4)
+        self.assertIn("timeout -k 5 0.4 sleep 5", line)
+
+    def test_empty_command_raises(self):
+        with self.assertRaises(ValueError):
+            compose_probe_command(synth([]), 10.0)
+
+
+class TestScrapeExit(unittest.TestCase):
+    def test_scrapes_trailing_sentinel(self):
+        out, code = scrape_exit("src/x.py:9: error: boom\nEXIT:1\n")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "src/x.py:9: error: boom")
+
+    def test_bottom_up_last_sentinel_wins(self):
+        out, code = scrape_exit("EXIT:7 mentioned in output\nreal output\nEXIT:0\n")
+        self.assertEqual(code, 0)
+        self.assertIn("EXIT:7 mentioned in output", out)
+
+    def test_no_sentinel_returns_none(self):
+        out, code = scrape_exit("just output\n")
+        self.assertIsNone(code)
+        self.assertEqual(out, "just output\n")
+
+
+class TestInterpretProbeOutput(unittest.TestCase):
+    def test_exit_124_maps_to_timeout_and_keeps_findings(self):
+        c = synth(["ruff", "check", "."])
+        r = interpret_probe_output(
+            c, "ruff check .", "app/main.py:3:1: F401 `os` imported but unused\n",
+            124, 20.0)
+        self.assertIsNone(r.exit_code)
+        self.assertEqual(
+            r.summary,
+            "TIMEOUT after 20s — probe did not finish (consider a narrower target)")
+        self.assertEqual(len(r.findings), 1)  # findings from partial output kept
+
+    def test_exit_127_maps_to_launch_failure(self):
+        c = synth(["not-a-tool"])
+        r = interpret_probe_output(c, "not-a-tool", "", 127, 20.0)
+        self.assertIsNone(r.exit_code)
+        self.assertIn("failed to launch", r.summary)
+        self.assertIn("tool not installed?", r.summary)
+
+    def test_command_not_found_text_maps_to_launch_failure(self):
+        c = synth(["not-a-tool"])
+        r = interpret_probe_output(
+            c, "not-a-tool", "bash: line 1: not-a-tool: command not found\n", None, 20.0)
+        self.assertIsNone(r.exit_code)
+        self.assertIn("failed to launch", r.summary)
+
+    def test_text_only_result_scrapes_sentinel(self):
+        c = synth(["ruff", "check", "."])
+        r = interpret_probe_output(
+            c, "ruff check .",
+            "app/main.py:3:1: F401 `os` imported but unused\nEXIT:1\n", None, 20.0)
+        self.assertEqual(r.exit_code, 1)
+        self.assertEqual(len(r.findings), 1)
+        self.assertEqual(r.findings[0].file, "app/main.py")
+
+    def test_empty_command_contract(self):
+        r = interpret_probe_output(synth([]), "", "anything", 0, 20.0)
+        self.assertEqual(r.summary, "empty command")
+        self.assertIsNone(r.exit_code)
+
+
+class TestComposedRoundtrip(unittest.TestCase):
+    """Prove the composed line + interpret round-trips through a real shell.
+    bash stands in for the harness's shell tool — test-file-only execution."""
+
+    def _run(self, line):
+        return subprocess.run(["bash", "-c", line], capture_output=True,
+                              text=True, timeout=30)
+
+    def test_diagnostic_roundtrip(self):
+        code = "import sys; sys.stderr.write('src/x.py:9: error: boom\\n'); sys.exit(1)"
+        c = synth(["python3", "-c", code])
+        proc = self._run(compose_probe_command(c, 10.0))
+        r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 10.0)
+        self.assertEqual(r.exit_code, 1)
+        self.assertEqual(len(r.findings), 1)
+        self.assertEqual(r.findings[0].file, "src/x.py")
+        self.assertEqual(r.findings[0].line, 9)
+
+    def test_timeout_roundtrip(self):
+        c = synth(["python3", "-c", "import time; time.sleep(30)"])
+        proc = self._run(compose_probe_command(c, 0.4))
+        r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 0.4)
+        self.assertIsNone(r.exit_code)
+        self.assertTrue(r.summary.startswith("TIMEOUT after 0s"))
+
+    def test_missing_tool_roundtrip(self):
+        c = synth(["definitely-not-a-real-binary-xyz", "check"])
+        proc = self._run(compose_probe_command(c, 5.0))
+        r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 5.0)
+        self.assertIsNone(r.exit_code)
+        self.assertIn("failed to launch", r.summary)
+
+
+if __name__ == "__main__":
+    unittest.main()

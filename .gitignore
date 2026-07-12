@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# operator/local config (the .example is tracked instead)
+cria.toml
+
+# cria runtime state
+.cria/
+logs/
+cria.out
+
+# harness-generated cache
+.codex-multi/

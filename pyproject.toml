@@ -1,0 +1,17 @@
+[project]
+name = "cria-shepherd"
+version = "0.0.1"
+description = "A harness-agnostic service that makes a small local model do real agentic coding."
+requires-python = ">=3.11"          # tomllib
+dependencies = []                    # standard library only — by design
+
+[project.scripts]
+cria = "cria.__main__:main"
+cria-tail = "cria.tail:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

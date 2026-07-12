@@ -1,0 +1,44 @@
+import unittest
+
+from cria.jsontext import extract_json_object, strip_think
+
+
+class JsonTextTests(unittest.TestCase):
+    def test_plain_object(self):
+        self.assertEqual(extract_json_object('{"a": 1}'), {"a": 1})
+
+    def test_json_fences_stripped(self):
+        raw = 'Here you go:\n```json\n{"engagement": "task"}\n```\n'
+        self.assertEqual(extract_json_object(raw), {"engagement": "task"})
+
+    def test_think_preamble_stripped(self):
+        raw = "<think>let me consider…</think>\n{\"task_type\": \"coding\"}"
+        self.assertEqual(extract_json_object(raw), {"task_type": "coding"})
+
+    def test_unclosed_think_dropped(self):
+        # a dangling <think> with no close: everything after it goes, so no object.
+        self.assertIsNone(extract_json_object("<think>reasoning with { a brace"))
+
+    def test_trailing_prose_ignored(self):
+        raw = '{"x": 1} and then some explanation about why.'
+        self.assertEqual(extract_json_object(raw), {"x": 1})
+
+    def test_braces_inside_strings(self):
+        raw = '{"reason": "use the {handle} field"}'
+        self.assertEqual(extract_json_object(raw), {"reason": "use the {handle} field"})
+
+    def test_skips_non_object_first_brace(self):
+        # a leading malformed brace span, then a real object.
+        raw = "{ not json } trailing {\"ok\": true}"
+        self.assertEqual(extract_json_object(raw), {"ok": True})
+
+    def test_none_on_no_object(self):
+        self.assertIsNone(extract_json_object("no json here"))
+        self.assertIsNone(extract_json_object(""))
+
+    def test_strip_think_leaves_answer(self):
+        self.assertEqual(strip_think("<think>x</think>answer").strip(), "answer")
+
+
+if __name__ == "__main__":
+    unittest.main()

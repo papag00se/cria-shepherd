@@ -1,0 +1,539 @@
+"""cria's HTTP service — a stdlib ``ThreadingHTTPServer`` exposing an
+OpenAI-compatible ``/v1/chat/completions`` endpoint.
+
+The harness (codex, or any OpenAI-compatible agent) points its model client at
+cria and gets back completions, knowing nothing of what cria did in the middle.
+Phase 1 proxies faithfully; phases 2+ insert classification, planning, and the
+assists between ``request.recv`` and the upstream call — the ``_handle_chat`` body
+is where that pipeline grows.
+
+Streaming uses ``Connection: close`` (no chunked framing) — correct and simple for
+a localhost/LAN single-user service; the client reads SSE until EOF.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import massage, responses, rumination
+from .classify import Classifier
+from .content_reduce import est_tokens
+from .config import Config
+from .events import EventLog
+from .heartbeat import Heartbeat
+from .indicators import Indicator, inject_buffered, strip_history, wrap_stream
+from .loop import Loop, LoopContext, LoopStore, completion_to_sse, session_key
+from .planner import Planner
+from .routing import Router
+from .toolmenu import add_cheatsheet
+from .upstream import Upstream, UpstreamError
+from .writeproxy import TranslationStore, advertise, needs_translation, represent_inbound, translate_outbound
+
+
+def _error_sse(message: str) -> bytes:
+    """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
+    payload = {"error": {"message": message, "type": "upstream_error"}}
+    return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
+
+
+def _has_visible_output(comp: dict) -> bool:
+    """True if the completion carries something the user should see — a tool call or
+    non-empty text. Used to decide whether to show the ⟦cria⟧ banner (never on an
+    empty turn)."""
+    msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
+    return bool(msg.get("tool_calls")) or bool((msg.get("content") or "").strip())
+
+# Renamed from the Rust vehicle's ``X-Nudge-Session-Id`` as part of the rebrand.
+# Optional: absent → cria runs stateless (fine for phase 1; session state lands
+# in phase 6 with the per-item plan loop).
+SESSION_HEADER = "X-Cria-Session-Id"
+
+
+def _proxy_body(body: dict) -> dict:
+    """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
+    harness call the loop declined, e.g. Codex's UI title-generation) — still DROPS the
+    harness's agent system/developer prompt. That persona is harness-specific and often
+    absurd overhead (Codex prepends its ~5.6K-token "You are Codex" boilerplate even to a
+    36-char title call). The request's own instructions live in its user messages and still
+    drive it; cria imposes no orchestration prompt of its own here. (The coder path drops it
+    separately, in loop._frame_for_item, and leads with cria's coder system prompt.)"""
+    msgs = body.get("messages")
+    if not isinstance(msgs, list):
+        return body
+    kept = [m for m in msgs if m.get("role") not in ("system", "developer")]
+    if len(kept) == len(msgs):
+        return body  # nothing to strip → same object
+    return {**body, "messages": kept}
+
+
+class CriaServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, cfg: Config, log: EventLog, upstream: Upstream) -> None:
+        self.cfg = cfg
+        self.log = log
+        self.upstream = upstream
+        self.translation_store = TranslationStore()  # write_file↔shell, per session
+        # Routing engages only when configured. With no [models.local]/[failover],
+        # cria is a plain phase-1 passthrough.
+        roles = cfg.routing.local_roles  # per-role model + sampling + reasoning (cria.toml)
+        classifier_model = cfg.routing.local_models.get("classifier")
+        self.classifier = (
+            Classifier(upstream, classifier_model, cfg.routing.engagement_bias, role=roles.get("classifier"))
+            if classifier_model
+            else None
+        )
+        self.router = (
+            Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds)
+            if (cfg.routing.local_models or cfg.routing.failover)
+            else None
+        )
+        # The plan-driven loop (phase 6) — active when a reasoner AND a coder model
+        # are configured and the planner is enabled. It owns the planner and drives
+        # a coding task item by item. Without it, cria is a smart proxy.
+        reasoner_model = cfg.routing.local_models.get("reasoner")
+        coder_model = cfg.routing.local_models.get("coder")
+        self.loop = None
+        if cfg.planner.enabled and reasoner_model and coder_model:
+            # The web-search key is read from its env var (never stored in config).
+            search_key = os.environ.get(cfg.planner.search_api_key_env or "", "")
+            # The coder runs on the STREAMING-guarded path so its reasoning is watched live: a
+            # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
+            # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
+            coder_role = roles.get("coder")
+            detector = rumination.Detector.from_reasoning_budget(
+                coder_role.output_reserve if coder_role else None)
+
+            def coder_chat(body, rlog, _up=upstream, _det=detector):
+                return _up.chat_watched(body, rlog, watch=_det.check)
+
+            self.loop = Loop(
+                LoopContext(
+                    planner=Planner(upstream, reasoner_model, role=roles.get("reasoner"),
+                                    search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds),
+                    coder_chat=coder_chat,
+                    coder_model=coder_model,
+                    reasoner_chat=upstream.chat,
+                    reasoner_model=reasoner_model,
+                    coder_role=coder_role,
+                    reasoner_role=roles.get("reasoner"),
+                    # ONE folder per run: plan mirror + verify dumps join the call captures
+                    # under <capture_dir>/<session>/ — a single place per session.
+                    runs_dir=cfg.logging.capture_dir,
+                ),
+                # Completed-work briefings + session shapes survive a cria restart (the restarts
+                # this project makes constantly were wiping the context a follow-up / a post-
+                # compaction continuation needs). Live plans are NOT persisted — see LoopStore.
+                LoopStore(state_path=os.path.join(cfg.logging.dir, "loopstate.json")),
+            )
+        super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
+
+
+class CriaHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "cria"
+    sys_version = ""
+
+    # Route the base handler's own access noise through our event log (debug), so
+    # there is exactly one logging path.
+    def log_message(self, fmt: str, *args) -> None:
+        self.server.log.emit("http.access", level="debug", line=(fmt % args))
+
+    def do_GET(self) -> None:
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/health":
+            self._send_json(200, {"status": "ok"})
+        elif path == "/v1/models":
+            # Two consumers, two shapes: Codex's model manager wants a top-level
+            # `models` list (empty is fine — it falls back to config metadata, and
+            # [server] pins the context window); plain OpenAI clients want `data`.
+            models = sorted(set(self.server.cfg.routing.local_models.values())) or ["cria"]
+            self._send_json(200, {
+                "object": "list",
+                "data": [{"id": m, "object": "model", "owned_by": "cria"} for m in models],
+                "models": [],
+            })
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        path = self.path.rstrip("/")
+        if path == "/v1/chat/completions":
+            self._handle_chat()
+        elif path == "/v1/responses":
+            self._handle_responses()
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    # ------------------------------------------------------------------ chat
+
+    def _handle_chat(self) -> None:
+        log: EventLog = self.server.log
+        session = self.headers.get(SESSION_HEADER)
+        turn = uuid.uuid4().hex[:8]
+        rlog = log.bind(session=session, turn=turn)
+
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            rlog.emit("request.bad", level="warn", error=str(e))
+            self._send_json(400, {"error": f"invalid JSON body: {e}"})
+            return
+
+        # INBOUND STRIP: remove cria's own indicator lines from the history before
+        # the model re-reads them (they were injected only for the human's view).
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            cleaned, stripped = strip_history(messages)
+            if stripped:
+                body["messages"] = cleaned
+                rlog.emit("indicators.stripped", lines=stripped)
+
+        # write_file↔shell: if the harness has shell but not write_file, re-present
+        # our prior shell translations as write_file (so the model sees its own
+        # tool) and advertise write_file to the model. Outbound lowering happens at
+        # the send points via _translate_out.
+        self._shell_tool = needs_translation(body.get("tools"))
+        self._session_key = None
+        if self._shell_tool is not None:
+            self._session_key = session_key(self.headers, body.get("messages", []))
+            body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, self._session_key, rlog)
+            advertise(body, rlog)
+
+        # Tool cheat-sheet: a terse per-tool usage note for the model (context-shaping).
+        if self.server.cfg.tools.cheatsheet:
+            add_cheatsheet(body, rlog)
+
+        # Honest token accounting for the connected harness (see _report_context_usage): the size
+        # of the context IT sent, not cria's internal call usages. cria fits it to the window itself.
+        self._ctx_tokens = _incoming_ctx_tokens(body, rlog)
+        stream = bool(body.get("stream"))
+        rlog.emit(
+            "request.recv",
+            model=body.get("model"),
+            stream=stream,
+            n_messages=len(body.get("messages", [])),
+            has_tools=bool(body.get("tools")),
+        )
+
+        # Streaming does the model work behind a heartbeat; buffered does not (no
+        # stream to heartbeat into). The classify → loop|route dispatch lives inside.
+        if stream:
+            self._respond_stream(body, rlog)
+        else:
+            self._respond_buffered(body, rlog)
+
+    def _classify(self, body: dict, rlog):
+        server: CriaServer = self.server
+        if server.classifier is None:
+            return None
+        return server.classifier.classify(body.get("messages", []), rlog)
+
+    def _translate_out(self, completion: dict, rlog) -> dict:
+        """Lower the model's write_file calls to shell, when translation is active
+        for this request. Set up in `_handle_chat`."""
+        if self._shell_tool is not None:
+            translate_outbound(completion, self._shell_tool, self.server.translation_store, self._session_key, rlog)
+        return completion
+
+    def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
+        """Resolve the provider/model for this classification and build the
+        indicator. Falls back to the local upstream (passthrough) when routing isn't
+        configured or nothing resolves. Mutates ``body["model"]``."""
+        server: CriaServer = self.server
+        ic = server.cfg.indicators
+
+        def passthrough() -> tuple[object, Indicator]:
+            return server.upstream, Indicator(ic.enabled, ic.metrics, model=str(body.get("model") or "?"), role=None)
+
+        if server.router is None or classification is None:
+            return passthrough()
+        route = server.router.route(classification.task_type, rlog)
+        if route is None:
+            return passthrough()
+        body["model"] = route.model
+        # Show the "which model" line only when the classification is fresh (first
+        # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
+        return route.provider, Indicator(
+            ic.enabled, ic.metrics, model=route.model, role=route.role, show_route=not classification.cached
+        )
+
+    def _respond_stream(self, body: dict, rlog) -> None:
+        """Stream the response as SSE, with a heartbeat covering the dead time before
+        the first real byte (classify / plan / coder / verify / upstream prefill)."""
+        self.close_connection = True  # no keep-alive; client reads SSE to EOF
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def raw_write(data: bytes) -> None:
+            self.wfile.write(data)
+            self.wfile.flush()
+
+        hb = Heartbeat(raw_write, interval=self.server.cfg.server.heartbeat_seconds).start()
+        try:
+            for raw in self._produce_stream(body, rlog):
+                hb.write(raw)
+            rlog.emit("response.sent", stream=True, beats=hb.beats)
+        except (BrokenPipeError, ConnectionResetError):
+            rlog.emit("response.client_gone", level="warn")
+        finally:
+            hb.stop()
+
+    def _produce_stream(self, body: dict, rlog):
+        """The SSE chunk generator. The blocking model work happens here on the first
+        iteration, so the heartbeat running in `_respond_stream` covers it.
+
+        Every model-touching step — classify, the plan loop, and the routed call — is
+        under one guard: an upstream failure (e.g. a 500 from a strict chat template)
+        becomes a clean in-stream error, never a dead handler thread."""
+        server: CriaServer = self.server
+        try:
+            classification = self._classify(body, rlog)
+            sk = session_key(self.headers, body.get("messages", []))
+            # Drive the loop when the loop KNOWS this session (a live plan to continue; a completed
+            # briefing / recorded shape, so a post-compaction rewrite is detected structurally) OR
+            # when a fresh turn is a task. Classification gates only STARTING a fresh plan.
+            if server.loop is not None and (server.loop.knows_session(sk) or (classification is not None and classification.engagement == "task")):
+                completion = server.loop.drive(body, sk, classification, rlog)
+                if completion is not None:
+                    yield from completion_to_sse(self._translate_out(completion, rlog))
+                    return
+            provider, indic = self._route(body, classification, rlog)
+            rlog.phase = "proxy"
+            stream = massage.massage_stream(
+                provider.stream_chat(_proxy_body(body), rlog),
+                body.get("model", ""),
+                body.get("tools"),
+                rlog,
+                post=lambda c: self._translate_out(c, rlog),  # lower a mid-stream-recovered write_file
+            )
+            yield from wrap_stream(stream, indic)
+        except UpstreamError as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            yield _error_sse(str(e))
+
+    def _produce_completion(self, body: dict, rlog, sess_key: str):
+        """Run the pipeline and return ``(chat-completion dict, Indicator|None)`` —
+        the plan loop's completion, or a routed+massaged+lowered one. Raises
+        ``UpstreamError`` on a model failure (callers turn that into a clean error).
+        Shared by the buffered chat path and the Responses adapter."""
+        server: CriaServer = self.server
+        classification = self._classify(body, rlog)
+        # Route through the loop when it KNOWS this session (live plan → continue regardless of the
+        # turn's classification; completed/shaped → structural compaction-rewrite detection) or when
+        # a fresh turn is a task. Classification only gates STARTING a fresh plan. See
+        # Loop.knows_session — without this the loop is abandoned mid-plan ("stopped after a command")
+        # or a post-compaction continuation is proxied blind.
+        if server.loop is not None and (server.loop.knows_session(sess_key) or (classification is not None and classification.engagement == "task")):
+            completion = server.loop.drive(body, sess_key, classification, rlog)
+            if completion is not None:
+                out = self._translate_out(completion, rlog)
+                _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
+                return out, None  # loop path carries no indicator
+        provider, indic = self._route(body, classification, rlog)
+        rlog.phase = "proxy"
+        raw = provider.chat(_proxy_body(body), rlog)
+        try:
+            comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
+        except (json.JSONDecodeError, TypeError):
+            return {}, indic
+        if massage.is_truncated(comp):
+            indic.note = "⚠ output truncated at the token limit"
+            rlog.emit("response.truncated")
+        out = self._translate_out(comp, rlog)
+        _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
+        return out, indic
+
+    def _respond_buffered(self, body: dict, rlog) -> None:
+        try:
+            comp, indic = self._produce_completion(body, rlog, session_key(self.headers, body.get("messages", [])))
+        except UpstreamError as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            self._send_json(502, {"error": f"upstream error: {e}"})
+            return
+        raw = json.dumps(comp).encode("utf-8")
+        if indic is not None:  # loop path has none; routed path decorates
+            raw = inject_buffered(raw, indic)
+        self._send_raw_json(raw)
+        rlog.emit("response.sent", stream=False, bytes=len(raw))
+
+    # -------------------------------------------------------------- responses api
+
+    def _raw_write(self, data: bytes) -> None:
+        self.wfile.write(data)
+        self.wfile.flush()
+
+    def _handle_responses(self) -> None:
+        """OpenAI Responses API endpoint (what Codex 0.142.5 speaks). Translate the
+        request to a chat body, run the SAME pipeline, and emit the chat completion
+        as Responses SSE events."""
+        log: EventLog = self.server.log
+        turn = uuid.uuid4().hex[:8]
+        try:
+            rbody = self._read_json_body()
+        except ValueError as e:
+            self._send_json(400, {"error": f"invalid JSON body: {e}"})
+            return
+        sess = responses.session_key_of(rbody)
+        rlog = log.bind(session=sess, turn=turn)
+        body = responses.to_chat_body(rbody)
+        sess_key = f"sid:{sess}" if sess else session_key(None, body.get("messages", []))
+
+        # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
+        self._shell_tool = needs_translation(body.get("tools"))
+        self._session_key = None
+        if self._shell_tool is not None:
+            self._session_key = sess_key
+            body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, sess_key, rlog)
+            advertise(body, rlog)
+        if self.server.cfg.tools.cheatsheet:
+            add_cheatsheet(body, rlog)
+
+        self._ctx_tokens = _incoming_ctx_tokens(body, rlog)  # honest token accounting for the harness
+        stream = bool(rbody.get("stream"))
+        rlog.emit("request.recv", api="responses", model=body.get("model"), stream=stream,
+                  n_messages=len(body.get("messages", [])), has_tools=bool(body.get("tools")))
+        if stream:
+            self._respond_responses_stream(body, sess_key, rlog)
+        else:
+            self._respond_responses_buffered(body, sess_key, rlog)
+
+    def _respond_responses_stream(self, body: dict, sess_key: str, rlog) -> None:
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        model = body.get("model", "") or ""
+        resp_id = responses._new_id("resp")
+        hb = Heartbeat(self._raw_write, interval=self.server.cfg.server.heartbeat_seconds).start()
+        try:
+            hb.write(responses.created_event(resp_id, model))  # open the stream immediately
+            try:
+                comp, _indic = self._produce_completion(body, rlog, sess_key)
+            except UpstreamError as e:
+                rlog.emit("response.error", level="error", error=str(e))
+                hb.write(responses._event("response.failed",
+                    {"response": {"id": resp_id, "status": "failed", "error": {"message": str(e)}}}))
+                return
+            banner = None
+            # Only show the cria line when this turn actually carries something — a tool
+            # call or text. A bare banner (empty completion) both litters the TUI and, being
+            # a text-only assistant turn, tells the harness the agent is DONE. cria's loop is
+            # built never to emit an empty non-final turn, but gate here too as a backstop.
+            if self.server.cfg.indicators.enabled and _has_visible_output(comp):
+                # Show the model cria ACTUALLY routed to (a local model), never the
+                # name the client's picker sent (e.g. "gpt-5.5") — cria ignores that.
+                lm = self.server.cfg.routing.local_models
+                if _indic is not None and getattr(_indic, "model", None):
+                    shown, role = _indic.model, (_indic.role or "local")
+                else:  # plan-loop path carries no indicator
+                    shown, role = (lm.get("coder") or lm.get("classifier") or "local"), "coder"
+                banner = f"⟦cria⟧ {role} · {shown}"
+                tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
+                if tps:
+                    banner += f" · {tps:.0f} tok/s"
+            for chunk in responses.body_events(comp, resp_id, model, banner):
+                hb.write(chunk)
+            rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats)
+        except (BrokenPipeError, ConnectionResetError):
+            rlog.emit("response.client_gone", level="warn")
+        finally:
+            hb.stop()
+
+    def _respond_responses_buffered(self, body: dict, sess_key: str, rlog) -> None:
+        try:
+            comp, _indic = self._produce_completion(body, rlog, sess_key)
+        except UpstreamError as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            self._send_json(502, {"error": f"upstream error: {e}"})
+            return
+        self._send_raw_json(json.dumps(responses.to_responses_json(comp, body.get("model", "") or "")).encode("utf-8"))
+        rlog.emit("response.sent", api="responses", stream=False)
+
+    def _send_raw_json(self, raw: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self._write(raw)
+
+    # ------------------------------------------------------------------ util
+
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b""
+        if not raw:
+            raise ValueError("empty body")
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            raise ValueError("body must be a JSON object")
+        return obj
+
+    def _send_json(self, code: int, obj: dict) -> None:
+        raw = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self._write(raw)
+
+    def _write(self, raw: bytes) -> None:
+        try:
+            self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+
+def _incoming_ctx_tokens(body: dict, rlog=None) -> int:
+    """Estimate the token size of the whole INCOMING request — the harness's conversation PLUS
+    the tools schema (fixed per-request overhead). Reported back as usage (see
+    _report_context_usage) so ANY connected harness sees honest token accounting for the context
+    it sent — not the size of whichever internal cria call produced a given completion. Purely
+    accounting/observability: cria guarantees the request fits the model window itself, in the
+    context floor (`contextfloor.fit`, applied at the upstream call), so overflow no longer
+    depends on the harness reacting to this number. Logs the msg-vs-tools breakdown."""
+    msg = 0
+    for m in body.get("messages") or []:
+        c = m.get("content")
+        if isinstance(c, str):
+            msg += est_tokens(c)
+        elif isinstance(c, list):
+            for p in c:
+                if isinstance(p, dict):
+                    msg += est_tokens(p.get("text") or "")
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            msg += est_tokens((fn.get("name") or "") + str(fn.get("arguments") or ""))
+    tools_list = body.get("tools") or []
+    tools = est_tokens(json.dumps(tools_list))
+    if rlog is not None:
+        top = sorted(
+            ((est_tokens(json.dumps(t)), (t.get("function") or {}).get("name") or t.get("name") or "?") for t in tools_list),
+            reverse=True,
+        )[:8]
+        rlog.emit("ctx.estimate", msg_tokens=msg, tools_tokens=tools, total=msg + tools,
+                  n_tools=len(tools_list), top_tools=[f"{n}={s}" for s, n in top])
+    return msg + tools
+
+
+def _report_context_usage(completion: dict, ctx_tokens: int, rlog) -> None:
+    """Report honest token accounting to whatever harness is connected: set input_tokens to the
+    size of the context IT sent (ctx_tokens), not whichever internal cria call produced this
+    completion. Harness-agnostic — a truthful gauge for any client's display/limits. cria does
+    NOT rely on the harness acting on it; the context floor keeps the request under the window."""
+    if ctx_tokens <= 0:
+        return
+    u = completion.get("usage") or {}
+    out = u.get("completion_tokens") or 0
+    completion["usage"] = {"prompt_tokens": ctx_tokens, "completion_tokens": out,
+                           "total_tokens": ctx_tokens + out}
+    rlog.emit("usage.context_reported", input_tokens=ctx_tokens, output_tokens=out)

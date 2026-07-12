@@ -1,0 +1,8 @@
+# The critic's USER message (the system instruction is verify.txt). It carries the step
+# plus the REAL ground truth the critic judges. The parts are joined with a blank line
+# between them; `evidence` and `probe` are dropped entirely when there's nothing to show.
+# `\n` in a value becomes a real newline. Format is `key = value`, one per line.
+step = STEP: {{STEP}}
+evidence = WHAT THE CODER'S TOOLS RETURNED (real ground truth):\n{{EVIDENCE}}
+probe = SYNTAX CHECK: {{PROBE}}
+summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n{{CODER_SUMMARY}}
