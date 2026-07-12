@@ -768,6 +768,41 @@ class WheelSpinTests(unittest.TestCase):
         self.assertIn("loop.wheel_spinning", rlog.kinds())
         self.assertNotIn("loop.repetition", rlog.kinds())  # contents vary — the identical tier stays silent
 
+    def test_canonical_tiny_edit_spiral_fires(self):
+        # Round-5 verify: THE incident shape — edit → cat → pytest, repeated. Five edits at
+        # 3-call interleave span 13 calls; the old 12-call window missed it by exactly one,
+        # permanently. WRITE_WINDOW (five full cycles) must catch it.
+        from cria.loop import WHEEL_SPIN_WRITES
+        ws = self._ws()
+        seq = []
+        for i in range(WHEEL_SPIN_WRITES):
+            seq.append(_edit("handler.py", f"x = {i}", f"x = {i + 1}"))  # lowered to apply_patch
+            seq.append(_shell_cmd("cat handler.py"))
+            seq.append(_shell_cmd("pytest -q"))
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq) - 2):                       # through the 5th edit
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.repetition", rlog.kinds())   # varying edits purge the act hunt
+
+    def test_create_file_spiral_counts_toward_wheel_spin(self):
+        # Round-5 verify: create_file is a write for the writeproxy — it must be one for the
+        # spin tracker too (a varying-content create_file spiral was invisible to BOTH tiers).
+        from cria.loop import WHEEL_SPIN_WRITES
+        ws = self._ws()
+        def _create(i):
+            return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                {"id": "c", "type": "function", "function": {"name": "create_file",
+                 "arguments": json.dumps({"path": "handler.py", "content": f"v = {i}"})}}]}}]}
+        coder = _Recorder([_create(i) for i in range(WHEEL_SPIN_WRITES)])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(WHEEL_SPIN_WRITES):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.wheel_spinning", rlog.kinds())
+
     def test_writes_spread_past_the_window_do_not_fire(self):
         # The window is the last REPEAT_WINDOW forwarded CALLS: a file revisited occasionally
         # across a long stretch of real work never accrues 5 in-window writes.
@@ -1101,6 +1136,35 @@ class RepetitionRedirectTests(unittest.TestCase):
         args = json.dumps({"command": "grep -n handler src/module.py",
                            "justification": "checking we don't touch the config"})
         self.assertFalse(_is_progress(_action_signature("shell", args), args))
+
+    def test_script_outranks_input(self):
+        # Round-5 verify: script=program, input=stdin — the derivation must not demote script
+        # below input (stdin data with a '>' read as a phantom write; a real script write missed).
+        from cria.loop import _action_signature, _is_progress
+        stdin_read = json.dumps({"script": "sort", "input": "line a\nc > d\nline b"})
+        self.assertFalse(_is_progress(_action_signature("run", stdin_read), stdin_read))
+        script_write = json.dumps({"script": "generate.sh > reports/out.txt", "input": "dataset-a"})
+        self.assertTrue(_is_progress(_action_signature("run", script_write), script_write))
+
+    def test_bracket_leading_shell_text_is_not_a_json_fragment(self):
+        # Round-5 verify: `[ -f x ] && …` test-brackets and `{ cmd; }` brace groups are bare
+        # shell text (quote-masked path) — only `{"…` / `["…` shapes are cut-off JSON.
+        from cria.loop import _action_signature, _is_progress
+        for read in ("[ -f x ] && grep 'count > 1' src/module.py",
+                     "{ grep 'n > 0' f.py; } | wc -l"):
+            self.assertFalse(_is_progress(_action_signature("shell", read), read), read)
+
+    def test_reads_of_different_files_same_flags_do_not_trip(self):
+        # Round-5 verify: `head -50 a.py/b.py/c.py` share verb+flag (2 shared, 2 jitter) but
+        # target DISJOINT files — exploration, vetoed before the jitter rule.
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("head -50 src/a.py"), _shell_cmd("head -50 src/b.py"),
+                           _shell_cmd("head -50 src/c.py")])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
 
     def test_identical_writes_far_apart_age_out(self):
         # Round-3 verify: preserved write signatures must not be immortal — identical writes

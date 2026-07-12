@@ -39,6 +39,7 @@ from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .planner_tools import normalize_search
 from .shelltool import _CMD_FIELDS, find_shell_tool, shell_args
+from .writeproxy import _WRITE_NAMES as writeproxy_names
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
 # request — a step that fails verification is now re-nudged INDEFINITELY; it never advances
@@ -56,7 +57,7 @@ MAX_TRUNCATION_RETRIES = 3
 # before accepting whatever it produced. Same MAX_BAIL_RETRIES ceiling.
 MAX_RUMINATION_RETRIES = 3
 # WHEEL-SPINNING trigger (operator, 2026-07-11; windowed 2026-07-12): the same file written this
-# many times — ANY content — within the last REPEAT_WINDOW forwarded calls → run the gate mid-work
+# many times — ANY content — within the last WRITE_WINDOW forwarded calls → run the gate mid-work
 # and INSERT the results into the coder's next turn. No done-claim needed, no judging — pure
 # ground truth, aimed at the tiny-edit spiral: the file's indentation is wrong, and the model
 # rewrites it ten times changing SOMETHING each time but never the fault, so content-hashing
@@ -77,6 +78,11 @@ WHEEL_SPIN_WRITES = 5
 # `pytest -q --tb=short` count as the same hunt.
 REPEAT_FINGERPRINT_N = 3
 REPEAT_WINDOW = 12
+# Writes are counted over a window sized to five full write→read→test cycles (3 calls per
+# edit): the canonical tiny-edit spiral interleaves a cat and a pytest between edits, so five
+# edits span 13 calls — a 12-call window missed the incident's exact shape by ONE, permanently
+# (round 5). Sparser revisits (3+ calls between edits) still age out and stay silent.
+WRITE_WINDOW = WHEEL_SPIN_WRITES * 3
 # Tool names of the write class — their nature is path+content, and new content is progress.
 _WRITE_TOOL_RE = re.compile(r"write|edit|patch|create|replace", re.I)
 # Shell-command words that mutate the workspace: a shell call carrying one of these, with no
@@ -98,7 +104,13 @@ BRIEFING_CLOSE = "⟦/cria:briefing⟧"
 # plan-id-named file in one tree to a session-uuid folder in another.
 _RUNS_DIR_DEFAULT = "~/.cria/calls"
 # Tools whose truncation corrupts a file on disk (the writeproxy lowers their content verbatim).
-_WRITE_TOOLS = ("write_file", "edit_file", "apply_patch")
+# Every write route the trackers must see: the writeproxy's lowered names (write_file,
+# create_file — import shared so they can't drift), plus the edit dialects massage leaves
+# intact when the HARNESS advertises them (edit_file/str_replace), plus apply_patch (what
+# massage lowers edits into otherwise). Round 5: create_file was missing — a varying-content
+# create_file rewrite spiral was invisible to BOTH tiers.
+_WRITE_TOOLS = tuple(dict.fromkeys(
+    tuple(sorted(writeproxy_names)) + ("edit_file", "str_replace", "apply_patch")))
 
 
 class Phase(Enum):
@@ -813,8 +825,8 @@ class Loop:
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
         """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
-        WHEEL_SPIN_WRITES times — ANY content — within the last REPEAT_WINDOW forwarded tool
-        calls. Consecutive is not required: the tiny-edit spiral rewrites the file with small
+        WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
+        calls (sized to five write→read→test cycles). Consecutive is not required: the tiny-edit spiral rewrites the file with small
         varying changes (never fixing the actual fault, e.g. indentation) while interleaving
         reads, tests, and other-file writes, so a consecutive streak undercounts it and the
         repetition trigger's content-hash can't see it. At the threshold the next loop turn
@@ -833,7 +845,7 @@ class Loop:
                     # it away from the file it just fixed)
                 path = _write_path(tc.get("function") or {})
                 sess.recent_writes.append(path)  # None for non-writes — the window is CALLS
-                del sess.recent_writes[:-REPEAT_WINDOW]
+                del sess.recent_writes[:-WRITE_WINDOW]
                 if (path is not None
                         and sess.recent_writes.count(path) >= WHEEL_SPIN_WRITES
                         and not sess.spin_probe_due and not sess.spin_probe
@@ -1523,6 +1535,13 @@ def _actions_match(a: tuple, b: tuple) -> bool:
         return sa == sb
     if sa == sb:
         return True
+    # File-target veto (round 5): `head -50 a.py` / `head -50 b.py` / `head -50 c.py` is
+    # exploration, not a loop — when both commands name files and the files are DISJOINT,
+    # the shared verb+flags must not make them "the same hunt".
+    pa = {t for t in sa if "." in t or "/" in t}
+    pb = {t for t in sb if "." in t or "/" in t}
+    if pa and pb and not (pa & pb):
+        return False
     shared = len(sa & sb)
     jitter = len(sa ^ sb)
     return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
@@ -1542,7 +1561,11 @@ _SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)[\w./~$-]|<<-?\s*\
 _SHELL_WRITE_RAW_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
 # The shell tool's command fields, shared with shelltool.shell_args so they can't drift
 # (round 4: shell_command was missing here, blinding progress detection on such harnesses).
-_COMMAND_KEYS = tuple(dict.fromkeys(_CMD_FIELDS + ("script",)))
+# `script` is spliced BEFORE `input`: a script-runner tool carrying both means script=program,
+# input=stdin — appending script after the shared tuple silently demoted it below input and
+# read stdin data as "the command" (round 5).
+_COMMAND_KEYS = tuple(dict.fromkeys(
+    [k for k in _CMD_FIELDS if k != "input"] + ["script", "input"]))
 
 
 def _command_text(args) -> str | None:
@@ -1558,8 +1581,10 @@ def _command_text(args) -> str | None:
             parsed = json.loads(args)
         except ValueError:
             s = args.strip()
-            # bare shell text IS the command; a cut-off {…/[… is a fragment → raw rules
-            return None if s[:1] in ("{", "[") else args
+            # bare shell text IS the command — including `[ -f x ] && …` test-brackets and
+            # `{ cmd; } | …` brace groups. A FRAGMENT (cut-off JSON) is a bracket followed by
+            # a string delimiter (`{"…`, possibly pretty-printed) — shell never opens that way.
+            return None if re.match(r'\s*[\{\[]\s*"', args) else args
     if isinstance(parsed, dict):
         for k in _COMMAND_KEYS:
             v = parsed.get(k)
