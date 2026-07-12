@@ -653,9 +653,15 @@ def _write(path="handler.py", content="x = 1"):
          "arguments": json.dumps({"path": path, "content": content})}}]}}]}
 
 
+def _shell_cmd(cmd):
+    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "t", "type": "function", "function": {"name": "shell",
+         "arguments": json.dumps({"command": ["bash", "-lc", cmd]})}}]}}]}
+
+
 class _VaryingWriter:
     """Rewrites the same file with DIFFERENT content each turn — trips the wheel-spin
-    same-file streak without tripping the (stricter, identical-args) repetition guard."""
+    same-file streak without tripping the repetition guard (new content = progress)."""
 
     def __init__(self, path="handler.py"):
         self._path = path
@@ -727,7 +733,8 @@ class WheelSpinTests(unittest.TestCase):
     def test_different_file_resets_the_streak(self):
         from cria.loop import WHEEL_SPIN_WRITES
         ws = self._ws()
-        writes = [_write("a.py")] * (WHEEL_SPIN_WRITES - 1) + [_write("b.py")] + [_write("a.py")]
+        writes = ([_write("a.py", f"v = {i}") for i in range(WHEEL_SPIN_WRITES - 1)]
+                  + [_write("b.py")] + [_write("a.py", "back")])
         coder = _Recorder(writes)
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
@@ -741,17 +748,17 @@ class WheelSpinTests(unittest.TestCase):
         seq = []
         for i in range(WHEEL_SPIN_WRITES):
             seq.append(_write("h.py", f"v = {i}"))   # varying content — streak, not repetition
-            # varying command args too (identical ones would rightly trip the repetition
-            # redirect first — that precedence is by design)
-            seq.append({"choices": [{"message": {"role": "assistant", "tool_calls": [
-                {"id": f"t{i}", "type": "function",
-                 "function": {"name": "shell", "arguments": json.dumps({"command": ["pytest", f"-k{i}"]})}}]}}]})
+            # IDENTICAL test commands between real edits: each new-content write is progress
+            # and resets the repetition hunt, so the healthy cycle only trips the (weaker,
+            # same-file) wheel-spin streak — never the repetition redirect.
+            seq.append(_shell_cmd("pytest -q"))
         coder = _Recorder(seq)
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         for _ in range(len(seq) - 1):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.repetition", rlog.kinds())
 
 
 class RunFolderTests(unittest.TestCase):
@@ -877,6 +884,35 @@ class RepetitionRedirectTests(unittest.TestCase):
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertNotIn("loop.repetition", rlog.kinds())
+
+    def test_flag_jitter_still_trips_by_nature(self):
+        # The codex-local lesson: the model jitters one flag/word without changing what it's
+        # doing. Exact fingerprints missed this; nature-matching (normalized word-sets) must not.
+        ws = self._ws()
+        coder = _Recorder([_shell_cmd("pytest -q"),
+                           _shell_cmd("pytest -q --tb=short"),   # same hunt, jittered flag
+                           _shell_cmd("pytest -q")])
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.repetition", rlog.kinds())
+
+    def test_healthy_edit_test_cycle_never_trips(self):
+        # write(NEW content) → pytest -q → write(NEW) → pytest -q …: each real edit is progress
+        # and resets the hunt, so the identical test runs never accrue. THE false positive the
+        # nature redesign exists to prevent.
+        ws = self._ws()
+        seq = []
+        for i in range(4):                                  # 4 writes — under the wheel-spin 5
+            seq.append(_write("h.py", f"attempt = {i}"))
+            seq.append(_shell_cmd("pytest -q"))
+        coder = _Recorder(seq)
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(len(seq)):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertNotIn("loop.repetition", rlog.kinds())
 

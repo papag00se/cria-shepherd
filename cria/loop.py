@@ -37,6 +37,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
+from .planner_tools import normalize_search
 from .shelltool import find_shell_tool, shell_args
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
@@ -60,13 +61,24 @@ MAX_RUMINATION_RETRIES = 3
 # needed, no judging — pure ground truth, aimed at the rewrite-loop pathology (a file rewritten
 # 5× while the actual bug sits elsewhere).
 WHEEL_SPIN_WRITES = 5
-# REPETITION REDIRECT (operator, 2026-07-12): the same tool call (name + args fingerprint)
-# REPEAT_FINGERPRINT_N times within the last REPEAT_WINDOW forwarded calls → run the gate for
-# fresh ground truth, then the REASONER authors a redirect (codex-local's reasoned-guidance
-# pattern: detect → ground truth → reason). Windowed, not consecutive-only, so interleaved
-# loops (write, test, write, test — byte-identical writes) are caught.
+# REPETITION REDIRECT (operator, 2026-07-12): the same tool call BY NATURE — not by exact
+# bytes; exact fingerprints were tried on the codex-local side and failed, because the model
+# jitters one flag or word without changing what it's doing — REPEAT_FINGERPRINT_N times within
+# the last REPEAT_WINDOW forwarded calls → run the gate for fresh ground truth, then the
+# REASONER authors a redirect (codex-local's reasoned-guidance pattern: detect → ground truth →
+# reason). Windowed, not consecutive-only, so interleaved loops (write, test, write, test —
+# byte-identical writes) are caught. Nature-matching (the codex-local search-guard lesson):
+# writes match on path+content (identical rewrite = repeat; NEW content = progress and RESETS
+# the window, so a healthy edit→test→edit→test cycle never trips on its repeated test runs);
+# everything else matches on a normalized word-set of its args, loosely, so `pytest -q` /
+# `pytest -q --tb=short` count as the same hunt.
 REPEAT_FINGERPRINT_N = 3
 REPEAT_WINDOW = 12
+# Tool names of the write class — their nature is path+content, and new content is progress.
+_WRITE_TOOL_RE = re.compile(r"write|edit|patch|create|replace", re.I)
+# Shell-command words that mutate the workspace: a shell call carrying one of these, with no
+# match already in the window, is progress too (the apply_patch/tee equivalents of a write).
+_MUTATOR_WORDS = frozenset({"apply_patch", "tee", "mv", "cp", "touch", "mkdir", "rm"})
 # Probe re-issues after a history rewrite erased the result. A harness compacting EVERY turn
 # would otherwise re-issue forever; past the cap the absent result falls back to fail-open (the
 # pre-existing don't-wedge behavior).
@@ -691,10 +703,13 @@ class Loop:
         return self._work(sess, key, body, rlog)
 
     def _track_repetition(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
-        """Repetition detection: fingerprint every forwarded tool call (name + args); the SAME
-        fingerprint REPEAT_FINGERPRINT_N times within the last REPEAT_WINDOW calls trips the
+        """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
+        (exact fingerprints were tried on the codex-local side and missed one-flag jitter).
+        REPEAT_FINGERPRINT_N nature-matches within the last REPEAT_WINDOW calls trips the
         reasoned redirect. Windowed, not consecutive-only, so write→test→write→test loops with
-        byte-identical writes are caught (the canonical small-model spiral)."""
+        byte-identical writes are caught (the canonical small-model spiral) — while PROGRESS
+        (a write/mutation matching nothing in the window, i.e. new ground changed) resets the
+        hunt, so a healthy edit→test→edit→test cycle never trips on its repeated test runs."""
         if sess.recent_actions is None:
             sess.recent_actions = []
         for ch in coder.get("choices", []):
@@ -703,10 +718,14 @@ class Loop:
                 name = fn.get("name") or "?"
                 args = fn.get("arguments") or ""
                 args = args if isinstance(args, str) else json.dumps(args)
-                fp = f"{name}:{hashlib.sha1(args.encode('utf-8', 'replace')).hexdigest()[:16]}"
-                sess.recent_actions.append(fp)
+                sig = _action_signature(name, args)
+                matches = sum(1 for s in sess.recent_actions if _actions_match(sig, s))
+                if not matches and _is_progress(sig):
+                    sess.recent_actions = [sig]  # new ground changed — a real move, not a loop
+                    continue
+                sess.recent_actions.append(sig)
                 del sess.recent_actions[:-REPEAT_WINDOW]
-                if (sess.recent_actions.count(fp) >= REPEAT_FINGERPRINT_N
+                if (matches + 1 >= REPEAT_FINGERPRINT_N
                         and not sess.redirect_due and not sess.redirect_probe):
                     sess.redirect_due = True
                     sess.recent_actions = []  # fresh window — a genuinely new loop can re-fire
@@ -1352,6 +1371,61 @@ def _content_text(content) -> str:
 def _extend_summary(summary: str, idx: int, item: str) -> str:
     line = f"{idx}. {item}"
     return f"{summary}\n{line}".strip() if summary else line
+
+
+def _action_signature(name: str, args: str) -> tuple:
+    """The NATURE of a tool call, for repetition matching — not its bytes. A write is its
+    target + content (path, content-hash); everything else is its tool name + a normalized
+    word-set of its argument values (flag/word jitter survives, per the codex-local lesson
+    that exact fingerprints don't)."""
+    try:
+        parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
+    except (ValueError, TypeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    if _WRITE_TOOL_RE.search(name):
+        path = str(parsed.get("path") or parsed.get("file_path") or parsed.get("filename") or "")
+        body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text") or args)
+        return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])
+    text = " ".join(str(v) for v in _flat_values(parsed)) or (args if isinstance(args, str) else "")
+    return ("act", name, frozenset(normalize_search(text)))
+
+
+def _flat_values(obj) -> list:
+    """Leaf values of a parsed args object, in order — flattens nested lists/dicts (a shell
+    call's {"command": ["bash", "-lc", "pytest -q"]} yields the actual words)."""
+    if isinstance(obj, dict):
+        return [v for val in obj.values() for v in _flat_values(val)]
+    if isinstance(obj, list):
+        return [v for val in obj for v in _flat_values(val)]
+    return [obj]
+
+
+def _actions_match(a: tuple, b: tuple) -> bool:
+    """Same action by nature? Writes: exact target+content. Others: same tool, and the
+    word-sets are the same hunt — exact, or near-identical (≥2 shared, ≤2 words of jitter),
+    or heavily overlapping (Jaccard ≥ 0.7 with ≥3 shared)."""
+    if a[0] != b[0] or a[1] != b[1]:
+        return False
+    if a[0] == "write":
+        return a[2] == b[2]
+    sa, sb = a[2], b[2]
+    if sa == sb:
+        return True
+    shared = len(sa & sb)
+    jitter = len(sa ^ sb)
+    return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
+
+
+def _is_progress(sig: tuple) -> bool:
+    """Does this action CHANGE the workspace? A write always; a shell call whose words carry a
+    known mutator (or a sed -i). Progress on new ground resets the repetition hunt — a healthy
+    edit→test→edit→test cycle must never trip on its repeated test runs."""
+    if sig[0] == "write":
+        return True
+    words = sig[2]
+    return bool(words & _MUTATOR_WORDS) or ("sed" in words and "-i" in words)
 
 
 def _clip(s: str, n: int) -> str:
