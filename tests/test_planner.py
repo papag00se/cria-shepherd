@@ -167,16 +167,49 @@ class GatherLoopTests(unittest.TestCase):
         Planner(prov, "m", clock=lambda: _FIXED).plan_for(_msgs("do a task"), _Rlog())
         self.assertIn("tools", prov.bodies[0])  # the gather call offers the read-only tools
 
-    def test_repeated_gather_signature_forces_the_plan(self):
-        # the reasoner keeps making the SAME tool call → cria stops gathering, forces the plan
+    def test_repeated_gather_signature_nudges_not_forces(self):
+        # the reasoner re-runs the SAME tool call → cria NUDGES it (don't force the plan, a
+        # sledgehammer that cut off a still-productive gather) and keeps gathering; the plan
+        # comes when the model stops calling tools.
         prov = _ScriptedProvider([
             _tool_resp("web_search", {"query": "same thing"}),
-            _tool_resp("web_search", {"query": "same thing"}),   # repeat sig → force
+            _tool_resp("web_search", {"query": "same thing"}),   # repeat → NUDGE, keep gathering
             _content_resp("1. step one\n2. step two"),
         ])
-        plan = Planner(prov, "m", search_key="", clock=lambda: _FIXED).plan_for(_msgs("a task"), _Rlog())
+        rlog = _Rlog()
+        plan = Planner(prov, "m", search_key="", clock=lambda: _FIXED).plan_for(_msgs("a task"), rlog)
         self.assertEqual(len(plan.items), 2)
-        self.assertNotIn("tools", prov.bodies[-1])  # the forced final call has tools OFF
+        # the repeat was nudged, not forced
+        self.assertIn("plan.repeat_nudge", [k for k, _ in rlog.events])
+        # and the gather kept its tools on the round AFTER the repeat (no forced-plan-off)
+        nudged_round = next(b for b in prov.bodies if any(
+            "you already ran" in str(m.get("content")) for m in b["messages"]))
+        self.assertIn("tools", nudged_round)
+
+    def test_forced_plan_reads_submit_plan_tool(self):
+        # gemma-fable won't emit a plain-text plan, so at the force cria offers submit_plan and
+        # reads the steps from the call it makes.
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "x"}),                     # round 1 gather
+            _tool_resp("submit_plan", {"steps": ["do a", "do b", "do c"]}),  # forced → submit_plan
+        ])
+        plan = Planner(prov, "m", search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), _Rlog())
+        self.assertEqual([i.text for i in plan.items], ["do a", "do b", "do c"])
+        self.assertEqual(prov.bodies[-1]["tools"][0]["function"]["name"], "submit_plan")  # offered submit_plan
+
+    def test_forced_plan_leak_is_logged_and_retried(self):
+        # the model calls something OTHER than submit_plan (a hallucinated tool) → logged with the
+        # name, retried in place; still nothing after retries → retriable (not poison-cached).
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "x"}),
+            _tool_resp("CreateNewProject", {"goal": "build"}),   # leak, every forced attempt
+        ])
+        rlog = _Rlog()
+        self.assertIsNone(Planner(prov, "m", search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), rlog))
+        retries = [kw for k, kw in rlog.events if k == "plan.force_retry"]
+        self.assertTrue(retries)
+        self.assertIn("CreateNewProject", str(retries[0].get("called")))  # the leak is in the record
+        self.assertIn("plan.retriable", [k for k, _ in rlog.events])       # retriable, not cached
 
     def test_extract_cwd_from_environment_context(self):
         from cria.planner import _extract_cwd

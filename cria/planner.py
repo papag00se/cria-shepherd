@@ -17,6 +17,7 @@ import re
 import shutil
 import tempfile
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from . import massage, planner_tools, prompts
@@ -26,6 +27,38 @@ from .plan import Plan, PlanItem
 
 _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
 _FORCE_PLAN = "You've gathered enough. Stop investigating and output ONLY the numbered plan now."
+# Forced-plan retries IN PLACE (gather kept): the model is offered a submit_plan tool each time
+# and its call is read; a couple of retries cover a stray call to something else.
+_MAX_FORCE_RETRIES = 3
+# The plan-submission tool. gemma-fable is hardwired to emit tool CALLS, so instead of asking for
+# plain text (which it answers with a hallucinated `call:CreateNewProject{…}`), hand it ONE tool
+# that IS the plan and read the steps from the call.
+_SUBMIT_PLAN_TOOL = {"type": "function", "function": {
+    "name": "submit_plan",
+    "description": "Submit the final plan: a numbered list of small, concrete, verifiable steps "
+                   "(one action per step) for the coder to execute.",
+    "parameters": {"type": "object", "properties": {
+        "steps": {"type": "array", "items": {"type": "string"}, "description": "the ordered steps"}},
+        "required": ["steps"]}}}
+
+
+def _steps_from_submit(msg: dict) -> list[str] | None:
+    """Read the plan steps from a ``submit_plan`` tool call (native or recovered from the dialect).
+    None if the model called something else or gave no steps."""
+    for tc in msg.get("tool_calls") or []:
+        if ((tc.get("function") or {}).get("name")) != "submit_plan":
+            continue
+        args = (tc.get("function") or {}).get("arguments")
+        try:
+            args = json.loads(args) if isinstance(args, str) else (args or {})
+        except (json.JSONDecodeError, ValueError):
+            args = {}
+        steps = args.get("steps") if isinstance(args, dict) else None
+        if isinstance(steps, list):
+            out = [str(s).strip() for s in steps if str(s).strip()]
+            if out:
+                return out
+    return None
 
 # The planner prompt lives in cria/prompts/plan.txt (edit it there). It asks for a
 # numbered LIST, not JSON: small local models emit a clean list far more reliably than
@@ -159,12 +192,23 @@ class Planner:
                 if not calls:  # no tool call → the content IS the plan
                     return self._parse(msg, rlog)
                 sig = _calls_signature(calls)
-                if sig in seen_sigs:  # repeating a round already run → stop gathering, force the plan
-                    return self._forced_plan(messages, rlog)
-                seen_sigs.add(sig)
-                # Feed the round back as PROTOCOL — the structured assistant tool-call turn,
-                # then one `tool` result per call. NOT flattened to prose (the parroting trap).
+                # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
+                # one `tool` result per call. NOT flattened to prose (the parroting trap).
                 messages.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": msg["tool_calls"]})
+                if sig in seen_sigs:
+                    # A REPEAT — the model re-ran an identical call. Don't force the plan (a
+                    # sledgehammer that cut off a still-productive gather); NUDGE it to use the
+                    # result it already has (or submit its plan) and keep gathering. The nudge is
+                    # a proper tool result per call, so the protocol stays well-formed, and the
+                    # round cap still bounds a model that ignores it.
+                    rlog.emit("plan.repeat_nudge", tools=[n for _, n, _ in calls])
+                    for cid, name, _args in calls:
+                        messages.append({"role": "tool", "tool_call_id": cid, "content": (
+                            f"[you already ran {name} with these exact arguments this gather — its "
+                            "result is already above. Don't repeat it: use that result, investigate "
+                            "something DIFFERENT, or if you have enough, output your plan.]")})
+                    continue
+                seen_sigs.add(sig)
                 for cid, name, args in calls:
                     result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches, rlog, scratch=scratch)
                     rlog.emit("plan.gather", tool=name)
@@ -175,21 +219,30 @@ class Planner:
             shutil.rmtree(scratch, ignore_errors=True)
 
     def _forced_plan(self, messages: list[dict], rlog) -> list[str] | None:
-        """One last call with tools OFF: stop gathering, output only the plan."""
-        msg = self._reason(messages + [{"role": "user", "content": _FORCE_PLAN}], rlog, tools=False)
-        if msg is None:
-            self._retriable_failure = True  # transport/model error, not an unplannable task
-            return None
-        if msg.get("tool_calls") and not (msg.get("content") or "").strip():
-            # The model answered the "output the plan" ask with ANOTHER tool call (native or
-            # recovered from a leaked dialect) — it wants to keep working. Retriable: don't let
-            # one overrun poison the negative cache for the whole session.
-            self._retriable_failure = True
-            rlog.emit("plan.unparsed", level="warn", sample="(tool call instead of a plan)")
-            return None
-        return self._parse(msg, rlog)
+        """Stop gathering, get the plan. This model (gemma-fable) is hardwired to emit TOOL CALLS
+        — asked for plain text it answers with `call:Bash{…}`/`call:thought{…}` no matter what —
+        so cria works WITH that: it offers a single `submit_plan(steps)` tool and reads the steps
+        from the call. RETRY IN PLACE (the gather stays in ``messages``) rather than discarding it
+        and re-gathering next turn (the amnesia loop) if the model calls something else."""
+        convo = messages + [{"role": "user", "content": _FORCE_PLAN}]
+        for attempt in range(_MAX_FORCE_RETRIES):
+            msg = self._reason(convo, rlog, tools=False, plan_tool=True)
+            if msg is None:
+                self._retriable_failure = True  # transport/model error, not an unplannable task
+                return None
+            steps = _steps_from_submit(msg) or self._parse(msg, rlog)  # the tool call, else any text
+            if steps:
+                if attempt:
+                    rlog.emit("plan.forced_recovered", attempt=attempt + 1)
+                return steps[:_MAX_STEPS]
+            # Called something OTHER than submit_plan (e.g. a hallucinated `CreateNewProject`) →
+            # retry, gather intact. Log WHAT it called so the record shows it (not just "no plan").
+            leaked = [((tc.get("function") or {}).get("name")) for tc in (msg.get("tool_calls") or [])]
+            rlog.emit("plan.force_retry", attempt=attempt + 1, called=leaked or "(no tool call)")
+        self._retriable_failure = True  # still no plan after retries — retriable, never poison-cache
+        return None
 
-    def _reason(self, messages: list[dict], rlog, *, tools: bool) -> dict | None:
+    def _reason(self, messages: list[dict], rlog, *, tools: bool, plan_tool: bool = False) -> dict | None:
         body: dict = {
             "model": self._model,
             "stream": False,
@@ -203,14 +256,15 @@ class Planner:
             self._role.apply(body)
         if tools:
             body["tools"] = planner_tools.PLANNER_TOOLS
+        elif plan_tool:
+            body["tools"] = [_SUBMIT_PLAN_TOOL]  # the ONLY move: submit the plan as a tool call
         try:
             rlog.phase = "planner"
             completion = json.loads(self._provider.chat(body, rlog))
             # Recover tool calls the model LEAKED as text (Hermes/XML/gemma-fable dialects) before
             # reading the message — llama.cpp doesn't parse the gemma `<|tool_call>call:NAME{…}`
-            # syntax, so without this a quirky reasoner's gather call lands in content, the plan
-            # parse fails, and the task gets negative-cached (observed live: gemma4's forced-plan
-            # leaked `call:web_search{…}` → plan.unparsed → the whole session fell to proxy).
+            # syntax, so without this a quirky reasoner's gather (or submit_plan) call lands in
+            # content and the parse fails.
             completion = massage.recover_leaked_tool_calls(completion, body.get("tools"), rlog)
             return _assistant_message_obj(completion)
         except Exception as e:

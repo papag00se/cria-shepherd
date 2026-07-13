@@ -122,3 +122,28 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
         return str(path)
     except (OSError, TypeError, ValueError):
         return None
+
+
+def capture_response(request_path: str | None, response, rlog=None) -> str | None:
+    """Write the model's RESPONSE next to its request capture, at ``NNNN-<phase>.response.json``.
+    The request capture records what cria SENT; this records what the model ANSWERED — the raw
+    tool-call dialect leak, the plan, the reasoning — so a forced-plan leak or a repeat-force is
+    reconstructable from disk instead of only from a replay. ``request_path`` is what ``capture``
+    returned (None → no-op); ``response`` is the raw bytes or a parsed dict. Best-effort."""
+    if not request_path:
+        return None
+    try:
+        base = Path(request_path)
+        rp = base.with_name(base.stem + ".response.json")
+        obj = response
+        if isinstance(response, (bytes, bytearray)):
+            try:
+                obj = json.loads(response)
+            except (json.JSONDecodeError, ValueError):
+                obj = {"raw": bytes(response).decode("utf-8", "replace")}
+        rp.write_text(json.dumps(obj, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        if rlog is not None:
+            rlog.emit("upstream.response_dump", path=str(rp))
+        return str(rp)
+    except (OSError, TypeError, ValueError):
+        return None

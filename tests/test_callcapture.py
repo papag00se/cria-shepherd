@@ -121,5 +121,26 @@ class SessionDirnameTests(unittest.TestCase):
             self.assertEqual(Path(path).parent.name, callcapture.session_dirname(sid))
 
 
+
+class CaptureResponseTests(unittest.TestCase):
+    def test_response_saved_next_to_request(self):
+        import tempfile, json as _j
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as tmp:
+            rlog = _FakeLog(session="019f0000-0000-7000-8000-000000000000")
+            req = callcapture.capture({"messages": [{"role": "user", "content": "hi"}]}, rlog,
+                                      calls_dir=tmp, phase="planner")
+            # a model response with a leaked/recovered tool call
+            resp = _j.dumps({"choices": [{"message": {"role": "assistant",
+                "content": "<|tool_call>call:CreateNewProject{}<tool_call|>"}}]}).encode()
+            rp = callcapture.capture_response(req, resp, rlog)
+            self.assertTrue(rp.endswith(".response.json"))
+            self.assertEqual(_P(rp).parent, _P(req).parent)          # same folder
+            self.assertIn("CreateNewProject", _P(rp).read_text())    # the model's ANSWER is on disk
+
+    def test_none_request_path_is_noop(self):
+        self.assertIsNone(callcapture.capture_response(None, b"{}"))
+
+
 if __name__ == "__main__":
     unittest.main()

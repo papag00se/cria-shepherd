@@ -233,7 +233,7 @@ class Upstream:
         """Non-streaming: return the full upstream response body (bytes)."""
         # Force stream=false (the Responses adapter buffers from a stream=true request;
         # sending that upstream would return unparseable SSE) + merge adjacent assistants.
-        data, sent_estimate, _ = self._prep(body, False, rlog)
+        data, sent_estimate, capture_path = self._prep(body, False, rlog)
         req = urllib.request.Request(
             self._chat_url, data=data, method="POST", headers=self._headers(sse=False)
         )
@@ -265,6 +265,7 @@ class Upstream:
             tok_per_s=tok_s,
             from_usage=bool(usage),
         )
+        callcapture.capture_response(capture_path, raw, rlog)  # what the model actually answered
         return raw
 
     def chat_watched(self, body: dict, rlog, watch=None) -> bytes:
@@ -346,6 +347,7 @@ class Upstream:
         t_end = time.monotonic()
         completion = _assemble_completion(body.get("model"), content, reasoning, tool_acc, finish, usage, aborted)
         self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
+        callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
         self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
         tokens = (usage or {}).get("completion_tokens")
         tok_s = round(tokens / (t_end - (t_first or t0)), 1) if (tokens and t_end > (t_first or t0)) else None
