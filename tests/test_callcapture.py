@@ -85,5 +85,41 @@ class TestCapture(unittest.TestCase):
             self.assertTrue(dict(rlog.events[0][1])["rendered"])
 
 
+class SessionDirnameTests(unittest.TestCase):
+    """The per-run folder is named <timestamp>-<session> so the newest run sorts last and the
+    time reads at a glance — the timestamp decoded from the (UUIDv7) session id."""
+
+    def test_uuid7_id_gets_a_sortable_timestamp_prefix(self):
+        sid = "019f5818-c99f-7911-a78e-79bbdb49625f"
+        name = callcapture.session_dirname(sid)
+        self.assertTrue(name.startswith("20260712T"), name)   # decoded from the id's own ms clock
+        self.assertTrue(name.endswith(sid))
+        self.assertRegex(name, r"^\d{8}T\d{6}-")
+
+    def test_deterministic_and_stable(self):
+        sid = "019f5818-c99f-7911-a78e-79bbdb49625f"
+        self.assertEqual(callcapture.session_dirname(sid), callcapture.session_dirname(sid))
+
+    def test_chronological_sort_matches_creation_order(self):
+        older = "019f5818-0000-7000-8000-000000000000"
+        newer = "019f5900-0000-7000-8000-000000000000"
+        self.assertLess(callcapture.session_dirname(older), callcapture.session_dirname(newer))
+
+    def test_non_uuid7_falls_back_to_bare_id(self):
+        # a v4 UUID (not v7) and an arbitrary key get NO invented prefix (no unstable now())
+        self.assertEqual(callcapture.session_dirname("550e8400-e29b-41d4-a716-446655440000"),
+                         "550e8400-e29b-41d4-a716-446655440000")
+        self.assertEqual(callcapture.session_dirname("my-key"), "my-key")
+        self.assertEqual(callcapture.session_dirname(None), "nosession")
+
+    def test_capture_lands_in_the_timestamped_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sid = "019f5818-c99f-7911-a78e-79bbdb49625f"
+            rlog = _FakeLog(session=sid)
+            path = callcapture.capture({"messages": [{"role": "user", "content": "hi"}]}, rlog,
+                                       calls_dir=tmp, phase="coder-s1")
+            self.assertEqual(Path(path).parent.name, callcapture.session_dirname(sid))
+
+
 if __name__ == "__main__":
     unittest.main()

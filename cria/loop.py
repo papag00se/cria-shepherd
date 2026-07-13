@@ -32,7 +32,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import massage, probegate, proberun, prompts
+from . import callcapture, massage, probegate, proberun, prompts
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -987,8 +987,9 @@ class Loop:
         if not target:  # explicitly disabled (tests)
             return None
         session = getattr(rlog, "session", None)
-        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(session)) if session else "nosession"
-        return Path(target).expanduser() / safe
+        # SAME folder name the captures use (callcapture.session_dirname) — <timestamp>-<session>
+        # — so a run's plan mirror, verify dumps, and call captures all land together.
+        return Path(target).expanduser() / callcapture.session_dirname(session)
 
     def _compact_done(self, sess: PlanSession, body: dict, rlog) -> str:
         """Compact a FINISHED plan into a work-done briefing (the reasoner), so a follow-up prompt

@@ -40,6 +40,34 @@ def _safe(s) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)) if s else "nosession"
 
 
+_UUID7_RE = re.compile(r"([0-9a-f]{8})-([0-9a-f]{4})-(7[0-9a-f]{3})-", re.I)
+
+
+def _uuid7_stamp(session) -> str | None:
+    """The creation time a UUIDv7 embeds in its first 48 bits → local ``YYYYMMDDTHHMMSS``.
+    Codex's ``prompt_cache_key`` (the cria session id) is a v7 UUID, so this is deterministic —
+    identical for every call of a session and across restarts, with no stored state. ``None``
+    when the id isn't a v7 UUID."""
+    m = _UUID7_RE.match(str(session or ""))
+    if not m:
+        return None
+    try:
+        ms = int(m.group(1) + m.group(2), 16)  # unix milliseconds
+        return datetime.fromtimestamp(ms / 1000).strftime("%Y%m%dT%H%M%S")  # local wall-clock
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def session_dirname(session) -> str:
+    """The per-run folder name: ``<YYYYMMDDTHHMMSS>-<session>`` so the newest run sorts last and
+    the time is legible at a glance. The timestamp is decoded from the (UUIDv7) session id; for a
+    non-v7 id the bare safe id is used — degrading to the old naming rather than inventing an
+    unstable ``now()`` prefix that would fork the folder per call."""
+    safe = _safe(session)
+    ts = _uuid7_stamp(session)
+    return f"{ts}-{safe}" if ts else safe
+
+
 def _stats(body: dict) -> dict:
     msgs = body.get("messages") or []
     tools = body.get("tools") or []
@@ -63,7 +91,7 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
     try:
         session = getattr(rlog, "session", None)
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
-        sess = _safe(session)
+        sess = session_dirname(session)  # <timestamp>-<session>, sortable; stable per session
         seq = _next_seq(sess)
         d = Path(calls_dir).expanduser() / sess
         d.mkdir(parents=True, exist_ok=True)
