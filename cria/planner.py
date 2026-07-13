@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import tempfile
 import threading
 from datetime import datetime, timezone
 
@@ -145,26 +147,32 @@ class Planner:
         messages: list[dict] = [{"role": "user", "content": seed}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
         seen_sigs: set[str] = set()
-        for _round in range(self._max_rounds):
-            msg = self._reason(messages, rlog, tools=True)
-            if msg is None:
-                return None
-            calls = _tool_calls(msg)
-            if not calls:  # no tool call → the content IS the plan
-                return self._parse(msg, rlog)
-            sig = _calls_signature(calls)
-            if sig in seen_sigs:  # repeating a round already run → stop gathering, force the plan
-                return self._forced_plan(messages, rlog)
-            seen_sigs.add(sig)
-            # Feed the round back as PROTOCOL — the structured assistant tool-call turn,
-            # then one `tool` result per call. NOT flattened to prose (the parroting trap).
-            messages.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": msg["tool_calls"]})
-            for cid, name, args in calls:
-                result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches, rlog)
-                rlog.emit("plan.gather", tool=name)
-                messages.append({"role": "tool", "tool_call_id": cid, "content": result})
-        rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
-        return self._forced_plan(messages, rlog)
+        # An ephemeral scratchpad the gather may WRITE to (persist + process fetched data across
+        # rounds) — in cria's OWN tmp, never the workspace (no-pollution), torn down after.
+        scratch = tempfile.mkdtemp(prefix="cria-gather-")
+        try:
+            for _round in range(self._max_rounds):
+                msg = self._reason(messages, rlog, tools=True)
+                if msg is None:
+                    return None
+                calls = _tool_calls(msg)
+                if not calls:  # no tool call → the content IS the plan
+                    return self._parse(msg, rlog)
+                sig = _calls_signature(calls)
+                if sig in seen_sigs:  # repeating a round already run → stop gathering, force the plan
+                    return self._forced_plan(messages, rlog)
+                seen_sigs.add(sig)
+                # Feed the round back as PROTOCOL — the structured assistant tool-call turn,
+                # then one `tool` result per call. NOT flattened to prose (the parroting trap).
+                messages.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": msg["tool_calls"]})
+                for cid, name, args in calls:
+                    result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches, rlog, scratch=scratch)
+                    rlog.emit("plan.gather", tool=name)
+                    messages.append({"role": "tool", "tool_call_id": cid, "content": result})
+            rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
+            return self._forced_plan(messages, rlog)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
     def _forced_plan(self, messages: list[dict], rlog) -> list[str] | None:
         """One last call with tools OFF: stop gathering, output only the plan."""

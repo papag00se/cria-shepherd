@@ -41,13 +41,43 @@ class SearchGate400Tests(unittest.TestCase):
 class ReadOnlyGuardTests(unittest.TestCase):
     def test_reads_allowed(self):
         for cmd in ("ls -la", "cat handler.py", "grep -r foo .", "git status", "git log --oneline",
-                    "curl https://api.handle.me/v1/handles/goose", "find . -name '*.py'", "head -20 x.py"):
-            self.assertTrue(pt.is_read_only_command(cmd), cmd)
+                    "curl https://api.handle.me/v1/handles/goose", "find . -name '*.py'", "head -20 x.py",
+                    "python3 -c \"import json; print(1)\"", "jq '.paths' /tmp/api.json"):
+            self.assertTrue(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
 
-    def test_writes_refused(self):
-        for cmd in ("echo x > f", "rm -rf .", "sed -i s/a/b/ f", "git commit -m x",
-                    "curl -o f https://x", "python setup.py build", "mkdir d", "cat a | tee b"):
-            self.assertFalse(pt.is_read_only_command(cmd), cmd)
+    def test_workspace_writes_refused(self):
+        # relative or workspace-absolute writes still corrupt the user's code → refused
+        for cmd in ("echo x > f", "sed -i s/a/b/ f", "git commit -m x", "curl -o out.json https://x",
+                    "python setup.py build" if False else "mkdir d", "cat a | tee b", "touch handler.py",
+                    "mv a.py b.py", "cp x /home/jesse/src/proj/y"):
+            self.assertFalse(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+
+    def test_scratchpad_writes_allowed(self):
+        # the whole point: persist + process fetched data in /tmp or the scratch dir
+        for cmd in ("curl https://api.handle.me/openapi.json > /tmp/api.json",
+                    "echo '{}' > /tmp/x.json && grep foo /tmp/x.json",
+                    "python3 -c \"import json,sys; json.dump({}, open('/tmp/o.json','w'))\"",
+                    "cat /tmp/api.json | jq '.paths'", "curl -o /tmp/api.json https://x",
+                    "mkdir -p /tmp/scr/sub", "tee /tmp/log.txt"):
+            self.assertTrue(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+
+    def test_scratch_dir_writes_allowed(self):
+        s = "/tmp/cria-gather-abc"
+        self.assertTrue(pt.is_gather_safe_command(f"echo hi > {s}/note.txt", s)[0])
+
+    def test_workspace_under_tmp_is_still_off_limits(self):
+        # the invariant is "scratchpad, never the workspace" — a workspace that lives under /tmp
+        # (as in tests) must NOT be writable just because it's /tmp-rooted
+        ws = "/tmp/ws-xyz"
+        self.assertFalse(pt.is_gather_safe_command(f"echo pwned > {ws}/handler.py", "/tmp/s", ws)[0])
+        self.assertFalse(pt.is_gather_safe_command(f"rm {ws}/f.py", "/tmp/s", ws)[0])
+        # but a sibling /tmp path (not the workspace) is fine
+        self.assertTrue(pt.is_gather_safe_command("echo x > /tmp/other.json", "/tmp/s", ws)[0])
+
+    def test_catastrophic_refused_regardless_of_target(self):
+        for cmd in ("rm -rf /", "rm -rf ~", "rm -rf .", "find . -delete", "find /tmp -delete",
+                    "dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "shred -u /tmp/x"):
+            self.assertFalse(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
 
 
 class DomainDetectTests(unittest.TestCase):

@@ -20,6 +20,7 @@ shell.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import urllib.parse
@@ -28,7 +29,7 @@ import urllib.request
 # The four READ-ONLY tools offered to the planner (inline schemas — local models are
 # lenient). No write/patch/exec-mutate tools: planning is not building.
 PLANNER_TOOLS = [
-    {"type": "function", "function": {"name": "exec_command", "description": "Run a READ-ONLY shell command to inspect the project (ls, cat, head, tail, grep, find, wc, git status/log/diff, …). Writes/mutations are refused — you are planning, not building.", "parameters": {"type": "object", "properties": {"cmd": {"type": "string", "description": "the command line"}}, "required": ["cmd"]}}},
+    {"type": "function", "function": {"name": "exec_command", "description": "Run a shell command to inspect the project (ls, cat, head, grep, find, git status/log/diff, …) or to PROCESS data you fetched — you may save to and read from /tmp (e.g. `curl … > /tmp/api.json && grep … /tmp/api.json`, `python3 -c …`). The WORKSPACE is read-only while planning (building is the coder's job); writes to it are refused.", "parameters": {"type": "object", "properties": {"cmd": {"type": "string", "description": "the command line"}}, "required": ["cmd"]}}},
     {"type": "function", "function": {"name": "read_file", "description": "Read a file's full contents to understand existing code/config/conventions.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "web_fetch", "description": "Fetch a URL (docs, an OpenAPI/JSON schema, a reference page) and return its text.", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}},
     {"type": "function", "function": {"name": "web_search", "description": "Search the web for documentation, APIs, or references the task implies.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
@@ -40,12 +41,14 @@ _BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 _FETCH_MAX_BYTES = 512 * 1024
 
 
-def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog) -> str:
-    """Run ONE planner tool call, READ-ONLY, and return human-readable text for the
-    gather loop to feed back. ``recent_searches`` is the per-gather list of normalized
-    search word-sets the 400 guard uses (mutated in place)."""
+def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog,
+                 scratch: str | None = None) -> str:
+    """Run ONE planner tool call and return human-readable text for the gather loop to feed
+    back. Reads anything; may WRITE only to a scratchpad (``scratch`` or /tmp), never the
+    workspace, so the reasoner can persist and process fetched data. ``recent_searches`` is the
+    per-gather list of normalized search word-sets the 400 guard uses (mutated in place)."""
     if name in ("exec_command", "shell", "bash", "local_shell"):
-        return _exec_command(args, cwd)
+        return _exec_command(args, cwd, scratch)
     if name in ("read_file", "cat_file"):
         return _read_file(args, cwd)
     if name == "web_fetch":
@@ -57,20 +60,33 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
 
 # ------------------------------------------------------------------ shell / files
 
-def _exec_command(args: dict, cwd: str) -> str:
+def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
     cmd = args.get("cmd") or args.get("command") or ""
     if isinstance(cmd, list):
         cmd = " ".join(str(c) for c in cmd)
     cmd = str(cmd).strip()
     if not cmd:
         return "[no command given]"
-    if not is_read_only_command(cmd):
-        return (f"[refused: planning is READ-ONLY — `{cmd[:100]}` would write or mutate. "
-                "Don't run it; just plan for the coder to do it.]")
+    ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
+    if not ok:
+        return (f"[refused: `{cmd[:100]}` {why}. During planning the WORKSPACE is read-only "
+                "(building is the coder's job). To process data you fetched, write it to /tmp "
+                "instead (e.g. `> /tmp/api.json`) — or read it from the web_fetch result already "
+                "in the conversation above.]")
+    # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
+    # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
+    env = dict(os.environ)
+    if scratch:
+        env["TMPDIR"] = scratch
     try:
         out = subprocess.run(["bash", "-lc", cmd], cwd=(cwd or "."), stdin=subprocess.DEVNULL,
-                             capture_output=True, text=True, timeout=20)
-        return _truncate((out.stdout + out.stderr).strip() or "[no output]", 8000)
+                             capture_output=True, text=True, timeout=20, env=env)
+        text = _truncate((out.stdout + out.stderr).strip() or "[no output]", 8000)
+        if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
+            text += ("\n[note: nothing was saved there yet — a web_fetch returns its content into "
+                     "THIS conversation, not to a file. Read the fetched text above, or save it "
+                     "first with a redirect to /tmp.]")
+        return text
     except subprocess.TimeoutExpired:
         return "[exec timed out after 20s]"
     except OSError as e:
@@ -101,33 +117,92 @@ _READ_ONLY = {
 _GIT_READ = {"status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "cat-file",
              "blame", "describe", "remote", "config", "grep"}
 
+# Where the gather MAY write — a scratchpad for processing fetched data. Never the workspace.
+_WRITE_ROOTS_BASE = ("/tmp/", "/var/tmp/", "/dev/null", "/dev/stdout", "/dev/stderr")
+# Catastrophic ops refused no matter the target — cria runs this shell itself, so its blast
+# radius must be bounded (the workspace-wipe lesson: a --yolo model once ran `find . -delete`).
+_CATASTROPHIC = re.compile(
+    r"(^|[\s|;&(])rm\s+[^|;&]*(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-rf|-fr)\b[^|;&]*\s(/|~|\$HOME|\.)(\s|/|$)"
+    r"|(^|[\s|;&(])find\b[^|;&]*\s-delete\b"
+    r"|\bmkfs\b|\bdd\b[^|;&]*\bof=/dev/|:\s*\(\s*\)\s*\{|>\s*/dev/(sd|nvme|mapper)|\bshred\b",
+    re.I,
+)
+# The write operators / mutating bases whose TARGETS must land in the scratchpad. A processor
+# with no shell write (python3 -c, jq, awk without redirect) is a read as far as the shell sees.
+_REDIR_RE = re.compile(r"(?<![0-9<>&])>>?\s*(?!&)([^\s|;&<>]+)")  # `> f` / `>> f`, not `2>&1`
+_MUTATORS = {"rm", "rmdir", "mv", "cp", "mkdir", "touch", "dd", "truncate", "install", "ln",
+             "chmod", "chown", "shred", "tee", "rsync"}
+# curl/wget flags that name an OUTPUT FILE (value is the NEXT token). Bare `-O` (curl) writes the
+# remote filename to the cwd = workspace, so it's always a workspace write.
+_NET_OUT_FLAGS = {"-o", "--output", "--output-document", "-P", "--directory-prefix"}
 
-def is_read_only_command(cmd: str) -> bool:
-    """Conservative read-only gate. Any redirect writes a file; each pipeline segment's
-    head must be a known read command (git/curl/wget/sed restricted to read-only uses).
-    Erring toward refusal is correct — a refused inspect costs a retry, a slipped mutation
-    corrupts the workspace."""
-    if ">" in cmd:
+
+def _net_write_targets(parts: list[str]) -> tuple[list[str], bool]:
+    """(output targets, has_bare_curl_O) for a curl/wget segment — only the token AFTER an
+    output flag is a target; the URL is not."""
+    targets, bare_O = [], False
+    for i, p in enumerate(parts):
+        if p in _NET_OUT_FLAGS and i + 1 < len(parts):
+            targets.append(parts[i + 1])
+        elif p == "-O":
+            bare_O = True
+    return targets, bare_O
+
+
+def _within(path: str, root: str) -> bool:
+    root = os.path.normpath(root)
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _under_write_roots(target: str, scratch: str | None, workspace: str | None) -> bool:
+    """Is a write target inside the allowed scratchpad (scratch dir or /tmp) AND not inside the
+    workspace? The workspace exclusion matters because cria's scratch — and a workspace — can
+    both live under /tmp; the invariant is 'scratchpad, never the workspace', not 'under /tmp'."""
+    t = target.strip().strip('"\'')
+    if t in ("/dev/null", "/dev/stdout", "/dev/stderr"):
+        return True
+    if not os.path.isabs(t):  # relative → resolves in the WORKSPACE cwd → never allowed
         return False
+    ap = os.path.normpath(t)
+    if workspace and _within(ap, os.path.abspath(workspace)):  # a /tmp workspace is still off-limits
+        return False
+    roots = list(_WRITE_ROOTS_BASE)
+    if scratch:
+        roots.append(os.path.normpath(scratch) + "/")
+    return any(_within(ap, r) for r in roots)
+
+
+def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str | None = None) -> tuple[bool, str]:
+    """The gather may READ anything but WRITE only to the scratchpad (``scratch`` or /tmp), never
+    the ``workspace`` — so a small reasoner can persist and process what it fetched without ever
+    touching the user's code. Returns ``(ok, reason)``; the reason names the violation for the
+    refusal message. Conservative by construction: an unrecognizable mutation is refused (a
+    refused command costs a retry; a slipped workspace write corrupts the user's code)."""
+    if _CATASTROPHIC.search(cmd):
+        return False, "is a destructive operation"
+    for target in _REDIR_RE.findall(cmd):  # every redirect target must be in the scratchpad
+        if not _under_write_roots(target, scratch, workspace):
+            return False, "would write outside the /tmp scratchpad (into the workspace)"
     for seg in re.split(r"[|;&\n]", cmd):
-        seg = seg.strip()
-        if not seg:
+        parts = seg.strip().split()
+        if not parts:
             continue
-        parts = seg.split()
         base = parts[0].rsplit("/", 1)[-1]
-        sub = parts[1] if len(parts) > 1 else ""
-        if base == "git":
-            if sub not in _GIT_READ:
-                return False
-        elif base == "sed":
-            if "-i" in seg:
-                return False
-        elif base in ("curl", "wget"):
-            if "-o" in parts or "-O" in parts:
-                return False
-        elif base not in _READ_ONLY:
-            return False
-    return True
+        pathargs = [p for p in parts[1:] if not p.startswith("-")]
+        if base == "git" and (parts[1:] and parts[1] not in _GIT_READ):
+            return False, "mutates the git repository"
+        if base == "sed" and "-i" in seg:
+            return False, "edits a file in place"
+        if base in ("curl", "wget"):
+            targets, bare_O = _net_write_targets(parts)
+            if bare_O or not all(_under_write_roots(t, scratch, workspace) for t in targets):
+                return False, "would download a file outside the /tmp scratchpad"
+        elif base in _MUTATORS:
+            # every path this mutator touches must be in the scratchpad (dd uses of=… not argv)
+            targets = pathargs + [p.split("=", 1)[1] for p in parts if p.startswith("of=")]
+            if not targets or not all(_under_write_roots(t, scratch, workspace) for t in targets):
+                return False, "would create/modify a file outside the /tmp scratchpad"
+    return True, ""
 
 
 # ------------------------------------------------------------------ web fetch / search
