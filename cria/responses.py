@@ -196,15 +196,20 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     out_items: list[dict] = []
     idx = 0
 
-    # The "⟦cria⟧ …" banner is FOLDED INTO the content item — never its own message item.
-    # A standalone banner item is a text assistant turn the harness stores, re-summarizes on
-    # compaction (it once became the ENTIRE handoff summary), and reads as "the agent answered".
-    # Riding inside the content, it's stripped inbound with the rest and can't stand alone; with
-    # no content to ride on (a tool-call-only or empty turn) the banner is simply dropped.
+    # The "⟦cria⟧ …" banner rides in a message item. When the turn has text, it's PREPENDED into
+    # that content. When the turn is tool-calls-only (the common case in a coding run), it becomes
+    # its own message item AHEAD of the function calls — safe there because the tool call keeps the
+    # agent loop alive (a banner is only a "the agent answered" signal on an otherwise EMPTY turn,
+    # which we still drop). Either way it's stripped inbound (strip_history) so the model never
+    # re-ingests it and it can't seed a compaction summary — the two hazards that once justified
+    # dropping it on tool-only turns, now handled upstream.
     content = msg.get("content")
     text = content if (isinstance(content, str) and content) else None
+    has_tool_calls = bool(msg.get("tool_calls"))
     if banner and text:
         text = f"{banner}\n{text}"
+    elif banner and has_tool_calls:
+        text = banner  # tool-call-only turn — show the banner alongside the call, not dropped
     if text:
         evs, done = _message_item(text, idx); out_items.append(done); idx += 1
         yield from evs
