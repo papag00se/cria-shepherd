@@ -78,10 +78,19 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
     env = dict(os.environ)
     if scratch:
         env["TMPDIR"] = scratch
+    # A workspace that doesn't exist (a fresh build — no repo dir yet) is not a valid cwd, so
+    # subprocess can't even launch and EVERY command dies with "failed to launch". Fall back to
+    # the scratchpad (or ".") and tell the planner the workspace is empty — so it plans to CREATE
+    # files rather than inspect a repo that isn't there.
+    fresh = bool(cwd) and not os.path.isdir(cwd)
+    run_cwd = (scratch or ".") if fresh else (cwd or ".")
     try:
-        out = subprocess.run(["bash", "-lc", cmd], cwd=(cwd or "."), stdin=subprocess.DEVNULL,
+        out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, timeout=20, env=env)
         text = _truncate((out.stdout + out.stderr).strip() or "[no output]", 8000)
+        if fresh:
+            text += (f"\n[note: the workspace `{cwd}` does not exist yet — it's a FRESH build with "
+                     "no files to inspect. Plan for the coder to CREATE the project from scratch.]")
         if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
             text += ("\n[note: nothing was saved there yet — a web_fetch returns its content into "
                      "THIS conversation, not to a file. Read the fetched text above, or save it "

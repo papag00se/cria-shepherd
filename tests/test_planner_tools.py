@@ -108,3 +108,25 @@ class _Rlog:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreshWorkspaceTests(unittest.TestCase):
+    """A workspace dir that doesn't exist (a fresh build) must not make exec_command die with
+    'failed to launch' — it falls back to the scratchpad and tells the planner it's fresh."""
+
+    def test_missing_workspace_falls_back_and_notes_fresh(self):
+        import tempfile
+        scratch = tempfile.mkdtemp()
+        out = pt.execute_tool("exec_command", {"cmd": "echo hi"}, "/no/such/workspace", "", [],
+                              _Rlog(), scratch=scratch)
+        self.assertNotIn("failed to launch", out)
+        self.assertIn("does not exist yet", out)
+        self.assertIn("FRESH build", out)
+
+    def test_existing_workspace_runs_there(self):
+        import tempfile, os
+        ws = tempfile.mkdtemp()
+        open(os.path.join(ws, "marker.txt"), "w").write("x")
+        out = pt.execute_tool("exec_command", {"cmd": "ls"}, ws, "", [], _Rlog())
+        self.assertIn("marker.txt", out)
+        self.assertNotIn("does not exist yet", out)

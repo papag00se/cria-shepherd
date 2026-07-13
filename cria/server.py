@@ -99,8 +99,11 @@ class CriaServer(ThreadingHTTPServer):
         coder_model = cfg.routing.local_models.get("coder")
         self.loop = None
         if cfg.planner.enabled and reasoner_model and coder_model:
-            # The web-search key is read from its env var (never stored in config).
-            search_key = os.environ.get(cfg.planner.search_api_key_env or "", "")
+            # The web-search key is read from its env var (never stored in config). STRIP it —
+            # a CRLF .env leaves a trailing "\r" that is an illegal HTTP header value and kills
+            # web_search with "Invalid header value" (observed live: the planner lost search and
+            # spun gather→force→re-gather with no plan).
+            search_key = os.environ.get(cfg.planner.search_api_key_env or "", "").strip()
             # The coder runs on the STREAMING-guarded path so its reasoning is watched live: a
             # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
             # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
