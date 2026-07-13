@@ -1,17 +1,66 @@
 """Tool-menu curation + cheat-sheet — the one Context-shaping move that is cria's
 job (the rest — compaction, trim, window — is delegated to the harness).
 
-A weak model does better when the reliable tools are named up front with terse
-usage. cria injects a short cheat-sheet as a system message on the OUTBOUND request
-to the model — it is not part of the harness's conversation, so it doesn't
-accumulate and needs no stripping; cria re-adds it each turn. Only tools the harness
-actually advertises (plus write_file, which cria advertises) are described.
+Two curation moves, both on the OUTBOUND request to the model:
+
+1. FOCUS the menu (``focus_tools``) — a weak model loses attention on a big tool
+   list, so cria drops everything that isn't a coding essential and keeps ~10 tools
+   (ports codex-local's ``ToolSubset::Focused`` / ``LIGHT_CODER_TOOL_NAMES``). The
+   full Codex menu is ~120 (its default Apps/Connectors catalog); a 9B does far
+   better with the shell/exec + file + read + web tools and none of the goal /
+   MCP-discovery / connector firehose.
+2. CHEAT-SHEET (``add_cheatsheet``) — name the kept tools up front with terse usage;
+   it's a system message, not part of the harness conversation, so it doesn't
+   accumulate and cria re-adds it each turn.
 """
 
 from __future__ import annotations
 
 from . import prompts
-from .shelltool import find_shell_tool
+from .shelltool import SHELL_TOOL_NAMES, find_shell_tool
+
+# The curated coder menu — the coding essentials a small local model actually needs
+# (ports codex-local LIGHT_CODER_TOOL_NAMES + its synthetic read/write/edit tools). The
+# shell/exec tool is matched by FAMILY (SHELL_TOOL_NAMES) so this stays harness-agnostic.
+# Everything NOT here is dropped: goal management (create_goal/get_goal/update_goal), MCP
+# discovery (list_mcp_resources/…), ask-the-user (request_user_input), connector/app tools,
+# and Codex's deferred-tool search (tool_search/tool_suggest).
+FOCUS_TOOL_NAMES = frozenset({
+    "write_stdin",                                    # exec_command's PTY companion
+    "apply_patch", "write_file", "edit_file", "read_file",
+    "list_dir", "view_image", "update_plan",
+    "web_search", "local_web_search", "web_fetch",
+    "request_permissions",
+})
+
+
+def _tool_name(t) -> str | None:
+    return (((t.get("function") or t) if isinstance(t, dict) else {}) or {}).get("name")
+
+
+def focus_tools(body: dict, rlog=None) -> None:
+    """Curate the model's tool menu to the coding essentials, dropping the rest — in place.
+
+    Ports codex-local's ``ToolSubset::Focused``: keep the shell/exec tool (by family, so it's
+    harness-agnostic) plus FOCUS_TOOL_NAMES; drop goal/MCP/connector/ask-the-user tools that
+    only distract a small model (and let it wander off — e.g. spawning a rogue ``create_goal``).
+    No-op when there are no tools. NEVER curates to empty: if nothing coding-essential survives
+    (a degenerate harness), the original menu is left untouched rather than leaving the model
+    tool-less."""
+    tools = body.get("tools")
+    if not tools:
+        return
+    kept, dropped = [], []
+    for t in tools:
+        nm = _tool_name(t)
+        if nm in FOCUS_TOOL_NAMES or nm in SHELL_TOOL_NAMES:
+            kept.append(t)
+        else:
+            dropped.append(nm)
+    if dropped and kept:  # leaving zero tools would break the model — keep the firehose instead
+        body["tools"] = kept
+        if rlog is not None:
+            rlog.emit("toolmenu.focused", kept=len(kept), dropped=len(dropped), names=dropped)
 
 
 def cheatsheet(tools) -> str | None:

@@ -28,7 +28,7 @@ from .indicators import Indicator, inject_buffered, strip_history, wrap_stream
 from .loop import Loop, LoopContext, LoopStore, completion_to_sse, session_key
 from .planner import Planner
 from .routing import Router
-from .toolmenu import add_cheatsheet
+from .toolmenu import add_cheatsheet, focus_tools
 from .upstream import Upstream, UpstreamError
 from .writeproxy import TranslationStore, advertise, needs_translation, represent_inbound, translate_outbound
 
@@ -204,7 +204,11 @@ class CriaHandler(BaseHTTPRequestHandler):
             body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, self._session_key, rlog)
             advertise(body, rlog)
 
-        # Tool cheat-sheet: a terse per-tool usage note for the model (context-shaping).
+        # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the
+        # goal/MCP/connector firehose) — after advertise so cria's write_file survives.
+        if self.server.cfg.tools.focus:
+            focus_tools(body, rlog)
+        # Tool cheat-sheet: a terse per-tool usage note for the (now curated) tools.
         if self.server.cfg.tools.cheatsheet:
             add_cheatsheet(body, rlog)
 
@@ -393,6 +397,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._session_key = sess_key
             body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, sess_key, rlog)
             advertise(body, rlog)
+        if self.server.cfg.tools.focus:
+            focus_tools(body, rlog)
         if self.server.cfg.tools.cheatsheet:
             add_cheatsheet(body, rlog)
 

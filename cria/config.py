@@ -213,10 +213,12 @@ class IndicatorsConfig:
 
 @dataclass(frozen=True)
 class ToolsConfig:
-    """Tool-menu shaping cria does for the model. ``cheatsheet`` injects a terse
-    per-tool usage note as a system message on the request to the model."""
+    """Tool-menu shaping cria does for the model. ``focus`` curates the menu down to the
+    coding essentials (drops the goal/MCP/connector firehose — see toolmenu.focus_tools);
+    ``cheatsheet`` injects a terse per-tool usage note as a system message on the request."""
 
     cheatsheet: bool = True
+    focus: bool = True  # curate the tool menu to coding essentials (ToolSubset::Focused port)
 
 
 @dataclass(frozen=True)
@@ -265,7 +267,10 @@ class Config:
             logging=_logging(data.get("logging", {})),
             routing=_routing(data),
             indicators=_indicators(data.get("indicators", {})),
-            tools=ToolsConfig(cheatsheet=bool(data.get("tools", {}).get("cheatsheet", True))),
+            tools=ToolsConfig(
+                cheatsheet=bool(data.get("tools", {}).get("cheatsheet", True)),
+                focus=bool(data.get("tools", {}).get("focus", True)),
+            ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),
                 search_api_key_env=(
