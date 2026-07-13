@@ -1,9 +1,10 @@
 """cria configuration — loaded from a TOML file via the stdlib ``tomllib``.
 
-Only the sections cria needs *today* are parsed (``[server]``, ``[upstream]``,
-``[logging]``); routing / model / role config arrives in phase 2 and will slot in
-as new sections. Unknown sections are ignored on purpose, so the file can carry
-forward-looking config without breaking an older build.
+All of cria's config sections are parsed here: ``[server]``, ``[upstream]``,
+``[logging]``, ``[indicators]``, ``[tools]``, ``[engagement]``, ``[planner]``, and
+the full routing layer (``[routing]`` with ``[models.local.*]`` / ``[models.cloud.*]``,
+``[providers.*]``, and ``[failover]``). Unknown sections are ignored on purpose, so
+the file can carry forward-looking config without breaking an older build.
 
 **No secrets live in this file.** Anything sensitive (e.g. a web-search API key)
 comes from the environment, not config — that is deliberate: the Rust vehicle kept
@@ -41,8 +42,9 @@ class ServerConfig:
 class UpstreamConfig:
     """The OpenAI-compatible model server cria proxies to (llama.cpp today).
 
-    cria appends ``/v1/chat/completions`` to ``base_url``. In phase 1 the request's
-    own ``model`` field is forwarded untouched; phase-2 routing will override it.
+    cria appends ``/v1/chat/completions`` to ``base_url``. The routing layer picks the
+    model per request (per-role alias); with routing unconfigured the request's own
+    ``model`` field is forwarded untouched.
     """
 
     base_url: str = "http://127.0.0.1:18084"
@@ -224,8 +226,9 @@ class ToolsConfig:
 @dataclass(frozen=True)
 class PlannerConfig:
     """The reasoned planner. Runs on a fresh coding task when a ``reasoner`` model
-    is configured; drafts the plan (phase 6 persists it to ``.cria/<id>.md`` via
-    the HARNESS's own file tools — cria never touches the workspace filesystem).
+    is configured; drafts the plan. The loop drives execution from the plan in memory
+    and mirrors it to cria's OWN dir (``~/.cria/plans/<id>.md`` via ``Loop._persist_plan``),
+    never into the workspace — cria does not touch the workspace filesystem.
 
     The planner GATHERS before it plans: it is given READ-ONLY tools (inspect the
     workspace, read files, fetch docs, search the web) and runs a bounded loop until

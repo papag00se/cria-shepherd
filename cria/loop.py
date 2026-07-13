@@ -32,7 +32,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, massage, probegate, proberun, prompts
+from . import callcapture, indicators, massage, probegate, proberun, prompts
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -1070,8 +1070,8 @@ class Loop:
         unverified = [(i + 1, it) for i, it in enumerate(items) if it.done and it.note != "verified"]
         brief_block = f"\n\n{BRIEFING_OPEN}\n{briefing}\n{BRIEFING_CLOSE}" if briefing else ""
         if not unverified:
-            return f"⟦cria⟧ plan complete — all {total} steps verified.{brief_block}".strip()
-        lines = [f"⟦cria⟧ plan finished, but {len(unverified)} of {total} steps did NOT pass verification:"]
+            return f"{indicators.MARKER}plan complete — all {total} steps verified.{brief_block}".strip()
+        lines = [f"{indicators.MARKER}plan finished, but {len(unverified)} of {total} steps did NOT pass verification:"]
         for n, it in unverified:
             why = f" — {it.fail_reason}" if it.fail_reason else ""
             lines.append(f"  ⚠ step {n}: {it.text}{why}")
@@ -1200,9 +1200,9 @@ def _work_log(messages: list[dict], limit: int = 6000) -> str:
 def _strip_cria_banners(text: str) -> str:
     """Drop cria's own `⟦cria⟧ …` status lines from a text blob — so the coder can't parrot
     them and they never reach the critic (via pending_coder_text) as 'the coder's summary'."""
-    if not text or "⟦cria⟧" not in text:
+    if not text or indicators.SENTINEL not in text:
         return text
-    return "\n".join(ln for ln in text.splitlines() if "⟦cria⟧" not in ln).strip()
+    return "\n".join(ln for ln in text.splitlines() if indicators.SENTINEL not in ln).strip()
 
 
 def _strip_completion_banners(completion: dict) -> None:
@@ -1215,16 +1215,18 @@ def _strip_completion_banners(completion: dict) -> None:
 
 
 def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
-    """Hide cria's OWN artifacts from the coder: its plan-file writes (`mkdir -p .cria && …
-    > .cria/<id>.md`) AND its `⟦cria⟧` status banners. Otherwise the coder writes its
-    deliverables into `.cria/`, and — worse — PARROTS the banners back, which then land in
-    the critic as 'the coder's summary'."""
+    """Hide cria's OWN artifacts from the coder: any `.cria/` plan-file writes (`mkdir -p .cria &&
+    … > .cria/<id>.md`) AND its `⟦cria⟧` status banners. cria no longer EMITS `.cria/` writes — the
+    plan mirror moved to cria's own dir with the no-workspace-pollution fix — but a resumed or
+    compacted conversation can still carry historical ones in its replayed history, so the scrub
+    stays. The banner scrub is always needed too, else the coder PARROTS the banners back and they
+    land in the critic as 'the coder's summary'."""
     hidden: set = set()
     out: list[dict] = []
     for m in messages:
         role = m.get("role")
         content = m.get("content")
-        if role == "assistant" and isinstance(content, str) and "⟦cria⟧" in content:
+        if role == "assistant" and isinstance(content, str) and indicators.SENTINEL in content:
             content = _strip_cria_banners(content)  # scrub cria's own banner lines
             m = {**m, "content": content}
         if role == "assistant" and m.get("tool_calls"):
@@ -1232,7 +1234,7 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
             for tc in m["tool_calls"]:
                 a = (tc.get("function") or {}).get("arguments") or ""
                 a = a if isinstance(a, str) else json.dumps(a)
-                if "mkdir -p .cria &&" in a:  # cria's file-op signature
+                if "mkdir -p .cria &&" in a:  # cria's historical file-op signature
                     hidden.add(tc.get("id"))
                 else:
                     kept.append(tc)
@@ -1310,7 +1312,7 @@ def _item_prompt(item: str, summary: str, idx: int, total: int) -> str:
 
 
 def _completion_toolcalls(tool_calls: list[dict], *, note: str | None = None) -> dict:
-    content = f"⟦cria⟧ {note}" if note else None
+    content = f"{indicators.MARKER}{note}" if note else None
     return {
         "object": "chat.completion",
         "choices": [

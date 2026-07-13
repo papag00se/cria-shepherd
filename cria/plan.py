@@ -101,11 +101,6 @@ class Plan:
         )
 
 
-def plan_path(plan_id: str) -> str:
-    """The workspace-relative path the harness writes/reads this plan at."""
-    return f".cria/{plan_id}.md"
-
-
 def _oneline(s: str, cap: int = 500) -> str:
     return " ".join(s.split())[:cap]
 

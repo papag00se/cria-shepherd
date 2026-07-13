@@ -21,7 +21,12 @@ from typing import Iterator
 
 # Distinctive enough that a model is extremely unlikely to emit it (so the inbound
 # strip never eats real output), and visible so the human knows it's a cria note.
-MARKER = "⟦cria⟧ "
+# SENTINEL is the bare token for substring/line matching (a parroted or empty banner may
+# lack the trailing space); MARKER == SENTINEL + " " is the prefix every emitted line uses.
+# Everything that emits or strips a cria line references these — never a bare literal — so the
+# emit/strip contract can't silently diverge if the token ever changes.
+SENTINEL = "⟦cria⟧"
+MARKER = SENTINEL + " "
 
 # Below this many streamed content deltas, a tok/s figure is noise (e.g. the Claude
 # provider fake-streams one big chunk) — so the metrics line is suppressed.

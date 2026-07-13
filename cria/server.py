@@ -24,7 +24,7 @@ from .content_reduce import est_tokens
 from .config import Config
 from .events import EventLog
 from .heartbeat import Heartbeat
-from .indicators import Indicator, inject_buffered, strip_history, wrap_stream
+from .indicators import MARKER, Indicator, inject_buffered, strip_history, wrap_stream
 from .loop import Loop, LoopContext, LoopStore, completion_to_sse, session_key
 from .planner import Planner
 from .routing import Router
@@ -491,7 +491,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                     shown, role = _indic.model, (_indic.role or "local")
                 else:  # plan-loop path carries no indicator
                     shown, role = (lm.get("coder") or lm.get("classifier") or "local"), "coder"
-                banner = f"⟦cria⟧ {role} · {shown}"
+                banner = f"{MARKER}{role} · {shown}"
                 tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
                 if tps:
                     banner += f" · {tps:.0f} tok/s"

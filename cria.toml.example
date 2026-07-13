@@ -15,8 +15,8 @@ heartbeat_seconds = 5 # SSE keepalive during dead time (classify/plan/verify); 0
 
 # --- the model server cria proxies to ----------------------------------------
 # The OpenAI-compatible upstream (llama.cpp today). cria appends
-# /v1/chat/completions. In phase 1 the request's own `model` is forwarded as-is;
-# phase-2 routing will pick the model per request instead.
+# /v1/chat/completions. Routing picks the model per request (per-role alias); with
+# routing unconfigured the request's own `model` is forwarded as-is.
 [upstream]
 base_url = "http://127.0.0.1:18084"
 timeout_seconds = 600
@@ -30,6 +30,11 @@ level = "info"        # debug | info | warn | error
 dir = "~/.cria/logs"
 console = true
 jsonl = true
+# Per-call capture (debugging aid, verbose — off by default): write the EXACT body of every model
+# call, plus the chat-template-rendered prompt, to <capture_dir>/<timestamp>-<session>/NNNN-<phase>.
+capture_calls = false
+capture_dir = "~/.cria/calls"
+capture_rendered = true   # also capture the rendered prompt string (local server only)
 
 # --- cria's messaging into the completion (which model, tok/s, later: assists) ---
 # cria decorates the response with its own status lines and strips them from the
@@ -41,6 +46,7 @@ metrics = true        # the trailing "N tok · X tok/s" line on streamed respons
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]
 cheatsheet = true     # inject a terse per-tool usage note (system message) for the model
+focus = true          # curate the tool menu down to coding essentials (drop non-coding connectors)
 
 # --- the reasoned planner ------------------------------------------------------
 [planner]
@@ -64,7 +70,8 @@ local_only = true          # the research posture: cloud roles become unresolvab
 # Per-role local models (codex-local style). Each block gives the `model` alias served
 # by [upstream] plus the sampling + reasoning cria attaches to EVERY request for that
 # role — applied PER REQUEST, so a change is a cria restart, never a model reload.
-# Keys: model (required) · reasoning ("on"/"off"/"auto") · temperature · top_p · top_k ·
+# Keys: model (required) · reasoning ("on" | "off" | "auto" = leave to the server default —
+#   cria injects no enable_thinking toggle and no think-suppression prefill) · temperature · top_p · top_k ·
 #   repeat_penalty · min_p · max_tokens · output_reserve.  (`temp` aliases temperature.)
 # max_tokens vs output_reserve are SEPARATE, on purpose: max_tokens is the HARD output cap
 #   (leave UNSET on file-writing roles so a big write_file finishes instead of truncating mid-

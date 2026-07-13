@@ -1,6 +1,6 @@
 import unittest
 
-from cria.plan import Plan, PlanItem, plan_path
+from cria.plan import Plan, PlanItem
 
 
 def _plan() -> Plan:
@@ -47,12 +47,6 @@ class PlanFormatTests(unittest.TestCase):
         for it in p.items:
             it.done = True
         self.assertIsNone(p.current())
-
-
-class PlanPathTests(unittest.TestCase):
-    def test_workspace_relative_path(self):
-        # cria never writes this — it's the path the HARNESS writes/reads it at.
-        self.assertEqual(plan_path("20260707T004512-3f9a1c2b"), ".cria/20260707T004512-3f9a1c2b.md")
 
 
 if __name__ == "__main__":
