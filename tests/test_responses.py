@@ -102,12 +102,33 @@ class ToResponsesSseTests(unittest.TestCase):
         # the response id is threaded through
         self.assertIn("resp_x", json.loads(body[-1].decode().split("data: ", 1)[1])["response"]["id"])
 
-    def test_banner_prepends_a_visible_cria_line(self):
+    def test_banner_folds_into_the_content_item(self):
+        # The banner rides INSIDE the content item — never its own message item, which the
+        # harness would store and re-summarize (it once became an entire compaction summary).
         comp = {"choices": [{"message": {"role": "assistant", "content": "the answer"}}]}
         events = _sse_events(responses.to_responses_sse(comp, "m", banner="⟦cria⟧ coder · fabliq"))
         out = events[-1]["response"]["output"]
-        self.assertEqual(out[0]["content"][0]["text"], "⟦cria⟧ coder · fabliq")  # banner first
-        self.assertEqual(out[1]["content"][0]["text"], "the answer")  # then the real answer
+        msg_items = [o for o in out if o.get("type") == "message"]
+        self.assertEqual(len(msg_items), 1)  # ONE item, not banner + content
+        self.assertEqual(msg_items[0]["content"][0]["text"], "⟦cria⟧ coder · fabliq\nthe answer")
+
+    def test_banner_dropped_on_empty_completion(self):
+        # No content to ride on → the banner is not emitted at all (no standalone item that
+        # reads as a finished answer or gets summarized into a fake handoff).
+        comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+        events = _sse_events(responses.to_responses_sse(comp, "m", banner="⟦cria⟧ reasoner · m · 9 tok/s"))
+        out = events[-1]["response"]["output"]
+        self.assertEqual([o for o in out if o.get("type") == "message"], [])
+
+    def test_banner_dropped_on_tool_call_only_turn(self):
+        # a tool-call turn carries no visible text — no standalone banner item
+        comp = {"choices": [{"message": {"role": "assistant", "content": None,
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"}}]}}]}
+        events = _sse_events(responses.to_responses_sse(comp, "m", banner="⟦cria⟧ coder · m"))
+        out = events[-1]["response"]["output"]
+        self.assertEqual([o for o in out if o.get("type") == "message"], [])
+        self.assertEqual(len([o for o in out if o.get("type") == "function_call"]), 1)
 
     def test_session_key_from_prompt_cache_key(self):
         self.assertEqual(responses.session_key_of({"prompt_cache_key": "abc"}), "abc")

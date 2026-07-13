@@ -95,23 +95,31 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
         yield from chunks
         return
 
+    # Hold the route/note lines and flush them only just before the FIRST real content delta —
+    # so a content-less stream (a tool-call-only or empty turn) never emits a standalone banner
+    # that the harness stores and re-summarizes. Flushed inline, the banner rides the content and
+    # is stripped inbound with it.
+    pending = []
     if indic.show_route:
-        yield content_chunk(indic.model, route_line(indic) + "\n")
+        pending.append(route_line(indic) + "\n")
     if indic.note:
-        yield content_chunk(indic.model, MARKER + indic.note + "\n")
+        pending.append(MARKER + indic.note + "\n")
 
     t_first: float | None = None
     deltas = 0
     for raw in chunks:
         if raw.strip() == b"data: [DONE]":
-            if indic.metrics and deltas >= _MIN_DELTAS_FOR_RATE and t_first is not None:
+            # metrics only when we actually emitted content (pending was flushed)
+            if indic.metrics and deltas >= _MIN_DELTAS_FOR_RATE and t_first is not None and not pending:
                 dt = time.monotonic() - t_first
                 if dt > 0:
-                    # leading newline so it lands on its own line after the model text
                     yield content_chunk(indic.model, "\n" + metrics_line(deltas, round(deltas / dt, 1)))
             yield raw
         else:
             if _is_content_delta(raw):
+                for h in pending:  # flush the banner inline, ahead of the first content token
+                    yield content_chunk(indic.model, h)
+                pending = []
                 if t_first is None:
                     t_first = time.monotonic()
                 deltas += 1
@@ -135,9 +143,14 @@ def inject_buffered(raw: bytes, indic: Indicator) -> bytes:
         msg = obj["choices"][0]["message"]
     except (json.JSONDecodeError, KeyError, IndexError, TypeError):
         return raw
-    header = "\n".join(header_lines)
     existing = msg.get("content") or ""
-    msg["content"] = f"{header}\n\n{existing}" if existing else header
+    if not existing.strip():
+        # No content to decorate — DON'T let the status header become the whole "response".
+        # A header-only completion is summarized/handed off as if it were real content (it once
+        # became an entire compaction summary) and reads as a finished answer to the harness.
+        return raw
+    header = "\n".join(header_lines)
+    msg["content"] = f"{header}\n\n{existing}"
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
 

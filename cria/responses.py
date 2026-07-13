@@ -196,12 +196,17 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     out_items: list[dict] = []
     idx = 0
 
-    if banner:  # a visible "⟦cria⟧ …" line so the user can SEE cria in the loop
-        evs, done = _message_item(banner, idx); out_items.append(done); idx += 1
-        yield from evs
+    # The "⟦cria⟧ …" banner is FOLDED INTO the content item — never its own message item.
+    # A standalone banner item is a text assistant turn the harness stores, re-summarizes on
+    # compaction (it once became the ENTIRE handoff summary), and reads as "the agent answered".
+    # Riding inside the content, it's stripped inbound with the rest and can't stand alone; with
+    # no content to ride on (a tool-call-only or empty turn) the banner is simply dropped.
     content = msg.get("content")
-    if isinstance(content, str) and content:
-        evs, done = _message_item(content, idx); out_items.append(done); idx += 1
+    text = content if (isinstance(content, str) and content) else None
+    if banner and text:
+        text = f"{banner}\n{text}"
+    if text:
+        evs, done = _message_item(text, idx); out_items.append(done); idx += 1
         yield from evs
     for tc in msg.get("tool_calls") or []:
         evs, done = _function_item(tc, idx); out_items.append(done); idx += 1

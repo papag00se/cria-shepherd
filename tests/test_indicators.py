@@ -104,6 +104,14 @@ class BufferedTests(unittest.TestCase):
         raw = json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
         self.assertEqual(inject_buffered(raw, _indic(enabled=False)), raw)
 
+    def test_empty_content_gets_no_banner(self):
+        # a header-only completion becomes a fake "response" — it once became an entire
+        # compaction handoff summary. Empty content stays empty.
+        for empty in ("", "   ", None):
+            raw = json.dumps({"choices": [{"message": {"role": "assistant", "content": empty}}]}).encode()
+            out = json.loads(inject_buffered(raw, _indic()))
+            self.assertEqual((out["choices"][0]["message"].get("content") or "").strip(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
