@@ -77,3 +77,29 @@ class ClassifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TitleAuxTests(unittest.TestCase):
+    def test_title_request_is_detected(self):
+        from cria.classify import is_title_request
+        title = ("You are a helpful assistant. You will be presented with a user prompt, and your "
+                 "job is to provide a short title for a task that will be created from that prompt. "
+                 "Generate a concise UI title (up to 36 characters). Fill the structured title field.")
+        self.assertTrue(is_title_request(title))
+        self.assertFalse(is_title_request("write a Python Lambda handler that resolves an Ada handle"))
+
+    def test_title_request_routes_to_question_not_task(self):
+        # even though the title prompt EMBEDS a coding task, it must not be planned
+        import json
+        title = ("provide a short title for a task. the task: build a Python Lambda with tests and a README")
+        class _P:
+            def chat(self, body, rlog):
+                raise AssertionError("classifier LLM must NOT be called for a title aux request")
+        class _R:
+            def __init__(self): self.events=[]
+            def emit(self,k,**kw): self.events.append((k,kw))
+            def decide(self,*a,**k): pass
+        c = Classifier(_P(), "m")
+        got = c.classify([{"role":"user","content":title}], _R())
+        self.assertEqual(got.engagement, "question")   # -> proxy, never the plan loop
+

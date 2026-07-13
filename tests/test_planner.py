@@ -206,7 +206,7 @@ class GatherLoopTests(unittest.TestCase):
         ])
         rlog = _Rlog()
         self.assertIsNone(Planner(prov, "m", search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), rlog))
-        retries = [kw for k, kw in rlog.events if k == "plan.force_retry"]
+        retries = [kw for k, kw in rlog.events if k == "plan.final_retry"]
         self.assertTrue(retries)
         self.assertIn("CreateNewProject", str(retries[0].get("called")))  # the leak is in the record
         self.assertIn("plan.retriable", [k for k, _ in rlog.events])       # retriable, not cached

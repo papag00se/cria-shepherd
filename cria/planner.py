@@ -26,10 +26,11 @@ from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 
 _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
-_FORCE_PLAN = "You've gathered enough. Stop investigating and output ONLY the numbered plan now."
-# Forced-plan retries IN PLACE (gather kept): the model is offered a submit_plan tool each time
-# and its call is read; a couple of retries cover a stray call to something else.
-_MAX_FORCE_RETRIES = 3
+# When the gather runs to the round cap without the model submitting, offer submit_plan as its
+# ONLY tool and read the call — retried in place a couple of times if it calls something else.
+# (No "you've gathered enough, stop investigating" prose — that message was useless and jarring;
+# the tool constraint is the whole instruction.)
+_MAX_FINAL_RETRIES = 3
 # The plan-submission tool. gemma-fable is hardwired to emit tool CALLS, so instead of asking for
 # plain text (which it answers with a hallucinated `call:CreateNewProject{…}`), hand it ONE tool
 # that IS the plan and read the steps from the call.
@@ -185,12 +186,16 @@ class Planner:
         scratch = tempfile.mkdtemp(prefix="cria-gather-")
         try:
             for _round in range(self._max_rounds):
-                msg = self._reason(messages, rlog, tools=True)
+                msg = self._reason(messages, rlog, gather=True)  # gather tools + submit_plan
                 if msg is None:
                     return None
                 calls = _tool_calls(msg)
                 if not calls:  # no tool call → the content IS the plan
                     return self._parse(msg, rlog)
+                steps = _steps_from_submit(msg)  # the model ended the gather by SUBMITTING its plan
+                if steps:
+                    rlog.emit("plan.submitted", steps=len(steps))
+                    return steps[:_MAX_STEPS]
                 sig = _calls_signature(calls)
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
                 # one `tool` result per call. NOT flattened to prose (the parroting trap).
@@ -214,35 +219,33 @@ class Planner:
                     rlog.emit("plan.gather", tool=name)
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result})
             rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
-            return self._forced_plan(messages, rlog)
+            return self._final_plan(messages, rlog)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def _forced_plan(self, messages: list[dict], rlog) -> list[str] | None:
-        """Stop gathering, get the plan. This model (gemma-fable) is hardwired to emit TOOL CALLS
-        — asked for plain text it answers with `call:Bash{…}`/`call:thought{…}` no matter what —
-        so cria works WITH that: it offers a single `submit_plan(steps)` tool and reads the steps
-        from the call. RETRY IN PLACE (the gather stays in ``messages``) rather than discarding it
-        and re-gathering next turn (the amnesia loop) if the model calls something else."""
-        convo = messages + [{"role": "user", "content": _FORCE_PLAN}]
-        for attempt in range(_MAX_FORCE_RETRIES):
-            msg = self._reason(convo, rlog, tools=False, plan_tool=True)
+    def _final_plan(self, messages: list[dict], rlog) -> list[str] | None:
+        """The gather hit the round cap without the model submitting. Offer ONLY submit_plan (the
+        gather tools are gone), so its one move is to hand over the plan — no prose telling it to
+        stop. RETRY IN PLACE (the gather stays in ``messages``) if it calls something else, rather
+        than discarding it and re-gathering next turn (the amnesia loop)."""
+        for attempt in range(_MAX_FINAL_RETRIES):
+            msg = self._reason(messages, rlog, plan_only=True)
             if msg is None:
                 self._retriable_failure = True  # transport/model error, not an unplannable task
                 return None
             steps = _steps_from_submit(msg) or self._parse(msg, rlog)  # the tool call, else any text
             if steps:
                 if attempt:
-                    rlog.emit("plan.forced_recovered", attempt=attempt + 1)
+                    rlog.emit("plan.final_recovered", attempt=attempt + 1)
                 return steps[:_MAX_STEPS]
             # Called something OTHER than submit_plan (e.g. a hallucinated `CreateNewProject`) →
-            # retry, gather intact. Log WHAT it called so the record shows it (not just "no plan").
+            # retry. Log WHAT it called so the record shows it (not just "no plan").
             leaked = [((tc.get("function") or {}).get("name")) for tc in (msg.get("tool_calls") or [])]
-            rlog.emit("plan.force_retry", attempt=attempt + 1, called=leaked or "(no tool call)")
+            rlog.emit("plan.final_retry", attempt=attempt + 1, called=leaked or "(no tool call)")
         self._retriable_failure = True  # still no plan after retries — retriable, never poison-cache
         return None
 
-    def _reason(self, messages: list[dict], rlog, *, tools: bool, plan_tool: bool = False) -> dict | None:
+    def _reason(self, messages: list[dict], rlog, *, gather: bool = False, plan_only: bool = False) -> dict | None:
         body: dict = {
             "model": self._model,
             "stream": False,
@@ -254,9 +257,9 @@ class Planner:
         }
         if self._role is not None:
             self._role.apply(body)
-        if tools:
-            body["tools"] = planner_tools.PLANNER_TOOLS
-        elif plan_tool:
+        if gather:  # investigate OR submit — the model ends the gather by submitting, not by force
+            body["tools"] = planner_tools.PLANNER_TOOLS + [_SUBMIT_PLAN_TOOL]
+        elif plan_only:
             body["tools"] = [_SUBMIT_PLAN_TOOL]  # the ONLY move: submit the plan as a tool call
         try:
             rlog.phase = "planner"

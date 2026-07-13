@@ -51,6 +51,13 @@ class Classifier:
 
     def classify(self, messages: list[dict], rlog) -> Classification:
         task = latest_user_text(messages)
+        if is_title_request(task):
+            # Codex's UI title-generation aux request EMBEDS the real task ("provide a short title
+            # for a task… <the coding task>"), so the LLM classifier mistakes it for a coding task
+            # and cria plans it — the title instruction then leaks into every planner prompt.
+            # Route it to a plain answer (proxy), never the plan loop.
+            rlog.emit("route.classify", aux="title", engagement="question")
+            return Classification("question", "question", "Codex title-generation aux request")
         key = _task_key(task)
         with self._lock:
             hit = self._cache.get(key)
@@ -110,6 +117,18 @@ class Classifier:
 
 
 # ------------------------------------------------------------------ helpers
+
+
+# Codex's fixed UI title-generation instruction (a harness aux prompt, not user content nor model
+# output — stable text, safe to match). It embeds the real task, so it must be recognized BEFORE
+# the LLM classifier is fooled into calling it a coding task.
+_TITLE_MARKERS = ("provide a short title for a task", "generate a concise ui title",
+                  "structured title field")
+
+
+def is_title_request(task: str) -> bool:
+    t = (task or "").lower()
+    return any(m in t for m in _TITLE_MARKERS)
 
 
 def latest_user_text(messages: list[dict]) -> str:
