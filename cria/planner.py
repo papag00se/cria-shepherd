@@ -56,7 +56,7 @@ def _steps_from_submit(msg: dict) -> list[str] | None:
             args = {}
         steps = args.get("steps") if isinstance(args, dict) else None
         if isinstance(steps, list):
-            out = [str(s).strip() for s in steps if str(s).strip()]
+            out = [c for s in steps if (c := _clean_step(s))]  # a step that ran into the dialect is trimmed
             if out:
                 return out
     return None
@@ -70,6 +70,22 @@ _MAX_STEPS = 12
 # A numbered ("1." / "1)") or bulleted ("-" / "*" / "•") list line → its text.
 _LIST_LINE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.+\S)")
 
+# A leaked dialect marker (gemma-fable / harmony): a step is ONE action, so anything from the
+# first marker on is the model failing to stop after the plan (a thought channel, another tool
+# call) — observed live bleeding into a submit_plan step, dirtying the whole plan mirror.
+_DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|think)[|/]*>|<\|\"\|>")
+
+
+def _clean_step(text: str) -> str:
+    """Trim a plan step to its action: cut at the first leaked dialect marker and drop the JSON /
+    array junk (``',]}`` etc.) that bleeds in when the model runs past the plan."""
+    s = str(text)
+    m = _DIALECT_MARKER.search(s)
+    if m:
+        s = s[:m.start()]
+    s = re.sub(r"[\s'\"\],}]+$", "", s)  # trailing quote/comma/bracket/brace junk
+    return s.strip()
+
 
 def parse_steps(text: str) -> list[str] | None:
     """Extract plan steps, accepting EITHER a numbered/bulleted list (the prompt's ask,
@@ -78,10 +94,10 @@ def parse_steps(text: str) -> list[str] | None:
     body = strip_think(text)
     obj = extract_json_object(body)
     if obj and isinstance(obj.get("steps"), list):
-        steps = [str(s).strip() for s in obj["steps"] if str(s).strip()]
+        steps = [c for s in obj["steps"] if (c := _clean_step(s))]
         if steps:
             return steps[:_MAX_STEPS]
-    steps = [m.group(1).strip() for line in body.splitlines() if (m := _LIST_LINE.match(line))]
+    steps = [c for line in body.splitlines() if (m := _LIST_LINE.match(line)) and (c := _clean_step(m.group(1)))]
     return steps[:_MAX_STEPS] or None
 
 

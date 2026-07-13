@@ -1,4 +1,5 @@
 import json
+import json as _json
 import unittest
 from datetime import datetime, timezone
 
@@ -261,3 +262,27 @@ class GemmaLeakRecoveryTests(unittest.TestCase):
         calls_before = prov.calls
         self.assertIsNone(p.plan_for(_msgs("task y"), _Rlog()))
         self.assertEqual(prov.calls, calls_before)       # cached — no re-call
+
+
+class StepCleaningTests(unittest.TestCase):
+    """A step must be one clean action — leaked dialect the model emitted by running PAST the
+    plan (a <|channel>thought, another call:web_search) must not bleed into it (observed live:
+    a dirty submit_plan step dirtied the whole plan mirror)."""
+
+    def test_dialect_and_json_junk_stripped_from_step(self):
+        from cria.planner import _clean_step
+        dirty = ("Implement tests against the real API\n',]}<tool_call|><|channel>thought\n"
+                 "I'm planning...<channel|><|tool_call>call:web_search{query:")
+        self.assertEqual(_clean_step(dirty), "Implement tests against the real API")
+
+    def test_submit_plan_steps_are_cleaned(self):
+        from cria.planner import _steps_from_submit
+        msg = {"tool_calls": [{"function": {"name": "submit_plan", "arguments":
+            _json.dumps({"steps": ["Do a clean thing",
+                                   "Do another\n']}<tool_call|><|channel>thought\nnoise"]})}}]}
+        self.assertEqual(_steps_from_submit(msg), ["Do a clean thing", "Do another"])
+
+    def test_clean_step_leaves_normal_text_alone(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Write the README with usage."), "Write the README with usage.")
+
