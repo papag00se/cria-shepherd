@@ -15,7 +15,7 @@ from tempfile import TemporaryDirectory
 
 from cria.config import Config, IndicatorsConfig, LoggingConfig, ServerConfig, UpstreamConfig
 from cria.events import EventLog
-from cria.server import CriaServer, _has_visible_output, _proxy_body
+from cria.server import CriaServer, _direct_coder_body, _has_visible_output, _proxy_body
 from cria.upstream import Upstream
 
 
@@ -36,6 +36,25 @@ class ProxyBodyTests(unittest.TestCase):
     def test_noop_when_no_harness_system(self):
         body = {"messages": [{"role": "user", "content": "hi"}]}
         self.assertIs(_proxy_body(body), body)  # same object → no needless copy
+
+
+class DirectCoderBodyTests(unittest.TestCase):
+    """Planner-bypass ([planner] enabled = false) frames the coder with cria's OWN coder system
+    prompt in place of the dropped harness one — a fair 'coder without a planner', not a bare relay."""
+
+    def test_drops_harness_system_and_leads_with_coder_prompt(self):
+        from cria import prompts
+        body = {"tools": [{"x": 1}], "messages": [
+            {"role": "system", "content": "You are Codex..."},
+            {"role": "developer", "content": "boilerplate"},
+            {"role": "user", "content": "port the lambda"},
+        ]}
+        out = _direct_coder_body(body)
+        self.assertEqual(out["messages"][0]["role"], "system")
+        self.assertEqual(out["messages"][0]["content"], prompts.load("coder_system"))
+        self.assertEqual([m["role"] for m in out["messages"][1:]], ["user"])  # harness system+dev gone
+        self.assertEqual(out["tools"], body["tools"])
+        self.assertEqual(body["messages"][0]["content"], "You are Codex...")  # input not mutated
 
 
 class HasVisibleOutputTests(unittest.TestCase):

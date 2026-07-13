@@ -18,7 +18,7 @@ import os
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import massage, responses, rumination
+from . import massage, prompts, responses, rumination
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -67,6 +67,15 @@ def _proxy_body(body: dict) -> dict:
     if len(kept) == len(msgs):
         return body  # nothing to strip → same object
     return {**body, "messages": kept}
+
+
+def _direct_coder_body(body: dict) -> dict:
+    """Planner-bypass framing ([planner] enabled = false): drop the harness system prompt and LEAD
+    with cria's own coder system prompt (prompts/coder_system.txt) — the SAME guidance the plan
+    loop gives the coder, minus the plan. So turning planning off is a fair 'coder without a
+    planner' (like codex-local drives it), not a bare passthrough with no coding-agent framing."""
+    msgs = [m for m in (body.get("messages") or []) if m.get("role") not in ("system", "developer")]
+    return {**body, "messages": [{"role": "system", "content": prompts.load("coder_system")}] + msgs}
 
 
 class CriaServer(ThreadingHTTPServer):
@@ -346,7 +355,14 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
         rlog.phase = "proxy"
-        raw = provider.chat(_proxy_body(body), rlog)
+        # Planner OFF ([planner] enabled = false) + a coding task → frame the coder directly (its
+        # own system prompt, no plan) so it's a fair "coder without a planner", not a bare relay.
+        if (not server.cfg.planner.enabled and classification is not None
+                and classification.task_type == "coding"):
+            rlog.emit("route.direct_coder")
+            raw = provider.chat(_direct_coder_body(body), rlog)
+        else:
+            raw = provider.chat(_proxy_body(body), rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError):
