@@ -16,6 +16,29 @@ class ContentReduceTests(unittest.TestCase):
         s = "small output"
         self.assertEqual(content_reduce(s, "text/plain", 1000), s)
 
+    def test_code_output_over_cap_is_not_keyword_stripped(self):
+        # A file read of source code sniffs as unknown/text; the prose stripper would remove bare
+        # `for`/`in`/`is`/`as`/`from`/`with` keywords and hand the model a broken file to edit.
+        code = "\n".join(
+            f"def handler_{n}(items):\n"
+            f"    for item in items:\n"
+            f"        if item is not None and item.kind in KINDS:\n"
+            f"            yield transform(item) from cache with lock"
+            for n in range(40)
+        )
+        out = content_reduce(code, None, cap_tokens=10)  # cap far below size → reduction attempted
+        self.assertEqual(out, code)          # code left byte-intact (not prose → not stripped)
+        self.assertIn("for item in items", out)
+        self.assertIn("is not None", out)
+
+    def test_prose_over_cap_is_still_stripped(self):
+        # Genuine prose must STILL compress — the gate mustn't over-refuse.
+        prose = ("The service resolves an incoming request to the correct handler and returns "
+                 "a response to the caller, with the payload embedded in the body of the message. ") * 8
+        out = content_reduce(prose, None, cap_tokens=10)
+        self.assertLess(len(out), len(prose))
+        self.assertNotIn(" to the ", out)  # a function word was dropped
+
     def test_strips_function_words_keeps_meaning(self):
         s = ("Resolves an Ada Handle to its Cardano address; returns 404 when the handle is "
              "not found, with payment_address in the body.")

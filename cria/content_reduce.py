@@ -35,8 +35,13 @@ def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> s
     if "json" in ct:
         reduced = reduce_json(content, cap_tokens)
         return reduced if reduced is not None else content
-    # text/*, yaml, unknown -> guarded prose strip (only ran because over cap)
-    return strip_prose_text(content)
+    # text/*, yaml, unknown -> guarded prose strip (only ran because over cap). Gate it: the
+    # stripper removes bare keywords (for/in/is/as/from/with), so running it on SOURCE CODE — which
+    # sniffs as "unknown" too — silently corrupts the file the model is about to edit. Strip only
+    # when the blob reads as natural language AND does not read as code.
+    if _looks_like_prose(content) and not _looks_like_code(content):
+        return strip_prose_text(content)
+    return content
 
 
 def reduce_lossless(content: str, content_type: str | None) -> str:
@@ -292,3 +297,23 @@ def _looks_like_prose(s: str) -> bool:
     total = max(len(s), 1)
     proseish = sum(1 for c in s if c.isalpha() or c.isspace())
     return proseish * 100 // total >= 75
+
+
+def _looks_like_code(s: str) -> bool:
+    """Conservative code sniff for the plain-text reduction gate. `_looks_like_prose` alone is
+    fooled by indented source — indentation inflates the whitespace ratio, so a block of Python
+    scores >75% "prose-ish" and the stripper then eats its `for`/`in`/`is`/`as`/`from`/`with`
+    keywords. Uses only STRUCTURAL signals (no per-language keyword list) so it generalizes:
+    (1) a high share of lines ending in a block opener / statement terminator, or (2) a high
+    density of structural symbols among the non-whitespace characters."""
+    lines = [ln for ln in s.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    enders = sum(1 for ln in lines if ln.rstrip().endswith((":", "{", "}", ";")))
+    if enders * 100 // len(lines) >= 40:
+        return True
+    non_space = [c for c in s if not c.isspace()]
+    if not non_space:
+        return False
+    symbols = sum(1 for c in non_space if c in "{}()[]<>=;+*/\\|&%$#@`~")
+    return symbols * 100 // len(non_space) >= 12

@@ -238,16 +238,16 @@ def _cap_descriptions(obj, cap: int):
 
 
 def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
-    """Shrink the largest ``tool`` outputs (bulkiest first) via content_reduce until the
-    transcript fits or nothing bulky remains. Only touches role==tool messages."""
+    """Shrink bulky ``tool`` outputs via content_reduce until the transcript fits or nothing
+    bulky remains. Only touches role==tool messages. OLDEST-first: the tool result the model is
+    acting on THIS turn is the highest-indexed tool message — reducing it truncates the very
+    content the current step depends on, so stale outputs are sacrificed before the freshest one
+    (was largest-first, which reduced the current file read before any old web_fetch dump)."""
     total = _msgs_tokens(messages)
     if total <= msg_budget:
         return messages, 0
-    # index → estimated size, largest first, tool outputs only
-    sized = sorted(
-        ((i, est_tokens(_msg_text(m))) for i, m in enumerate(messages) if m.get("role") == "tool"),
-        key=lambda t: t[1], reverse=True,
-    )
+    # (index, est size), tool outputs only, in conversation order → oldest reduced first.
+    sized = [(i, est_tokens(_msg_text(m))) for i, m in enumerate(messages) if m.get("role") == "tool"]
     out = list(messages)
     reduced = 0
     for i, sz in sized:

@@ -19,6 +19,7 @@ import uuid
 
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
+from .writeproxy import _decode_backslash_escapes
 
 # Aliases a model reaches for that really mean "run a shell command".
 # Command names a model may emit as a TOOL name (instead of calling the shell tool) —
@@ -608,8 +609,8 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None):
         cleaned = msg.get("content") or ""
         if len(cleaned) > emitted:
             yield _sse({"content": cleaned[emitted:]}, model)
-        for tc in msg.get("tool_calls") or []:
-            yield _sse({"tool_calls": [{"index": 0, "id": tc.get("id"), "type": "function", "function": tc["function"]}]}, model)
+        for i, tc in enumerate(msg.get("tool_calls") or []):
+            yield _sse({"tool_calls": [{"index": i, "id": tc.get("id"), "type": "function", "function": tc["function"]}]}, model)
         finish = "tool_calls" if msg.get("tool_calls") else "stop"
     elif len(content) > emitted:
         yield _sse({"content": content[emitted:]}, model)  # the held-back tail
@@ -730,9 +731,12 @@ _HUNK = re.compile(r"^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@(.*)$")
 
 
 def _normalize_patch_body(body: str) -> str:
-    # Doubly-escaped newlines with no real ones → decode (the model escaped them).
+    # Doubly-escaped newlines with no real ones → decode (the model escaped them). Use the SAME
+    # byte-safe char decoder as the write_file path (only \n\t\r\\ and quotes): a `unicode_escape`
+    # round-trip reinterprets UTF-8 as latin-1 → mojibake on any accented/CJK/emoji byte, and
+    # over-decodes every other escape (\t, \\, \uXXXX) in the patch content.
     if "\\n" in body and "\n" not in body:
-        body = body.encode("utf-8").decode("unicode_escape")
+        body = _decode_backslash_escapes(body)
     body = _collapse_wrappers(body)  # one Begin/End around everything, not per-file
     body = _unified_to_native(body)  # `--- a/… / +++ b/…` → `*** Update/Add/Delete File:`
     body = _repair_hunk_headers(body)  # drop the miscounted `@@ -L,N +L,N @@` numbers

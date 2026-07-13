@@ -23,6 +23,12 @@ from . import callcapture, contextfloor, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
+# When the local server's /props can't be read, apply the floor against this conservative
+# window rather than DISABLING it — under-guessing over-trims (safe), over-guessing overflows
+# (the failure the floor exists to prevent). Retry /props up to _MAX_PROPS_ATTEMPTS times first,
+# so a transient miss (GPU busy on the shared box) self-heals before we commit to the fallback.
+_FALLBACK_WINDOW = 8192
+_MAX_PROPS_ATTEMPTS = 3
 # Fail-fast budget for the debug-only /apply-template render (shares the single inference slot).
 _RENDER_TIMEOUT_S = 8
 # Re-run the reasoning watcher (rumination check) only after this many new chars of reasoning, so
@@ -55,8 +61,11 @@ class Upstream:
         # model, not a constant to hand-maintain. None (cloud / undiscoverable) skips the
         # floor: cloud windows are large and /props doesn't exist there.
         self._window = context_window if context_window else _UNSET
+        self._window_final = bool(context_window)  # a configured value is authoritative — no probe
+        self._props_attempts = 0
         if self._api_key and context_window is None:
-            self._window = None  # cloud provider, no override → no floor
+            self._window = None       # cloud provider, no override → no floor
+            self._window_final = True  # …and never probe /props on a cloud endpoint
 
     @property
     def chat_url(self) -> str:
@@ -71,11 +80,14 @@ class Upstream:
         return h
 
     def _resolve_window(self, rlog) -> int | None:
-        """The loaded model's context window (n_ctx), discovered once from /props and
-        cached. Returns None if it can't be discovered (then the floor is skipped)."""
-        if self._window is not _UNSET:
+        """The loaded model's context window (n_ctx), discovered from the local server's /props.
+        A configured value or a cloud endpoint is authoritative (no probe). On a LOCAL endpoint
+        whose /props can't be read, fall back to a conservative default so the floor STILL runs —
+        a transient miss (GPU busy) must NEVER silently disable the fit guarantee for the life of
+        the process — and keep retrying on later calls until the attempt budget is spent."""
+        if self._window_final:
             return self._window
-        self._window = None  # default to "no floor" unless discovery succeeds
+        self._props_attempts += 1
         try:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -83,9 +95,18 @@ class Upstream:
             n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
             if isinstance(n_ctx, int) and n_ctx > 0:
                 self._window = n_ctx
+                self._window_final = True
                 rlog.emit("context.window", source="props", n_ctx=n_ctx)
+                return self._window
+            rlog.emit("context.window", level="info", source="props", error="no n_ctx in /props")
         except (urllib.error.URLError, ValueError, KeyError, OSError) as e:
             rlog.emit("context.window", level="info", source="props", error=str(e))
+        # Discovery missed this attempt: keep the floor ALIVE on a safe fallback (never cache
+        # None = "no floor"), and retry next call until the attempt budget commits the fallback.
+        self._window = _FALLBACK_WINDOW
+        if self._props_attempts >= _MAX_PROPS_ATTEMPTS:
+            self._window_final = True
+            rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW)
         return self._window
 
     def _prep(self, body: dict, stream: bool, rlog) -> tuple[bytes, int, str | None]:

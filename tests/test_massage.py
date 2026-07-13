@@ -86,6 +86,16 @@ class ApplyPatchTests(unittest.TestCase):
         self.assertIn("\n", got)
         self.assertNotIn("\\n", got)
 
+    def test_double_escaped_patch_preserves_non_ascii(self):
+        # The literal-\n decode must be byte-safe: a `unicode_escape` round-trip mojibakes any
+        # non-ASCII byte (é → Ã©, em-dash → garbage). Char-level decode leaves them intact.
+        patch = "*** Begin Patch\\n*** Update File: h.py\\n-cafe\\n+café — draft\\n*** End Patch"
+        c = normalize_apply_patch(_completion(tool_calls=[_tc("apply_patch", json.dumps({"input": patch}))]))
+        got = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])["input"]
+        self.assertIn("\n", got)
+        self.assertIn("café", got)  # é preserved (pre-fix: mojibake)
+        self.assertIn("—", got)     # em-dash preserved
+
     def test_adds_envelope(self):
         c = normalize_apply_patch(_completion(tool_calls=[_tc("apply_patch", json.dumps({"input": "*** Update File: h.py\n+x"}))]))
         got = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])["input"]
@@ -164,6 +174,17 @@ class StreamMassageTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["function"]["name"], "read_file")
         self.assertNotIn("<tool_call>", text)
+
+    def test_multiple_leaked_calls_get_distinct_indices(self):
+        # two Hermes calls leaked as content: each streamed tool_call delta must carry a
+        # DISTINCT index. OpenAI clients reassemble tool_calls BY index — two at index 0
+        # merge into one corrupt call (names/ids overwrite, args concatenate to bad JSON).
+        leaked = ('<tool_call>{"name": "read_file", "arguments": {"path": "a.py"}}</tool_call>'
+                  '<tool_call>{"name": "read_file", "arguments": {"path": "b.py"}}</tool_call>')
+        stream = [_sse({"role": "assistant"}), _sse({"content": leaked}), _sse({}), b"data: [DONE]\n\n"]
+        _text, calls = self._assemble(massage_stream(iter(stream), "m", tools=None))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([c["index"] for c in calls], [0, 1])
 
 
 class EditFileTests(unittest.TestCase):

@@ -103,6 +103,25 @@ class TestFits(unittest.TestCase):
         reduced = [m for m in out if m.get("role") == "tool"][0]["content"]
         self.assertLess(est_tokens(reduced), before)
 
+    def test_reduction_spares_the_freshest_tool_output(self):
+        # Two reducible tool outputs; the budget only needs ONE reduced to fit. The freshest one
+        # (highest index) is the file the current step edits — it must be spared, so the STALE one
+        # is reduced. Pre-fix reduction ran largest-first and (fresh being larger) gutted it.
+        dense = "the item is in the list and it is on the page with the note for the row of the set " * 40
+        fresh = "This sentence describes the current file contents that the model edits. " * 60
+        self.assertGreater(est_tokens(fresh), est_tokens(dense))  # fresh is the LARGER of the two
+        msgs = [
+            _a("", [{"id": "c1", "function": {"name": "web_fetch", "arguments": "{}"}}]),
+            _tool("c1", dense),   # OLDER tool output
+            _a("", [{"id": "c2", "function": {"name": "read_file", "arguments": "{}"}}]),
+            _tool("c2", fresh),   # FRESHEST — the file the current step depends on
+        ]
+        out, reduced = contextfloor._reduce_tool_outputs(msgs, 1700)
+        self.assertGreaterEqual(reduced, 1)
+        tool_msgs = [m for m in out if m.get("role") == "tool"]
+        self.assertEqual(tool_msgs[-1]["content"], fresh)  # freshest byte-intact
+        self.assertLess(est_tokens(tool_msgs[0]["content"]), est_tokens(dense))  # stale shrank
+
     def test_orphan_tool_result_removed_when_assistant_dropped(self):
         msgs = [
             _a("Y" * 12000, [{"id": "c1", "function": {"name": "n", "arguments": "{}"}}]),

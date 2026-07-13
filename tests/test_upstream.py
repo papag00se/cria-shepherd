@@ -1,9 +1,32 @@
 import json
 import unittest
+import urllib.error
 from unittest import mock
 
 from cria import rumination
-from cria.upstream import Upstream, _accumulate_tool_deltas, _assemble_completion
+from cria.upstream import (
+    _FALLBACK_WINDOW,
+    _MAX_PROPS_ATTEMPTS,
+    Upstream,
+    _accumulate_tool_deltas,
+    _assemble_completion,
+)
+
+
+class _PropsResp:
+    """A urlopen context-manager result for a /props GET."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode()
 
 
 class _Rlog:
@@ -61,6 +84,42 @@ class ToolAssemblyTests(unittest.TestCase):
         c = _assemble_completion("m", ["thinking..."], ["reasoning"], {}, None, None, {"hits": 7, "reasoning_tokens": 5000})
         self.assertEqual(c["choices"][0]["finish_reason"], "rumination")
         self.assertEqual(c["cria_rumination"], {"hits": 7, "reasoning_tokens": 5000})
+
+
+class WindowResolutionTests(unittest.TestCase):
+    """Invariant: a LOCAL upstream ALWAYS ends up with a usable window — the floor is never
+    silently disabled by a transient /props miss (pre-fix, one failure cached None forever)."""
+
+    def test_transient_props_failure_keeps_floor_alive_then_heals(self):
+        up = Upstream("http://x")  # local, no context_window → must discover
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=urllib.error.URLError("busy")):
+            w = up._resolve_window(rlog)
+        self.assertEqual(w, _FALLBACK_WINDOW)   # floor stays alive on the fallback…
+        self.assertIsNotNone(w)                 # …never None (the pre-fix regression)
+        self.assertFalse(up._window_final)      # still provisional → will retry
+        # a later call, /props back up → real window replaces the fallback
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        return_value=_PropsResp({"default_generation_settings": {"n_ctx": 16384}})):
+            w2 = up._resolve_window(rlog)
+        self.assertEqual(w2, 16384)
+        self.assertTrue(up._window_final)
+
+    def test_persistent_props_failure_commits_fallback_never_none(self):
+        up = Upstream("http://x")
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
+            for _ in range(_MAX_PROPS_ATTEMPTS + 2):
+                w = up._resolve_window(rlog)
+                self.assertEqual(w, _FALLBACK_WINDOW)
+                self.assertIsNotNone(w)
+        self.assertTrue(up._window_final)  # attempt budget spent → stop probing, keep the floor
+
+    def test_cloud_endpoint_never_probes_and_skips_floor(self):
+        up = Upstream("http://x", api_key="sk-test")  # cloud → no floor, no /props
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=AssertionError("must not probe")):
+            self.assertIsNone(up._resolve_window(rlog))
 
 
 class ChatWatchedTests(unittest.TestCase):
