@@ -217,3 +217,63 @@ block with exact file:line, critic digest, `loop.gate` truth capture,
   yet wired into any stuck-loop intervention (cria has no coder action-loop
   detectors yet — see the repeat-guards inventory). — **Trigger:** the
   Repetition/Thrash detector port.
+
+---
+
+## Audit-lens findings (2026-07-13) — deferred, LOW severity
+
+A four-lens audit (prompt integrity / wire fidelity / context-budget math / hygiene)
+landed 11 fixes across three commits. These remaining findings were rated LOW and are
+recorded here so they aren't silently dropped. Each has its trigger.
+
+### Context-budget edges (the estimator is stdlib chars/4, no tokenizer)
+- **Image / base64 content parts are token-invisible to the floor estimator**
+  (`contextfloor._msg_text` reads only text/content keys of a content-part list). A
+  large `data:` image blob contributes 0 to the estimate → a request built around it
+  can overflow. — **Trigger:** a multimodal local model actually fed images.
+- **CJK / multibyte underestimated on the FIRST request**: `est_tokens = len//4`
+  counts code points; CJK tokenizes ~1 token/char, and the learned ratio (capped at
+  `tokenratio.MAX_RATIO=3.5`) can't cover ~4× before calibration exists. — **Trigger:**
+  a CJK-dense first turn overflowing; add a script-density weight to `est_tokens`.
+- **A giant CURRENT user paste is neither reduced nor droppable** → guaranteed
+  overflow (`content_reduce` only touches `role==tool`; the last user message is
+  protected from dropping). — **Trigger:** a real task whose single ask exceeds the
+  window; allow last-resort reduction of an oversized non-tool message.
+- **No shed-tools lever**: if the bare tool schema (names/params/enums, all
+  descriptions already dropped) alone exceeds budget, the request is surfaced as
+  over-budget with no lever to drop whole tools. Surfaced, not silent. — **Trigger:** a
+  connector set whose bare schema overflows a small window.
+
+### Wire fidelity (all Codex-insulated; the Responses adapter rebuilds its own shapes)
+- **`wrap_stream` emits the `⟦cria⟧ tok/s` content delta AFTER the `finish_reason`
+  chunk** (`indicators.py` on `[DONE]`). Nonstandard: a choice is complete once
+  `finish_reason` is set. — **Trigger:** a strict SSE reassembler dropping/erroring on
+  post-finish content; emit it before the finish chunk or as a usage-style trailer.
+- **`writeproxy._repair_double_escaped` rewrites a legit single-line file** whose
+  content has a literal `\n` and no real newline (a one-line JSON/regex/.env value) →
+  its `\n` becomes a real newline. Bounded to the no-real-newline-anywhere case. —
+  **Trigger:** a genuine single-line-with-literal-\n write observed; gate on a stronger
+  signal (multiple `\n`, a shebang/`{` lead).
+- **`responses.to_chat_body` mints independent ids** for a `function_call` item that
+  lacks both `call_id` and `id`, so it no longer correlates with its
+  `function_call_output`. Only triggers if a client omits `call_id` (Codex always
+  sends it). — **Trigger:** a non-Codex Responses client that omits `call_id`.
+
+### Prompt wording (model-facing; left for the operator's judgment)
+- **`step_framing.txt` editorializes** "This plan … may contain mistakes; verify
+  before moving on." For a small model this invites second-guessing the very step
+  cria is trying to get executed (the rumination guard then has to fight it). —
+  **Trigger:** operator decides to de-editorialize; keep the "verify after you change"
+  half, drop the "may contain mistakes" invitation.
+- **`plan.txt` may emit a step telling the CODER to "search the web"**, but the coder
+  in loop mode has no web tool (web/search is planner-only). — **Trigger:** the planner
+  INVESTIGATE-phase port (already deferred above), which folds discovered facts into
+  concrete steps instead of deferring the lookup to the coder.
+
+### Upstream twin (spec source-of-truth on this machine)
+- **`content_reduce`'s ungated plain-text prose-strip** (fixed in cria this pass:
+  `cria/content_reduce.py` now gates on prose AND a structural code sniff) mirrors
+  `codex-local/codex-rs/routing/src/content_reduce.rs:39`, which still strips
+  unconditionally and whose `looks_like_prose` is the same 75%-alpha-or-space test that
+  misreads indented code. — **Trigger:** decide whether to sync the guard upstream to
+  keep the port and the research vehicle aligned.
