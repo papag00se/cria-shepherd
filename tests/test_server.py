@@ -187,6 +187,24 @@ class PassthroughTests(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/health", timeout=10) as r:
             self.assertEqual(json.loads(r.read())["status"], "ok")
 
+    def _post_responses(self, body: dict) -> bytes:
+        req = urllib.request.Request(
+            self.base + "/v1/responses", data=json.dumps(body).encode(), method="POST",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.read()
+
+    def test_responses_path_strips_cria_banner_from_history(self):
+        # The Responses API path (what Codex speaks) must strip cria's own "⟦cria⟧" lines
+        # inbound, same as the chat path — else the banner leaks into the compaction summary
+        # and the plan task (observed live).
+        from cria.indicators import MARKER
+        body = {"model": "m", "input": [{"type": "message", "role": "user", "content": [
+            {"type": "input_text",
+             "text": f"summarize the thread\n{MARKER}reasoner · m · 7 tok/s\nthe real summary"}]}]}
+        self._post_responses(body)
+        self.assertIn("indicators.stripped", [e["kind"] for e in self._events()])
+
 
 class RoutedTests(unittest.TestCase):
     """cria WITH routing config: classify → route → rewrite model → proxy."""

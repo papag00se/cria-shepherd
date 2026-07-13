@@ -395,6 +395,17 @@ class CriaHandler(BaseHTTPRequestHandler):
         body = responses.to_chat_body(rbody)
         sess_key = f"sid:{sess}" if sess else session_key(None, body.get("messages", []))
 
+        # INBOUND STRIP (mirrors the chat path): remove cria's own "⟦cria⟧" indicator lines
+        # from the history before anything re-reads them — the classifier, the plan's rewrite
+        # summary, the model. Without it the banner leaked into the compaction summary and the
+        # plan task on this (the Responses) path, which Codex speaks.
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            cleaned, stripped = strip_history(messages)
+            if stripped:
+                body["messages"] = cleaned
+                rlog.emit("indicators.stripped", lines=stripped)
+
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
         self._shell_tool = needs_translation(body.get("tools"))
         self._session_key = None
