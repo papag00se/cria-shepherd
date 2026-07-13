@@ -285,6 +285,20 @@ class CompactionTests(unittest.TestCase):
         self.assertIn("BUILT the handler", closing)                                # …content included
         self.assertTrue(store.shape_done("sid:k"))                                 # only the one-bit marker server-side
 
+    def test_drive_stamps_wire_envelope_on_completions(self):
+        from cria.loop import Loop, LoopStore
+        store = LoopStore()
+        coder = _Scripted([_toolcall(), _done()])
+        reasoner = _Scripted([_verdict(True), _summary("done")])
+        loop = Loop(_ctx(coder, reasoner, _plan(1)), store)
+        c1 = loop.drive(_body(), "sid:k", _Classification(), _Rlog())
+        self.assertIsNotNone(c1)
+        self.assertTrue(c1["id"].startswith("chatcmpl-"))  # non-Codex chat clients need a full envelope
+        self.assertIsInstance(c1["created"], int)
+        self.assertIn("model", c1)
+        chunks = b"".join(completion_to_sse(c1))
+        self.assertIn(c1["id"].encode(), chunks)           # id propagates into the SSE chunks
+
     def test_work_log_strips_cria_ops_keeps_real_actions(self):
         from cria.loop import _work_log
         msgs = [

@@ -122,6 +122,16 @@ class TestFits(unittest.TestCase):
         self.assertEqual(tool_msgs[-1]["content"], fresh)  # freshest byte-intact
         self.assertLess(est_tokens(tool_msgs[0]["content"]), est_tokens(dense))  # stale shrank
 
+    def test_oversized_reserve_is_clamped_not_zeroing_prompt(self):
+        # A harness sending max_tokens >= window drives reserve >= window (reserve_for falls back to
+        # max_tokens) → prompt budget <= 0, everything trimmed to the floor and STILL over budget.
+        # The clamp keeps real room for the prompt so a tiny conversation just fits.
+        msgs = [{"role": "system", "content": "sys"}, _u("do the thing"), _a("ok")]
+        out, _tools, rep = contextfloor.fit(msgs, None, window=8192, reserve=999999, safety=1.0)
+        self.assertLessEqual(rep.reserve, 8192 - 1)   # reserve bounded below the window
+        self.assertFalse(rep.over_budget)             # pre-fix: doomed/over-budget despite fitting
+        self.assertEqual([m.get("content") for m in out], ["sys", "do the thing", "ok"])  # intact
+
     def test_orphan_tool_result_removed_when_assistant_dropped(self):
         msgs = [
             _a("Y" * 12000, [{"id": "c1", "function": {"name": "n", "arguments": "{}"}}]),

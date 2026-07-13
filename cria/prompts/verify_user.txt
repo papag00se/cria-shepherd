@@ -4,5 +4,5 @@
 # `\n` in a value becomes a real newline. Format is `key = value`, one per line.
 step = STEP: {{STEP}}
 evidence = WHAT THE CODER'S TOOLS RETURNED (real ground truth):\n{{EVIDENCE}}
-probe = SYNTAX CHECK: {{PROBE}}
+probe = GROUND-TRUTH CHECKS (lint · type-check · tests · git): {{PROBE}}
 summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n{{CODER_SUMMARY}}

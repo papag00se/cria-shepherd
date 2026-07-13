@@ -26,6 +26,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -354,6 +355,13 @@ class Loop:
         with self._session_lock(session_key):
             out = self._drive_locked(body, session_key, classification, rlog)
             self._store.persist(session_key)  # durable plan progress → restarts RESUME, not re-plan
+            if out is not None:
+                # The loop's synthesized completions carry only object+choices; a plain
+                # /v1/chat/completions client (non-Codex) needs a well-formed envelope. Codex's
+                # Responses adapter rebuilds its own, so this is for the direct chat clients.
+                out.setdefault("id", f"chatcmpl-{uuid.uuid4().hex}")
+                out.setdefault("created", int(time.time()))
+                out.setdefault("model", body.get("model") or "")
             return out
 
     def _drive_locked(self, body: dict, session_key: str, classification, rlog) -> dict | None:
@@ -1677,9 +1685,12 @@ def completion_to_sse(completion: dict):
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     model = completion.get("model", "")
+    cid = completion.get("id", "")
+    created = completion.get("created", 0)
 
     def chunk(delta: dict, finish=None) -> bytes:
-        payload = {"object": "chat.completion.chunk", "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+        payload = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+                   "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
         return b"data: " + json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n\n"
 
     yield chunk({"role": "assistant"})

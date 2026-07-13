@@ -152,6 +152,12 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         return messages, tools, rep
 
     safety = max(1.0, safety)
+    # A reserve at/above the window zeroes (or negates) the prompt budget → the whole conversation
+    # gets trimmed to the floor and STILL reports over budget. Bound it so at least MIN_MSG_BUDGET of
+    # real window is left for the prompt (a harness may send max_tokens ≥ window, and reserve_for
+    # falls back to max_tokens). Reflect the effective reserve in the report.
+    reserve = max(0, min(reserve, window - MIN_MSG_BUDGET))
+    rep.reserve = reserve
     # Budget in ESTIMATE space: real ≈ est × safety must fit window − reserve.
     target_est = int((window - reserve) / safety)
     rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0
