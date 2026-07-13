@@ -6,6 +6,7 @@ without touching the real model server on :18084 (single-slot).
 
 import json
 import threading
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -36,6 +37,37 @@ class ProxyBodyTests(unittest.TestCase):
     def test_noop_when_no_harness_system(self):
         body = {"messages": [{"role": "user", "content": "hi"}]}
         self.assertIs(_proxy_body(body), body)  # same object → no needless copy
+
+
+class ApplyRouteRoleTests(unittest.TestCase):
+    """The proxy path must attach the routed local role's sampling/reasoning — else a local model
+    runs on server defaults (no repeat_penalty → gemma dialect leaks; wrong temp). This was the
+    'not the same Gemma 4' bug: role was applied only in the loop, never on the proxy path."""
+
+    def _handler(self, roles):
+        from cria.server import CriaHandler
+        h = CriaHandler.__new__(CriaHandler)  # bare instance, no socket
+        h.server = types.SimpleNamespace(cfg=types.SimpleNamespace(
+            routing=types.SimpleNamespace(local_roles=roles)))
+        return h
+
+    def test_applies_the_indicated_role(self):
+        from cria.config import LocalRole
+        coder = LocalRole(model="gemma", reasoning="on", temperature=0.0, top_p=0.95,
+                          top_k=64, repeat_penalty=1.1)
+        h = self._handler({"coder": coder})
+        indic = types.SimpleNamespace(role="coder")
+        body = {"messages": [{"role": "user", "content": "x"}]}
+        h._apply_route_role(body, indic)
+        self.assertEqual(body["temperature"], 0.0)
+        self.assertEqual(body["repeat_penalty"], 1.1)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": True})
+
+    def test_noop_on_passthrough_role_none(self):
+        h = self._handler({"coder": object()})
+        body = {"messages": []}
+        h._apply_route_role(body, types.SimpleNamespace(role=None))
+        self.assertNotIn("temperature", body)  # passthrough → untouched
 
 
 class DirectCoderBodyTests(unittest.TestCase):

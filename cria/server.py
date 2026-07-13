@@ -278,6 +278,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             ic.enabled, ic.metrics, model=route.model, role=route.role, show_route=not classification.cached
         )
 
+    def _apply_route_role(self, pbody: dict, indic) -> dict:
+        """Attach the routed local role's sampling + reasoning (temp/top_p/top_k/repeat_penalty/
+        enable_thinking) to a proxy-path body, in place. WITHOUT this a local model on the proxy
+        path runs on llama.cpp's defaults — no repeat_penalty (gemma4 then leaks
+        `<|tool_call>`/`<|channel>` tokens), wrong temperature, no reasoning toggle — i.e. NOT the
+        model the toml configures. The plan loop applies the role per call (loop.py); the proxy and
+        direct-coder paths must do the same, or the same model behaves like a different one."""
+        role = self.server.cfg.routing.local_roles.get(indic.role) if getattr(indic, "role", None) else None
+        if role is not None:
+            role.apply(pbody)
+        return pbody
+
     def _respond_stream(self, body: dict, rlog) -> None:
         """Stream the response as SSE, with a heartbeat covering the dead time before
         the first real byte (classify / plan / coder / verify / upstream prefill)."""
@@ -324,7 +336,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
             stream = massage.massage_stream(
-                provider.stream_chat(_proxy_body(body), rlog),
+                provider.stream_chat(self._apply_route_role(_proxy_body(body), indic), rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
@@ -360,9 +372,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         if (not server.cfg.planner.enabled and classification is not None
                 and classification.task_type == "coding"):
             rlog.emit("route.direct_coder")
-            raw = provider.chat(_direct_coder_body(body), rlog)
+            pbody = _direct_coder_body(body)
         else:
-            raw = provider.chat(_proxy_body(body), rlog)
+            pbody = _proxy_body(body)
+        raw = provider.chat(self._apply_route_role(pbody, indic), rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError):
