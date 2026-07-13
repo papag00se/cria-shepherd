@@ -83,6 +83,35 @@ def apply(completion: dict, tools=None, rlog=None) -> dict:
     return completion
 
 
+def coerce_text_answer(completion: dict, rlog=None) -> dict:
+    """A TEXT answer was expected — the request offered no tools (a compaction/summary, a reasoner
+    or critic call, a plain question) — but the model answered with a TOOL CALL instead: a native
+    one, or a dialect leak already promoted to ``tool_calls`` by ``recover_leaked_tool_calls``.
+    A tool call can't be the answer here, so recover the text: drop the spurious tool_calls and,
+    if that leaves no content, promote the model's reasoning — where the answer was actually
+    drafted (observed live: a gemma4 compaction reasoned out a full summary, then emitted a
+    hallucinated ``<|tool_call>call:Gemma4__Try{…}`` as its 'answer', losing the summary). Dialect-
+    agnostic and idempotent — it keys off 'has a tool call but no text', not any one syntax."""
+    for choice in completion.get("choices", []):
+        msg = choice.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        has_text = isinstance(content, str) and content.strip()
+        if has_text and not msg.get("tool_calls"):
+            continue  # already a clean text answer
+        if msg.get("tool_calls"):
+            msg["tool_calls"] = None  # spurious: nothing was there to call
+        if not has_text:
+            reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+            if isinstance(reasoning, str) and reasoning.strip():
+                msg["content"] = reasoning.strip()
+                _log(rlog, "massage.text_from_reasoning", chars=len(reasoning.strip()))
+        if choice.get("finish_reason") == "tool_calls":
+            choice["finish_reason"] = "stop"
+    return completion
+
+
 def lower_edit_file(completion: dict, tools=None, rlog=None) -> dict:
     """Rewrite an `edit_file`/`str_replace` find-replace as a native `apply_patch`
     Update hunk (old lines `-`, new lines `+`) — so an edit is escaping-proof too.

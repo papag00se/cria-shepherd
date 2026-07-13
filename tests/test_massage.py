@@ -2,6 +2,7 @@ import json
 import unittest
 
 from cria.massage import (
+    coerce_text_answer,
     add_file_to_write_file,
     apply,
     is_truncated,
@@ -347,3 +348,47 @@ class GemmaDialectTests(unittest.TestCase):
         calls, _ = _extract_gemma("<|tool_call>call:t{x:1.5,y:2}<tool_call|>")
         args = json.loads(calls[0]["function"]["arguments"])
         self.assertEqual(args, {"x": "1.5", "y": 2})     # i64-only bare parsing, preserved
+
+
+class CoerceTextAnswerTests(unittest.TestCase):
+    """A text-expected call (no tools offered) whose model answered with a TOOL CALL must be
+    recovered to text — dialect-agnostic. Motivating incident: a gemma4 compaction reasoned out
+    a full summary, then emitted a hallucinated `<|tool_call>call:Gemma4__Try{…}` and lost it."""
+
+    def test_gemma_dialect_answer_recovers_the_reasoning_summary(self):
+        comp = {"choices": [{"finish_reason": "stop", "message": {"role": "assistant",
+            "content": "<|tool_call>call:Gemma4__Try{max_tokens:200,temperature:0.15}<tool_call|>",
+            "reasoning_content": "Summary: built the handler, added tests, migrated the error path."}}]}
+        out = coerce_text_answer(apply(comp, None))          # None tools = compaction/reasoner call
+        msg = out["choices"][0]["message"]
+        self.assertIsNone(msg.get("tool_calls"))
+        self.assertIn("built the handler", msg["content"])
+        self.assertNotIn("Gemma4__Try", msg["content"])
+        self.assertEqual(out["choices"][0]["finish_reason"], "stop")
+
+    def test_native_tool_call_without_text_recovers_reasoning(self):
+        # dialect-agnostic: a NATIVE tool_calls answer on a no-tools call is equally spurious
+        comp = {"choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant",
+            "content": None, "reasoning_content": "The answer is 42.",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "whatever", "arguments": "{}"}}]}}]}
+        out = coerce_text_answer(apply(comp, None))
+        msg = out["choices"][0]["message"]
+        self.assertIsNone(msg.get("tool_calls"))
+        self.assertEqual(msg["content"], "The answer is 42.")
+
+    def test_real_text_answer_is_untouched(self):
+        comp = {"choices": [{"message": {"role": "assistant", "content": "a real summary"}}]}
+        out = coerce_text_answer(apply(comp, None))
+        self.assertEqual(out["choices"][0]["message"]["content"], "a real summary")
+
+    def test_tool_call_preserved_when_tools_offered(self):
+        # with tools available, a tool call IS a valid answer — never coerced
+        comp = {"choices": [{"message": {"role": "assistant", "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}}]}
+        out = apply(comp, [{"type": "function", "function": {"name": "shell"}}])
+        self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
+
+    def test_empty_with_no_reasoning_stays_empty(self):
+        comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+        out = coerce_text_answer(apply(comp, None))
+        self.assertEqual((out["choices"][0]["message"].get("content") or ""), "")

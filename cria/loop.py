@@ -1044,7 +1044,11 @@ class Loop:
             call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
             rlog.phase = "compactor" + ("-noreason" if reasoning_off else "")
-            text = _completion_text(_parse_completion(self._ctx.reasoner_chat(call, rlog)))
+            comp = _parse_completion(self._ctx.reasoner_chat(call, rlog))
+            # This call offered no tools — recover a dialect/tool-call "answer" back to text: the
+            # leak becomes tool_calls, then coerce drops them and promotes the reasoning summary.
+            comp = massage.coerce_text_answer(massage.apply(comp, None, rlog), rlog)
+            text = _completion_text(comp)
             if role is not None:
                 text = role.clean_content(text)
             return _strip_cria_banners(text).strip()

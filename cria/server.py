@@ -348,6 +348,11 @@ class CriaHandler(BaseHTTPRequestHandler):
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError):
             return {}, indic
+        if not body.get("tools"):
+            # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
+            # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
+            # or dialect-only "answer" recovers the summary from the model's reasoning.
+            comp = massage.coerce_text_answer(comp, rlog)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
