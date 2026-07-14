@@ -283,13 +283,16 @@ harness AGENTS/env preamble is re-presented in cria's clean voice. Residual:
   menu-derived hint already stays honest (it names `edit_file` only when the harness
   offers it). — **Trigger:** decide on a safe lowering (base64 old/new via a portable
   one-liner, or gate on harness apply_patch) and inject it.
-- **The guards were wired onto the BUFFERED path** (`_produce_completion`, which the
-  Codex/Responses API uses — the captured runaway). A plain `/v1/chat/completions`
-  STREAMING client with the planner off + a coding task still proxies via
-  `_produce_stream` with no direct-coder branch and no guards. — **Trigger:** a
-  streaming (non-Responses) harness driving coding tasks with the planner off; add the
-  direct-coder+guards branch to `_produce_stream` (rumination watches in-flight; a
-  streamed turn can't post-hoc truncation-retry without buffering).
+- **The guards are wired onto the BUFFERED path** (`_produce_completion`, which the
+  Codex/Responses API uses — the captured runaway). As of the guard refactor this now
+  includes the FULL shared suite: rumination + truncation AND the cross-turn
+  repetition/wheel-spin → ground-truth-probe → steer round-trip (via the per-session
+  GuardStore, same implementation the loop uses). A plain `/v1/chat/completions`
+  STREAMING client with the planner off still proxies via `_produce_stream` with no
+  direct-coder branch and no guards. — **Trigger:** a streaming (non-Responses) harness
+  driving coding tasks with the planner off; add the direct-coder+guards branch to
+  `_produce_stream` (rumination watches in-flight; a streamed turn can't post-hoc
+  truncation-retry without buffering).
 - **Reframed project instructions stay a USER message** (clean, but trimmable), not
   promoted to the protected system message the way codex-local pins `user_instructions`.
   — **Trigger:** observed loss of AGENTS.md rules to floor-trimming on a long
