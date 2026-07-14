@@ -1680,7 +1680,8 @@ class FrameForItemTests(unittest.TestCase):
         ]
         framed = _frame_for_item(msgs, "Create handler.py with resolve_handle()", "", 1, 7)
         blob = json.dumps(framed)
-        self.assertIn("environment_context", blob)          # env context KEPT
+        self.assertIn("cwd: /repo", blob)                   # env context KEPT — reframed to cria's clean voice
+        self.assertNotIn("<environment_context>", blob)     # …no longer the raw harness tags
         self.assertIn("Do ONLY this step", blob)            # step framing present
         self.assertIn("Create handler.py", blob)            # the step is the task
         self.assertNotIn("README", blob)                    # full task (later steps) GONE
@@ -1706,7 +1707,8 @@ class FrameForItemTests(unittest.TestCase):
         blob = json.dumps(framed)
         self.assertNotIn("Codex CLI", blob)                 # harness agent prompt GONE
         self.assertNotIn("harness boilerplate", blob)       # developer boilerplate GONE
-        self.assertIn("AGENTS.md", blob)                    # the USER's own instructions KEPT
+        self.assertNotIn("<INSTRUCTIONS>", blob)            # the raw harness tags GONE (reframed)
+        self.assertIn("Project instructions", blob)         # the USER's own instructions KEPT — cria's voice
         self.assertIn("my project rules", blob)             # (kept in full)
         self.assertIn("Create handler.py", blob)            # the step
         self.assertNotIn("Build the whole feature", blob)   # the raw task was replaced by the step
@@ -1762,3 +1764,33 @@ class SharedGuardTests(unittest.TestCase):
         out = guard_truncation(clean, {"messages": [], "tools": None}, coder_chat, _Rlog())
         self.assertEqual(calls, [])  # not truncated → no retry, no coder call
         self.assertEqual(out["choices"][0]["message"]["content"], "done")
+
+
+class ReframePreambleTests(unittest.TestCase):
+    """The harness env-context/instructions preamble is re-presented in cria's own clean voice
+    (ports codex-local extract_project_instructions), not forwarded as a raw foreign-tag collage."""
+
+    _BLOB = ("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n# AGENTS\nNo band-aids.\r\n</INSTRUCTIONS>"
+             "<environment_context>\n  <cwd>/w/site</cwd>\n  <shell>bash</shell>\n"
+             "  <current_date>2026-07-13</current_date>\n"
+             "  <permission_profile type=\"disabled\"/>\n</environment_context>")
+
+    def test_unwraps_instructions_and_env_dropping_noise(self):
+        from cria.loop import reframe_preamble
+        out = reframe_preamble({"role": "user", "content": self._BLOB})["content"]
+        self.assertIn("No band-aids.", out)          # the real instructions survive
+        self.assertIn("cwd: /w/site", out)           # the useful env fields survive
+        self.assertNotIn("<INSTRUCTIONS>", out)      # foreign tags gone
+        self.assertNotIn("permission_profile", out)  # sandbox/permission noise dropped
+        self.assertNotIn("\r", out)                  # CRLF normalized
+
+    def test_leaves_the_task_message_untouched(self):
+        from cria.loop import reframe_preamble
+        task = {"role": "user", "content": "port the lambda handler"}
+        self.assertEqual(reframe_preamble(task), task)  # not a preamble → unchanged
+
+    def test_keeps_raw_when_nothing_extractable(self):
+        from cria.loop import reframe_preamble
+        # matches the env-context signal but has no extractable tag bodies → don't lose it
+        m = {"role": "user", "content": "<environment_context></environment_context>"}
+        self.assertEqual(reframe_preamble(m), m)

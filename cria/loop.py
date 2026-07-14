@@ -1198,6 +1198,58 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
     return out
 
 
+def reframe_preamble(m: dict) -> dict:
+    """Re-present a harness env-context/instructions preamble in cria's OWN clean voice instead
+    of forwarding it raw (ports codex-local's extract_project_instructions). A harness like Codex
+    prepends a `# AGENTS.md instructions <INSTRUCTIONS>…</INSTRUCTIONS><environment_context>…`
+    blob — foreign tags, CRLF, sandbox/permission plumbing — which a small model reads as a
+    patchwork of another voice (and parrots). Unwrap the real content: the project instructions
+    and just the useful environment fields (cwd/shell/date), dropping the XML and the sandbox
+    noise. Only touches a recognized preamble; an unrecognized message is returned untouched, and
+    the raw form is kept if nothing could be extracted (never lose the user's instructions)."""
+    if m.get("role") != "user" or not _is_env_context(m):
+        return m
+    new = _reframe_preamble_text(_msg_text_content(m))
+    return {**m, "content": new} if new else m
+
+
+def _msg_text_content(m: dict) -> str:
+    c = m.get("content")
+    if isinstance(c, list):
+        return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return c or ""
+
+
+def _tag_body(text: str, name: str) -> str | None:
+    """The content between ``<name>`` and ``</name>`` (first occurrence), or None."""
+    open_t, close_t = f"<{name}>", f"</{name}>"
+    lo, hi = text.find(open_t), text.find(close_t)
+    if lo == -1 or hi == -1 or hi < lo:
+        return None
+    return text[lo + len(open_t):hi]
+
+
+# The environment fields worth showing a coder — cwd/shell/date — by tag name. Sandbox /
+# permission_profile / filesystem plumbing is deliberately NOT surfaced: it's harness noise a
+# small model burns attention on (approval semantics the flow never uses).
+_ENV_FIELDS = (("cwd", "cwd"), ("shell", "shell"), ("current_date", "date"), ("timezone", "timezone"))
+
+
+def _reframe_preamble_text(text: str) -> str | None:
+    instr = _tag_body(text, "INSTRUCTIONS") or _tag_body(text, "user_instructions")
+    env = _tag_body(text, "environment_context")
+    parts: list[str] = []
+    if instr and instr.strip():
+        parts.append("Project instructions (from the repo — follow these):\n"
+                     + instr.replace("\r", "").strip())
+    if env:
+        fields = [(label, v.strip()) for tag, label in _ENV_FIELDS
+                  if (v := _tag_body(env, tag)) and v.strip()]
+        if fields:
+            parts.append("Working environment — " + ", ".join(f"{k}: {v}" for k, v in fields) + ".")
+    return "\n\n".join(parts) if parts else None
+
+
 def _is_env_context(m: dict) -> bool:
     """A harness-injected environment/instructions preamble (not the real task) that some
     harnesses prepend as a user message. cria recognizes the known conventions — e.g. Codex's
@@ -1252,7 +1304,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
             out.append({"role": "user", "content": prompt})  # the TASK → the step (env context kept)
             replaced = True
         else:
-            out.append(m)
+            out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice, not raw
     if not replaced:
         out.append({"role": "user", "content": prompt})  # no task message found → the step is the ask
     return out
