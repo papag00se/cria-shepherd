@@ -45,6 +45,7 @@ route   = true        # the ongoing "⟦cria⟧ <role> · <model>" banner on eac
 metrics = true        # the trailing "· N tok/s" suffix on the route banner
 assists = true        # the "⟦cria⟧ <note>" guard/assist lines (e.g. "running the repo's checks (…)")
 stats   = true        # a terse end-of-turn summary line: "⟦cria⟧ turn done · ⏱ 45s · 🔁 12 calls · ⚡ 38 tok/s · 🛡 …"
+reasoning = true      # forward the model's reasoning to the harness (Codex renders it as the "thinking" preamble)
 
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]

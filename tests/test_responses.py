@@ -156,3 +156,35 @@ class ArgSanitizeTests(unittest.TestCase):
     def test_valid_and_dict_args_preserved(self):
         self.assertEqual(json.loads(responses._as_args_str('{"a": 1}')), {"a": 1})
         self.assertEqual(json.loads(responses._as_args_str({"b": 2})), {"b": 2})
+
+
+class ReasoningForwardingTests(unittest.TestCase):
+    """The model's reasoning ('thinking') is forwarded as a Responses reasoning item so Codex
+    renders it — the preamble that's missing vs a normal OpenAI session."""
+
+    _COMP = {"choices": [{"message": {"role": "assistant", "content": None,
+              "reasoning_content": "Read the failing test, then fix resolve_handle().",
+              "tool_calls": [{"id": "c", "type": "function",
+                              "function": {"name": "read_file", "arguments": '{"path":"t.py"}'}}]},
+              "finish_reason": "tool_calls"}]}
+
+    def _event_kinds(self, show):
+        from cria.responses import body_events
+        return [r.decode().split("\n", 1)[0] for r in body_events(self._COMP, "r", "m", show_reasoning=show)
+                if r.startswith(b"event:")]
+
+    def test_reasoning_item_emitted_when_enabled(self):
+        kinds = self._event_kinds(True)
+        self.assertIn("event: response.reasoning_summary_text.delta", kinds)  # the delta Codex displays
+        # reasoning comes BEFORE the action
+        self.assertLess(kinds.index("event: response.reasoning_summary_text.delta"),
+                        kinds.index("event: response.function_call_arguments.delta"))
+
+    def test_no_reasoning_when_disabled(self):
+        self.assertFalse(any("reasoning" in k for k in self._event_kinds(False)))
+
+    def test_no_reasoning_item_when_none_present(self):
+        from cria.responses import body_events
+        comp = {"choices": [{"message": {"content": "hi"}}]}
+        kinds = [r.decode() for r in body_events(comp, "r", "m", show_reasoning=True)]
+        self.assertFalse(any("reasoning" in k for k in kinds))

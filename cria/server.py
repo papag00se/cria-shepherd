@@ -637,7 +637,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                 tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
                 if ic.metrics and tps:  # [indicators] metrics — the "· N tok/s" suffix
                     banner += f" · {tps:.0f} tok/s"
-            for chunk in responses.body_events(comp, resp_id, model, banner):
+            show_reasoning = self.server.cfg.indicators.enabled and self.server.cfg.indicators.reasoning
+            for chunk in responses.body_events(comp, resp_id, model, banner, show_reasoning=show_reasoning):
                 hb.write(chunk)
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats)
         except (BrokenPipeError, ConnectionResetError):
@@ -652,7 +653,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.emit("response.error", level="error", error=str(e))
             self._send_json(502, {"error": f"upstream error: {e}"})
             return
-        self._send_raw_json(json.dumps(responses.to_responses_json(comp, body.get("model", "") or "")).encode("utf-8"))
+        show_reasoning = self.server.cfg.indicators.enabled and self.server.cfg.indicators.reasoning
+        self._send_raw_json(json.dumps(responses.to_responses_json(
+            comp, body.get("model", "") or "", show_reasoning=show_reasoning)).encode("utf-8"))
         rlog.emit("response.sent", api="responses", stream=False)
 
     def _send_raw_json(self, raw: bytes) -> None:

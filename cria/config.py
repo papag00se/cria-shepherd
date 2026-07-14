@@ -217,6 +217,7 @@ class IndicatorsConfig:
     metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
     assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
     stats: bool = True    # a terse end-of-turn "⟦cria⟧ turn done · ⏱ … · 🛡 …" summary line
+    reasoning: bool = True  # forward the model's reasoning as a Responses reasoning item (Codex shows it as 'thinking')
 
 
 @dataclass(frozen=True)
@@ -349,6 +350,7 @@ def _indicators(d: dict) -> IndicatorsConfig:
         metrics=bool(d.get("metrics", True)),
         assists=bool(d.get("assists", True)),
         stats=bool(d.get("stats", True)),
+        reasoning=bool(d.get("reasoning", True)),
     )
 
 

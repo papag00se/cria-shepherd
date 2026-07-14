@@ -152,6 +152,35 @@ def created_event(resp_id: str, model: str) -> bytes:
     })
 
 
+# The model's reasoning can be a very long chain-of-thought; forward a generous but bounded slice
+# as the "thinking" preamble (Codex renders the reasoning summary), not the entire transcript.
+_REASONING_CAP = 8000
+
+
+def _reasoning_item(text: str, idx: int) -> tuple[list[bytes], dict]:
+    """A Responses REASONING item — the model's 'thinking', which Codex renders as the dimmed
+    reasoning preamble before an action. Emitted through the summary channel
+    (`response.reasoning_summary_text.delta`, the event Codex displays); the item is opened first so
+    the delta has an active item to attach to. Shape mirrors the ResponseItem::Reasoning the client
+    parses: ``{type: reasoning, summary: [{type: summary_text, text}]}`` (id/content optional)."""
+    item_id = _new_id("rs")
+    done = {"id": item_id, "type": "reasoning", "summary": [{"type": "summary_text", "text": text}]}
+    evs = [
+        _event("response.output_item.added", {"output_index": idx,
+            "item": {"id": item_id, "type": "reasoning", "summary": []}}),
+        _event("response.reasoning_summary_part.added", {"item_id": item_id, "output_index": idx,
+            "summary_index": 0, "part": {"type": "summary_text", "text": ""}}),
+        _event("response.reasoning_summary_text.delta", {"item_id": item_id, "output_index": idx,
+            "summary_index": 0, "delta": text}),
+        _event("response.reasoning_summary_text.done", {"item_id": item_id, "output_index": idx,
+            "summary_index": 0, "text": text}),
+        _event("response.reasoning_summary_part.done", {"item_id": item_id, "output_index": idx,
+            "summary_index": 0, "part": {"type": "summary_text", "text": text}}),
+        _event("response.output_item.done", {"output_index": idx, "item": done}),
+    ]
+    return evs, done
+
+
 def _message_item(text: str, idx: int) -> tuple[list[bytes], dict]:
     item_id = _new_id("msg")
     done = {"id": item_id, "type": "message", "status": "completed", "role": "assistant",
@@ -188,13 +217,25 @@ def _function_item(tc: dict, idx: int) -> tuple[list[bytes], dict]:
     return evs, done
 
 
-def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None) -> Iterator[bytes]:
-    """Everything after `response.created`: an optional cria banner line, one message
-    item (if any text), one function_call item per tool call, then `response.completed`."""
+def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,
+                show_reasoning: bool = False) -> Iterator[bytes]:
+    """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
+    enabled), an optional cria banner line, one message item (if any text), one function_call item
+    per tool call, then `response.completed`."""
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out_items: list[dict] = []
     idx = 0
+
+    # The model's REASONING first — Codex renders it as the dimmed 'thinking' preamble. cria already
+    # captures it (upstream assembles message.reasoning_content); forward it so the harness can show
+    # what the model is thinking (dropped INBOUND by to_chat_body, so it never re-feeds the model).
+    if show_reasoning:
+        reasoning = msg.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
+            evs, done = _reasoning_item(reasoning.strip()[:_REASONING_CAP], idx)
+            out_items.append(done); idx += 1
+            yield from evs
 
     # The "⟦cria⟧ …" banner rides in a message item. When the turn has text, it's PREPENDED into
     # that content. When the turn is tool-calls-only (the common case in a coding run), it becomes
@@ -229,11 +270,16 @@ def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, b
     yield from body_events(completion, rid, model, banner)
 
 
-def to_responses_json(completion: dict, model: str) -> dict:
+def to_responses_json(completion: dict, model: str, show_reasoning: bool = False) -> dict:
     """Non-streaming Responses object (stream:false)."""
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out: list[dict] = []
+    if show_reasoning:
+        reasoning = msg.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
+            out.append({"id": _new_id("rs"), "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": reasoning.strip()[:_REASONING_CAP]}]})
     content = msg.get("content")
     if isinstance(content, str) and content:
         out.append({"id": _new_id("msg"), "type": "message", "status": "completed", "role": "assistant",
