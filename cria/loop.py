@@ -99,18 +99,10 @@ MAX_PROBE_REISSUES = 2
 # NOT start with the indicator MARKER ("⟦cria⟧ "), so strip_history leaves it intact inbound.
 BRIEFING_OPEN = "⟦cria:briefing⟧"
 BRIEFING_CLOSE = "⟦/cria:briefing⟧"
-# Injected into the coder's framing on the FIRST turn after a detected harness compaction (the
-# plan-off path — the loop instead re-plans from the summary). The seed incident: a compacted model
-# read the lossy summary, treated its OWN earlier work as a previous agent's, couldn't find the test
-# file it had written, and re-created a duplicate under a different dir. This note re-orients it:
-# inspect before creating, don't restart finished work.
-REANCHOR_NOTE = (
-    "context notice: the harness just compacted this conversation — earlier turns were replaced by a "
-    "summary, so history above is lossy. Work it describes may be YOUR OWN from earlier in THIS "
-    "session, not another agent's. Before creating any file or redoing a step, INSPECT the workspace "
-    "first (list the directory, read the files that should already exist) and continue from what is "
-    "actually there — do NOT recreate files or restart work that is already done."
-)
+# The re-anchor note injected on the FIRST turn after a detected harness compaction (the plan-off
+# path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
+# compacted model treated its OWN earlier work as a previous agent's and duplicated a file under a
+# different dir; the note re-orients it to inspect before creating.
 # ONE FOLDER PER RUN (operator direction 2026-07-11): everything cria produces for a session —
 # call captures, reasoning files, the plan mirror, the critic's verify dumps — lands under
 # <runs_dir>/<session>/, keyed by the SAME session id the captures use. No more tying a
@@ -548,9 +540,7 @@ class Loop:
             sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
             sess.verify_fails += 1
             rlog.emit("loop.step_incomplete", step=idx, reason="no tools used", attempt=sess.verify_fails)
-            return self._renudge(sess, key, body,
-                                 "you used no tools and changed nothing this step — do the step's "
-                                 "work with tool calls first, then report", rlog)
+            return self._renudge(sess, key, body, prompts.load("leg0_nudge_step"), rlog)
         # LEG 2 setup: compose the completion gate (syntax floor + top probe + top TEST probe,
         # discovered fresh from the workspace) as ONE shell command the harness runs.
         probe_tc = self._gate_op(body, sess, rlog)
@@ -614,7 +604,7 @@ class Loop:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
-            digest = "SYNTAX FLOOR: did not run\nPROBES: none ran — the gate command produced no output."
+            digest = prompts.load("probe_digest_none")
             evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)
             if ok:

@@ -28,7 +28,6 @@ from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip
 from .loop import (
     GuardStore,
     Loop,
-    REANCHOR_NOTE,
     _add_note,
     _clean_completion,
     _strip_completion_banners,
@@ -376,9 +375,6 @@ class CriaHandler(BaseHTTPRequestHandler):
             return provider.chat
         return lambda body, rlog: watched(body, rlog, watch=detector.check)
 
-    _LEG0_NUDGE = ("you used no tools and changed nothing — do the actual work with tool calls "
-                   "first, then report when it is genuinely done")
-
     def _run_coder(self, framed: dict, coder_chat, gs, rlog):
         """One guarded + cleaned coder call on the plan-off path (shared by the main turn and the
         LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin
@@ -429,7 +425,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
                 return _completion_final(held or "Done.")
             rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
-            gs.nudge_reason = f"not done yet — the repo's own checks are failing:\n{_clip_tail(errors, 1800)}"
+            gs.nudge_reason = prompts.render("gate_fail_steer", errors=_clip_tail(errors, 1800))
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
         if gs.awaiting_probe:
@@ -444,7 +440,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         framed = _direct_coder_body(body)
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix)
-            extra.append({"role": "user", "content": prompts.render("nudge", reason=REANCHOR_NOTE)})
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=prompts.load("reanchor"))})
             self.server.loop_store.clear_rewrite(sess_key)  # acted on it (framing rebuilt each turn)
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
@@ -472,7 +468,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if gs.action_seq == 0 and not gs.leg0_nudged:  # the session never acted at all
             gs.leg0_nudged = True
             rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
-            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=self._LEG0_NUDGE)}]
+            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=prompts.load("leg0_nudge"))}]
             recall = self._run_coder({**framed, "messages": conv}, coder_chat, gs, rlog)
             if recall is not None:
                 comp = recall

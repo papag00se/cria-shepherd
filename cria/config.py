@@ -20,6 +20,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import prompts
+
 # Where ``Config.load(None)`` looks, in order, when no explicit path is given.
 DEFAULT_CONFIG_LOCATIONS: tuple[str, ...] = (
     "~/.cria/cria.toml",           # cria's home — alongside its logs/plans/verify output
@@ -109,25 +111,24 @@ class CloudEntry:
     reasoning: str | None = None
 
 
-# Injected into a request when a role's reasoning is OFF, so models that don't honor the
-# empty-`<think></think>` prefill (the LFM2 family) still answer directly instead of narrating.
-# Mild on purpose — a hard "answer only" directive costs accuracy on reasoning-trained models.
-_NOTHINK_DIRECTIVE = "Do not think out loud or narrate your reasoning. Respond directly."
-
-
+# Injected when a role's reasoning is OFF, so models that don't honor the empty-`<think></think>`
+# prefill (the LFM2 family) still answer directly instead of narrating. Mild on purpose — a hard
+# "answer only" directive costs accuracy on reasoning-trained models. Text: prompts/nothink_directive.txt
+# (loaded at call time so an edit takes effect with no restart, like every other prompt).
 def _inject_nothink_directive(body: dict) -> None:
     """Append the no-think directive to the leading system message (or insert one). Merging
     keeps a single leading system message — strict chat templates reject a second one."""
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return
+    directive = prompts.load("nothink_directive")
     if msgs and msgs[0].get("role") == "system":
         head = dict(msgs[0])
         c = head.get("content")
-        head["content"] = f"{c}\n\n{_NOTHINK_DIRECTIVE}" if isinstance(c, str) and c.strip() else _NOTHINK_DIRECTIVE
+        head["content"] = f"{c}\n\n{directive}" if isinstance(c, str) and c.strip() else directive
         body["messages"] = [head] + list(msgs[1:])
     else:
-        body["messages"] = [{"role": "system", "content": _NOTHINK_DIRECTIVE}] + list(msgs)
+        body["messages"] = [{"role": "system", "content": directive}] + list(msgs)
 
 
 @dataclass(frozen=True)
