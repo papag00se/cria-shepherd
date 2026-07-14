@@ -29,6 +29,9 @@ from .loop import (
     GuardStore,
     Loop,
     _add_note,
+    _clean_completion,
+    _strip_completion_banners,
+    _strip_cria_file_ops,
     LoopContext,
     LoopStore,
     completion_to_sse,
@@ -111,7 +114,11 @@ def _direct_coder_body(body: dict) -> dict:
     with cria's own coder system prompt (prompts/coder_system.txt) — the SAME guidance the plan
     loop gives the coder, minus the plan. So turning planning off is a fair 'coder without a
     planner' (like codex-local drives it), not a bare passthrough with no coding-agent framing."""
-    msgs = [reframe_preamble(m) for m in (body.get("messages") or []) if m.get("role") not in ("system", "developer")]
+    # Strip cria's own artifacts from the REPLAYED history (its ⟦cria⟧ banners + any historical
+    # `.cria/` writes) before reframing — same scrub the loop's _frame_for_item does — so a
+    # resumed/compacted plan-off conversation can't feed them to the coder to imitate.
+    src = _strip_cria_file_ops(body.get("messages") or [])
+    msgs = [reframe_preamble(m) for m in src if m.get("role") not in ("system", "developer")]
     # Carry the menu-derived tool hint into cria's OWN system message: add_cheatsheet folded it
     # into the harness system message during prep, which we just dropped — so the coder would
     # otherwise get no tool guidance and the prompt could name tools not in the menu.
@@ -507,6 +514,11 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return {}, indic
                 comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
                 comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
+                # Per-turn hygiene (same as the loop's coder-turn tail): scrub cria's own parroted
+                # banners, and strip reasoning the model leaked into content when reasoning is OFF.
+                _strip_completion_banners(comp)
+                if server.coder_role is not None:
+                    _clean_completion(comp, server.coder_role)
                 if steer:  # no hidden guards: surface that cria steered the coder this turn
                     _add_note(comp, "applied a steer from the repetition/wheel-spin guard")
                 if any((ch.get("message") or {}).get("tool_calls") for ch in comp.get("choices", [])):
