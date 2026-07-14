@@ -358,8 +358,16 @@ class CriaHandler(BaseHTTPRequestHandler):
         server: CriaServer = self.server
         ic = server.cfg.indicators
 
+        def banner_model(provider, fallback: str) -> str:
+            """The name to SHOW: the model actually loaded at the server (llama.cpp /v1/models), so
+            the banner is the TRUTH, not a config label that may not match what's loaded. Cloud
+            providers report None → the routed model name stands."""
+            loaded = provider.loaded_model(rlog) if hasattr(provider, "loaded_model") else None
+            return loaded or fallback
+
         def passthrough() -> tuple[object, Indicator]:
-            return server.upstream, Indicator(ic.enabled, ic.metrics, model=str(body.get("model") or "?"),
+            return server.upstream, Indicator(ic.enabled, ic.metrics,
+                                              model=banner_model(server.upstream, str(body.get("model") or "?")),
                                               role=None, route=ic.route, assists=ic.assists)
 
         if server.router is None or classification is None:
@@ -371,8 +379,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
         return route.provider, Indicator(
-            ic.enabled, ic.metrics, model=route.model, role=route.role, show_route=not classification.cached,
-            route=ic.route, assists=ic.assists,
+            ic.enabled, ic.metrics, model=banner_model(route.provider, route.model), role=route.role,
+            show_route=not classification.cached, route=ic.route, assists=ic.assists,
         )
 
     def _apply_route_role(self, pbody: dict, indic) -> dict:
@@ -616,13 +624,15 @@ class CriaHandler(BaseHTTPRequestHandler):
             # built never to emit an empty non-final turn, but gate here too as a backstop.
             ic = self.server.cfg.indicators
             if ic.enabled and ic.route and _has_visible_output(comp):  # [indicators] route
-                # Show the model cria ACTUALLY routed to (a local model), never the
-                # name the client's picker sent (e.g. "gpt-5.5") — cria ignores that.
+                # Show the model ACTUALLY LOADED on the server (the truth from /v1/models), never a
+                # config label that may not match, and never the client picker's name (e.g. "gpt-5.5").
                 lm = self.server.cfg.routing.local_models
+                loaded = self.server.upstream.loaded_model(rlog)
                 if _indic is not None and getattr(_indic, "model", None):
                     shown, role = _indic.model, (_indic.role or "local")
                 else:  # plan-loop path carries no indicator
                     shown, role = (lm.get("coder") or lm.get("classifier") or "local"), "coder"
+                shown = loaded or shown  # loaded model wins — the banner is the truth
                 banner = f"{MARKER}{role} · {shown}"
                 tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
                 if ic.metrics and tps:  # [indicators] metrics — the "· N tok/s" suffix

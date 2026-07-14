@@ -60,6 +60,11 @@ class Upstream:
         # from the local server's /props (n_ctx of the loaded model) — a property of the
         # model, not a constant to hand-maintain. None (cloud / undiscoverable) skips the
         # floor: cloud windows are large and /props doesn't exist there.
+        # The model id ACTUALLY loaded at this server (llama.cpp /v1/models → its --alias),
+        # discovered once. cria sends a model NAME but llama serves whatever it has loaded (loose
+        # match), so a wrong alias in the config silently runs the WRONG model — this lets cria
+        # compare and warn. None for a cloud endpoint (no single loaded model).
+        self._loaded_model = None if api_key else _UNSET
         self._window = context_window if context_window else _UNSET
         self._window_final = bool(context_window)  # a configured value is authoritative — no probe
         self._props_attempts = 0
@@ -78,6 +83,26 @@ class Upstream:
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
         return h
+
+    def loaded_model(self, rlog) -> str | None:
+        """The model id ACTUALLY loaded at this local server — llama.cpp's /v1/models returns its
+        ``--alias``. Discovered once and cached, so cria's banner can show the TRUTH (what's really
+        answering) rather than a config label that may not match. None for a cloud endpoint (no
+        single loaded model) or when /v1/models can't be read. A model swap needs a cria restart to
+        refresh (the same workflow as the fleet swap)."""
+        if self._loaded_model is not _UNSET:
+            return self._loaded_model
+        self._loaded_model = None
+        try:
+            req = urllib.request.Request(self._base_url + "/v1/models", method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            models = data.get("data") if isinstance(data, dict) else None
+            if models and isinstance(models[0], dict):
+                self._loaded_model = models[0].get("id") or None
+        except (urllib.error.URLError, ValueError, KeyError, OSError, IndexError, TypeError) as e:
+            rlog.emit("upstream.models", level="info", error=str(e))
+        return self._loaded_model
 
     def _resolve_window(self, rlog) -> int | None:
         """The loaded model's context window (n_ctx), discovered from the local server's /props.

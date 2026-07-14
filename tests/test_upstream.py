@@ -216,3 +216,21 @@ class MergeAssistantTests(unittest.TestCase):
             {"role": "assistant", "content": "done"},
         ]
         self.assertEqual([m["role"] for m in _merge_consecutive_assistant(msgs)], ["assistant", "tool", "assistant"])
+
+
+class LoadedModelTests(unittest.TestCase):
+    """cria asks the server what's ACTUALLY loaded (/v1/models → the --alias), so the banner shows
+    the truth instead of a config label — no silent model mismatch."""
+
+    def test_reads_and_caches_the_loaded_alias(self):
+        up = Upstream("http://x")
+        resp = _PropsResp({"data": [{"id": "gemma_4_12b_fable_v2_q4"}]})
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            self.assertEqual(up.loaded_model(_Rlog()), "gemma_4_12b_fable_v2_q4")
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=AssertionError("cached — no refetch")):
+            self.assertEqual(up.loaded_model(_Rlog()), "gemma_4_12b_fable_v2_q4")
+
+    def test_none_for_cloud_endpoint(self):
+        up = Upstream("http://x", api_key="sk-test")
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=AssertionError("must not probe")):
+            self.assertIsNone(up.loaded_model(_Rlog()))
