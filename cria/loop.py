@@ -1433,10 +1433,9 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             gs.probe_call_id = probe_tc["id"]
             rlog.emit("loop.redirect_probe", step=step)
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
-        gs.nudge_reason = (
-            f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
-            f"({_clip(gs.repeat_action, 160)}) — repeating it will not change the outcome. "
-            "Choose a DIFFERENT next action and take it now via a tool call.")
+        gs.nudge_reason = prompts.render(
+            "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N,
+            repeat_action=_clip(gs.repeat_action, 160), ground_truth="")
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
         gs.spin_probe_due = False
@@ -1447,10 +1446,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             gs.probe_call_id = probe_tc["id"]
             rlog.emit("loop.spin_probe", step=step, path=gs.spin_path)
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
-        gs.nudge_reason = (  # same no-gate fallback: a steer, never silence
-            f"you have rewritten `{gs.spin_path}` repeatedly; the repo's checks could not "
-            "run here. Stop rewriting it — re-read the step and verify a DIFFERENT part of "
-            "the work before touching that file again.")
+        gs.nudge_reason = prompts.render("spin_nogate", spin_path=gs.spin_path)  # a steer, never silence
         rlog.emit("loop.spin_probe_result", step=step, canned=True)
     return None
 
@@ -1486,18 +1482,16 @@ def guard_ground_truth(outcome) -> str:
     if findings:
         return findings
     if outcome.ran:
-        return ("the repo's checks (lint + type-check + syntax) all PASS on your current "
-                "edits — no error-class findings in this file")
-    return "the checks could not run"
+        return prompts.load("ground_truth_clean")
+    return prompts.load("ground_truth_noran")
 
 
 def guard_canned_redirect(gs: GuardState, outcome) -> str:
     """The canned repetition redirect (no reasoner) — the shared steer both the plan-off path and
     the loop's reasoner-unavailable fallback deliver."""
-    return (f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
-            f"({_clip(gs.repeat_action, 160)}) — repeating it will not change the outcome. "
-            f"Ground truth: {_clip_tail(guard_ground_truth(outcome), 600)}. Choose a DIFFERENT "
-            "next action and take it now via a tool call.")
+    return prompts.render(
+        "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=_clip(gs.repeat_action, 160),
+        ground_truth=f"Ground truth: {_clip_tail(guard_ground_truth(outcome), 600)}. ")
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:
@@ -1520,8 +1514,8 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=Non
     gs.spin_probe = False
     findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
     rlog.emit("loop.spin_probe_result", step=step, clean=findings is None and outcome.ran)
-    return (f"you have rewritten `{gs.spin_path}` repeatedly; "
-            f"ground truth from the repo's own checks:\n{_clip_tail(guard_ground_truth(outcome), 1800)}")
+    return prompts.render("spin_ground_truth", spin_path=gs.spin_path,
+                          truth=_clip_tail(guard_ground_truth(outcome), 1800))
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:

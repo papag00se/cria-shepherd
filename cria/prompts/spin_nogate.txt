@@ -1,0 +1,1 @@
+you have rewritten `{{SPIN_PATH}}` repeatedly; the repo's checks could not run here. Stop rewriting it — re-read the step and verify a DIFFERENT part of the work before touching that file again.

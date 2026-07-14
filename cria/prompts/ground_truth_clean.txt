@@ -1,0 +1,1 @@
+the repo's checks (lint + type-check + syntax) all PASS on your current edits — no error-class findings in this file
