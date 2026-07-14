@@ -1,0 +1,7 @@
+# Descriptions the planner reasoner reads for its read-only gather tools + submit_plan.
+# Format: `<tool> = <description>`. Schemas live in the code; loaded at import (restart re-tunes).
+submit_plan = Submit the final plan: a numbered list of small, concrete, verifiable steps (one action per step) for the coder to execute.
+exec_command = Run a shell command to inspect the project (ls, cat, head, grep, find, git status/log/diff, …) or to PROCESS data you fetched — you may save to and read from /tmp (e.g. `curl … > /tmp/api.json && grep … /tmp/api.json`, `python3 -c …`). The WORKSPACE is read-only while planning (building is the coder's job); writes to it are refused.
+read_file = Read a file's full contents to understand existing code/config/conventions.
+web_fetch = Fetch a URL (docs, an OpenAPI/JSON schema, a reference page) and return its text.
+web_search = Search the web for documentation, APIs, or references the task implies.

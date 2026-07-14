@@ -36,8 +36,7 @@ _MAX_FINAL_RETRIES = 3
 # that IS the plan and read the steps from the call.
 _SUBMIT_PLAN_TOOL = {"type": "function", "function": {
     "name": "submit_plan",
-    "description": "Submit the final plan: a numbered list of small, concrete, verifiable steps "
-                   "(one action per step) for the coder to execute.",
+    "description": prompts.load_map("planner_tool_descs")["submit_plan"],
     "parameters": {"type": "object", "properties": {
         "steps": {"type": "array", "items": {"type": "string"}, "description": "the ordered steps"}},
         "required": ["steps"]}}}
@@ -189,7 +188,7 @@ class Planner:
             # The compacted root usually IS the latest user text; when they're the same, the "current
             # request" is simply to finish what the summary says is unfinished.
             ask = task if task.strip() != rewrite_summary.strip() else \
-                "Continue and finish the remaining work described in the summary."
+                prompts.load_map("planner_steers")["default_ask"]
             seed = prompts.render("plan_rewritten", summary=rewrite_summary, task=ask)
         elif prior_work:
             seed = prompts.render("plan_continuation", prior=prior_work, task=task)
@@ -225,10 +224,8 @@ class Planner:
                     # round cap still bounds a model that ignores it.
                     rlog.emit("plan.repeat_nudge", tools=[n for _, n, _ in calls])
                     for cid, name, _args in calls:
-                        messages.append({"role": "tool", "tool_call_id": cid, "content": (
-                            f"[you already ran {name} with these exact arguments this gather — its "
-                            "result is already above. Don't repeat it: use that result, investigate "
-                            "something DIFFERENT, or if you have enough, output your plan.]")})
+                        messages.append({"role": "tool", "tool_call_id": cid,
+                                         "content": prompts.fill(prompts.load_map("planner_steers")["gather_repeat"], tool=name)})
                     continue
                 seen_sigs.add(sig)
                 for cid, name, args in calls:

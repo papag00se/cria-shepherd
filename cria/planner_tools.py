@@ -26,13 +26,17 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-# The four READ-ONLY tools offered to the planner (inline schemas — local models are
-# lenient). No write/patch/exec-mutate tools: planning is not building.
+from . import prompts
+
+# The four READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
+# write/patch/exec-mutate tools: planning is not building. The model-facing DESCRIPTIONS live in
+# prompts/planner_tool_descs.txt (loaded at import; restart re-tunes); the schemas stay here.
+_TD = prompts.load_map("planner_tool_descs")
 PLANNER_TOOLS = [
-    {"type": "function", "function": {"name": "exec_command", "description": "Run a shell command to inspect the project (ls, cat, head, grep, find, git status/log/diff, …) or to PROCESS data you fetched — you may save to and read from /tmp (e.g. `curl … > /tmp/api.json && grep … /tmp/api.json`, `python3 -c …`). The WORKSPACE is read-only while planning (building is the coder's job); writes to it are refused.", "parameters": {"type": "object", "properties": {"cmd": {"type": "string", "description": "the command line"}}, "required": ["cmd"]}}},
-    {"type": "function", "function": {"name": "read_file", "description": "Read a file's full contents to understand existing code/config/conventions.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "web_fetch", "description": "Fetch a URL (docs, an OpenAPI/JSON schema, a reference page) and return its text.", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}},
-    {"type": "function", "function": {"name": "web_search", "description": "Search the web for documentation, APIs, or references the task implies.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "exec_command", "description": _TD["exec_command"], "parameters": {"type": "object", "properties": {"cmd": {"type": "string", "description": "the command line"}}, "required": ["cmd"]}}},
+    {"type": "function", "function": {"name": "read_file", "description": _TD["read_file"], "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "web_fetch", "description": _TD["web_fetch"], "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {"name": "web_search", "description": _TD["web_search"], "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
 ]
 
 # Matches Brave Browser on Linux desktop (it identifies as Chrome on purpose).
@@ -55,7 +59,7 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
         return _web_fetch(args)
     if name in ("web_search", "local_web_search"):
         return _web_search(args, search_key, recent_searches)
-    return f"[planner has no `{name}` tool — you are read-only: exec_command (read), read_file, web_fetch, web_search]"
+    return prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name)
 
 
 # ------------------------------------------------------------------ shell / files
@@ -69,10 +73,7 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
         return "[no command given]"
     ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
     if not ok:
-        return (f"[refused: `{cmd[:100]}` {why}. During planning the WORKSPACE is read-only "
-                "(building is the coder's job). To process data you fetched, write it to /tmp "
-                "instead (e.g. `> /tmp/api.json`) — or read it from the web_fetch result already "
-                "in the conversation above.]")
+        return prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd[:100], why=why)
     # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
     # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
     env = dict(os.environ)
@@ -89,12 +90,9 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
                              capture_output=True, text=True, timeout=20, env=env)
         text = _truncate((out.stdout + out.stderr).strip() or "[no output]", 8000)
         if fresh:
-            text += (f"\n[note: the workspace `{cwd}` does not exist yet — it's a FRESH build with "
-                     "no files to inspect. Plan for the coder to CREATE the project from scratch.]")
+            text += "\n" + prompts.fill(prompts.load_map("planner_steers")["fresh_note"], cwd=cwd)
         if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
-            text += ("\n[note: nothing was saved there yet — a web_fetch returns its content into "
-                     "THIS conversation, not to a file. Read the fetched text above, or save it "
-                     "first with a redirect to /tmp.]")
+            text += "\n" + prompts.load_map("planner_steers")["scratch_note"]
         return text
     except subprocess.TimeoutExpired:
         return "[exec timed out after 20s]"
@@ -238,7 +236,7 @@ def _web_search(args: dict, search_key: str, recent: list) -> str:
     if blocked is not None:
         return blocked
     if not (search_key or "").strip():
-        return "[web_search error: no search API key configured — set planner.search_api_key_env]"
+        return prompts.load_map("planner_steers")["no_search_key"]
     try:
         return format_results(query, brave_search(search_key, query, 5))
     except Exception as e:
