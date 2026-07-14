@@ -68,8 +68,8 @@ _SHELL = {"type": "function", "function": {"name": "shell", "parameters": {"type
 
 
 def _ctx(coder, reasoner, plan=None, workspace_root=None):
-    return LoopContext(planner=_Planner(plan or _plan()), coder_chat=coder, coder_model="coder-m",
-                       reasoner_chat=reasoner, reasoner_model="reasoner-m", runs_dir="",  # "" = no run-artifact writes in tests
+    return LoopContext(planner=_Planner(plan or _plan()), coder_chat=coder,
+                       reasoner_chat=reasoner, runs_dir="",  # "" = no run-artifact writes in tests
                        workspace_root=workspace_root)
 
 
@@ -515,8 +515,8 @@ class ReviewFixTests(unittest.TestCase):
         from cria.loop import Loop, LoopContext, LoopStore
         store = LoopStore()
         planner = _FlakyPlanner(_plan(1), fail_first=1)
-        ctx = LoopContext(planner=planner, coder_chat=_Scripted([_toolcall()]), coder_model="c",
-                          reasoner_chat=_Scripted([_verdict()]), reasoner_model="r", runs_dir="")
+        ctx = LoopContext(planner=planner, coder_chat=_Scripted([_toolcall()]),
+                          reasoner_chat=_Scripted([_verdict()]), runs_dir="")
         loop = Loop(ctx, store)
         store.observe_shape("sid:s", "originalroot", 3)                  # session known at the original root
         store.mark_done("sid:s")
@@ -871,8 +871,8 @@ class RunFolderTests(unittest.TestCase):
             session = "019fabcd-1234"
 
         ctx = LoopContext(planner=_Planner(_plan(1)), coder_chat=_Scripted([_toolcall(), _done()]),
-                          coder_model="c", reasoner_chat=_Scripted([_verdict(True), _summary("s")]),
-                          reasoner_model="r", runs_dir=tmp)
+                          reasoner_chat=_Scripted([_verdict(True), _summary("s")]),
+                          runs_dir=tmp)
         loop = Loop(ctx)
         rlog = _SessRlog()
         loop.drive(_body(), "k", _Classification(), rlog)                      # plan persisted
@@ -904,8 +904,8 @@ class ResumeTests(unittest.TestCase):
                 def plan_for(self, *a, **k):
                     raise AssertionError("re-planned after restart — resume failed")
             store2 = LoopStore(state_path=state)
-            ctx2 = LoopContext(planner=_NoPlanner(), coder_chat=_Recorder([_toolcall()]), coder_model="c",
-                               reasoner_chat=_Scripted([_verdict(True)]), reasoner_model="r", runs_dir="")
+            ctx2 = LoopContext(planner=_NoPlanner(), coder_chat=_Recorder([_toolcall()]),
+                               reasoner_chat=_Scripted([_verdict(True)]), runs_dir="")
             loop2 = Loop(ctx2, store2)
             rlog = _Rlog()
             out = loop2.drive(_body(), "sid:r", C, rlog)                 # resumes: drives step 2

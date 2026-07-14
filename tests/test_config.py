@@ -66,35 +66,43 @@ class ConfigTests(unittest.TestCase):
     def test_dir_path_expands_home(self):
         self.assertFalse(str(Config().logging.dir_path).startswith("~"))
 
-    def test_per_role_blocks_parse_and_derive_models(self):
+    def test_per_role_blocks_parse_sampling_no_model(self):
+        # A role table carries ONLY sampling + reasoning — there is no model alias (cria always uses
+        # the server's loaded model). The role is "configured" by the presence of its table.
         with TemporaryDirectory() as tmp:
             p = self._write(tmp, """
 [models.local.coder]
-model = "fabliq_q6"
 reasoning = "off"
 temp = 0.0
 repeat_penalty = 1.05
 """)
             cfg = Config.load(p)
             role = cfg.routing.local_roles["coder"]
-            self.assertEqual(role.model, "fabliq_q6")
             self.assertEqual(role.temperature, 0.0)
             self.assertEqual(role.repeat_penalty, 1.05)
-            self.assertEqual(cfg.routing.local_models["coder"], "fabliq_q6")  # derived, back-compat
+            self.assertIn("coder", cfg.routing.local_roles)  # present → configured
 
-    def test_legacy_flat_string_still_parses(self):
+    def test_model_key_is_rejected(self):
+        # `model` must NEVER appear in the toml — cria always uses the server's loaded model. A stray
+        # `model` key is a hard error so it can't creep back and mislead a future reader.
+        with TemporaryDirectory() as tmp:
+            p = self._write(tmp, '[models.local.coder]\nmodel = "fabliq_q6"\ntemp = 0.0\n')
+            with self.assertRaisesRegex(ValueError, "remove `model`"):
+                Config.load(p)
+
+    def test_legacy_flat_alias_string_is_rejected(self):
+        # The old `role = "alias"` form is an alias — also gone. Rejected with a pointed message.
         with TemporaryDirectory() as tmp:
             p = self._write(tmp, '[models.local]\nreasoner = "some_alias"\n')
-            cfg = Config.load(p)
-            self.assertEqual(cfg.routing.local_roles["reasoner"].model, "some_alias")
-            self.assertIsNone(cfg.routing.local_roles["reasoner"].temperature)
+            with self.assertRaisesRegex(ValueError, "remove the alias"):
+                Config.load(p)
 
     def test_temperature_and_temp_both_accepted_plus_max_tokens(self):
         # codex-local uses `temperature`; cria also accepts the short `temp`. And max_tokens
         # is now a per-role param (was silently dropped before).
         with TemporaryDirectory() as tmp:
-            p = self._write(tmp, '[models.local.a]\nmodel="m"\ntemperature=0.1\nmax_tokens=4096\n'
-                                 '[models.local.b]\nmodel="m"\ntemp=0.3\n')
+            p = self._write(tmp, '[models.local.a]\ntemperature=0.1\nmax_tokens=4096\n'
+                                 '[models.local.b]\ntemp=0.3\n')
             roles = Config.load(p).routing.local_roles
             self.assertEqual(roles["a"].temperature, 0.1)   # `temperature` (codex-local's name)
             self.assertEqual(roles["a"].max_tokens, 4096)
@@ -109,7 +117,7 @@ repeat_penalty = 1.05
         # cria-internal hint (cria_output_reserve) the context floor reads — NOT a wire field.
         from cria.config import LocalRole
         with TemporaryDirectory() as tmp:
-            p = self._write(tmp, '[models.local.coder]\nmodel="m"\noutput_reserve=8192\n')
+            p = self._write(tmp, '[models.local.coder]\noutput_reserve=8192\n')
             role = Config.load(p).routing.local_roles["coder"]
             self.assertEqual(role.output_reserve, 8192)
             self.assertIsNone(role.max_tokens)  # separate; unset by default (uncapped)
@@ -119,12 +127,12 @@ repeat_penalty = 1.05
         self.assertNotIn("max_tokens", body)  # uncapped: a big write_file isn't chopped mid-content
         # Unset output_reserve → no hint written.
         b2 = {"model": "m", "messages": []}
-        LocalRole(model="m").apply(b2)
+        LocalRole().apply(b2)
         self.assertNotIn("cria_output_reserve", b2)
 
     def test_reasoning_off_injects_directive_and_flag(self):
         from cria.config import LocalRole
-        role = LocalRole(model="m", reasoning="off")
+        role = LocalRole(reasoning="off")
         body = {"model": "m", "messages": [{"role": "system", "content": "You are X."}, {"role": "user", "content": "hi"}]}
         role.apply(body)
         self.assertFalse(body["chat_template_kwargs"]["enable_thinking"])
@@ -134,23 +142,22 @@ repeat_penalty = 1.05
     def test_reasoning_on_no_directive(self):
         from cria.config import LocalRole
         body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
-        LocalRole(model="m", reasoning="on").apply(body)
+        LocalRole(reasoning="on").apply(body)
         self.assertTrue(body["chat_template_kwargs"]["enable_thinking"])
         self.assertNotIn("system", [m["role"] for m in body["messages"]])  # no directive injected
 
     def test_clean_content_strips_leaked_reasoning_when_off(self):
         from cria.config import LocalRole
-        off = LocalRole(model="m", reasoning="off")
+        off = LocalRole(reasoning="off")
         self.assertEqual(off.clean_content("Okay let me think... 3x17.</think>\n\nNo, 51 is not prime."), "No, 51 is not prime.")
         self.assertEqual(off.clean_content("No, 51 is not prime."), "No, 51 is not prime.")  # no marker → unchanged
-        self.assertEqual(LocalRole(model="m", reasoning="on").clean_content("keep <think>x</think> this"),
+        self.assertEqual(LocalRole(reasoning="on").clean_content("keep <think>x</think> this"),
                          "keep <think>x</think> this")  # reasoning on → no-op
 
     def test_role_apply_attaches_sampling_and_reasoning(self):
         with TemporaryDirectory() as tmp:
             p = self._write(tmp, """
 [models.local.coder]
-model = "m"
 reasoning = "off"
 temp = 0.2
 repeat_penalty = 1.1

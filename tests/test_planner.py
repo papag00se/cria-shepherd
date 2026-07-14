@@ -53,7 +53,7 @@ _FIXED = datetime(2026, 7, 7, 0, 45, 12, tzinfo=timezone.utc)
 
 
 def _planner(content: str) -> Planner:
-    return Planner(_Provider(content), "reasoner-model", clock=lambda: _FIXED)
+    return Planner(_Provider(content), clock=lambda: _FIXED)
 
 
 def _msgs(text):
@@ -96,7 +96,7 @@ class PlannerTests(unittest.TestCase):
         # planner, prevents re-planning WITHIN a session). So a re-run of the same task in a new
         # session drafts fresh and does the work — it never inherits a prior run's plan.
         p = _Provider('{"steps": ["a", "b", "c"]}')
-        planner = Planner(p, "m", clock=lambda: _FIXED)
+        planner = Planner(p, clock=lambda: _FIXED)
         plan1 = planner.plan_for(_msgs("same task"), _Rlog())
         for it in plan1.items:          # simulate the loop completing the whole plan
             it.done = True
@@ -108,7 +108,7 @@ class PlannerTests(unittest.TestCase):
     def test_unplannable_task_is_negatively_cached(self):
         # An UNplannable task must not re-hit the reasoner every turn of a session.
         p = _Provider("write some code, good luck")  # no parseable plan
-        planner = Planner(p, "m", clock=lambda: _FIXED)
+        planner = Planner(p, clock=lambda: _FIXED)
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
         self.assertEqual(p.calls, 1, "negative cache prevents re-calling the reasoner")
@@ -125,7 +125,7 @@ class RewriteSeedTests(unittest.TestCase):
         # A post-harness-compaction plan is seeded with plan_rewritten (summary + current ask),
         # never the raw summary as the task, and never the plan_continuation prior-work frame.
         prov = _ScriptedProvider([_content_resp("1. finish the live test\n2. run it")])
-        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        p = Planner(prov, clock=lambda: _FIXED)
         summary = "Built handler.py and unit tests; live test remains."
         plan = p.plan_for(_msgs(summary), _Rlog(), rewrite_summary=summary)
         self.assertIsNotNone(plan)
@@ -137,7 +137,7 @@ class RewriteSeedTests(unittest.TestCase):
 
     def test_rewrite_with_distinct_new_ask_carries_both(self):
         prov = _ScriptedProvider([_content_resp("1. write the script")])
-        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        p = Planner(prov, clock=lambda: _FIXED)
         msgs = [{"role": "user", "content": "SUMMARY: handler built."},
                 {"role": "user", "content": "now write the live-test script"}]
         plan = p.plan_for(msgs, _Rlog(), rewrite_summary="SUMMARY: handler built.")
@@ -154,7 +154,7 @@ class GatherLoopTests(unittest.TestCase):
             _tool_resp("web_search", {"query": "api.handle.me docs"}),   # search_key="" → graceful result
             _content_resp("1. Fetch api.handle.me\n2. Write handler.py\n3. Run tests"),
         ])
-        plan = Planner(prov, "m", search_key="", clock=lambda: _FIXED).plan_for(
+        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
             _msgs("build an ada handle resolver"), _Rlog())
         self.assertEqual(len(plan.items), 3)
         self.assertEqual(prov.calls, 2)  # one gather round + one plan
@@ -165,7 +165,7 @@ class GatherLoopTests(unittest.TestCase):
 
     def test_tools_offered_on_gather_but_off_when_forced(self):
         prov = _ScriptedProvider([_content_resp("1. a\n2. b")])  # plans immediately, no tool call
-        Planner(prov, "m", clock=lambda: _FIXED).plan_for(_msgs("do a task"), _Rlog())
+        Planner(prov, clock=lambda: _FIXED).plan_for(_msgs("do a task"), _Rlog())
         self.assertIn("tools", prov.bodies[0])  # the gather call offers the read-only tools
 
     def test_repeated_gather_signature_nudges_not_forces(self):
@@ -178,7 +178,7 @@ class GatherLoopTests(unittest.TestCase):
             _content_resp("1. step one\n2. step two"),
         ])
         rlog = _Rlog()
-        plan = Planner(prov, "m", search_key="", clock=lambda: _FIXED).plan_for(_msgs("a task"), rlog)
+        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("a task"), rlog)
         self.assertEqual(len(plan.items), 2)
         # the repeat was nudged, not forced
         self.assertIn("plan.repeat_nudge", [k for k, _ in rlog.events])
@@ -194,7 +194,7 @@ class GatherLoopTests(unittest.TestCase):
             _tool_resp("web_fetch", {"url": "x"}),                     # round 1 gather
             _tool_resp("submit_plan", {"steps": ["do a", "do b", "do c"]}),  # forced → submit_plan
         ])
-        plan = Planner(prov, "m", search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), _Rlog())
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), _Rlog())
         self.assertEqual([i.text for i in plan.items], ["do a", "do b", "do c"])
         self.assertEqual(prov.bodies[-1]["tools"][0]["function"]["name"], "submit_plan")  # offered submit_plan
 
@@ -206,7 +206,7 @@ class GatherLoopTests(unittest.TestCase):
             _tool_resp("CreateNewProject", {"goal": "build"}),   # leak, every forced attempt
         ])
         rlog = _Rlog()
-        self.assertIsNone(Planner(prov, "m", search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), rlog))
+        self.assertIsNone(Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), rlog))
         retries = [kw for k, kw in rlog.events if k == "plan.final_retry"]
         self.assertTrue(retries)
         self.assertIn("CreateNewProject", str(retries[0].get("called")))  # the leak is in the record
@@ -234,7 +234,7 @@ class GemmaLeakRecoveryTests(unittest.TestCase):
         # it). The planner must recover it, run the tool, and continue to the plan.
         leak = _content_resp('<|tool_call>call:read_file{path:<|"|>x.py<|"|>}<tool_call|>')
         prov = _ScriptedProvider([leak, _content_resp("1. do the thing\n2. verify")])
-        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        p = Planner(prov, clock=lambda: _FIXED)
         plan = p.plan_for(_msgs("build it"), _Rlog())
         self.assertIsNotNone(plan)                       # gather continued → plan landed
         self.assertEqual(len(plan.items), 2)
@@ -246,7 +246,7 @@ class GemmaLeakRecoveryTests(unittest.TestCase):
         # The model answers the forced "output the plan" with ANOTHER tool call, every time.
         leak = _content_resp('<|tool_call>call:web_search{query:<|"|>docs<|"|>}<tool_call|>')
         prov = _ScriptedProvider([leak])                 # repeats forever → gather cap → forced plan → leak again
-        p = Planner(prov, "reasoner-model", max_gather_rounds=2, clock=lambda: _FIXED)
+        p = Planner(prov, max_gather_rounds=2, clock=lambda: _FIXED)
         rlog = _Rlog()
         self.assertIsNone(p.plan_for(_msgs("task x"), rlog))
         self.assertIn("plan.retriable", [k for k, _ in rlog.events])
@@ -257,7 +257,7 @@ class GemmaLeakRecoveryTests(unittest.TestCase):
 
     def test_unparsed_prose_is_still_negative_cached(self):
         prov = _ScriptedProvider([_content_resp("I think this task is about lambdas and such.")])
-        p = Planner(prov, "reasoner-model", clock=lambda: _FIXED)
+        p = Planner(prov, clock=lambda: _FIXED)
         self.assertIsNone(p.plan_for(_msgs("task y"), _Rlog()))
         calls_before = prov.calls
         self.assertIsNone(p.plan_for(_msgs("task y"), _Rlog()))

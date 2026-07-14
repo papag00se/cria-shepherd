@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from cria.config import Config, IndicatorsConfig, LoggingConfig, ServerConfig, UpstreamConfig
+from cria.config import Config, IndicatorsConfig, LocalRole, LoggingConfig, ServerConfig, UpstreamConfig
 from cria.events import EventLog
 from cria.server import CriaServer, _direct_coder_body, _has_visible_output, _proxy_body
 from cria.upstream import Upstream
@@ -53,7 +53,7 @@ class ApplyRouteRoleTests(unittest.TestCase):
 
     def test_applies_the_indicated_role(self):
         from cria.config import LocalRole
-        coder = LocalRole(model="gemma", reasoning="on", temperature=0.0, top_p=0.95,
+        coder = LocalRole(reasoning="on", temperature=0.0, top_p=0.95,
                           top_k=64, repeat_penalty=1.1)
         h = self._handler({"coder": coder})
         indic = types.SimpleNamespace(role="coder")
@@ -156,6 +156,15 @@ class _FakeUpstream(BaseHTTPRequestHandler):
             self._sse()
         else:
             self._json(_JSON)
+
+    def do_GET(self):
+        # cria asks the server what model is loaded (/v1/models) — there are no config aliases, so
+        # this IS the wire model cria rewrites every local request to.
+        if self.path.endswith("/v1/models"):
+            self._json(json.dumps({"data": [{"id": "gemma-loaded"}]}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def _sse(self):
         self.close_connection = True
@@ -289,7 +298,7 @@ class RoutedTests(unittest.TestCase):
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
                 local_only=True,
-                local_models={"classifier": "m-classifier", "coder": "m-coder"},
+                local_roles={"classifier": LocalRole(), "coder": LocalRole()},
                 failover={"coding": ("coder",)},
                 engagement_bias="task",
             ),
@@ -323,10 +332,10 @@ class RoutedTests(unittest.TestCase):
         self.assertEqual(decisions["engagement"]["choice"], "task")
         self.assertEqual(decisions["route"]["choice"], "coder")
 
-        # Two upstream calls: the classifier (m-classifier) and the proxied,
-        # model-REWRITTEN completion (m-coder, not the client's "orig-model").
+        # The proxied completion is model-REWRITTEN to the server's LOADED model (gemma-loaded, from
+        # /v1/models), not the client's "orig-model" and not a config alias (there are none).
         proxied = [e for e in events if e["kind"] == "upstream.request" and e.get("stream")]
-        self.assertTrue(proxied and proxied[-1]["model"] == "m-coder")
+        self.assertTrue(proxied and proxied[-1]["model"] == "gemma-loaded")
 
 
 _SHELL_TOOL = {"type": "function", "function": {"name": "shell", "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
@@ -353,7 +362,7 @@ class PlanningTests(unittest.TestCase):
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
                 local_only=True,
-                local_models={"classifier": "m-classifier", "reasoner": "m-reasoner", "coder": "m-coder"},
+                local_roles={"classifier": LocalRole(), "reasoner": LocalRole(), "coder": LocalRole()},
                 failover={"coding": ("coder",)},
             ),
             planner=PlannerConfig(enabled=True),
@@ -442,7 +451,7 @@ class ResilienceTests(unittest.TestCase):
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
                 local_only=True,
-                local_models={"classifier": "m-classifier", "reasoner": "m-reasoner", "coder": "m-coder"},
+                local_roles={"classifier": LocalRole(), "reasoner": LocalRole(), "coder": LocalRole()},
                 failover={"coding": ("coder",)},
             ),
             planner=PlannerConfig(enabled=True),
@@ -499,7 +508,7 @@ class ResponsesApiTests(unittest.TestCase):
             server=ServerConfig(host="127.0.0.1", port=0),
             upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
-            routing=RoutingConfig(local_only=True, local_models={"classifier": "m-c", "coder": "m-coder"},
+            routing=RoutingConfig(local_only=True, local_roles={"classifier": LocalRole(), "coder": LocalRole()},
                                   failover={"coding": ("coder",)}),
             indicators=IndicatorsConfig(enabled=False),  # test raw translation (no ⟦cria⟧ banner)
         )

@@ -146,23 +146,24 @@ class CriaServer(ThreadingHTTPServer):
         self.translation_store = TranslationStore()  # write_file↔shell, per session
         # Routing engages only when configured. With no [models.local]/[failover],
         # cria is a plain phase-1 passthrough.
-        roles = cfg.routing.local_roles  # per-role model + sampling + reasoning (cria.toml)
-        classifier_model = cfg.routing.local_models.get("classifier")
+        roles = cfg.routing.local_roles  # per-role sampling + reasoning (cria.toml); NO model alias —
+        # the wire model is always the server's loaded model. A role is "configured" by the PRESENCE
+        # of its [models.local.<role>] table, so every gate below keys on membership in `roles`.
         self.classifier = (
-            Classifier(upstream, classifier_model, cfg.routing.engagement_bias, role=roles.get("classifier"))
-            if classifier_model
+            Classifier(upstream, cfg.routing.engagement_bias, role=roles.get("classifier"))
+            if "classifier" in roles
             else None
         )
         self.router = (
             Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds)
-            if (cfg.routing.local_models or cfg.routing.failover)
+            if (roles or cfg.routing.failover)
             else None
         )
-        # The plan-driven loop (phase 6) — active when a reasoner AND a coder model
-        # are configured and the planner is enabled. It owns the planner and drives
-        # a coding task item by item. Without it, cria is a smart proxy.
-        reasoner_model = cfg.routing.local_models.get("reasoner")
-        coder_model = cfg.routing.local_models.get("coder")
+        # The plan-driven loop (phase 6) — active when a reasoner AND a coder role are configured
+        # and the planner is enabled. It owns the planner and drives a coding task item by item.
+        # Without it, cria is a smart proxy.
+        has_reasoner = "reasoner" in roles
+        has_coder = "coder" in roles
         # The coder role's sampling/reserve — needed for the rumination budget on BOTH the loop
         # and the plan-off proxy path (the guards are not gated behind the planner).
         self.coder_role = roles.get("coder")
@@ -172,7 +173,7 @@ class CriaServer(ThreadingHTTPServer):
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
         self.loop = None
-        if cfg.planner.enabled and reasoner_model and coder_model:
+        if cfg.planner.enabled and has_reasoner and has_coder:
             # The web-search key is read from its env var (never stored in config). STRIP it —
             # a CRLF .env leaves a trailing "\r" that is an illegal HTTP header value and kills
             # web_search with "Invalid header value" (observed live: the planner lost search and
@@ -190,12 +191,10 @@ class CriaServer(ThreadingHTTPServer):
 
             self.loop = Loop(
                 LoopContext(
-                    planner=Planner(upstream, reasoner_model, role=roles.get("reasoner"),
+                    planner=Planner(upstream, role=roles.get("reasoner"),
                                     search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds),
                     coder_chat=coder_chat,
-                    coder_model=coder_model,
                     reasoner_chat=upstream.chat,
-                    reasoner_model=reasoner_model,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     # ONE folder per run: plan mirror + verify dumps join the call captures
@@ -228,7 +227,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # Two consumers, two shapes: Codex's model manager wants a top-level
             # `models` list (empty is fine — it falls back to config metadata, and
             # [server] pins the context window); plain OpenAI clients want `data`.
-            models = sorted(set(self.server.cfg.routing.local_models.values())) or ["cria"]
+            models = [self.server.upstream.loaded_model(self.server.log) or "cria"]
             self._send_json(200, {
                 "object": "list",
                 "data": [{"id": m, "object": "model", "owned_by": "cria"} for m in models],
@@ -477,11 +476,13 @@ class CriaHandler(BaseHTTPRequestHandler):
         route = server.router.route(classification.task_type, rlog)
         if route is None:
             return passthrough()
-        body["model"] = route.model
+        if route.model:  # None = the role omitted its alias → leave the request's model; the
+            body["model"] = route.model  # upstream fills the server's loaded model in _prep
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
         return route.provider, Indicator(
-            ic.enabled, ic.metrics, model=banner_model(route.provider, route.model), role=route.role,
+            ic.enabled, ic.metrics,
+            model=banner_model(route.provider, route.model or str(body.get("model") or "?")), role=route.role,
             show_route=not classification.cached, route=ic.route, assists=ic.assists,
         )
 
@@ -699,12 +700,11 @@ class CriaHandler(BaseHTTPRequestHandler):
             if ic.enabled and ic.route and _has_visible_output(comp):  # [indicators] route
                 # Show the model ACTUALLY LOADED on the server (the truth from /v1/models), never a
                 # config label that may not match, and never the client picker's name (e.g. "gpt-5.5").
-                lm = self.server.cfg.routing.local_models
                 loaded = self.server.upstream.loaded_model(rlog)
                 if _indic is not None and getattr(_indic, "model", None):
                     shown, role = _indic.model, (_indic.role or "local")
                 else:  # plan-loop path carries no indicator
-                    shown, role = (lm.get("coder") or lm.get("classifier") or "local"), "coder"
+                    shown, role = "local", "coder"
                 shown = loaded or shown  # loaded model wins — the banner is the truth
                 banner = f"{MARKER}{role} · {shown}"
                 tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed

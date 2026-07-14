@@ -71,11 +71,17 @@ max_gather_rounds = 12                # cap the planner's read-only investigate 
 local_only = true          # the research posture: cloud roles become unresolvable,
                            # so failover chains collapse to their local links.
 
-# Per-role local models (codex-local style). Each block gives the `model` alias served
-# by [upstream] plus the sampling + reasoning cria attaches to EVERY request for that
-# role — applied PER REQUEST, so a change is a cria restart, never a model reload.
-# Keys: model (required) · reasoning ("on" | "off" | "auto" = leave to the server default —
-#   cria injects no enable_thinking toggle and no think-suppression prefill) · temperature · top_p · top_k ·
+# Per-role local settings (codex-local style). Each block gives the sampling + reasoning cria
+# attaches to EVERY request for that role — applied PER REQUEST, so a change is a cria restart,
+# never a model reload. The mere PRESENCE of a role's block means "this role is configured".
+#
+# THERE IS NO `model` KEY. cria always uses whatever model the server reports loaded (/v1/models):
+# the llama.cpp server serves the one model it launched with and ignores the requested name, so
+# pinning an alias here would be meaningless and drift on every model swap. A `model` key is a hard
+# config error — do not add one. (Swap models by relaunching the model server; cria needs no edit.)
+#
+# Keys: reasoning ("on" | "off" | "auto" = leave to the server default — cria injects no
+#   enable_thinking toggle and no think-suppression prefill) · temperature · top_p · top_k ·
 #   repeat_penalty · min_p · max_tokens · output_reserve.  (`temp` aliases temperature.)
 # max_tokens vs output_reserve are SEPARATE, on purpose: max_tokens is the HARD output cap
 #   (leave UNSET on file-writing roles so a big write_file finishes instead of truncating mid-
@@ -86,24 +92,20 @@ local_only = true          # the research posture: cloud roles become unresolvab
 #   timeout_seconds), so those are set once up top, not repeated per role.
 # (ctx / quant / GPU are launch-time only and live with the model server, not here.)
 [models.local.classifier]
-model       = "fabliq_8b_reasoning_q6"
 reasoning   = "on"
 temperature = 0.0
 
 [models.local.reasoner]    # the planner + the step critic
-model       = "fabliq_8b_reasoning_q6"
 reasoning   = "on"
 temperature = 0.0
 
 [models.local.coder]
-model          = "fabliq_8b_reasoning_q6"
 reasoning      = "on"
 temperature    = 0.0
 repeat_penalty = 1.05
 output_reserve = 8192    # generous input-side reserve for a file-writing role (max_tokens left unset)
 
 [models.local.compactor]
-model       = "fabliq_8b_reasoning_q6"
 reasoning   = "on"
 temperature = 0.0
 

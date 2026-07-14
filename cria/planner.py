@@ -102,9 +102,10 @@ def parse_steps(text: str) -> list[str] | None:
 
 
 class Planner:
-    def __init__(self, provider, model: str, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
+    def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
-        self._model = model
+        # No model: the planner's bodies carry no `model`, so the upstream fills the server's loaded
+        # model (cria never pins an alias — the single-loaded-model posture).
         self._role = role  # LocalRole | None — the reasoner role's per-request sampling/reasoning
         self._search_key = search_key or ""  # Brave key for the planner's web_search (may be "")
         self._max_rounds = max(1, max_gather_rounds)
@@ -263,7 +264,6 @@ class Planner:
 
     def _reason(self, messages: list[dict], rlog, *, gather: bool = False, plan_only: bool = False) -> dict | None:
         body: dict = {
-            "model": self._model,
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
             # Cap the output so a reasoning model that fails to stop can't run to

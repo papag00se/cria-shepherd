@@ -328,9 +328,9 @@ class LoopContext:
 
     planner: object  # .plan_for(messages, rlog) -> Plan | None
     coder_chat: object  # (body, rlog) -> bytes  (a buffered completion)
-    coder_model: str
     reasoner_chat: object  # (body, rlog) -> bytes
-    reasoner_model: str
+    # No coder_model / reasoner_model: the loop's bodies carry no `model`, so the upstream fills the
+    # server's loaded model (cria never pins an alias — the single-loaded-model posture).
     coder_role: object = None  # LocalRole | None — per-request sampling/reasoning for the coder
     reasoner_role: object = None  # LocalRole | None — for the critic
     # Root of the per-run folders (the SAME root the call captures use, so one session's
@@ -501,7 +501,7 @@ class Loop:
         if intervention is not None:
             return intervention
         framed = dict(body)
-        framed["model"] = self._ctx.coder_model
+        framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
                                prior_work=sess.prior_work, tools=body.get("tools"))
@@ -760,7 +760,6 @@ class Loop:
         parseable JSON (or the call failed). `reasoning_off` forces enable_thinking=false so a
         reasoning model can't exhaust its token budget before emitting the verdict."""
         body = {
-            "model": self._ctx.reasoner_model,
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
             # Bound the output: the verdict is a one-line JSON. Without a cap a reasoning
@@ -855,7 +854,6 @@ class Loop:
         """One completion-compaction call → the summary text ("" on failure/empty). ``reasoning_off``
         forces enable_thinking=false so a reasoning model can't exhaust its budget before answering."""
         call = {
-            "model": self._ctx.reasoner_model,
             "stream": False,
             "max_tokens": 1024,  # a briefing, not an essay — and an uncapped reasoner can hang the turn
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],

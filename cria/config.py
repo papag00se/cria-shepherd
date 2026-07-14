@@ -137,7 +137,11 @@ class LocalRole:
     that role. These are applied PER REQUEST, so changing them is a cria restart — never a
     model-server reload (unlike ctx/quant, which live with the launcher)."""
 
-    model: str
+    # NO `model` field, by design: cria ALWAYS uses whatever model the server reports loaded
+    # (/v1/models). The llama.cpp server serves the one model it launched with and ignores the
+    # requested name, so pinning an alias here is meaningless and drifts on every model swap. A
+    # role table carries ONLY sampling + reasoning; the wire model is resolved per request from the
+    # server. (Do not re-add a model parameter — [models.local.<role>] rejects one.)
     reasoning: str | None = None       # "on" | "off" | None (None → the server/template default)
     temperature: float | None = None
     top_p: float | None = None
@@ -196,8 +200,8 @@ class RoutingConfig:
     quietly collapse to their local links."""
 
     local_only: bool = True
-    local_models: Mapping[str, str] = field(default_factory=dict)  # role -> model alias (derived)
-    local_roles: Mapping[str, LocalRole] = field(default_factory=dict)  # role -> full per-role settings
+    local_roles: Mapping[str, LocalRole] = field(default_factory=dict)  # role -> per-role sampling + reasoning
+    # (No role->model map: cria resolves the wire model from the server's loaded model per request.)
     cloud_pools: Mapping[str, tuple[CloudEntry, ...]] = field(default_factory=dict)  # role -> entries
     providers: Mapping[str, ProviderConfig] = field(default_factory=dict)  # provider name -> endpoint
     failover: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # task_type -> role chain
@@ -360,7 +364,6 @@ def _routing(data: dict) -> RoutingConfig:
     engagement = data.get("engagement", {})
 
     local_roles = {str(k): _local_role(str(k), v) for k, v in models.get("local", {}).items()}
-    local_models = {role: rc.model for role, rc in local_roles.items()}  # role -> alias (back-compat)
 
     providers: dict[str, ProviderConfig] = {}
     for name, pd in data.get("providers", {}).items():
@@ -413,7 +416,6 @@ def _routing(data: dict) -> RoutingConfig:
 
     return RoutingConfig(
         local_only=bool(routing.get("local_only", True)),
-        local_models=local_models,
         local_roles=local_roles,
         cloud_pools=cloud_pools,
         providers=providers,
@@ -423,12 +425,22 @@ def _routing(data: dict) -> RoutingConfig:
 
 
 def _local_role(name: str, spec) -> LocalRole:
-    """Parse one [models.local.<role>] entry. Accepts the codex-local-style table
-    (``model`` + reasoning/sampling) OR the legacy flat ``role = "alias"`` string."""
-    if isinstance(spec, str):  # legacy: role = "alias"
-        return LocalRole(model=spec)
-    if not isinstance(spec, dict) or not spec.get("model"):
-        raise ValueError(f"[models.local.{name}] needs a `model` (an alias served by [upstream])")
+    """Parse one [models.local.<role>] table into its sampling + reasoning. There is NO model
+    parameter: cria always uses whatever model the server reports loaded (/v1/models). A `model`
+    key (or the legacy flat ``role = "alias"`` string) is REJECTED so it can never creep back into
+    the toml and mislead a future reader into thinking cria pins a model here."""
+    if isinstance(spec, str):  # the legacy `role = "alias"` form — an alias, which no longer exists
+        raise ValueError(
+            f"[models.local.{name}] = \"{spec}\": remove the alias — cria always uses the model the "
+            f"server reports loaded (/v1/models). Write [models.local.{name}] as a table of sampling "
+            f"+ reasoning only.")
+    if not isinstance(spec, dict):
+        raise ValueError(f"[models.local.{name}] must be a table of sampling + reasoning")
+    if "model" in spec:
+        raise ValueError(
+            f"[models.local.{name}]: remove `model` — cria always uses the model the server reports "
+            f"loaded (/v1/models), so pinning an alias here is meaningless and drifts on every model "
+            f"swap. This table carries ONLY sampling + reasoning.")
 
     def _num(key):
         v = spec.get(key)
@@ -442,7 +454,6 @@ def _local_role(name: str, spec) -> LocalRole:
     # `temperature` (codex-local's name) OR the short `temp` — accept either.
     temperature = _num("temperature") if spec.get("temperature") is not None else _num("temp")
     return LocalRole(
-        model=str(spec["model"]),
         reasoning=(str(reasoning).lower() if reasoning is not None else None),
         temperature=temperature,
         top_p=_num("top_p"),

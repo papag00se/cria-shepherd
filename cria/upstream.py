@@ -141,6 +141,13 @@ class Upstream:
         text item + a function_call item → two adjacent assistant messages; strict templates
         (Fabliq) reject a list ending in 2+ assistant messages. Merge them → the single-turn form.
         ``sent_estimate`` is the chars/4 estimate of what's actually sent, for density calibration."""
+        if not body.get("model"):
+            # A role omitted its `model` alias (the single-loaded-model posture) — fill it from
+            # whatever the server reports loaded. Mutate `body` (not just `out`) so the surrounding
+            # chat/stream reads (logging, density calibration, the echoed completion model) agree.
+            loaded = self.loaded_model(rlog)
+            if loaded:
+                body["model"] = loaded
         out = {**body, "stream": stream}
         msgs = body.get("messages")
         if isinstance(msgs, list):

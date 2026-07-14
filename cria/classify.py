@@ -41,9 +41,10 @@ class Classification:
 
 
 class Classifier:
-    def __init__(self, provider, model: str, bias: str = "task", role=None) -> None:
+    def __init__(self, provider, bias: str = "task", role=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
-        self._model = model
+        # No model: the classify body carries no `model`, so the upstream fills the server's loaded
+        # model (the single-loaded-model posture — cria never pins an alias).
         self._bias = bias if bias in _ENGAGEMENTS else "task"
         self._role = role  # LocalRole | None — this role's per-request sampling/reasoning
         self._cache: dict[str, Classification] = {}
@@ -76,7 +77,6 @@ class Classifier:
         if not task.strip():
             return self._fallback("no user text to classify")
         body = {
-            "model": self._model,
             "stream": False,
             "temperature": 0,  # default; the role's config (cria.toml) overrides below
             # The classification is a short JSON. Cap the output so a reasoning model that

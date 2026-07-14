@@ -234,3 +234,19 @@ class LoadedModelTests(unittest.TestCase):
         up = Upstream("http://x", api_key="sk-test")
         with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=AssertionError("must not probe")):
             self.assertIsNone(up.loaded_model(_Rlog()))
+
+    def test_prep_fills_missing_model_from_loaded(self):
+        # A role that omits its alias sends a body with no `model`; _prep fills it (in place) from
+        # the server's loaded model so the wire + density key + echoed completion all agree.
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "gemma_4_12b_fable_v2_q4"  # pre-seed the cache (skip the /v1/models call)
+        body = {"messages": [{"role": "user", "content": "hi"}]}  # NO model key
+        up._prep(body, False, _Rlog())
+        self.assertEqual(body["model"], "gemma_4_12b_fable_v2_q4")
+
+    def test_prep_leaves_an_explicit_model_untouched(self):
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "server-loaded"
+        body = {"model": "explicit-alias", "messages": [{"role": "user", "content": "hi"}]}
+        up._prep(body, False, _Rlog())
+        self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override

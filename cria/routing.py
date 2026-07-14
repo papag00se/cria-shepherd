@@ -28,7 +28,7 @@ from .upstream import Upstream
 @dataclass
 class Route:
     provider: object  # Upstream (HTTP) or ClaudeCliProvider — both expose stream_chat/chat
-    model: str
+    model: str | None  # None = the role omitted its alias; the upstream fills the server's loaded model
     role: str
     reason: str
 
@@ -61,7 +61,7 @@ class Router:
         if not chain:
             return None  # no routing config → caller does passthrough
         for role in chain:
-            resolved = self._resolve(role)
+            resolved = self._resolve(role, rlog)
             if resolved is not None:
                 provider, model = resolved
                 rlog.decide("route", role, f"task_type={task_type}", model=model)
@@ -78,9 +78,12 @@ class Router:
             return fo.get("reasoning") or fo.get("coding") or ()
         return fo.get("coding") or ()
 
-    def _resolve(self, role: str) -> tuple[object, str] | None:
-        if role in self._cfg.local_models:
-            return self._local, self._cfg.local_models[role]
+    def _resolve(self, role: str, rlog) -> tuple[object, str | None] | None:
+        if role in self._cfg.local_roles:
+            # There are no local aliases — cria always uses the server's loaded model. Resolve it now
+            # so the wire model + banner + density key carry the real name. None if the server is
+            # unreachable; the upstream fills it (or leaves the request's own model) at call time.
+            return self._local, self._local.loaded_model(rlog)
         if role in self._cfg.cloud_pools:
             if self._cfg.local_only:
                 return None

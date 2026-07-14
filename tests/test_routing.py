@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from cria.config import CloudEntry, ProviderConfig, RoutingConfig
+from cria.config import CloudEntry, LocalRole, ProviderConfig, RoutingConfig
 from cria.routing import Router
 
 
@@ -13,13 +13,25 @@ class _Rlog:
         pass
 
 
-LOCAL = object()  # sentinel local provider
+class _Local:
+    """Stand-in for the local Upstream. A local role has no alias — the router asks the provider
+    what model the server has loaded, so the sentinel answers that."""
+
+    def __init__(self, loaded="m-local"):
+        self._loaded = loaded
+
+    def loaded_model(self, rlog):
+        return self._loaded
+
+
+LOCAL = _Local()  # sentinel local provider (reports "m-local" loaded)
 
 
 def _cfg(**kw) -> RoutingConfig:
     base = dict(
         local_only=True,
-        local_models={"coder": "m-local", "reasoner": "m-reasoner", "classifier": "m-c"},
+        # Role tables carry sampling only — no alias. Presence = configured.
+        local_roles={"coder": LocalRole(), "reasoner": LocalRole(), "classifier": LocalRole()},
         cloud_pools={"cloud.coder": (CloudEntry("openai", "gpt-x", 100),)},
         providers={"openai": ProviderConfig("openai", base_url="https://api.openai.test/v1", api_key_env="TEST_OPENAI_KEY")},
         failover={"coding": ("coder", "cloud.coder"), "reasoning": ("reasoner",)},
@@ -29,9 +41,9 @@ def _cfg(**kw) -> RoutingConfig:
     return RoutingConfig(**base)
 
 
-def _router(cfg, factory=None):
+def _router(cfg, factory=None, local=LOCAL):
     factory = factory or (lambda base_url, key: ("cloud", base_url, key))
-    return Router(cfg, LOCAL, provider_factory=factory)
+    return Router(cfg, local, provider_factory=factory)
 
 
 class RoutingTests(unittest.TestCase):
@@ -39,14 +51,28 @@ class RoutingTests(unittest.TestCase):
         r = _router(_cfg()).route("coding", _Rlog())
         self.assertIsNotNone(r)
         self.assertIs(r.provider, LOCAL)
+        # No alias in config → the wire model is whatever the server reports loaded.
         self.assertEqual((r.role, r.model), ("coder", "m-local"))
+
+    def test_local_model_is_the_server_loaded_model(self):
+        # The single-loaded-model posture: a local role resolves its wire model from the provider's
+        # loaded model, never a config alias.
+        r = _router(_cfg(), local=_Local(loaded="gemma-loaded")).route("coding", _Rlog())
+        self.assertEqual(r.model, "gemma-loaded")
+
+    def test_local_model_stays_none_when_server_unreachable(self):
+        # loaded_model returns None (server down) → Route.model stays None; the upstream fills it
+        # later (or leaves the request's own model). The route still resolves — no crash.
+        r = _router(_cfg(), local=_Local(loaded=None)).route("coding", _Rlog())
+        self.assertIsNotNone(r)
+        self.assertIsNone(r.model)
 
     def test_question_falls_back_to_reasoning_chain(self):
         r = _router(_cfg()).route("question", _Rlog())
         self.assertEqual(r.role, "reasoner")
 
     def test_no_config_returns_none(self):
-        empty = RoutingConfig(local_models={}, failover={})
+        empty = RoutingConfig(local_roles={}, failover={})
         self.assertIsNone(_router(empty).route("coding", _Rlog()))
 
     def test_cloud_resolves_when_enabled_and_key_present(self):
