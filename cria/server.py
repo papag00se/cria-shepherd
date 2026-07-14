@@ -44,6 +44,7 @@ from .loop import (
 from .planner import Planner
 from .routing import Router
 from .toolmenu import add_cheatsheet, cheatsheet, focus_tools
+from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
 from .writeproxy import TranslationStore, advertise, needs_translation, represent_inbound, translate_outbound
 
@@ -71,6 +72,16 @@ def _prepend_content_line(completion: dict, line: str) -> None:
     msg = choices[0].setdefault("message", {})
     existing = msg.get("content")
     msg["content"] = f"{line}\n{existing}" if isinstance(existing, str) and existing else line
+
+
+def _append_content_line(completion: dict, line: str) -> None:
+    """Append ``line`` after the first choice's message content (a footer, e.g. the turn stats)."""
+    choices = completion.get("choices") or []
+    if not choices:
+        return
+    msg = choices[0].setdefault("message", {})
+    existing = msg.get("content")
+    msg["content"] = f"{existing}\n\n{line}" if isinstance(existing, str) and existing else line
 
 # Renamed from the Rust vehicle's ``X-Nudge-Session-Id`` as part of the rebrand.
 # Optional: absent → cria runs stateless (fine for phase 1; session state lands
@@ -143,6 +154,8 @@ class CriaServer(ThreadingHTTPServer):
         # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
         # own in PlanSession). Same shared guard implementation drives both.
         self.guard_store = GuardStore()
+        # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
+        self.stats_store = StatsStore()
         self.loop = None
         if cfg.planner.enabled and reasoner_model and coder_model:
             # The web-search key is read from its env var (never stored in config). STRIP it —
@@ -301,6 +314,22 @@ class CriaHandler(BaseHTTPRequestHandler):
             strip_note_lines(completion)  # drop content ⟦cria⟧ notes too (cria_notes already popped)
         return completion
 
+    def _finalize(self, completion: dict, sess_key: str, rlog) -> dict:
+        """The single completion-finalization chokepoint: fold this response into the turn stats
+        (before _decorate consumes the notes), apply the [indicators] decoration, and — when the
+        agent has FINISHED the user turn (a text answer, no tool call, after real multi-step work)
+        — append the terse end-of-turn summary and reset the turn."""
+        ic = self.server.cfg.indicators
+        stats = self.server.stats_store.get(sess_key)
+        stats.observe(completion, getattr(rlog, "last_tok_per_s", None))
+        completion = self._decorate(completion)
+        tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
+        if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
+            if ic.enabled and ic.stats and _has_visible_output(completion):
+                _append_content_line(completion, stats.summary())
+            self.server.stats_store.reset(sess_key)
+        return completion
+
     def _translate_out(self, completion: dict, rlog) -> dict:
         """Lower the model's write_file calls to shell, when translation is active
         for this request. Set up in `_handle_chat`."""
@@ -399,7 +428,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if server.loop is not None and (server.loop.knows_session(sk) or (classification is not None and classification.engagement == "task")):
                 completion = server.loop.drive(body, sk, classification, rlog)
                 if completion is not None:
-                    yield from completion_to_sse(self._decorate(self._translate_out(completion, rlog)))
+                    yield from completion_to_sse(self._finalize(self._translate_out(completion, rlog), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
@@ -430,7 +459,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if server.loop is not None and (server.loop.knows_session(sess_key) or (classification is not None and classification.engagement == "task")):
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
-                out = self._decorate(self._translate_out(completion, rlog))
+                out = self._finalize(self._translate_out(completion, rlog), sess_key, rlog)
                 _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
@@ -489,7 +518,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
-        out = self._decorate(self._translate_out(comp, rlog))
+        out = self._finalize(self._translate_out(comp, rlog), sess_key, rlog)
         _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
         return out, indic
 

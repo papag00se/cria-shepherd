@@ -216,6 +216,7 @@ class IndicatorsConfig:
     route: bool = True    # the ongoing "⟦cria⟧ <role> · <model>" banner
     metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
     assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
+    stats: bool = True    # a terse end-of-turn "⟦cria⟧ turn done · ⏱ … · 🛡 …" summary line
 
 
 @dataclass(frozen=True)
@@ -347,6 +348,7 @@ def _indicators(d: dict) -> IndicatorsConfig:
         route=bool(d.get("route", True)),
         metrics=bool(d.get("metrics", True)),
         assists=bool(d.get("assists", True)),
+        stats=bool(d.get("stats", True)),
     )
 
 

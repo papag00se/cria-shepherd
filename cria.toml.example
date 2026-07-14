@@ -44,6 +44,7 @@ enabled = true        # master switch — off = pure passthrough, no cria decora
 route   = true        # the ongoing "⟦cria⟧ <role> · <model>" banner on each response
 metrics = true        # the trailing "· N tok/s" suffix on the route banner
 assists = true        # the "⟦cria⟧ <note>" guard/assist lines (e.g. "running the repo's checks (…)")
+stats   = true        # a terse end-of-turn summary line: "⟦cria⟧ turn done · ⏱ 45s · 🔁 12 calls · ⚡ 38 tok/s · 🛡 …"
 
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]
