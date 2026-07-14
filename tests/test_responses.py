@@ -230,6 +230,6 @@ class ReasoningForwardingTests(unittest.TestCase):
         self.assertTrue(n > 0)
         self.assertNotIn("resolve_handle", cleaned[0]["content"])
 
-    def test_reasoning_transcript_off_by_default(self):
-        text = self._reasoning_message_text()  # neither flag set
+    def test_reasoning_transcript_not_folded_when_flag_absent(self):
+        text = self._reasoning_message_text()  # neither flag passed → no fold
         self.assertIsNone(text)  # no message item, no folded reasoning

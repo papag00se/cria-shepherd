@@ -47,11 +47,11 @@ assists = true        # the "⟦cria⟧ <note>" guard/assist lines (e.g. "runnin
 stats   = true        # a terse end-of-turn summary line: "⟦cria⟧ turn done · ⏱ 45s · 🔁 12 calls · ⚡ 38 tok/s · 🛡 …"
 reasoning = true      # forward the model's reasoning on the native channel (Codex's live "thinking"
                       #   preamble — transient; it is NOT kept in the scrollable history)
-reasoning_transcript = false  # ALSO fold the reasoning into the PERSISTENT message as "⟦cria⟧ 💭 …"
+reasoning_transcript = true  # ALSO fold the reasoning into the PERSISTENT message as "⟦cria⟧ 💭 …"
                       #   lines, so the thinking rides in the scrollback like the banner (and is
-                      #   stripped from inbound history the same way) instead of only flashing. Set
-                      #   true to KEEP the thinking visible; pair with reasoning=false to avoid
-                      #   showing it twice (native transient + persistent block).
+                      #   stripped from inbound history the same way) instead of only flashing.
+                      #   Complements `reasoning` (live/transient); set reasoning=false if a client
+                      #   shows the thinking twice.
 
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]
