@@ -697,11 +697,9 @@ class Loop:
         else:
             truth = "(the checks could not run)"
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
-        user = (f"STEP THE CODER IS ON:\n{step_text}\n\n"
-                f"THE ACTION IT KEEPS REPEATING ({REPEAT_FINGERPRINT_N}x):\n{sess.repeat_action}\n\n"
-                f"ITS RECENT TOOL RESULTS:\n{evidence or '(none)'}\n\n"
-                f"GROUND TRUTH FROM THE REPO'S CHECKS:\n{_clip_tail(truth, 1200)}\n\n"
-                "Write the redirect now.")
+        user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
+                              repeat_action=sess.repeat_action, evidence=evidence or "(none)",
+                              truth=_clip_tail(truth, 1200))
         text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=False)
         if not text:
             text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=True)
@@ -830,13 +828,9 @@ class Loop:
             for i, it in enumerate(sess.plan.items)
         )
         log = _work_log(body.get("messages", []))
-        prior = f"EARLIER IN THIS SESSION:\n{sess.prior_work}\n\n" if sess.prior_work else ""
-        user = (
-            f"{prior}TASK COMPLETED:\n{sess.plan.task}\n\n"
-            f"PLAN (with status):\n{checklist}\n\n"
-            f"WORK LOG (the coder's actual actions and their results):\n{log or '(no tool activity captured)'}\n\n"
-            "Produce the completed-work summary now."
-        )
+        prior = (prompts.render("done_summary_prior", prior_work=sess.prior_work) + "\n\n") if sess.prior_work else ""
+        user = prompts.render("done_summary_user", prior=prior, task=sess.plan.task,
+                              checklist=checklist, log=log or "(no tool activity captured)")
         system = prompts.load("done_summary")
         # First pass with the reasoner AS CONFIGURED. If it yields no text — a reasoning model can
         # burn the whole max_tokens budget THINKING and emit an empty content (the observed
@@ -1117,13 +1111,12 @@ def _reframe_preamble_text(text: str) -> str | None:
     env = _tag_body(text, "environment_context")
     parts: list[str] = []
     if instr and instr.strip():
-        parts.append("Project instructions (from the repo — follow these):\n"
-                     + instr.replace("\r", "").strip())
+        parts.append(prompts.render("preamble_instructions", instructions=instr.replace("\r", "").strip()))
     if env:
         fields = [(label, v.strip()) for tag, label in _ENV_FIELDS
                   if (v := _tag_body(env, tag)) and v.strip()]
         if fields:
-            parts.append("Working environment — " + ", ".join(f"{k}: {v}" for k, v in fields) + ".")
+            parts.append(prompts.render("preamble_environment", fields=", ".join(f"{k}: {v}" for k, v in fields)))
     return "\n\n".join(parts) if parts else None
 
 
@@ -1165,7 +1158,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # it was trimming cria's own step framing AWAY, leaving the coder with no idea what step it was
     # on (it then flails and the re-nudge loop never converges = "Thinking forever"). In the system
     # message the instruction can never be dropped, and system is authoritative for the model.
-    done_block = f"Already done earlier this session (build on it, don't redo):\n{prior_work}\n\n" if prior_work else ""
+    done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
     # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
     # told to use ONLY the tools actually in this turn's menu — the harness system message that
     # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).

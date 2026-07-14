@@ -1,0 +1,10 @@
+{{PRIOR}}TASK COMPLETED:
+{{TASK}}
+
+PLAN (with status):
+{{CHECKLIST}}
+
+WORK LOG (the coder's actual actions and their results):
+{{LOG}}
+
+Produce the completed-work summary now.
