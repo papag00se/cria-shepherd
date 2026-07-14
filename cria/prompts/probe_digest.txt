@@ -1,0 +1,10 @@
+# proberun's critic-digest fragments (byte-for-byte ports of the Rust upstream). The reasoner/critic
+# reads these in the probe digest. Loaded at import — a cria restart re-tunes.
+# Format: `<key> = <text>`.  `floor_fmt` keeps a single-brace {x} that Python .format() fills.
+floor_fmt = SYNTAX FLOOR: {x}
+floor_clean = clean (files parse)
+floor_fallback = parse/syntax issues found
+floor_none = did not run (no parse checks applicable)
+no_probes = PROBES: none ran — no lint/test command was discovered for this project.
+exit_clean = exit 0 (ran clean)
+exit_no_launch = did NOT launch (tool missing?)

@@ -1,0 +1,7 @@
+# linterprobe (syntax-floor) model-facing text (byte-for-byte ports of the Rust upstream).
+# `failing`/`none`/`clean` are the floor digest the critic reads; `nudge_preamble` is the coder-facing
+# re-prompt header (a newline is re-added in code after it). Loaded per call — no restart needed.
+failing = Errors — the workspace does NOT pass its syntax/linter check:
+none = No checker ran (no recognized source files on disk, or no checker binary installed) — treat this as no signal.
+clean = Clean — every source file passes its syntax/linter check. The defect is NOT a syntax error; look at logic, a wrong or missing import, a stub/placeholder shadowing real code, or whether the task is already satisfied.
+nudge_preamble = [GROUND TRUTH — your code does not pass its own checker] Fix these exact errors before continuing. Do NOT rewrite the whole file — go to the reported line and fix only what it points to:

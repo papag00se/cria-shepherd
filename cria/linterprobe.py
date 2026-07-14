@@ -42,6 +42,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from . import prompts
+
 # (exit_code | None, stdout, stderr, timed_out) — see the module docstring for the
 # error-signalling contract (FileNotFoundError = binary absent).
 RunResult = tuple[Optional[int], str, str, bool]
@@ -76,28 +78,23 @@ class LinterReport:
 
     def probe_digest(self) -> str:
         """Reasoner-facing verdict — ALWAYS text, routing the diagnosis even when clean."""
+        d = prompts.load_map("floor_digest")
         failing = self.failing()
         if failing:
-            text = "Errors — the workspace does NOT pass its syntax/linter check:"
+            text = d["failing"]
             for f in failing:
                 text += f"\n• {f.language} ({f.tool}):\n{f.errors.strip()}"
             return text
         if not self.findings:
-            return ("No checker ran (no recognized source files on disk, or no checker"
-                    " binary installed) — treat this as no signal.")
-        return ("Clean — every source file passes its syntax/linter check. The defect is"
-                " NOT a syntax error; look at logic, a wrong or missing import, a"
-                " stub/placeholder shadowing real code, or whether the task is already"
-                " satisfied.")
+            return d["none"]
+        return d["clean"]
 
     def nudge_text(self) -> Optional[str]:
         """Coder-facing re-prompt with the exact errors; None when nothing is failing."""
         failing = self.failing()
         if not failing:
             return None
-        text = ("[GROUND TRUTH — your code does not pass its own checker] Fix these exact"
-                " errors before continuing. Do NOT rewrite the whole file — go to the"
-                " reported line and fix only what it points to:\n")
+        text = prompts.load_map("floor_digest")["nudge_preamble"] + "\n"
         for f in failing:
             text += f"\n• {f.language} ({f.tool}):\n{f.errors.strip()}\n"
         return text

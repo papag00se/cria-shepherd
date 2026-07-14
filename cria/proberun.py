@@ -50,7 +50,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import probediscovery
+from . import probediscovery, prompts
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -79,19 +79,19 @@ CHILD_POLL_INTERVAL_S = 0.040
 # Findings shown per probe in the completion block nudge (.take(5)).
 BLOCK_NUDGE_MAX_FINDINGS = 5
 
-# Message/format strings — byte-for-byte with upstream. The Rust source writes
-# the preamble with a `\` line continuation, which collapses to a single space:
-# exactly one space between "exact" and "problems".
-BLOCK_NUDGE_PREAMBLE = (
-    "[GROUND TRUTH — the repo's own checks fail] You are not done yet. "
-    "Fix these exact problems; go to the reported line, do not rewrite whole files:\n"
-)
-DIGEST_FLOOR_FMT = "SYNTAX FLOOR: {x}"
-DIGEST_FLOOR_CLEAN = "clean (files parse)"
-DIGEST_FLOOR_FALLBACK = "parse/syntax issues found"
-DIGEST_NO_PROBES = "PROBES: none ran — no lint/test command was discovered for this project."
-DIGEST_EXIT_CLEAN = "exit 0 (ran clean)"
-DIGEST_EXIT_NO_LAUNCH = "did NOT launch (tool missing?)"
+# Message/format strings — byte-for-byte with upstream, now sourced from prompts/ so they're tunable
+# (loaded once at import; a cria restart re-tunes). The preamble ends with a newline `load` strips,
+# so it's re-added here; the Rust source's `\` line-continuation collapses to a single space (one
+# space between "exact" and "problems"), preserved in prompts/block_nudge_preamble.txt.
+BLOCK_NUDGE_PREAMBLE = prompts.load("block_nudge_preamble") + "\n"
+_DIGEST = prompts.load_map("probe_digest")
+DIGEST_FLOOR_FMT = _DIGEST["floor_fmt"]  # single-brace {x}, filled by .format()
+DIGEST_FLOOR_CLEAN = _DIGEST["floor_clean"]
+DIGEST_FLOOR_FALLBACK = _DIGEST["floor_fallback"]
+DIGEST_FLOOR_NONE = _DIGEST["floor_none"]
+DIGEST_NO_PROBES = _DIGEST["no_probes"]
+DIGEST_EXIT_CLEAN = _DIGEST["exit_clean"]
+DIGEST_EXIT_NO_LAUNCH = _DIGEST["exit_no_launch"]
 
 # ---------------------------------------------------------------------------
 # cria constants (proxy path — NOT probe_run.rs values)
@@ -327,7 +327,7 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
         syntax = [r for r in report.results
                   if kinds.get(r.command) is probediscovery.ProbeKind.SyntaxCheck]
         if not syntax:
-            floor_txt = "did not run (no parse checks applicable)"
+            floor_txt = DIGEST_FLOOR_NONE
         elif all(r.exit_code == 0 for r in syntax):
             floor_txt = DIGEST_FLOOR_CLEAN
         else:
