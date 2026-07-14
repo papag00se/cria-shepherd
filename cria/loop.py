@@ -139,6 +139,10 @@ class GuardState:
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
+    done_probe: bool = False  # a probe verifying a "done" claim is in flight
+    pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
+    leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
 
 
 @dataclass
@@ -1448,6 +1452,20 @@ def _add_note(completion: dict, note: str) -> None:
     (_strip_completion_banners) can't drop cria's own intentional notes."""
     if note:
         completion.setdefault("cria_notes", []).append(note)
+
+
+def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
+    """Read a completion-gate probe's result and return the block-nudge (the file:line errors) when
+    the repo's checks FAILED, else None (checks passed, or couldn't run → fail-open, don't wedge).
+    The OBJECTIVE half of the loop's completion gate — no reasoner critic — so the plan-off path can
+    verify a 'done' claim against ground truth before letting the turn end. Reuses the shared
+    interpret + block-nudge modules (no duplicated verdict logic)."""
+    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
+    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
+        else probegate.GateOutcome(ran=False)
+    if not outcome.ran:
+        return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
+    return proberun.completion_block_nudge(outcome.report)  # errors, or None when clean
 
 
 def guard_ground_truth(outcome) -> str:

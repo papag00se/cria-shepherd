@@ -34,7 +34,15 @@ from .loop import (
     _strip_cria_file_ops,
     LoopContext,
     LoopStore,
+    _clip_tail,
+    _completion_final,
+    _completion_text,
+    _completion_toolcalls,
+    _has_tool_calls,
+    _read_tool_result,
     completion_to_sse,
+    guard_gate_op,
+    guard_gate_verdict,
     guard_intervene,
     guard_probe_steer,
     guard_rumination,
@@ -358,6 +366,93 @@ class CriaHandler(BaseHTTPRequestHandler):
             return provider.chat
         return lambda body, rlog: watched(body, rlog, watch=detector.check)
 
+    _LEG0_NUDGE = ("you used no tools and changed nothing — do the actual work with tool calls "
+                   "first, then report when it is genuinely done")
+
+    def _run_coder(self, framed: dict, coder_chat, gs, rlog):
+        """One guarded + cleaned coder call on the plan-off path (shared by the main turn and the
+        LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin
+        tracking if it acted. Returns the completion, or None on a decode failure."""
+        try:
+            comp = massage.apply(json.loads(coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
+        comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
+        _strip_completion_banners(comp)
+        if self.server.coder_role is not None:
+            _clean_completion(comp, self.server.coder_role)
+        if _has_tool_calls(comp):
+            guard_track_repetition(gs, comp, rlog)
+            guard_track_write_streak(gs, comp, rlog)
+        return comp
+
+    def _drive_direct_coder(self, gs, provider, indic, body: dict, rlog):
+        """The plan-off direct-coder turn with the SAME protections the loop gives its coder: the
+        repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify
+        against the repo's checks before ending the turn), and per-turn hygiene. Cross-turn state
+        lives in the per-session GuardState. Returns the completion to send, or None on decode fail."""
+        coder_chat = self._guarded_coder_chat(provider)
+        # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
+        if gs.done_probe:
+            gs.done_probe = False
+            errors = guard_gate_verdict(gs, body, rlog)
+            if not errors:  # checks passed → the 'done' is genuine; forward the held answer
+                rlog.emit("loop.gate", plan_off=True, blocked=False)
+                held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
+                return _completion_final(held or "Done.")
+            rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
+            gs.nudge_reason = f"not done yet — the repo's own checks are failing:\n{_clip_tail(errors, 1800)}"
+        # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
+        steer, intervention = None, None
+        if gs.awaiting_probe:
+            gs.awaiting_probe = False
+            steer = guard_probe_steer(gs, body, rlog)  # canned (no reasoner on plan-off)
+        elif not gs.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
+            intervention = guard_intervene(gs, body, rlog)
+        if intervention is not None:
+            return intervention
+        if steer is None and gs.nudge_reason:
+            steer, gs.nudge_reason = gs.nudge_reason, ""
+        framed = _direct_coder_body(body)
+        if steer:  # inject the steer into the coder framing this turn
+            framed = {**framed, "messages": framed["messages"]
+                      + [{"role": "user", "content": prompts.render("nudge", reason=steer)}]}
+        framed = self._apply_route_role(framed, indic)
+        comp = self._run_coder(framed, coder_chat, gs, rlog)
+        if comp is None:
+            return None
+        if steer:  # no hidden guards: surface that cria steered the coder
+            _add_note(comp, "applied a steer from the guard")
+        if _has_tool_calls(comp):
+            return comp  # acting → forward
+        return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)
+
+    def _gate_direct_done(self, gs, comp, framed: dict, body: dict, coder_chat, rlog):
+        """The coder answered with NO tool call (thinks it's done). Verify before ending the turn:
+        LEG0 (never acted this session → one act-first nudge, re-call once), then the OBJECTIVE
+        completion gate (run the repo's checks; on failure the next turn steers, on pass the 'done'
+        is forwarded). The same protection the loop's LEG0 + gate give — no false 'done, tests pass'.
+        NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd> tags
+        from `framed`)."""
+        if gs.action_seq == 0 and not gs.leg0_nudged:  # the session never acted at all
+            gs.leg0_nudged = True
+            rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
+            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=self._LEG0_NUDGE)}]
+            recall = self._run_coder({**framed, "messages": conv}, coder_chat, gs, rlog)
+            if recall is not None:
+                comp = recall
+                if _has_tool_calls(comp):
+                    return comp  # it acted after the nudge
+        probe = guard_gate_op(gs, body, rlog)  # body, NOT framed — reframe stripped the <cwd> tags
+        if probe is not None:
+            gs.done_probe = True
+            gs.probe_call_id = probe["id"]
+            gs.pending_done = _completion_text(comp)
+            rlog.emit("loop.completion_probe", plan_off=True)
+            return _completion_toolcalls([probe], note="verifying — running the repo's checks")
+        return comp  # no shell tool → can't gate; forward the 'done' as-is
+
     def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
         """Resolve the provider/model for this classification and build the
         indicator. Falls back to the local upstream (passthrough) when routing isn't
@@ -487,43 +582,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                   and classification.task_type == "coding")
         if direct:
             rlog.emit("route.direct_coder")
-            # Repetition / wheel-spin guard — the SAME shared implementation the loop uses, so a
-            # plan-off session that thrashes (rewrite→test→rewrite) gets a ground-truth probe and a
-            # steer, not endless churn. Cross-turn state lives in the per-session GuardStore.
-            gs = server.guard_store.get(sess_key)
-            steer, intervention = None, None
-            if gs.awaiting_probe:  # a guard probe we emitted last turn has run → read its ground truth
-                gs.awaiting_probe = False
-                steer = guard_probe_steer(gs, body, rlog)  # canned steer (no reasoner on plan-off)
-            else:
-                intervention = guard_intervene(gs, body, rlog)  # flagged? → emit a probe / park a steer
-                if intervention is None:
-                    steer, gs.nudge_reason = gs.nudge_reason or None, ""
-            if intervention is not None:
-                comp = intervention  # emit the ground-truth probe (a shell call the harness runs)
-            else:
-                framed = _direct_coder_body(body)
-                if steer:  # inject the guard's steer into the coder framing this turn
-                    framed = {**framed, "messages": framed["messages"]
-                              + [{"role": "user", "content": prompts.render("nudge", reason=steer)}]}
-                framed = self._apply_route_role(framed, indic)
-                coder_chat = self._guarded_coder_chat(provider)
-                try:
-                    comp = massage.apply(json.loads(coder_chat(framed, rlog)), body.get("tools"), rlog)
-                except (json.JSONDecodeError, TypeError):
-                    return {}, indic
-                comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
-                comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
-                # Per-turn hygiene (same as the loop's coder-turn tail): scrub cria's own parroted
-                # banners, and strip reasoning the model leaked into content when reasoning is OFF.
-                _strip_completion_banners(comp)
-                if server.coder_role is not None:
-                    _clean_completion(comp, server.coder_role)
-                if steer:  # no hidden guards: surface that cria steered the coder this turn
-                    _add_note(comp, "applied a steer from the repetition/wheel-spin guard")
-                if any((ch.get("message") or {}).get("tool_calls") for ch in comp.get("choices", [])):
-                    guard_track_repetition(gs, comp, rlog)   # detect repetition in what the coder just did
-                    guard_track_write_streak(gs, comp, rlog)
+            comp = self._drive_direct_coder(server.guard_store.get(sess_key), provider, indic, body, rlog)
+            if comp is None:
+                return {}, indic
         else:
             raw = provider.chat(self._apply_route_role(_proxy_body(body), indic), rlog)
             try:

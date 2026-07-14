@@ -1859,3 +1859,29 @@ class GuardNoteTests(unittest.TestCase):
         out = guard_truncation(dict(trunc), {"messages": [], "tools": None},
                                lambda b, r: json.dumps(trunc).encode(), _Rlog())  # never recovers → refuse
         self.assertIn("partial write refused", " ".join(out.get("cria_notes", [])))
+
+
+class DirectCompletionGateTests(unittest.TestCase):
+    """The objective completion gate cria now runs on a plan-off 'done' (verify the repo's checks
+    before letting the turn end) — the pieces the plan-off path drives."""
+
+    def test_gate_verdict_fail_open_without_a_plan(self):
+        from cria.loop import GuardState, guard_gate_verdict
+        gs = GuardState(); gs.probe_call_id = "p1"  # gate_plan None → couldn't run → accept the 'done'
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
+        self.assertIsNone(guard_gate_verdict(gs, body, _Rlog()))
+
+    def test_gate_op_emits_a_shell_probe_and_stashes_the_plan(self):
+        from cria.loop import GuardState, guard_gate_op
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "h.py"), "w") as f:
+                f.write("def f():\n    return 1\n")
+            body = {"tools": [{"type": "function", "function": {"name": "shell",
+                     "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}],
+                    "messages": [{"role": "user", "content": f"<environment_context><cwd>{tmp}</cwd></environment_context>"}]}
+            gs = GuardState()
+            probe = guard_gate_op(gs, body, _Rlog())
+            self.assertIsNotNone(probe)                 # a shell probe to run the repo's checks
+            self.assertEqual(probe["function"]["name"], "shell")
+            self.assertIsNotNone(gs.gate_plan)          # stashed so the verdict can interpret it
