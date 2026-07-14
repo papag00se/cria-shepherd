@@ -75,8 +75,9 @@ class FocusToolsTests(unittest.TestCase):
 class CheatsheetTests(unittest.TestCase):
     def test_describes_present_tools(self):
         note = cheatsheet([_WRITE, _SHELL, _PATCH])
-        self.assertIn("write_file(path, content)", note)
-        self.assertIn("shell(command)", note)
+        self.assertIn("write_file", note)
+        self.assertIn('"content"', note)   # the menu-derived hint carries argument shapes
+        self.assertIn("shell", note)
         self.assertIn("apply_patch", note)
 
     def test_none_without_tools(self):
@@ -85,6 +86,19 @@ class CheatsheetTests(unittest.TestCase):
 
     def test_shell_read_hint_when_no_read_file(self):
         self.assertIn("cat <path>", cheatsheet([_SHELL]))
+
+    def test_names_only_tools_in_the_menu(self):
+        # prompt<->menu consistency: read_file + list_dir present → named with arg shapes;
+        # edit_file absent → NEVER mentioned (the mismatch the coder prompt used to have)
+        note = cheatsheet([_WRITE, _SHELL, _t("read_file"), _t("list_dir")])
+        self.assertIn("read_file", note)
+        self.assertIn("list_dir", note)
+        self.assertIn("start_line", note)     # read_file's argument shape is spelled out
+        self.assertNotIn("edit_file", note)   # not in the menu → the hint must not name it
+        # …and when edit_file IS in the menu, it gets described
+        note2 = cheatsheet([_WRITE, _t("edit_file")])
+        self.assertIn("edit_file", note2)
+        self.assertIn("old_string", note2)
 
 
 class AddCheatsheetTests(unittest.TestCase):
@@ -109,7 +123,7 @@ class AddCheatsheetTests(unittest.TestCase):
         add_cheatsheet(body)
         roles = [m["role"] for m in body["messages"]]
         self.assertEqual(roles, ["system", "user"])
-        self.assertIn("shell(command)", body["messages"][0]["content"])
+        self.assertIn("run a shell command", body["messages"][0]["content"])
 
     def test_merges_into_multimodal_system(self):
         body = {
@@ -122,7 +136,7 @@ class AddCheatsheetTests(unittest.TestCase):
         add_cheatsheet(body)
         self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
         parts = body["messages"][0]["content"]
-        self.assertTrue(any("shell(command)" in p.get("text", "") for p in parts))
+        self.assertTrue(any("run a shell command" in p.get("text", "") for p in parts))
 
     def test_noop_without_tools(self):
         body = {"messages": [{"role": "user", "content": "hi"}]}

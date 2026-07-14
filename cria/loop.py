@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, indicators, massage, probegate, proberun, prompts
+from . import callcapture, indicators, massage, probegate, proberun, prompts, toolmenu
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -502,7 +502,8 @@ class Loop:
         framed = dict(body)
         framed["model"] = self._ctx.coder_model
         framed["stream"] = False
-        msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total, prior_work=sess.prior_work)
+        msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
+                               prior_work=sess.prior_work, tools=body.get("tools"))
         if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
             sess.nudge_reason = ""
@@ -1209,7 +1210,7 @@ def _is_env_context(m: dict) -> bool:
     return "<environment_context>" in c or "<user_instructions>" in c
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "") -> list[dict]:
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -1236,7 +1237,13 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # on (it then flails and the re-nudge loop never converges = "Thinking forever"). In the system
     # message the instruction can never be dropped, and system is authoritative for the model.
     done_block = f"Already done earlier this session (build on it, don't redo):\n{prior_work}\n\n" if prior_work else ""
-    out: list[dict] = [{"role": "system", "content": prompts.load("coder_system") + "\n\n" + done_block + prompt}]
+    # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
+    # told to use ONLY the tools actually in this turn's menu — the harness system message that
+    # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).
+    hint = toolmenu.cheatsheet(tools)
+    hint_block = f"{hint}\n\n" if hint else ""
+    out: list[dict] = [{"role": "system",
+                        "content": prompts.load("coder_system") + "\n\n" + hint_block + done_block + prompt}]
     replaced = False
     for m in messages:
         if m.get("role") in ("system", "developer"):

@@ -1,10 +1,15 @@
 # The tool cheat-sheet cria folds into the model's system message (one per turn, on the
-# OUTBOUND request only). One entry per tool cria may describe; only tools the harness
-# actually advertises are included, in this order. {{SHELL}} = the harness's shell tool
-# name (e.g. shell, exec_command, bash). Format is `key = value`, one per line.
-header = Tool usage (prefer these; keep files small and focused):
-write_file = - write_file(path, content): create or OVERWRITE a file with its FULL content — the most reliable way to write a file (you supply the whole file, nothing to escape).
-shell = - {{SHELL}}(command): run a shell command.
-apply_patch = - apply_patch: edit an existing file. Format: `*** Begin Patch` / `*** Update File: <path>` / `-old` / `+new` / `*** End Patch`.
-read_file = - read_file(path): read a file.
-read_via_shell = - read a file with `{{SHELL}}` running `cat <path>`.
+# OUTBOUND request only) — the menu-derived tool hint (ports codex-local build_tool_hint).
+# One entry per tool cria may describe; ONLY tools actually in this turn's resolved menu are
+# included, in this order, so the prompt can never name a tool the model can't call.
+# {{SHELL}} = the harness's shell tool name (e.g. shell, exec_command, bash). Format is
+# `key = value`, one per line; `\n` in a value becomes a real newline.
+header = Tools available this turn — call these exact names with these argument shapes:
+write_file = - write_file — create or OVERWRITE a file with its FULL content (you supply the whole file; nothing to escape). Args: {"path": "<file>", "content": "<full file text>"}. The default way to write a file.
+read_file = - read_file — read a file (read-only). Args: {"path": "<file>"}, or {"path": "<file>", "start_line": 40, "end_line": 80} for a 1-based inclusive range.
+list_dir = - list_dir — list a directory (read-only). Args: {"path": "<dir>"} (defaults to the current directory).
+edit_file = - edit_file — replace ONE exact snippet in an existing file. Args: {"path": "<file>", "old_string": "<exact text to replace>", "new_string": "<replacement>"}. Copy old_string VERBATIM from the file; if it won't apply, fall back to write_file with the whole file.
+apply_patch = - apply_patch — edit an existing file. Format: `*** Begin Patch` / `*** Update File: <path>` / `-old` / `+new` / `*** End Patch`.
+shell = - {{SHELL}} — run a shell command when no focused tool fits, per the tool's own argument schema.
+read_via_shell = - read a file with `{{SHELL}}` running `cat <path>` (there is no read_file tool this turn).
+footer = Prefer a focused tool (write_file / read_file / list_dir) over the shell for its job.

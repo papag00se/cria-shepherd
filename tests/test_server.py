@@ -88,6 +88,17 @@ class DirectCoderBodyTests(unittest.TestCase):
         self.assertEqual(out["tools"], body["tools"])
         self.assertEqual(body["messages"][0]["content"], "You are Codex...")  # input not mutated
 
+    def test_carries_menu_derived_tool_hint_into_cria_system(self):
+        # the hint add_cheatsheet folded into the (now dropped) harness system message must be
+        # re-carried into cria's own system message, naming the tools actually in the menu
+        body = {"tools": [{"type": "function", "function": {"name": "write_file"}},
+                          {"type": "function", "function": {"name": "read_file"}}],
+                "messages": [{"role": "system", "content": "harness"},
+                             {"role": "user", "content": "build it"}]}
+        sysmsg = _direct_coder_body(body)["messages"][0]["content"]
+        self.assertIn("read_file", sysmsg)
+        self.assertIn('"content"', sysmsg)  # argument shapes carried too
+
 
 class HasVisibleOutputTests(unittest.TestCase):
     """The ⟦cria⟧ banner shows only when the turn carries something to see."""

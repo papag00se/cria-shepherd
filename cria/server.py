@@ -28,7 +28,7 @@ from .indicators import MARKER, Indicator, inject_buffered, strip_history, wrap_
 from .loop import Loop, LoopContext, LoopStore, completion_to_sse, guard_rumination, guard_truncation, session_key
 from .planner import Planner
 from .routing import Router
-from .toolmenu import add_cheatsheet, focus_tools
+from .toolmenu import add_cheatsheet, cheatsheet, focus_tools
 from .upstream import Upstream, UpstreamError
 from .writeproxy import TranslationStore, advertise, needs_translation, represent_inbound, translate_outbound
 
@@ -75,7 +75,12 @@ def _direct_coder_body(body: dict) -> dict:
     loop gives the coder, minus the plan. So turning planning off is a fair 'coder without a
     planner' (like codex-local drives it), not a bare passthrough with no coding-agent framing."""
     msgs = [m for m in (body.get("messages") or []) if m.get("role") not in ("system", "developer")]
-    return {**body, "messages": [{"role": "system", "content": prompts.load("coder_system")}] + msgs}
+    # Carry the menu-derived tool hint into cria's OWN system message: add_cheatsheet folded it
+    # into the harness system message during prep, which we just dropped — so the coder would
+    # otherwise get no tool guidance and the prompt could name tools not in the menu.
+    hint = cheatsheet(body.get("tools"))
+    system = prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
+    return {**body, "messages": [{"role": "system", "content": system}] + msgs}
 
 
 class CriaServer(ThreadingHTTPServer):

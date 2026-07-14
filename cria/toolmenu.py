@@ -64,25 +64,34 @@ def focus_tools(body: dict, rlog=None) -> None:
 
 
 def cheatsheet(tools) -> str | None:
-    """A terse per-tool usage note for the tools present, or None if there's nothing
-    worth saying. The wording lives in cria/prompts/cheatsheet.txt (edit it there)."""
+    """The menu-derived tool hint (ports codex-local ``build_tool_hint``): a terse per-tool note
+    with argument shapes, generated FROM this turn's resolved menu — so the guidance names ONLY
+    tools the model can actually call and the prompt can never disagree with the menu. None when
+    there's nothing worth saying. The wording lives in cria/prompts/cheatsheet.txt."""
     names = {(((t.get("function") or t) if isinstance(t, dict) else {}).get("name")) for t in tools or []}
     shell = find_shell_tool(tools)
     frag = prompts.load_map("cheatsheet")
     lines = []
     if "write_file" in names:
         lines.append(frag["write_file"])
-    if shell is not None:
-        lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
-    if "apply_patch" in names:
-        lines.append(frag["apply_patch"])
     if "read_file" in names:
         lines.append(frag["read_file"])
     elif shell is not None:
         lines.append(prompts.fill(frag["read_via_shell"], shell=shell["name"]))
+    if "list_dir" in names:
+        lines.append(frag["list_dir"])
+    if "edit_file" in names:
+        lines.append(frag["edit_file"])
+    if "apply_patch" in names:
+        lines.append(frag["apply_patch"])
+    if shell is not None:
+        lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
     if not lines:
         return None
-    return frag["header"] + "\n" + "\n".join(lines)
+    body = frag["header"] + "\n" + "\n".join(lines)
+    if shell is not None and (names & {"write_file", "read_file", "list_dir"}):
+        body += "\n" + frag["footer"]  # only worth saying when there IS a focused tool to prefer
+    return body
 
 
 def add_cheatsheet(body: dict, rlog=None) -> None:
