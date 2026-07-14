@@ -41,6 +41,8 @@ class Indicator:
     role: str | None = None  # None → passthrough (no routing)
     show_route: bool = True  # show the "which model" line this turn (else metrics only)
     note: str | None = None  # an extra one-off line, e.g. "planned 5 steps → …"
+    route: bool = True  # config: the "⟦cria⟧ <role> · <model>" banner is enabled
+    assists: bool = True  # config: the "⟦cria⟧ <note>" guard/assist lines are enabled
 
     def route_text(self) -> str:
         return f"{self.role or 'passthrough'} · {self.model}"
@@ -79,6 +81,18 @@ def _strip_marker_lines(text: str) -> tuple[str, int]:
     return "\n".join(kept).strip("\n"), len(lines) - len(kept)
 
 
+def strip_note_lines(completion: dict) -> None:
+    """Remove cria's own ``⟦cria⟧ …`` (MARKER) lines from a completion's message content, in place.
+    Used when ``[indicators] assists`` is off, so the guard/assist notes cria synthesizes into the
+    completion content ('running the repo's checks (…)', truncation warnings) never reach the
+    harness. The separately-added route banner is unaffected (it isn't in the content)."""
+    for ch in completion.get("choices", []):
+        msg = ch.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str) and MARKER in content:
+            msg["content"] = _strip_marker_lines(content)[0] or None
+
+
 # ------------------------------------------------------------------ outbound
 
 
@@ -105,9 +119,9 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
     # that the harness stores and re-summarizes. Flushed inline, the banner rides the content and
     # is stripped inbound with it.
     pending = []
-    if indic.show_route:
+    if indic.route and indic.show_route:  # the ongoing route banner (config: [indicators] route)
         pending.append(route_line(indic) + "\n")
-    if indic.note:
+    if indic.assists and indic.note:  # a guard/assist note line (config: [indicators] assists)
         pending.append(MARKER + indic.note + "\n")
 
     t_first: float | None = None
@@ -137,9 +151,9 @@ def inject_buffered(raw: bytes, indic: Indicator) -> bytes:
     if not indic.enabled:
         return raw
     header_lines = []
-    if indic.show_route:
+    if indic.route and indic.show_route:  # config: [indicators] route
         header_lines.append(route_line(indic))
-    if indic.note:
+    if indic.assists and indic.note:  # config: [indicators] assists
         header_lines.append(MARKER + indic.note)
     if not header_lines:
         return raw

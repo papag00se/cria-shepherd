@@ -24,10 +24,11 @@ from .content_reduce import est_tokens
 from .config import Config
 from .events import EventLog
 from .heartbeat import Heartbeat
-from .indicators import MARKER, Indicator, inject_buffered, strip_history, wrap_stream
+from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
 from .loop import (
     GuardStore,
     Loop,
+    _add_note,
     LoopContext,
     LoopStore,
     completion_to_sse,
@@ -59,6 +60,17 @@ def _has_visible_output(comp: dict) -> bool:
     empty turn)."""
     msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
     return bool(msg.get("tool_calls")) or bool((msg.get("content") or "").strip())
+
+
+def _prepend_content_line(completion: dict, line: str) -> None:
+    """Prepend ``line`` as its own line to the first choice's message content (creating it if the
+    turn was tool-calls-only). Used to surface cria's out-of-band assist notes as ⟦cria⟧ lines."""
+    choices = completion.get("choices") or []
+    if not choices:
+        return
+    msg = choices[0].setdefault("message", {})
+    existing = msg.get("content")
+    msg["content"] = f"{line}\n{existing}" if isinstance(existing, str) and existing else line
 
 # Renamed from the Rust vehicle's ``X-Nudge-Session-Id`` as part of the rebrand.
 # Optional: absent → cria runs stateless (fine for phase 1; session state lands
@@ -275,6 +287,20 @@ class CriaHandler(BaseHTTPRequestHandler):
             return None
         return server.classifier.classify(body.get("messages", []), rlog)
 
+    def _decorate(self, completion: dict) -> dict:
+        """[indicators] assists: surface EVERY cria assist that fired as a ⟦cria⟧ line — the
+        out-of-band `cria_notes` channel the guards append to (rumination/truncation/steer) PLUS any
+        ⟦cria⟧ note already in the content (the repetition/wheel-spin probes). 'No hidden guards':
+        under the flag a fired guard is always visible; with the flag off, all of it is stripped."""
+        ic = self.server.cfg.indicators
+        notes = completion.pop("cria_notes", None) or []
+        if ic.enabled and ic.assists:
+            for note in reversed(notes):  # each note becomes its own ⟦cria⟧ line, ahead of the content
+                _prepend_content_line(completion, f"{MARKER}{note}")
+        else:
+            strip_note_lines(completion)  # drop content ⟦cria⟧ notes too (cria_notes already popped)
+        return completion
+
     def _translate_out(self, completion: dict, rlog) -> dict:
         """Lower the model's write_file calls to shell, when translation is active
         for this request. Set up in `_handle_chat`."""
@@ -304,7 +330,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         ic = server.cfg.indicators
 
         def passthrough() -> tuple[object, Indicator]:
-            return server.upstream, Indicator(ic.enabled, ic.metrics, model=str(body.get("model") or "?"), role=None)
+            return server.upstream, Indicator(ic.enabled, ic.metrics, model=str(body.get("model") or "?"),
+                                              role=None, route=ic.route, assists=ic.assists)
 
         if server.router is None or classification is None:
             return passthrough()
@@ -315,7 +342,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
         return route.provider, Indicator(
-            ic.enabled, ic.metrics, model=route.model, role=route.role, show_route=not classification.cached
+            ic.enabled, ic.metrics, model=route.model, role=route.role, show_route=not classification.cached,
+            route=ic.route, assists=ic.assists,
         )
 
     def _apply_route_role(self, pbody: dict, indic) -> dict:
@@ -371,7 +399,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if server.loop is not None and (server.loop.knows_session(sk) or (classification is not None and classification.engagement == "task")):
                 completion = server.loop.drive(body, sk, classification, rlog)
                 if completion is not None:
-                    yield from completion_to_sse(self._translate_out(completion, rlog))
+                    yield from completion_to_sse(self._decorate(self._translate_out(completion, rlog)))
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
@@ -402,7 +430,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if server.loop is not None and (server.loop.knows_session(sess_key) or (classification is not None and classification.engagement == "task")):
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
-                out = self._translate_out(completion, rlog)
+                out = self._decorate(self._translate_out(completion, rlog))
                 _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
@@ -442,6 +470,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return {}, indic
                 comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
                 comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
+                if steer:  # no hidden guards: surface that cria steered the coder this turn
+                    _add_note(comp, "applied a steer from the repetition/wheel-spin guard")
                 if any((ch.get("message") or {}).get("tool_calls") for ch in comp.get("choices", [])):
                     guard_track_repetition(gs, comp, rlog)   # detect repetition in what the coder just did
                     guard_track_write_streak(gs, comp, rlog)
@@ -459,7 +489,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
-        out = self._translate_out(comp, rlog)
+        out = self._decorate(self._translate_out(comp, rlog))
         _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
         return out, indic
 
@@ -555,7 +585,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             # call or text. A bare banner (empty completion) both litters the TUI and, being
             # a text-only assistant turn, tells the harness the agent is DONE. cria's loop is
             # built never to emit an empty non-final turn, but gate here too as a backstop.
-            if self.server.cfg.indicators.enabled and _has_visible_output(comp):
+            ic = self.server.cfg.indicators
+            if ic.enabled and ic.route and _has_visible_output(comp):  # [indicators] route
                 # Show the model cria ACTUALLY routed to (a local model), never the
                 # name the client's picker sent (e.g. "gpt-5.5") — cria ignores that.
                 lm = self.server.cfg.routing.local_models
@@ -565,7 +596,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                     shown, role = (lm.get("coder") or lm.get("classifier") or "local"), "coder"
                 banner = f"{MARKER}{role} · {shown}"
                 tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
-                if tps:
+                if ic.metrics and tps:  # [indicators] metrics — the "· N tok/s" suffix
                     banner += f" · {tps:.0f} tok/s"
             for chunk in responses.body_events(comp, resp_id, model, banner):
                 hb.write(chunk)

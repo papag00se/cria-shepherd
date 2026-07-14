@@ -40,8 +40,10 @@ capture_rendered = true   # also capture the rendered prompt string (local serve
 # cria decorates the response with its own status lines and strips them from the
 # history before the model sees them. off = pure passthrough, no decoration.
 [indicators]
-enabled = true
-metrics = true        # the trailing "N tok · X tok/s" line on streamed responses
+enabled = true        # master switch — off = pure passthrough, no cria decoration
+route   = true        # the ongoing "⟦cria⟧ <role> · <model>" banner on each response
+metrics = true        # the trailing "· N tok/s" suffix on the route banner
+assists = true        # the "⟦cria⟧ <note>" guard/assist lines (e.g. "running the repo's checks (…)")
 
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]

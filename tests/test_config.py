@@ -165,3 +165,13 @@ repeat_penalty = 1.1
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndicatorTogglesTests(unittest.TestCase):
+    def test_route_and_assists_parse_independently(self):
+        from cria.config import _indicators
+        ic = _indicators({"route": False, "assists": False})
+        self.assertFalse(ic.route)
+        self.assertFalse(ic.assists)
+        self.assertTrue(ic.enabled)   # unspecified → default on
+        self.assertTrue(ic.metrics)

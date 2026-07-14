@@ -206,11 +206,16 @@ class RoutingConfig:
 
 @dataclass(frozen=True)
 class IndicatorsConfig:
-    """cria's messaging into the completion content (which model, tok/s, later:
-    assist notifications). ``enabled`` off = a pure passthrough with no decoration."""
+    """cria's messaging into the completion content. ``enabled`` off = a pure passthrough with no
+    decoration. The two visible families are independently toggleable: ``route`` (the ongoing
+    ``⟦cria⟧ <role> · <model>`` line, with ``metrics`` the ``· N tok/s`` suffix) and ``assists``
+    (the ``⟦cria⟧ <note>`` guard/assist lines — 'running the repo's checks (…)', truncation
+    warnings, …)."""
 
-    enabled: bool = True
-    metrics: bool = True  # the trailing tok/s line on streamed responses
+    enabled: bool = True  # master switch: off = no cria decoration at all
+    route: bool = True    # the ongoing "⟦cria⟧ <role> · <model>" banner
+    metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
+    assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
 
 
 @dataclass(frozen=True)
@@ -337,7 +342,12 @@ def _logging(d: dict) -> LoggingConfig:
 
 
 def _indicators(d: dict) -> IndicatorsConfig:
-    return IndicatorsConfig(enabled=bool(d.get("enabled", True)), metrics=bool(d.get("metrics", True)))
+    return IndicatorsConfig(
+        enabled=bool(d.get("enabled", True)),
+        route=bool(d.get("route", True)),
+        metrics=bool(d.get("metrics", True)),
+        assists=bool(d.get("assists", True)),
+    )
 
 
 def _routing(data: dict) -> RoutingConfig:

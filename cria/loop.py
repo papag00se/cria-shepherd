@@ -1441,6 +1441,15 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
     return None
 
 
+def _add_note(completion: dict, note: str) -> None:
+    """Record a cria assist as an out-of-band note on the completion. The server surfaces it as a
+    ⟦cria⟧ line when [indicators] assists is on — 'no hidden guards': every intervention that fires
+    is visible under the flag. A SEPARATE channel from content, so the loop's parroted-banner scrub
+    (_strip_completion_banners) can't drop cria's own intentional notes."""
+    if note:
+        completion.setdefault("cria_notes", []).append(note)
+
+
 def guard_ground_truth(outcome) -> str:
     """The coder-facing ground truth from a gate outcome: the block-nudge findings if any, else a
     plain 'all checks pass' (NEUTRAL — a content-blind streak can't tell a spiral from honest
@@ -1513,6 +1522,8 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
         if ch.get("finish_reason") == "rumination":
             ch["finish_reason"] = "stop"
+    if attempt:  # no hidden guards: surface that the reasoning loop was broken
+        _add_note(coder, f"reasoning loop detected — aborted and refocused ({attempt}×)")
     return coder
 
 
@@ -1545,7 +1556,8 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         rlog.phase = f"{phase}-continue{attempt}"
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
-    if massage.is_truncated(coder):
+    dropped = massage.is_truncated(coder)
+    if dropped:
         # Exhausted (or a non-write truncation): do NOT forward the partial write — a cut-off
         # write_file lowered to disk is exactly the corruption. Drop the tool call; the turn then
         # reads as non-acting and the caller gates on ground truth rather than a corrupt file.
@@ -1555,6 +1567,10 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     for ch in coder.get("choices", []):
         if ch.get("finish_reason") == "rumination":
             ch["finish_reason"] = "stop"
+    if dropped:  # no hidden guards: the partial write was refused
+        _add_note(coder, "output hit the token limit — partial write refused (retry in smaller pieces)")
+    elif attempt:  # recovered after steering to incremental writes
+        _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
     return coder
 
 

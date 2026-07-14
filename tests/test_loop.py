@@ -1835,3 +1835,27 @@ class SharedRepetitionGuardTests(unittest.TestCase):
         steer = guard_probe_steer(gs, body, _Rlog())  # author=None → canned (plan-off)
         self.assertIn("rewritten `h.py`", steer)
         self.assertFalse(gs.spin_probe)  # consumed
+
+
+class GuardNoteTests(unittest.TestCase):
+    """No hidden guards: rumination + truncation surface an out-of-band cria_notes entry when they
+    fire, which the server renders as a ⟦cria⟧ line under [indicators] assists."""
+
+    def test_rumination_surfaces_a_note(self):
+        from cria.loop import guard_rumination
+        ruminating = {"choices": [{"message": {"role": "assistant", "content": "…"}, "finish_reason": "rumination"}],
+                      "cria_rumination": {"hits": 7, "reasoning_tokens": 5000}}
+        acted = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "c", "function": {"name": "write_file", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}
+        out = guard_rumination(ruminating, {"messages": [], "tools": None},
+                               lambda b, r: json.dumps(acted).encode(), _Rlog())
+        self.assertIn("reasoning loop detected", " ".join(out.get("cria_notes", [])))
+
+    def test_truncation_refusal_surfaces_a_note(self):
+        from cria.loop import guard_truncation
+        trunc = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "c", "function": {"name": "write_file", "arguments": '{"path":"h.py","content":"x"}'}}]},
+            "finish_reason": "length"}]}
+        out = guard_truncation(dict(trunc), {"messages": [], "tools": None},
+                               lambda b, r: json.dumps(trunc).encode(), _Rlog())  # never recovers → refuse
+        self.assertIn("partial write refused", " ".join(out.get("cria_notes", [])))

@@ -115,3 +115,21 @@ class BufferedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToggleTests(unittest.TestCase):
+    def test_route_false_omits_the_route_line(self):
+        shown = _assemble(list(wrap_stream(iter(_model_stream(["a", "b", "c"])), _indic(route=False))))
+        self.assertNotIn("coder · fabliq_8b_reasoning_q6", shown)  # route banner off
+        self.assertIn("abc", shown)                                 # model text untouched
+
+    def test_assists_false_omits_the_note(self):
+        shown = _assemble(list(wrap_stream(
+            iter(_model_stream(["a", "b", "c"])), _indic(assists=False, note="running the repo's checks"))))
+        self.assertNotIn("running the repo's checks", shown)
+
+    def test_strip_note_lines_drops_cria_notes_keeps_real_text(self):
+        from cria.indicators import strip_note_lines, MARKER
+        comp = {"choices": [{"message": {"content": f"{MARKER}running the repo's checks\nreal answer"}}]}
+        strip_note_lines(comp)
+        self.assertEqual(comp["choices"][0]["message"]["content"], "real answer")
