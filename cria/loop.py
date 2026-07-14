@@ -28,7 +28,7 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
@@ -120,20 +120,15 @@ class Phase(Enum):
 
 
 @dataclass
-class PlanSession:
-    plan: Plan
-    phase: Phase = Phase.WORK
-    summary: str = ""  # running summary of completed steps
-    prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
-    verify_fails: int = 0
+class GuardState:
+    """Cross-turn repetition / wheel-spin guard state: the ground-truth-probe round-trip plus the
+    rolling action/write windows. Shared so ONE implementation of the guard drives both paths —
+    ``PlanSession`` IS-A ``GuardState`` (the plan loop), and the plan-off direct path keeps a bare
+    ``GuardState`` per session. The module-level ``guard_*`` functions operate on this state."""
     awaiting_probe: bool = False  # cria emitted a ground-truth probe; next request is its result
     probe_call_id: str = ""  # the id of the probe tool call, to find its result
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
-    step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
-    leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
-    last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
-    gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
     spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
@@ -141,10 +136,40 @@ class PlanSession:
     recent_actions: list = None  # rolling window of (seq, nature-signature) per forwarded call
     action_seq: int = 0  # forwarded-call counter — ages recent_actions entries out of the window
     repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
-    redirect_due: bool = False  # repetition tripped → gate + reasoner redirect before next coder turn
-    redirect_probe: bool = False  # the in-flight gate feeds a reasoner redirect
+    redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
+    redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
+    nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+
+
+@dataclass
+class PlanSession(GuardState):
+    plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
+    phase: Phase = Phase.WORK
+    summary: str = ""  # running summary of completed steps
+    prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
+    verify_fails: int = 0
+    step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
+    leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
+    last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
-    nudge_reason: str = ""  # a failed-check reason to hand the coder on its next work turn
+
+
+class GuardStore:
+    """Per-session GuardState for the plan-off path — the loop keeps its guard state inside its
+    PlanSession, but the plan-off direct path is otherwise stateless, so it holds the cross-turn
+    repetition/spin windows here (keyed by session, like the write-translation store)."""
+
+    def __init__(self) -> None:
+        self._m: dict[str, GuardState] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> GuardState:
+        with self._lock:
+            gs = self._m.get(key)
+            if gs is None:
+                gs = self._m[key] = GuardState()
+            return gs
 
 
 # GROUND-TRUTH gate: composed per verification by probegate.plan_gate (syntax floor +
@@ -466,39 +491,11 @@ class Loop:
 
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
-        if sess.redirect_due:  # repetition tripped → ground truth, then the reasoner redirects
-            sess.redirect_due = False
-            sess.spin_probe_due = False  # the redirect's gate supersedes a pending spin probe —
-            # never run two back-to-back gates, and never let the spin renudge overwrite the
-            # reasoner-authored redirect parked in nudge_reason
-            probe_tc = self._gate_op(body, sess, rlog)
-            if probe_tc is not None:
-                sess.awaiting_probe = True
-                sess.redirect_probe = True
-                sess.probe_call_id = probe_tc["id"]
-                rlog.emit("loop.redirect_probe", step=idx)
-                return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
-            # no gate available (no shell tool / unreadable workspace): NEVER swallow a tripped
-            # intervention — deliver the canned steer through this turn's nudge instead
-            sess.nudge_reason = (
-                f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
-                f"({_clip(sess.repeat_action, 160)}) — repeating it will not change the outcome. "
-                "Choose a DIFFERENT next action and take it now via a tool call.")
-            rlog.emit("loop.redirect", step=idx, canned=True, chars=len(sess.nudge_reason))
-        if sess.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
-            sess.spin_probe_due = False
-            probe_tc = self._gate_op(body, sess, rlog)
-            if probe_tc is not None:
-                sess.awaiting_probe = True
-                sess.spin_probe = True
-                sess.probe_call_id = probe_tc["id"]
-                rlog.emit("loop.spin_probe", step=idx, path=sess.spin_path)
-                return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
-            sess.nudge_reason = (  # same no-gate fallback: a steer, never silence
-                f"you have rewritten `{sess.spin_path}` repeatedly; the repo's checks could not "
-                "run here. Stop rewriting it — re-read the step and verify a DIFFERENT part of "
-                "the work before touching that file again.")
-            rlog.emit("loop.spin_probe_result", step=idx, canned=True)
+        # Repetition/wheel-spin intervention (shared with the plan-off path): emit a ground-truth
+        # probe now, or park a canned steer in sess.nudge_reason for the framing below.
+        intervention = guard_intervene(sess, body, rlog, step=idx, workspace_root=self._ctx.workspace_root)
+        if intervention is not None:
+            return intervention
         framed = dict(body)
         framed["model"] = self._ctx.coder_model
         framed["stream"] = False
@@ -592,30 +589,11 @@ class Loop:
         # Interpret the gate output through the ported probe modules (floor + probes + git).
         outcome = probegate.interpret_gate(sess.gate_plan, probe) if sess.gate_plan is not None \
             else probegate.GateOutcome(ran=False)
-        if sess.redirect_probe:  # repetition: ground truth → the REASONER authors the redirect
-            sess.redirect_probe = False
-            redirect = self._author_redirect(sess, outcome, body, rlog)
-            rlog.emit("loop.redirect", step=idx, chars=len(redirect))
-            return self._renudge(sess, key, body, f"[REDIRECT]\n{redirect}", rlog)
-        if sess.spin_probe:  # wheel-spinning ground truth: INSERT the results and keep working —
-            sess.spin_probe = False  # no verdict, no critic, the step stays open
-            findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
-            if findings:
-                truth = findings
-            elif outcome.ran:
-                # NEUTRAL report (round 6): the spec for this tier is "surface the lint/type-check
-                # results", NOT "the bug is elsewhere". A content-blind streak can't tell a spiral
-                # from an honest sequence of edits to one file (applying review findings one by
-                # one), so it must NOT claim the problem isn't here — that mis-steers the coder off
-                # the correct file. Just state the checks pass and let it decide.
-                truth = ("the repo's checks (lint + type-check + syntax) all PASS on your current "
-                         "edits — no error-class findings in this file")
-            else:
-                truth = "the checks could not run"
-            rlog.emit("loop.spin_probe_result", step=idx, clean=findings is None and outcome.ran)
-            return self._renudge(sess, key, body,
-                                 f"you have rewritten `{sess.spin_path}` repeatedly; "
-                                 f"ground truth from the repo's own checks:\n{_clip_tail(truth, 1800)}", rlog)
+        # Guard-probe result (repetition redirect / wheel-spin ground truth) — shared with the
+        # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
+        steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._author_redirect)
+        if steer is not None:
+            return self._renudge(sess, key, body, steer, rlog)
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
@@ -694,56 +672,9 @@ class Loop:
         return self._work(sess, key, body, rlog)
 
     def _track_repetition(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
-        """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
-        (exact fingerprints were tried on the codex-local side and missed one-flag jitter).
-        REPEAT_FINGERPRINT_N nature-matches within the last REPEAT_WINDOW calls trips the
-        reasoned redirect. Windowed, not consecutive-only, so write→test→write→test loops with
-        byte-identical writes are caught (the canonical small-model spiral) — while PROGRESS
-        (a write/mutation matching nothing in the window, i.e. new ground changed) resets the
-        hunt, so a healthy edit→test→edit→test cycle never trips on its repeated test runs."""
-        if sess.recent_actions is None:
-            sess.recent_actions = []
-        for ch in coder.get("choices", []):
-            for tc in (ch.get("message") or {}).get("tool_calls") or []:
-                if (sess.redirect_due or sess.redirect_probe
-                        or sess.spin_probe_due or sess.spin_probe):
-                    return  # an intervention is in flight — it consumed the evidence; nothing
-                    # accrues until it's delivered (a fire mid-completion must not let the
-                    # completion's REMAINING calls repopulate the just-flushed windows)
-                fn = tc.get("function") or {}
-                name = fn.get("name") or "?"
-                args = fn.get("arguments") or ""
-                args = args if isinstance(args, str) else json.dumps(args)
-                sig = _action_signature(name, args)
-                sess.action_seq += 1
-                # AGE-based trim (entries are (seq, sig)): an entry expires REPEAT_WINDOW
-                # forwarded calls after it was seen — even across progress resets. A length
-                # trim alone made preserved write signatures immortal: identical writes 60
-                # calls apart counted as "3× in the last 12".
-                cutoff = sess.action_seq - REPEAT_WINDOW
-                sess.recent_actions = [e for e in sess.recent_actions if e[0] > cutoff]
-                matches = sum(1 for e in sess.recent_actions if _actions_match(sig, e[1]))
-                if not matches and _is_progress(sig, args):
-                    # a real move — reset the hunt for ACTIONS, but keep (in-window) write
-                    # signatures: the per-file rule ("same file, same content, 3× in the
-                    # window") must survive interleaved progress on OTHER files
-                    sess.recent_actions = [e for e in sess.recent_actions if e[1][0] == "write"]
-                    sess.recent_actions.append((sess.action_seq, sig))
-                    continue
-                sess.recent_actions.append((sess.action_seq, sig))
-                if (matches + 1 >= REPEAT_FINGERPRINT_N
-                        and not sess.redirect_due and not sess.redirect_probe
-                        and not sess.spin_probe_due and not sess.spin_probe):
-                    sess.redirect_due = True
-                    # flush BOTH windows: one intervention consumes the evidence — the writes
-                    # that fired this redirect must not ALSO count toward a wheel-spin right
-                    # after the coder complies (that steer would point away from the very file
-                    # it just fixed).
-                    sess.recent_actions = []
-                    sess.recent_writes = []
-                    sess.repeat_action = f"{name} {_clip(args, 300)}"
-                    rlog.emit("loop.repetition", step=idx, tool=name,
-                              count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
+        """The loop's coder step — delegates to the shared :func:`guard_track_repetition` so the
+        plan-off path runs the IDENTICAL detection."""
+        guard_track_repetition(sess, coder, rlog, step=idx)
 
     def _author_redirect(self, sess: PlanSession, outcome, body: dict, rlog) -> str:
         """The reasoned redirect (codex-local's reasoned-guidance pattern): hand the reasoner the
@@ -770,75 +701,17 @@ class Loop:
             text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=True)
         if text:
             return _clip(text, 1200)
-        # Reasoner unavailable → the canned fallback (upstream keeps canned directives for
-        # exactly this case).
-        return (f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
-                f"({_clip(sess.repeat_action, 160)}) — repeating it will not change the outcome. "
-                f"Ground truth: {_clip_tail(truth, 600)}. Choose a DIFFERENT next action and take "
-                "it now via a tool call.")
+        # Reasoner unavailable → the SAME canned redirect the plan-off path uses (one steer text).
+        return guard_canned_redirect(sess, outcome)
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
-        """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
-        WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
-        calls (sized to five write→read→test cycles). Consecutive is not required: the tiny-edit spiral rewrites the file with small
-        varying changes (never fixing the actual fault, e.g. indentation) while interleaving
-        reads, tests, and other-file writes, so a consecutive streak undercounts it and the
-        repetition trigger's content-hash can't see it. At the threshold the next loop turn
-        runs the gate and INSERTS the lint/type-check findings (see _verify_after_probe) —
-        ground truth on the next call, not more rewriting."""
-        if sess.recent_writes is None:
-            sess.recent_writes = []
-        for ch in coder.get("choices", []):
-            for tc in (ch.get("message") or {}).get("tool_calls") or []:
-                if (sess.redirect_due or sess.redirect_probe
-                        or sess.spin_probe_due or sess.spin_probe):
-                    return  # intervention in flight — nothing accrues (this tracker runs AFTER
-                    # _track_repetition on the SAME completion: without this check it would
-                    # repopulate the flushed window with the very writes that fired the redirect,
-                    # and the coder's single compliance write would re-trip a spin probe steering
-                    # it away from the file it just fixed)
-                path = _write_path(tc.get("function") or {})
-                sess.recent_writes.append(path)  # None for non-writes — the window is CALLS
-                del sess.recent_writes[:-WRITE_WINDOW]
-                if (path is not None
-                        and sess.recent_writes.count(path) >= WHEEL_SPIN_WRITES
-                        and not sess.spin_probe_due and not sess.spin_probe
-                        and not sess.redirect_due and not sess.redirect_probe):
-                    sess.spin_probe_due = True
-                    sess.spin_path = path
-                    # flush BOTH windows (one intervention at a time — a pending redirect's
-                    # gate would otherwise be hijacked and its reasoner-authored nudge
-                    # overwritten by the spin renudge)
-                    sess.recent_writes = []
-                    sess.recent_actions = []
-                    rlog.emit("loop.wheel_spinning", step=idx, path=path, writes=WHEEL_SPIN_WRITES)
+        """The loop's coder step — delegates to the shared :func:`guard_track_write_streak`."""
+        guard_track_write_streak(sess, coder, rlog, step=idx)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
-        """Compose the completion gate (probegate.plan_gate: syntax floor + discovered top probe +
-        top TEST probe + git snapshot) and build it as a shell tool call for the HARNESS to run.
-        None if the harness advertises no shell tool (then cria can only prose-verify). The plan
-        is stashed on the session so the result can be replayed through the ported interpreters."""
-        tool = find_shell_tool(body.get("tools"))
-        if tool is None:
-            return None
-        # NEVER fall back to "." — that is cria's OWN cwd, not the workspace (it once composed a
-        # probe over cria's repo). Unknown root → a minimal git-only gate; the harness's shell
-        # still runs in the workspace, so the change-signal lands and the floor/probes abstain.
-        root = self._ctx.workspace_root or _extract_cwd(body.get("messages", []))
-        if root == ".":  # _extract_cwd's no-cwd fallback IS cria's own cwd — refuse it here
-            root = ""
-        try:
-            plan = probegate.plan_gate(root)
-        except OSError as e:  # unreadable workspace → no gate; the critic still judges (fail-open)
-            rlog.emit("loop.gate_error", level="warn", error=str(e))
-            sess.gate_plan = None
-            return None
-        sess.gate_plan = plan
-        return {
-            "id": "call_" + uuid.uuid4().hex[:16],
-            "type": "function",
-            "function": {"name": tool["name"], "arguments": json.dumps(shell_args(tool, plan.script))},
-        }
+        """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
+        configured workspace root."""
+        return guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)
 
     # ------------------------------------------------------------------ helpers
 
@@ -1405,6 +1278,213 @@ def _write_paths(completion: dict) -> list:
     return [p for ch in completion.get("choices", [])
             for tc in (ch.get("message") or {}).get("tool_calls") or []
             if (p := _write_path(tc.get("function") or {}))]
+
+
+def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
+    """Compose the completion gate (probegate.plan_gate: syntax floor + discovered top probe +
+    top TEST probe + git snapshot) and build it as a shell tool call for the HARNESS to run.
+    None if the harness advertises no shell tool (then cria can only prose-verify). The plan is
+    stashed on ``gs`` so the result can be replayed through the ported interpreters. Shared by the
+    plan loop (workspace_root from its LoopContext) and the plan-off path (root from the request)."""
+    tool = find_shell_tool(body.get("tools"))
+    if tool is None:
+        return None
+    # NEVER fall back to "." — that is cria's OWN cwd, not the workspace (it once composed a
+    # probe over cria's repo). Unknown root → a minimal git-only gate; the harness's shell
+    # still runs in the workspace, so the change-signal lands and the floor/probes abstain.
+    root = workspace_root or _extract_cwd(body.get("messages", []))
+    if root == ".":  # _extract_cwd's no-cwd fallback IS cria's own cwd — refuse it here
+        root = ""
+    try:
+        plan = probegate.plan_gate(root)
+    except OSError as e:  # unreadable workspace → no gate; the caller still fails open
+        rlog.emit("loop.gate_error", level="warn", error=str(e))
+        gs.gate_plan = None
+        return None
+    gs.gate_plan = plan
+    return {
+        "id": "call_" + uuid.uuid4().hex[:16],
+        "type": "function",
+        "function": {"name": tool["name"], "arguments": json.dumps(shell_args(tool, plan.script))},
+    }
+
+
+def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> None:
+    """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
+    (exact fingerprints were tried on the codex-local side and missed one-flag jitter).
+    REPEAT_FINGERPRINT_N nature-matches within the last REPEAT_WINDOW calls trips the
+    redirect. Windowed, not consecutive-only, so write→test→write→test loops with
+    byte-identical writes are caught (the canonical small-model spiral) — while PROGRESS
+    (a write/mutation matching nothing in the window, i.e. new ground changed) resets the
+    hunt, so a healthy edit→test→edit→test cycle never trips on its repeated test runs.
+
+    Operates on GuardState so the plan loop and the plan-off path run ONE implementation."""
+    if gs.recent_actions is None:
+        gs.recent_actions = []
+    for ch in coder.get("choices", []):
+        for tc in (ch.get("message") or {}).get("tool_calls") or []:
+            if (gs.redirect_due or gs.redirect_probe
+                    or gs.spin_probe_due or gs.spin_probe):
+                return  # an intervention is in flight — it consumed the evidence; nothing
+                # accrues until it's delivered (a fire mid-completion must not let the
+                # completion's REMAINING calls repopulate the just-flushed windows)
+            fn = tc.get("function") or {}
+            name = fn.get("name") or "?"
+            args = fn.get("arguments") or ""
+            args = args if isinstance(args, str) else json.dumps(args)
+            sig = _action_signature(name, args)
+            gs.action_seq += 1
+            # AGE-based trim (entries are (seq, sig)): an entry expires REPEAT_WINDOW
+            # forwarded calls after it was seen — even across progress resets. A length
+            # trim alone made preserved write signatures immortal: identical writes 60
+            # calls apart counted as "3× in the last 12".
+            cutoff = gs.action_seq - REPEAT_WINDOW
+            gs.recent_actions = [e for e in gs.recent_actions if e[0] > cutoff]
+            matches = sum(1 for e in gs.recent_actions if _actions_match(sig, e[1]))
+            if not matches and _is_progress(sig, args):
+                # a real move — reset the hunt for ACTIONS, but keep (in-window) write
+                # signatures: the per-file rule ("same file, same content, 3× in the
+                # window") must survive interleaved progress on OTHER files
+                gs.recent_actions = [e for e in gs.recent_actions if e[1][0] == "write"]
+                gs.recent_actions.append((gs.action_seq, sig))
+                continue
+            gs.recent_actions.append((gs.action_seq, sig))
+            if (matches + 1 >= REPEAT_FINGERPRINT_N
+                    and not gs.redirect_due and not gs.redirect_probe
+                    and not gs.spin_probe_due and not gs.spin_probe):
+                gs.redirect_due = True
+                # flush BOTH windows: one intervention consumes the evidence — the writes
+                # that fired this redirect must not ALSO count toward a wheel-spin right
+                # after the coder complies (that steer would point away from the very file
+                # it just fixed).
+                gs.recent_actions = []
+                gs.recent_writes = []
+                gs.repeat_action = f"{name} {_clip(args, 300)}"
+                rlog.emit("loop.repetition", step=step, tool=name,
+                          count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
+
+
+def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None) -> None:
+    """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
+    WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
+    calls (sized to five write→read→test cycles). Consecutive is not required: the tiny-edit
+    spiral rewrites the file with small varying changes (never fixing the actual fault, e.g.
+    indentation) while interleaving reads, tests, and other-file writes, so a consecutive streak
+    undercounts it and the repetition trigger's content-hash can't see it. At the threshold the
+    next turn runs the gate and INSERTS the lint/type-check findings — ground truth on the next
+    call, not more rewriting. Operates on GuardState — shared by both paths."""
+    if gs.recent_writes is None:
+        gs.recent_writes = []
+    for ch in coder.get("choices", []):
+        for tc in (ch.get("message") or {}).get("tool_calls") or []:
+            if (gs.redirect_due or gs.redirect_probe
+                    or gs.spin_probe_due or gs.spin_probe):
+                return  # intervention in flight — nothing accrues (this tracker runs AFTER
+                # guard_track_repetition on the SAME completion: without this check it would
+                # repopulate the flushed window with the very writes that fired the redirect,
+                # and the coder's single compliance write would re-trip a spin probe steering
+                # it away from the file it just fixed)
+            path = _write_path(tc.get("function") or {})
+            gs.recent_writes.append(path)  # None for non-writes — the window is CALLS
+            del gs.recent_writes[:-WRITE_WINDOW]
+            if (path is not None
+                    and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES
+                    and not gs.spin_probe_due and not gs.spin_probe
+                    and not gs.redirect_due and not gs.redirect_probe):
+                gs.spin_probe_due = True
+                gs.spin_path = path
+                # flush BOTH windows (one intervention at a time — a pending redirect's
+                # gate would otherwise be hijacked and its reasoner-authored nudge
+                # overwritten by the spin renudge)
+                gs.recent_writes = []
+                gs.recent_actions = []
+                rlog.emit("loop.wheel_spinning", step=step, path=path, writes=WHEEL_SPIN_WRITES)
+
+
+def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_root=None) -> dict | None:
+    """If a repeat/spin was flagged on a prior turn, intervene BEFORE the next coder turn: emit a
+    ground-truth probe (a repo-checks shell call the harness runs) and return that completion to
+    send now — or, when no gate is available (no shell tool / unreadable workspace), NEVER swallow
+    the tripped intervention: park a canned steer in ``gs.nudge_reason`` for the caller to inject
+    into the coder framing, and return None. Returns None when nothing is pending. Shared by the
+    plan loop and the plan-off path — one implementation of the repetition→probe→steer round-trip."""
+    if gs.redirect_due:  # repetition tripped → ground truth, then a redirect
+        gs.redirect_due = False
+        gs.spin_probe_due = False  # the redirect's gate supersedes a pending spin probe — never run
+        # two back-to-back gates, and never let the spin steer overwrite the redirect in nudge_reason
+        probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
+        if probe_tc is not None:
+            gs.awaiting_probe = True
+            gs.redirect_probe = True
+            gs.probe_call_id = probe_tc["id"]
+            rlog.emit("loop.redirect_probe", step=step)
+            return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
+        gs.nudge_reason = (
+            f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
+            f"({_clip(gs.repeat_action, 160)}) — repeating it will not change the outcome. "
+            "Choose a DIFFERENT next action and take it now via a tool call.")
+        rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
+    if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
+        gs.spin_probe_due = False
+        probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
+        if probe_tc is not None:
+            gs.awaiting_probe = True
+            gs.spin_probe = True
+            gs.probe_call_id = probe_tc["id"]
+            rlog.emit("loop.spin_probe", step=step, path=gs.spin_path)
+            return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
+        gs.nudge_reason = (  # same no-gate fallback: a steer, never silence
+            f"you have rewritten `{gs.spin_path}` repeatedly; the repo's checks could not "
+            "run here. Stop rewriting it — re-read the step and verify a DIFFERENT part of "
+            "the work before touching that file again.")
+        rlog.emit("loop.spin_probe_result", step=step, canned=True)
+    return None
+
+
+def guard_ground_truth(outcome) -> str:
+    """The coder-facing ground truth from a gate outcome: the block-nudge findings if any, else a
+    plain 'all checks pass' (NEUTRAL — a content-blind streak can't tell a spiral from honest
+    sequential edits, so it must NOT claim the bug is elsewhere), else 'could not run'."""
+    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
+    if findings:
+        return findings
+    if outcome.ran:
+        return ("the repo's checks (lint + type-check + syntax) all PASS on your current "
+                "edits — no error-class findings in this file")
+    return "the checks could not run"
+
+
+def guard_canned_redirect(gs: GuardState, outcome) -> str:
+    """The canned repetition redirect (no reasoner) — the shared steer both the plan-off path and
+    the loop's reasoner-unavailable fallback deliver."""
+    return (f"you have repeated the same action {REPEAT_FINGERPRINT_N} times "
+            f"({_clip(gs.repeat_action, 160)}) — repeating it will not change the outcome. "
+            f"Ground truth: {_clip_tail(guard_ground_truth(outcome), 600)}. Choose a DIFFERENT "
+            "next action and take it now via a tool call.")
+
+
+def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:
+    """A guard probe (repetition redirect or wheel-spin) we emitted last turn has now run — read
+    its result, interpret the gate, and return the steer text to hand the coder (the caller injects
+    it as a nudge). ``author`` (loop only) reasons the redirect from the ground truth; without it
+    (plan-off) the redirect is canned. Returns None when this isn't a guard probe (a plan
+    completion-gate — the loop handles that itself)."""
+    if not (gs.spin_probe or gs.redirect_probe):
+        return None
+    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
+    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
+        else probegate.GateOutcome(ran=False)
+    if gs.redirect_probe:  # repetition: ground truth → a redirect (reasoner-authored, or canned)
+        gs.redirect_probe = False
+        redirect = author(gs, outcome, body, rlog) if author is not None else guard_canned_redirect(gs, outcome)
+        rlog.emit("loop.redirect", step=step, chars=len(redirect))
+        return f"[REDIRECT]\n{redirect}"
+    # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open
+    gs.spin_probe = False
+    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
+    rlog.emit("loop.spin_probe_result", step=step, clean=findings is None and outcome.ran)
+    return (f"you have rewritten `{gs.spin_path}` repeatedly; "
+            f"ground truth from the repo's own checks:\n{_clip_tail(guard_ground_truth(outcome), 1800)}")
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:

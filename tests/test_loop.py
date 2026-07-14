@@ -1794,3 +1794,44 @@ class ReframePreambleTests(unittest.TestCase):
         # matches the env-context signal but has no extractable tag bodies → don't lose it
         m = {"role": "user", "content": "<environment_context></environment_context>"}
         self.assertEqual(reframe_preamble(m), m)
+
+
+class SharedRepetitionGuardTests(unittest.TestCase):
+    """The repetition/wheel-spin guard is now shared module functions (GuardState-driven), so the
+    plan-off path runs the IDENTICAL detection→probe→steer the loop does."""
+
+    def _tc(self, name, args):
+        return {"choices": [{"message": {"tool_calls": [
+            {"id": "x", "function": {"name": name, "arguments": args}}]}}]}
+
+    def test_track_repetition_trips_redirect(self):
+        from cria.loop import GuardState, guard_track_repetition, REPEAT_FINGERPRINT_N
+        gs = GuardState()
+        for _ in range(REPEAT_FINGERPRINT_N):
+            guard_track_repetition(gs, self._tc("exec_command", '{"cmd":"pytest -q"}'), _Rlog())
+        self.assertTrue(gs.redirect_due)
+        self.assertIn("exec_command", gs.repeat_action)
+
+    def test_track_write_streak_trips_spin(self):
+        from cria.loop import GuardState, guard_track_write_streak, WHEEL_SPIN_WRITES
+        gs = GuardState()
+        for _ in range(WHEEL_SPIN_WRITES):
+            guard_track_write_streak(gs, self._tc("write_file", '{"path":"h.py","content":"x"}'), _Rlog())
+        self.assertTrue(gs.spin_probe_due)
+        self.assertEqual(gs.spin_path, "h.py")
+
+    def test_intervene_parks_canned_steer_without_shell(self):
+        from cria.loop import GuardState, guard_intervene
+        gs = GuardState(); gs.spin_probe_due = True; gs.spin_path = "h.py"
+        out = guard_intervene(gs, {"tools": [], "messages": []}, _Rlog())  # no shell → no probe
+        self.assertIsNone(out)
+        self.assertIn("rewritten `h.py`", gs.nudge_reason)  # never silent — canned steer parked
+        self.assertFalse(gs.spin_probe_due)
+
+    def test_probe_steer_returns_spin_ground_truth(self):
+        from cria.loop import GuardState, guard_probe_steer
+        gs = GuardState(); gs.spin_probe = True; gs.spin_path = "h.py"; gs.probe_call_id = "p1"
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "PROBE_EXIT=0"}]}
+        steer = guard_probe_steer(gs, body, _Rlog())  # author=None → canned (plan-off)
+        self.assertIn("rewritten `h.py`", steer)
+        self.assertFalse(gs.spin_probe)  # consumed

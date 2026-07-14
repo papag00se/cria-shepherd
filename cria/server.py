@@ -26,11 +26,16 @@ from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, wrap_stream
 from .loop import (
+    GuardStore,
     Loop,
     LoopContext,
     LoopStore,
     completion_to_sse,
+    guard_intervene,
+    guard_probe_steer,
     guard_rumination,
+    guard_track_repetition,
+    guard_track_write_streak,
     guard_truncation,
     reframe_preamble,
     session_key,
@@ -123,6 +128,9 @@ class CriaServer(ThreadingHTTPServer):
         # The coder role's sampling/reserve — needed for the rumination budget on BOTH the loop
         # and the plan-off proxy path (the guards are not gated behind the planner).
         self.coder_role = roles.get("coder")
+        # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
+        # own in PlanSession). Same shared guard implementation drives both.
+        self.guard_store = GuardStore()
         self.loop = None
         if cfg.planner.enabled and reasoner_model and coder_model:
             # The web-search key is read from its env var (never stored in config). STRIP it —
@@ -407,14 +415,36 @@ class CriaHandler(BaseHTTPRequestHandler):
                   and classification.task_type == "coding")
         if direct:
             rlog.emit("route.direct_coder")
-            framed = self._apply_route_role(_direct_coder_body(body), indic)
-            coder_chat = self._guarded_coder_chat(provider)
-            try:
-                comp = massage.apply(json.loads(coder_chat(framed, rlog)), body.get("tools"), rlog)
-            except (json.JSONDecodeError, TypeError):
-                return {}, indic
-            comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
-            comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
+            # Repetition / wheel-spin guard — the SAME shared implementation the loop uses, so a
+            # plan-off session that thrashes (rewrite→test→rewrite) gets a ground-truth probe and a
+            # steer, not endless churn. Cross-turn state lives in the per-session GuardStore.
+            gs = server.guard_store.get(sess_key)
+            steer, intervention = None, None
+            if gs.awaiting_probe:  # a guard probe we emitted last turn has run → read its ground truth
+                gs.awaiting_probe = False
+                steer = guard_probe_steer(gs, body, rlog)  # canned steer (no reasoner on plan-off)
+            else:
+                intervention = guard_intervene(gs, body, rlog)  # flagged? → emit a probe / park a steer
+                if intervention is None:
+                    steer, gs.nudge_reason = gs.nudge_reason or None, ""
+            if intervention is not None:
+                comp = intervention  # emit the ground-truth probe (a shell call the harness runs)
+            else:
+                framed = _direct_coder_body(body)
+                if steer:  # inject the guard's steer into the coder framing this turn
+                    framed = {**framed, "messages": framed["messages"]
+                              + [{"role": "user", "content": prompts.render("nudge", reason=steer)}]}
+                framed = self._apply_route_role(framed, indic)
+                coder_chat = self._guarded_coder_chat(provider)
+                try:
+                    comp = massage.apply(json.loads(coder_chat(framed, rlog)), body.get("tools"), rlog)
+                except (json.JSONDecodeError, TypeError):
+                    return {}, indic
+                comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
+                comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
+                if any((ch.get("message") or {}).get("tool_calls") for ch in comp.get("choices", [])):
+                    guard_track_repetition(gs, comp, rlog)   # detect repetition in what the coder just did
+                    guard_track_write_streak(gs, comp, rlog)
         else:
             raw = provider.chat(self._apply_route_role(_proxy_body(body), indic), rlog)
             try:
