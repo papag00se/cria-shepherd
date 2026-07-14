@@ -243,6 +243,15 @@ class ToolsConfig:
 
 
 @dataclass(frozen=True)
+class ContextConfig:
+    """Outbound context-shaping — what the MODEL sees, distinct from what cria keeps for detection.
+    ``focus_trim`` collapses exact-duplicate tool calls (same name+args) to their last occurrence so
+    a small model isn't drowning in its own repeated failed commands (see focustrim.py)."""
+
+    focus_trim: bool = True
+
+
+@dataclass(frozen=True)
 class PlannerConfig:
     """The reasoned planner. Runs on a fresh coding task when a ``reasoner`` model
     is configured; drafts the plan. The loop drives execution from the plan in memory
@@ -271,6 +280,7 @@ class Config:
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     indicators: IndicatorsConfig = field(default_factory=IndicatorsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     source: str | None = None  # the file this was loaded from (None = all defaults)
 
@@ -292,6 +302,9 @@ class Config:
             tools=ToolsConfig(
                 cheatsheet=bool(data.get("tools", {}).get("cheatsheet", True)),
                 focus=bool(data.get("tools", {}).get("focus", True)),
+            ),
+            context=ContextConfig(
+                focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
             ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),

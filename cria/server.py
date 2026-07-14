@@ -18,7 +18,7 @@ import os
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import massage, prompts, responses, rumination
+from . import focustrim, massage, prompts, responses, rumination
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -210,6 +210,7 @@ class CriaServer(ThreadingHTTPServer):
                     # ONE folder per run: plan mirror + verify dumps join the call captures
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,
+                    focus_trim=cfg.context.focus_trim,
                 ),
                 # The SAME store the plan-off path uses (created above). Completed-work briefings +
                 # session shapes survive a cria restart (the restarts this project makes constantly
@@ -380,6 +381,21 @@ class CriaHandler(BaseHTTPRequestHandler):
             return provider.chat
         return lambda body, rlog: watched(body, rlog, watch=detector.check)
 
+    def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
+        """Collapse exact-duplicate tool calls in the OUTBOUND coder body so the model stays focused
+        on current state — applied to the FRAMED copy, never the history cria's detectors read.
+        Gated by [context] focus_trim. Returns (body, applied?)."""
+        if not self.server.cfg.context.focus_trim:
+            return framed, False
+        msgs = framed.get("messages")
+        if not isinstance(msgs, list):
+            return framed, False
+        trimmed, rep = focustrim.trim(msgs)
+        if not rep.applied:
+            return framed, False
+        rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
+        return {**framed, "messages": trimmed}, True
+
     def _run_coder(self, framed: dict, coder_chat, gs, rlog):
         """One guarded + cleaned coder call on the plan-off path (shared by the main turn and the
         LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin
@@ -452,6 +468,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if extra:
             framed = {**framed, "messages": framed["messages"] + extra}
         framed = self._apply_route_role(framed, indic)
+        framed, trimmed = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (not the history)
         comp = self._run_coder(framed, coder_chat, gs, rlog)
         if comp is None:
             return None
@@ -459,6 +476,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface that cria steered the coder
             _add_note(comp, "applied a steer from the guard")
+        if trimmed:  # no hidden guards: surface that cria trimmed repeated tool calls
+            _add_note(comp, "trimmed repeated tool calls from the context")
         if _has_tool_calls(comp):
             return comp  # acting → forward
         return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)
@@ -623,7 +642,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             if comp is None:
                 return {}, indic
         else:
-            raw = provider.chat(self._apply_route_role(_proxy_body(body), indic), rlog)
+            pbody, _ = self._focus_trim(self._apply_route_role(_proxy_body(body), indic), rlog)
+            raw = provider.chat(pbody, rlog)
             try:
                 comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
             except (json.JSONDecodeError, TypeError):

@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, indicators, massage, probegate, proberun, prompts, toolmenu
+from . import callcapture, focustrim, indicators, massage, probegate, proberun, prompts, toolmenu
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -345,6 +345,8 @@ class LoopContext:
     # derived per request from the harness env-context (<cwd>), falling back to ".". Probe
     # EXECUTION always rides the harness shell tool regardless — cria never runs the commands.
     workspace_root: str | None = None
+    # Focus-trim the OUTBOUND coder view (collapse exact-duplicate tool calls). [context] focus_trim.
+    focus_trim: bool = True
 
 
 class Loop:
@@ -513,6 +515,12 @@ class Loop:
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
             sess.nudge_reason = ""
         framed["messages"] = msgs
+        if self._ctx.focus_trim:  # focus the OUTBOUND coder view (never the history the guards read)
+            trimmed, rep = focustrim.trim(msgs)
+            if rep.applied:
+                framed["messages"] = trimmed
+                rlog.emit("context.focus_trim", step=idx,
+                          dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
             self._ctx.coder_role.apply(framed)
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
@@ -1502,7 +1510,7 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
     the loop's reasoner-unavailable fallback deliver."""
     return prompts.render(
         "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=_clip(gs.repeat_action, 160),
-        ground_truth=f"Ground truth: {_clip_tail(guard_ground_truth(outcome), 600)}. ")
+        ground_truth=f"{_clip_tail(guard_ground_truth(outcome), 600)}. ")
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:

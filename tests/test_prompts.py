@@ -11,8 +11,12 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertIn("\n", text)  # internal newlines preserved
 
     def test_render_fills_double_brace_tokens_case_insensitively(self):
+        # nudge.txt content is user-tunable, so assert the MECHANISM (the {{REASON}} token is filled
+        # from the case-insensitive kwarg), not the surrounding wording.
         out = prompts.render("nudge", reason="tests are red")
-        self.assertEqual(out, "That step is not done yet: tests are red\nKeep working on it, then stop.")
+        self.assertIn("tests are red", out)      # the token was substituted
+        self.assertNotIn("{{REASON}}", out)      # no placeholder left behind
+        self.assertNotIn("{{", out)
 
     def test_render_leaves_literal_single_braces_untouched(self):
         # the critic must be told to emit `{"done": true}` — a single-brace literal that
