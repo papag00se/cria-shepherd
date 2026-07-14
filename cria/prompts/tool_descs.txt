@@ -1,0 +1,6 @@
+# Descriptions the model reads for cria's synthetic lean tools (writeproxy advertises these).
+# Format: `<tool> = <description>` (one per line). Schemas live in writeproxy.py; only the
+# model-facing description is tunable here.
+write_file = Create or completely overwrite a file with its FULL content. The most reliable way to write a file — you supply the whole file, nothing to escape.
+read_file = Read a file's contents (read-only). Optionally pass a 1-based inclusive line range with start_line/end_line.
+list_dir = List the entries of a directory (read-only). Defaults to the current directory.

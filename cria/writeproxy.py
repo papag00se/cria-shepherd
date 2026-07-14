@@ -26,6 +26,7 @@ import shlex
 import threading
 import uuid
 
+from . import prompts
 from .shelltool import SHELL_TOOL_NAMES, shell_args
 
 _WRITE_NAMES = {"write_file", "create_file"}
@@ -35,59 +36,30 @@ _LIST_NAMES = {"list_dir"}
 # command can't carry an arbitrarily long base64 (the arg-size limit).
 _CHUNK_BYTES = 65536
 
-WRITE_FILE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "write_file",
-        "description": (
-            "Create or completely overwrite a file with its FULL content. The most "
-            "reliable way to write a file — you supply the whole file, nothing to escape."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-            "required": ["path", "content"],
-        },
-    },
-}
-
-# The synthetic READ tools (ported from codex-local synthetic_local_read_tools): lean,
-# purpose-built alternatives to the raw exec/PTY tool so a small model reads and lists
-# through a named tool instead of driving `cat`/`ls` through the heavy shell schema. Like
-# write_file, cria advertises them to the model and LOWERS them to the harness's shell
-# outbound (owns no executors) — the clean `cat`/`sed`/`ls` form is fine to show as-is.
-READ_FILE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "read_file",
-        "description": (
-            "Read a file's contents (read-only). Optionally pass a 1-based inclusive line "
-            "range with start_line/end_line."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "start_line": {"type": "integer"},
-                "end_line": {"type": "integer"},
-            },
-            "required": ["path"],
-        },
-    },
-}
-
-LIST_DIR_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "list_dir",
-        "description": "List the entries of a directory (read-only). Defaults to the current directory.",
-        "parameters": {
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": [],
-        },
-    },
-}
+# cria's synthetic lean tools (write_file + the codex-local synthetic_local_read_tools read_file /
+# list_dir): purpose-built alternatives to the raw exec/PTY tool so a small model writes, reads, and
+# lists through a named tool instead of driving `cat`/`ls`/base64 through the heavy shell schema.
+# cria advertises them to the model and LOWERS them to the harness's shell outbound (owns no
+# executors). The SCHEMAS are fixed here; the model-facing DESCRIPTIONS live in prompts/tool_descs.txt
+# and are loaded per call, so an edit needs no restart (like every other model-facing string).
+def _synthetic_tools() -> dict[str, dict]:
+    d = prompts.load_map("tool_descs")
+    return {
+        "write_file": {"type": "function", "function": {
+            "name": "write_file", "description": d["write_file"],
+            "parameters": {"type": "object",
+                           "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                           "required": ["path", "content"]}}},
+        "read_file": {"type": "function", "function": {
+            "name": "read_file", "description": d["read_file"],
+            "parameters": {"type": "object",
+                           "properties": {"path": {"type": "string"},
+                                          "start_line": {"type": "integer"}, "end_line": {"type": "integer"}},
+                           "required": ["path"]}}},
+        "list_dir": {"type": "function", "function": {
+            "name": "list_dir", "description": d["list_dir"],
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": []}}},
+    }
 
 
 class TranslationStore:
@@ -135,14 +107,15 @@ def advertise(body: dict, rlog=None) -> set[str]:
         body["tools"] = tools
     present = {(((t.get("function") or t) if isinstance(t, dict) else {}).get("name")) for t in tools}
     injected: set[str] = set()
+    synth = _synthetic_tools()
     if not (present & _WRITE_NAMES):
-        tools.append(WRITE_FILE_TOOL)
+        tools.append(synth["write_file"])
         injected.add("write_file")
     if "read_file" not in present:
-        tools.append(READ_FILE_TOOL)
+        tools.append(synth["read_file"])
         injected.add("read_file")
     if "list_dir" not in present:
-        tools.append(LIST_DIR_TOOL)
+        tools.append(synth["list_dir"])
         injected.add("list_dir")
     if injected and rlog is not None:
         rlog.emit("writeproxy.advertised", tools=sorted(injected))
@@ -255,7 +228,7 @@ def represent_inbound(messages: list[dict], store: TranslationStore, key: str, r
         elif role == "tool":
             orig = store.get(key, m.get("tool_call_id"))
             if orig is not None and not orig.get("drop") and not str(m.get("content") or "").strip():
-                m = {**m, "content": f"Wrote {orig['path']}"}  # reframe the empty success, keep any error
+                m = {**m, "content": prompts.render("write_confirm", path=orig["path"])}  # reframe empty success
             out.append(m)
         else:
             out.append(m)
