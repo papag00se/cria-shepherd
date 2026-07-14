@@ -1885,3 +1885,38 @@ class DirectCompletionGateTests(unittest.TestCase):
             self.assertIsNotNone(probe)                 # a shell probe to run the repo's checks
             self.assertEqual(probe["function"]["name"], "shell")
             self.assertIsNotNone(gs.gate_plan)          # stashed so the verdict can interpret it
+
+
+class CompactionReframeTests(unittest.TestCase):
+    """Codex's VS Code compaction APPENDS an 'Another language model started to solve this problem…'
+    turn that misattributes the model's own summary — cria reattributes it (the root doesn't change,
+    so the structural rewrite detector never fires; this is the fix for that blind spot)."""
+
+    _MARKER = ("Another language model started to solve this problem and produced a summary of its "
+               "thinking process. You also have access to the state of the tools that were used by "
+               "that language model. Use this to build on the work that has already been done and "
+               "avoid duplicating work. Here is the summary produced by the other language model, "
+               "use the information in this summary to assist with your own analysis:\n"
+               "Built handler.py + tests; live test still failing.")
+
+    def test_reattributes_and_keeps_the_summary(self):
+        from cria.loop import reframe_compaction
+        msgs = [{"role": "user", "content": "task: build the lambda"},
+                {"role": "user", "content": self._MARKER}]
+        out, hit = reframe_compaction(msgs)
+        self.assertTrue(hit)
+        new = out[1]["content"]
+        self.assertNotIn("Another language model", new)          # misattribution gone
+        self.assertIn("YOUR OWN prior work", new)                # reattributed to the model
+        self.assertIn("Built handler.py + tests", new)           # the real summary survives
+        self.assertIs(out[0], msgs[0])                           # unrelated messages untouched
+
+    def test_noop_and_idempotent(self):
+        from cria.loop import reframe_compaction
+        plain = [{"role": "user", "content": "just a normal task"}]
+        same, hit = reframe_compaction(plain)
+        self.assertFalse(hit)
+        self.assertIs(same, plain)                               # same list, no copy
+        once, _ = reframe_compaction([{"role": "user", "content": self._MARKER}])
+        twice, hit2 = reframe_compaction(once)                   # already reframed → no re-touch
+        self.assertFalse(hit2)

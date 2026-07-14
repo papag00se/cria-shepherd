@@ -43,6 +43,7 @@ from .loop import (
     _read_tool_result,
     _stable_session,
     completion_to_sse,
+    reframe_compaction,
     guard_gate_op,
     guard_gate_verdict,
     guard_intervene,
@@ -275,9 +276,13 @@ class CriaHandler(BaseHTTPRequestHandler):
         messages = body.get("messages")
         if isinstance(messages, list):
             cleaned, stripped = strip_history(messages)
-            if stripped:
+            cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
+            if stripped or reframed:
                 body["messages"] = cleaned
-                rlog.emit("indicators.stripped", lines=stripped)
+                if stripped:
+                    rlog.emit("indicators.stripped", lines=stripped)
+                if reframed:
+                    rlog.emit("loop.compaction_reframed")
 
         # write_file↔shell: if the harness has shell but not write_file, re-present
         # our prior shell translations as write_file (so the model sees its own
@@ -677,9 +682,13 @@ class CriaHandler(BaseHTTPRequestHandler):
         messages = body.get("messages")
         if isinstance(messages, list):
             cleaned, stripped = strip_history(messages)
-            if stripped:
+            cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
+            if stripped or reframed:
                 body["messages"] = cleaned
-                rlog.emit("indicators.stripped", lines=stripped)
+                if stripped:
+                    rlog.emit("indicators.stripped", lines=stripped)
+                if reframed:
+                    rlog.emit("loop.compaction_reframed")
 
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
         self._shell_tool = needs_translation(body.get("tools"))

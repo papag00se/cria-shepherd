@@ -1,0 +1,4 @@
+Earlier in THIS session you worked on this task and produced the summary below — this is YOUR OWN prior work, not another agent's, and the tool results already in this conversation are from your own earlier actions. Build on it: before creating any file or redoing a step, INSPECT the workspace (list the directory, read the files that should already exist) and continue from what is actually there. Do NOT recreate files or restart work that is already done.
+
+Your summary of the work so far:
+{{SUMMARY}}

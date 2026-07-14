@@ -1069,6 +1069,34 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
     return out
 
 
+# Codex's VS Code extension compacts by APPENDING this user turn (it keeps the original task as the
+# root, so the structural rewrite detection never fires) and frames the model's OWN earlier summary
+# as "another language model's". That misattribution makes a small model disown its prior work and
+# duplicate files. cria recognizes the known harness artifact (as it reframes <environment_context>)
+# and REATTRIBUTES the summary to the model itself + re-anchors it (inspect before creating).
+_COMPACTION_MARKER = "Another language model started to solve this problem"
+_COMPACTION_BOUNDARY = "assist with your own analysis:"
+
+
+def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
+    """Reattribute the harness's 'another language model' compaction turn to the model itself and
+    re-anchor it, keeping the summary. Returns (messages, reframed?) — the SAME list (no copy) when
+    no compaction turn is present. Idempotent per turn: the reframed content no longer carries the
+    marker, so a later pass won't touch it again."""
+    out: list[dict] = []
+    reframed = False
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str) and m.get("role") == "user" and _COMPACTION_MARKER in c:
+            idx = c.find(_COMPACTION_BOUNDARY)  # split off the harness preamble, keep the summary tail
+            summary = c[idx + len(_COMPACTION_BOUNDARY):].lstrip("\n") if idx != -1 else c
+            out.append({**m, "content": prompts.render("compaction_reframe", summary=summary)})
+            reframed = True
+        else:
+            out.append(m)
+    return (out, True) if reframed else (messages, False)
+
+
 def reframe_preamble(m: dict) -> dict:
     """Re-present a harness env-context/instructions preamble in cria's OWN clean voice instead
     of forwarding it raw (ports codex-local's extract_project_instructions). A harness like Codex
