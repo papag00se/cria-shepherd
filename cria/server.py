@@ -214,10 +214,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         # the send points via _translate_out.
         self._shell_tool = needs_translation(body.get("tools"))
         self._session_key = None
+        self._synthetic: set[str] = set()  # which synthetic tools cria injected (to lower ONLY those)
         if self._shell_tool is not None:
             self._session_key = session_key(self.headers, body.get("messages", []))
             body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, self._session_key, rlog)
-            advertise(body, rlog)
+            self._synthetic = advertise(body, rlog)
 
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the
         # goal/MCP/connector firehose) — after advertise so cria's write_file survives.
@@ -256,7 +257,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         """Lower the model's write_file calls to shell, when translation is active
         for this request. Set up in `_handle_chat`."""
         if self._shell_tool is not None:
-            translate_outbound(completion, self._shell_tool, self.server.translation_store, self._session_key, rlog)
+            translate_outbound(completion, self._shell_tool, self.server.translation_store,
+                               self._session_key, rlog, injected=getattr(self, "_synthetic", set()))
         return completion
 
     def _guarded_coder_chat(self, provider):
@@ -466,10 +468,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
         self._shell_tool = needs_translation(body.get("tools"))
         self._session_key = None
+        self._synthetic: set[str] = set()  # which synthetic tools cria injected (to lower ONLY those)
         if self._shell_tool is not None:
             self._session_key = sess_key
             body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, sess_key, rlog)
-            advertise(body, rlog)
+            self._synthetic = advertise(body, rlog)
         if self.server.cfg.tools.focus:
             focus_tools(body, rlog)
         if self.server.cfg.tools.cheatsheet:

@@ -37,6 +37,21 @@ class AdvertiseTests(unittest.TestCase):
         advertise(body)
         self.assertEqual(sum(t["function"]["name"] == "write_file" for t in body["tools"]), 1)
 
+    def test_adds_read_and_list_tools_and_returns_injected(self):
+        body = {"tools": [_SHELL]}
+        injected = advertise(body)
+        names = [t["function"]["name"] for t in body["tools"]]
+        self.assertIn("read_file", names)   # lean named tools, not the raw shell/PTY
+        self.assertIn("list_dir", names)
+        self.assertEqual(injected, {"write_file", "read_file", "list_dir"})
+
+    def test_does_not_inject_a_harness_native_tool(self):
+        native_read = {"type": "function", "function": {"name": "read_file"}}
+        body = {"tools": [_SHELL, native_read]}
+        injected = advertise(body)
+        self.assertNotIn("read_file", injected)  # harness runs it → cria must not lower it
+        self.assertEqual(sum(t["function"]["name"] == "read_file" for t in body["tools"]), 1)
+
 
 class TranslateTests(unittest.TestCase):
     def _completion(self, name, args, call_id="c1"):
@@ -55,6 +70,33 @@ class TranslateTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(b64).decode(), "print('hi')\n")
         # recorded for the inbound swap
         self.assertEqual(store.get("k", "c1")["path"], "src/h.py")
+
+    _ARR_SHELL = {"name": "shell", "schema": {"properties": {"command": {"type": "array"}}}}
+
+    def test_outbound_lowers_read_file_to_cat(self):
+        comp = self._completion("read_file", {"path": "src/h.py"})
+        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"read_file"})
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        self.assertEqual(tc["function"]["name"], "shell")
+        self.assertIn("cat src/h.py", " ".join(json.loads(tc["function"]["arguments"])["command"]))
+
+    def test_outbound_read_file_line_range_uses_sed(self):
+        comp = self._completion("read_file", {"path": "h.py", "start_line": 10, "end_line": 20})
+        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"read_file"})
+        cmd = " ".join(json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"])
+        self.assertIn("sed -n '10,20p' h.py", cmd)
+
+    def test_outbound_lowers_list_dir_to_ls(self):
+        comp = self._completion("list_dir", {"path": "src"})
+        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"list_dir"})
+        cmd = " ".join(json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"])
+        self.assertIn("ls -la src", cmd)
+
+    def test_read_file_not_lowered_when_not_injected(self):
+        # a harness-native read_file (cria didn't inject it) is left for the harness to run
+        comp = self._completion("read_file", {"path": "h.py"})
+        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected=set())
+        self.assertEqual(comp["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read_file")
 
     def test_inbound_represents_shell_as_write_file(self):
         store = TranslationStore()
