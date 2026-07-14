@@ -158,16 +158,26 @@ _REASONING_CAP = 8000
 
 
 def _reasoning_item(text: str, idx: int) -> tuple[list[bytes], dict]:
-    """A Responses REASONING item — the model's 'thinking', which Codex renders as the dimmed
-    reasoning preamble before an action. Emitted through the summary channel
-    (`response.reasoning_summary_text.delta`, the event Codex displays); the item is opened first so
-    the delta has an active item to attach to. Shape mirrors the ResponseItem::Reasoning the client
-    parses: ``{type: reasoning, summary: [{type: summary_text, text}]}`` (id/content optional)."""
+    """A Responses REASONING item — the model's 'thinking'. Emitted on BOTH reasoning channels:
+
+    * the SUMMARY channel (`response.reasoning_summary_text.delta`) — Codex renders this as the
+      live, TRANSIENT 'thinking' status header (extracted bold chunk), which is replaced each turn
+      and is NOT kept in the transcript; and
+    * the raw CONTENT channel (`response.reasoning_text.delta` + the item's `content` field) — the
+      channel gated by Codex's `show_raw_agent_reasoning` config, which is the one rendered into the
+      PERSISTENT transcript. Without this channel the reasoning only ever flashed in the transient
+      header and vanished on the next call.
+
+    The item is opened first so the deltas have an active item to attach to. Shape mirrors the
+    ResponseItem::Reasoning the client parses: ``{type: reasoning, summary: [{type: summary_text,
+    text}], content: [{type: reasoning_text, text}]}`` (id/encrypted_content optional)."""
     item_id = _new_id("rs")
-    done = {"id": item_id, "type": "reasoning", "summary": [{"type": "summary_text", "text": text}]}
+    done = {"id": item_id, "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": text}],
+            "content": [{"type": "reasoning_text", "text": text}]}
     evs = [
         _event("response.output_item.added", {"output_index": idx,
-            "item": {"id": item_id, "type": "reasoning", "summary": []}}),
+            "item": {"id": item_id, "type": "reasoning", "summary": [], "content": []}}),
         _event("response.reasoning_summary_part.added", {"item_id": item_id, "output_index": idx,
             "summary_index": 0, "part": {"type": "summary_text", "text": ""}}),
         _event("response.reasoning_summary_text.delta", {"item_id": item_id, "output_index": idx,
@@ -176,6 +186,11 @@ def _reasoning_item(text: str, idx: int) -> tuple[list[bytes], dict]:
             "summary_index": 0, "text": text}),
         _event("response.reasoning_summary_part.done", {"item_id": item_id, "output_index": idx,
             "summary_index": 0, "part": {"type": "summary_text", "text": text}}),
+        # Raw reasoning content — the persistent-transcript channel (needs show_raw_agent_reasoning).
+        _event("response.reasoning_text.delta", {"item_id": item_id, "output_index": idx,
+            "content_index": 0, "delta": text}),
+        _event("response.reasoning_text.done", {"item_id": item_id, "output_index": idx,
+            "content_index": 0, "text": text}),
         _event("response.output_item.done", {"output_index": idx, "item": done}),
     ]
     return evs, done
@@ -278,8 +293,10 @@ def to_responses_json(completion: dict, model: str, show_reasoning: bool = False
     if show_reasoning:
         reasoning = msg.get("reasoning_content")
         if isinstance(reasoning, str) and reasoning.strip():
+            r = reasoning.strip()[:_REASONING_CAP]
             out.append({"id": _new_id("rs"), "type": "reasoning",
-                        "summary": [{"type": "summary_text", "text": reasoning.strip()[:_REASONING_CAP]}]})
+                        "summary": [{"type": "summary_text", "text": r}],
+                        "content": [{"type": "reasoning_text", "text": r}]})
     content = msg.get("content")
     if isinstance(content, str) and content:
         out.append({"id": _new_id("msg"), "type": "message", "status": "completed", "role": "assistant",

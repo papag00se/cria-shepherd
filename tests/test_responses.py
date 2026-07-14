@@ -175,10 +175,28 @@ class ReasoningForwardingTests(unittest.TestCase):
 
     def test_reasoning_item_emitted_when_enabled(self):
         kinds = self._event_kinds(True)
-        self.assertIn("event: response.reasoning_summary_text.delta", kinds)  # the delta Codex displays
+        self.assertIn("event: response.reasoning_summary_text.delta", kinds)  # the transient header
+        self.assertIn("event: response.reasoning_text.delta", kinds)          # the persistent channel
         # reasoning comes BEFORE the action
         self.assertLess(kinds.index("event: response.reasoning_summary_text.delta"),
                         kinds.index("event: response.function_call_arguments.delta"))
+
+    def test_reasoning_item_carries_both_summary_and_raw_content(self):
+        # The persisted reasoning item (in output_item.done) must include BOTH channels: `summary`
+        # for the transient header AND `content` (raw) for the persistent transcript — the latter is
+        # what was missing when reasoning only flashed and vanished.
+        import json as _json
+        from cria.responses import body_events
+        done_item = None
+        for r in body_events(self._COMP, "r", "m", show_reasoning=True):
+            line = r.decode()
+            if "response.output_item.done" in line:
+                data = _json.loads(line.split("data: ", 1)[1])
+                if data["item"].get("type") == "reasoning":
+                    done_item = data["item"]
+        self.assertIsNotNone(done_item)
+        self.assertTrue(done_item["summary"] and done_item["summary"][0]["type"] == "summary_text")
+        self.assertTrue(done_item["content"] and done_item["content"][0]["type"] == "reasoning_text")
 
     def test_no_reasoning_when_disabled(self):
         self.assertFalse(any("reasoning" in k for k in self._event_kinds(False)))
