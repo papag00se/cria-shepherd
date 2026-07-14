@@ -1724,3 +1724,41 @@ class CoderEvidenceTests(unittest.TestCase):
         ev = _coder_evidence(msgs, "probe1")
         self.assertIn("3 passed", ev)          # the coder's real run is the evidence
         self.assertNotIn("PROBE_EXIT", ev)     # cria's probe excluded
+
+
+class SharedGuardTests(unittest.TestCase):
+    """The guards are shared module functions (not gated behind the planner), so the plan-off
+    proxy path runs the IDENTICAL protection the loop does."""
+
+    def _trunc_write(self):
+        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "c1", "function": {"name": "write_file",
+                                      "arguments": '{"path": "h.py", "content": "def f(): pass"}'}}]},
+            "finish_reason": "length"}]}
+
+    def test_guard_truncation_refuses_partial_write_when_exhausted(self):
+        from cria.loop import guard_truncation
+        calls = []
+
+        def coder_chat(body, rlog):  # always still truncated → never recovers
+            calls.append(1)
+            return json.dumps(self._trunc_write()).encode()
+
+        out = guard_truncation(self._trunc_write(), {"messages": [{"role": "user", "content": "go"}],
+                                                     "tools": None}, coder_chat, _Rlog(), phase="direct-coder")
+        self.assertTrue(calls)  # it retried (a mid-write truncation → incremental steer)
+        # exhausted → the partial write is REFUSED (tool calls dropped), never shipped to disk
+        self.assertFalse((out["choices"][0]["message"].get("tool_calls")))
+
+    def test_guard_truncation_passes_clean_completion_untouched(self):
+        from cria.loop import guard_truncation
+        clean = {"choices": [{"message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}]}
+        calls = []
+
+        def coder_chat(body, rlog):
+            calls.append(1)
+            return b"{}"
+
+        out = guard_truncation(clean, {"messages": [], "tools": None}, coder_chat, _Rlog())
+        self.assertEqual(calls, [])  # not truncated → no retry, no coder call
+        self.assertEqual(out["choices"][0]["message"]["content"], "done")

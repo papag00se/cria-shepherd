@@ -555,74 +555,13 @@ class Loop:
         return self._renudge(sess, key, body, reason, rlog)
 
     def _guard_rumination(self, coder: dict, framed: dict, idx: int, rlog) -> dict:
-        """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
-        a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
-        into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
-        pick the simplest next step and act, capped. Distinct from the truncation guard (that's a
-        cut-off WRITE; this is runaway THINKING) — they key off different finish_reasons."""
-        attempt = 0
-        conv = list(framed["messages"])
-        while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
-            v = coder.get("cria_rumination") or {}
-            attempt += 1
-            rlog.emit("loop.rumination", step=idx, attempt=attempt,
-                      hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens"))
-            conv = conv + [{"role": "user", "content": prompts.render(
-                "rumination_guard", hits=v.get("hits", "several"), tokens=v.get("reasoning_tokens", "many"))}]
-            rlog.phase = f"coder-s{idx}-focus{attempt}"
-            coder = massage.apply(
-                _parse_completion(self._ctx.coder_chat({**framed, "messages": conv}, rlog)),
-                framed.get("tools"), rlog,
-            )
-        coder.pop("cria_rumination", None)  # internal marker — never forward it
-        for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
-            if ch.get("finish_reason") == "rumination":
-                ch["finish_reason"] = "stop"
-        return coder
+        """The loop's coder step — delegates to the shared :func:`guard_rumination` with the
+        loop's watched coder call, so the plan-off proxy path runs the IDENTICAL guard."""
+        return guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
 
     def _guard_truncation(self, coder: dict, framed: dict, idx: int, rlog) -> dict:
-        """Output-truncation guard (ported from codex-local `local_routing.rs`). The model hit
-        the output-token cap MID-generation, so any file it was writing is cut off. NEVER ship
-        that partial write: the model would re-read an "incomplete" file and rewrite it forever,
-        each rewrite truncating at the SAME cap (the file-corruption loop we watched burn a whole
-        run). Instead — when the truncation was mid-`write_file` — steer to INCREMENTAL writes
-        (first chunk via write_file, then edit_file appends) and retry, capped. If it's still cut
-        off after the retry budget (or the truncation wasn't a write), refuse the partial: drop
-        the tool call so the loop gates on ground truth rather than writing a corrupt file.
-
-        NOTE: the retry deliberately does NOT feed the model its own truncated output — the remedy
-        is 'write the file in small pieces', which starts the file over in chunks, so 'continue
-        from byte N' isn't needed (and the truncated text is unreliable anyway)."""
-        attempt = 0
-        conv = list(framed["messages"])
-        while massage.is_truncated(coder) and attempt < MAX_TRUNCATION_RETRIES:
-            path = _truncated_write_path(coder)
-            out_tok = _output_tokens(coder)
-            rlog.emit("loop.truncated", step=idx, attempt=attempt + 1, path=path, output_tokens=out_tok)
-            if path is None:
-                break  # not a mid-write truncation → the write steer doesn't apply; refuse below
-            attempt += 1
-            limit = f"~{out_tok} tokens" if out_tok else "the output-token limit"
-            conv = conv + [{"role": "user", "content": prompts.render("truncation_guard", path=path, limit=limit)}]
-            rlog.phase = f"coder-s{idx}-continue{attempt}"
-            coder = massage.apply(
-                _parse_completion(self._ctx.coder_chat({**framed, "messages": conv}, rlog)),
-                framed.get("tools"), rlog,
-            )
-        if massage.is_truncated(coder):
-            # Exhausted (or a non-write truncation): do NOT forward the partial write — a cut-off
-            # write_file lowered to disk is exactly the corruption. Drop the tool call; the coder
-            # then reads as a non-acting turn and the loop gates on the ground-truth probe.
-            rlog.emit("loop.truncated_dropped", step=idx)
-            _drop_tool_calls(coder)
-        # A RETRY here runs after the rumination guard already finished — if the retried
-        # completion itself ruminated, its internal marker and sentinel finish_reason must
-        # still never reach the harness.
-        coder.pop("cria_rumination", None)
-        for ch in coder.get("choices", []):
-            if ch.get("finish_reason") == "rumination":
-                ch["finish_reason"] = "stop"
-        return coder
+        """The loop's coder step — delegates to the shared :func:`guard_truncation`."""
+        return guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
         """The ground-truth probe cria emitted last turn has run — read its result and
@@ -1407,6 +1346,77 @@ def _write_paths(completion: dict) -> list:
     return [p for ch in completion.get("choices", [])
             for tc in (ch.get("message") or {}).get("tool_calls") or []
             if (p := _write_path(tc.get("function") or {}))]
+
+
+def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:
+    """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
+    a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
+    into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
+    pick the simplest next step and act, capped. Distinct from the truncation guard (that's a
+    cut-off WRITE; this is runaway THINKING) — they key off different finish_reasons.
+
+    ``coder_chat(body, rlog) -> bytes`` is injected so BOTH the plan loop (its watched coder
+    call) and the plan-off proxy path (a per-request watched call) run the identical guard —
+    the guards are NOT gated behind the planner; only plan-authored guidance is."""
+    attempt = 0
+    conv = list(body.get("messages") or [])
+    while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
+        v = coder.get("cria_rumination") or {}
+        attempt += 1
+        rlog.emit("loop.rumination", step=step, attempt=attempt,
+                  hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens"))
+        conv = conv + [{"role": "user", "content": prompts.render(
+            "rumination_guard", hits=v.get("hits", "several"), tokens=v.get("reasoning_tokens", "many"))}]
+        rlog.phase = f"{phase}-focus{attempt}"
+        coder = massage.apply(
+            _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
+    coder.pop("cria_rumination", None)  # internal marker — never forward it
+    for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
+        if ch.get("finish_reason") == "rumination":
+            ch["finish_reason"] = "stop"
+    return coder
+
+
+def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:
+    """Output-truncation guard (ported from codex-local `local_routing.rs`). The model hit
+    the output-token cap MID-generation, so any file it was writing is cut off. NEVER ship
+    that partial write: the model would re-read an "incomplete" file and rewrite it forever,
+    each rewrite truncating at the SAME cap (the file-corruption loop we watched burn a whole
+    run). Instead — when the truncation was mid-`write_file` — steer to INCREMENTAL writes
+    (first chunk via write_file, then edit_file appends) and retry, capped. If it's still cut
+    off after the retry budget (or the truncation wasn't a write), refuse the partial: drop
+    the tool call so the caller gates on ground truth rather than writing a corrupt file.
+
+    NOTE: the retry deliberately does NOT feed the model its own truncated output — the remedy
+    is 'write the file in small pieces', which starts the file over in chunks, so 'continue
+    from byte N' isn't needed (and the truncated text is unreliable anyway).
+
+    ``coder_chat`` is injected so the loop and the plan-off proxy path share ONE guard."""
+    attempt = 0
+    conv = list(body.get("messages") or [])
+    while massage.is_truncated(coder) and attempt < MAX_TRUNCATION_RETRIES:
+        path = _truncated_write_path(coder)
+        out_tok = _output_tokens(coder)
+        rlog.emit("loop.truncated", step=step, attempt=attempt + 1, path=path, output_tokens=out_tok)
+        if path is None:
+            break  # not a mid-write truncation → the write steer doesn't apply; refuse below
+        attempt += 1
+        limit = f"~{out_tok} tokens" if out_tok else "the output-token limit"
+        conv = conv + [{"role": "user", "content": prompts.render("truncation_guard", path=path, limit=limit)}]
+        rlog.phase = f"{phase}-continue{attempt}"
+        coder = massage.apply(
+            _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
+    if massage.is_truncated(coder):
+        # Exhausted (or a non-write truncation): do NOT forward the partial write — a cut-off
+        # write_file lowered to disk is exactly the corruption. Drop the tool call; the turn then
+        # reads as non-acting and the caller gates on ground truth rather than a corrupt file.
+        rlog.emit("loop.truncated_dropped", step=step)
+        _drop_tool_calls(coder)
+    coder.pop("cria_rumination", None)  # a retry may itself ruminate — never forward the marker
+    for ch in coder.get("choices", []):
+        if ch.get("finish_reason") == "rumination":
+            ch["finish_reason"] = "stop"
+    return coder
 
 
 def _truncated_write_path(completion: dict) -> str | None:

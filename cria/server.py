@@ -25,7 +25,7 @@ from .config import Config
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, wrap_stream
-from .loop import Loop, LoopContext, LoopStore, completion_to_sse, session_key
+from .loop import Loop, LoopContext, LoopStore, completion_to_sse, guard_rumination, guard_truncation, session_key
 from .planner import Planner
 from .routing import Router
 from .toolmenu import add_cheatsheet, focus_tools
@@ -106,6 +106,9 @@ class CriaServer(ThreadingHTTPServer):
         # a coding task item by item. Without it, cria is a smart proxy.
         reasoner_model = cfg.routing.local_models.get("reasoner")
         coder_model = cfg.routing.local_models.get("coder")
+        # The coder role's sampling/reserve — needed for the rumination budget on BOTH the loop
+        # and the plan-off proxy path (the guards are not gated behind the planner).
+        self.coder_role = roles.get("coder")
         self.loop = None
         if cfg.planner.enabled and reasoner_model and coder_model:
             # The web-search key is read from its env var (never stored in config). STRIP it —
@@ -116,7 +119,7 @@ class CriaServer(ThreadingHTTPServer):
             # The coder runs on the STREAMING-guarded path so its reasoning is watched live: a
             # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
             # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
-            coder_role = roles.get("coder")
+            coder_role = self.coder_role
             detector = rumination.Detector.from_reasoning_budget(
                 coder_role.output_reserve if coder_role else None)
 
@@ -256,6 +259,19 @@ class CriaHandler(BaseHTTPRequestHandler):
             translate_outbound(completion, self._shell_tool, self.server.translation_store, self._session_key, rlog)
         return completion
 
+    def _guarded_coder_chat(self, provider):
+        """A coder call carrying the loop's in-flight rumination watch (a fresh detector per
+        request, budgeted from the coder role's output_reserve) and returning a buffered
+        completion — so the plan-off direct-coder path runs the SAME guard as the loop. A
+        provider without watching (a cloud provider) falls back to a plain buffered chat."""
+        coder_role = self.server.coder_role
+        detector = rumination.Detector.from_reasoning_budget(
+            coder_role.output_reserve if coder_role else None)
+        watched = getattr(provider, "chat_watched", None)
+        if watched is None:
+            return provider.chat
+        return lambda body, rlog: watched(body, rlog, watch=detector.check)
+
     def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
         """Resolve the provider/model for this classification and build the
         indicator. Falls back to the local upstream (passthrough) when routing isn't
@@ -368,18 +384,27 @@ class CriaHandler(BaseHTTPRequestHandler):
         provider, indic = self._route(body, classification, rlog)
         rlog.phase = "proxy"
         # Planner OFF ([planner] enabled = false) + a coding task → frame the coder directly (its
-        # own system prompt, no plan) so it's a fair "coder without a planner", not a bare relay.
-        if (not server.cfg.planner.enabled and classification is not None
-                and classification.task_type == "coding"):
+        # own system prompt, no plan) AND run it through the SAME guards the loop uses (rumination
+        # + truncation). Plan-off means NO PLAN, not NO PROTECTION — the guards are not gated behind
+        # the planner. A small model left to relay bare is exactly what runs away / thrashes.
+        direct = (not server.cfg.planner.enabled and classification is not None
+                  and classification.task_type == "coding")
+        if direct:
             rlog.emit("route.direct_coder")
-            pbody = _direct_coder_body(body)
+            framed = self._apply_route_role(_direct_coder_body(body), indic)
+            coder_chat = self._guarded_coder_chat(provider)
+            try:
+                comp = massage.apply(json.loads(coder_chat(framed, rlog)), body.get("tools"), rlog)
+            except (json.JSONDecodeError, TypeError):
+                return {}, indic
+            comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
+            comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
         else:
-            pbody = _proxy_body(body)
-        raw = provider.chat(self._apply_route_role(pbody, indic), rlog)
-        try:
-            comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
-        except (json.JSONDecodeError, TypeError):
-            return {}, indic
+            raw = provider.chat(self._apply_route_role(_proxy_body(body), indic), rlog)
+            try:
+                comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
+            except (json.JSONDecodeError, TypeError):
+                return {}, indic
         if not body.get("tools"):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
