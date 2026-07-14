@@ -546,5 +546,42 @@ class ResponsesApiTests(unittest.TestCase):
         self.assertIn("data", doc)    # plain OpenAI clients want this one
 
 
+class _RewriteRlog:
+    def emit(self, kind, **kw):
+        pass
+
+
+class DirectRewriteDetectionTests(unittest.TestCase):
+    """Harness-compaction detection on the PLAN-OFF path (the seed anomaly): a changed conversation
+    root under a stable session key = the history was replaced → re-anchor the coder. Same structural
+    signal + same shared LoopStore the loop uses; no phrase-matching."""
+
+    def _handler(self, store):
+        from cria.server import CriaHandler
+        h = CriaHandler.__new__(CriaHandler)  # bare instance, no socket
+        h.server = types.SimpleNamespace(loop_store=store)
+        return h
+
+    def test_rewrite_detected_on_replaced_root_under_stable_key(self):
+        from cria.loop import LoopStore
+        h = self._handler(LoopStore())
+        key = "sid:abc"
+        first = {"messages": [{"role": "user", "content": "build the lambda"}]}
+        self.assertFalse(h._detect_rewrite(key, first, _RewriteRlog()))  # first sight → no rewrite
+        appended = {"messages": [{"role": "user", "content": "build the lambda"},
+                                 {"role": "assistant", "content": "ok"}]}
+        self.assertFalse(h._detect_rewrite(key, appended, _RewriteRlog()))  # append keeps the root
+        compacted = {"messages": [{"role": "user", "content": "SUMMARY: earlier we built the lambda…"}]}
+        self.assertTrue(h._detect_rewrite(key, compacted, _RewriteRlog()))  # root replaced → rewrite
+
+    def test_no_rewrite_for_content_derived_task_key(self):
+        from cria.loop import LoopStore
+        h = self._handler(LoopStore())
+        a = {"messages": [{"role": "user", "content": "a"}]}
+        b = {"messages": [{"role": "user", "content": "TOTALLY DIFFERENT"}]}
+        self.assertFalse(h._detect_rewrite("task:xyz", a, _RewriteRlog()))  # unstable key → disabled
+        self.assertFalse(h._detect_rewrite("task:xyz", b, _RewriteRlog()))
+
+
 if __name__ == "__main__":
     unittest.main()

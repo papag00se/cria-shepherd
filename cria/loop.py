@@ -99,6 +99,18 @@ MAX_PROBE_REISSUES = 2
 # NOT start with the indicator MARKER ("⟦cria⟧ "), so strip_history leaves it intact inbound.
 BRIEFING_OPEN = "⟦cria:briefing⟧"
 BRIEFING_CLOSE = "⟦/cria:briefing⟧"
+# Injected into the coder's framing on the FIRST turn after a detected harness compaction (the
+# plan-off path — the loop instead re-plans from the summary). The seed incident: a compacted model
+# read the lossy summary, treated its OWN earlier work as a previous agent's, couldn't find the test
+# file it had written, and re-created a duplicate under a different dir. This note re-orients it:
+# inspect before creating, don't restart finished work.
+REANCHOR_NOTE = (
+    "context notice: the harness just compacted this conversation — earlier turns were replaced by a "
+    "summary, so history above is lossy. Work it describes may be YOUR OWN from earlier in THIS "
+    "session, not another agent's. Before creating any file or redoing a step, INSPECT the workspace "
+    "first (list the directory, read the files that should already exist) and continue from what is "
+    "actually there — do NOT recreate files or restart work that is already done."
+)
 # ONE FOLDER PER RUN (operator direction 2026-07-11): everything cria produces for a session —
 # call captures, reasoning files, the plan mirror, the critic's verify dumps — lands under
 # <runs_dir>/<session>/, keyed by the SAME session id the captures use. No more tying a

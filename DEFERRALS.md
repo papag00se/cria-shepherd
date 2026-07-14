@@ -172,6 +172,32 @@ Residual gaps (each with its trigger):
   - **Trigger:** a harness whose summarize request breaks under the loop's decline
     path, or a need to route compaction to a dedicated role.
 
+### Plan-off compaction survival — BUILT (re-anchor), briefing intentionally N/A
+Context (the seed): a PLAN-OFF session hit a harness compaction; the coder read the
+lossy summary, treated its OWN earlier work as another agent's, couldn't find the
+test file it had written, and re-created a duplicate under a different directory. The
+compaction-survival machinery was loop-only (gated behind `planner.enabled`). Landed
+2026-07-14: the `LoopStore` (shape recording + rewrite detection) is lifted OUT of the
+planner gate and shared by BOTH paths (`server.loop_store`; within one process the
+planner is globally on/off, so a session is only ever driven by the loop OR by plan-off,
+never both — one store, no contention). The plan-off path now detects the rewrite
+(`_detect_rewrite` → the same `observe_shape` + `_history_root` + `_stable_session`, no
+phrase-matching) and, on the first turn after a compaction, injects a **re-anchor note**
+(`loop.REANCHOR_NOTE`) into the coder framing: *inspect the workspace before creating
+files; work you see may be your own; don't restart finished work.* Surfaced as a
+`⟦cria⟧ re-anchored after a harness compaction` assist (no hidden guards).
+
+- **A plan-off turn-end BRIEFING is deliberately NOT emitted** (the audit listed it as a
+  Tier-2 sub-piece). The loop emits a briefing because it OWNS the closing message
+  (it synthesizes the final completion and embeds the `⟦cria:briefing⟧` envelope). The
+  plan-off path forwards the coder's OWN completion and has no plan-completion event, so
+  there is no cria-owned message to carry a briefing and no trigger to build one. The
+  harness's own compaction summary + cria's re-anchor is the mechanism on this path.
+  - **Trigger:** a plan-off harness that does NOT compact on its own (so no summary is
+    ever produced) AND runs conversations long enough to need one. Then: have cria emit
+    its own end-of-turn briefing envelope on the plan-off path (heuristic, no reasoner)
+    the way the loop does at `loop.done`.
+
 ---
 
 ## Probes / completion gate (ported 2026-07-11 — full multi-ecosystem port)

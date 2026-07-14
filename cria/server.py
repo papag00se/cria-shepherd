@@ -28,6 +28,7 @@ from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip
 from .loop import (
     GuardStore,
     Loop,
+    REANCHOR_NOTE,
     _add_note,
     _clean_completion,
     _strip_completion_banners,
@@ -39,7 +40,9 @@ from .loop import (
     _completion_text,
     _completion_toolcalls,
     _has_tool_calls,
+    _history_root,
     _read_tool_result,
+    _stable_session,
     completion_to_sse,
     guard_gate_op,
     guard_gate_verdict,
@@ -172,6 +175,13 @@ class CriaServer(ThreadingHTTPServer):
         self.guard_store = GuardStore()
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
+        # Conversation-shape store for HARNESS-COMPACTION detection — shared by BOTH paths. It lives
+        # OUTSIDE the planner gate: the plan-off/proxy path (the user's path) equally needs to notice
+        # when the harness replaced the history and re-anchor the coder, or it treats its own prior
+        # work as a stranger's and duplicates files. Within one process the planner is globally on or
+        # off, so a session is only ever driven by the loop OR by plan-off — never both — so one store
+        # serves both with no contention. When the loop is built it uses this same instance.
+        self.loop_store = LoopStore(state_path=os.path.join(cfg.logging.dir, "loopstate.json"))
         self.loop = None
         if cfg.planner.enabled and has_reasoner and has_coder:
             # The web-search key is read from its env var (never stored in config). STRIP it —
@@ -201,10 +211,11 @@ class CriaServer(ThreadingHTTPServer):
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,
                 ),
-                # Completed-work briefings + session shapes survive a cria restart (the restarts
-                # this project makes constantly were wiping the context a follow-up / a post-
-                # compaction continuation needs). Live plans are NOT persisted — see LoopStore.
-                LoopStore(state_path=os.path.join(cfg.logging.dir, "loopstate.json")),
+                # The SAME store the plan-off path uses (created above). Completed-work briefings +
+                # session shapes survive a cria restart (the restarts this project makes constantly
+                # were wiping the context a follow-up / a post-compaction continuation needs). Live
+                # plans are NOT persisted — see LoopStore.
+                self.loop_store,
             )
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
 
@@ -386,12 +397,29 @@ class CriaHandler(BaseHTTPRequestHandler):
             guard_track_write_streak(gs, comp, rlog)
         return comp
 
-    def _drive_direct_coder(self, gs, provider, indic, body: dict, rlog):
+    def _detect_rewrite(self, sess_key: str, body: dict, rlog) -> bool:
+        """Harness-compaction detection on the plan-off path — the SAME structural signal the loop
+        uses (a changed conversation root under a stable session key = the history was replaced), via
+        the SAME shared LoopStore. No phrase-matching. Records this turn's shape every call so a later
+        rewrite is caught; returns True on the first turn after a rewrite (sticky until cleared)."""
+        store = self.server.loop_store
+        if store is None or not _stable_session(sess_key):
+            return False  # only content-independent (sid:) keys can detect this — see the loop
+        msgs = body.get("messages", [])
+        _root_text, fp = _history_root(msgs)
+        rewritten = store.observe_shape(sess_key, fp, len(msgs))
+        if rewritten:
+            rlog.emit("loop.history_rewritten", plan_off=True, n_messages=len(msgs))
+        return rewritten
+
+    def _drive_direct_coder(self, gs, provider, indic, body: dict, sess_key: str, rlog):
         """The plan-off direct-coder turn with the SAME protections the loop gives its coder: the
         repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify
-        against the repo's checks before ending the turn), and per-turn hygiene. Cross-turn state
-        lives in the per-session GuardState. Returns the completion to send, or None on decode fail."""
+        against the repo's checks before ending the turn), harness-compaction re-anchoring, and
+        per-turn hygiene. Cross-turn state lives in the per-session GuardState + the shared shape
+        store. Returns the completion to send, or None on decode fail."""
         coder_chat = self._guarded_coder_chat(provider)
+        rewritten = self._detect_rewrite(sess_key, body, rlog)
         # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
         if gs.done_probe:
             gs.done_probe = False
@@ -414,13 +442,20 @@ class CriaHandler(BaseHTTPRequestHandler):
         if steer is None and gs.nudge_reason:
             steer, gs.nudge_reason = gs.nudge_reason, ""
         framed = _direct_coder_body(body)
+        extra = []
+        if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix)
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=REANCHOR_NOTE)})
+            self.server.loop_store.clear_rewrite(sess_key)  # acted on it (framing rebuilt each turn)
         if steer:  # inject the steer into the coder framing this turn
-            framed = {**framed, "messages": framed["messages"]
-                      + [{"role": "user", "content": prompts.render("nudge", reason=steer)}]}
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
+        if extra:
+            framed = {**framed, "messages": framed["messages"] + extra}
         framed = self._apply_route_role(framed, indic)
         comp = self._run_coder(framed, coder_chat, gs, rlog)
         if comp is None:
             return None
+        if rewritten:  # no hidden guards: surface that cria re-anchored the turn
+            _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface that cria steered the coder
             _add_note(comp, "applied a steer from the guard")
         if _has_tool_calls(comp):
@@ -583,7 +618,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                   and classification.task_type == "coding")
         if direct:
             rlog.emit("route.direct_coder")
-            comp = self._drive_direct_coder(server.guard_store.get(sess_key), provider, indic, body, rlog)
+            comp = self._drive_direct_coder(server.guard_store.get(sess_key), provider, indic, body, sess_key, rlog)
             if comp is None:
                 return {}, indic
         else:
