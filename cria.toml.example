@@ -58,6 +58,12 @@ reasoning_transcript = true  # ALSO fold the reasoning into the PERSISTENT messa
 cheatsheet = true     # inject a terse per-tool usage note (system message) for the model
 focus = true          # curate the tool menu down to coding essentials (drop non-coding connectors)
 
+# --- outbound context-shaping (what the MODEL sees, vs what cria keeps for detection) -----------
+[context]
+focus_trim = true     # collapse exact-duplicate tool calls (same name+args) to their LAST occurrence
+                      #   before sending to the model, so a small model isn't drowning in its own
+                      #   repeated failed commands. cria's detectors still see the FULL history.
+
 # --- the reasoned planner ------------------------------------------------------
 [planner]
 enabled = true        # on a fresh coding task, draft a plan via the reasoner.
