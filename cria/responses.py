@@ -20,6 +20,8 @@ import json
 import uuid
 from collections.abc import Iterator
 
+from .indicators import MARKER
+
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:24]}"
@@ -232,8 +234,16 @@ def _function_item(tc: dict, idx: int) -> tuple[list[bytes], dict]:
     return evs, done
 
 
+def _reasoning_transcript_block(reasoning: str) -> str:
+    """The model's reasoning rendered as ``⟦cria⟧ 💭 …`` lines — folded into the persistent message
+    content so it rides in the scrollback like the banner (and is stripped from inbound history the
+    same way: EVERY line carries the MARKER, so strip_history drops the whole block)."""
+    lines = reasoning.splitlines() or [""]
+    return "\n".join(f"{MARKER}{'💭 ' if i == 0 else ''}{ln}" for i, ln in enumerate(lines))
+
+
 def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,
-                show_reasoning: bool = False) -> Iterator[bytes]:
+                show_reasoning: bool = False, reasoning_transcript: bool = False) -> Iterator[bytes]:
     """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
     enabled), an optional cria banner line, one message item (if any text), one function_call item
     per tool call, then `response.completed`."""
@@ -242,30 +252,37 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     out_items: list[dict] = []
     idx = 0
 
-    # The model's REASONING first — Codex renders it as the dimmed 'thinking' preamble. cria already
-    # captures it (upstream assembles message.reasoning_content); forward it so the harness can show
-    # what the model is thinking (dropped INBOUND by to_chat_body, so it never re-feeds the model).
-    if show_reasoning:
-        reasoning = msg.get("reasoning_content")
-        if isinstance(reasoning, str) and reasoning.strip():
-            evs, done = _reasoning_item(reasoning.strip()[:_REASONING_CAP], idx)
-            out_items.append(done); idx += 1
-            yield from evs
+    reasoning = msg.get("reasoning_content")
+    reasoning = reasoning.strip()[:_REASONING_CAP] if isinstance(reasoning, str) and reasoning.strip() else ""
 
-    # The "⟦cria⟧ …" banner rides in a message item. When the turn has text, it's PREPENDED into
-    # that content. When the turn is tool-calls-only (the common case in a coding run), it becomes
-    # its own message item AHEAD of the function calls — safe there because the tool call keeps the
-    # agent loop alive (a banner is only a "the agent answered" signal on an otherwise EMPTY turn,
-    # which we still drop). Either way it's stripped inbound (strip_history) so the model never
-    # re-ingests it and it can't seed a compaction summary — the two hazards that once justified
-    # dropping it on tool-only turns, now handled upstream.
+    # The model's REASONING first, on the NATIVE reasoning channel — Codex renders it as the live
+    # 'thinking' preamble (transient). cria captures it (upstream assembles message.reasoning_content)
+    # and forwards it (dropped INBOUND by to_chat_body, so it never re-feeds the model).
+    if show_reasoning and reasoning:
+        evs, done = _reasoning_item(reasoning, idx)
+        out_items.append(done); idx += 1
+        yield from evs
+
+    # The "⟦cria⟧ …" lead — the optional reasoning-transcript block (persistent 'thinking') then the
+    # banner — rides in a message item. When the turn has text, it's PREPENDED into that content.
+    # When the turn is tool-calls-only (the common case in a coding run), it becomes its own message
+    # item AHEAD of the function calls — safe there because the tool call keeps the agent loop alive
+    # (a lead is only a "the agent answered" signal on an otherwise EMPTY turn, which we still drop).
+    # Either way it's stripped inbound (strip_history) so the model never re-ingests it and it can't
+    # seed a compaction summary — the two hazards that once justified dropping it on tool-only turns.
     content = msg.get("content")
     text = content if (isinstance(content, str) and content) else None
     has_tool_calls = bool(msg.get("tool_calls"))
-    if banner and text:
-        text = f"{banner}\n{text}"
-    elif banner and has_tool_calls:
-        text = banner  # tool-call-only turn — show the banner alongside the call, not dropped
+    lead_parts = []
+    if reasoning_transcript and reasoning:
+        lead_parts.append(_reasoning_transcript_block(reasoning))
+    if banner:
+        lead_parts.append(banner)
+    lead = "\n".join(lead_parts)
+    if lead and text:
+        text = f"{lead}\n{text}"
+    elif lead and has_tool_calls:
+        text = lead  # tool-call-only turn — show the lead alongside the call, not dropped
     if text:
         evs, done = _message_item(text, idx); out_items.append(done); idx += 1
         yield from evs
@@ -285,22 +302,27 @@ def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, b
     yield from body_events(completion, rid, model, banner)
 
 
-def to_responses_json(completion: dict, model: str, show_reasoning: bool = False) -> dict:
+def to_responses_json(completion: dict, model: str, show_reasoning: bool = False,
+                      reasoning_transcript: bool = False) -> dict:
     """Non-streaming Responses object (stream:false)."""
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out: list[dict] = []
-    if show_reasoning:
-        reasoning = msg.get("reasoning_content")
-        if isinstance(reasoning, str) and reasoning.strip():
-            r = reasoning.strip()[:_REASONING_CAP]
-            out.append({"id": _new_id("rs"), "type": "reasoning",
-                        "summary": [{"type": "summary_text", "text": r}],
-                        "content": [{"type": "reasoning_text", "text": r}]})
+    reasoning = msg.get("reasoning_content")
+    reasoning = reasoning.strip()[:_REASONING_CAP] if isinstance(reasoning, str) and reasoning.strip() else ""
+    if show_reasoning and reasoning:
+        out.append({"id": _new_id("rs"), "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": reasoning}],
+                    "content": [{"type": "reasoning_text", "text": reasoning}]})
     content = msg.get("content")
-    if isinstance(content, str) and content:
+    text = content if (isinstance(content, str) and content) else None
+    has_tool_calls = bool(msg.get("tool_calls"))
+    if reasoning_transcript and reasoning and (text or has_tool_calls):
+        block = _reasoning_transcript_block(reasoning)  # persistent ⟦cria⟧ 💭 … lines in the transcript
+        text = f"{block}\n{text}" if text else block
+    if text:
         out.append({"id": _new_id("msg"), "type": "message", "status": "completed", "role": "assistant",
-                    "content": [{"type": "output_text", "text": content}]})
+                    "content": [{"type": "output_text", "text": text}]})
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function") or {}
         out.append({"id": _new_id("fc"), "type": "function_call", "status": "completed",

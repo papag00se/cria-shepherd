@@ -45,7 +45,13 @@ route   = true        # the ongoing "⟦cria⟧ <role> · <model>" banner on eac
 metrics = true        # the trailing "· N tok/s" suffix on the route banner
 assists = true        # the "⟦cria⟧ <note>" guard/assist lines (e.g. "running the repo's checks (…)")
 stats   = true        # a terse end-of-turn summary line: "⟦cria⟧ turn done · ⏱ 45s · 🔁 12 calls · ⚡ 38 tok/s · 🛡 …"
-reasoning = true      # forward the model's reasoning to the harness (Codex renders it as the "thinking" preamble)
+reasoning = true      # forward the model's reasoning on the native channel (Codex's live "thinking"
+                      #   preamble — transient; it is NOT kept in the scrollable history)
+reasoning_transcript = false  # ALSO fold the reasoning into the PERSISTENT message as "⟦cria⟧ 💭 …"
+                      #   lines, so the thinking rides in the scrollback like the banner (and is
+                      #   stripped from inbound history the same way) instead of only flashing. Set
+                      #   true to KEEP the thinking visible; pair with reasoning=false to avoid
+                      #   showing it twice (native transient + persistent block).
 
 # --- tool-menu shaping ---------------------------------------------------------
 [tools]

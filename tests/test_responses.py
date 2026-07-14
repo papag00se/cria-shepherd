@@ -206,3 +206,30 @@ class ReasoningForwardingTests(unittest.TestCase):
         comp = {"choices": [{"message": {"content": "hi"}}]}
         kinds = [r.decode() for r in body_events(comp, "r", "m", show_reasoning=True)]
         self.assertFalse(any("reasoning" in k for k in kinds))
+
+    def _reasoning_message_text(self, **kw):
+        """The text of the assistant MESSAGE item body_events emits (where the transcript block rides)."""
+        import json as _json
+        from cria.responses import body_events
+        for r in body_events(self._COMP, "r", "m", **kw):
+            line = r.decode()
+            if "response.output_item.done" in line:
+                data = _json.loads(line.split("data: ", 1)[1])
+                if data["item"].get("type") == "message":
+                    return "".join(p.get("text", "") for p in data["item"]["content"])
+        return None
+
+    def test_reasoning_transcript_folds_into_persistent_message(self):
+        from cria.indicators import MARKER, strip_history
+        text = self._reasoning_message_text(reasoning_transcript=True)
+        self.assertIsNotNone(text)                       # a message item now exists (tool-call-only turn)
+        self.assertIn(f"{MARKER}💭", text)               # the reasoning rides as a ⟦cria⟧ 💭 block
+        self.assertIn("resolve_handle", text)            # the actual thinking is present
+        # every block line carries the MARKER, so it's stripped from inbound history like the banner
+        cleaned, n = strip_history([{"role": "assistant", "content": text}])
+        self.assertTrue(n > 0)
+        self.assertNotIn("resolve_handle", cleaned[0]["content"])
+
+    def test_reasoning_transcript_off_by_default(self):
+        text = self._reasoning_message_text()  # neither flag set
+        self.assertIsNone(text)  # no message item, no folded reasoning

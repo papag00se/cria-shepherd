@@ -221,7 +221,12 @@ class IndicatorsConfig:
     metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
     assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
     stats: bool = True    # a terse end-of-turn "⟦cria⟧ turn done · ⏱ … · 🛡 …" summary line
-    reasoning: bool = True  # forward the model's reasoning as a Responses reasoning item (Codex shows it as 'thinking')
+    reasoning: bool = True  # forward the model's reasoning on the native Responses reasoning channel
+                            # (Codex's live 'thinking' preamble — transient, not kept in scrollback)
+    reasoning_transcript: bool = False  # ALSO fold the reasoning into the PERSISTENT message content
+                                        # as "⟦cria⟧ 💭 …" lines — rides in the scrollback like the
+                                        # banner (and is stripped from inbound history the same way),
+                                        # so the thinking stays visible instead of only flashing
 
 
 @dataclass(frozen=True)
@@ -355,6 +360,7 @@ def _indicators(d: dict) -> IndicatorsConfig:
         assists=bool(d.get("assists", True)),
         stats=bool(d.get("stats", True)),
         reasoning=bool(d.get("reasoning", True)),
+        reasoning_transcript=bool(d.get("reasoning_transcript", False)),
     )
 
 
