@@ -270,6 +270,31 @@ recorded here so they aren't silently dropped. Each has its trigger.
   INVESTIGATE-phase port (already deferred above), which folds discovered facts into
   concrete steps instead of deferring the lookup to the coder.
 
+### Finishing the port (2026-07-13 — landed guards/tools/tool-prompting/instructions)
+Four port gaps were closed (the model-facing scaffolding codex-local wraps around the
+shared lean prompt): the rumination + truncation guards now run on the plan-off/proxy
+path (not gated behind the planner); synthetic lean `read_file`/`list_dir` are injected
+and lowered to shell (not just `write_file`); the tool hint is generated from the live
+menu and carried into cria's own system message (prompt↔menu can't disagree); and the
+harness AGENTS/env preamble is re-presented in cria's clean voice. Residual:
+- **Synthetic `edit_file` is NOT injected** — only `read_file`/`list_dir` (and
+  `write_file`). A byte-safe executor-less edit lowering is a separate problem:
+  `apply_patch` needs harness support, and a shell find/replace is escaping-fragile. The
+  menu-derived hint already stays honest (it names `edit_file` only when the harness
+  offers it). — **Trigger:** decide on a safe lowering (base64 old/new via a portable
+  one-liner, or gate on harness apply_patch) and inject it.
+- **The guards were wired onto the BUFFERED path** (`_produce_completion`, which the
+  Codex/Responses API uses — the captured runaway). A plain `/v1/chat/completions`
+  STREAMING client with the planner off + a coding task still proxies via
+  `_produce_stream` with no direct-coder branch and no guards. — **Trigger:** a
+  streaming (non-Responses) harness driving coding tasks with the planner off; add the
+  direct-coder+guards branch to `_produce_stream` (rumination watches in-flight; a
+  streamed turn can't post-hoc truncation-retry without buffering).
+- **Reframed project instructions stay a USER message** (clean, but trimmable), not
+  promoted to the protected system message the way codex-local pins `user_instructions`.
+  — **Trigger:** observed loss of AGENTS.md rules to floor-trimming on a long
+  conversation; fold the reframed instructions into cria's system message.
+
 ### Upstream twin (spec source-of-truth on this machine)
 - **`content_reduce`'s ungated plain-text prose-strip** (fixed in cria this pass:
   `cria/content_reduce.py` now gates on prose AND a structural code sniff) mirrors
