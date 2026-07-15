@@ -468,16 +468,14 @@ class CriaHandler(BaseHTTPRequestHandler):
         if extra:
             framed = {**framed, "messages": framed["messages"] + extra}
         framed = self._apply_route_role(framed, indic)
-        framed, trimmed = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (not the history)
-        comp = self._run_coder(framed, coder_chat, gs, rlog)
+        framed, _ = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (logged, not bannered —
+        comp = self._run_coder(framed, coder_chat, gs, rlog)  # routine housekeeping, not an intervention)
         if comp is None:
             return None
         if rewritten:  # no hidden guards: surface that cria re-anchored the turn
             _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface that cria steered the coder
             _add_note(comp, "applied a steer from the guard")
-        if trimmed:  # no hidden guards: surface that cria trimmed repeated tool calls
-            _add_note(comp, "trimmed repeated tool calls from the context")
         if _has_tool_calls(comp):
             return comp  # acting → forward
         return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)
