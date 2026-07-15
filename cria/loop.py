@@ -143,6 +143,7 @@ class GuardState:
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -1455,6 +1456,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
         gs.nudge_reason = prompts.render(
             "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N,
             repeat_action=_clip(gs.repeat_action, 160), ground_truth="")
+        gs.steer_source = "repetition guard"
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
         gs.spin_probe_due = False
@@ -1466,6 +1468,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             rlog.emit("loop.spin_probe", step=step, path=gs.spin_path)
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
         gs.nudge_reason = prompts.render("spin_nogate", spin_path=gs.spin_path)  # a steer, never silence
+        gs.steer_source = "wheel-spin guard"
         rlog.emit("loop.spin_probe_result", step=step, canned=True)
     return None
 
@@ -1526,11 +1529,13 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=Non
         else probegate.GateOutcome(ran=False)
     if gs.redirect_probe:  # repetition: ground truth → a redirect (reasoner-authored, or canned)
         gs.redirect_probe = False
+        gs.steer_source = "repetition guard"
         redirect = author(gs, outcome, body, rlog) if author is not None else guard_canned_redirect(gs, outcome)
         rlog.emit("loop.redirect", step=step, chars=len(redirect))
         return f"[REDIRECT]\n{redirect}"
     # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open
     gs.spin_probe = False
+    gs.steer_source = "wheel-spin guard"
     findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
     rlog.emit("loop.spin_probe_result", step=step, clean=findings is None and outcome.ran)
     return prompts.render("spin_ground_truth", spin_path=gs.spin_path,

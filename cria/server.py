@@ -476,6 +476,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return _completion_final(held or "Done.")
             rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
             gs.nudge_reason = prompts.render("gate_fail_steer", errors=_clip_tail(errors, 1800))
+            gs.steer_source = "completion gate (repo checks failed)"
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
         if gs.awaiting_probe:
@@ -503,8 +504,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             return None
         if rewritten:  # no hidden guards: surface that cria re-anchored the turn
             _add_note(comp, "re-anchored after a harness compaction")
-        if steer:  # no hidden guards: surface that cria steered the coder
-            _add_note(comp, "applied a steer from the guard")
+        if steer:  # no hidden guards: surface WHICH guard steered the coder (not just "a guard")
+            _add_note(comp, f"steered the coder — {gs.steer_source or 'guard'}")
+            gs.steer_source = ""
         if _has_tool_calls(comp):
             return comp  # acting → forward
         return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)

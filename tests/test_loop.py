@@ -737,6 +737,23 @@ class WheelSpinTests(unittest.TestCase):
         self.assertNotIn("loop.step_done", rlog.kinds())   # inserted, never judged
         self.assertIn("loop.spin_probe_result", rlog.kinds())
 
+    def test_probe_steer_labels_which_guard_fired(self):
+        # The ⟦cria⟧ note must say WHICH guard steered the coder, not just "a guard" — so a
+        # wheel-spin steer and a repetition redirect are distinguishable in the scrollback.
+        from cria.loop import GuardState, guard_probe_steer
+        rlog = _Rlog()
+        # wheel-spin probe resolving → labels "wheel-spin guard"
+        gs = GuardState(spin_probe=True, probe_call_id="p1", spin_path="x.py")
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
+        self.assertIsNotNone(guard_probe_steer(gs, body, rlog))
+        self.assertEqual(gs.steer_source, "wheel-spin guard")
+        # repetition redirect resolving (canned, no author) → labels "repetition guard"
+        gs2 = GuardState(redirect_probe=True, probe_call_id="p2", repeat_action="write_file(h.py)")
+        body2 = {"messages": [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
+        steer = guard_probe_steer(gs2, body2, rlog)
+        self.assertIn("[REDIRECT]", steer)
+        self.assertEqual(gs2.steer_source, "repetition guard")
+
     def test_clean_checks_report_the_pass_without_editorializing(self):
         # Round-6: the clean-gate message must NOT claim "the problem is elsewhere" — a
         # content-blind streak can't distinguish a spiral from an honest sequence of edits to
