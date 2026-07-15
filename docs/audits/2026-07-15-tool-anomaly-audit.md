@@ -1,5 +1,14 @@
 # Tool-handling Anomaly Sweep — 2026-07-15
 
+> **RESOLVED 2026-07-15.** All tiers fixed (no deferrals) across commits for Responses
+> translation, focus-trim, menu/cheat-sheet coherence, the guard write-class predicates, and
+> the writeproxy overhaul (stateless sentinels, edit_file + web-tool synthesis, atomic write).
+> Decisions taken: `apply_patch` dropped from the model menu (kept as the edit_file lowering
+> target); `web_search` routes to the harness's search tool if present, else a Brave curl.
+> Live-verified: the running session advertises `edit_file` + `web_fetch`, `apply_patch` gone;
+> write + edit lowering executed byte-exact in a real shell. 645 tests green.
+
+
 Wide-net, single-pass, parallel scan for **tool mishaps**: anomalies in how cria
 curates the tool menu, synthesizes lean tools, translates/lowers tool calls, and
 guards them. Sister to the Audit Lens; this catalogues *things that shouldn't exist*,
