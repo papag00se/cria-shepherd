@@ -39,7 +39,7 @@ from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .planner_tools import normalize_search
-from .shelltool import _CMD_FIELDS, find_shell_tool, shell_args
+from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
@@ -84,8 +84,10 @@ REPEAT_WINDOW = 12
 # edits span 13 calls — a 12-call window missed the incident's exact shape by ONE, permanently
 # (round 5). Sparser revisits (3+ calls between edits) still age out and stay silent.
 WRITE_WINDOW = WHEEL_SPIN_WRITES * 3
-# Tool names of the write class — their nature is path+content, and new content is progress.
-_WRITE_TOOL_RE = re.compile(r"write|edit|patch|create|replace", re.I)
+# The write class is ONE predicate (`_is_write_tool`, membership in _WRITE_TOOLS below) — shared by
+# the repetition signature AND the wheel-spin/truncation guards, so a route can't be a write to one
+# and not the other. (A loose substring regex was tried and split the two: it mis-classed `write_stdin`
+# as a file write and missed nothing the exact set doesn't.)
 # Shell-command words that mutate the workspace: a shell call carrying one of these, with no
 # match already in the window, is progress too (the apply_patch/tee equivalents of a write).
 _MUTATOR_WORDS = frozenset({"apply_patch", "tee", "mv", "cp", "touch", "mkdir", "rm"})
@@ -116,6 +118,12 @@ _RUNS_DIR_DEFAULT = "~/.cria/calls"
 # create_file rewrite spiral was invisible to BOTH tiers.
 _WRITE_TOOLS = tuple(dict.fromkeys(
     tuple(sorted(writeproxy_names)) + ("edit_file", "str_replace", "apply_patch")))
+
+
+def _is_write_tool(name) -> bool:
+    """The single write-class predicate — used by the repetition signature and the wheel-spin /
+    truncation guards alike, so a named tool is a write to all of them or to none."""
+    return name in _WRITE_TOOLS
 
 
 class Phase(Enum):
@@ -1305,10 +1313,32 @@ def _path_of_args(args, patch_ok: bool = True) -> str | None:
 
 
 def _write_path(fn: dict) -> str | None:
-    """The file a single write-class tool call targets; None for non-write calls."""
-    if fn.get("name") not in _WRITE_TOOLS:
+    """The file a single tool call writes; None for non-write calls. Covers the named write tools AND
+    a SHELL-native write (redirect/heredoc/`tee`), so the wheel-spin guard counts a model rewriting
+    one file straight through the shell the same as a write_file."""
+    name = fn.get("name")
+    if _is_write_tool(name):
+        return _path_of_args(fn.get("arguments") or "", patch_ok=name == "apply_patch")
+    if name in SHELL_TOOL_NAMES:
+        return _shell_write_target(fn.get("arguments") or "")
+    return None
+
+
+# Extract the file a shell command writes via redirect/heredoc/`tee` — the target token after a
+# `>`/`>>` (not `/dev/…`, `&`, or a comparison) or after `tee [-a]`. Quoted spans are stripped first
+# so a `>` inside a string isn't read as a redirect. Best-effort: a miss just doesn't group (never
+# over-fires), matching the streak guard's existing tolerance.
+_REDIRECT_TARGET_RE = re.compile(r'(?<![-=<>\d])>{1,2}\s*(?!/dev/|&)([\w./~$-]+)')
+_TEE_TARGET_RE = re.compile(r'\btee\b\s+(?:-a\s+)?(?!-)([\w./~$-]+)')
+
+
+def _shell_write_target(args) -> str | None:
+    text = _command_text(args)
+    if text is None:
         return None
-    return _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
+    masked = _QUOTED_SPAN_RE.sub("", text)  # drop quoted spans so a `>` inside them isn't a redirect
+    m = _REDIRECT_TARGET_RE.search(masked) or _TEE_TARGET_RE.search(masked)
+    return m.group(1) if m else None
 
 
 def _write_paths(completion: dict) -> list:
@@ -1738,8 +1768,8 @@ def _action_signature(name: str, args: str) -> tuple:
         parsed = {}
     if not isinstance(parsed, dict):
         parsed = {}
-    if _WRITE_TOOL_RE.search(name):
-        path = _path_of_args(args, patch_ok="patch" in name.lower()) or ""
+    if _is_write_tool(name):
+        path = _path_of_args(args, patch_ok=name == "apply_patch") or ""
         body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")
                    or parsed.get("input") or parsed.get("patch") or args)
         return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])

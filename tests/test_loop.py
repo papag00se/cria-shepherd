@@ -697,6 +697,27 @@ class _VaryingWriter:
         return self.bodies[-1]["messages"][-1]["content"]
 
 
+class ShellWritePathTests(unittest.TestCase):
+    def test_shell_native_write_yields_a_path(self):
+        from cria.loop import _write_path
+        self.assertEqual(_write_path({"name": "shell", "arguments": '{"command":["bash","-lc","echo x > handler.py"]}'}), "handler.py")
+        self.assertEqual(_write_path({"name": "exec_command", "arguments": '{"cmd":"cat > a/b.py <<EOF\\nx\\nEOF"}'}), "a/b.py")
+        self.assertEqual(_write_path({"name": "shell", "arguments": '{"command":["bash","-lc","pytest -q | tee out.log"]}'}), "out.log")
+
+    def test_shell_reads_and_redirect_to_devnull_are_not_writes(self):
+        from cria.loop import _write_path
+        self.assertIsNone(_write_path({"name": "shell", "arguments": '{"command":["bash","-lc","cat handler.py"]}'}))
+        self.assertIsNone(_write_path({"name": "shell", "arguments": '{"command":["bash","-lc","pytest -q 2>/dev/null"]}'}))
+        self.assertIsNone(_write_path({"name": "shell", "arguments": '{"command":["bash","-lc","echo \\"a > b\\""]}'}))  # `>` inside a quote
+
+    def test_write_class_predicate_is_unified(self):
+        # write_stdin is NOT a file write (the old loose regex mis-classed it); named write tools are.
+        from cria.loop import _is_write_tool
+        self.assertFalse(_is_write_tool("write_stdin"))
+        self.assertTrue(_is_write_tool("write_file"))
+        self.assertTrue(_is_write_tool("edit_file"))
+
+
 class WheelSpinTests(unittest.TestCase):
     """Trigger 2: the same file written WHEEL_SPIN_WRITES times — any content — within the
     last REPEAT_WINDOW forwarded calls → cria runs the gate mid-work and INSERTS the results
