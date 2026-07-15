@@ -54,6 +54,31 @@ class ToChatBodyTests(unittest.TestCase):
         body = responses.to_chat_body(r)
         self.assertEqual(json.loads(body["messages"][0]["tool_calls"][0]["function"]["arguments"]), {"a": 1})
 
+    def test_tool_choice_object_form_is_nested(self):
+        r = {"model": "m", "input": [], "tools": [
+            {"type": "function", "name": "f", "parameters": {"type": "object"}}],
+            "tool_choice": {"type": "function", "name": "f"}}
+        body = responses.to_chat_body(r)
+        self.assertEqual(body["tool_choice"], {"type": "function", "function": {"name": "f"}})
+
+    def test_tool_choice_string_passes_through_object_unknown_dropped(self):
+        self.assertEqual(responses.to_chat_body({"model": "m", "input": [], "tool_choice": "required"})["tool_choice"], "required")
+        # an unrecognized object form (mcp/allowed_tools) is omitted, not sent as garbage
+        self.assertNotIn("tool_choice", responses.to_chat_body({"model": "m", "input": [], "tool_choice": {"type": "mcp"}}))
+
+    def test_tool_with_no_parameters_gets_default_object_and_strict_carried(self):
+        r = {"model": "m", "input": [], "tools": [
+            {"type": "function", "name": "f", "strict": True}]}
+        fn = responses.to_chat_body(r)["tools"][0]["function"]
+        self.assertEqual(fn["parameters"], {"type": "object", "properties": {}})
+        self.assertIs(fn["strict"], True)
+
+    def test_function_call_output_without_id_is_dropped_not_null_paired(self):
+        r = {"model": "m", "input": [
+            {"type": "function_call_output", "output": "orphaned"}]}  # no call_id/id
+        msgs = responses.to_chat_body(r)["messages"]
+        self.assertFalse(any(m.get("role") == "tool" for m in msgs))  # no null-id tool message
+
 
 def _sse_events(chunks) -> list[dict]:
     out = []
@@ -139,6 +164,19 @@ class ToResponsesSseTests(unittest.TestCase):
     def test_session_key_from_prompt_cache_key(self):
         self.assertEqual(responses.session_key_of({"prompt_cache_key": "abc"}), "abc")
         self.assertIsNone(responses.session_key_of({}))
+
+    def test_buffered_json_folds_the_banner_like_the_stream(self):
+        # parity: to_responses_json now takes a banner and folds it into the content item, same as
+        # body_events — the buffered (stream:false) path was dropping the ⟦cria⟧ line.
+        comp = {"choices": [{"message": {"role": "assistant", "content": "the answer"}}]}
+        out = responses.to_responses_json(comp, "m", banner="⟦cria⟧ coder · m")["output"]
+        msg = [o for o in out if o.get("type") == "message"][0]
+        self.assertEqual(msg["content"][0]["text"], "⟦cria⟧ coder · m\nthe answer")
+
+    def test_buffered_json_drops_banner_on_empty_completion(self):
+        comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+        out = responses.to_responses_json(comp, "m", banner="⟦cria⟧ x")["output"]
+        self.assertEqual([o for o in out if o.get("type") == "message"], [])
 
 
 if __name__ == "__main__":

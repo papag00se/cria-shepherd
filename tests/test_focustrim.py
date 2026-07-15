@@ -92,6 +92,23 @@ def _fail_action(cid, cmd):
             {"role": "tool", "tool_call_id": cid, "content": "%s: No such file or directory\nProcess exited with code 1" % cmd}]
 
 
+class GateDupCollapseTests(unittest.TestCase):
+    def test_identical_gate_probes_are_not_collapsed(self):
+        from cria.probegate import SECTION_PREFIX as GATE
+        gate_args = f'{{"cmd": "echo {GATE}probe-0___"}}'
+        msgs = [
+            {"role": "user", "content": "x"},
+            _asst("g1", "exec_command", gate_args),
+            {"role": "tool", "tool_call_id": "g1", "content": f"{GATE}probe-0___\nEXIT:0"},
+            _asst("g2", "exec_command", gate_args),   # byte-identical gate script
+            {"role": "tool", "tool_call_id": "g2", "content": f"{GATE}probe-0___\nEXIT:1\nSyntaxError"},
+        ]
+        out, rep = trim(msgs)
+        self.assertEqual(rep.dropped_calls, 0)                       # neither gate collapsed
+        ids = {tc["id"] for m in out if m.get("role") == "assistant" for tc in m.get("tool_calls", [])}
+        self.assertEqual(ids, {"g1", "g2"})                          # both survive
+
+
 class ErrorSquashTests(unittest.TestCase):
     def test_squashes_a_run_of_distinct_failures_keeping_recent(self):
         msgs = [{"role": "user", "content": "build it"}]

@@ -90,11 +90,19 @@ class FocusToolsTests(unittest.TestCase):
 
 class CheatsheetTests(unittest.TestCase):
     def test_describes_present_tools(self):
-        note = cheatsheet([_WRITE, _SHELL, _PATCH])
+        note = cheatsheet([_WRITE, _SHELL, _t("edit_file")])
         self.assertIn("write_file", note)
         self.assertIn('"content"', note)   # the menu-derived hint carries argument shapes
         self.assertIn("shell", note)
-        self.assertIn("apply_patch", note)
+        self.assertIn("edit_file", note)
+
+    def test_apply_patch_is_not_model_facing(self):
+        # apply_patch is dropped from the menu (a 9B can't produce diff context) and stays only as
+        # the lowering target — neither the focused menu nor the cheat-sheet names it.
+        body = {"tools": [_WRITE, _SHELL, _PATCH]}
+        focus_tools(body)
+        self.assertNotIn("apply_patch", {m["function"]["name"] for m in body["tools"]})
+        self.assertNotIn("apply_patch", cheatsheet([_WRITE, _SHELL, _PATCH]) or "")
 
     def test_none_without_tools(self):
         self.assertIsNone(cheatsheet([]))
@@ -131,6 +139,28 @@ class CheatsheetTests(unittest.TestCase):
     def test_shell_described_as_last_resort(self):
         note = cheatsheet([_WRITE, _SHELL])
         self.assertIn("LAST RESORT", note)    # shell is de-emphasized, not co-equal
+
+    def test_list_dir_arg_name_read_from_schema(self):
+        # a harness-native list_dir uses dir_path — the hint must say dir_path, not the synthetic path
+        native = {"type": "function", "function": {"name": "list_dir",
+                  "parameters": {"type": "object", "properties": {"dir_path": {"type": "string"}}, "required": ["dir_path"]}}}
+        note = cheatsheet([native, _SHELL])
+        self.assertIn('"dir_path"', note)
+        self.assertNotIn('{"path": "<dir>"}', note)
+        # cria's synthetic list_dir (path) still renders path
+        synth = {"type": "function", "function": {"name": "list_dir",
+                 "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}}}
+        self.assertIn('"path"', cheatsheet([synth, _SHELL]))
+
+    def test_web_fetch_crossref_only_when_fetch_present(self):
+        # web_search alone must not point at web_fetch (uncallable); with web_fetch it may
+        self.assertNotIn("web_fetch", cheatsheet([_t("web_search"), _SHELL]))
+        self.assertIn("web_fetch", cheatsheet([_t("web_search"), _t("web_fetch"), _SHELL]))
+
+    def test_previously_undocumented_tools_now_have_fragments(self):
+        for nm in ("view_image", "update_plan", "request_permissions", "write_stdin"):
+            note = cheatsheet([_t(nm), _SHELL])
+            self.assertIn(nm, note, nm)
 
     def test_web_fetch_navigation_hint_surfaces_find_and_cursor(self):
         # A weak model re-fetches the same url to "see more" instead of navigating it. When web_fetch

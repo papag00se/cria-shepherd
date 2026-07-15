@@ -781,25 +781,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": {"message": str(e)}}}))
                 return
-            banner = None
-            # Only show the cria line when this turn actually carries something — a tool
-            # call or text. A bare banner (empty completion) both litters the TUI and, being
-            # a text-only assistant turn, tells the harness the agent is DONE. cria's loop is
-            # built never to emit an empty non-final turn, but gate here too as a backstop.
-            ic = self.server.cfg.indicators
-            if ic.enabled and ic.route and _has_visible_output(comp):  # [indicators] route
-                # Show the model ACTUALLY LOADED on the server (the truth from /v1/models), never a
-                # config label that may not match, and never the client picker's name (e.g. "gpt-5.5").
-                loaded = self.server.upstream.loaded_model(rlog)
-                if _indic is not None and getattr(_indic, "model", None):
-                    shown, role = _indic.model, (_indic.role or "local")
-                else:  # plan-loop path carries no indicator
-                    shown, role = "local", "coder"
-                shown = loaded or shown  # loaded model wins — the banner is the truth
-                banner = f"{MARKER}{role} · {shown}"
-                tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
-                if ic.metrics and tps:  # [indicators] metrics — the "· N tok/s" suffix
-                    banner += f" · {tps:.0f} tok/s"
+            banner = self._compute_banner(comp, _indic, rlog)
             ind = self.server.cfg.indicators
             show_reasoning = ind.enabled and ind.reasoning
             reasoning_transcript = ind.enabled and ind.reasoning_transcript
@@ -814,6 +796,27 @@ class CriaHandler(BaseHTTPRequestHandler):
             self.server.unregister_stream(hb)
             hb.stop()
 
+    def _compute_banner(self, comp: dict, indic, rlog) -> str | None:
+        """The ⟦cria⟧ route line for this turn, or None. Shared by the streaming and buffered
+        Responses paths so both surface the same banner. Only when the turn carries visible output
+        (a bare banner on an empty turn litters the TUI and reads to the harness as 'agent done')."""
+        ic = self.server.cfg.indicators
+        if not (ic.enabled and ic.route and _has_visible_output(comp)):  # [indicators] route
+            return None
+        # Show the model ACTUALLY LOADED on the server (the truth from /v1/models), never a config
+        # label that may not match, and never the client picker's name (e.g. "gpt-5.5").
+        loaded = self.server.upstream.loaded_model(rlog)
+        if indic is not None and getattr(indic, "model", None):
+            shown, role = indic.model, (indic.role or "local")
+        else:  # plan-loop path carries no indicator
+            shown, role = "local", "coder"
+        shown = loaded or shown  # loaded model wins — the banner is the truth
+        banner = f"{MARKER}{role} · {shown}"
+        tps = getattr(rlog, "last_tok_per_s", None)  # this turn's model generation speed
+        if ic.metrics and tps:  # [indicators] metrics — the "· N tok/s" suffix
+            banner += f" · {tps:.0f} tok/s"
+        return banner
+
     def _respond_responses_buffered(self, body: dict, sess_key: str, rlog) -> None:
         try:
             comp, _indic = self._produce_completion(body, rlog, sess_key)
@@ -824,9 +827,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         ind = self.server.cfg.indicators
         show_reasoning = ind.enabled and ind.reasoning
         reasoning_transcript = ind.enabled and ind.reasoning_transcript
+        banner = self._compute_banner(comp, _indic, rlog)  # parity with the streaming path
         self._send_raw_json(json.dumps(responses.to_responses_json(
             comp, body.get("model", "") or "", show_reasoning=show_reasoning,
-            reasoning_transcript=reasoning_transcript)).encode("utf-8"))
+            reasoning_transcript=reasoning_transcript, banner=banner)).encode("utf-8"))
         rlog.emit("response.sent", api="responses", stream=False)
 
     def _send_raw_json(self, raw: bytes) -> None:

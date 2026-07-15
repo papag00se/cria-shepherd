@@ -99,13 +99,17 @@ def _is_failure(content) -> bool:
     return isinstance(content, str) and any(p.search(content) for p in _FAIL_SIGNATURES)
 
 
+def _call_is_gate(tc: dict) -> bool:
+    """The tool call is cria's own gate probe — its command carries the ___CRIA_GATE_ marker."""
+    args = (tc.get("function") or {}).get("arguments") or ""
+    args = args if isinstance(args, str) else json.dumps(args)
+    return _GATE_MARKER in args
+
+
 def _is_gate_probe(tc: dict, result: dict) -> bool:
     """cria's own ground-truth gate probe (its command/result carries the ___CRIA_GATE_ markers).
     Exempt from the failure-squash: it is the ground truth, not a dead end to remove."""
-    fn = tc.get("function") or {}
-    args = fn.get("arguments") or ""
-    args = args if isinstance(args, str) else json.dumps(args)
-    return _GATE_MARKER in args or _GATE_MARKER in str(result.get("content") or "")
+    return _call_is_gate(tc) or _GATE_MARKER in str(result.get("content") or "")
 
 
 def _tried_label(tc: dict) -> str:
@@ -128,7 +132,10 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         if m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
                 cid = tc.get("id")
-                if cid is not None:
+                # Never fold cria's OWN gate probe into a dup group — two identical gate scripts
+                # would collapse and drop an earlier probe+result pair cria depends on (same class
+                # as the failure-squash exemption).
+                if cid is not None and not _call_is_gate(tc):
                     occ.setdefault(_fingerprint(tc), []).append(cid)
     drop_ids = {cid for cids in occ.values() if len(cids) > 1 for cid in cids[:-1]}
     if not drop_ids:

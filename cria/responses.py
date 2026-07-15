@@ -62,9 +62,13 @@ def to_chat_body(r: dict) -> dict:
                 }],
             })
         elif t == "function_call_output":
+            call_id = item.get("call_id") or item.get("id")
+            if call_id is None:
+                continue  # no id to pair on — a role:tool with null tool_call_id orphans and
+                #           strict chat templates reject it; drop rather than fabricate an id
             rest.append({
                 "role": "tool",
-                "tool_call_id": item.get("call_id") or item.get("id"),
+                "tool_call_id": call_id,
                 "content": _output_text(item.get("output")),
             })
         # other item types (reasoning, etc.) are dropped — cria works from messages
@@ -78,8 +82,9 @@ def to_chat_body(r: dict) -> dict:
     tools = _to_chat_tools(r.get("tools"))
     if tools:
         body["tools"] = tools
-    if r.get("tool_choice") is not None:
-        body["tool_choice"] = r["tool_choice"]
+    choice = _to_chat_tool_choice(r.get("tool_choice"))
+    if choice is not None:
+        body["tool_choice"] = choice
     if r.get("parallel_tool_calls") is not None:
         body["parallel_tool_calls"] = r["parallel_tool_calls"]
     return body
@@ -123,6 +128,22 @@ def _as_args_str(args) -> str:
         return args  # unrecoverable — leave it (better than dropping the call)
 
 
+def _to_chat_tool_choice(tc):
+    """Translate a Responses `tool_choice` to the chat-completions form. Strings
+    (`auto`/`none`/`required`) pass through. Responses' FLAT object form
+    `{"type":"function","name":"foo"}` is NESTED to `{"type":"function","function":{"name":"foo"}}`
+    (chat completions rejects the flat form). Any other object type (allowed_tools/mcp/…) is
+    dropped — sending it verbatim is garbage the server can't honor. None → omit."""
+    if tc is None or isinstance(tc, str):
+        return tc
+    if isinstance(tc, dict):
+        if tc.get("type") == "function" and tc.get("name"):
+            return {"type": "function", "function": {"name": tc["name"]}}
+        if tc.get("type") == "function" and isinstance(tc.get("function"), dict):
+            return tc  # already nested
+    return None  # unrecognized object form → omit (fall back to the server's default)
+
+
 def _to_chat_tools(tools) -> list[dict]:
     """Responses tools are FLAT (`{type:function, name, description, parameters}`);
     chat completions nests them under `function`. Non-function tools are skipped."""
@@ -133,8 +154,11 @@ def _to_chat_tools(tools) -> list[dict]:
         fn = {"name": t.get("name", "")}
         if t.get("description") is not None:
             fn["description"] = t["description"]
-        if t.get("parameters") is not None:
-            fn["parameters"] = t["parameters"]
+        # A strict llama.cpp tool template can require the `parameters` key — default an
+        # absent schema to the empty-object form rather than emit a param-less tool.
+        fn["parameters"] = t["parameters"] if t.get("parameters") is not None else {"type": "object", "properties": {}}
+        if t.get("strict") is not None:
+            fn["strict"] = t["strict"]  # carry structured-output enforcement across the boundary
         out.append({"type": "function", "function": fn})
     return out
 
@@ -312,8 +336,9 @@ def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, b
 
 
 def to_responses_json(completion: dict, model: str, show_reasoning: bool = False,
-                      reasoning_transcript: bool = False) -> dict:
-    """Non-streaming Responses object (stream:false)."""
+                      reasoning_transcript: bool = False, banner: str | None = None) -> dict:
+    """Non-streaming Responses object (stream:false). Mirrors ``body_events`` — including the
+    ⟦cria⟧ lead (reasoning transcript + banner) — so the buffered and streaming paths agree."""
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out: list[dict] = []
@@ -326,9 +351,16 @@ def to_responses_json(completion: dict, model: str, show_reasoning: bool = False
     content = msg.get("content")
     text = content if (isinstance(content, str) and content) else None
     has_tool_calls = bool(msg.get("tool_calls"))
-    if reasoning_transcript and reasoning and (text or has_tool_calls):
-        block = _reasoning_transcript_block(reasoning)  # persistent ⟦cria⟧ 💭 … lines in the transcript
-        text = f"{block}\n{text}" if text else block
+    lead_parts = []
+    if reasoning_transcript and reasoning:
+        lead_parts.append(_reasoning_transcript_block(reasoning))
+    if banner:
+        lead_parts.append(banner)
+    lead = "\n".join(lead_parts)
+    if lead and text:
+        text = f"{lead}\n{text}"
+    elif lead and has_tool_calls:
+        text = lead  # tool-call-only turn — show the lead alongside the call, not dropped
     if text:
         out.append({"id": _new_id("msg"), "type": "message", "status": "completed", "role": "assistant",
                     "content": [{"type": "output_text", "text": text}]})

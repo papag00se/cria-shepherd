@@ -27,18 +27,22 @@ from .shelltool import SHELL_TOOL_NAMES, find_shell_tool
 # and Codex's deferred-tool search (tool_search/tool_suggest).
 FOCUS_TOOL_NAMES = frozenset({
     "write_stdin",                                    # exec_command's PTY companion
-    "apply_patch", "write_file", "edit_file", "read_file",
+    "write_file", "edit_file", "read_file",
     "list_dir", "view_image", "update_plan",
     "web_search", "local_web_search", "web_fetch",
     "request_permissions",
 })
+# apply_patch is deliberately NOT model-facing (ported from codex-local): a 9B can't produce
+# matching diff context, so it's replaced by content-based write_file/edit_file. It stays only as
+# the LOWERING TARGET (massage.lower_edit_file rewrites edit_file → apply_patch), executed by the
+# harness even though it's not in the advertised menu.
 
 # Preferred PRESENTATION order (ports codex-local present_local_tools + the LIGHT_CODER order):
 # cria's purpose-built tools come FIRST so a weak model reaches for write_file/edit_file/read_file/
 # web_* before falling back to a raw command; the shell/exec family is pushed LAST. The schema order
 # the model sees is a real preference signal — the same lever codex-local used to curb shell-reflex.
 _FOCUS_ORDER = (
-    "write_file", "edit_file", "apply_patch",         # writing — the default change path
+    "write_file", "edit_file",                        # writing — the default change path
     "read_file", "list_dir", "view_image",            # reading / inspection
     "web_search", "local_web_search", "web_fetch",    # the web tools
     "update_plan", "request_permissions",
@@ -95,7 +99,8 @@ def cheatsheet(tools) -> str | None:
     with argument shapes, generated FROM this turn's resolved menu — so the guidance names ONLY
     tools the model can actually call and the prompt can never disagree with the menu. None when
     there's nothing worth saying. The wording lives in cria/prompts/cheatsheet.txt."""
-    names = {(((t.get("function") or t) if isinstance(t, dict) else {}).get("name")) for t in tools or []}
+    by_name = {n: t for t in tools or [] if (n := (((t.get("function") or t) if isinstance(t, dict) else {}).get("name")))}
+    names = set(by_name)
     shell = find_shell_tool(tools)
     frag = prompts.load_map("cheatsheet")
     lines = []
@@ -107,24 +112,34 @@ def cheatsheet(tools) -> str | None:
         write_tools.append("edit_file (replace one snippet)")
     if write_tools:
         lines.append(prompts.fill(frag["lead_write"], tools=" or ".join(write_tools)))
-    # Same preferred order as the schema (_FOCUS_ORDER): writing tools grouped first, then
-    # reading/inspection, then web, with the shell last — so the hint mirrors the menu.
+    # Same preferred order as the schema (_FOCUS_ORDER): writing tools first, then reading/
+    # inspection, then web, with the shell last — so the hint mirrors the menu. apply_patch is
+    # intentionally absent (not model-facing). Arg NAMES for read_file/list_dir are read from the
+    # resolved schema, so the hint can't disagree with a harness-native tool (path vs dir_path).
     if "write_file" in names:
         lines.append(frag["write_file"])
     if "edit_file" in names:
         lines.append(frag["edit_file"])
-    if "apply_patch" in names:
-        lines.append(frag["apply_patch"])
     if "read_file" in names:
-        lines.append(frag["read_file"])
+        lines.append(prompts.fill(frag["read_file"], arg=_path_arg(by_name["read_file"])))
     elif shell is not None:
         lines.append(prompts.fill(frag["read_via_shell"], shell=shell["name"]))
     if "list_dir" in names:
-        lines.append(frag["list_dir"])
+        lines.append(prompts.fill(frag["list_dir"], arg=_path_arg(by_name["list_dir"])))
+    if "view_image" in names:
+        lines.append(frag["view_image"])
     if "web_search" in names or "local_web_search" in names:
-        lines.append(frag["web_search"])
+        # The web_fetch cross-reference is included ONLY when web_fetch is actually callable.
+        fetch_hint = frag["web_search_fetch_hint"] if "web_fetch" in names else ""
+        lines.append(prompts.fill(frag["web_search"], fetch_hint=fetch_hint))
     if "web_fetch" in names:  # the find/cursor navigation hint — a weak model re-fetches otherwise
         lines.append(frag["web_fetch"])
+    if "update_plan" in names:
+        lines.append(frag["update_plan"])
+    if "request_permissions" in names:
+        lines.append(frag["request_permissions"])
+    if "write_stdin" in names and shell is not None:
+        lines.append(prompts.fill(frag["write_stdin"], shell=shell["name"]))
     if shell is not None:
         lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
     if not lines:
@@ -133,6 +148,19 @@ def cheatsheet(tools) -> str | None:
     if shell is not None and (names & {"write_file", "read_file", "list_dir", "web_search", "web_fetch"}):
         body += "\n" + prompts.fill(frag["footer"], shell=shell["name"])  # worth saying only when a focused tool exists to prefer
     return body
+
+
+def _path_arg(tool, default: str = "path") -> str:
+    """The property name a read/list tool uses for its path (path / dir_path / file_path / …),
+    read from the RESOLVED schema so the hint matches a harness-native tool instead of assuming
+    cria's synthetic `path`. Falls back to the first required/declared property, then `default`."""
+    params = (((tool or {}).get("function") or tool or {}) if isinstance(tool, dict) else {}).get("parameters") or {}
+    props = params.get("properties") or {}
+    for cand in ("path", "dir_path", "file_path", "filename", "dir", "directory"):
+        if cand in props:
+            return cand
+    req = params.get("required") or []
+    return req[0] if req else next(iter(props), default)
 
 
 def add_cheatsheet(body: dict, rlog=None) -> None:
