@@ -6,8 +6,14 @@
 > the search key and cloud provider keys); `_warn_config` surfaces a misconfigured feature at
 > startup. The duplicate Brave request is collapsed into `cria/brave.py`. Live-verified: after
 > setting `env_file` in the toml and restarting, `env_secret` resolves the key and a live request
-> synthesizes `web_search`. **Tier 2 (consolidation) and Tier 3 (band-aid visibility) below are
-> NOT yet done** — offered to the user.
+> synthesizes `web_search`.
+>
+> **Tier 2 + Tier 3 RESOLVED 2026-07-15.** Consolidation: `cria/toolargs.py` (one `parse_args` +
+> `tool_path` + `PATH_KEYS`, delegated from writeproxy/massage/loop); `_command_of` uses
+> `shelltool._CMD_FIELDS`; `massage._read_command` handles start-only. Band-aid visibility: the
+> classifier escalates to ERROR after 3 consecutive failures; planner infra failure logs at ERROR;
+> routing warns (naming the missing var) when a cloud provider is dropped for a missing key;
+> `reasoning="auto"` documented. 660 tests green. Whole sweep closed.
 
 
 Second sweep, triggered by a **recurring** failure: the Brave web-search key was "fixed
