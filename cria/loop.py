@@ -40,6 +40,7 @@ from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .planner_tools import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
+from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
@@ -1268,7 +1269,7 @@ def _has_tool_calls(completion: dict) -> bool:
     return False
 
 
-_PATH_KEYS = ("path", "file_path", "file", "filename")  # aliases the writeproxy itself accepts
+_PATH_KEYS = PATH_KEYS  # the one shared alias set (also used by the raw-regex fallback below)
 # Patch-body target on PARSED text (real newlines bound the path).
 _PATCH_FILE_RE = re.compile(r"\*\*\* (?:Add|Update) File: ([^\n]+)")
 # Patch-body target on RAW arg blobs, where \n is two ESCAPED characters: the path ends at an
@@ -1786,12 +1787,7 @@ def _action_signature(name: str, args: str) -> tuple:
     the codex-local lesson that exact fingerprints don't). Args that normalize to NOTHING
     (symbol-only/non-ASCII) fall back to an exact-bytes hash — an empty set must not match
     every other empty set of the same tool."""
-    try:
-        parsed = json.loads(args) if isinstance(args, str) else dict(args or {})
-    except (ValueError, TypeError):
-        parsed = {}
-    if not isinstance(parsed, dict):
-        parsed = {}
+    parsed = parse_args(args)
     if _is_write_tool(name):
         path = _path_of_args(args, patch_ok=name == "apply_patch") or ""
         body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")

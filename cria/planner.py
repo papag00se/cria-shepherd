@@ -284,7 +284,10 @@ class Planner:
             completion = massage.recover_leaked_tool_calls(completion, body.get("tools"), rlog)
             return _assistant_message_obj(completion)
         except Exception as e:
-            rlog.emit("plan.error", level="warn", error=str(e))
+            # An INFRA failure (upstream error, parse crash) — distinct from a genuine no-plan
+            # verdict (that returns None from _parse with a plan.unparsed warn). Log at ERROR so a
+            # persistently broken planner is visible, not silently degraded to plain routing.
+            rlog.emit("plan.error", level="error", error=f"{type(e).__name__}: {e}")
             return None
 
     def _parse(self, msg: dict, rlog) -> list[str] | None:

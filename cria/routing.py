@@ -94,13 +94,13 @@ class Router:
             provider_cfg = self._cfg.providers.get(entry.provider)
             if provider_cfg is None:
                 return None
-            provider = self._build_cloud(provider_cfg)
+            provider = self._build_cloud(provider_cfg, rlog)
             if provider is None:
                 return None
             return provider, entry.model
         return None
 
-    def _build_cloud(self, pc: ProviderConfig) -> object | None:
+    def _build_cloud(self, pc: ProviderConfig, rlog=None) -> object | None:
         """Build the provider for a cloud entry, or ``None`` if it's unresolvable
         (missing key for HTTP, missing binary for the Claude CLI)."""
         if pc.kind == "claude_cli":
@@ -109,6 +109,8 @@ class Router:
             return self._cached(("claude", pc.binary, pc.cwd), lambda: self._claude_factory(pc))
         key = env_secret(pc.api_key_env)  # normalized (CRLF-safe), same hygiene as the search key
         if pc.api_key_env and not key:
+            if rlog is not None:  # name the missing var — a credentials gap should not look like "local by choice"
+                rlog.emit("routing.cloud_skipped", level="warn", provider=pc.base_url, missing=pc.api_key_env)
             return None  # no credentials in the environment → unresolvable
         return self._cached(("http", pc.base_url, key), lambda: self._provider_factory(pc.base_url, key))
 

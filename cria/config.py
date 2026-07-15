@@ -143,7 +143,7 @@ class LocalRole:
     # requested name, so pinning an alias here is meaningless and drifts on every model swap. A
     # role table carries ONLY sampling + reasoning; the wire model is resolved per request from the
     # server. (Do not re-add a model parameter — [models.local.<role>] rejects one.)
-    reasoning: str | None = None       # "on" | "off" | None (None → the server/template default)
+    reasoning: str | None = None       # "on" | "off" | "auto" | None ("auto"/None → server/template default)
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None

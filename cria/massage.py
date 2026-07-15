@@ -19,6 +19,7 @@ import uuid
 
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
+from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
 from .writeproxy import _decode_backslash_escapes
 
 # Aliases a model reaches for that really mean "run a shell command".
@@ -125,7 +126,7 @@ def lower_edit_file(completion: dict, tools=None, rlog=None) -> dict:
             if fn.get("name") not in ("edit_file", "str_replace"):
                 continue
             args = _args(fn.get("arguments"))
-            path = args.get("path") or args.get("file_path") or args.get("file")
+            path = _tool_path(args)
             old = args.get("old_string") or args.get("old_str") or args.get("old")
             if not path or old is None:
                 continue
@@ -149,13 +150,7 @@ def _has_tool(name: str, tools) -> bool:
 
 
 def _args(arguments) -> dict:
-    if isinstance(arguments, dict):
-        return arguments
-    try:
-        obj = json.loads(arguments)
-        return obj if isinstance(obj, dict) else {}
-    except (json.JSONDecodeError, TypeError):
-        return {}
+    return _parse_tool_args(arguments)  # the one shared tool-arg parser
 
 
 # ---------------------------------------------------- tool-call normalization
@@ -253,12 +248,13 @@ def _alias_command(name: str, args: dict) -> str:
 
 
 def _read_command(args: dict) -> str:
-    path = str(args.get("path") or args.get("file") or args.get("file_path") or "")
-    q = shlex.quote(path) if path else ""
+    q = shlex.quote(_tool_path(args) or "")
     start, end = args.get("start_line") or args.get("start"), args.get("end_line") or args.get("end")
     try:
         if start and end:
             return f"sed -n '{int(start)},{int(end)}p' {q}"
+        if start:  # start-only → to EOF (was silently ignored → whole file); matches the writeproxy
+            return f"sed -n '{int(start)},$p' {q}"
     except (TypeError, ValueError):
         pass
     return f"cat {q}".strip()

@@ -27,7 +27,8 @@ import re
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import brave, prompts
-from .shelltool import SHELL_TOOL_NAMES, shell_args
+from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
+from .toolargs import parse_args as _parse, tool_path as _tool_path
 
 _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
@@ -148,16 +149,6 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None) -> set[str]:
 # --------------------------------------------------------------------- outbound lowering
 
 
-def _parse(args) -> dict:
-    if isinstance(args, dict):
-        return args
-    try:
-        d = json.loads(args) if isinstance(args, str) else {}
-        return d if isinstance(d, dict) else {}
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return {}
-
-
 def _sentinel(name: str, arguments) -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly."""
     args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
@@ -201,7 +192,7 @@ def _edit_command(path: str, old: str, new: str) -> str:
 
 
 def _read_command(args: dict) -> str | None:
-    path = args.get("path") or args.get("file_path") or args.get("file")
+    path = _tool_path(args)
     if not path:
         return None
     q = _qbash(path)
@@ -263,11 +254,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             args = _parse(fn.get("arguments"))
             cmd = None
             if name in _WRITE_NAMES and name in injected:
-                path = args.get("path") or args.get("file_path") or args.get("file")
+                path = _tool_path(args)
                 if path:
                     cmd = _write_command(str(path), _repair_double_escaped(str(args.get("content") or args.get("contents") or "")))
             elif name in _EDIT_NAMES and name in injected:
-                path = args.get("path") or args.get("file_path") or args.get("file")
+                path = _tool_path(args)
                 if path and args.get("old_string") is not None:
                     cmd = _edit_command(str(path), str(args.get("old_string") or ""), str(args.get("new_string") or ""))
             elif name in _READ_NAMES and name in injected:
@@ -298,7 +289,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
 def _command_of(args) -> str:
     """The command string out of a shell-tool call's arguments (reverse of shell_args)."""
     d = _parse(args)
-    v = d.get("cmd") or d.get("command") or d.get("script") or d.get("input")
+    v = next((d[f] for f in (*_CMD_FIELDS, "script") if d.get(f)), None)
     if isinstance(v, list):
         return v[-1] if v else ""
     return str(v or "")
@@ -338,7 +329,7 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                         swapped += 1
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
-                            write_paths[tc.get("id")] = p.get("path") or p.get("file_path") or p.get("file") or ""
+                            write_paths[tc.get("id")] = _tool_path(p) or ""
                 elif name == "local_web_search":  # always present the Brave tool as web_search
                     tc = {**tc, "function": {**fn, "name": "web_search"}}
                     swapped += 1

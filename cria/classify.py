@@ -28,6 +28,7 @@ from .jsontext import extract_json_object
 _ENGAGEMENTS = ("question", "simple", "task")
 _TASK_TYPES = ("coding", "reasoning", "question")
 _CACHE_CAP = 256
+_ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalates to an error log
 
 # The classifier prompt lives in cria/prompts/classify.txt (edit it there).
 
@@ -49,6 +50,8 @@ class Classifier:
         self._role = role  # LocalRole | None — this role's per-request sampling/reasoning
         self._cache: dict[str, Classification] = {}
         self._lock = threading.Lock()
+        self._consec_fail = 0  # consecutive classify failures → escalate (a broken classifier
+        #                        otherwise hides behind the engage-biased fallback, silently)
 
     def classify(self, messages: list[dict], rlog) -> Classification:
         task = latest_user_text(messages)
@@ -75,7 +78,7 @@ class Classifier:
 
     def _call(self, task: str, rlog) -> Classification:
         if not task.strip():
-            return self._fallback("no user text to classify")
+            return self._fallback("no user text to classify", rlog)
         body = {
             "stream": False,
             "temperature": 0,  # default; the role's config (cria.toml) overrides below
@@ -94,7 +97,7 @@ class Classifier:
             raw = self._provider.chat(body, rlog)
         except Exception as e:  # upstream unreachable, timeout, etc.
             rlog.emit("route.classify_error", level="warn", error=str(e))
-            return self._fallback("classifier call failed")
+            return self._fallback("classifier call failed", rlog)
 
         text = completion_text(raw)
         if self._role is not None:
@@ -102,18 +105,26 @@ class Classifier:
         obj = extract_json_object(text)
         if not obj:
             rlog.emit("route.classify_unparsed", level="warn")
-            return self._fallback("unparseable classifier output")
+            return self._fallback("unparseable classifier output", rlog)
 
         engagement = _one_of(obj.get("engagement"), _ENGAGEMENTS, self._bias)
         task_type = _one_of(obj.get("task_type"), _TASK_TYPES, _default_task_type(engagement))
         reason = str(obj.get("reason", ""))[:200]
         rlog.decide("engagement", engagement, reason or "classified", task_type=task_type)
+        with self._lock:
+            self._consec_fail = 0  # a clean classify resolves the streak
         return Classification(engagement, task_type, reason)
 
-    def _fallback(self, why: str) -> Classification:
+    def _fallback(self, why: str, rlog=None) -> Classification:
         eng = self._bias  # bias toward engaging — under-engaging a task is the costly error
-        rlog_reason = f"fallback: {why}"
-        return Classification(engagement=eng, task_type=_default_task_type(eng), reason=rlog_reason)
+        with self._lock:
+            self._consec_fail += 1
+            streak = self._consec_fail
+        # The bias keeps routing alive, but a PERSISTENT failure (a broken/parse-failing classifier —
+        # usually the fenced-JSON/reasoning-leak bug) must not stay invisible: escalate past a few.
+        if rlog is not None and streak >= _ESCALATE_AFTER:
+            rlog.emit("route.classify_degraded", level="error", consecutive=streak, why=why)
+        return Classification(engagement=eng, task_type=_default_task_type(eng), reason=f"fallback: {why}")
 
 
 # ------------------------------------------------------------------ helpers

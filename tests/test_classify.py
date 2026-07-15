@@ -59,6 +59,29 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(c.engagement, "task")  # bias, the safe (heavier) direction
         self.assertIn("fallback", c.reason)
 
+    def test_persistent_failure_escalates_to_error(self):
+        p = _Provider("no json here")  # every classify fails → fallback
+        clf = Classifier(p, bias="task")
+        rlog = _Rlog()
+        for i in range(3):
+            clf.classify(_msgs(f"distinct task {i}"), rlog)  # distinct → not cached, each re-fails
+        kinds = [k for k, _ in rlog.events]
+        self.assertIn("route.classify_degraded", kinds)   # a broken classifier is no longer silent
+        deg = [kw for k, kw in rlog.events if k == "route.classify_degraded"][0]
+        self.assertEqual(deg["level"], "error")
+
+    def test_a_clean_classify_resets_the_failure_streak(self):
+        # two fails then a success then a fail → no escalation (streak was reset)
+        clf = Classifier(_Provider("junk"), bias="task")
+        rlog = _Rlog()
+        clf.classify(_msgs("a"), rlog)
+        clf.classify(_msgs("b"), rlog)
+        clf._provider = _Provider('{"engagement":"task","task_type":"coding"}')
+        clf.classify(_msgs("c"), rlog)   # clean → resets
+        clf._provider = _Provider("junk")
+        clf.classify(_msgs("d"), rlog)   # 1 fail, below threshold
+        self.assertNotIn("route.classify_degraded", [k for k, _ in rlog.events])
+
     def test_bad_enum_values_are_normalized(self):
         p = _Provider('{"engagement": "WILD", "task_type": "nonsense"}')
         c = Classifier(p, bias="simple").classify(_msgs("x"), _Rlog())
