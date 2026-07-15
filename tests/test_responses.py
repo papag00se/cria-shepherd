@@ -226,9 +226,11 @@ class ReasoningForwardingTests(unittest.TestCase):
         self.assertIn(f"{MARKER}💭", text)               # the reasoning rides as a ⟦cria⟧ 💭 block
         self.assertIn("resolve_handle", text)            # the actual thinking is present
         # every block line carries the MARKER, so it's stripped from inbound history like the banner
+        # inbound, cria strips its own ⟦cria⟧ markers; a decoration-ONLY assistant turn (no tool
+        # call, no real text) is then dropped entirely rather than left as an empty assistant.
         cleaned, n = strip_history([{"role": "assistant", "content": text}])
         self.assertTrue(n > 0)
-        self.assertNotIn("resolve_handle", cleaned[0]["content"])
+        self.assertEqual(cleaned, [])                    # the reasoning block is gone with the turn
 
     def test_reasoning_transcript_not_folded_when_flag_absent(self):
         text = self._reasoning_message_text()  # neither flag passed → no fold
