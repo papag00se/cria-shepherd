@@ -489,13 +489,28 @@ def _assemble_completion(model, content, reasoning, tool_acc, finish, usage, abo
     return completion
 
 
+def _is_empty_assistant(m: dict) -> bool:
+    """An assistant message with NO tool_calls and no non-blank content. It carries zero
+    information and strict chat templates (gemma-toggle) reject it with an HTTP 400. These arise
+    from empty model turns and from harness compaction; a standalone one (not adjacent to another
+    assistant) used to be rare, but focus-trim's note insertion / removals can leave one exposed."""
+    if m.get("role") != "assistant" or m.get("tool_calls"):
+        return False
+    c = m.get("content")
+    return not c or (isinstance(c, str) and not c.strip())
+
+
 def _merge_consecutive_assistant(messages: list[dict]) -> list[dict]:
     """Collapse runs of adjacent assistant messages into one (content joined, tool_calls
     combined). Codex represents one assistant turn as a text `message` item + separate
     `function_call` items; left split, a list ending in 2+ assistant messages is rejected
-    by strict chat templates ("Cannot have 2 or more assistant messages at the end")."""
+    by strict chat templates ("Cannot have 2 or more assistant messages at the end"). Also
+    DROP empty assistant messages outright — the template 400s on them (an empty assistant has
+    no tool_calls, so removing it can never orphan a tool result)."""
     out: list[dict] = []
     for m in messages:
+        if _is_empty_assistant(m):
+            continue
         if m.get("role") == "assistant" and out and out[-1].get("role") == "assistant":
             prev = out[-1]
             parts = [c for c in (prev.get("content"), m.get("content")) if c]
