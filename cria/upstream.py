@@ -482,11 +482,29 @@ def _assemble_completion(model, content, reasoning, tool_acc, finish, usage, abo
     return completion
 
 
+def _is_empty_assistant(m: dict) -> bool:
+    """An assistant message carrying NEITHER meaningful content NOR tool_calls — an empty turn.
+    Strict chat templates (gemma/Fabliq) hard-reject it ("Assistant message must contain either
+    'content' or 'tool_calls'!"), so it must never go on the wire."""
+    if m.get("role") != "assistant":
+        return False
+    has_content = bool(m.get("content") and str(m["content"]).strip())
+    return not has_content and not m.get("tool_calls")
+
+
 def _merge_consecutive_assistant(messages: list[dict]) -> list[dict]:
     """Collapse runs of adjacent assistant messages into one (content joined, tool_calls
-    combined). Codex represents one assistant turn as a text `message` item + separate
-    `function_call` items; left split, a list ending in 2+ assistant messages is rejected
-    by strict chat templates ("Cannot have 2 or more assistant messages at the end")."""
+    combined), then DROP any assistant left empty. Codex represents one assistant turn as a text
+    `message` item + separate `function_call` items; left split, a list ending in 2+ assistant
+    messages is rejected by strict chat templates ("Cannot have 2 or more assistant messages at
+    the end").
+
+    A post-compaction turn can carry empty assistant placeholders (an assistant `message` item with
+    no text, no tool call); the merge below can also SYNTHESIZE a bare ``{"role": "assistant"}`` when
+    it coalesces two such empties. Either way the strict template hard-rejects an assistant with
+    neither content nor tool_calls, so drop them. Safe: with no tool_calls, no ``tool`` result
+    references the dropped turn, and the merge has already guaranteed no two assistants are adjacent,
+    so removing one can't strand a same-role pair."""
     out: list[dict] = []
     for m in messages:
         if m.get("role") == "assistant" and out and out[-1].get("role") == "assistant":
@@ -501,7 +519,7 @@ def _merge_consecutive_assistant(messages: list[dict]) -> list[dict]:
             out[-1] = merged
         else:
             out.append(m)
-    return out
+    return [m for m in out if not _is_empty_assistant(m)]
 
 
 def _try_json(b: bytes) -> dict | None:

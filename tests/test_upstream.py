@@ -217,6 +217,40 @@ class MergeAssistantTests(unittest.TestCase):
         ]
         self.assertEqual([m["role"] for m in _merge_consecutive_assistant(msgs)], ["assistant", "tool", "assistant"])
 
+    def test_bare_assistant_dropped_not_sent(self):
+        # The real post-compaction 400: a bare {"role": "assistant"} (no content, no tool_calls) —
+        # the strict gemma template rejects it ("must contain either 'content' or 'tool_calls'").
+        # It must be dropped, not merged into a same-role neighbor and shipped.
+        from cria.upstream import _merge_consecutive_assistant
+        msgs = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "a", "type": "function", "function": {"name": "s", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "a", "content": "ok"},
+            {"role": "assistant"},                       # the offender — bare
+            {"role": "user", "content": "next"},
+        ]
+        out = _merge_consecutive_assistant(msgs)
+        self.assertEqual([m["role"] for m in out], ["assistant", "tool", "user"])
+        self.assertFalse(any(m.get("role") == "assistant" and not m.get("content") and not m.get("tool_calls") for m in out))
+
+    def test_merge_of_two_empty_assistants_yields_no_bare_message(self):
+        # The synthesis path: two adjacent EMPTY assistants merge to a bare {"role": "assistant"} —
+        # which must then be dropped, not emitted.
+        from cria.upstream import _merge_consecutive_assistant
+        msgs = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": None},
+        ]
+        out = _merge_consecutive_assistant(msgs)
+        self.assertEqual([m["role"] for m in out], ["user"])   # both empties gone, nothing bare left
+
+    def test_empty_assistant_with_tool_calls_is_kept(self):
+        # An assistant with EMPTY content but a real tool_call is a valid turn — never dropped.
+        from cria.upstream import _merge_consecutive_assistant
+        msgs = [{"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c", "type": "function", "function": {"name": "s", "arguments": "{}"}}]}]
+        self.assertEqual(len(_merge_consecutive_assistant(msgs)), 1)
+
 
 class LoadedModelTests(unittest.TestCase):
     """cria asks the server what's ACTUALLY loaded (/v1/models → the --alias), so the banner shows
