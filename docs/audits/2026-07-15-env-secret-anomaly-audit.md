@@ -1,5 +1,15 @@
 # Env / Secret-Handling Anomaly Sweep — 2026-07-15
 
+> **Tier 1 RESOLVED 2026-07-15.** Root fixed: cria loads its own env file at startup
+> (`cria/envfile.py` `load_env_file`, keyed off a new `env_file` config), normalizing values
+> once so the CRLF footgun dies at the source; `env_secret` is the single key accessor (used by
+> the search key and cloud provider keys); `_warn_config` surfaces a misconfigured feature at
+> startup. The duplicate Brave request is collapsed into `cria/brave.py`. Live-verified: after
+> setting `env_file` in the toml and restarting, `env_secret` resolves the key and a live request
+> synthesizes `web_search`. **Tier 2 (consolidation) and Tier 3 (band-aid visibility) below are
+> NOT yet done** — offered to the user.
+
+
 Second sweep, triggered by a **recurring** failure: the Brave web-search key was "fixed
 twice" at the code level and still didn't work. This sweep asked *why the fixes keep
 bouncing off*.
