@@ -1,0 +1,1 @@
+[cria removed {{N}} earlier failed attempts to keep you focused on current state — they returned errors (non-zero exit / file-not-found) and are superseded. Tried: {{TRIED}}. Your most recent attempts are shown below; don't repeat these.]
