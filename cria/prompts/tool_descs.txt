@@ -4,3 +4,6 @@
 write_file = Create or completely overwrite a file with its FULL content. The most reliable way to write a file — you supply the whole file, nothing to escape.
 read_file = Read a file's contents (read-only). Optionally pass a 1-based inclusive line range with start_line/end_line.
 list_dir = List the entries of a directory (read-only). Defaults to the current directory.
+edit_file = Replace ONE exact snippet in an existing file. Copy old_string VERBATIM from the file (it must occur exactly once); set new_string to "" to delete. For a small change this is far better than rewriting the whole file. If it won't apply, fall back to write_file.
+web_fetch = Fetch a web page (read-only) and return its text. To navigate a long page WITHOUT re-fetching it, pass find to return only the section containing that text, or cursor (from a previous response) to page further.
+web_search = Search the web and return result titles, URLs, and short snippets. Pair with web_fetch to read a specific result in full.

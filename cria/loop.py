@@ -1507,6 +1507,30 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
     return None
 
 
+def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, workspace_root=None) -> dict | None:
+    """A probe cria emitted last turn should have a result this turn. If the harness COMPACTED the
+    history (``rewritten``), that result was LOST, not declined — re-issue the gate rather than
+    fail-open (accept an unverified 'done') or downgrade to a canned steer. Capped by
+    MAX_PROBE_REISSUES. Shared with the loop's _verify_after_probe so BOTH paths recover a
+    compaction-lost probe. Returns the re-issued probe completion, or None (result present, not a
+    compaction loss, cap hit, or no gate). Leaves the pending flag armed so next turn reads the new
+    result the same way."""
+    if not (gs.done_probe or gs.awaiting_probe):
+        return None
+    if _read_tool_result(body.get("messages", []), gs.probe_call_id).strip():
+        gs.probe_reissues = 0  # the result arrived — clear the streak
+        return None
+    if not rewritten or gs.probe_reissues >= MAX_PROBE_REISSUES:
+        return None
+    probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
+    if probe_tc is None:
+        return None
+    gs.probe_call_id = probe_tc["id"]
+    gs.probe_reissues += 1
+    rlog.emit("loop.probe_reissued", plan_off=workspace_root is None, attempt=gs.probe_reissues)
+    return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+
+
 def _add_note(completion: dict, note: str) -> None:
     """Record a cria assist as an out-of-band note on the completion. The server surfaces it as a
     ⟦cria⟧ line when [indicators] assists is on — 'no hidden guards': every intervention that fires

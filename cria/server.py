@@ -48,6 +48,7 @@ from .loop import (
     guard_gate_op,
     guard_gate_verdict,
     guard_intervene,
+    guard_probe_reissue,
     guard_probe_steer,
     guard_rumination,
     guard_track_repetition,
@@ -61,7 +62,7 @@ from .routing import Router
 from .toolmenu import add_cheatsheet, cheatsheet, focus_tools
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
-from .writeproxy import TranslationStore, advertise, needs_translation, represent_inbound, translate_outbound
+from .writeproxy import advertise, native_search_name, needs_translation, represent_inbound, translate_outbound
 
 
 def _error_sse(message: str) -> bytes:
@@ -147,7 +148,6 @@ class CriaServer(ThreadingHTTPServer):
         self.cfg = cfg
         self.log = log
         self.upstream = upstream
-        self.translation_store = TranslationStore()  # write_file↔shell, per session
         # Routing engages only when configured. With no [models.local]/[failover],
         # cria is a plain phase-1 passthrough.
         roles = cfg.routing.local_roles  # per-role sampling + reasoning (cria.toml); NO model alias —
@@ -318,13 +318,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # our prior shell translations as write_file (so the model sees its own
         # tool) and advertise write_file to the model. Outbound lowering happens at
         # the send points via _translate_out.
-        self._shell_tool = needs_translation(body.get("tools"))
-        self._session_key = None
-        self._synthetic: set[str] = set()  # which synthetic tools cria injected (to lower ONLY those)
-        if self._shell_tool is not None:
-            self._session_key = session_key(self.headers, body.get("messages", []))
-            body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, self._session_key, rlog)
-            self._synthetic = advertise(body, rlog)
+        self._setup_translation(body, rlog)
 
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the
         # goal/MCP/connector firehose) — after advertise so cria's write_file survives.
@@ -389,12 +383,28 @@ class CriaHandler(BaseHTTPRequestHandler):
             self.server.stats_store.reset(sess_key)
         return completion
 
-    def _translate_out(self, completion: dict, rlog) -> dict:
-        """Lower the model's write_file calls to shell, when translation is active
-        for this request. Set up in `_handle_chat`."""
+    def _setup_translation(self, body: dict, rlog) -> None:
+        """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior
+        shell translations as the tool the model called (from the sentinel in history), then advertise
+        cria's synthetic tools. Records what to lower outbound (self._synthetic), the harness's search
+        backend to route web_search to (self._native_search — read BEFORE advertise renames it), and
+        the Brave key for a synthesized web_search."""
+        self._shell_tool = needs_translation(body.get("tools"))
+        self._synthetic: set[str] = set()
+        self._native_search = None
+        self._brave_key = os.environ.get(self.server.cfg.planner.search_api_key_env or "", "").strip() or None
         if self._shell_tool is not None:
-            translate_outbound(completion, self._shell_tool, self.server.translation_store,
-                               self._session_key, rlog, injected=getattr(self, "_synthetic", set()))
+            self._native_search = native_search_name(body.get("tools"))
+            body["messages"] = represent_inbound(body.get("messages", []), rlog)
+            self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
+
+    def _translate_out(self, completion: dict, rlog) -> dict:
+        """Lower the model's synthetic-tool calls to shell, when translation is active for this
+        request. Set up in `_setup_translation`."""
+        if self._shell_tool is not None:
+            translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
+                               brave_key=getattr(self, "_brave_key", None),
+                               native_search=getattr(self, "_native_search", None))
         return completion
 
     def _guarded_coder_chat(self, provider):
@@ -466,6 +476,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         store. Returns the completion to send, or None on decode fail."""
         coder_chat = self._guarded_coder_chat(provider)
         rewritten = self._detect_rewrite(sess_key, body, rlog)
+        # A probe whose result a harness compaction erased is re-issued (parity with the loop),
+        # rather than fail-open / downgrade to a canned steer with no ground truth.
+        reissue = guard_probe_reissue(gs, body, rlog, rewritten=rewritten)
+        if reissue is not None:
+            return reissue
         # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
         if gs.done_probe:
             gs.done_probe = False
@@ -740,13 +755,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                     rlog.emit("loop.compaction_reframed")
 
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
-        self._shell_tool = needs_translation(body.get("tools"))
-        self._session_key = None
-        self._synthetic: set[str] = set()  # which synthetic tools cria injected (to lower ONLY those)
-        if self._shell_tool is not None:
-            self._session_key = sess_key
-            body["messages"] = represent_inbound(body.get("messages", []), self.server.translation_store, sess_key, rlog)
-            self._synthetic = advertise(body, rlog)
+        self._setup_translation(body, rlog)
         if self.server.cfg.tools.focus:
             focus_tools(body, rlog)
         if self.server.cfg.tools.cheatsheet:

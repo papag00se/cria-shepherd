@@ -1,181 +1,191 @@
-import base64
 import json
 import unittest
 
 from cria.writeproxy import (
-    TranslationStore,
     advertise,
+    native_search_name,
     needs_translation,
     represent_inbound,
     translate_outbound,
+    _repair_double_escaped,
 )
 
-_SHELL = {"type": "function", "function": {"name": "shell", "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
-_WRITE = {"type": "function", "function": {"name": "write_file"}}
+_ARR_SHELL = {"name": "shell", "schema": {"properties": {"command": {"type": "array"}}}}
+_CMD_SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
+
+
+def _t(name, **params):
+    return {"type": "function", "function": {"name": name, "parameters": params or {"type": "object"}}}
+
+
+def _call(name, args, cid="c1"):
+    return {"choices": [{"message": {"tool_calls": [
+        {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+
+
+def _lowered_cmd(comp):
+    """The shell command string of the (single) lowered tool call in a translated completion."""
+    tc = comp["choices"][0]["message"]["tool_calls"][0]
+    args = json.loads(tc["function"]["arguments"])
+    v = args.get("cmd") or args.get("command")
+    return v[-1] if isinstance(v, list) else v
+
+
+def _history_from(comp):
+    """The lowered completion's tool calls, shaped as an assistant history message for inbound."""
+    return [{"role": "assistant", "tool_calls": comp["choices"][0]["message"]["tool_calls"]}]
 
 
 class DetectTests(unittest.TestCase):
     def test_translate_when_shell_but_no_write(self):
-        self.assertEqual(needs_translation([_SHELL])["name"], "shell")
+        self.assertIsNotNone(needs_translation([_t("shell")]))
 
     def test_passthrough_when_harness_has_write_file(self):
-        self.assertIsNone(needs_translation([_SHELL, _WRITE]))
+        self.assertIsNone(needs_translation([_t("shell"), _t("write_file")]))
 
     def test_none_when_no_shell(self):
-        self.assertIsNone(needs_translation([]))
+        self.assertIsNone(needs_translation([_t("read_file")]))
 
 
 class AdvertiseTests(unittest.TestCase):
-    def test_adds_write_file_for_the_model(self):
-        body = {"tools": [_SHELL]}
-        advertise(body)
-        names = [t["function"]["name"] for t in body["tools"]]
-        self.assertIn("write_file", names)
-
-    def test_idempotent(self):
-        body = {"tools": [_SHELL, _WRITE]}
-        advertise(body)
-        self.assertEqual(sum(t["function"]["name"] == "write_file" for t in body["tools"]), 1)
-
-    def test_adds_read_and_list_tools_and_returns_injected(self):
-        body = {"tools": [_SHELL]}
+    def test_injects_the_lean_set_including_edit_file(self):
+        body = {"tools": [_t("shell")]}
         injected = advertise(body)
-        names = [t["function"]["name"] for t in body["tools"]]
-        self.assertIn("read_file", names)   # lean named tools, not the raw shell/PTY
-        self.assertIn("list_dir", names)
-        self.assertEqual(injected, {"write_file", "read_file", "list_dir"})
+        names = {(t.get("function") or t)["name"] for t in body["tools"]}
+        self.assertLessEqual({"write_file", "edit_file", "read_file", "list_dir", "web_fetch"}, names)
+        self.assertIn("edit_file", injected)   # the surgical-edit path is now advertised
 
     def test_does_not_inject_a_harness_native_tool(self):
-        native_read = {"type": "function", "function": {"name": "read_file"}}
-        body = {"tools": [_SHELL, native_read]}
+        body = {"tools": [_t("shell"), _t("read_file"), _t("edit_file")]}
         injected = advertise(body)
-        self.assertNotIn("read_file", injected)  # harness runs it → cria must not lower it
-        self.assertEqual(sum(t["function"]["name"] == "read_file" for t in body["tools"]), 1)
+        self.assertNotIn("read_file", injected)
+        self.assertNotIn("edit_file", injected)
+
+    def test_local_web_search_presented_as_web_search(self):
+        body = {"tools": [_t("shell"), _t("local_web_search")]}
+        advertise(body)
+        names = {(t.get("function") or t)["name"] for t in body["tools"]}
+        self.assertIn("web_search", names)          # presented to the model as web_search
+        self.assertNotIn("local_web_search", names)  # the raw Brave name is hidden
+
+    def test_web_search_synthesized_only_with_a_brave_key(self):
+        no_key = {"tools": [_t("shell")]}
+        advertise(no_key, brave_key=None)
+        self.assertNotIn("web_search", {(t.get("function") or t)["name"] for t in no_key["tools"]})
+        with_key = {"tools": [_t("shell")]}
+        injected = advertise(with_key, brave_key="sk-brave")
+        self.assertIn("web_search", injected)
 
 
-class TranslateTests(unittest.TestCase):
-    def _completion(self, name, args, call_id="c1"):
-        return {"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+class TranslateWriteTests(unittest.TestCase):
+    def test_write_lowers_to_one_atomic_base64_command_no_chunking(self):
+        big = "x" * 500_000  # far over any old chunk size — must still be ONE call (heredoc stdin)
+        comp = _call("write_file", {"path": "a/b.py", "content": big})
+        translate_outbound(comp, _ARR_SHELL, injected={"write_file"})
+        calls = comp["choices"][0]["message"]["tool_calls"]
+        self.assertEqual(len(calls), 1)            # no chunking
+        cmd = _lowered_cmd(comp)
+        self.assertIn("base64 -d", cmd)
+        self.assertIn("mv ", cmd)                  # atomic: temp then move
+        self.assertIn("⟦cria:tool⟧", cmd)          # the stateless sentinel
 
-    def test_outbound_lowers_to_base64_shell(self):
-        store = TranslationStore()
-        comp = self._completion("write_file", {"path": "src/h.py", "content": "print('hi')\n"})
-        translate_outbound(comp, {"name": "shell", "schema": {"properties": {"command": {"type": "array"}}}}, store, "k")
-        tc = comp["choices"][0]["message"]["tool_calls"][0]
-        self.assertEqual(tc["function"]["name"], "shell")
-        cmd = " ".join(json.loads(tc["function"]["arguments"])["command"])
-        self.assertIn("base64 -d > src/h.py", cmd)
-        # and the base64 in the command decodes back to the exact content
-        b64 = cmd.split("printf %s ")[1].split(" |")[0]
-        self.assertEqual(base64.b64decode(b64).decode(), "print('hi')\n")
-        # recorded for the inbound swap
-        self.assertEqual(store.get("k", "c1")["path"], "src/h.py")
+    def test_write_round_trip_is_byte_exact_and_stateless(self):
+        content = "line1\n\ttabbed 'quotes' \"dq\" $VAR `bt`\nend\n"
+        comp = _call("write_file", {"path": "x.py", "content": content})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        # NO store handed back — re-presentation reads the sentinel from the command itself
+        out = represent_inbound(_history_from(comp))
+        tc = out[0]["tool_calls"][0]["function"]
+        self.assertEqual(tc["name"], "write_file")
+        self.assertEqual(json.loads(tc["arguments"])["content"], content)
 
-    _ARR_SHELL = {"name": "shell", "schema": {"properties": {"command": {"type": "array"}}}}
+    def test_empty_write_result_reframed_error_kept(self):
+        comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="c9")
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": "  "}]
+        out = represent_inbound(hist)
+        self.assertIn("x.py", str(out[-1]["content"]))            # empty success → confirmation
+        hist2 = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": "permission denied"}]
+        self.assertEqual(represent_inbound(hist2)[-1]["content"], "permission denied")  # real error kept
 
-    def test_outbound_lowers_read_file_to_cat(self):
-        comp = self._completion("read_file", {"path": "src/h.py"})
-        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"read_file"})
-        tc = comp["choices"][0]["message"]["tool_calls"][0]
-        self.assertEqual(tc["function"]["name"], "shell")
-        self.assertIn("cat src/h.py", " ".join(json.loads(tc["function"]["arguments"])["command"]))
 
-    def test_outbound_read_file_line_range_uses_sed(self):
-        comp = self._completion("read_file", {"path": "h.py", "start_line": 10, "end_line": 20})
-        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"read_file"})
-        cmd = " ".join(json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"])
-        self.assertIn("sed -n '10,20p' h.py", cmd)
+class TranslateEditReadTests(unittest.TestCase):
+    def test_edit_file_lowers_to_python_replace_and_round_trips(self):
+        comp = _call("edit_file", {"path": "m.py", "old_string": 'x, "id"}', "new_string": 'x, "id": id}'})
+        translate_outbound(comp, _CMD_SHELL, injected={"edit_file"})
+        cmd = _lowered_cmd(comp)
+        self.assertIn("python3", cmd)
+        self.assertIn("must occur exactly once", cmd)   # fail-closed on absent/ambiguous
+        back = represent_inbound(_history_from(comp))[0]["tool_calls"][0]["function"]
+        self.assertEqual(back["name"], "edit_file")
+        self.assertEqual(json.loads(back["arguments"])["new_string"], 'x, "id": id}')
 
-    def test_outbound_lowers_list_dir_to_ls(self):
-        comp = self._completion("list_dir", {"path": "src"})
-        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected={"list_dir"})
-        cmd = " ".join(json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"])
-        self.assertIn("ls -la src", cmd)
+    def test_read_file_range_and_start_only(self):
+        both = _call("read_file", {"path": "f.py", "start_line": 10, "end_line": 20})
+        translate_outbound(both, _CMD_SHELL, injected={"read_file"})
+        self.assertIn("sed -n '10,20p'", _lowered_cmd(both))
+        start = _call("read_file", {"path": "f.py", "start_line": 10})   # was silently ignored before
+        translate_outbound(start, _CMD_SHELL, injected={"read_file"})
+        self.assertIn("sed -n '10,$p'", _lowered_cmd(start))
+        whole = _call("read_file", {"path": "f.py"})
+        translate_outbound(whole, _CMD_SHELL, injected={"read_file"})
+        self.assertIn("cat ", _lowered_cmd(whole))
 
-    def test_read_file_not_lowered_when_not_injected(self):
-        # a harness-native read_file (cria didn't inject it) is left for the harness to run
-        comp = self._completion("read_file", {"path": "h.py"})
-        translate_outbound(comp, self._ARR_SHELL, TranslationStore(), "k", injected=set())
+    def test_read_and_list_are_re_presented_inbound(self):
+        comp = _call("read_file", {"path": "f.py"}, cid="r1")
+        translate_outbound(comp, _CMD_SHELL, injected={"read_file"})
+        back = represent_inbound(_history_from(comp))[0]["tool_calls"][0]["function"]
+        self.assertEqual(back["name"], "read_file")   # model sees read_file, not the raw shell cat
+
+    def test_not_lowered_when_not_injected(self):
+        comp = _call("read_file", {"path": "f.py"})
+        translate_outbound(comp, _CMD_SHELL, injected=set())
         self.assertEqual(comp["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read_file")
 
-    def test_inbound_represents_shell_as_write_file(self):
-        store = TranslationStore()
-        store.record("k", "c1", "src/h.py", "print('hi')\n")
-        # the harness ran the shell call; history now has the shell call cria emitted
-        history = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": '{"command":"..."}'}}]}]
-        out = represent_inbound(history, store, "k")
-        fn = out[0]["tool_calls"][0]["function"]
-        self.assertEqual(fn["name"], "write_file")  # model sees its own tool again
-        self.assertEqual(json.loads(fn["arguments"]), {"path": "src/h.py", "content": "print('hi')\n"})
 
+class WebTests(unittest.TestCase):
+    def test_web_fetch_lowers_to_curl_with_find(self):
+        plain = _call("web_fetch", {"url": "https://x/openapi.json"})
+        translate_outbound(plain, _CMD_SHELL, injected={"web_fetch"})
+        self.assertIn("curl -sL", _lowered_cmd(plain))
+        find = _call("web_fetch", {"url": "https://x", "find": "holders"})
+        translate_outbound(find, _CMD_SHELL, injected={"web_fetch"})
+        self.assertIn("grep", _lowered_cmd(find))     # find → section grep, not a re-fetch
+
+    def test_web_search_routes_to_native_when_present(self):
+        comp = _call("web_search", {"query": "ada handle"})
+        translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
+        self.assertEqual(comp["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "local_web_search")
+
+    def test_web_search_lowers_to_brave_when_synthesized(self):
+        comp = _call("web_search", {"query": "ada handle"})
+        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="sk-brave")
+        cmd = _lowered_cmd(comp)
+        self.assertIn("brave", cmd)
+        self.assertIn("curl", cmd)
+
+    def test_local_web_search_history_represented_as_web_search(self):
+        hist = [{"role": "assistant", "tool_calls": [
+            {"id": "s1", "type": "function", "function": {"name": "local_web_search", "arguments": '{"query":"x"}'}}]}]
+        out = represent_inbound(hist)
+        self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "web_search")
+
+
+class MiscTests(unittest.TestCase):
     def test_inbound_leaves_unrelated_calls_alone(self):
-        store = TranslationStore()
-        history = [{"role": "assistant", "tool_calls": [{"id": "other", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}]
-        out = represent_inbound(history, store, "k")
-        self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "shell")  # unchanged
+        hist = [{"role": "assistant", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": '{"cmd":"ls"}'}}]}]
+        self.assertEqual(represent_inbound(hist), hist)   # no sentinel → untouched
 
-    def test_round_trip_content_is_byte_exact(self):
-        store = TranslationStore()
-        content = 'def h():\n    return {"a": "b\'c", "n": 1}\n'  # quotes, braces, newlines
-        comp = self._completion("write_file", {"path": "h.py", "content": content})
-        translate_outbound(comp, {"name": "shell", "schema": {}}, store, "k")
-        back = represent_inbound(
-            [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}],
-            store, "k",
-        )
-        self.assertEqual(json.loads(back[0]["tool_calls"][0]["function"]["arguments"])["content"], content)
+    def test_native_search_name(self):
+        self.assertEqual(native_search_name([_t("local_web_search")]), "local_web_search")
+        self.assertEqual(native_search_name([_t("web_search")]), "web_search")
+        self.assertIsNone(native_search_name([_t("shell")]))
 
-    def test_reframes_empty_result_but_keeps_errors(self):
-        store = TranslationStore()
-        store.record("k", "c1", "h.py", "x")
-        history = [
-            {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "  "},  # empty shell success
-        ]
-        out = represent_inbound(history, store, "k")
-        self.assertEqual(out[1]["content"], "Wrote h.py")
-        # an error result is preserved, not reframed
-        store.record("k", "c2", "h.py", "x")
-        err = represent_inbound([{"role": "tool", "tool_call_id": "c2", "content": "permission denied"}], store, "k")
-        self.assertEqual(err[0]["content"], "permission denied")
-
-
-class ChunkTests(unittest.TestCase):
-    def test_large_file_splits_into_multiple_shell_calls(self):
-        store = TranslationStore()
-        content = "x" * 200_000  # > _CHUNK_BYTES (65536) → 4 chunks
-        comp = {"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "big.txt", "content": content})}}]}}]}
-        translate_outbound(comp, {"name": "shell", "schema": {}}, store, "k")
-        calls = comp["choices"][0]["message"]["tool_calls"]
-        self.assertGreater(len(calls), 1)
-        cmds = [json.loads(c["function"]["arguments"])["command"] for c in calls]
-        self.assertIn(" > big.txt", cmds[0])  # first writes
-        self.assertTrue(all(" >> big.txt" in c for c in cmds[1:]))  # rest append
-
-    def test_inbound_collapses_chunks_to_one_write_file(self):
-        store = TranslationStore()
-        content = "y" * 200_000
-        comp = {"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "big.txt", "content": content})}}]}}]}
-        translate_outbound(comp, {"name": "shell", "schema": {}}, store, "k")
-        # the harness ran all N shell calls; history has them + their results
-        history = [{"role": "assistant", "tool_calls": comp["choices"][0]["message"]["tool_calls"]}]
-        out = represent_inbound(history, store, "k")
-        calls = out[0]["tool_calls"]
-        self.assertEqual(len(calls), 1)  # the model sees ONE write_file
-        self.assertEqual(calls[0]["function"]["name"], "write_file")
-        self.assertEqual(json.loads(calls[0]["function"]["arguments"])["content"], content)
+    def test_literal_newlines_decoded_real_left_alone(self):
+        self.assertEqual(_repair_double_escaped("a\\nb\\nc"), "a\nb\nc")
+        self.assertEqual(_repair_double_escaped("a\nb"), "a\nb")
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class DoubleEscapeTests(unittest.TestCase):
-    def test_literal_newlines_decoded(self):
-        from cria.writeproxy import _repair_double_escaped
-        self.assertEqual(_repair_double_escaped("def f():\\n    return 1"), "def f():\n    return 1")
-
-    def test_real_newlines_left_alone(self):
-        from cria.writeproxy import _repair_double_escaped
-        self.assertEqual(_repair_double_escaped("has\nreal\nnewlines"), "has\nreal\nnewlines")
-        self.assertEqual(_repair_double_escaped("no escapes here"), "no escapes here")

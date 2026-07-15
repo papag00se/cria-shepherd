@@ -697,6 +697,30 @@ class _VaryingWriter:
         return self.bodies[-1]["messages"][-1]["content"]
 
 
+class ProbeReissueTests(unittest.TestCase):
+    _SHELL = {"tools": [{"type": "function", "function": {"name": "shell",
+              "parameters": {"properties": {"command": {"type": "array"}}}}}], "messages": []}
+
+    def test_reissues_when_result_lost_to_compaction(self):
+        from cria.loop import GuardState, guard_probe_reissue
+        gs = GuardState(awaiting_probe=True, probe_call_id="p1")   # result missing
+        out = guard_probe_reissue(gs, self._SHELL, _Rlog(), rewritten=True)
+        self.assertIsNotNone(out)                                 # re-issued, not failed-open
+        self.assertEqual(gs.probe_reissues, 1)
+
+    def test_no_reissue_when_result_present_streak_reset(self):
+        from cria.loop import GuardState, guard_probe_reissue
+        body = {"tools": self._SHELL["tools"], "messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
+        gs = GuardState(awaiting_probe=True, probe_call_id="p1", probe_reissues=1)
+        self.assertIsNone(guard_probe_reissue(gs, body, _Rlog(), rewritten=True))
+        self.assertEqual(gs.probe_reissues, 0)
+
+    def test_no_reissue_without_compaction_or_when_nothing_pending(self):
+        from cria.loop import GuardState, guard_probe_reissue
+        self.assertIsNone(guard_probe_reissue(GuardState(awaiting_probe=True, probe_call_id="p1"), self._SHELL, _Rlog(), rewritten=False))
+        self.assertIsNone(guard_probe_reissue(GuardState(), self._SHELL, _Rlog(), rewritten=True))  # nothing pending
+
+
 class ShellWritePathTests(unittest.TestCase):
     def test_shell_native_write_yields_a_path(self):
         from cria.loop import _write_path
