@@ -100,6 +100,26 @@ class CheatsheetTests(unittest.TestCase):
         self.assertIn("edit_file", note2)
         self.assertIn("old_string", note2)
 
+    def test_web_fetch_navigation_hint_surfaces_find_and_cursor(self):
+        # A weak model re-fetches the same url to "see more" instead of navigating it. When web_fetch
+        # is in the menu, the cheatsheet must name its find/cursor navigation args.
+        note = cheatsheet([_WRITE, _t("web_fetch")])
+        self.assertIn("web_fetch", note)
+        self.assertIn('"find"', note)
+        self.assertIn('"cursor"', note)
+
+    def test_web_tools_absent_are_not_mentioned(self):
+        # No web tool in the menu → the hint must not name find/cursor/web_fetch (menu<->prompt parity)
+        note = cheatsheet([_WRITE, _SHELL])
+        self.assertNotIn("web_fetch", note)
+        self.assertNotIn("cursor", note)
+        # web_search present but web_fetch absent → search named, but the find/cursor navigation
+        # guidance (web_fetch's) must NOT appear
+        note2 = cheatsheet([_WRITE, _t("web_search")])
+        self.assertIn("web_search", note2)
+        self.assertNotIn('"find"', note2)
+        self.assertNotIn('"cursor"', note2)
+
 
 class AddCheatsheetTests(unittest.TestCase):
     def test_merges_into_system_prompt(self):

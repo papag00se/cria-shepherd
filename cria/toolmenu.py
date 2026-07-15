@@ -84,6 +84,10 @@ def cheatsheet(tools) -> str | None:
         lines.append(frag["edit_file"])
     if "apply_patch" in names:
         lines.append(frag["apply_patch"])
+    if "web_search" in names or "local_web_search" in names:
+        lines.append(frag["web_search"])
+    if "web_fetch" in names:  # the find/cursor navigation hint — a weak model re-fetches otherwise
+        lines.append(frag["web_fetch"])
     if shell is not None:
         lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
     if not lines:
