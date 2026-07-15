@@ -13,11 +13,14 @@ Two rules, applied in order:
      then succeeded after an edit keeps the success). This also subsumes "superseded errors" (same
      command failed then succeeded) and exact re-reads of a file.
 
-  B. SQUASH ERROR-SPAM — a consecutive RUN of failed actions (an assistant turn with one tool call
-     whose result is an error: non-zero exit, file-not-found, command-not-found) of length ≥
-     `_SPAM_THRESHOLD` is collapsed to its last `_SPAM_KEEP` actions plus one note naming what was
-     tried. The recent failures survive (so the model won't repeat them or lose a live error); only
-     the stale flailing tail is removed.
+  B. SQUASH ERROR-SPAM — failed actions (an assistant turn with one tool call whose result is an
+     error: non-zero exit, file-not-found, command-not-found) are collapsed once there are more than
+     `_SPAM_KEEP` of them: the last `_SPAM_KEEP` FAILURES survive (a live error the model is fixing
+     is never removed, even across intervening successes), all EARLIER failures are removed wherever
+     they sit, and one note names everything that was tried. They need NOT be consecutive — a
+     dead-end is noise whether it flails in a spree or is scattered across the session; the note
+     carries the negative information ("these were tried and FAILED; don't retry them") regardless of
+     position. Successful actions are always kept, in place.
 
 Both drop tool calls and their paired results as UNITS, so no `tool` result is ever orphaned from
 its `assistant` tool_call (the one hard constraint in the OpenAI/Responses message format). Neither
@@ -34,9 +37,9 @@ from dataclasses import dataclass
 
 from . import prompts
 
-# Error-spam squash tuning. A run must reach _SPAM_THRESHOLD failed actions before any are squashed,
-# and the most recent _SPAM_KEEP always survive (so a live error the model needs is never removed).
-_SPAM_THRESHOLD = 4
+# Error-spam squash tuning. Squash only once there are MORE than _SPAM_KEEP failed actions (so a
+# couple of failures are left alone); the most recent _SPAM_KEEP failures always survive (a live
+# error the model is fixing is never removed, even across intervening successes).
 _SPAM_KEEP = 2
 
 # Precise failure signatures — matched against a tool RESULT's content. Kept narrow on purpose (a
@@ -138,60 +141,37 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     return out, rep
 
 
-def _squash_error_runs(messages: list[dict]) -> tuple[list[dict], TrimReport]:
-    """Rule B — collapse a consecutive run of failed single-call actions to its last _SPAM_KEEP,
-    replacing the dropped tail-of-flailing with one note. An 'action' is an assistant turn with one
-    tool call immediately followed by its (failing) result."""
-    n = len(messages)
-    spans: list[tuple[int, int, dict]] = []  # (assistant_idx, result_idx, tool_call)
-    i = 0
+def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
+    """Rule B — collapse stale failed actions (position-independent). Keep the last _SPAM_KEEP
+    FAILURES (a live error survives even across intervening successes); remove every earlier failure
+    wherever it sits, and replace them with ONE note naming what was tried. Successful actions are
+    always kept. An 'action' is an assistant turn with one tool call immediately followed by its
+    (failing) result."""
+    failed: list[tuple[int, int, dict]] = []  # (assistant_idx, result_idx, tool_call), in order
+    i, n = 0, len(messages)
     while i < n - 1:
         tc = _single_call(messages[i])
         nxt = messages[i + 1]
         if (tc is not None and nxt.get("role") == "tool"
                 and nxt.get("tool_call_id") == tc.get("id") and _is_failure(nxt.get("content"))):
-            spans.append((i, i + 1, tc))
+            failed.append((i, i + 1, tc))
             i += 2
         else:
             i += 1
-    if not spans:
-        return messages, TrimReport()
+    if len(failed) - _SPAM_KEEP < 2:
+        return messages, TrimReport()  # fewer than 2 stale failures — not worth collapsing to a note
 
-    # Group spans that are adjacent in the message list into runs.
-    runs: list[list[tuple[int, int, dict]]] = []
-    cur: list[tuple[int, int, dict]] = []
-    for s in spans:
-        if cur and s[0] == cur[-1][1] + 1:
-            cur.append(s)
-        else:
-            if cur:
-                runs.append(cur)
-            cur = [s]
-    if cur:
-        runs.append(cur)
-
-    remove: set[int] = set()
-    notes: dict[int, str] = {}  # first-dropped-assistant-index → the squash note
-    rep = TrimReport()
-    for run in runs:
-        if len(run) < _SPAM_THRESHOLD:
-            continue
-        drop = run[:-_SPAM_KEEP]
-        for a, r, _tc in drop:
-            remove.add(a)
-            remove.add(r)
-        rep.dropped_calls += len(drop)
-        rep.dropped_msgs += len(drop) * 2  # each action is an assistant + a tool message
-        rep.squashed_runs += 1
-        tried = "; ".join(_tried_label(tc) for _a, _r, tc in drop)
-        notes[drop[0][0]] = prompts.render("trim_error_squash", n=len(drop), tried=_clip(tried, 300))
-    if not remove:
-        return messages, TrimReport()
+    drop = failed[:-_SPAM_KEEP]  # every failure except the most recent _SPAM_KEEP
+    remove = {idx for a, r, _tc in drop for idx in (a, r)}
+    note_at = drop[-1][0]  # the last removed failure's position → the note sits just before the kept ones
+    tried = "; ".join(_tried_label(tc) for _a, _r, tc in drop)
+    note = prompts.render("trim_error_squash", n=len(drop), tried=_clip(tried, 400))
+    rep = TrimReport(dropped_calls=len(drop), dropped_msgs=len(drop) * 2, squashed_runs=1)
 
     out: list[dict] = []
     for idx, m in enumerate(messages):
-        if idx in notes:
-            out.append({"role": "user", "content": notes[idx]})
+        if idx == note_at:
+            out.append({"role": "user", "content": note})
         if idx in remove:
             continue
         out.append(m)
@@ -204,7 +184,7 @@ def trim(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     if not isinstance(messages, list):
         return messages, TrimReport()
     out, rep_a = _collapse_duplicates(messages)
-    out, rep_b = _squash_error_runs(out)
+    out, rep_b = _squash_failures(out)
     total = TrimReport(
         dropped_calls=rep_a.dropped_calls + rep_b.dropped_calls,
         dropped_msgs=rep_a.dropped_msgs + rep_b.dropped_msgs,

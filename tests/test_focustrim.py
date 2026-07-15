@@ -121,8 +121,9 @@ class ErrorSquashTests(unittest.TestCase):
         self.assertEqual(rep.squashed_runs, 0)
         self.assertIs(out, msgs)                                 # untouched
 
-    def test_success_breaks_the_run(self):
-        # 3 fails, a SUCCESS, then 2 fails — no run reaches the threshold, nothing squashed
+    def test_squashes_across_a_success_keeping_it_in_place(self):
+        # 3 fails, a SUCCESS, then 2 fails — 5 failures total, scattered, NOT consecutive. The stale
+        # failures still collapse (dead ends are noise wherever they sit); the success is preserved.
         msgs = [{"role": "user", "content": "x"}]
         msgs += _fail_action("a", "cat a") + _fail_action("b", "cat b") + _fail_action("c", "cat c")
         msgs += [{"role": "assistant", "tool_calls": [{"id": "ok", "type": "function",
@@ -130,5 +131,12 @@ class ErrorSquashTests(unittest.TestCase):
                  {"role": "tool", "tool_call_id": "ok", "content": "handler.py\ntests"}]
         msgs += _fail_action("d", "cat d") + _fail_action("e", "cat e")
         out, rep = trim(msgs)
-        self.assertEqual(rep.squashed_runs, 0)
+        self.assertEqual(rep.squashed_runs, 1)                            # squashed despite the success
+        self.assertEqual(rep.dropped_calls, 3)                           # 5 failures - keep(2)
         self.assertTrue(any(m.get("tool_call_id") == "ok" for m in out))  # the success is preserved
+        # the two most recent FAILURES survive; the earlier three are gone
+        surviving_fail_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool" and m["tool_call_id"] != "ok"]
+        self.assertEqual(surviving_fail_ids, ["d", "e"])
+        note = [m for m in out if "cria removed" in str(m.get("content", ""))]
+        self.assertEqual(len(note), 1)
+        self.assertIn("cat a", note[0]["content"])                        # the scattered dead-ends are named
