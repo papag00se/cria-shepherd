@@ -60,15 +60,8 @@ def metrics_line(deltas: int, tok_per_s: float) -> str:
 
 
 def strip_history(messages: list[dict]) -> tuple[list[dict], int]:
-    """Remove cria's own `MARKER` lines from message content, so the model never re-reads them.
-    Returns (clean messages, lines stripped).
-
-    If stripping empties an assistant turn that was ONLY cria's own decoration (a tool-call turn
-    whose message text was just the ⟦cria⟧ banner + reasoning-transcript block, the tool call being a
-    separate item) and it has no tool_calls, the turn is DROPPED — leaving an empty assistant behind
-    is what strict chat templates (gemma) 400 on. This is where that empty is born: cria adds the
-    decoration outbound, then strips it back out inbound; without this it leaves an empty shell that
-    the adjacent-merge normally hides but focus-trim / compaction can strand."""
+    """Remove cria's own `MARKER` lines from message content, so the model never
+    re-reads them. Returns (clean messages, lines stripped)."""
     out: list[dict] = []
     stripped = 0
     for m in messages:
@@ -78,8 +71,6 @@ def strip_history(messages: list[dict]) -> tuple[list[dict], int]:
             if n:
                 m = {**m, "content": cleaned}
                 stripped += n
-                if m.get("role") == "assistant" and not cleaned.strip() and not m.get("tool_calls"):
-                    continue  # decoration-only turn → nothing left; don't plant an empty assistant
         out.append(m)
     return out, stripped
 

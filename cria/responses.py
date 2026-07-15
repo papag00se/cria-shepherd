@@ -49,12 +49,8 @@ def to_chat_body(r: dict) -> dict:
             if role in ("system", "developer"):
                 if text:
                     sys_parts.append(text)
-            elif text and text.strip():
+            else:
                 rest.append({"role": "assistant" if role == "assistant" else "user", "content": text})
-            # else: an EMPTY message item (Codex emits one for a reasoning-only turn — the model
-            # thought but produced no text and no tool call). Dropped: turning it into an empty
-            # assistant makes strict chat templates 400 (the reasoning item is dropped just above,
-            # and any function_call from the same turn is its own item, so nothing is lost).
         elif t == "function_call":
             rest.append({
                 "role": "assistant",

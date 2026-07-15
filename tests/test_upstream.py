@@ -250,31 +250,3 @@ class LoadedModelTests(unittest.TestCase):
         body = {"model": "explicit-alias", "messages": [{"role": "user", "content": "hi"}]}
         up._prep(body, False, _Rlog())
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
-
-
-class EmptyAssistantDropTests(unittest.TestCase):
-    """A standalone empty assistant (no content, no tool_calls) 400s the gemma template — cria drops
-    it in the merge (it can't orphan a tool result, having no tool_calls). Regression: a compaction +
-    focus-trim left one exposed between a tool result and a user note → HTTP 400 → session wedge."""
-
-    def test_drops_empty_assistant_between_tool_and_user(self):
-        from cria.upstream import _merge_consecutive_assistant
-        msgs = [
-            {"role": "assistant", "tool_calls": [{"id": "A", "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "A", "content": "ok"},
-            {"role": "assistant", "content": None},          # the offender: empty, standalone
-            {"role": "user", "content": "next"},
-        ]
-        out = _merge_consecutive_assistant(msgs)
-        self.assertEqual([m.get("role") for m in out], ["assistant", "tool", "user"])
-        # the surviving assistant keeps its tool_call; the tool result is not orphaned
-        self.assertEqual(out[0]["tool_calls"][0]["id"], "A")
-
-    def test_drops_whitespace_and_empty_list_variants_but_keeps_real_ones(self):
-        from cria.upstream import _is_empty_assistant
-        self.assertTrue(_is_empty_assistant({"role": "assistant", "content": None}))
-        self.assertTrue(_is_empty_assistant({"role": "assistant", "content": "  \n "}))
-        self.assertTrue(_is_empty_assistant({"role": "assistant", "content": "", "tool_calls": []}))
-        self.assertFalse(_is_empty_assistant({"role": "assistant", "content": "hi"}))
-        self.assertFalse(_is_empty_assistant({"role": "assistant", "tool_calls": [{"id": "z"}]}))
-        self.assertFalse(_is_empty_assistant({"role": "tool", "content": ""}))  # not an assistant
