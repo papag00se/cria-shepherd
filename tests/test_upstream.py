@@ -250,3 +250,76 @@ class LoadedModelTests(unittest.TestCase):
         body = {"model": "explicit-alias", "messages": [{"role": "user", "content": "hi"}]}
         up._prep(body, False, _Rlog())
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
+
+
+class _BufResp:
+    """A urlopen result for a buffered (non-stream) call: read() once, then close()."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self.closed = False
+
+    def read(self):
+        return self._raw
+
+    def close(self):
+        self.closed = True
+
+
+def _overflow_error(n_prompt_tokens, n_ctx):
+    import io
+    body = json.dumps({"error": {
+        "n_prompt_tokens": n_prompt_tokens, "n_ctx": n_ctx, "type": "exceed_context_size_error"}}).encode()
+    return urllib.error.HTTPError("http://x/v1/chat/completions", 400, "Bad Request", {}, io.BytesIO(body))
+
+
+class OverflowRefitTests(unittest.TestCase):
+    """cria's floor budgets against a LEARNED per-model density that lags a single hot (base64/blob)
+    turn. When the server still 400s 'exceeds context', cria re-fits to the REAL token count it
+    reports and retries ITSELF — so the harness never sees the 400 (its blind same-body retries
+    can't converge fast enough)."""
+
+    def _big_body(self):
+        # Enough messages that a tighter density visibly trims MORE of them on the refit.
+        msgs = [{"role": "user", "content": "payload " * 80} for _ in range(200)]
+        return {"model": "m", "messages": msgs}
+
+    def test_overflow_triggers_a_single_refit_retry_that_succeeds(self):
+        up = Upstream("http://x", context_window=8192, capture_dir=None)
+        good = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                           "usage": {"prompt_tokens": 4000, "completion_tokens": 1}}).encode()
+        calls = [_overflow_error(9000, 8192), _BufResp(good)]
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=calls) as m:
+            raw = up.chat(self._big_body(), rlog)
+        self.assertEqual(m.call_count, 2)                       # 400 → re-fit → retry, then 200
+        self.assertEqual(json.loads(raw)["choices"][0]["message"]["content"], "ok")
+        refits = [kw for k, kw in rlog.events if k == "context.refit"]
+        self.assertEqual(len(refits), 1)
+        self.assertEqual(refits[0]["real"], 9000)              # learned the server's real count
+        reqs = [kw for k, kw in rlog.events if k == "upstream.request"]
+        self.assertEqual([r["refit"] for r in reqs], [False, True])
+        # the retry was prepped TIGHTER against the real count → the wire body kept fewer messages
+        sent = [len(json.loads(c.args[0].data)["messages"]) for c in m.call_args_list]
+        self.assertLess(sent[1], sent[0])
+
+    def test_non_overflow_error_is_not_retried(self):
+        up = Upstream("http://x", context_window=8192, capture_dir=None)
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        side_effect=urllib.error.URLError("connection refused")) as m:
+            with self.assertRaises(Exception):
+                up.chat(self._big_body(), rlog)
+        self.assertEqual(m.call_count, 1)                       # not a refittable overflow → no retry
+        self.assertFalse([k for k, _ in rlog.events if k == "context.refit"])
+
+    def test_second_overflow_is_not_retried_again(self):
+        # If the re-fit STILL overflows (should not happen, but be safe), give up — one retry only,
+        # then surface the error rather than looping.
+        up = Upstream("http://x", context_window=8192, capture_dir=None)
+        rlog = _Rlog()
+        errs = [_overflow_error(9000, 8192), _overflow_error(9000, 8192)]
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=errs) as m:
+            with self.assertRaises(Exception):
+                up.chat(self._big_body(), rlog)
+        self.assertEqual(m.call_count, 2)                       # one refit attempt, no infinite loop

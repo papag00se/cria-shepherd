@@ -134,13 +134,17 @@ class Upstream:
             rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW)
         return self._window
 
-    def _prep(self, body: dict, stream: bool, rlog) -> tuple[bytes, int, str | None]:
+    def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
         stream flag, and MERGE adjacent assistant messages. Codex splits one assistant turn into a
         text item + a function_call item → two adjacent assistant messages; strict templates
         (Fabliq) reject a list ending in 2+ assistant messages. Merge them → the single-turn form.
-        ``sent_estimate`` is the chars/4 estimate of what's actually sent, for density calibration."""
+        ``sent_estimate`` is the chars/4 estimate of what's actually sent, for density calibration.
+
+        ``safety_override`` forces the floor's density factor (used by the overflow refit-retry: the
+        server just told us this exact body's real token count, so re-fit against THAT truth rather
+        than the per-model average, which lags a single outlier-density request)."""
         if not body.get("model"):
             # A role omitted its `model` alias (the single-loaded-model posture) — fill it from
             # whatever the server reports loaded. Mutate `body` (not just `out`) so the surrounding
@@ -155,7 +159,7 @@ class Upstream:
             if window:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
-                safety = tokenratio.observed(body.get("model"))  # LEARNED real÷estimate density
+                safety = safety_override if safety_override is not None else tokenratio.observed(body.get("model"))
                 msgs, tools, rep = contextfloor.fit(msgs, tools_in, window=window, reserve=reserve, safety=safety)
                 if rep.applied or rep.over_budget:
                     lvl = "warning" if rep.over_budget else "info"
@@ -179,21 +183,49 @@ class Upstream:
         if shifted is not None:
             rlog.emit("context.calibrated", model=model, real=prompt_tokens, est=estimate, ratio=round(shifted, 2))
 
-    def _learn_from_overflow(self, model, estimate: int, err, rlog) -> None:
-        """On a 400 'exceeds context' the server reports the REAL prompt size (`n_prompt_tokens`);
-        learn from it so the harness's retry (same body) budgets correctly and fits. Best-effort."""
+    def _overflow_refit(self, err, sent_estimate: int, model, rlog) -> float | None:
+        """A 400 'exceeds context' means the floor under-budgeted THIS body (its density ran hotter
+        than the per-model average — a base64/blob-heavy turn). The server reports the REAL prompt
+        size (``n_prompt_tokens``); return the density factor (real÷estimate) that re-prepping with
+        will trim this exact body to fit, and feed it into the per-model average for future turns.
+        ``None`` when it isn't a refittable overflow (nothing to re-fit against)."""
         if not isinstance(err, urllib.error.HTTPError):
-            return
+            return None
         try:
-            payload = json.loads(err.read())
+            payload = json.loads(err.read())  # consumes the HTTPError body (readable once)
         except (ValueError, OSError, AttributeError):
-            return
+            return None
         inner = payload.get("error") if isinstance(payload.get("error"), dict) else payload
-        n = inner.get("n_prompt_tokens") if isinstance(inner, dict) else None
-        shifted = tokenratio.record(model, n, estimate)
-        if shifted is not None:
-            rlog.emit("context.calibrated", level="warning", source="overflow",
-                      model=model, real=n, est=estimate, ratio=round(shifted, 2))
+        real = inner.get("n_prompt_tokens") if isinstance(inner, dict) else None
+        if not real or not sent_estimate:
+            return None
+        tokenratio.record(model, real, sent_estimate)  # also nudge the running per-model average
+        density = float(real) / float(sent_estimate)
+        rlog.emit("context.refit", level="warning", model=model, real=real, est=sent_estimate,
+                  n_ctx=(inner.get("n_ctx") if isinstance(inner, dict) else None), safety=round(density, 2))
+        return density
+
+    def _open_with_refit(self, body: dict, stream: bool, rlog) -> tuple:
+        """Prep + POST the request, with ONE context-overflow REFIT-retry. cria's whole job is to
+        make every request fit the window; if the floor still under-budgets a hot-density turn and
+        the server 400s, re-fit to the REAL token count it reports and retry ONCE — so the harness
+        never sees the 400 (its blind same-body retries can't converge fast enough). Returns the
+        open ``(resp, sent_estimate, capture_path)``; raises ``UpstreamError`` on any other failure."""
+        safety_override: float | None = None
+        for attempt in range(2):
+            data, sent_estimate, capture_path = self._prep(body, stream, rlog, safety_override=safety_override)
+            req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))
+            rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
+                      stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
+            try:
+                return urllib.request.urlopen(req, timeout=self._timeout), sent_estimate, capture_path
+            except urllib.error.URLError as e:
+                refit = self._overflow_refit(e, sent_estimate, body.get("model"), rlog) if attempt == 0 else None
+                if refit is not None:
+                    safety_override = refit  # re-prep tighter against the server's real count, retry
+                    continue
+                rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
+                raise UpstreamError(str(e)) from e
 
     def _render_prompt(self, body: dict) -> str | None:
         """Ask the server to render the chat body into the flat prompt string the model actually
@@ -224,27 +256,11 @@ class Upstream:
         caller to forward. Emits ``upstream.request`` / ``upstream.first_token`` /
         ``upstream.done`` with TTFT + tok/s. Token count uses the upstream ``usage``
         block when present, else counts content deltas as a proxy."""
-        data, sent_estimate, _ = self._prep(body, True, rlog)
-        req = urllib.request.Request(
-            self._chat_url, data=data, method="POST", headers=self._headers(sse=True)
-        )
-        rlog.emit(
-            "upstream.request",
-            url=self._chat_url,
-            model=body.get("model"),
-            stream=True,
-            n_messages=len(body.get("messages", [])),
-        )
+        resp, sent_estimate, _ = self._open_with_refit(body, True, rlog)
         t0 = time.monotonic()
         t_first: float | None = None
         content_chunks = 0
         usage: dict | None = None
-        try:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)
-        except urllib.error.URLError as e:
-            self._learn_from_overflow(body.get("model"), sent_estimate, e, rlog)
-            rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-            raise UpstreamError(str(e)) from e
         try:
             for raw in resp:
                 if raw.startswith(b"data:"):
@@ -286,26 +302,12 @@ class Upstream:
         """Non-streaming: return the full upstream response body (bytes)."""
         # Force stream=false (the Responses adapter buffers from a stream=true request;
         # sending that upstream would return unparseable SSE) + merge adjacent assistants.
-        data, sent_estimate, capture_path = self._prep(body, False, rlog)
-        req = urllib.request.Request(
-            self._chat_url, data=data, method="POST", headers=self._headers(sse=False)
-        )
-        rlog.emit(
-            "upstream.request",
-            url=self._chat_url,
-            model=body.get("model"),
-            stream=False,
-            n_messages=len(body.get("messages", [])),
-        )
+        resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
         t0 = time.monotonic()
         try:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)
             raw = resp.read()
+        finally:
             resp.close()
-        except urllib.error.URLError as e:
-            self._learn_from_overflow(body.get("model"), sent_estimate, e, rlog)
-            rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-            raise UpstreamError(str(e)) from e
         t_end = time.monotonic()
         usage = (_try_json(raw) or {}).get("usage")
         self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
@@ -335,18 +337,9 @@ class Upstream:
         # Ask for the usage block on the terminal chunk (llama.cpp honors this) so the assembled
         # completion carries real completion_tokens — the truncation guard reports them to the model.
         body = {**body, "stream_options": {"include_usage": True}}
-        data, sent_estimate, capture_path = self._prep(body, True, rlog)
-        req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=True))
-        rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
-                  stream=True, n_messages=len(body.get("messages", [])))
+        resp, sent_estimate, capture_path = self._open_with_refit(body, True, rlog)
         t0 = time.monotonic()
         t_first: float | None = None
-        try:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)
-        except urllib.error.URLError as e:
-            self._learn_from_overflow(body.get("model"), sent_estimate, e, rlog)
-            rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-            raise UpstreamError(str(e)) from e
 
         content: list[str] = []
         reasoning: list[str] = []

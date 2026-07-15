@@ -1,2 +1,2 @@
-That step is not done yet: {{REASON}}
+{{REASON}}
 Keep working on it, then stop.
