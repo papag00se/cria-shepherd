@@ -233,3 +233,28 @@ class ReasoningForwardingTests(unittest.TestCase):
     def test_reasoning_transcript_not_folded_when_flag_absent(self):
         text = self._reasoning_message_text()  # neither flag passed → no fold
         self.assertIsNone(text)  # no message item, no folded reasoning
+
+
+class EmptyMessageItemTests(unittest.TestCase):
+    """Codex emits an empty assistant `message` item for a reasoning-only turn (the model thought
+    but produced no text and no tool call in that item). to_chat_body must NOT turn it into an empty
+    assistant chat message — those 400 the gemma template (the compaction-wedge root cause)."""
+
+    def test_empty_assistant_message_item_is_dropped(self):
+        from cria.responses import to_chat_body
+        r = {"input": [
+            {"type": "message", "role": "user", "content": "build it"},
+            {"type": "message", "role": "assistant", "content": ""},          # reasoning-only → empty
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}]},
+            {"type": "function_call", "name": "exec", "arguments": "{}", "call_id": "c1"},
+        ]}
+        msgs = to_chat_body(r)["messages"]
+        empties = [m for m in msgs if m.get("role") == "assistant"
+                   and not (m.get("content") or "").strip() and not m.get("tool_calls")]
+        self.assertEqual(empties, [])                       # no empty assistant produced
+        self.assertTrue(any(m.get("tool_calls") for m in msgs))  # the real tool-call turn survives
+
+    def test_whitespace_only_assistant_message_item_is_dropped(self):
+        from cria.responses import to_chat_body
+        r = {"input": [{"type": "message", "role": "assistant", "content": "   \n  "}]}
+        self.assertEqual(to_chat_body(r)["messages"], [])   # nothing to send
