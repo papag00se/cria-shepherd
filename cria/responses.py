@@ -158,6 +158,15 @@ def created_event(resp_id: str, model: str) -> bytes:
     })
 
 
+def failed_event(resp_id: str, message: str) -> bytes:
+    """A TERMINAL `response.failed` SSE event. The error is generic (no `code`), which Codex maps to
+    a RETRYABLE failure (ApiError::Retryable) — so on a mid-stream shutdown the client cleanly
+    RE-SENDS the turn instead of seeing a bare EOF, which it can only escape via a manual interrupt
+    that then gets mislabeled as a deliberate user abort."""
+    return _event("response.failed",
+                  {"response": {"id": resp_id, "status": "failed", "error": {"message": message}}})
+
+
 # The model's reasoning can be a very long chain-of-thought; forward a generous but bounded slice
 # as the "thinking" preamble (Codex renders the reasoning summary), not the entire transcript.
 _REASONING_CAP = 8000

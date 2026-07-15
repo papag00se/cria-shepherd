@@ -10,6 +10,7 @@ point at a local llama.cpp on :18084).
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from dataclasses import replace
 
@@ -64,11 +65,21 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.logging.capture_calls:
         log.emit("capture.enabled", dir=str(cfg.logging.capture_dir_path))
     server = CriaServer(cfg, log, upstream)
+
+    # systemd's `restart` sends SIGINT (KillSignal=SIGINT) → KeyboardInterrupt; route SIGTERM (the
+    # default) through the same path so the graceful drain runs no matter how cria is stopped.
+    def _on_sigterm(*_a):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
     log.emit("server.start", host=cfg.server.host, port=cfg.server.port, upstream=cfg.upstream.base_url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        log.emit("server.stop", reason="interrupt")
+        # End every in-flight SSE stream with a clean, retryable terminal BEFORE we die, so a restart
+        # mid-generation makes the harness re-send the turn instead of wedging on a bare EOF.
+        drained = server.drain_streams()
+        log.emit("server.stop", reason="interrupt", drained_streams=drained)
     finally:
         server.server_close()
         log.close()

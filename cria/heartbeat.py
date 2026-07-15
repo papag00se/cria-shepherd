@@ -29,6 +29,7 @@ class Heartbeat:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._drained = False  # a terminal payload was written (shutdown drain) → no more writes
         self.beats = 0
 
     def start(self) -> "Heartbeat":
@@ -40,8 +41,25 @@ class Heartbeat:
     def write(self, data: bytes) -> None:
         """Write real content, serialized with heartbeats and resetting the idle clock."""
         with self._lock:
+            if self._drained:
+                return  # the stream was terminally drained on shutdown — never write past it
             self._write_raw(data)
             self._last = self._clock()
+
+    def drain(self, data: bytes) -> None:
+        """Write a TERMINAL payload once and stop the stream — used by the server's shutdown drain to
+        end an in-flight SSE cleanly (a retryable response.failed) instead of leaving the client with
+        a bare mid-stream EOF. Idempotent; safe to call from a different thread than the writer (the
+        request thread is blocked in the model call), since it takes the same write lock."""
+        with self._lock:
+            if self._drained:
+                return
+            self._drained = True
+            try:
+                self._write_raw(data)
+            except Exception:  # noqa: BLE001 — the socket may already be gone; shutting down anyway
+                pass
+        self._stop.set()  # stop the heartbeat thread
 
     def stop(self) -> None:
         self._stop.set()
@@ -52,6 +70,8 @@ class Heartbeat:
         tick = min(1.0, self._interval / 2) or 0.25
         while not self._stop.wait(tick):
             with self._lock:
+                if self._drained:
+                    break
                 if self._clock() - self._last >= self._interval:
                     try:
                         self._write_raw(_COMMENT)

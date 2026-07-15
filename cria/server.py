@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -175,6 +176,10 @@ class CriaServer(ThreadingHTTPServer):
         self.guard_store = GuardStore()
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
+        # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
+        # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
+        self.active_streams: dict = {}
+        self._streams_lock = threading.Lock()
         # Conversation-shape store for HARNESS-COMPACTION detection — shared by BOTH paths. It lives
         # OUTSIDE the planner gate: the plan-off/proxy path (the user's path) equally needs to notice
         # when the harness replaced the history and re-anchor the coder, or it treats its own prior
@@ -219,6 +224,30 @@ class CriaServer(ThreadingHTTPServer):
                 self.loop_store,
             )
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
+
+    def register_stream(self, hb, resp_id: str) -> None:
+        with self._streams_lock:
+            self.active_streams[hb] = resp_id
+
+    def unregister_stream(self, hb) -> None:
+        with self._streams_lock:
+            self.active_streams.pop(hb, None)
+
+    def drain_streams(self) -> int:
+        """On shutdown, END every in-flight SSE stream with a terminal, RETRYABLE response.failed so
+        the client re-sends the turn cleanly. Without this a restart mid-generation kills the daemon
+        request thread while it's blocked in the model call, the socket EOFs mid-stream, and the
+        harness mislabels the disconnect as a user interrupt (the '<turn_aborted>' + manual 'continue'
+        wedge). We write the terminal from HERE (the shutdown thread) via each Heartbeat's write lock,
+        since the request thread can't (it's blocked upstream)."""
+        with self._streams_lock:
+            streams = list(self.active_streams.items())
+        for hb, resp_id in streams:
+            try:
+                hb.drain(responses.failed_event(resp_id, "cria is restarting — retry shortly"))
+            except Exception:  # noqa: BLE001 — best effort; shutting down regardless
+                pass
+        return len(streams)
 
 
 class CriaHandler(BaseHTTPRequestHandler):
@@ -740,6 +769,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         model = body.get("model", "") or ""
         resp_id = responses._new_id("resp")
         hb = Heartbeat(self._raw_write, interval=self.server.cfg.server.heartbeat_seconds).start()
+        self.server.register_stream(hb, resp_id)  # so a shutdown can end this stream cleanly
         try:
             hb.write(responses.created_event(resp_id, model))  # open the stream immediately
             try:
@@ -779,6 +809,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             rlog.emit("response.client_gone", level="warn")
         finally:
+            self.server.unregister_stream(hb)
             hb.stop()
 
     def _respond_responses_buffered(self, body: dict, sess_key: str, rlog) -> None:
