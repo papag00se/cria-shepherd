@@ -56,6 +56,22 @@ class FocusToolsTests(unittest.TestCase):
         self.assertIn("web_fetch", kept)
         self.assertIn("edit_file", kept)
 
+    def test_orders_focused_tools_first_and_shell_last(self):
+        # The harness lists shell first and scatters the specific tools; focus_tools reorders so
+        # cria's purpose-built tools lead and the generic shell trails (the preference signal).
+        body = {"tools": [_t(n) for n in ["shell", "web_fetch", "read_file", "write_file", "edit_file"]]}
+        focus_tools(body)
+        order = [m["function"]["name"] for m in body["tools"]]
+        self.assertEqual(order[0], "write_file")   # a purpose-built tool leads
+        self.assertEqual(order[-1], "shell")       # the generic shell trails
+        self.assertLess(order.index("write_file"), order.index("edit_file"))  # writing grouped first
+
+    def test_reorders_even_when_nothing_dropped(self):
+        # Even if the harness already sent only focused tools (nothing to prune), shell still moves last.
+        body = {"tools": [_t("shell"), _t("write_file")]}
+        focus_tools(body)
+        self.assertEqual([m["function"]["name"] for m in body["tools"]], ["write_file", "shell"])
+
     def test_never_curates_to_empty(self):
         # a degenerate harness with ONLY non-essential tools: keep the firehose rather than
         # leave the model tool-less
@@ -100,6 +116,22 @@ class CheatsheetTests(unittest.TestCase):
         self.assertIn("edit_file", note2)
         self.assertIn("old_string", note2)
 
+    def test_lead_calls_out_only_write_tools_in_the_menu(self):
+        # The CRITICAL file-writing lead must name only the write tools actually present (parity):
+        # write_file alone → no "edit_file" in the lead.
+        note = cheatsheet([_WRITE, _SHELL])
+        self.assertIn("CRITICAL", note)
+        self.assertIn("write_file", note)
+        self.assertNotIn("edit_file", note)   # not in the menu → never named
+        # both present → both named
+        note2 = cheatsheet([_WRITE, _t("edit_file"), _SHELL])
+        self.assertIn("write_file", note2)
+        self.assertIn("edit_file", note2)
+
+    def test_shell_described_as_last_resort(self):
+        note = cheatsheet([_WRITE, _SHELL])
+        self.assertIn("LAST RESORT", note)    # shell is de-emphasized, not co-equal
+
     def test_web_fetch_navigation_hint_surfaces_find_and_cursor(self):
         # A weak model re-fetches the same url to "see more" instead of navigating it. When web_fetch
         # is in the menu, the cheatsheet must name its find/cursor navigation args.
@@ -143,7 +175,7 @@ class AddCheatsheetTests(unittest.TestCase):
         add_cheatsheet(body)
         roles = [m["role"] for m in body["messages"]]
         self.assertEqual(roles, ["system", "user"])
-        self.assertIn("run a shell command", body["messages"][0]["content"])
+        self.assertIn("LAST RESORT", body["messages"][0]["content"])
 
     def test_merges_into_multimodal_system(self):
         body = {
@@ -156,7 +188,7 @@ class AddCheatsheetTests(unittest.TestCase):
         add_cheatsheet(body)
         self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
         parts = body["messages"][0]["content"]
-        self.assertTrue(any("run a shell command" in p.get("text", "") for p in parts))
+        self.assertTrue(any("LAST RESORT" in p.get("text", "") for p in parts))
 
     def test_noop_without_tools(self):
         body = {"messages": [{"role": "user", "content": "hi"}]}

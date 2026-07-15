@@ -4,7 +4,8 @@
 # included, in this order, so the prompt can never name a tool the model can't call.
 # {{SHELL}} = the harness's shell tool name (e.g. shell, exec_command, bash). Format is
 # `key = value`, one per line; `\n` in a value becomes a real newline.
-header = Tools available this turn — call these exact names with these argument shapes:
+header = Tools available this turn, listed in the order you should PREFER them — call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.
+lead_write = CRITICAL — to create or change a file you MUST use {{TOOLS}}. Do NOT write files by shelling out (echo/cat/heredoc/tee/sed): the file tools are more reliable and cannot be truncated mid-write.
 write_file = - write_file — create or OVERWRITE a file with its FULL content (you supply the whole file; nothing to escape). Args: {"path": "<file>", "content": "<full file text>"}. The default way to write a file.
 read_file = - read_file — read a file (read-only). Args: {"path": "<file>"}, or {"path": "<file>", "start_line": 40, "end_line": 80} for a 1-based inclusive range.
 list_dir = - list_dir — list a directory (read-only). Args: {"path": "<dir>"} (defaults to the current directory).
@@ -12,6 +13,6 @@ edit_file = - edit_file — replace ONE exact snippet in an existing file. Args:
 apply_patch = - apply_patch — edit an existing file. Format: `*** Begin Patch` / `*** Update File: <path>` / `-old` / `+new` / `*** End Patch`.
 web_search = - web_search — search the web for pages. Args: {"query": "<what to look up>"}. Returns result snippets + URLs; open one in full with web_fetch.
 web_fetch = - web_fetch — read a web page (read-only). Args: {"url": "<url>"}. To NAVIGATE a page you already fetched, do NOT re-fetch the same url — add {"find": "<text>"} to jump to the section containing that text, or {"cursor": "<token>"} to page to the next chunk (a long page's result hands you a cursor for the next one). Re-fetching the whole page to see more just wastes context.
-shell = - {{SHELL}} — run a shell command when no focused tool fits, per the tool's own argument schema.
+shell = - {{SHELL}} — LAST RESORT, for commands with no dedicated tool above (build, test, git, package installs, mkdir/rm). Per the tool's own argument schema. Do NOT use it to read, write, or list files when a focused tool exists.
 read_via_shell = - read a file with `{{SHELL}}` running `cat <path>` (there is no read_file tool this turn).
-footer = Prefer a focused tool (write_file / read_file / list_dir) over the shell for its job.
+footer = Rule of thumb: if a purpose-built tool above fits the job — writing a file, reading a file, listing a directory, searching the web — use it. Fall back to `{{SHELL}}` only for what those tools can't do.

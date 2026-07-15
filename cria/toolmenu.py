@@ -33,20 +33,43 @@ FOCUS_TOOL_NAMES = frozenset({
     "request_permissions",
 })
 
+# Preferred PRESENTATION order (ports codex-local present_local_tools + the LIGHT_CODER order):
+# cria's purpose-built tools come FIRST so a weak model reaches for write_file/edit_file/read_file/
+# web_* before falling back to a raw command; the shell/exec family is pushed LAST. The schema order
+# the model sees is a real preference signal — the same lever codex-local used to curb shell-reflex.
+_FOCUS_ORDER = (
+    "write_file", "edit_file", "apply_patch",         # writing — the default change path
+    "read_file", "list_dir", "view_image",            # reading / inspection
+    "web_search", "local_web_search", "web_fetch",    # the web tools
+    "update_plan", "request_permissions",
+    "write_stdin",                                     # shell-adjacent (paired with exec_command)
+)
+
 
 def _tool_name(t) -> str | None:
     return (((t.get("function") or t) if isinstance(t, dict) else {}) or {}).get("name")
 
 
-def focus_tools(body: dict, rlog=None) -> None:
-    """Curate the model's tool menu to the coding essentials, dropping the rest — in place.
+def _order_key(name) -> tuple:
+    """Sort key for the focused menu: purpose-built tools first (in _FOCUS_ORDER), the shell/exec
+    family LAST, everything else stable in the middle."""
+    if name in SHELL_TOOL_NAMES:
+        return (2, 0)                                 # shell/exec — last resort, listed last
+    if name in _FOCUS_ORDER:
+        return (0, _FOCUS_ORDER.index(name))          # cria's tools first, in preferred order
+    return (1, 0)                                     # unranked focus tool — keep in the middle
 
-    Ports codex-local's ``ToolSubset::Focused``: keep the shell/exec tool (by family, so it's
-    harness-agnostic) plus FOCUS_TOOL_NAMES; drop goal/MCP/connector/ask-the-user tools that
-    only distract a small model (and let it wander off — e.g. spawning a rogue ``create_goal``).
-    No-op when there are no tools. NEVER curates to empty: if nothing coding-essential survives
-    (a degenerate harness), the original menu is left untouched rather than leaving the model
-    tool-less."""
+
+def focus_tools(body: dict, rlog=None) -> None:
+    """Curate the model's tool menu to the coding essentials AND order it by preference — in place.
+
+    Ports codex-local's ``ToolSubset::Focused`` + ``present_local_tools``: keep the shell/exec tool
+    (by family, so it's harness-agnostic) plus FOCUS_TOOL_NAMES; drop goal/MCP/connector/ask-the-user
+    tools that only distract a small model (and let it wander off — e.g. spawning a rogue
+    ``create_goal``); then REORDER the survivors so cria's purpose-built tools lead and the generic
+    shell trails (the schema order nudges the model to prefer the specific tools). No-op when there
+    are no tools. NEVER curates to empty: if nothing coding-essential survives (a degenerate harness),
+    the original menu is left untouched rather than leaving the model tool-less."""
     tools = body.get("tools")
     if not tools:
         return
@@ -57,10 +80,14 @@ def focus_tools(body: dict, rlog=None) -> None:
             kept.append(t)
         else:
             dropped.append(nm)
-    if dropped and kept:  # leaving zero tools would break the model — keep the firehose instead
-        body["tools"] = kept
-        if rlog is not None:
-            rlog.emit("toolmenu.focused", kept=len(kept), dropped=len(dropped), names=dropped)
+    if not kept:  # nothing coding-essential survives — leaving zero tools would break the model
+        return
+    # Reorder to lead with cria's tools even when nothing was dropped (the harness may already send
+    # only focused tools); prune too when the firehose brought extras.
+    kept.sort(key=lambda t: _order_key(_tool_name(t)))  # specific tools first, shell last
+    body["tools"] = kept
+    if rlog is not None and dropped:
+        rlog.emit("toolmenu.focused", kept=len(kept), dropped=len(dropped), names=dropped)
 
 
 def cheatsheet(tools) -> str | None:
@@ -72,18 +99,28 @@ def cheatsheet(tools) -> str | None:
     shell = find_shell_tool(tools)
     frag = prompts.load_map("cheatsheet")
     lines = []
+    # Call the file tools out up front — naming ONLY the write tools actually in the menu (parity).
+    write_tools = []
+    if "write_file" in names:
+        write_tools.append("write_file (a new or fully overwritten file)")
+    if "edit_file" in names:
+        write_tools.append("edit_file (replace one snippet)")
+    if write_tools:
+        lines.append(prompts.fill(frag["lead_write"], tools=" or ".join(write_tools)))
+    # Same preferred order as the schema (_FOCUS_ORDER): writing tools grouped first, then
+    # reading/inspection, then web, with the shell last — so the hint mirrors the menu.
     if "write_file" in names:
         lines.append(frag["write_file"])
+    if "edit_file" in names:
+        lines.append(frag["edit_file"])
+    if "apply_patch" in names:
+        lines.append(frag["apply_patch"])
     if "read_file" in names:
         lines.append(frag["read_file"])
     elif shell is not None:
         lines.append(prompts.fill(frag["read_via_shell"], shell=shell["name"]))
     if "list_dir" in names:
         lines.append(frag["list_dir"])
-    if "edit_file" in names:
-        lines.append(frag["edit_file"])
-    if "apply_patch" in names:
-        lines.append(frag["apply_patch"])
     if "web_search" in names or "local_web_search" in names:
         lines.append(frag["web_search"])
     if "web_fetch" in names:  # the find/cursor navigation hint — a weak model re-fetches otherwise
@@ -93,8 +130,8 @@ def cheatsheet(tools) -> str | None:
     if not lines:
         return None
     body = frag["header"] + "\n" + "\n".join(lines)
-    if shell is not None and (names & {"write_file", "read_file", "list_dir"}):
-        body += "\n" + frag["footer"]  # only worth saying when there IS a focused tool to prefer
+    if shell is not None and (names & {"write_file", "read_file", "list_dir", "web_search", "web_fetch"}):
+        body += "\n" + prompts.fill(frag["footer"], shell=shell["name"])  # worth saying only when a focused tool exists to prefer
     return body
 
 
