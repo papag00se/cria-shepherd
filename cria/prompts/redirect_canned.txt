@@ -1,1 +1,1 @@
-you have repeated the same action {{REPEAT_N}} times ({{REPEAT_ACTION}}) — repeating it will not change the outcome. {{GROUND_TRUTH}}Choose a DIFFERENT next action and take it now via a tool call.
+{{GROUND_TRUTH}}You have repeated the same action {{REPEAT_N}} times ({{REPEAT_ACTION}}) — repeating it will not change the outcome. Choose a DIFFERENT next action and take it now via a tool call.

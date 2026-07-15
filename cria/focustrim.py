@@ -35,7 +35,13 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import prompts
+from . import probegate, prompts
+
+# cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
+# exits NON-ZERO by design (a failing check is the signal), so it trips _FAIL_SIGNATURES — but it
+# is not a model dead-end: squashing it removes the exact ground truth cria injected and, worse,
+# folds it into a note that tells the model "don't repeat these". It must survive the squash.
+_GATE_MARKER = probegate.SECTION_PREFIX
 
 # Error-spam squash tuning. Squash only once there are MORE than _SPAM_KEEP failed actions (so a
 # couple of failures are left alone); the most recent _SPAM_KEEP failures always survive (a live
@@ -91,6 +97,15 @@ def _single_call(m: dict) -> dict | None:
 
 def _is_failure(content) -> bool:
     return isinstance(content, str) and any(p.search(content) for p in _FAIL_SIGNATURES)
+
+
+def _is_gate_probe(tc: dict, result: dict) -> bool:
+    """cria's own ground-truth gate probe (its command/result carries the ___CRIA_GATE_ markers).
+    Exempt from the failure-squash: it is the ground truth, not a dead end to remove."""
+    fn = tc.get("function") or {}
+    args = fn.get("arguments") or ""
+    args = args if isinstance(args, str) else json.dumps(args)
+    return _GATE_MARKER in args or _GATE_MARKER in str(result.get("content") or "")
 
 
 def _tried_label(tc: dict) -> str:
@@ -153,7 +168,8 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         tc = _single_call(messages[i])
         nxt = messages[i + 1]
         if (tc is not None and nxt.get("role") == "tool"
-                and nxt.get("tool_call_id") == tc.get("id") and _is_failure(nxt.get("content"))):
+                and nxt.get("tool_call_id") == tc.get("id") and _is_failure(nxt.get("content"))
+                and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
             failed.append((i, i + 1, tc))
             i += 2
         else:

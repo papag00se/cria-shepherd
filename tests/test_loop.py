@@ -1031,6 +1031,26 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertIn("repeated the same action", coder.last_user())  # canned fallback
         self.assertIn("PASS", coder.last_user())                      # clean-checks truth included
 
+    def test_canned_redirect_foregrounds_the_failing_check(self):
+        # #2: when the gate FAILS, the concrete error must LEAD the redirect (a small model reads
+        # past a trailing ground-truth block and rewrites the whole file again).
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        ws = self._ws()
+        coder = _Recorder([_write("h.py", "same bytes")])
+        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty → canned
+        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(3):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        result = f'{P}probe-0{S}\n  File "h.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
+        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        nudge = coder.last_user()
+        self.assertIn("GROUND TRUTH", nudge)                              # the failing check is present
+        self.assertIn("repeated the same action", nudge)                 # and so is the repetition framing
+        # the ground truth LEADS — it comes before the 'you repeated' text, not buried after it
+        self.assertLess(nudge.index("GROUND TRUTH"), nudge.index("repeated the same action"))
+
     def test_varying_args_do_not_trip(self):
         ws = self._ws()
         coder = _VaryingWriter("h.py")                      # same file, different bytes each time

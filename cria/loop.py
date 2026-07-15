@@ -512,9 +512,11 @@ class Loop:
         framed["stream"] = False
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
                                prior_work=sess.prior_work, tools=body.get("tools"))
+        steered = ""
         if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
             sess.nudge_reason = ""
+            steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
         framed["messages"] = msgs
         if self._ctx.focus_trim:  # focus the OUTBOUND coder view (never the history the guards read)
             trimmed, rep = focustrim.trim(msgs)
@@ -534,6 +536,8 @@ class Loop:
         #   forwarded to the harness AND captured below as pending_coder_text for the critic)
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
+        if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
+            _add_note(coder, f"steered the coder — {steered}")
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             self._track_repetition(sess, coder, idx, rlog)
@@ -1510,10 +1514,13 @@ def guard_ground_truth(outcome) -> str:
 
 def guard_canned_redirect(gs: GuardState, outcome) -> str:
     """The canned repetition redirect (no reasoner) — the shared steer both the plan-off path and
-    the loop's reasoner-unavailable fallback deliver."""
+    the loop's reasoner-unavailable fallback deliver. The GROUND TRUTH leads (its block-nudge already
+    says 'fix these exact problems; go to the reported line, do not rewrite whole files') so the
+    concrete error is foregrounded — not buried after the 'you repeated an action' framing, where a
+    small model reads past it and rewrites the whole file again."""
     return prompts.render(
         "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=_clip(gs.repeat_action, 160),
-        ground_truth=f"{_clip_tail(guard_ground_truth(outcome), 600)}. ")
+        ground_truth=f"{_clip_tail(guard_ground_truth(outcome), 900)}\n\n")
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:

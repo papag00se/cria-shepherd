@@ -140,3 +140,25 @@ class ErrorSquashTests(unittest.TestCase):
         note = [m for m in out if "cria removed" in str(m.get("content", ""))]
         self.assertEqual(len(note), 1)
         self.assertIn("cat a", note[0]["content"])                        # the scattered dead-ends are named
+
+    def test_gate_probe_is_never_squashed_as_a_failed_action(self):
+        # cria's OWN ground-truth gate probe exits non-zero BY DESIGN (a failing check is the signal).
+        # It must survive the failure-squash — squashing it removes the exact error cria surfaced.
+        from cria.probegate import SECTION_PREFIX as GATE
+        gate_out = (f"{GATE}probe-0___\n  File \"./mcp_client.py\", line 14\n"
+                    "SyntaxError: ':' expected after dictionary key\nProcess exited with code 1")
+        msgs = [{"role": "user", "content": "x"}]
+        for c in ("a", "b", "c", "d"):                                    # 4 real dead-ends (over threshold)
+            msgs += _fail_action(c, f"cat {c}")
+        msgs += [{"role": "assistant", "tool_calls": [{"id": "gate", "type": "function",
+                  "function": {"name": "exec_command", "arguments": f'{{"cmd": "echo {GATE}probe-0___"}}'}}]},
+                 {"role": "tool", "tool_call_id": "gate", "content": gate_out}]
+        out, rep = trim(msgs)
+        self.assertEqual(rep.squashed_runs, 1)                            # the cat dead-ends still collapse
+        # the gate probe + its ground-truth result survive untouched
+        self.assertTrue(any(m.get("tool_call_id") == "gate" for m in out))
+        surviving = "".join(str(m.get("content", "")) for m in out)
+        self.assertIn("expected after dictionary key", surviving)         # the error is still present
+        # …and the gate is NOT named in the "removed failed attempts" note
+        note = [m for m in out if "cria removed" in str(m.get("content", ""))][0]
+        self.assertNotIn(GATE, note["content"])
