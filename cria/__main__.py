@@ -16,6 +16,7 @@ from dataclasses import replace
 
 from . import __version__
 from .config import Config
+from .envfile import load_env_file
 from .events import EventLog
 from .server import CriaServer
 from .upstream import Upstream
@@ -55,6 +56,12 @@ def main(argv: list[str] | None = None) -> int:
         upstream=cfg.upstream.base_url,
         log_file=str(log.path) if log.path else None,
     )
+
+    # Load cria's own secrets BEFORE anything reads a key — a systemd service doesn't source a
+    # shell `.env`, so without this the daemon starts with the Brave/cloud keys absent.
+    if cfg.env_file:
+        loaded = load_env_file(cfg.env_file)
+        log.emit("env.loaded", file=cfg.env_file, count=loaded, level=("info" if loaded else "warn"))
 
     upstream = Upstream(
         cfg.upstream.base_url,

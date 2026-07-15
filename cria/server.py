@@ -23,6 +23,7 @@ from . import focustrim, massage, prompts, responses, rumination
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
+from .envfile import env_secret
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -69,6 +70,20 @@ def _error_sse(message: str) -> bytes:
     """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
     payload = {"error": {"message": message, "type": "upstream_error"}}
     return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
+
+
+def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
+    """One-time startup sanity: warn when a configured-looking feature CAN'T actually run, so a
+    misconfiguration is visible instead of silently degrading — the class that hid the Brave-key
+    bug (web_search just quietly never ran; the planner was quietly a passthrough)."""
+    if cfg.planner.enabled and not (has_reasoner and has_coder):
+        missing = [r for r, ok in (("reasoner", has_reasoner), ("coder", has_coder)) if not ok]
+        log.emit("config.warn", level="warn", issue="planner_inert",
+                 detail=f"[planner] enabled but missing role(s): {', '.join(missing)} — the plan loop will not run")
+    if cfg.planner.search_api_key_env and not env_secret(cfg.planner.search_api_key_env):
+        log.emit("config.warn", level="warn", issue="web_search_disabled",
+                 detail=f"web_search configured (search_api_key_env={cfg.planner.search_api_key_env}) "
+                        "but that env var is empty in the process — search disabled (is env_file set and loaded?)")
 
 
 def _has_visible_output(comp: dict) -> bool:
@@ -188,12 +203,14 @@ class CriaServer(ThreadingHTTPServer):
         # serves both with no contention. When the loop is built it uses this same instance.
         self.loop_store = LoopStore(state_path=os.path.join(cfg.logging.dir, "loopstate.json"))
         self.loop = None
+        # Surface a misconfigured-looking feature at startup instead of silently degrading — the
+        # class of failure that hid the Brave-key bug (web_search just quietly never ran).
+        _warn_config(cfg, has_reasoner, has_coder, log)
         if cfg.planner.enabled and has_reasoner and has_coder:
-            # The web-search key is read from its env var (never stored in config). STRIP it —
-            # a CRLF .env leaves a trailing "\r" that is an illegal HTTP header value and kills
-            # web_search with "Invalid header value" (observed live: the planner lost search and
-            # spun gather→force→re-gather with no plan).
-            search_key = os.environ.get(cfg.planner.search_api_key_env or "", "").strip()
+            # The web-search key comes from its env var (never stored in config); env_secret reads
+            # it normalized (CRLF-safe) — the CRLF was the illegal-header footgun, fixed once at the
+            # source (envfile) rather than stripped per-consumer.
+            search_key = env_secret(cfg.planner.search_api_key_env) or ""
             # The coder runs on the STREAMING-guarded path so its reasoning is watched live: a
             # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
             # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
@@ -392,7 +409,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._shell_tool = needs_translation(body.get("tools"))
         self._synthetic: set[str] = set()
         self._native_search = None
-        self._brave_key = os.environ.get(self.server.cfg.planner.search_api_key_env or "", "").strip() or None
+        self._brave_key = env_secret(self.server.cfg.planner.search_api_key_env)
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             body["messages"] = represent_inbound(body.get("messages", []), rlog)

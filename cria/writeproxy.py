@@ -24,8 +24,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import prompts
+from . import brave, prompts
 from .shelltool import SHELL_TOOL_NAMES, shell_args
 
 _WRITE_NAMES = {"write_file", "create_file"}
@@ -169,11 +170,6 @@ def _shell_call(orig_id: str, shell_tool: dict, command: str) -> dict:
             "function": {"name": shell_tool["name"], "arguments": json.dumps(shell_args(shell_tool, command))}}
 
 
-def _qbash(s: str) -> str:
-    """Quote a string for safe single-quoted embedding in a bash command."""
-    return "'" + str(s).replace("'", "'\\''") + "'"
-
-
 def _b64(s: str) -> str:
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
@@ -238,14 +234,15 @@ def _fetch_command(args: dict) -> str | None:
 
 
 def _search_command(args: dict, brave_key: str) -> str:
-    q = _qbash(args.get("query") or "")
-    endpoint = "https://api.search.brave.com/res/v1/web/search?q="
-    # Brave web search → compact "title — url" lines the model can pair with web_fetch.
-    jqless = (r"""python3 -c 'import sys,json"""
-              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
-              r""";print("\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r[:8]) or "no results")'""")
-    return (f'curl -sL --max-time {_FETCH_TIMEOUT_S} -H {_qbash("X-Subscription-Token: " + brave_key)} '
-            f'"{endpoint}$(printf %s {q} | sed \'s/ /+/g\')" | {jqless}')
+    """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
+    shared `brave` module (same request the planner's in-process search builds), then parsed to
+    compact "title / url / description" lines the model can pair with web_fetch."""
+    url = brave.query_url(args.get("query") or "")
+    header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
+    parse = (r"""python3 -c 'import sys,json"""
+             r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
+             r""";print("\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r[:8]) or "no results")'""")
+    return f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse}"
 
 
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,

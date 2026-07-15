@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from .claude_cli import ClaudeCliProvider
 from .config import CloudEntry, ProviderConfig, RoutingConfig
+from .envfile import env_secret
 from .upstream import Upstream
 
 
@@ -106,7 +107,7 @@ class Router:
             if not _claude_available(pc.binary):
                 return None
             return self._cached(("claude", pc.binary, pc.cwd), lambda: self._claude_factory(pc))
-        key = os.environ.get(pc.api_key_env) if pc.api_key_env else None
+        key = env_secret(pc.api_key_env)  # normalized (CRLF-safe), same hygiene as the search key
         if pc.api_key_env and not key:
             return None  # no credentials in the environment → unresolvable
         return self._cached(("http", pc.base_url, key), lambda: self._provider_factory(pc.base_url, key))

@@ -26,7 +26,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-from . import prompts
+from . import brave, prompts
 
 # The four READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
 # write/patch/exec-mutate tools: planning is not building. The model-facing DESCRIPTIONS live in
@@ -39,9 +39,6 @@ PLANNER_TOOLS = [
     {"type": "function", "function": {"name": "web_search", "description": _TD["web_search"], "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
 ]
 
-# Matches Brave Browser on Linux desktop (it identifies as Chrome on purpose).
-_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-_BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 _FETCH_MAX_BYTES = 512 * 1024
 
 
@@ -244,11 +241,9 @@ def _web_search(args: dict, search_key: str, recent: list) -> str:
 
 
 def brave_search(api_key: str, query: str, count: int = 5) -> list[dict]:
-    """One Brave Search GET. Returns a list of {title,url,description}."""
-    count = max(1, min(20, count))
-    url = _BRAVE_ENDPOINT + "?" + urllib.parse.urlencode({"q": query, "count": count})
-    req = urllib.request.Request(url, headers={
-        "X-Subscription-Token": api_key, "Accept": "application/json", "User-Agent": _USER_AGENT})
+    """One Brave Search GET. Returns a list of {title,url,description}. Endpoint/encoding/headers
+    come from the shared `brave` module so the writeproxy's shell web_search can't diverge."""
+    req = urllib.request.Request(brave.query_url(query, count), headers=brave.headers(api_key))
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read())
     results = ((data.get("web") or {}).get("results")) or []

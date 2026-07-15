@@ -282,6 +282,10 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    # Path to an env file cria loads at startup so it has its secrets (Brave key, cloud keys)
+    # no matter how it's launched — a systemd service does NOT source a shell `.env`. Values the
+    # environment already provides win; a missing file is not an error. See cria/envfile.py.
+    env_file: str | None = None
     source: str | None = None  # the file this was loaded from (None = all defaults)
 
     @classmethod
@@ -315,6 +319,7 @@ class Config:
                 ),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
             ),
+            env_file=(str(data["env_file"]) if data.get("env_file") else None),
             source=str(resolved),
         )
 
