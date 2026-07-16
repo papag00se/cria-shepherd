@@ -2133,28 +2133,26 @@ class FreshDiskFactsTests(unittest.TestCase):
         self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
 
 
-class GroundTruthPartialTests(unittest.TestCase):
+class GroundTruthSilenceTests(unittest.TestCase):
     """guard_ground_truth (shared by BOTH the spin nudge and the canned redirect, in the loop and
-    plan-off) must distinguish four states — a gate that RAN but whose test probe failed to launch
-    is UNVERIFIED, never 'all checks pass'. That false green light talked the coder out of a
-    still-needed KeyError fix (session 20260716T093350)."""
+    plan-off) speaks to the model ONLY from positive signal. A gate whose test probe failed to launch
+    is cria's OWN setup gap — it stays SILENT (empty), never 'all checks pass' (the false green light
+    that talked the coder out of a still-needed KeyError fix, session 20260716T093350) and never a
+    confession the model can't act on."""
 
     def _gate_outcome(self, results):
         from cria.probegate import GateOutcome
         from cria.proberun import ProbeReport
         return GateOutcome(ran=True, report=ProbeReport([], [], results))
 
-    def test_launch_failed_test_is_unverified_not_pass(self):
+    def test_launch_failed_probe_is_silence_not_pass(self):
         from cria.loop import guard_ground_truth
         from cria.probeparse import ProbeResult
         truth = guard_ground_truth(self._gate_outcome([
             ProbeResult("python -m pytest -q", None, "failed to launch — python not found", []),
             ProbeResult("python3 -m compileall -q .", 0, "clean", []),
         ]))
-        self.assertIn("could not run", truth.lower())
-        self.assertIn("have not verified", truth.lower())
-        self.assertIn("python -m pytest -q", truth)      # names the probe that didn't run
-        self.assertNotIn("all pass", truth.lower())
+        self.assertEqual(truth, "")   # no positive signal → say nothing (not "pass", not a confession)
 
     def test_all_ran_clean_is_no_error_class_not_a_pass_verdict(self):
         from cria.loop import guard_ground_truth
@@ -2172,10 +2170,55 @@ class GroundTruthPartialTests(unittest.TestCase):
             [Finding(file="x.py", line=5, message="undefined name 'foo'")])]))
         self.assertIn("undefined name 'foo'", truth)
 
-    def test_gate_never_ran_says_could_not_run(self):
+    def test_gate_never_ran_is_silence(self):
         from cria.loop import guard_ground_truth
         from cria.probegate import GateOutcome
-        self.assertIn("could not run", guard_ground_truth(GateOutcome(ran=False)).lower())
+        self.assertEqual(guard_ground_truth(GateOutcome(ran=False)), "")
+
+    def test_spin_steer_falls_back_to_behavioral_nudge_when_silent(self):
+        # the wheel-spin steer must still fire (with a DIFFERENT-action nudge) even when the checks
+        # gave no signal — it just carries no checks claim.
+        from cria.loop import GuardState, guard_probe_steer
+        gs = GuardState(); gs.spin_probe = True; gs.spin_path = "handle_api.py"; gs.probe_call_id = "p1"
+        gs.gate_plan = None  # → outcome.ran False → guard_ground_truth "" → spin_no_truth path
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
+        steer = guard_probe_steer(gs, body, _Rlog())
+        self.assertIsNotNone(steer)
+        self.assertIn("handle_api.py", steer)
+        self.assertIn("different next action", steer.lower())
+        self.assertNotIn("pass", steer.lower())
+
+    def _test_cand(self, cmd, kind):
+        from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind  # noqa: F401
+        return ProbeCandidate(kind=kind, command=cmd, working_dir="/tmp", confidence=90,
+                              expected_value=80, cost=ProbeCost.Cheap, mutates_code=False,
+                              may_hang=False, may_need_services=False, reason="t")
+
+    def test_failed_unparsed_check_is_surfaced_not_clean(self):
+        # a hard-failure probe (test) that ran, exited non-zero, but produced no parseable finding must
+        # surface as FAILED — not fall through to the clean "no error-class findings" message.
+        from cria.loop import guard_ground_truth
+        from cria.probediscovery import ProbeKind
+        from cria.probegate import GateOutcome
+        from cria.probeparse import ProbeResult
+        from cria.proberun import ProbeReport
+        cand = self._test_cand(["pytest", "-q"], ProbeKind.Test)
+        out = GateOutcome(ran=True, report=ProbeReport([], [cand], [ProbeResult("pytest -q", 1, "boom", [])]))
+        truth = guard_ground_truth(out)
+        self.assertIn("failed", truth.lower())
+        self.assertNotIn("no error-class", truth.lower())
+
+    def test_gate_verdict_blocks_a_failed_unparsed_done(self):
+        # the plan-off DONE gate must NOT accept a 'done' when a hard-failure check ran and failed —
+        # even with no parseable location (the guard_gate_verdict straggler the sweep found).
+        from cria.loop import GuardState, guard_gate_verdict
+        from cria.probediscovery import ProbeKind
+        from cria.probegate import GatePlan, SECTION_PREFIX as P, SECTION_SUFFIX as S
+        gs = GuardState(); gs.probe_call_id = "p1"
+        gs.gate_plan = GatePlan(workspace="/tmp", candidates=[self._test_cand(["python3", "-m", "pytest", "-q"], ProbeKind.Test)])
+        probe = f"{P}probe-0{S}\ninternal error, aborting collection\nEXIT:1\n{P}git{S}\nabc\n"
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": probe}]}
+        self.assertIsNotNone(guard_gate_verdict(gs, body, _Rlog()))   # 'done' NOT accepted
 
 
 if __name__ == "__main__":

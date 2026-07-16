@@ -4,7 +4,7 @@ You are ALSO shown the coder's recent tool results — read them: the repeats ma
 
 Write a SHORT redirect (under 120 words), addressed directly to the coder:
 1. Name what it keeps doing and say plainly that repeating THAT exact thing will not change the outcome.
-2. State the ground truth that matters — quote the failing check's file:line if there is one. If the checks are clean, say so factually ("the checks pass"); do NOT assert where the problem is or isn't — you have not been shown that.
+2. State the ground truth that matters — quote the failing check's file:line if there is one. If the checks reported no errors, you may note that, but do NOT tell the coder "the checks pass" or that it is done — the checks don't verify behaviour, and something can still be wrong. Do NOT assert where the problem is or isn't — you have not been shown that.
 3. Give ONE concrete next action — different from the repeated one — and tell it to do that now via a tool call.
 
 No preamble, no meta-commentary. Output only the redirect text.

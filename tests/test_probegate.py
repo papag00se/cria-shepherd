@@ -221,15 +221,16 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("no error-class", out.lower())
         self.assertNotIn("E501", out)
 
-    def test_launch_failure_is_not_an_error_to_fix_nor_a_pass(self):
-        # THE regression: a probe that couldn't launch (`python` absent) must be reported as "could
-        # not run" — never as an error to fix at a line, and never swallowed into a pass.
+    def test_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
+        # THE regression: a probe that couldn't launch (`python` absent) is cria's OWN setup gap. The
+        # model sees a neutral non-actionable note — never an error to "fix", never a pass/clean claim.
         raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("could not run", out.lower())
+        self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
-        self.assertNotIn("no error-class problems. that", out.lower())  # not the clean/pass message
-        self.assertIn("do not read this as a pass", out.lower())
+        self.assertNotIn("pass", out.lower())           # not a pass/clean claim
+        self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message either
+        self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
 
     def test_real_error_wins_over_launch_failure(self):
         # If something both failed to launch AND a real error was reported, surface the real error.
@@ -238,6 +239,39 @@ class CleanGateOutputTests(unittest.TestCase):
         out = probegate.clean_gate_output(raw)
         self.assertIn("undefined name 'foo'", out)
         self.assertIn("fix them at", out.lower())
+
+    def test_real_error_mentioning_no_such_file_is_not_couldnt_run(self):
+        # THE _INFRA_FAILURE false-positive: a genuine test failure whose message contains "No such
+        # file or directory" (FileNotFoundError, missing #include) must surface as an ERROR, keyed on
+        # the section's non-zero EXIT — not be hidden as "couldn't run" by a substring.
+        raw = self._raw("FAILED tests/t.py::test_reads - FileNotFoundError: "
+                        "[Errno 2] No such file or directory: 'data.csv'\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("No such file or directory", out)     # surfaced, not swallowed
+        self.assertIn("fix them at", out.lower())
+        self.assertNotIn("no usable result", out.lower())   # NOT the couldn't-run message
+
+    def test_timeout_exit_is_couldnt_run(self):
+        raw = self._raw("(killed mid-run)\nEXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no usable result", out.lower())
+        self.assertNotIn("fix", out.lower())
+
+    def test_nonzero_exit_empty_output_is_a_failure(self):
+        raw = self._raw("EXIT:1")   # exited non-zero, printed nothing usable
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("failed", out.lower())
+        self.assertIn("run it yourself", out.lower())
+        self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message
+
+    def test_nonzero_exit_advisory_only_is_clean_not_a_failure(self):
+        # ruff/tsc-style: exited non-zero but every line is advisory (unused import). Must read as
+        # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.
+        raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no error-class", out.lower())
+        self.assertNotIn("failed", out.lower())
+        self.assertNotIn("imported but unused", out)
 
     def test_non_gate_text_untouched(self):
         self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers"))

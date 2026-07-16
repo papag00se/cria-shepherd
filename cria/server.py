@@ -569,7 +569,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if gs.done_probe:
             gs.done_probe = False
             errors = guard_gate_verdict(gs, body, rlog)
-            if not errors:  # checks passed → the 'done' is genuine; forward the held answer
+            if not errors:  # no failing check (clean, or couldn't run → fail-open) → forward the held answer
                 rlog.emit("loop.gate", plan_off=True, blocked=False)
                 held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
                 return _completion_final(held or "Done.")

@@ -753,8 +753,9 @@ class Loop:
         step_text = item.text if item is not None else sess.plan.task
         # a FACT for the reasoner, not an inference: it sees the recent tool results (which reveal
         # whether the repeats hit the same or different targets) and decides. Via the shared
-        # guard_ground_truth so a probe that failed to launch is reported as UNVERIFIED, never "pass".
-        truth = guard_ground_truth(outcome)
+        # guard_ground_truth: findings or a neutral clean note, and "" when the checks gave no positive
+        # signal (couldn't run) — the reasoner then steers on the repetition itself, with no checks claim.
+        truth = guard_ground_truth(outcome) or "(no check results this turn — steer on the repeated action itself)"
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
         # Fresh-disk grounding: read the files the coder is touching as they ARE on disk now, so the
         # reasoner reasons from real bytes instead of the transcript's stale view (the groundtruth port).
@@ -1567,9 +1568,10 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
 
 def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     """Read the periodic check-in probe's result and return the GROUND TRUTH to insert (via the shared
-    guard_ground_truth: the file:line findings, an UNVERIFIED note when a probe couldn't run, or a
-    neutral 'no error-class findings' that is not a done-signal) — no verdict, the model keeps working.
-    None when no periodic probe is pending."""
+    guard_ground_truth: the file:line findings or a neutral 'no error-class findings' that is not a
+    done-signal) — no verdict, the model keeps working. None when no periodic probe is pending, OR when
+    the checks produced no positive signal (couldn't run) — a check-in with nothing to report says
+    nothing rather than confessing cria couldn't run its own probe."""
     if not gs.periodic_probe:
         return None
     gs.periodic_probe = False
@@ -1577,9 +1579,11 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
-    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
-    rlog.emit("loop.periodic_gate_result", clean=findings is None and outcome.ran, ran=outcome.ran)
-    return prompts.render("periodic_gate", truth=_clip_tail(guard_ground_truth(outcome), 1800))
+    truth = guard_ground_truth(outcome)
+    rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(truth))
+    if not truth:
+        return None  # no positive signal → inject nothing (couldn't-run is cria's problem, not the model's)
+    return prompts.render("periodic_gate", truth=_clip_tail(truth, 1800))
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
@@ -1624,40 +1628,56 @@ def _add_note(completion: dict, note: str) -> None:
 
 
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
-    """Read a completion-gate probe's result and return the block-nudge (the file:line errors) when
-    the repo's checks FAILED, else None (checks passed, or couldn't run → fail-open, don't wedge).
-    The OBJECTIVE half of the loop's completion gate — no reasoner critic — so the plan-off path can
-    verify a 'done' claim against ground truth before letting the turn end. Reuses the shared
-    interpret + block-nudge modules (no duplicated verdict logic)."""
+    """Read a completion-gate probe's result and return a block-steer when the repo's checks FAILED,
+    else None (genuinely clean, or the checks couldn't run → fail-open, don't wedge). The OBJECTIVE half
+    of the loop's completion gate — no reasoner critic — so the plan-off path can verify a 'done' claim
+    against ground truth before letting the turn end.
+
+    A failure blocks whether or not cria could parse a location: the file:line errors from
+    completion_block_nudge, OR a check that RAN and exited non-zero with no parseable finding
+    (failed_unparsed_probes — a test that failed on a bare traceback, a build that errored). Only a
+    couldn't-run (exit_code None, no signal) is fail-open — cria's own inability must not wedge a real
+    'done'. Without the failed_unparsed_probes arm a failing test whose output didn't parse was accepted
+    as a genuine 'done'."""
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
     if not outcome.ran:
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
-    return proberun.completion_block_nudge(outcome.report)  # errors, or None when clean
+    findings = proberun.completion_block_nudge(outcome.report)
+    if findings:
+        return findings
+    failed = proberun.failed_unparsed_probes(outcome.report)
+    if failed:  # a check ran and FAILED (no parseable line) → the 'done' isn't genuine
+        return "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
+    return None  # genuinely clean, or only couldn't-run probes → accept
 
 
 def guard_ground_truth(outcome) -> str:
-    """The coder-facing ground truth from a gate outcome. Four states, because "no blocking findings"
-    is NOT the same as "checks pass":
+    """The coder-facing ground truth from a gate outcome — emitted ONLY when cria has a real,
+    code-level signal. cria speaks to the model from POSITIVE signal (a check that actually ran); it
+    does not narrate its own failures.
 
-    * error-class findings → the block-nudge (fix these at the line).
-    * the gate script never ran → 'could not run'.
-    * the script ran but some probe FAILED TO LAUNCH / timed out (a test that couldn't run can't
-      vouch for behaviour) → 'partial': say what didn't run and that the file is UNVERIFIED. Without
-      this branch a test that silently failed to launch rendered as "all checks pass" — a false green
-      light that talked the coder out of a still-needed fix.
-    * everything that ran was clean → 'clean', but framed as "no error-class findings", NOT "done":
-      NEUTRAL (a content-blind streak can't tell a spiral from honest edits, so it must not claim the
-      bug is elsewhere) and explicitly not a verdict on behaviour/logic."""
-    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
+    * error-class findings (a check RAN and found a problem) → the block-nudge (fix these at the line).
+    * everything that ran was clean AND nothing failed to launch → a NEUTRAL clean note — framed as
+      "no error-class findings", NOT "done" (a content-blind streak can't tell a spiral from honest
+      edits, so it must not claim the bug is elsewhere or that the task is finished).
+    * anything else — the gate never ran, or a probe FAILED TO LAUNCH / timed out → "" (SILENCE). A
+      couldn't-run is almost always cria's OWN setup gap (wrong interpreter, no venv, deps not
+      installed, a service not up), not a fact the model can act on. Surfacing it would either confess
+      cria's failure as noise or, worse, risk reading as a pass. cria stays quiet; the model proceeds
+      on its own judgement (it has its own shell); the miss is logged for the operator, not the model.
+    """
+    if not outcome.ran:
+        return ""
+    findings = proberun.completion_block_nudge(outcome.report)
     if findings:
         return findings
-    if not outcome.ran:
-        return prompts.load("ground_truth_noran")
-    unran = proberun.unran_probes(outcome.report)
-    if unran:
-        return prompts.render("ground_truth_partial", unran=_clip_tail("\n".join(unran), 600))
+    failed = proberun.failed_unparsed_probes(outcome.report)
+    if failed:  # a check RAN and FAILED but cria couldn't parse a location → surface it coarsely
+        return prompts.render("ground_truth_failed", failed=_clip_tail("\n".join(failed), 800))
+    if proberun.unran_probes(outcome.report):  # a check couldn't launch → no clean signal → stay silent
+        return ""
     return prompts.load("ground_truth_clean")
 
 
@@ -1666,10 +1686,13 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
     the loop's reasoner-unavailable fallback deliver. The GROUND TRUTH leads (its block-nudge already
     says 'fix these exact problems; go to the reported line, do not rewrite whole files') so the
     concrete error is foregrounded — not buried after the 'you repeated an action' framing, where a
-    small model reads past it and rewrites the whole file again."""
+    small model reads past it and rewrites the whole file again. When the checks gave no positive
+    signal (couldn't run), guard_ground_truth is empty and the redirect carries no checks block —
+    just the 'you repeated an action, do something different' steer."""
+    gt = guard_ground_truth(outcome)
     return prompts.render(
         "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=_clip(gs.repeat_action, 160),
-        ground_truth=f"{_clip_tail(guard_ground_truth(outcome), 900)}\n\n")
+        ground_truth=(f"{_clip_tail(gt, 900)}\n\n" if gt else ""))
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:
@@ -1689,13 +1712,15 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=Non
         redirect = author(gs, outcome, body, rlog) if author is not None else guard_canned_redirect(gs, outcome)
         rlog.emit("loop.redirect", step=step, chars=len(redirect))
         return f"[REDIRECT]\n{redirect}"
-    # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open
+    # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open. When the
+    # checks gave no positive signal (couldn't run), steer on the repetition alone — no checks claim.
     gs.spin_probe = False
     gs.steer_source = "wheel-spin guard"
-    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
-    rlog.emit("loop.spin_probe_result", step=step, clean=findings is None and outcome.ran)
-    return prompts.render("spin_ground_truth", spin_path=gs.spin_path,
-                          truth=_clip_tail(guard_ground_truth(outcome), 1800))
+    truth = guard_ground_truth(outcome)
+    rlog.emit("loop.spin_probe_result", step=step, spoke=bool(truth))
+    if truth:
+        return prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=_clip_tail(truth, 1800))
+    return prompts.render("spin_no_truth", spin_path=gs.spin_path)
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:

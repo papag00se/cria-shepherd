@@ -37,11 +37,6 @@ from . import probeparse, proberun
 # line — its phrase check is substring so it already works either way.
 _LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
 
-# Shell/OS launch-failure fingerprints: the probe never actually ran (interpreter/tool absent, or
-# `timeout` couldn't spawn it). These are INFRASTRUCTURE misses, not code errors — they must not be
-# shown to the model as "fix this at the reported line", and their silence is not a pass.
-_INFRA_FAILURE = ("command not found", "no such file or directory",
-                  "failed to run command", "failed to launch")
 from .proberun import ProbeReport
 
 # Marker line delimiting each section of the composed script's output. The id after the
@@ -125,43 +120,60 @@ def clean_gate_output(raw: str) -> str | None:
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
     ``___CRIA_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
     ``Chunk ID / Process exited / …`` wrapper. Shown verbatim (and PROTECTED from trimming) it buried
-    the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model
-    then chased — even though the gate DIGEST already filters those. This strips all of it and reports
-    one of three honest states: real error-class findings (syntax, undefined names, type errors, test
-    failures); checks that could NOT run (interpreter/tool absent — verified nothing, never a pass); or
-    the checks that ran found nothing, framed as "no error-class problems" and explicitly NOT as "done"
-    (they don't exercise behaviour). Returns ``None`` when ``raw`` is not a gate result (untouched)."""
+    the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model then
+    chased — even though the gate DIGEST already filters those. This strips all of it and, keying on the
+    RELIABLE per-section EXIT code (not fragile text sniffing), reports one honest state: error-class
+    findings; a check that FAILED with no parseable location; checks that could NOT run (launch failure
+    / timeout — cria's own setup gap, a neutral non-signal, never a pass); or the checks that ran found
+    nothing (framed "no error-class problems", explicitly NOT "done"). Returns ``None`` when ``raw`` is
+    not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
     findings: list[str] = []
-    could_not_run: list[str] = []
     seen: set[str] = set()
+    could_not_run = False
+    failed_no_detail = False
     for sid, body in split_sections(raw).items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
             continue
-        for ln in body.splitlines():
+        text, code = proberun.scrape_exit(body)
+        # The EXIT sentinel is the reliable signal (the composed probe always prints it). A launch
+        # failure (125/126/127) or timeout (124) means the check did NOT complete — never a code error
+        # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
+        # mentions it (a FileNotFoundError, a missing #include) as couldn't-run.
+        if code in proberun.LAUNCH_FAILURE_EXIT_CODES or code == proberun.TIMEOUT_EXIT_CODE:
+            could_not_run = True
+            continue
+        had_content = False
+        section_findings: list[str] = []
+        for ln in text.splitlines():
             s = ln.strip()
             if not s or s.startswith(proberun.PROBE_EXIT_SENTINEL):   # blank / EXIT:<n> sentinel
                 continue
-            if any(sig in s.lower() for sig in _INFRA_FAILURE):       # tool/interpreter absent — not a code error
-                if s not in seen:
-                    seen.add(s)
-                    could_not_run.append(s)
-                continue
+            had_content = True
             # advisory either as a whole line (phrase/prefix forms) or once the location prefix is
             # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered
             if probeparse.is_advisory(s) or probeparse.is_advisory(_LOC_PREFIX.sub("", s)):
                 continue
             if s not in seen:
                 seen.add(s)
-                findings.append(s)
+                section_findings.append(s)
+        findings.extend(section_findings)
+        # a check that exited NON-ZERO but printed NOTHING usable (empty output) still FAILED — don't
+        # let it read as clean. If it printed only advisory lines (had_content, no findings), that's an
+        # advisory-clean lint exit, NOT a failure — so keying on had_content avoids the footgun.
+        if code not in (0, None) and not had_content:
+            failed_no_detail = True
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at "
                 "the reported line:\n" + "\n".join(findings[:40]))
-    if could_not_run:               # checks couldn't launch → NOT a pass; never asks the model to "fix" it
-        return ("⟦cria:checks⟧ some of the repo's own checks could NOT run here (missing tool or "
-                "interpreter), so they verified nothing — do not read this as a pass:\n"
-                + "\n".join(could_not_run[:20]))
+    if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
+        return ("⟦cria:checks⟧ one of the repo's own checks FAILED but printed no location cria could "
+                "parse — run it yourself and read the actual error before continuing. Not done.")
+    if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
+        # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
+        # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
+        return "⟦cria:checks⟧ the automatic checks produced no usable result this turn — no signal either way."
     return ("⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems. That does "
             "not verify behaviour or mean the task is done — if you know something is still wrong, keep "
             "fixing it with a targeted edit.")

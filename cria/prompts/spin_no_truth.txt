@@ -1,0 +1,1 @@
+you have rewritten `{{SPIN_PATH}}` repeatedly — rewriting it again will not change the outcome. Stop and take a DIFFERENT next action: read the file as it is on disk right now, run the specific thing that's failing and read the actual error, or inspect the code you depend on. Then make one targeted change based on what you find.

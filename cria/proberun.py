@@ -108,8 +108,13 @@ PROBE_EXIT_SENTINEL = "EXIT:"
 # coreutils timeout(1) semantics standing in for upstream's kill loop.
 TIMEOUT_KILL_GRACE_S = 5     # timeout -k 5: SIGKILL follow-up for SIGTERM-ignoring tools
 TIMEOUT_EXIT_CODE = 124      # timeout(1) fired -> upstream's timed_out=true branch
-NOT_EXECUTABLE_EXIT_CODE = 126  # shell: found but not executable (flows through as-is)
+NOT_EXECUTABLE_EXIT_CODE = 126  # shell: found but not executable (permission/broken interpreter)
 NOT_FOUND_EXIT_CODE = 127    # shell: command not found -> upstream's spawn-Err branch
+# Every coreutils timeout(1) exit code that means the command did NOT actually run: 125 (timeout
+# itself failed), 126 (found but not executable), 127 (not found). All map to a launch failure
+# (exit_code=None) so unran_probes flags them and the gate never reads a couldn't-run as clean. 124
+# (timed out) is separate — there the command DID run, so partial findings are salvaged.
+LAUNCH_FAILURE_EXIT_CODES = (125, NOT_EXECUTABLE_EXIT_CODE, NOT_FOUND_EXIT_CODE)
 NOT_FOUND_TEXT = "command not found"
 PROXY_LAUNCH_DETAIL = "command not found"  # the {e} detail when the shell, not the OS, tells us
 
@@ -286,6 +291,35 @@ def unran_probes(report: ProbeReport) -> list[str]:
     return out
 
 
+# Kinds where a NON-ZERO exit unambiguously means "broken": a test failed, a type-check errored, a
+# build/compile failed. Deliberately EXCLUDES Lint / FormatCheck / StaticAnalysis — those exit
+# non-zero on ADVISORY-only findings (an unused import, a formatting diff), and parse_output has
+# already stripped those advisories from r.findings, so "non-zero + no findings" there is expected and
+# must NOT be surfaced as a failure (that would resurrect the unused-import footgun). SyntaxCheck is
+# excluded too: completion_block_nudge already surfaces a red syntax floor.
+_HARD_FAILURE_KINDS = (
+    probediscovery.ProbeKind.Test,
+    probediscovery.ProbeKind.Typecheck,
+    probediscovery.ProbeKind.BuildCheck,
+)
+
+
+def failed_unparsed_probes(report: ProbeReport) -> list[str]:
+    """Hard-failure probes (see :data:`_HARD_FAILURE_KINDS`) that RAN and exited NON-ZERO but produced
+    NO parseable file:line finding — a real failure the parsers couldn't localize (a test that failed
+    on a bare traceback, ``cargo check`` exit 101, ``tsc`` whose lines all read as advisory under
+    noUnusedLocals). POSITIVE signal (the check ran and FAILED) — NOT clean, NOT couldn't-run — so it is
+    surfaced coarsely (command + summary) rather than falling through to "no error-class findings". A
+    normal parseable failure keeps its findings and is caught by completion_block_nudge instead."""
+    kinds = _kind_by_command(report)
+    out: list[str] = []
+    for r in report.results:
+        if r.exit_code not in (None, 0) and not r.findings \
+                and kinds.get(r.command) in _HARD_FAILURE_KINDS:
+            out.append(f"$ {r.command} — {r.summary or f'exited {r.exit_code}'}")
+    return out
+
+
 def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
     """Returns None when everything the probes could check is clean (so
     completion is allowed).
@@ -437,6 +471,10 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
         # Same as_secs() truncation as run_candidate; findings kept.
         result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
         return result
-    if exit_code == NOT_FOUND_EXIT_CODE or NOT_FOUND_TEXT in output:
+    # A launch failure by exit code (125/126/127); OR, only when NO sentinel survived (exit_code is
+    # None), the text fallback. The `exit_code is None` guard matters: a probe that exited 0 whose
+    # OUTPUT merely mentions "command not found" (a test asserting on an error string) must keep its
+    # real exit 0 — not be flipped to a launch failure by a substring.
+    if exit_code in LAUNCH_FAILURE_EXIT_CODES or (exit_code is None and NOT_FOUND_TEXT in output):
         return err_result(joined, LAUNCH_FAILURE_FMT.format(e=PROXY_LAUNCH_DETAIL))
     return parse_output(joined, family_of(c.command), exit_code, output, "")

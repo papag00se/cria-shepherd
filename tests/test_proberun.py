@@ -24,6 +24,7 @@ from cria.proberun import (
     completion_block_nudge,
     completion_probe_digest,
     compose_probe_command,
+    failed_unparsed_probes,
     family_of,
     interpret_probe_output,
     run_candidate,
@@ -270,6 +271,62 @@ class TestUnranProbes(unittest.TestCase):
     def test_all_ran_yields_no_unran(self):
         report = ProbeReport(["python"], [], [ProbeResult("python3 -m pytest -q", 0, "3 passed", [])])
         self.assertEqual(unran_probes(report), [])
+
+
+class TestLaunchFailureExitCodes(unittest.TestCase):
+    """coreutils timeout exits 125/126/127 when the command did not really run — all must map to a
+    launch failure (exit_code None) so it's never read as clean. The text fallback must not override a
+    real exit 0."""
+
+    def _interp(self, raw, kind=ProbeKind.Test):
+        return interpret_probe_output(synth(["gradlew"], kind), "gradlew", raw, None, 45.0)
+
+    def test_exit_126_not_executable_is_launch_failure(self):
+        r = self._interp("permission denied\nEXIT:126\n")
+        self.assertIsNone(r.exit_code)                 # launch failure
+        self.assertNotIn("permission denied", "\n".join(f.message for f in r.findings))
+
+    def test_exit_125_timeout_self_failure_is_launch_failure(self):
+        self.assertIsNone(self._interp("timeout: bad usage\nEXIT:125\n").exit_code)
+
+    def test_exit_0_with_command_not_found_in_output_stays_clean(self):
+        # a test asserting on an error string must keep its real exit 0 — not be flipped by a substring
+        r = self._interp("test_err PASSED\nassert 'command not found' in stderr\n1 passed\nEXIT:0\n")
+        self.assertEqual(r.exit_code, 0)
+
+
+class TestFailedUnparsedProbes(unittest.TestCase):
+    """A hard-failure probe (test/typecheck/build) that RAN, exited non-zero, but produced no parseable
+    finding is a real failure — surfaced. A LINT that exits non-zero on advisory-only findings (already
+    stripped from r.findings) must NOT be — that would resurrect the unused-import footgun."""
+
+    def _report(self, *specs):  # each spec: (cmd_list, exit_code, findings, kind)
+        sel = [synth(c, k) for (c, _e, _f, k) in specs]
+        res = [ProbeResult(" ".join(c), e, "sum", f) for (c, e, f, k) in specs]
+        return ProbeReport([], sel, res)
+
+    def test_hard_failure_no_findings_is_surfaced(self):
+        rep = self._report(
+            (["pytest", "-q"], 1, [], ProbeKind.Test),
+            (["cargo", "check"], 101, [], ProbeKind.BuildCheck),
+        )
+        out = failed_unparsed_probes(rep)
+        self.assertEqual(len(out), 2)
+        self.assertTrue(any("pytest" in o for o in out))
+        self.assertTrue(any("cargo" in o for o in out))
+
+    def test_lint_nonzero_no_findings_is_not_a_failure(self):
+        # ruff exits 1 on an unused import; parse_output already stripped that advisory from findings.
+        rep = self._report((["ruff", "check", "."], 1, [], ProbeKind.Lint))
+        self.assertEqual(failed_unparsed_probes(rep), [])
+
+    def test_clean_and_launch_failure_and_parsed_failures_are_excluded(self):
+        rep = self._report(
+            (["pytest", "-q"], 0, [], ProbeKind.Test),                                # clean
+            (["mypy", "."], None, [], ProbeKind.Typecheck),                           # launch failure
+            (["pytest", "-q2"], 1, [Finding(file="x.py", line=1, message="boom")], ProbeKind.Test),  # parsed
+        )
+        self.assertEqual(failed_unparsed_probes(rep), [])
 
 
 # ---------------------------------------------------------------------------
