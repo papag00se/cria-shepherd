@@ -1,0 +1,3 @@
+the repo's own checks did NOT fully run on your edits, so they have not verified this file. These could not run here (missing tool/interpreter, or nothing collected):
+{{UNRAN}}
+Whatever DID run reported no error-class problems, but that is not a clean bill of health and does not mean you are done. If you believe there is still a bug — for example a failing test the checks couldn't run — fix it with a TARGETED edit at the specific line; do not rewrite the whole file, and do not treat the checks as if they passed.

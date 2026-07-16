@@ -751,13 +751,10 @@ class Loop:
         produces nothing — a stuck coder must never be left without a steer."""
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
-        if outcome.ran:
-            findings = proberun.completion_block_nudge(outcome.report)
-            # a FACT for the reasoner, not an inference: it sees the recent tool results (which
-            # reveal whether the repeats hit the same or different targets) and decides.
-            truth = findings or "the repo's checks (lint + type-check + syntax) all PASS — no error-class findings"
-        else:
-            truth = "(the checks could not run)"
+        # a FACT for the reasoner, not an inference: it sees the recent tool results (which reveal
+        # whether the repeats hit the same or different targets) and decides. Via the shared
+        # guard_ground_truth so a probe that failed to launch is reported as UNVERIFIED, never "pass".
+        truth = guard_ground_truth(outcome)
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
         # Fresh-disk grounding: read the files the coder is touching as they ARE on disk now, so the
         # reasoner reasons from real bytes instead of the transcript's stale view (the groundtruth port).
@@ -1569,9 +1566,10 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
 
 
 def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
-    """Read the periodic check-in probe's result and return the GROUND TRUTH to insert (the file:line
-    findings, or a neutral 'all checks pass') — no verdict, the model keeps working. None when no
-    periodic probe is pending."""
+    """Read the periodic check-in probe's result and return the GROUND TRUTH to insert (via the shared
+    guard_ground_truth: the file:line findings, an UNVERIFIED note when a probe couldn't run, or a
+    neutral 'no error-class findings' that is not a done-signal) — no verdict, the model keeps working.
+    None when no periodic probe is pending."""
     if not gs.periodic_probe:
         return None
     gs.periodic_probe = False
@@ -1640,15 +1638,27 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
 
 
 def guard_ground_truth(outcome) -> str:
-    """The coder-facing ground truth from a gate outcome: the block-nudge findings if any, else a
-    plain 'all checks pass' (NEUTRAL — a content-blind streak can't tell a spiral from honest
-    sequential edits, so it must NOT claim the bug is elsewhere), else 'could not run'."""
+    """The coder-facing ground truth from a gate outcome. Four states, because "no blocking findings"
+    is NOT the same as "checks pass":
+
+    * error-class findings → the block-nudge (fix these at the line).
+    * the gate script never ran → 'could not run'.
+    * the script ran but some probe FAILED TO LAUNCH / timed out (a test that couldn't run can't
+      vouch for behaviour) → 'partial': say what didn't run and that the file is UNVERIFIED. Without
+      this branch a test that silently failed to launch rendered as "all checks pass" — a false green
+      light that talked the coder out of a still-needed fix.
+    * everything that ran was clean → 'clean', but framed as "no error-class findings", NOT "done":
+      NEUTRAL (a content-blind streak can't tell a spiral from honest edits, so it must not claim the
+      bug is elsewhere) and explicitly not a verdict on behaviour/logic."""
     findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
     if findings:
         return findings
-    if outcome.ran:
-        return prompts.load("ground_truth_clean")
-    return prompts.load("ground_truth_noran")
+    if not outcome.ran:
+        return prompts.load("ground_truth_noran")
+    unran = proberun.unran_probes(outcome.report)
+    if unran:
+        return prompts.render("ground_truth_partial", unran=_clip_tail("\n".join(unran), 600))
+    return prompts.load("ground_truth_clean")
 
 
 def guard_canned_redirect(gs: GuardState, outcome) -> str:

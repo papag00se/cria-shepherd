@@ -512,6 +512,14 @@ def build_python(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     def with_(extra: list[str]) -> list[str]:
         return list(prefix) + list(extra)
 
+    # The interpreter to invoke pytest with. Inside a package-manager env (`uv run` / `poetry run`)
+    # the canonical name is `python` (the env exposes it); on a bare system there is no guarantee a
+    # `python` symlink exists — modern boxes ship only `python3` — so plain invocations must say
+    # `python3`, matching the tier-0 floor (`python3 -m compileall`) and linterprobe. A bare `python`
+    # here made the whole test probe fail to LAUNCH ("python: No such file or directory"), which then
+    # read downstream as "checks pass" — a false green light over a real failing test.
+    py = "python" if prefix else "python3"
+
     # config-gated tools all share the same (strong) confidence, so the
     # run-first TIER (typecheck < lint < test) decides order, not arbitrary
     # confidence gaps.
@@ -530,7 +538,7 @@ def build_python(p: ProjectDir, out: list[ProbeCandidate]) -> None:
         out.append(cand(ProbeKind.Lint, with_(["flake8", "."]), d, 70, 80,
                         ProbeCost.Cheap, "flake8 configured"))
     if p.has("pytest.ini") or pyproject_has(p, "pytest") or has_tests_dir(d):
-        out.append(cand(ProbeKind.Test, with_(["python", "-m", "pytest", "-q"]),
+        out.append(cand(ProbeKind.Test, with_([py, "-m", "pytest", "-q"]),
                         d, min(pm_conf, 90), 90, ProbeCost.Moderate,
                         "pytest configured / tests dir present"))
     if p.has("tox.ini"):
@@ -544,7 +552,7 @@ def build_python(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     # — if the same dir already produced JS/Rust/etc. candidates (JsTs is
     # detected before Python), the fallback is suppressed.
     if not any(c.working_dir == d for c in out):
-        out.append(cand(ProbeKind.Test, with_(["python", "-m", "pytest", "-q"]),
+        out.append(cand(ProbeKind.Test, with_([py, "-m", "pytest", "-q"]),
                         d, 55, 90, ProbeCost.Moderate,
                         "python project; pytest is the common test runner"))
 

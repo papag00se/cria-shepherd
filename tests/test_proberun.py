@@ -30,6 +30,7 @@ from cria.proberun import (
     run_probes_with,
     scrape_exit,
     select_completion_probes,
+    unran_probes,
 )
 
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
@@ -249,6 +250,26 @@ class TestCompletionBlockNudge(unittest.TestCase):
     def test_all_clean_allows_completion(self):
         report = ProbeReport(["python"], [], [ProbeResult("pytest -q", 0, "clean", [])])
         self.assertIsNone(completion_block_nudge(report, LinterReport()))
+
+
+class TestUnranProbes(unittest.TestCase):
+    """A probe that failed to launch / timed out (exit_code is None) is MISSING SIGNAL, not a pass —
+    unran_probes surfaces it so ground truth is never rendered as "all checks pass"."""
+
+    def test_launch_failure_and_timeout_are_unran_clean_is_not(self):
+        report = ProbeReport(["python"], [], [
+            ProbeResult("python -m pytest -q", None, "failed to launch — tool not installed?", []),
+            ProbeResult("mypy .", None, "TIMEOUT after 45s", []),
+            ProbeResult("python3 -m compileall -q .", 0, "clean", []),   # this one RAN — excluded
+        ])
+        unran = unran_probes(report)
+        self.assertEqual(len(unran), 2)
+        self.assertTrue(any("pytest" in u for u in unran))
+        self.assertTrue(all("compileall" not in u for u in unran))
+
+    def test_all_ran_yields_no_unran(self):
+        report = ProbeReport(["python"], [], [ProbeResult("python3 -m pytest -q", 0, "3 passed", [])])
+        self.assertEqual(unran_probes(report), [])
 
 
 # ---------------------------------------------------------------------------

@@ -203,20 +203,41 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("deadbeef", out)                     # git hash dropped
         self.assertNotIn("Chunk ID", out)                     # exec wrapper dropped
 
-    def test_all_clean_or_advisory_reports_pass(self):
+    def test_all_clean_or_advisory_is_not_a_done_signal(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:0")
         out = probegate.clean_gate_output(raw)
         self.assertIsNotNone(out)
-        self.assertIn("pass", out.lower())
+        self.assertIn("no error-class", out.lower())
         self.assertNotIn("imported but unused", out)
+        # must NOT read as "done"/verified — that talked the coder out of a still-needed fix
+        self.assertNotIn("all pass", out.lower())
+        self.assertIn("does not verify", out.lower())
 
     def test_bare_style_code_after_location_is_advisory(self):
         # E501 sits AFTER the file:line:col prefix — is_advisory's anchored code check only fires
         # once clean_gate_output strips that prefix.
         raw = self._raw("x.py:80:1: E501 line too long (99 > 88 characters)\nEXIT:0")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("pass", out.lower())
+        self.assertIn("no error-class", out.lower())
         self.assertNotIn("E501", out)
+
+    def test_launch_failure_is_not_an_error_to_fix_nor_a_pass(self):
+        # THE regression: a probe that couldn't launch (`python` absent) must be reported as "could
+        # not run" — never as an error to fix at a line, and never swallowed into a pass.
+        raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("could not run", out.lower())
+        self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
+        self.assertNotIn("no error-class problems. that", out.lower())  # not the clean/pass message
+        self.assertIn("do not read this as a pass", out.lower())
+
+    def test_real_error_wins_over_launch_failure(self):
+        # If something both failed to launch AND a real error was reported, surface the real error.
+        raw = self._raw("timeout: failed to run command 'python': No such file or directory\n"
+                        "x.py:5:4 undefined name 'foo'\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("undefined name 'foo'", out)
+        self.assertIn("fix them at", out.lower())
 
     def test_non_gate_text_untouched(self):
         self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers"))

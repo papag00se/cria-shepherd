@@ -269,6 +269,23 @@ def syntax_floor_clean(report: ProbeReport):
     return all(r.exit_code == 0 for r in syntax)
 
 
+def unran_probes(report: ProbeReport) -> list[str]:
+    """Human labels for probes that were selected and CAME BACK but did NOT actually complete — a
+    launch failure (tool/interpreter absent) or a timeout, both of which interpret_probe_output maps
+    to ``exit_code is None``. Their silence is MISSING SIGNAL, never a pass: a test suite that could
+    not launch cannot vouch for behaviour. Callers that render ground truth to the model must treat a
+    non-empty result here as "not verified", so absence-of-findings is never shown as "checks pass".
+    """
+    kinds = _kind_by_command(report)
+    out: list[str] = []
+    for r in report.results:
+        if r.exit_code is None:
+            k = kinds.get(r.command)
+            label = f" ({k.name})" if k is not None else ""
+            out.append(f"$ {r.command}{label} — {r.summary}")
+    return out
+
+
 def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
     """Returns None when everything the probes could check is clean (so
     completion is allowed).

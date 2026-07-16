@@ -1,1 +1,1 @@
-the repo's checks (lint + type-check + syntax) all PASS on your current edits — no error-class findings in this file
+the repo's own checks that ran (lint / type-check / syntax) found no error-class problems in your current edits. That is NOT a verdict on behaviour or logic and does NOT mean the task is done — those checks don't exercise your code's actual cases. If you know something is still wrong (a failing test, a wrong result), keep fixing it; just make a TARGETED edit at the specific line instead of rewriting the whole file.

@@ -182,8 +182,9 @@ class PythonFallbackTests(DiscoveryCase):
         # low-confidence pytest fallback.
         write(self.d, "requirements.txt", "requests\n")
         got = discover(self.d)
+        # no pm lock/prefix → the bare-system interpreter is `python3` (bare `python` may not exist)
         fb = next(x for x in got
-                  if x.command == ["python", "-m", "pytest", "-q"])
+                  if x.command == ["python3", "-m", "pytest", "-q"])
         self.assertEqual(fb.confidence, 55)
 
     def test_fallback_suppressed_when_dir_already_has_candidates(self):

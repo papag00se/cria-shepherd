@@ -36,6 +36,12 @@ from . import probeparse, proberun
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
 # line — its phrase check is substring so it already works either way.
 _LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
+
+# Shell/OS launch-failure fingerprints: the probe never actually ran (interpreter/tool absent, or
+# `timeout` couldn't spawn it). These are INFRASTRUCTURE misses, not code errors — they must not be
+# shown to the model as "fix this at the reported line", and their silence is not a pass.
+_INFRA_FAILURE = ("command not found", "no such file or directory",
+                  "failed to run command", "failed to launch")
 from .proberun import ProbeReport
 
 # Marker line delimiting each section of the composed script's output. The id after the
@@ -120,12 +126,15 @@ def clean_gate_output(raw: str) -> str | None:
     ``___CRIA_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
     ``Chunk ID / Process exited / …`` wrapper. Shown verbatim (and PROTECTED from trimming) it buried
     the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model
-    then chased — even though the gate DIGEST already filters those. This strips all of it: the model
-    sees only error-class findings (syntax, undefined names, type errors, real test failures), or a
-    one-line "all pass". Returns ``None`` when ``raw`` is not a gate result (leave it untouched)."""
+    then chased — even though the gate DIGEST already filters those. This strips all of it and reports
+    one of three honest states: real error-class findings (syntax, undefined names, type errors, test
+    failures); checks that could NOT run (interpreter/tool absent — verified nothing, never a pass); or
+    the checks that ran found nothing, framed as "no error-class problems" and explicitly NOT as "done"
+    (they don't exercise behaviour). Returns ``None`` when ``raw`` is not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
     findings: list[str] = []
+    could_not_run: list[str] = []
     seen: set[str] = set()
     for sid, body in split_sections(raw).items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
@@ -134,6 +143,11 @@ def clean_gate_output(raw: str) -> str | None:
             s = ln.strip()
             if not s or s.startswith(proberun.PROBE_EXIT_SENTINEL):   # blank / EXIT:<n> sentinel
                 continue
+            if any(sig in s.lower() for sig in _INFRA_FAILURE):       # tool/interpreter absent — not a code error
+                if s not in seen:
+                    seen.add(s)
+                    could_not_run.append(s)
+                continue
             # advisory either as a whole line (phrase/prefix forms) or once the location prefix is
             # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered
             if probeparse.is_advisory(s) or probeparse.is_advisory(_LOC_PREFIX.sub("", s)):
@@ -141,10 +155,16 @@ def clean_gate_output(raw: str) -> str | None:
             if s not in seen:
                 seen.add(s)
                 findings.append(s)
-    if not findings:
-        return "⟦cria:checks⟧ the repo's own checks (syntax / lint / tests) pass on your current edits — no error-class findings."
-    return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at the "
-            "reported line:\n" + "\n".join(findings[:40]))
+    if findings:                    # a check RAN and found a real error-class problem — foreground it
+        return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at "
+                "the reported line:\n" + "\n".join(findings[:40]))
+    if could_not_run:               # checks couldn't launch → NOT a pass; never asks the model to "fix" it
+        return ("⟦cria:checks⟧ some of the repo's own checks could NOT run here (missing tool or "
+                "interpreter), so they verified nothing — do not read this as a pass:\n"
+                + "\n".join(could_not_run[:20]))
+    return ("⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems. That does "
+            "not verify behaviour or mean the task is done — if you know something is still wrong, keep "
+            "fixing it with a targeted edit.")
 
 
 def clean_gate_results(messages: list) -> list:

@@ -891,7 +891,8 @@ class WheelSpinTests(unittest.TestCase):
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         msg = coder.last_user()
-        self.assertIn("PASS", msg)
+        self.assertIn("no error-class", msg.lower())      # states the clean fact...
+        self.assertNotIn("all pass", msg.lower())         # ...without overclaiming a verified/done state
         self.assertNotIn("NOT in the file", msg)          # no false "look elsewhere" steer
         self.assertNotIn("elsewhere", msg)
 
@@ -1134,7 +1135,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         for blob in (seen["system"].lower(), seen["user"].lower()):
             self.assertNotIn("not in the file", blob)
             self.assertNotIn("look elsewhere", blob)
-        self.assertIn("pass", seen["user"].lower())        # the neutral clean fact
+        self.assertIn("no error-class", seen["user"].lower())   # the neutral clean fact
 
     def test_reasoner_failure_falls_back_to_canned_redirect(self):
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
@@ -1150,7 +1151,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("repeated the same action", coder.last_user())  # canned fallback
-        self.assertIn("PASS", coder.last_user())                      # clean-checks truth included
+        self.assertIn("no error-class", coder.last_user().lower())    # clean-checks truth included
 
     def test_canned_redirect_foregrounds_the_failing_check(self):
         # #2: when the gate FAILS, the concrete error must LEAD the redirect (a small model reads
@@ -2130,3 +2131,52 @@ class FreshDiskFactsTests(unittest.TestCase):
         self.assertIn("does NOT exist", _fresh_disk_facts(d, ["nope.py"], ""))  # missing = a fact
         self.assertEqual(_fresh_disk_facts(None, ["h.py"], ""), "")  # no root → empty (prior behavior)
         self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
+
+
+class GroundTruthPartialTests(unittest.TestCase):
+    """guard_ground_truth (shared by BOTH the spin nudge and the canned redirect, in the loop and
+    plan-off) must distinguish four states — a gate that RAN but whose test probe failed to launch
+    is UNVERIFIED, never 'all checks pass'. That false green light talked the coder out of a
+    still-needed KeyError fix (session 20260716T093350)."""
+
+    def _gate_outcome(self, results):
+        from cria.probegate import GateOutcome
+        from cria.proberun import ProbeReport
+        return GateOutcome(ran=True, report=ProbeReport([], [], results))
+
+    def test_launch_failed_test_is_unverified_not_pass(self):
+        from cria.loop import guard_ground_truth
+        from cria.probeparse import ProbeResult
+        truth = guard_ground_truth(self._gate_outcome([
+            ProbeResult("python -m pytest -q", None, "failed to launch — python not found", []),
+            ProbeResult("python3 -m compileall -q .", 0, "clean", []),
+        ]))
+        self.assertIn("could not run", truth.lower())
+        self.assertIn("have not verified", truth.lower())
+        self.assertIn("python -m pytest -q", truth)      # names the probe that didn't run
+        self.assertNotIn("all pass", truth.lower())
+
+    def test_all_ran_clean_is_no_error_class_not_a_pass_verdict(self):
+        from cria.loop import guard_ground_truth
+        from cria.probeparse import ProbeResult
+        truth = guard_ground_truth(self._gate_outcome([ProbeResult("python3 -m pytest -q", 0, "3 passed", [])]))
+        self.assertIn("no error-class", truth.lower())
+        self.assertIn("not a verdict", truth.lower())
+        self.assertNotIn("all pass", truth.lower())
+
+    def test_error_findings_are_surfaced(self):
+        from cria.loop import guard_ground_truth
+        from cria.probeparse import Finding, ProbeResult
+        truth = guard_ground_truth(self._gate_outcome([ProbeResult(
+            "python3 -m pytest -q", 1, "1 failed",
+            [Finding(file="x.py", line=5, message="undefined name 'foo'")])]))
+        self.assertIn("undefined name 'foo'", truth)
+
+    def test_gate_never_ran_says_could_not_run(self):
+        from cria.loop import guard_ground_truth
+        from cria.probegate import GateOutcome
+        self.assertIn("could not run", guard_ground_truth(GateOutcome(ran=False)).lower())
+
+
+if __name__ == "__main__":
+    unittest.main()
