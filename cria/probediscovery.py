@@ -817,6 +817,34 @@ _TOML_CHECK = (
     "sys.exit(bad)\n"
 )
 
+# Strict-JSON floor — ONLY files that are strict JSON BY SPEC (no comments/trailing commas allowed),
+# so a stdlib json.load can't false-positive on valid config. Deliberately excludes tsconfig.json /
+# jsconfig.json / *.jsonc / .vscode/* (JSON-with-comments) — those must be validated by their own
+# tool (tsc), which understands the comment dialect.
+_STRICT_JSON_NAMES = ("package.json", "composer.json")
+_JSON_CHECK = (
+    "import sys, json\n"
+    "bad = 0\n"
+    "for f in sys.argv[1:]:\n"
+    "    try:\n"
+    "        with open(f) as fh:\n"
+    "            json.load(fh)\n"
+    "    except Exception as e:\n"
+    "        print('%s: %s' % (f, e))\n"
+    "        bad = 1\n"
+    "sys.exit(bad)\n"
+)
+
+
+def _strict_json_files(root: Path) -> list[str]:
+    """Paths of strict-JSON config files present (by name), skip-dirs pruned via inventory."""
+    out: list[str] = []
+    for p in inventory(root):
+        for name in _STRICT_JSON_NAMES:
+            if p.has(name):
+                out.append(str(Path(p.dir) / name))
+    return sorted(out)
+
 
 def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     """File-presence tier-0 candidates for the workspace (see the table above).
@@ -843,6 +871,10 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     if tomls:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _TOML_CHECK, *tomls],
                         root, 95, 95, ProbeCost.Cheap, "TOML config present: parse floor"))
+    jsons = _strict_json_files(root)[:MAX_FLOOR_FILES_PER_LANG]
+    if jsons:
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _JSON_CHECK, *jsons],
+                        root, 95, 95, ProbeCost.Cheap, "strict-JSON config present: parse floor"))
     return out
 
 

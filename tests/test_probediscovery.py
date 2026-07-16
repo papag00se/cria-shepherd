@@ -217,6 +217,20 @@ class TomlFloorTests(DiscoveryCase):
         write(self.d, "x.py", "print(1)\n")
         self.assertFalse([c for c in syntax_floor_candidates(self.d) if "TOML" in c.reason])
 
+    def test_strict_json_floor_checks_package_json_only(self):
+        import subprocess
+        from cria.probediscovery import syntax_floor_candidates
+        write(self.d, "package.json", '{"name": "x",}')   # trailing comma → invalid strict JSON
+        write(self.d, "tsconfig.json", '{\n  // comments are legal here\n  "compilerOptions": {}\n}')
+        cands = [c for c in syntax_floor_candidates(self.d) if "JSON" in c.reason]
+        self.assertEqual(len(cands), 1)
+        joined = " ".join(cands[0].command)
+        self.assertIn("package.json", joined)
+        self.assertNotIn("tsconfig.json", joined)   # JSONC-with-comments is NOT strict-checked (tsc owns it)
+        r = subprocess.run(cands[0].command, cwd=self.d, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("package.json", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
