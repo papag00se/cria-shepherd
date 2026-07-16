@@ -159,6 +159,11 @@ class LocalRole:
     #                     Also seeds the rumination detector's reasoning budget.
     max_tokens: int | None = None
     output_reserve: int | None = None
+    # Per-role ENDPOINT. cria does not assume every role runs on the same host/port: a role may name
+    # its own OpenAI-compatible server (e.g. a second llama.cpp serving a bigger model on another
+    # port/box). Unset → the shared [upstream] endpoint. The role still uses whatever model THAT
+    # server reports loaded (no alias) — base_url only says WHERE, not WHICH.
+    base_url: str | None = None
 
     def apply(self, body: dict) -> None:
         """Attach this role's sampling + reasoning to a chat-completions body, in place.
@@ -496,4 +501,5 @@ def _local_role(name: str, spec) -> LocalRole:
         min_p=_num("min_p"),
         max_tokens=_int("max_tokens"),
         output_reserve=_int("output_reserve"),
+        base_url=(str(spec["base_url"]) if spec.get("base_url") else None),
     )

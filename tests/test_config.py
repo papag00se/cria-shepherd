@@ -94,6 +94,15 @@ repeat_penalty = 1.05
             role = cfg.routing.local_roles["coder"]
             self.assertEqual(role.temperature, 0.0)
             self.assertEqual(role.repeat_penalty, 1.05)
+            self.assertIsNone(role.base_url)   # no per-role endpoint → the shared [upstream]
+
+    def test_per_role_base_url_parses(self):
+        # A role may name its OWN endpoint (roles need not share a host/port).
+        with TemporaryDirectory() as tmp:
+            p = self._write(tmp, '[models.local.reasoner]\nbase_url = "http://box2:9000"\ntemp = 0.3\n')
+            role = Config.load(p).routing.local_roles["reasoner"]
+            self.assertEqual(role.base_url, "http://box2:9000")
+            self.assertEqual(role.temperature, 0.3)
             self.assertIn("coder", cfg.routing.local_roles)  # present → configured
 
     def test_model_key_is_rejected(self):

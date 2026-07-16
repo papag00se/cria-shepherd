@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Iterator
 
-from . import callcapture, contextfloor, tokenratio
+from . import callcapture, contextfloor, failover, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -299,15 +299,31 @@ class Upstream:
             )
 
     def chat(self, body: dict, rlog) -> bytes:
-        """Non-streaming: return the full upstream response body (bytes)."""
+        """Non-streaming: return the full upstream response body (bytes).
+
+        Retries the SAME endpoint ONCE on a transient TIMEOUT (a slow-prefill / connection-reset on
+        the shared GPU that would otherwise be a dead turn) via the failover executor — a single
+        local endpoint has no chain to walk, so anything else re-raises. Buffered, so a retry is safe."""
         # Force stream=false (the Responses adapter buffers from a stream=true request;
         # sending that upstream would return unparseable SSE) + merge adjacent assistants.
-        resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
-        t0 = time.monotonic()
-        try:
-            raw = resp.read()
-        finally:
-            resp.close()
+        attempt = 0
+        while True:
+            try:
+                resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
+                t0 = time.monotonic()
+                try:
+                    raw = resp.read()
+                finally:
+                    resp.close()
+                break
+            except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
+                action = failover.decide_action(
+                    failover.classify_failure(None, str(e)), "upstream", "upstream", ("upstream",), attempt)
+                if not isinstance(action, failover.RetrySame):
+                    raise
+                attempt = action.attempt
+                rlog.emit("upstream.retry", level="warn", attempt=attempt, wait_ms=action.wait_ms, error=str(e))
+                time.sleep(action.wait_ms / 1000.0)
         t_end = time.monotonic()
         usage = (_try_json(raw) or {}).get("usage")
         self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)

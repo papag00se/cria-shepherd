@@ -143,3 +143,28 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PerRoleEndpointTests(unittest.TestCase):
+    def test_role_base_url_builds_its_own_endpoint(self):
+        built = []
+
+        class _Up(_Local):
+            def __init__(self, base):
+                super().__init__(loaded=f"model@{base}")
+                self.base = base
+
+        def factory(base_url, key):
+            built.append(base_url)
+            return _Up(base_url)
+
+        cfg = _cfg(local_roles={"coder": LocalRole(base_url="http://box2:9000"), "reasoner": LocalRole()},
+                   failover={"coding": ("coder",), "reasoning": ("reasoner",)})
+        r = Router(cfg, LOCAL, provider_factory=factory)
+        self.assertEqual(r.route("coding", _Rlog()).provider.base, "http://box2:9000")  # its OWN endpoint
+        self.assertEqual(built, ["http://box2:9000"])
+        self.assertIs(r.route("reasoning", _Rlog()).provider, LOCAL)   # no base_url → shared upstream
+
+    def test_route_chain_skips_unresolvable_links(self):
+        chain = Router(_cfg(), LOCAL).route_chain("coding", _Rlog())
+        self.assertEqual([rt.role for rt in chain], ["coder"])   # cloud.coder skipped under local_only

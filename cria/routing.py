@@ -79,12 +79,35 @@ class Router:
             return fo.get("reasoning") or fo.get("coding") or ()
         return fo.get("coding") or ()
 
+    def route_chain(self, task_type: str, rlog) -> list[Route]:
+        """The ORDERED list of resolvable routes for a task_type — the input to the failover
+        executor. Unresolvable links (cloud off under local_only, missing key) are skipped and
+        logged; an empty list means no routing config / nothing resolved."""
+        routes: list[Route] = []
+        for role in self._chain_for(task_type):
+            resolved = self._resolve(role, rlog)
+            if resolved is not None:
+                provider, model = resolved
+                routes.append(Route(provider, model, role, f"chain[{task_type}] -> {role}"))
+            else:
+                rlog.emit("route.skip", role=role, reason="unresolvable")
+        return routes
+
+    def _local_endpoint(self, lr) -> Upstream:
+        """The Upstream a local role runs on — the shared [upstream] one, or the role's OWN base_url
+        (cria does not assume every role is on the same host/port). Cached per endpoint."""
+        if not lr.base_url:
+            return self._local
+        return self._cached(("local", lr.base_url.rstrip("/")),
+                            lambda: self._provider_factory(lr.base_url, None))
+
     def _resolve(self, role: str, rlog) -> tuple[object, str | None] | None:
         if role in self._cfg.local_roles:
             # There are no local aliases — cria always uses the server's loaded model. Resolve it now
             # so the wire model + banner + density key carry the real name. None if the server is
             # unreachable; the upstream fills it (or leaves the request's own model) at call time.
-            return self._local, self._local.loaded_model(rlog)
+            provider = self._local_endpoint(self._cfg.local_roles[role])
+            return provider, provider.loaded_model(rlog)
         if role in self._cfg.cloud_pools:
             if self._cfg.local_only:
                 return None
