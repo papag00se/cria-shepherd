@@ -23,11 +23,11 @@ from pathlib import Path
 from . import prompts
 
 # Where ``Config.load(None)`` looks, in order, when no explicit path is given.
-DEFAULT_CONFIG_LOCATIONS: tuple[str, ...] = (
-    "~/.cria/cria.toml",           # cria's home — alongside its logs/plans/verify output
-    "./cria.toml",
-    "~/.config/cria/config.toml",
-)
+# cria's config lives in exactly two places: the user's HOME (global defaults) and the CURRENT
+# DIRECTORY (per-workspace overrides). Both are read and DEEP-MERGED, with the cwd file winning
+# any key both define. No env-var pointer and no XDG path — one obvious place each config lives.
+HOME_CONFIG = "~/.cria/cria.toml"   # cria's home — alongside its logs/plans/verify output
+CWD_CONFIG = "cria.toml"            # the workspace's own overrides (relative to the launch dir)
 
 
 @dataclass(frozen=True)
@@ -294,13 +294,24 @@ class Config:
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "Config":
-        resolved = _resolve_path(path)
-        if resolved is None:
-            # No config anywhere → all defaults, so cria runs out-of-box against
-            # a local llama.cpp on :18084.
-            return cls()
-        with open(resolved, "rb") as fh:
-            data = tomllib.load(fh)
+        if path is not None:
+            # An explicit --config is authoritative: that ONE file, or an error.
+            p = Path(path).expanduser()
+            if not p.is_file():
+                raise FileNotFoundError(f"cria config not found: {p}")
+            data, source = _read_toml(p), str(p)
+        else:
+            # HOME (global) then CWD (per-workspace), deep-merged with CWD winning any overlap.
+            layers = [(q, _read_toml(q)) for q in (Path(HOME_CONFIG).expanduser(), Path(CWD_CONFIG))
+                      if q.is_file()]
+            if not layers:
+                # No config anywhere → all defaults, so cria runs out-of-box against a local
+                # llama.cpp on :18084.
+                return cls()
+            data = {}
+            for _q, d in layers:
+                data = _deep_merge(data, d)
+            source = " + ".join(str(q) for q, _ in layers)
         return cls(
             server=_server(data.get("server", {})),
             upstream=_upstream(data.get("upstream", {})),
@@ -321,27 +332,22 @@ class Config:
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
             ),
             env_file=(str(data["env_file"]) if data.get("env_file") else None),
-            source=str(resolved),
+            source=source,
         )
 
 
-def _resolve_path(path: str | os.PathLike[str] | None) -> Path | None:
-    if path is not None:
-        p = Path(path).expanduser()
-        if not p.is_file():
-            raise FileNotFoundError(f"cria config not found: {p}")
-        return p
-    env = os.environ.get("CRIA_CONFIG")
-    if env:
-        p = Path(env).expanduser()
-        if not p.is_file():
-            raise FileNotFoundError(f"CRIA_CONFIG points at a missing file: {p}")
-        return p
-    for loc in DEFAULT_CONFIG_LOCATIONS:
-        p = Path(loc).expanduser()
-        if p.is_file():
-            return p
-    return None
+def _read_toml(p: Path) -> dict:
+    with open(p, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """``base`` with ``override`` layered on top — nested tables merge key-by-key; ``override``
+    wins any leaf (or table-vs-scalar) collision. Neither input is mutated."""
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 def _server(d: dict) -> ServerConfig:

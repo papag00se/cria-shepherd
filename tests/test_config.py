@@ -2,7 +2,21 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from cria.config import Config
+from cria.config import Config, _deep_merge
+
+
+class DeepMergeTests(unittest.TestCase):
+    def test_cwd_wins_overlap_and_nested_tables_merge(self):
+        home = {"server": {"port": 18085, "host": "0.0.0.0"}, "planner": {"enabled": True},
+                "env_file": "~/.cria/.env"}
+        cwd = {"server": {"port": 9000}, "planner": {"max_gather_rounds": 5}}
+        merged = _deep_merge(home, cwd)
+        self.assertEqual(merged["server"]["port"], 9000)             # cwd WINS the overlapping key
+        self.assertEqual(merged["server"]["host"], "0.0.0.0")        # home key with no override survives
+        self.assertTrue(merged["planner"]["enabled"])                # home-only nested key survives
+        self.assertEqual(merged["planner"]["max_gather_rounds"], 5)  # cwd-only nested key is added
+        self.assertEqual(merged["env_file"], "~/.cria/.env")         # home-only top-level key survives
+        self.assertEqual(home["server"]["port"], 18085)              # inputs not mutated
 
 
 class ConfigTests(unittest.TestCase):

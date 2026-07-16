@@ -2,9 +2,9 @@
 
     python -m cria --config cria.toml
 
-Config resolution order when ``--config`` is omitted: ``$CRIA_CONFIG``,
-``./cria.toml``, ``~/.config/cria/config.toml``, then built-in defaults (which
-point at a local llama.cpp on :18084).
+Config when ``--config`` is omitted: ``~/.cria/cria.toml`` (home defaults) deep-merged
+with ``./cria.toml`` (per-workspace overrides, which WIN any overlapping key), then
+built-in defaults (which point at a local llama.cpp on :18084).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .upstream import Upstream
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cria", description="cria-shepherd service")
-    ap.add_argument("--config", help="path to cria.toml (else $CRIA_CONFIG / ./cria.toml / ~/.config/cria/config.toml)")
+    ap.add_argument("--config", help="path to cria.toml (else ~/.cria/cria.toml merged with ./cria.toml, cwd wins)")
     ap.add_argument("--host", help="override [server].host")
     ap.add_argument("--port", type=int, help="override [server].port")
     ap.add_argument("--log-level", choices=["debug", "info", "warn", "error"], help="override [logging].level")
