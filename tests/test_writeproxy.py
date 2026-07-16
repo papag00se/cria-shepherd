@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from cria.config import CRIA_HOME
 from cria.writeproxy import (
     advertise,
     native_search_name,
@@ -247,3 +248,51 @@ class EditCommandTests(unittest.TestCase):
         self.assertIn("not found", msg)
         self.assertIn("y = 2", msg)                 # shows the file's ACTUAL content near the target
         self.assertEqual(out, "def resolve(handle):\n    y = 2\n")   # unchanged
+
+
+class CriaHomeGuardTests(unittest.TestCase):
+    """The driven model must never read or write inside cria's OWN private dir (~/.cria): no leaking
+    cria's .env credentials, no corrupting cria.toml / loopstate with a stray write. Dual of the
+    no-workspace-pollution rule. A confused small model really did write a `~/.cria/chat-<id>.txt`
+    'message to the user' there — this refuses it at the same chokepoint that lowers the tools."""
+
+    def _lowered(self, name, args):
+        comp = _call(name, args)
+        translate_outbound(comp, _ARR_SHELL, injected={name})
+        return _lowered_cmd(comp)
+
+    def test_write_into_cria_home_is_refused(self):
+        cmd = self._lowered("write_file", {"path": str(CRIA_HOME / "chat-123.txt"), "content": "hi"})
+        self.assertIn("off-limits", cmd)
+        self.assertNotIn("base64 -d", cmd)          # the real write was never composed
+
+    def test_read_of_cria_env_secret_is_refused(self):
+        cmd = self._lowered("read_file", {"path": str(CRIA_HOME / ".env")})
+        self.assertIn("off-limits", cmd)
+        self.assertNotIn("cat ", cmd)               # never cats cria's secrets to the model
+
+    def test_tilde_cria_path_is_refused(self):
+        self.assertIn("off-limits", self._lowered("write_file", {"path": "~/.cria/cria.toml", "content": "x"}))
+
+    def test_dotdot_escape_into_cria_home_is_refused(self):
+        p = str(CRIA_HOME / "sub" / ".." / "loopstate.json")   # normpath collapses to ~/.cria/loopstate.json
+        self.assertIn("off-limits", self._lowered("write_file", {"path": p, "content": "x"}))
+
+    def test_edit_and_list_into_cria_home_are_refused(self):
+        self.assertIn("off-limits", self._lowered("edit_file", {"path": str(CRIA_HOME / "cria.toml"),
+                                                                 "old_string": "a", "new_string": "b"}))
+        self.assertIn("off-limits", self._lowered("list_dir", {"path": str(CRIA_HOME)}))
+
+    def test_workspace_relative_write_is_allowed(self):
+        cmd = self._lowered("write_file", {"path": "src/app.py", "content": "x"})
+        self.assertIn("base64 -d", cmd)             # normal lowering, not refused
+        self.assertNotIn("off-limits", cmd)
+
+    def test_absolute_path_outside_cria_home_is_allowed(self):
+        cmd = self._lowered("write_file", {"path": "/tmp/scratch/app.py", "content": "x"})
+        self.assertIn("base64 -d", cmd)
+        self.assertNotIn("off-limits", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()

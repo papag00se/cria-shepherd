@@ -23,10 +23,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import brave, prompts, webfetch
+from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
 from .toolargs import parse_args as _parse, tool_path as _tool_path
 
@@ -34,6 +37,43 @@ _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
 _READ_NAMES = {"read_file"}
 _LIST_NAMES = {"list_dir"}
+
+# cria's own private dir is off-limits to the driven model — no reading (it holds cria's .env
+# credentials and config) and no writing (a stray file, or worse an overwrite of cria.toml /
+# loopstate, corrupts cria). A confused small model has done both: it invented a `~/.cria/chat-<id>.txt`
+# path and wrote a "message to the user" into it, having no other channel to speak. This is the dual of
+# the no-workspace-pollution rule, enforced at the same chokepoint that lowers the synthetic tools.
+_CRIA_HOME_REFUSAL = (
+    "⟦cria⟧ that path is inside cria's own private directory (~/.cria) and is off-limits — cria's "
+    "config, credentials, and state live there. Use the project workspace for any file you read or "
+    "write. If you meant to tell the user something, just say it in your reply — do not write a file."
+)
+
+
+def _targets_cria_home(path: str) -> bool:
+    """True when a synthetic tool's path resolves INTO cria's own home (~/.cria). Only absolute / ~
+    paths can — a relative path resolves against the harness workspace, never cria's home. Lexical
+    (normpath, not resolve) so `..` can't escape the check and the path need not exist yet."""
+    try:
+        t = Path(path).expanduser()
+        if not t.is_absolute():
+            return False
+        t = Path(os.path.normpath(str(t)))
+        return t == CRIA_HOME or CRIA_HOME in t.parents
+    except (ValueError, OSError):
+        return False
+
+
+def _guarded_path(name: str, args: dict) -> str | None:
+    """The local filesystem path a synthetic tool would touch — for the cria-home guard. None for the
+    non-path tools (web_fetch/web_search take a URL/query, not a local path)."""
+    if name in _WRITE_NAMES or name in _EDIT_NAMES or name in _READ_NAMES:
+        p = _tool_path(args)
+    elif name in _LIST_NAMES:
+        p = args.get("path") or args.get("dir") or args.get("directory")
+    else:
+        return None
+    return str(p) if p else None
 _FETCH_NAMES = {"web_fetch"}
 _SEARCH_NAMES = {"web_search", "local_web_search"}
 
@@ -289,7 +329,14 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
             cmd = None
-            if name in _WRITE_NAMES and name in injected:
+            # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
+            # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
+            # stray write corrupt its state. The refusal is a normal tool result the model reads.
+            if name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
+                cmd = f"printf %s {_qbash(_CRIA_HOME_REFUSAL)}"
+                if rlog is not None:
+                    rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
+            elif name in _WRITE_NAMES and name in injected:
                 path = _tool_path(args)
                 if path:
                     cmd = _write_command(str(path), _repair_double_escaped(str(args.get("content") or args.get("contents") or "")))

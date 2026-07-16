@@ -28,6 +28,11 @@ from . import prompts
 # any key both define. No env-var pointer and no XDG path — one obvious place each config lives.
 HOME_CONFIG = "~/.cria/cria.toml"   # cria's home — alongside its logs/plans/verify output
 CWD_CONFIG = "cria.toml"            # the workspace's own overrides (relative to the launch dir)
+# cria's OWN private directory: config, .env credentials, plan mirrors, logs, per-call captures. The
+# dual of the no-workspace-pollution rule — the driven MODEL must never read or write in here (the
+# writeproxy refuses synthetic-tool paths that resolve into it), so it can't leak cria's secrets or
+# clobber cria's state by writing a stray file.
+CRIA_HOME = Path("~/.cria").expanduser()
 
 
 @dataclass(frozen=True)
