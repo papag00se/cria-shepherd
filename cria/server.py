@@ -421,13 +421,14 @@ class CriaHandler(BaseHTTPRequestHandler):
             body["messages"] = represent_inbound(body.get("messages", []), rlog)
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
 
-    def _translate_out(self, completion: dict, rlog) -> dict:
+    def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
-        request. Set up in `_setup_translation`."""
+        request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
+        fetch/search repeat + stop-guessing gates."""
         if self._shell_tool is not None:
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
-                               native_search=getattr(self, "_native_search", None))
+                               native_search=getattr(self, "_native_search", None), session=sess_key)
         return completion
 
     def _guarded_coder_chat(self, provider):
@@ -703,7 +704,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if server.loop is not None and (server.loop.knows_session(sk) or (classification is not None and classification.engagement == "task")):
                 completion = server.loop.drive(body, sk, classification, rlog)
                 if completion is not None:
-                    yield from completion_to_sse(self._finalize(self._translate_out(completion, rlog), sk, rlog))
+                    yield from completion_to_sse(self._finalize(self._translate_out(completion, sk, rlog), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
@@ -712,7 +713,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
-                post=lambda c: self._translate_out(c, rlog),  # lower a mid-stream-recovered write_file
+                post=lambda c: self._translate_out(c, sk, rlog),  # lower a mid-stream-recovered write_file
             )
             yield from wrap_stream(stream, indic)
         except UpstreamError as e:
@@ -734,7 +735,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if server.loop is not None and (server.loop.knows_session(sess_key) or (classification is not None and classification.engagement == "task")):
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
-                out = self._finalize(self._translate_out(completion, rlog), sess_key, rlog)
+                out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
                 _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
@@ -765,7 +766,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
-        out = self._finalize(self._translate_out(comp, rlog), sess_key, rlog)
+        out = self._finalize(self._translate_out(comp, sess_key, rlog), sess_key, rlog)
         _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
         return out, indic
 

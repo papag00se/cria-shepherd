@@ -147,16 +147,85 @@ def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: O
     _DOC_CACHE[url] = (status, ct, reduced, parsed)
 
 
+# --- coder-loop gate state (cria is a persistent server) -----------------------------------
+# Exact external fetches/searches already made THIS SESSION (an identical repeat can only return
+# what the model has), and the consecutive-failure streak (the stop-guessing nudge). Bounded so a
+# long-lived server can't grow unboundedly. Internal/localhost URLs are never gated (a dev server
+# the model may be polling). Ports web_fetch.rs::gate_fetch + note_fetch_outcome + local_web_search
+# gate_search, adapted to cria's own session state instead of Rust's SessionTurnStore.
+_FETCH_SEEN: dict[str, set] = {}
+_FETCH_STREAK: dict[str, int] = {}
+_SEARCH_SEEN: dict[str, set] = {}
+_GATE_CAP = 256
+
+
 def clear_cache() -> None:
     _DOC_CACHE.clear()
+    _FETCH_SEEN.clear()
+    _FETCH_STREAK.clear()
+    _SEARCH_SEEN.clear()
+
+
+def _bound(store: dict) -> None:
+    if len(store) > _GATE_CAP:
+        store.clear()
+
+
+def _note_streak(session: str, status: int) -> int:
+    """Consecutive non-2xx fetches this session; a 2xx resets it. Returns the current streak."""
+    if 200 <= status < 300:
+        _FETCH_STREAK[session] = 0
+        return 0
+    n = _FETCH_STREAK.get(session, 0) + 1
+    _FETCH_STREAK[session] = n
+    _bound(_FETCH_STREAK)
+    return n
+
+
+def gate_search(session: Optional[str], query: str) -> Optional[str]:
+    """Refuse an exact-repeat web_search this session (results don't change turn to turn): returns
+    the HTTP-400 refusal text, or None to proceed (recording the query). No session → always proceed."""
+    q = (query or "").strip().lower()
+    if not session or not q:
+        return None
+    seen = _SEARCH_SEEN.setdefault(session, set())
+    if q in seen:
+        return (f'HTTP 400 Bad Request · web_search "{query}"\n'
+                "You already ran this search this session — the results won't differ. Use them, "
+                "search something different, or web_fetch a specific URL.")
+    seen.add(q)
+    _bound(_SEARCH_SEEN)
+    return None
 
 
 # --- the entry point (web_fetch.rs::fetch_nav) ---------------------------------------------
 
 def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = None,
-              cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None) -> str:
+              cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None,
+              session: Optional[str] = None) -> str:
     """Plain fetch, ``find=`` selection, or ``cursor=`` pagination, backed by the URL cache.
-    Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx)."""
+    Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx).
+
+    ``session`` enables the coder-loop gates: an exact repeat of an EXTERNAL fetch already made this
+    session is refused (it can only return what the model has), and after GUESS_STREAK_THRESHOLD
+    consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate."""
+    external = not is_internal_url(url)
+    seen_key = (url, find or "", cursor or "")
+    if session and external and seen_key in _FETCH_SEEN.get(session, ()):
+        return (f"HTTP 400 Bad Request · web_fetch {url}\n"
+                "You already fetched this exact request (same url, find, cursor) this session — the "
+                "result won't differ. Use what you already have, or fetch something different.")
+    out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent)
+    if session and external and status is not None:
+        _FETCH_SEEN.setdefault(session, set()).add(seen_key)
+        _bound(_FETCH_SEEN)
+        out += guess_hint(status, _note_streak(session, status))
+    return out
+
+
+def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, Optional[int]]:
+    """Fetch (or serve from cache) → reduce → render to the model-facing text. Returns
+    ``(text, status)``; ``status`` is None on a transport error (no HTTP response)."""
     navigating = bool(find) or bool(cursor)
     cached = _DOC_CACHE.get(url) if navigating else None
     if cached is not None:
@@ -165,9 +234,9 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
         try:
             r = fetch(url, user_agent)
         except ValueError as e:
-            return str(e)
+            return str(e), None
         except (urllib.error.URLError, OSError) as e:
-            return f"web_fetch error fetching {url}: {e}"
+            return f"web_fetch error fetching {url}: {e}", None
         reduced, parsed = reduce_for_cache(r.body, r.content_type, url)
         status, ct = r.status, r.content_type
         _cache_put(url, status, ct, reduced, parsed)
@@ -175,13 +244,13 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 "The response body was EMPTY. Retrying this exact URL returns the same empty "
-                "result — try a different source or path.")
+                "result — try a different source or path."), status
     if find:
         slice_ = find_in(reduced, parsed, find, cap_tokens)
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
-                f'find="{find.strip()}"\n\n---\n{slice_}')
+                f'find="{find.strip()}"\n\n---\n{slice_}'), status
     offset = _parse_cursor(cursor) if cursor else 0
-    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens)
+    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens), status
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------

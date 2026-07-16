@@ -26,7 +26,7 @@ import json
 import re
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, prompts
+from . import brave, prompts, webfetch
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
 from .toolargs import parse_args as _parse, tool_path as _tool_path
 
@@ -214,21 +214,22 @@ def _list_command(args: dict) -> str:
     return f"ls -la {_qbash(path)}"
 
 
-def _fetch_command(args: dict) -> str | None:
+def _fetch_command(args: dict, session: str | None = None) -> str | None:
     """cria fetches + reduces the page IN-PROCESS (it runs as a stateful server with a per-URL
     doc cache) and lowers to a ``printf`` of the ALREADY-REDUCED, bounded result — so the harness
     records navigable content that PERSISTS in the conversation, instead of running a raw ``curl``
     whose single-line JSON/YAML it truncates mid-line (the Ada-handle openapi.json incident).
-    Structural JSON/YAML reduce + ``find``/``cursor`` navigation live in :mod:`cria.webfetch`."""
+    Structural JSON/YAML reduce + ``find``/``cursor`` navigation live in :mod:`cria.webfetch`.
+    ``session`` (when known) enables the exact-repeat + stop-guessing gates in webfetch."""
     url = args.get("url")
     if not url:
         return None
-    from . import webfetch  # local import: webfetch → brave/content_reduce; avoid an import cycle
     cursor = args.get("cursor")
     result = webfetch.fetch_nav(
         str(url),
         find=(str(args["find"]) if args.get("find") else None),
         cursor=(str(cursor) if cursor not in (None, "") else None),
+        session=session,
     )
     return f"printf %s {_qbash(result)}"
 
@@ -246,7 +247,8 @@ def _search_command(args: dict, brave_key: str) -> str:
 
 
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
-                       brave_key: str | None = None, native_search: str | None = None) -> dict:
+                       brave_key: str | None = None, native_search: str | None = None,
+                       session: str | None = None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -275,9 +277,12 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif name in _LIST_NAMES and name in injected:
                 cmd = _list_command(args)
             elif name in _FETCH_NAMES and name in injected:
-                cmd = _fetch_command(args)
+                cmd = _fetch_command(args, session)
             elif name == "web_search":
-                if "web_search" in injected and brave_key:  # synthetic → Brave curl
+                refusal = webfetch.gate_search(session, str(args.get("query") or ""))
+                if refusal is not None:  # exact-repeat search this session → refuse, don't burn a call
+                    cmd = f"printf %s {_qbash(refusal)}"
+                elif "web_search" in injected and brave_key:  # synthetic → Brave curl
                     cmd = _search_command(args, brave_key)
                 elif native_search and native_search != "web_search":  # route to the harness's search tool
                     rebuilt.append({**tc, "function": {**fn, "name": native_search}})

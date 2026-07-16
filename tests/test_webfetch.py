@@ -167,3 +167,37 @@ class FetchNavSeedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GateTests(unittest.TestCase):
+    """Coder-loop gates: exact-repeat fetch/search refusal + stop-guessing nudge (session-scoped)."""
+
+    def setUp(self):
+        wf.clear_cache()
+        self._orig = wf.fetch
+        self.addCleanup(lambda: setattr(wf, "fetch", self._orig))
+
+    def test_search_exact_repeat_refused(self):
+        self.assertIsNone(wf.gate_search("s1", "ada handle api"))
+        r = wf.gate_search("s1", "ada handle api")            # exact repeat
+        self.assertIn("HTTP 400", r)
+        self.assertIn("already ran this search", r)
+        self.assertIsNone(wf.gate_search("s2", "ada handle api"))  # a different session is fine
+        self.assertIsNone(wf.gate_search(None, "x"))               # no session → always proceed
+
+    def test_fetch_exact_repeat_refused_but_internal_never_gated(self):
+        wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", '{"a":1}', False)
+        first = wf.fetch_nav("https://api.x/openapi.json", session="s1")
+        self.assertIn("HTTP 200", first)
+        repeat = wf.fetch_nav("https://api.x/openapi.json", session="s1")
+        self.assertIn("already fetched this exact request", repeat)
+        wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "text/plain", "up", False)
+        wf.fetch_nav("http://localhost:8080/health", session="s1")
+        again = wf.fetch_nav("http://localhost:8080/health", session="s1")   # internal → never gated
+        self.assertNotIn("already fetched", again)
+
+    def test_guess_streak_nudge_after_three_non_2xx(self):
+        wf.fetch = lambda u, ua=None: wf.FetchResult(404, u, "text/plain", "nope", False)
+        self.assertNotIn("guessing", wf.fetch_nav("https://api.x/miss0", session="s1"))
+        self.assertNotIn("guessing", wf.fetch_nav("https://api.x/miss1", session="s1"))
+        self.assertIn("guessing", wf.fetch_nav("https://api.x/miss2", session="s1"))   # 3rd in a row
