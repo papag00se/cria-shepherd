@@ -51,7 +51,6 @@ _TMP_SUFFIX = ".cria-tmp"
 # both look blank) would be reported to the model as "Wrote {path}" (false success).
 _WROTE = "⟦cria:wrote⟧"
 _FETCH_TIMEOUT_S = 20
-_FETCH_CAP_BYTES = 65536  # cap a fetched page so one tool result can't blow the window
 
 
 # --------------------------------------------------------------------- synthetic schemas
@@ -77,7 +76,7 @@ def _synthetic_tools() -> dict[str, dict]:
                         {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, ["path"]),
         "list_dir": fn("list_dir", d["list_dir"], {"path": {"type": "string"}}, []),
         "web_fetch": fn("web_fetch", d["web_fetch"],
-                        {"url": {"type": "string"}, "find": {"type": "string"}, "cursor": {"type": "integer"}}, ["url"]),
+                        {"url": {"type": "string"}, "find": {"type": "string"}, "cursor": {"type": "string"}}, ["url"]),
         "web_search": fn("web_search", d["web_search"], {"query": {"type": "string"}}, ["query"]),
     }
 
@@ -216,18 +215,22 @@ def _list_command(args: dict) -> str:
 
 
 def _fetch_command(args: dict) -> str | None:
+    """cria fetches + reduces the page IN-PROCESS (it runs as a stateful server with a per-URL
+    doc cache) and lowers to a ``printf`` of the ALREADY-REDUCED, bounded result — so the harness
+    records navigable content that PERSISTS in the conversation, instead of running a raw ``curl``
+    whose single-line JSON/YAML it truncates mid-line (the Ada-handle openapi.json incident).
+    Structural JSON/YAML reduce + ``find``/``cursor`` navigation live in :mod:`cria.webfetch`."""
     url = args.get("url")
     if not url:
         return None
-    q = _qbash(url)
-    base = f"curl -sL --max-time {_FETCH_TIMEOUT_S} {q}"
-    find = args.get("find")
-    if find:  # return only the matching sections (with context) instead of the whole page
-        return f"{base} | grep -n -C5 -F {_qbash(find)} | head -c {_FETCH_CAP_BYTES}"
+    from . import webfetch  # local import: webfetch → brave/content_reduce; avoid an import cycle
     cursor = args.get("cursor")
-    if isinstance(cursor, int) and cursor > 0:        # page further into the body (byte offset)
-        return f"{base} | tail -c +{cursor} | head -c {_FETCH_CAP_BYTES}"
-    return f"{base} | head -c {_FETCH_CAP_BYTES}"
+    result = webfetch.fetch_nav(
+        str(url),
+        find=(str(args["find"]) if args.get("find") else None),
+        cursor=(str(cursor) if cursor not in (None, "") else None),
+    )
+    return f"printf %s {_qbash(result)}"
 
 
 def _search_command(args: dict, brave_key: str) -> str:

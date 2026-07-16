@@ -148,13 +148,27 @@ class TranslateEditReadTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
-    def test_web_fetch_lowers_to_curl_with_find(self):
-        plain = _call("web_fetch", {"url": "https://x/openapi.json"})
-        translate_outbound(plain, _CMD_SHELL, injected={"web_fetch"})
-        self.assertIn("curl -sL", _lowered_cmd(plain))
-        find = _call("web_fetch", {"url": "https://x", "find": "holders"})
-        translate_outbound(find, _CMD_SHELL, injected={"web_fetch"})
-        self.assertIn("grep", _lowered_cmd(find))     # find → section grep, not a re-fetch
+    def test_web_fetch_fetches_in_process_and_lowers_to_printf(self):
+        # cria fetches + reduces in-process (stateful server) and lowers to a printf of the
+        # already-reduced result — no raw curl the harness would truncate mid-line.
+        from cria import webfetch
+        webfetch.clear_cache()
+        body = json.dumps({"openapi": "3.0.3", "paths": {"/holders": {"get": {"summary": "list holders"}}}})
+        orig = webfetch.fetch
+        webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
+        try:
+            plain = _call("web_fetch", {"url": "https://x/openapi.json"})
+            translate_outbound(plain, _CMD_SHELL, injected={"web_fetch"})
+            cmd = _lowered_cmd(plain)
+            self.assertIn("printf", cmd)               # in-process fetch, not a raw curl
+            self.assertNotIn("curl -sL", cmd)
+            self.assertIn("HTTP 200", cmd)             # the reduced result is embedded verbatim
+            self.assertIn("openapi", cmd)
+            find = _call("web_fetch", {"url": "https://x/openapi.json", "find": "holders"})
+            translate_outbound(find, _CMD_SHELL, injected={"web_fetch"})
+            self.assertIn("list holders", _lowered_cmd(find))  # structural find, served from cache
+        finally:
+            webfetch.fetch = orig
 
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
