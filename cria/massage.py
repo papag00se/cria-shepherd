@@ -71,7 +71,13 @@ _XML_PARAM = re.compile(r"<parameter=([A-Za-z0-9_.-]+)\s*>(.*?)</parameter>", re
 # parse this (the old one here silently dropped nested/numeric args) — recursive descent only.
 _GEMMA_TC_OPEN = "<|tool_call>"
 _GEMMA_TC_CLOSE = "<tool_call|>"
-_GEMMA_STR = '<|"|>' 
+_GEMMA_STR = '<|"|>'
+# LFM2/Fabliq NATIVE delimiters. llama.cpp's peg-native parser already RECOVERS a well-formed
+# native call, so we do NOT recover these — we only STRIP the sentinels from content: whole pairs,
+# then any orphan start/end token a MALFORMED call leaked (a stray `<|tool_call_end|>` poisons the
+# pinned plan/redirect). Ported from tool_aliases.rs (LFM2_TC_OPEN/CLOSE + strip_leaked_tool_calls).
+_LFM2_TC_OPEN = "<|tool_call_start|>"
+_LFM2_TC_CLOSE = "<|tool_call_end|>"
 
 
 def apply(completion: dict, tools=None, rlog=None) -> dict:
@@ -338,6 +344,9 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
         if isinstance(content, str) and "<|channel" in content:  # Gemma's thought channel
             content = _strip_channel(content)
             msg["content"] = content or None
+        if isinstance(content, str) and (_LFM2_TC_OPEN in content or _LFM2_TC_CLOSE in content):
+            content = _strip_lfm2_sentinels(content)  # llama.cpp recovered the call; strip its leaked text
+            msg["content"] = content or None
         if msg.get("tool_calls"):
             continue  # already has real tool calls; don't double-recover
         if not isinstance(content, str) or "<" not in content:
@@ -361,6 +370,32 @@ def _strip_channel(content: str) -> str:
     variant AND the gemma-fable `<|channel>thought…<channel|>` variant (an unterminated open —
     truncated thinking — drops to the end, as upstream)."""
     return _CHANNEL_FABLE.sub("", _CHANNEL.sub("", content)).strip()
+
+
+def _strip_delimited(content: str, open_: str, close_: str) -> str:
+    """Remove every ``open…close`` block; an unterminated final ``open`` (truncated generation)
+    drops to the end. Port of tool_aliases.rs::strip_delimited."""
+    out: list[str] = []
+    rest = content
+    while True:
+        o = rest.find(open_)
+        if o < 0:
+            out.append(rest)
+            break
+        out.append(rest[:o])
+        after = rest[o + len(open_):]
+        c = after.find(close_)
+        rest = after[c + len(close_):] if c >= 0 else ""
+    return "".join(out)
+
+
+def _strip_lfm2_sentinels(content: str) -> str:
+    """LFM2/Fabliq native ``<|tool_call_start|>…<|tool_call_end|>``: strip whole pairs, then any
+    orphan start/end token a MALFORMED call left behind (a stray ``<|tool_call_end|>`` poisons the
+    pinned plan/redirect). STRIP, not RECOVER — llama.cpp's peg-native parser already handles a
+    well-formed native call. Port of tool_aliases.rs::strip_leaked_tool_calls (LFM2 arm)."""
+    out = _strip_delimited(content, _LFM2_TC_OPEN, _LFM2_TC_CLOSE)
+    return out.replace(_LFM2_TC_OPEN, "").replace(_LFM2_TC_CLOSE, "").strip()
 
 
 def _extract_leaked(content: str) -> tuple[list[dict], str]:

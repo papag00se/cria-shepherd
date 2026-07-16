@@ -112,6 +112,26 @@ class GemmaTests(unittest.TestCase):
         self.assertEqual(json.loads(tc["function"]["arguments"])["path"], "src/h.py")
 
 
+class Lfm2SentinelTests(unittest.TestCase):
+    def test_wellformed_pair_stripped_prose_kept(self):
+        # llama.cpp already recovers the call; the sentinel TEXT must not survive into content.
+        c = recover_leaked_tool_calls(_completion(
+            content="Step 1.<|tool_call_start|>read_file(path='x.py')<|tool_call_end|>Step 2."))
+        out = _first(c)["message"]["content"]
+        self.assertNotIn("tool_call_start", out)
+        self.assertNotIn("tool_call_end", out)
+        self.assertIn("Step 1.", out)
+        self.assertIn("Step 2.", out)
+
+    def test_orphan_end_sentinel_stripped(self):
+        # the planner-leak shape: a MALFORMED call leaves a stray end token that poisons the plan.
+        c = recover_leaked_tool_calls(_completion(
+            content="[PLAN]\n{\n  \"read_file(path='r.py')]<|tool_call_end|>"))
+        out = _first(c)["message"]["content"]
+        self.assertNotIn("tool_call_end", out)
+        self.assertIn("[PLAN]", out)
+
+
 class DeepPatchTests(unittest.TestCase):
     def _norm(self, patch):
         c = normalize_apply_patch(_completion(tool_calls=[_tc("apply_patch", json.dumps({"input": patch}))]))
