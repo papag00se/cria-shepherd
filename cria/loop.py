@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, focustrim, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
+from . import callcapture, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -759,9 +759,13 @@ class Loop:
         else:
             truth = "(the checks could not run)"
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
+        # Fresh-disk grounding: read the files the coder is touching as they ARE on disk now, so the
+        # reasoner reasons from real bytes instead of the transcript's stale view (the groundtruth port).
+        disk = _fresh_disk_facts(self._ctx.workspace_root, sess.recent_writes, sess.spin_path)
         user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
                               repeat_action=sess.repeat_action, evidence=evidence or "(none)",
-                              truth=_clip_tail(truth, 1200))
+                              truth=_clip_tail(truth, 1200),
+                              disk=_clip_tail(disk, 2000) or "(no files touched yet)")
         text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, prompts.load("redirect"),
                          user, rlog, phase="reasoner")  # retry_off defaults True → the same two-pass
         if text:
@@ -1821,6 +1825,26 @@ def _coder_evidence(messages: list[dict], probe_id, limit: int = 3) -> str:
             if len(out) >= limit:
                 break
     return "\n---\n".join(reversed(out))
+
+
+MAX_REDIRECT_FILES = 5  # cap fresh-disk snapshots fed to a redirect — context, not the whole tree
+
+
+def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
+    """The files the coder has been TOUCHING, read from disk NOW (via cria.groundtruth) — not the
+    transcript's stale 'what the model said it wrote' view. This is the grounding the reasoned
+    redirect was missing (groundtruth.py was ported but never wired). Empty when the workspace root
+    is unknown or nothing has been written yet, so the redirect degrades to its prior behavior."""
+    if not root:
+        return ""
+    paths: list[str] = []
+    for p in list(recent_writes or []) + [spin_path]:
+        if p and p not in paths:
+            paths.append(p)
+    if not paths:
+        return ""
+    snaps = groundtruth.file_snapshot(root, paths[:MAX_REDIRECT_FILES], groundtruth.DEFAULT_FILE_CAP)
+    return groundtruth.GroundTruth(files=snaps).render()
 
 
 def _completion_text(completion: dict) -> str:

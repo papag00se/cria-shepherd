@@ -2109,3 +2109,24 @@ class GuardStoreIsolationTests(unittest.TestCase):
         for i in range(_MAX_GUARD_STATES + 5):                     # never grows unboundedly
             st.get(f"sid:{i}")
         self.assertLessEqual(len(st._m), _MAX_GUARD_STATES + 1)
+
+
+class FreshDiskFactsTests(unittest.TestCase):
+    """The reasoned redirect now grounds on the files as they ARE on disk (groundtruth port),
+    not the transcript's stale view."""
+
+    def test_reads_current_bytes_and_reports_missing(self):
+        import os
+        import tempfile
+
+        from cria.loop import _fresh_disk_facts
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "h.py"), "w") as f:
+            f.write("def f():\n    return 42\n")
+        out = _fresh_disk_facts(d, ["h.py", None, "h.py"], "")   # dedups, skips None
+        self.assertIn("h.py", out)
+        self.assertIn("return 42", out)                          # the ACTUAL current disk bytes
+        self.assertIn("on disk NOW", out)
+        self.assertIn("does NOT exist", _fresh_disk_facts(d, ["nope.py"], ""))  # missing = a fact
+        self.assertEqual(_fresh_disk_facts(None, ["h.py"], ""), "")  # no root → empty (prior behavior)
+        self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
