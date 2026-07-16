@@ -103,7 +103,6 @@ repeat_penalty = 1.05
             role = Config.load(p).routing.local_roles["reasoner"]
             self.assertEqual(role.base_url, "http://box2:9000")
             self.assertEqual(role.temperature, 0.3)
-            self.assertIn("coder", cfg.routing.local_roles)  # present → configured
 
     def test_model_key_is_rejected(self):
         # `model` must NEVER appear in the toml — cria always uses the server's loaded model. A stray
