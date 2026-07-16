@@ -228,7 +228,7 @@ class LoopStore:
     ``state_path`` (optional) persists the shapes as one small JSON file so a cria restart
     doesn't orphan detection. Live ``PlanSession``s are deliberately NOT persisted (a Plan
     mid-flight has in-memory phases/flags; resuming one across a restart is future work,
-    recorded in DEFERRALS.md)."""
+    recorded in docs/port-fidelity-audit.md)."""
 
     def __init__(self, state_path: str | None = None) -> None:
         self._sessions: dict[str, PlanSession] = {}
@@ -1021,7 +1021,7 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     fingerprint under a stable ``sid:`` session key is therefore the compaction signal — content-
     based, no phrase-matching, harness-agnostic. ``task:``-keyed sessions never detect rewrites
     (``_stable_session`` gates it): their key derives from this very root, so a rewritten root
-    mints a new key and simply looks like a new session (recorded in DEFERRALS.md)."""
+    mints a new key and simply looks like a new session (recorded in docs/port-fidelity-audit.md)."""
     for m in messages:
         if m.get("role") == "user" and not _is_env_context(m):
             text = _content_text(m.get("content"))

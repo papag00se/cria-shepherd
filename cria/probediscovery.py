@@ -783,7 +783,7 @@ def build_glue(p: ProjectDir, out: list[ProbeCandidate]) -> None:
 #   completion selection GUARANTEES every tier<=1 candidate runs):
 #     Rust -> cargo check · Go -> go build/vet · JVM -> mvn/gradle compile ·
 #     .NET -> dotnet build · Elixir -> mix compile · TS -> tsc --noEmit
-#   (TypeScript without a tsconfig has no parse-only check — recorded in DEFERRALS.)
+#   (TypeScript without a tsconfig has no parse-only check — recorded in docs/port-fidelity-audit.md.)
 
 # Per-file parse checks are capped so a huge tree can't compose a giant script
 # (same bound the old floor used).

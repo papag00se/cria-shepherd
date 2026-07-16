@@ -40,7 +40,7 @@ they can't accrete in context or confuse the model.
 
 **Guards fired** (the human notice; the nudge itself is the in-context directive)
 - Repetition guard · Forced-diagnosis guard · Context-reset guard · Rumination guard
-- Quality gate · Patch-failed → `write_file` rewrite · Malformed-tool-call recovered
+- Patch-failed → `write_file` rewrite · Malformed-tool-call recovered
 
 **Context-shaping events**
 - Calibrated context budget (learned real-token ratio).
