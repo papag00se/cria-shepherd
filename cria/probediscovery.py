@@ -791,6 +791,32 @@ MAX_FLOOR_FILES_PER_LANG = 40
 # The same skip list the linter floor used, as a compileall -x regex.
 _COMPILEALL_SKIP_RE = r"(^|/)(\.git|\.cria|__pycache__|venv|\.venv|node_modules|dist|build)(/|$)"
 
+# Config-file syntax floor (NOT in the Rust — a cria congruence add): a broken pyproject.toml /
+# Cargo.toml / *.toml has no compiler to catch it, so the model rewrites it blind. Parse each with
+# stdlib tomllib and print `<file>: <error>` (the message carries the line/column). Abstains if no
+# TOML parser is present (py<3.11 without tomli) — never blocks on a missing tool. (No JSON floor:
+# tsconfig.json / *.jsonc legitimately allow comments, so a strict json.load would false-positive
+# on valid config and wrongly block a 'done'.)
+_TOML_CHECK = (
+    "import sys\n"
+    "try:\n"
+    "    import tomllib\n"
+    "except ModuleNotFoundError:\n"
+    "    try:\n"
+    "        import tomli as tomllib\n"
+    "    except ModuleNotFoundError:\n"
+    "        sys.exit(0)\n"
+    "bad = 0\n"
+    "for f in sys.argv[1:]:\n"
+    "    try:\n"
+    "        with open(f, 'rb') as fh:\n"
+    "            tomllib.load(fh)\n"
+    "    except Exception as e:\n"
+    "        print('%s: %s' % (f, e))\n"
+    "        bad = 1\n"
+    "sys.exit(bad)\n"
+)
+
 
 def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     """File-presence tier-0 candidates for the workspace (see the table above).
@@ -813,6 +839,10 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     for f in linterprobe.collect_files(str(root), ["rb"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["ruby", "-c", f],
                         root, 95, 95, ProbeCost.Cheap, "Ruby file present: parse floor"))
+    tomls = linterprobe.collect_files(str(root), ["toml"])[:MAX_FLOOR_FILES_PER_LANG]
+    if tomls:
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _TOML_CHECK, *tomls],
+                        root, 95, 95, ProbeCost.Cheap, "TOML config present: parse floor"))
     return out
 
 

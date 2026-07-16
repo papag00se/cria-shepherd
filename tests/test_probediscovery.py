@@ -197,5 +197,26 @@ class PythonFallbackTests(DiscoveryCase):
         self.assertNotIn("python -m pytest -q", sc)
 
 
+class TomlFloorTests(DiscoveryCase):
+    def test_toml_floor_added_when_a_toml_is_present_and_catches_a_break(self):
+        import subprocess
+        from cria.probediscovery import syntax_floor_candidates
+        write(self.d, "pyproject.toml", 'name = "ok"\n[tool.x]\ny = 1\n')
+        toml = [c for c in syntax_floor_candidates(self.d) if c.kind is ProbeKind.SyntaxCheck and "TOML" in c.reason]
+        self.assertEqual(len(toml), 1)
+        # valid toml → exit 0
+        self.assertEqual(subprocess.run(toml[0].command, cwd=self.d, capture_output=True).returncode, 0)
+        # break it → the floor reports the file and exits non-zero (the ground truth the model lacked)
+        write(self.d, "pyproject.toml", "name = \n")   # invalid value
+        r = subprocess.run(syntax_floor_candidates(self.d)[-1].command, cwd=self.d, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("pyproject.toml", r.stdout)
+
+    def test_no_toml_floor_without_a_toml(self):
+        from cria.probediscovery import syntax_floor_candidates
+        write(self.d, "x.py", "print(1)\n")
+        self.assertFalse([c for c in syntax_floor_candidates(self.d) if "TOML" in c.reason])
+
+
 if __name__ == "__main__":
     unittest.main()

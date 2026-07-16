@@ -580,14 +580,16 @@ class GateFlowTests(unittest.TestCase):
         return t
 
     def _gate_result(self, floor_exit=0, probe_body=None):
-        # Unified design: sections are probe-<i> in candidate order. For the _ws fixture the
-        # order is [compileall(SyntaxCheck), pyflakes(Lint), pytest(Test)].
+        # Unified design: sections are probe-<i> in candidate order. The _ws fixture has both a .py
+        # and a pyproject.toml, so the order is [compileall(SyntaxCheck), TOML(SyntaxCheck),
+        # pyflakes(Lint), pytest(Test)].
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         parts = [f"{P}probe-0{S}",
                  "EXIT:0" if floor_exit == 0 else '  File "x.py", line 3\nSyntaxError: bad\nEXIT:1',
-                 f"{P}probe-1{S}", "EXIT:0"]
+                 f"{P}probe-1{S}", "EXIT:0",   # TOML floor (pyproject.toml present)
+                 f"{P}probe-2{S}", "EXIT:0"]   # pyflakes
         if probe_body is not None:
-            parts += [f"{P}probe-2{S}", probe_body]
+            parts += [f"{P}probe-3{S}", probe_body]   # pytest
         parts += [f"{P}git{S}", "abc"]
         return "\n".join(parts)
 
