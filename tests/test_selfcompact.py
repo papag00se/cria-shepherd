@@ -72,3 +72,41 @@ class SelfCompactTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PinnedTaskTests(unittest.TestCase):
+    """The conversation-root task is re-emitted verbatim as a ⟦cria:task⟧ north-star header on every
+    compacted view — so it can't erode into the summary across rounds. Without it a plan-off session
+    lost its goal (only an impoverished one-line rollup survived) and drifted onto tangential work."""
+
+    def test_task_header_pinned_after_system_before_rollup(self):
+        m = _msgs(40)
+        out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(),
+                                  pinned_task="Build the Handle resolver", **_KW)
+        self.assertTrue(applied)
+        self.assertEqual(out[0], m[0])                                    # system still first
+        self.assertIn(selfcompact.TASK_MARKER, str(out[1]["content"]))    # task header right after system
+        self.assertIn("Build the Handle resolver", str(out[1]["content"]))
+        contents = [str(x.get("content")) for x in out]
+        ti = next(i for i, c in enumerate(contents) if selfcompact.TASK_MARKER in c)
+        si = next(i for i, c in enumerate(contents) if selfcompact.SUMMARY_MARKER in c)
+        self.assertLess(ti, si)                                          # task leads, rollup follows
+
+    def test_task_survives_rounds_despite_impoverished_summary(self):
+        task = "Resolve an Ada Handle to a Cardano address via api.handle.me"
+        state = CompactState()
+        for n in (40, 60, 90):   # summarizer returns a stale, task-less one-liner every round
+            out, state, applied = compact(_msgs(n), lambda mm: "mocked requests.get in tests", state,
+                                          pinned_task=task, **_KW)
+            self.assertTrue(applied)
+            self.assertTrue(any(task in str(x.get("content")) for x in out))   # never lost
+
+    def test_no_pinned_task_no_header(self):
+        out, _, applied = compact(_msgs(40), lambda mm: "ROLLUP", CompactState(), **_KW)
+        self.assertTrue(applied)
+        self.assertFalse(any(selfcompact.TASK_MARKER in str(x.get("content")) for x in out))
+
+    def test_huge_task_is_clipped(self):
+        out, _, _ = compact(_msgs(40), lambda mm: "R", CompactState(), pinned_task="Z" * 5000, **_KW)
+        header = next(str(x["content"]) for x in out if selfcompact.TASK_MARKER in str(x.get("content")))
+        self.assertEqual(header.count("Z"), selfcompact._TASK_CLIP)   # task body clipped to the cap

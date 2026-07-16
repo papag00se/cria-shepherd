@@ -34,9 +34,11 @@ TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exce
 KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦cria:rollup⟧"     # tags the injected summary — floor-protected + identifiable
+TASK_MARKER = "⟦cria:task⟧"          # tags the pinned original-task header — the session's north star
 # Anchor markers whose messages are ALWAYS kept verbatim. Mirrors loop.BRIEFING_OPEN /
 # probegate.SECTION_PREFIX (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", SUMMARY_MARKER)
+_ANCHOR_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
+_TASK_CLIP = 2000   # chars — the task is the north star, kept verbatim but bounded against a huge spec
 
 
 @dataclass
@@ -103,12 +105,25 @@ def _summary_msg(summary: str) -> dict:
         f"{summary}")}
 
 
+def _task_msg(task: str) -> dict:
+    return {"role": "user", "content": (
+        f"{TASK_MARKER} Your ORIGINAL task for this session — keep it as your north star and do NOT "
+        f"drift onto tangential work; everything below serves THIS:\n{task[:_TASK_CLIP]}")}
+
+
 def compact(messages: list[dict], summarize, state: CompactState, *,
             trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
-            recompact_tokens: int = RECOMPACT_TOKENS) -> tuple[list[dict], CompactState, bool]:
+            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "") -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
-    trigger, or when there is no middle to compact (the recent tail already spans everything)."""
+    trigger, or when there is no middle to compact (the recent tail already spans everything).
+
+    ``pinned_task`` (the conversation's ROOT task, supplied by the caller — it alone can detect the
+    task past the harness env-context/reframe) is re-emitted verbatim as a ⟦cria:task⟧ header on every
+    compacted view. Without it the task — a plain user message with no anchor marker — falls into the
+    summarizable middle and ERODES across rounds (round 2's rollup summarizes round 1's rollup), which
+    is how a plan-off session lost its goal and drifted onto tangential build/deploy work. Pinning it
+    keeps the north star authoritative and immune to summary degradation."""
     if sum(_msg_tokens(m) for m in messages) <= trigger_tokens:
         return messages, state, False
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
@@ -126,5 +141,8 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     covered = max(head_end, min(state.covered, tail_start))
     anchors = [m for m in messages[head_end:covered] if _has_anchor(m)]   # kept verbatim, never elided
     band = messages[covered:tail_start]                                   # old-but-unfolded, verbatim
-    out = messages[:head_end] + anchors + [_summary_msg(state.summary)] + band + messages[tail_start:]
+    # The pinned task leads the compacted view (right after cria's system prompt) so the north star is
+    # the first thing the coder reads — never summarized, re-emitted fresh from the caller each turn.
+    task = [_task_msg(pinned_task)] if pinned_task.strip() else []
+    out = messages[:head_end] + task + anchors + [_summary_msg(state.summary)] + band + messages[tail_start:]
     return out, state, True

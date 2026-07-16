@@ -476,18 +476,21 @@ class CriaHandler(BaseHTTPRequestHandler):
             return provider.chat
         return lambda body, rlog: watched(body, rlog, watch=detector.check)
 
-    def _maybe_self_compact(self, framed: dict, sess_key: str, rlog) -> dict:
+    def _maybe_self_compact(self, framed: dict, sess_key: str, rlog, root_task: str = "") -> dict:
         """Roll the OLD middle of a long plan-off coder history into a reasoner summary (info-
         preserving) instead of letting the floor drop-oldest lose it. Gated by [context] self_compact
         and STABLE sessions only (an unstable task: key can't persist the throttle state without the
-        cross-conversation leak — same posture as the guard/gate). Runs BEFORE focus_trim + the floor."""
+        cross-conversation leak — same posture as the guard/gate). Runs BEFORE focus_trim + the floor.
+        ``root_task`` (the raw conversation-root task from the caller) is pinned verbatim so it can't
+        erode across compaction rounds — the plan loop keeps it in the protected system message, but the
+        plan-off coder carries the task as a plain user turn that would otherwise be summarized away."""
         if not self.server.cfg.context.self_compact or not _stable_session(sess_key):
             return framed
         msgs = framed.get("messages") or []
         state = self.server.compact_states.get(sess_key) or selfcompact.CompactState()
         out, state, applied = selfcompact.compact(
             msgs, lambda mm: self._summarize(mm, rlog), state,
-            trigger_tokens=self.server.cfg.context.trigger_compaction)
+            trigger_tokens=self.server.cfg.context.trigger_compaction, pinned_task=root_task)
         if not applied:
             return framed
         if len(self.server.compact_states) >= 256:
@@ -608,7 +611,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
         if extra:
             framed = {**framed, "messages": framed["messages"] + extra}
-        framed = self._maybe_self_compact(framed, sess_key, rlog)  # roll the old middle into a summary
+        # Pin the conversation-root task (extracted from the RAW body, where env-context detection
+        # still works — framed has already been reframed) so self-compaction can't summarize it away.
+        framed = self._maybe_self_compact(framed, sess_key, rlog,
+                                          root_task=_history_root(body.get("messages", []))[0])
         framed = self._apply_route_role(framed, indic)
         framed, _ = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (logged, not bannered —
         comp = self._run_coder(framed, coder_chat, gs, rlog)  # routine housekeeping, not an intervention)
