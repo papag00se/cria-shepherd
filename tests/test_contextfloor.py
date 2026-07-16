@@ -261,3 +261,23 @@ class ProtectedOverflowTests(unittest.TestCase):
                 {"role": "user", "content": "task"}]
         out, tools, rep = contextfloor.fit(msgs, None, window=8000, reserve=1000, safety=1.8)
         self.assertTrue(rep.over_budget)                  # honest: nothing droppable remained
+
+
+class FloorSynthesisTests(unittest.TestCase):
+    """Dropping old turns SYNTHESIZES their durable state (files modified) instead of deleting it."""
+
+    def test_drop_oldest_synthesizes_modified_files(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "assistant", "content": "writing",
+             "tool_calls": [{"id": "c1", "function": {"name": "write_file",
+                             "arguments": '{"path": "app/resolver.py", "content": "x"}'}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "wrote"},
+            {"role": "user", "content": "x" * 4000},
+        ]
+        out, dropped = contextfloor._drop_oldest(msgs, msg_budget=50)
+        self.assertGreater(dropped, 0)
+        joined = " ".join(str(m.get("content")) for m in out)
+        self.assertIn(contextfloor._COMPACTED_MARK, joined)   # dropped turns synthesized, not vanished
+        self.assertIn("app/resolver.py", joined)              # the modified file survives the drop
+        self.assertEqual(out[0]["role"], "system")            # system stays at the front

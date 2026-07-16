@@ -34,13 +34,23 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from . import toolargs
 from .content_reduce import content_reduce, est_tokens
 
+# The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
+# silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
+_COMPACTED_MARK = "⟦cria:compacted⟧"
+_MAX_COMPACTED_FILES = 30
+# Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
+_WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_editor",
+                     "create_file", "text_editor")
+
 # Anchors the floor must NOT silently trim: the completion-briefing envelope a follow-up re-reads
-# FROM history, and cria's ground-truth gate output the coder must read to fix a step. Literals
-# mirror loop.BRIEFING_OPEN / probegate.SECTION_PREFIX — contextfloor is low-level and imports
-# neither (avoids a cycle); a test asserts they stay in sync.
-_PROTECT_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_")
+# FROM history, cria's ground-truth gate output the coder must read to fix a step, and the
+# synthesized-state note that stands in for dropped turns. Literals mirror loop.BRIEFING_OPEN /
+# probegate.SECTION_PREFIX — contextfloor is low-level and imports neither (avoids a cycle); a test
+# asserts they stay in sync.
+_PROTECT_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK)
 
 
 def _has_protect_marker(m: dict) -> bool:
@@ -330,8 +340,10 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
 
 
 def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
-    """Drop oldest droppable messages (not system, not the active turn) until the
-    transcript fits the budget or nothing droppable remains."""
+    """Drop oldest droppable messages (not system, not the active turn) until the transcript fits
+    the budget or nothing droppable remains — but SYNTHESIZE their durable state (the files they
+    modified) into a protected note in their place, so a long overflowing session doesn't lose track
+    of what exists on disk (spirit of trim/state_extract — deterministic, no LLM)."""
     prot = _protected_mask(messages)
     keep = [True] * len(messages)
     total = _msgs_tokens(messages)
@@ -344,7 +356,46 @@ def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int
         total -= est_tokens(_msg_text(m))
         keep[i] = False
         dropped += 1
-    return [m for i, m in enumerate(messages) if keep[i]], dropped
+    kept = [m for i, m in enumerate(messages) if keep[i]]
+    if dropped:
+        note = _compacted_note([m for i, m in enumerate(messages) if not keep[i]], dropped)
+        kept = _insert_after_leading_system(kept, note)
+    return kept, dropped
+
+
+def _modified_files(msgs: list[dict]) -> list[str]:
+    """Deduped paths of files that the given (dropped) assistant turns WROTE/EDITED — the fact that
+    survives the drop even though the content doesn't."""
+    out: list[str] = []
+    for m in msgs:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if (fn.get("name") or "") in _WRITE_TOOL_NAMES:
+                p = toolargs.tool_path(toolargs.parse_args(fn.get("arguments")))
+                if p and p not in out:
+                    out.append(p)
+    return out
+
+
+def _compacted_note(dropped_msgs: list[dict], dropped: int) -> dict:
+    """The synthesized stand-in for the dropped turns."""
+    body = f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."
+    files = _modified_files(dropped_msgs)
+    if files:
+        body += (" Files modified in them (still on disk — re-read one if you need its current "
+                 "contents): " + ", ".join(files[:_MAX_COMPACTED_FILES]) + ".")
+    return {"role": "user", "content": body}
+
+
+def _insert_after_leading_system(msgs: list[dict], note: dict) -> list[dict]:
+    """Place the synthesized note right after the leading run of system/protected messages, so it
+    stands at the head of the (now-compacted) conversation body."""
+    i = 0
+    while i < len(msgs) and (msgs[i].get("role") in ("system", "developer") or _has_protect_marker(msgs[i])):
+        i += 1
+    return msgs[:i] + [note] + msgs[i:]
 
 
 def _strip_orphan_tools(messages: list[dict]) -> tuple[list[dict], int]:
