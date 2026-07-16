@@ -249,6 +249,10 @@ class ContextConfig:
     a small model isn't drowning in its own repeated failed commands (see focustrim.py)."""
 
     focus_trim: bool = True
+    # Roll the OLD middle of a long plan-off coder history into a reasoner summary (information-
+    # preserving) instead of letting the floor drop-oldest lose it. On above a message threshold;
+    # stable sessions only. See selfcompact.py.
+    self_compact: bool = True
 
 
 @dataclass(frozen=True)
@@ -309,6 +313,7 @@ class Config:
             ),
             context=ContextConfig(
                 focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
+                self_compact=bool(data.get("context", {}).get("self_compact", True)),
             ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),

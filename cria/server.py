@@ -19,8 +19,8 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import focustrim, massage, prompts, responses, rumination
-from .classify import Classifier
+from . import focustrim, massage, prompts, responses, rumination, selfcompact
+from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
 from .envfile import env_secret
@@ -72,6 +72,21 @@ def _error_sse(message: str) -> bytes:
     """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
     payload = {"error": {"message": message, "type": "upstream_error"}}
     return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
+
+
+def _msg_digest(m: dict) -> str:
+    """A compact one-line rendering of a message for the self-compaction transcript: its text plus
+    any tool call as ``name(args…)`` and a clipped tool result — enough for a factual summary."""
+    parts = []
+    c = m.get("content")
+    if isinstance(c, str) and c.strip():
+        parts.append(c[:800])
+    elif isinstance(c, list):
+        parts.append(" ".join(p.get("text", "") for p in c if isinstance(p, dict))[:800])
+    for tc in m.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        parts.append(f"{fn.get('name', '?')}({str(fn.get('arguments', ''))[:200]})")
+    return " ".join(p for p in parts if p)[:1000]
 
 
 def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
@@ -191,6 +206,7 @@ class CriaServer(ThreadingHTTPServer):
         # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
         # own in PlanSession). Same shared guard implementation drives both.
         self.guard_store = GuardStore()
+        self.compact_states: dict = {}  # per-(stable)-session selfcompact.CompactState rollup cache
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
@@ -439,6 +455,42 @@ class CriaHandler(BaseHTTPRequestHandler):
             return provider.chat
         return lambda body, rlog: watched(body, rlog, watch=detector.check)
 
+    def _maybe_self_compact(self, framed: dict, sess_key: str, rlog) -> dict:
+        """Roll the OLD middle of a long plan-off coder history into a reasoner summary (info-
+        preserving) instead of letting the floor drop-oldest lose it. Gated by [context] self_compact
+        and STABLE sessions only (an unstable task: key can't persist the throttle state without the
+        cross-conversation leak — same posture as the guard/gate). Runs BEFORE focus_trim + the floor."""
+        if not self.server.cfg.context.self_compact or not _stable_session(sess_key):
+            return framed
+        msgs = framed.get("messages") or []
+        if len(msgs) <= selfcompact.SELFCOMPACT_TRIGGER:
+            return framed
+        state = self.server.compact_states.get(sess_key) or selfcompact.CompactState()
+        out, state, applied = selfcompact.compact(msgs, lambda mm: self._summarize(mm, rlog), state)
+        if not applied:
+            return framed
+        if len(self.server.compact_states) >= 256:
+            self.server.compact_states.clear()  # bound like the other per-session stores
+        self.server.compact_states[sess_key] = state
+        rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=state.covered)
+        return {**framed, "messages": out}
+
+    def _summarize(self, messages: list[dict], rlog) -> str:
+        """Reasoner call that folds a span of the coder transcript into a factual briefing."""
+        transcript = "\n".join(f"{m.get('role')}: {_msg_digest(m)}" for m in messages)[:20000]
+        body = {"stream": False, "temperature": 0, "max_tokens": 1024,
+                "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")},
+                             {"role": "user", "content": transcript}]}
+        if self.server.coder_role is not None:
+            self.server.coder_role.apply(body)  # coder role's sampling (no separate reasoner on plan-off)
+        rlog.phase = "self-compact"
+        try:
+            text = completion_text(self.server.upstream.chat(body, rlog)).strip()
+        except UpstreamError as e:
+            rlog.emit("context.self_compact_error", level="warn", error=str(e))
+            return "(earlier work — summary unavailable)"
+        return text or "(earlier work this session)"
+
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
         """Collapse exact-duplicate tool calls in the OUTBOUND coder body so the model stays focused
         on current state — applied to the FRAMED copy, never the history cria's detectors read.
@@ -543,6 +595,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
         if extra:
             framed = {**framed, "messages": framed["messages"] + extra}
+        framed = self._maybe_self_compact(framed, sess_key, rlog)  # roll the old middle into a summary
         framed = self._apply_route_role(framed, indic)
         framed, _ = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (logged, not bannered —
         comp = self._run_coder(framed, coder_chat, gs, rlog)  # routine housekeeping, not an intervention)

@@ -1,0 +1,5 @@
+You are compressing the earlier part of a coding session into a briefing for the SAME agent to keep working from. Summarize the transcript below into a concise, factual briefing:
+- What was accomplished (files created/edited, functions written).
+- The CURRENT state of the code and any tests (what passes, what still fails and why).
+- What remains to be done / the next step.
+Be specific — name files, functions, and concrete errors. Do NOT invent progress. Output only the briefing, no preamble.
