@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from . import probegate, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
-# exits NON-ZERO by design (a failing check is the signal), so it trips _FAIL_SIGNATURES — but it
+# exits NON-ZERO by design (a failing check is the signal), so it trips the fail signatures — but it
 # is not a model dead-end: squashing it removes the exact ground truth cria injected and, worse,
 # folds it into a note that tells the model "don't repeat these". It must survive the squash.
 _GATE_MARKER = probegate.SECTION_PREFIX
@@ -48,14 +48,26 @@ _GATE_MARKER = probegate.SECTION_PREFIX
 # error the model is fixing is never removed, even across intervening successes).
 _SPAM_KEEP = 2
 
-# Precise failure signatures — matched against a tool RESULT's content. Kept narrow on purpose (a
-# bare "failed"/"error" appears in plenty of legitimate output); these are unambiguous dead ends.
-_FAIL_SIGNATURES = [
+# HARD failures — the tool itself exited non-zero. Unambiguous dead ends.
+_HARD_FAIL_SIGNATURES = [
     re.compile(r"exited with code [1-9]", re.I),   # Codex exec: "Process exited with code 1"
     re.compile(r"\bexit code [1-9]", re.I),
+]
+# SOFT failures — content phrases that USUALLY mean a dead end (a missing file, a bad command). But
+# they also appear in the BODY of a SUCCESSFUL call: a live-API curl that exits 0 and returns
+# {"error":"route_not_found", "docs":"…"} carries the exact hint the model needs. So a soft phrase is
+# only a failure when the tool did NOT explicitly succeed — otherwise squashing it (into a "don't
+# repeat these" note) throws away a real result and steers the model away from re-querying the API.
+_SOFT_FAIL_SIGNATURES = [
     re.compile(r"no such file or directory", re.I),
     re.compile(r"command not found", re.I),
     re.compile(r"\bnot found\b", re.I),
+]
+# Explicit success markers the exec / lowered-web_fetch envelopes always print. Their presence means
+# the TOOL succeeded, so a soft phrase in the content is data, not a failure.
+_SUCCESS_MARKERS = [
+    re.compile(r"exited with code 0\b", re.I),
+    re.compile(r"\bHTTP 2\d\d\b"),
 ]
 
 
@@ -96,7 +108,13 @@ def _single_call(m: dict) -> dict | None:
 
 
 def _is_failure(content) -> bool:
-    return isinstance(content, str) and any(p.search(content) for p in _FAIL_SIGNATURES)
+    if not isinstance(content, str):
+        return False
+    if any(p.search(content) for p in _HARD_FAIL_SIGNATURES):
+        return True
+    if any(p.search(content) for p in _SUCCESS_MARKERS):
+        return False   # the tool exited 0 / returned 2xx → a success whose body just mentions "not found"
+    return any(p.search(content) for p in _SOFT_FAIL_SIGNATURES)
 
 
 def _call_is_gate(tc: dict) -> bool:

@@ -1150,7 +1150,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
-        self.assertIn("repeated the same action", coder.last_user())  # canned fallback
+        self.assertIn("very similar actions", coder.last_user())  # canned fallback
         self.assertIn("no error-class", coder.last_user().lower())    # clean-checks truth included
 
     def test_canned_redirect_foregrounds_the_failing_check(self):
@@ -1169,9 +1169,9 @@ class RepetitionRedirectTests(unittest.TestCase):
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         nudge = coder.last_user()
         self.assertIn("GROUND TRUTH", nudge)                              # the failing check is present
-        self.assertIn("repeated the same action", nudge)                 # and so is the repetition framing
+        self.assertIn("very similar actions", nudge)                 # and so is the repetition framing
         # the ground truth LEADS — it comes before the 'you repeated' text, not buried after it
-        self.assertLess(nudge.index("GROUND TRUTH"), nudge.index("repeated the same action"))
+        self.assertLess(nudge.index("GROUND TRUTH"), nudge.index("very similar actions"))
 
     def test_varying_args_do_not_trip(self):
         ws = self._ws()
@@ -1450,7 +1450,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         with mock.patch("cria.loop.probegate.plan_gate", side_effect=OSError("unreadable")):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.redirect", rlog.kinds())        # canned, not silent
-        self.assertIn("repeated the same action", coder.last_user())
+        self.assertIn("very similar actions", coder.last_user())
 
     def test_shell_native_writes_are_progress(self):
         # The coder writes via heredoc/redirect instead of write_file: still progress, so the
@@ -2219,6 +2219,41 @@ class GroundTruthSilenceTests(unittest.TestCase):
         probe = f"{P}probe-0{S}\ninternal error, aborting collection\nEXIT:1\n{P}git{S}\nabc\n"
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": probe}]}
         self.assertIsNotNone(guard_gate_verdict(gs, body, _Rlog()))   # 'done' NOT accepted
+
+
+class NavRepeatSignatureTests(unittest.TestCase):
+    """Progressive navigation (paging a doc, drilling by key, listing a NEW dir) is progress, not a
+    spiral — a changed url/cursor/path must not trip the repetition redirect. Three progressive
+    web_fetches falsely matched (host tokens dominated the word-bag), aborting a legitimate paginated
+    read (calls 25-28); three list_dir of DIFFERENT paths falsely fired at call 12."""
+
+    def test_progressive_web_fetch_pages_do_not_match(self):
+        from cria.loop import _action_signature, _actions_match
+        a = _action_signature("web_fetch", '{"url":"https://api.handle.me/openapi.json"}')
+        b = _action_signature("web_fetch", '{"url":"https://api.handle.me/openapi.json","cursor":"c16000"}')
+        self.assertFalse(_actions_match(a, b))          # different cursor = progress, not a repeat
+
+    def test_identical_web_fetch_still_matches(self):
+        from cria.loop import _action_signature, _actions_match
+        s = '{"url":"https://api.handle.me/openapi.json","cursor":"c16000"}'
+        self.assertTrue(_actions_match(_action_signature("web_fetch", s), _action_signature("web_fetch", s)))
+
+    def test_list_dir_of_different_paths_do_not_match(self):
+        from cria.loop import _action_signature, _actions_match
+        a = _action_signature("list_dir", '{"path":"/w"}')
+        b = _action_signature("list_dir", '{"path":"/w/docs"}')
+        self.assertFalse(_actions_match(a, b))          # the bogus call-12 "3 times (list_dir docs)"
+
+    def test_list_dir_same_path_matches(self):
+        from cria.loop import _action_signature, _actions_match
+        s = '{"path":"/w"}'
+        self.assertTrue(_actions_match(_action_signature("list_dir", s), _action_signature("list_dir", s)))
+
+    def test_read_file_progressive_start_lines_do_not_match(self):
+        from cria.loop import _action_signature, _actions_match
+        a = _action_signature("read_file", '{"path":"big.py"}')
+        b = _action_signature("read_file", '{"path":"big.py","start_line":200}')
+        self.assertFalse(_actions_match(a, b))
 
 
 if __name__ == "__main__":

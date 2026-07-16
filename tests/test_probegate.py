@@ -298,3 +298,20 @@ class CleanGateOutputTests(unittest.TestCase):
         once = probegate.clean_gate_results(msgs)
         twice = probegate.clean_gate_results(once)
         self.assertEqual(once, twice)
+
+
+class GitOnlyGateTests(unittest.TestCase):
+    """An empty/no-code repo yields zero probe candidates, so plan_gate composes a git-ONLY script.
+    That must NOT read as 'checks pass' — no check actually ran (calls 12-34 of the empty-repo session
+    got a false '⟦cria:checks⟧ no error-class problems' on a git-only gate)."""
+
+    def test_interpret_git_only_gate_is_not_ran(self):
+        from cria.probegate import GatePlan, interpret_gate, SECTION_PREFIX as P, SECTION_SUFFIX as S
+        out = interpret_gate(GatePlan(workspace="/tmp", candidates=[]), f"{P}git{S}\nabc123\n")
+        self.assertFalse(out.ran)          # only a git snapshot came back → no check ran → not clean
+
+    def test_clean_gate_output_git_only_is_not_a_pass(self):
+        from cria.probegate import clean_gate_output, SECTION_PREFIX as P, SECTION_SUFFIX as S
+        out = clean_gate_output(f"pre\n{P}git{S}\nabc123\n")
+        self.assertIn("no usable result", out.lower())     # the neutral no-signal branch...
+        self.assertNotIn("no error-class", out.lower())    # ...NOT the clean/pass message

@@ -133,9 +133,11 @@ def clean_gate_output(raw: str) -> str | None:
     seen: set[str] = set()
     could_not_run = False
     failed_no_detail = False
+    saw_probe = False
     for sid, body in split_sections(raw).items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
             continue
+        saw_probe = True
         text, code = proberun.scrape_exit(body)
         # The EXIT sentinel is the reliable signal (the composed probe always prints it). A launch
         # failure (125/126/127) or timeout (124) means the check did NOT complete — never a code error
@@ -164,6 +166,8 @@ def clean_gate_output(raw: str) -> str | None:
         # advisory-clean lint exit, NOT a failure — so keying on had_content avoids the footgun.
         if code not in (0, None) and not had_content:
             failed_no_detail = True
+    if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
+        could_not_run = True
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at "
                 "the reported line:\n" + "\n".join(findings[:40]))
@@ -200,7 +204,11 @@ def clean_gate_results(messages: list) -> list:
 def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
     sections = split_sections(result_text)
-    if not sections:
+    # ran is TRUE only if an actual check section came back — NOT just the always-present git snapshot.
+    # An empty / no-code repo yields zero candidates, so plan_gate composes a git-ONLY script; treating
+    # that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
+    # actually ran. No probe-* section → ran=False → silence, not a false pass.
+    if not any(k.startswith("probe-") for k in sections):
         return GateOutcome(ran=False)
     out = GateOutcome(ran=True)
 

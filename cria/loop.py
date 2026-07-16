@@ -1918,10 +1918,20 @@ def _extend_summary(summary: str, idx: int, item: str) -> str:
 # of three DIFFERENT files would fire the redirect.
 _BOILERPLATE_WORDS = frozenset({"bash", "sh", "zsh", "dash", "-lc", "-c", "-l", "-e", "env"})
 
+# Navigation/read tools whose repeated use is usually PROGRESS, not a spiral: paging through a doc
+# (web_fetch cursor), drilling by key (find), reading further into a file (start_line), listing a new
+# dir. Their word-set signature is dominated by a constant host/path token ({http, api.handle.me}), so
+# three progressive fetches at different cursors falsely matched as "the same action" and tripped the
+# repetition redirect — aborting a legitimate paginated read. For these, the signature keys on the
+# DISTINGUISHING locator, so a changed url/path/cursor/find/offset reads as progress; only the SAME
+# target repeated (which the web_fetch visibility gate already refuses) matches.
+_NAV_TOOLS = frozenset({"web_fetch", "web_search", "read_file", "list_dir"})
+
 
 def _action_signature(name: str, args: str) -> tuple:
     """The NATURE of a tool call, for repetition matching — not its bytes. A write is its
-    target + content (path, content-hash); everything else is its tool name + a normalized
+    target + content (path, content-hash); a nav/read tool is its target + locator (so paging or
+    drilling to a new spot is progress, not a repeat); everything else is its tool name + a normalized
     word-set of its argument values minus shell boilerplate (flag/word jitter survives, per
     the codex-local lesson that exact fingerprints don't). Args that normalize to NOTHING
     (symbol-only/non-ASCII) fall back to an exact-bytes hash — an empty set must not match
@@ -1932,6 +1942,11 @@ def _action_signature(name: str, args: str) -> tuple:
         body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")
                    or parsed.get("input") or parsed.get("patch") or args)
         return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])
+    if name in _NAV_TOOLS:
+        loc = (parsed.get("url") or parsed.get("path") or parsed.get("dir") or parsed.get("directory") or "",
+               parsed.get("cursor") or "", parsed.get("find") or parsed.get("query") or "",
+               parsed.get("start_line") or parsed.get("offset") or "")
+        return ("nav", name, tuple(str(x) for x in loc))
     text = " ".join(str(v) for v in _flat_values(parsed)) or (args if isinstance(args, str) else "")
     words = frozenset(normalize_search(text)) - _BOILERPLATE_WORDS
     if not words:  # nothing survived normalization → exact bytes only (never a wildcard)
@@ -1956,7 +1971,7 @@ def _actions_match(a: tuple, b: tuple) -> bool:
     or heavily overlapping (Jaccard ≥ 0.7 with ≥3 shared)."""
     if a[0] != b[0] or a[1] != b[1]:
         return False
-    if a[0] == "write":
+    if a[0] in ("write", "nav"):  # exact target+content / target+locator — a changed spot is progress
         return a[2] == b[2]
     sa, sb = a[2], b[2]
     if isinstance(sa, str) or isinstance(sb, str):  # exact-bytes fallback signatures

@@ -179,3 +179,26 @@ class ErrorSquashTests(unittest.TestCase):
         # …and the gate is NOT named in the "removed failed attempts" note
         note = [m for m in out if "cria removed" in str(m.get("content", ""))][0]
         self.assertNotIn(GATE, note["content"])
+
+
+class IsFailureExitCodeTests(unittest.TestCase):
+    """A tool that exited 0 (or returned HTTP 2xx) is a SUCCESS whose body may merely mention 'not
+    found' — it must NOT be squashed as a failed attempt. The exit-0 api.handle.me curl carried the
+    exact route hint + docs URL the model needed; the old bare `\\bnot found\\b` threw it away."""
+
+    def test_exit_zero_body_mentioning_not_found_is_not_a_failure(self):
+        from cria.focustrim import _is_failure
+        body = '{"error":"route_not_found","message":"Route not found: /api/handles/goose","docs":"https://api.handle.me/"}\nProcess exited with code 0'
+        self.assertFalse(_is_failure(body))
+
+    def test_http_2xx_fetch_is_not_a_failure(self):
+        from cria.focustrim import _is_failure
+        self.assertFalse(_is_failure("HTTP 200 OK · https://api.handle.me/\nSwagger UI ... not found in nav"))
+
+    def test_exit_nonzero_not_found_is_a_failure(self):
+        from cria.focustrim import _is_failure
+        self.assertTrue(_is_failure("cat: package.json: No such file or directory\nProcess exited with code 1"))
+
+    def test_soft_signature_without_a_success_marker_is_a_failure(self):
+        from cria.focustrim import _is_failure
+        self.assertTrue(_is_failure("bash: frobnicate: command not found"))
