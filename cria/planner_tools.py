@@ -216,7 +216,7 @@ def _web_fetch(args: dict) -> str:
     if not url:
         return "[web_fetch error: no url]"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        req = urllib.request.Request(url, headers={"User-Agent": brave.USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read(_FETCH_MAX_BYTES)
             body = raw.decode("utf-8", "replace")

@@ -110,6 +110,46 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class WebFetchUserAgentTests(unittest.TestCase):
+    """Invariant: the planner's web_fetch actually ISSUES a request with a defined browser
+    User-Agent. Regression guard for the `_USER_AGENT` NameError (undefined symbol) that made
+    every gather-loop fetch fail — swallowed by the broad `except`, so the reasoner planned
+    blind against docs it believed it had read."""
+
+    def test_web_fetch_sends_the_canonical_user_agent_and_does_not_nameerror(self):
+        captured = {}
+
+        class _Resp:
+            status = 200
+
+            def read(self, n=-1):
+                return b'{"ok": true}'
+
+            def geturl(self):
+                return "https://api.handle.me/openapi.json"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            captured["ua"] = next((v for k, v in req.header_items() if k.lower() == "user-agent"), None)
+            return _Resp()
+
+        orig = pt.urllib.request.urlopen
+        pt.urllib.request.urlopen = fake_urlopen
+        try:
+            out = pt._web_fetch({"url": "https://api.handle.me/openapi.json"})
+        finally:
+            pt.urllib.request.urlopen = orig
+
+        self.assertNotIn("is not defined", out)        # the NameError no longer leaks into the result
+        self.assertIn("HTTP 200", out)                 # the real response is surfaced
+        self.assertEqual(captured["ua"], pt.brave.USER_AGENT)  # a defined, canonical browser UA was sent
+
+
 class FreshWorkspaceTests(unittest.TestCase):
     """A workspace dir that doesn't exist (a fresh build) must not make exec_command die with
     'failed to launch' — it falls back to the scratchpad and tells the planner it's fresh."""
