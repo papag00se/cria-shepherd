@@ -723,6 +723,35 @@ class ProbeReissueTests(unittest.TestCase):
         self.assertIsNone(guard_probe_reissue(GuardState(), self._SHELL, _Rlog(), rewritten=True))  # nothing pending
 
 
+class PeriodicGateTests(unittest.TestCase):
+    _SHELL = {"tools": [{"type": "function", "function": {"name": "shell",
+              "parameters": {"properties": {"command": {"type": "array"}}}}}], "messages": []}
+
+    def test_fires_only_at_the_cadence_and_resets(self):
+        from cria.loop import GuardState, guard_periodic_gate, GATE_EVERY_CODER_TURNS
+        self.assertIsNone(guard_periodic_gate(GuardState(coder_turns=GATE_EVERY_CODER_TURNS - 1), self._SHELL, _Rlog()))
+        gs = GuardState(coder_turns=GATE_EVERY_CODER_TURNS)
+        self.assertIsNotNone(guard_periodic_gate(gs, self._SHELL, _Rlog()))  # a probe is emitted
+        self.assertTrue(gs.periodic_probe)
+        self.assertEqual(gs.coder_turns, 0)                                  # counter reset
+
+    def test_result_inserts_the_ground_truth_findings(self):
+        import tempfile, os
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        from cria.loop import GuardState, guard_periodic_gate, guard_periodic_result
+        ws = tempfile.mkdtemp()
+        with open(os.path.join(ws, "x.py"), "w") as f:
+            f.write("print(1)\n")                              # a .py → probe-0 is the compile floor
+        gs = GuardState(coder_turns=15)
+        guard_periodic_gate(gs, self._SHELL, _Rlog(), workspace_root=ws)   # arms a real gate
+        result = f'{P}probe-0{S}\n  File "x.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
+        body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id, "content": result}]}
+        truth = guard_periodic_result(gs, body, _Rlog())
+        self.assertIsNotNone(truth)
+        self.assertIn("SyntaxError", truth)                    # the failing check reaches the model
+        self.assertFalse(gs.periodic_probe)                    # consumed
+
+
 class ShellWritePathTests(unittest.TestCase):
     def test_shell_native_write_yields_a_path(self):
         from cria.loop import _write_path

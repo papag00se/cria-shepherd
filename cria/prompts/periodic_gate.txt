@@ -1,0 +1,2 @@
+Routine check-in — here is the CURRENT state of the repo's own checks (syntax / lint / tests). This is ground truth, not my opinion. If anything below is broken, fix that FIRST before continuing; if it's all clean, carry on.
+{{TRUTH}}

@@ -49,6 +49,8 @@ from .loop import (
     guard_gate_op,
     guard_gate_verdict,
     guard_intervene,
+    guard_periodic_gate,
+    guard_periodic_result,
     guard_probe_reissue,
     guard_probe_steer,
     guard_rumination,
@@ -509,6 +511,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
             gs.nudge_reason = prompts.render("gate_fail_steer", errors=_clip_tail(errors, 1800))
             gs.steer_source = "completion gate (repo checks failed)"
+        # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
+        if gs.periodic_probe:
+            truth = guard_periodic_result(gs, body, rlog)
+            if truth:
+                gs.nudge_reason = truth
+                gs.steer_source = "periodic check-in"
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
         if gs.awaiting_probe:
@@ -520,6 +528,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             return intervention
         if steer is None and gs.nudge_reason:
             steer, gs.nudge_reason = gs.nudge_reason, ""
+        # PERIODIC gate: every N acting turns, run the checks and insert ground truth — but only when
+        # nothing else is steering this turn (a guard steer / re-anchor takes precedence).
+        if steer is None and not rewritten:
+            periodic = guard_periodic_gate(gs, body, rlog)
+            if periodic is not None:
+                return periodic
         framed = _direct_coder_body(body)
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix)
@@ -540,6 +554,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             _add_note(comp, f"steered the coder — {gs.steer_source or 'guard'}")
             gs.steer_source = ""
         if _has_tool_calls(comp):
+            gs.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
             return comp  # acting → forward
         return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)
 

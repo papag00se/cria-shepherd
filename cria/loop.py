@@ -153,6 +153,8 @@ class GuardState:
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
+    coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
+    periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -209,6 +211,11 @@ class GuardStore:
 # detection). Cheap (a hash + an int each); evicted oldest-first.
 _MAX_SHAPES = 256
 _MAX_GUARD_STATES = 256  # bound GuardStore like _shapes — a long-lived process must not grow it forever
+# The gate normally fires only on a "done" claim or a guard trip, so an acting-heavy model can edit
+# for a long stretch with NO ground truth (it circled on a broken pyproject.toml for ~90 turns). Run
+# the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
+# syntax/lint/test state early, not only when it thinks it's finished.
+GATE_EVERY_CODER_TURNS = 15
 
 
 class LoopStore:
@@ -1546,6 +1553,41 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
     gs.probe_reissues += 1
     rlog.emit("loop.probe_reissued", plan_off=workspace_root is None, attempt=gs.probe_reissues)
     return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+
+
+def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
+    """Every GATE_EVERY_CODER_TURNS acting coder turns, emit the repo's checks as a probe so the
+    model gets GROUND TRUTH on a cadence — not only when it claims 'done' or a guard trips. INSERTs
+    the result (no verdict, the turn stays open), like the wheel-spin probe. Returns the probe
+    completion, or None (not due yet, or no gate available). Resets the counter either way so a
+    gate-less workspace doesn't retry every turn."""
+    if gs.coder_turns < GATE_EVERY_CODER_TURNS:
+        return None
+    gs.coder_turns = 0
+    probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
+    if probe_tc is None:
+        return None  # no shell tool / unknown root — can't gate; try again in another N turns
+    gs.awaiting_probe = True
+    gs.periodic_probe = True
+    gs.probe_call_id = probe_tc["id"]
+    rlog.emit("loop.periodic_gate", plan_off=workspace_root is None)
+    return _completion_toolcalls([probe_tc], note="periodic check-in — running the repo's checks")
+
+
+def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
+    """Read the periodic check-in probe's result and return the GROUND TRUTH to insert (the file:line
+    findings, or a neutral 'all checks pass') — no verdict, the model keeps working. None when no
+    periodic probe is pending."""
+    if not gs.periodic_probe:
+        return None
+    gs.periodic_probe = False
+    gs.awaiting_probe = False
+    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
+    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
+        else probegate.GateOutcome(ran=False)
+    findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
+    rlog.emit("loop.periodic_gate_result", clean=findings is None and outcome.ran, ran=outcome.ran)
+    return prompts.render("periodic_gate", truth=_clip_tail(guard_ground_truth(outcome), 1800))
 
 
 def _add_note(completion: dict, note: str) -> None:
