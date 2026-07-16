@@ -14,7 +14,7 @@ import signal
 import sys
 from dataclasses import replace
 
-from . import __version__
+from . import __version__, brave
 from .config import Config
 from .envfile import load_env_file
 from .events import EventLog
@@ -58,10 +58,14 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Load cria's own secrets BEFORE anything reads a key — a systemd service doesn't source a
-    # shell `.env`, so without this the daemon starts with the Brave/cloud keys absent.
+    # shell `.env`, so without this the daemon starts with the Brave/cloud keys absent. cria loads
+    # ONLY its own declared vars (the Brave key + any configured cloud-provider key) — never
+    # anything else in the file, so a shared/home env file can't leak unrelated secrets into cria.
     if cfg.env_file:
-        loaded = load_env_file(cfg.env_file)
-        log.emit("env.loaded", file=cfg.env_file, count=loaded, level=("info" if loaded else "warn"))
+        allow = {brave.API_KEY_ENV} | {p.api_key_env for p in cfg.routing.providers.values() if p.api_key_env}
+        loaded = load_env_file(cfg.env_file, allow)
+        log.emit("env.loaded", file=cfg.env_file, count=loaded, vars=sorted(allow),
+                 level=("info" if loaded else "warn"))
 
     upstream = Upstream(
         cfg.upstream.base_url,

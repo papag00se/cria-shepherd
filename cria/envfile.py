@@ -13,8 +13,15 @@ from __future__ import annotations
 import os
 
 
-def load_env_file(path: str) -> int:
-    """Load ``KEY=VALUE`` lines from ``path`` into ``os.environ`` and return the count set.
+def load_env_file(path: str, allow: set[str]) -> int:
+    """Load ONLY the allowlisted ``KEY=VALUE`` lines from ``path`` into ``os.environ``; return the
+    count set.
+
+    SECURITY — leak guard: cria loads ONLY the variables it declares it needs (``allow`` = the
+    Brave key + any configured cloud-provider key). EVERY other line in the file is ignored and
+    never read into cria's process. So an env file that ALSO holds unrelated secrets — a shared
+    home ``.env`` — cannot leak them into cria, nor into the planner's read-only gather
+    subprocesses, which inherit cria's environment. An empty ``allow`` loads nothing.
 
     - A variable already in the environment WINS (a real systemd ``Environment=`` / operator
       export is never clobbered) — the file only fills what's missing.
@@ -22,6 +29,8 @@ def load_env_file(path: str) -> int:
     - ``export KEY=…`` and ``# comment`` / blank lines are handled. A missing file is not an
       error (the path is optional config) — returns 0.
     """
+    if not allow:
+        return 0
     try:
         with open(os.path.expanduser(path), encoding="utf-8") as fh:
             text = fh.read()
@@ -36,7 +45,9 @@ def load_env_file(path: str) -> int:
             line = line[len("export "):]
         key, val = line.split("=", 1)
         key = key.strip()
-        if not key or key in os.environ:  # don't clobber a value the environment already provides
+        if key not in allow:  # not one of cria's OWN declared vars → never touch it (leak guard)
+            continue
+        if key in os.environ:  # don't clobber a value the environment already provides
             continue
         val = val.strip()
         if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
