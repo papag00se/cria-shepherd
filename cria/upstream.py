@@ -309,8 +309,12 @@ class Upstream:
         attempt = 0
         while True:
             try:
-                resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
+                # t0 BEFORE the open: a non-stream urlopen returns only AFTER the server has finished
+                # generating (the whole completion is buffered server-side), so timing from AFTER the
+                # open captures just the body READ (~ms) — tokens/that = millions of tok/s. Measuring
+                # from before the open gives the real end-to-end generation time.
                 t0 = time.monotonic()
+                resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
                 try:
                     raw = resp.read()
                 finally:

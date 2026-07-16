@@ -357,3 +357,36 @@ class OverflowRefitTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 up.chat(self._big_body(), rlog)
         self.assertEqual(m.call_count, 2)                       # one refit attempt, no infinite loop
+
+
+class ChatTimingTests(unittest.TestCase):
+    """Non-streaming chat must time the FULL generation, not just the buffered-body read. A blocking
+    urlopen returns only AFTER the server finished generating; timing from after the open reported
+    millions of tok/s (the reasoner-banner bug: gemma_4_12b at 3.3M tok/s)."""
+
+    def test_tok_per_s_measures_generation_not_body_read(self):
+        import time as _time
+        up = Upstream("http://x", context_window=8192, capture_dir=None)
+        raw = json.dumps({"choices": [{"message": {"role": "assistant", "content": "hi"}}],
+                          "usage": {"completion_tokens": 50, "prompt_tokens": 10}}).encode()
+
+        class _Resp:
+            def read(self_):
+                return raw          # instant — the body is already generated server-side
+
+            def close(self_):
+                pass
+
+        def fake_open(b, stream, rlog):
+            _time.sleep(0.1)        # the server generating; a non-stream urlopen blocks HERE
+            return _Resp(), 10, None
+
+        rlog = _Rlog()
+        with mock.patch.object(up, "_open_with_refit", side_effect=fake_open), \
+             mock.patch("cria.upstream.callcapture.capture_response"):
+            up.chat({"model": "m", "messages": []}, rlog)
+        done = [kw for k, kw in rlog.events if k == "upstream.done"][0]
+        tps = done["tok_per_s"]
+        self.assertIsNotNone(tps)
+        self.assertLess(tps, 5000)      # ~500 tok/s (50 tok / 0.1s) — NOT the millions the old timing gave
+        self.assertGreater(tps, 50)     # the 0.1s generation IS in the interval (not a near-zero read window)
