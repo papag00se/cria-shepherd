@@ -7,9 +7,19 @@ from __future__ import annotations
 
 import urllib.parse
 
+from .envfile import env_secret
+
 ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 # Matches Brave Browser on Linux desktop (it identifies as Chrome on purpose).
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+# The web-search key's env var has exactly ONE name — Brave's own — so it is a code constant,
+# not a config knob. (The key VALUE is never in config; it's read from the environment at runtime.)
+API_KEY_ENV = "BRAVE_SEARCH_API_KEY"
+
+
+def api_key() -> str | None:
+    """The Brave Search API key from the environment (CRLF/quote-normalized), or None when unset."""
+    return env_secret(API_KEY_ENV)
 
 
 def query_url(query: str, count: int = 5) -> str:

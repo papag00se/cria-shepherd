@@ -23,7 +23,7 @@ from . import focustrim, massage, prompts, responses, rumination, selfcompact
 from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
-from .envfile import env_secret
+from . import brave
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -83,10 +83,10 @@ def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
         missing = [r for r, ok in (("reasoner", has_reasoner), ("coder", has_coder)) if not ok]
         log.emit("config.warn", level="warn", issue="planner_inert",
                  detail=f"[planner] enabled but missing role(s): {', '.join(missing)} — the plan loop will not run")
-    if cfg.planner.search_api_key_env and not env_secret(cfg.planner.search_api_key_env):
+    if cfg.planner.enabled and not brave.api_key():
         log.emit("config.warn", level="warn", issue="web_search_disabled",
-                 detail=f"web_search configured (search_api_key_env={cfg.planner.search_api_key_env}) "
-                        "but that env var is empty in the process — search disabled (is env_file set and loaded?)")
+                 detail=f"web_search needs {brave.API_KEY_ENV} but it's empty in the process — "
+                        "search disabled (is env_file set and loaded?)")
 
 
 def _has_visible_output(comp: dict) -> bool:
@@ -211,10 +211,10 @@ class CriaServer(ThreadingHTTPServer):
         # class of failure that hid the Brave-key bug (web_search just quietly never ran).
         _warn_config(cfg, has_reasoner, has_coder, log)
         if cfg.planner.enabled and has_reasoner and has_coder:
-            # The web-search key comes from its env var (never stored in config); env_secret reads
-            # it normalized (CRLF-safe) — the CRLF was the illegal-header footgun, fixed once at the
-            # source (envfile) rather than stripped per-consumer.
-            search_key = env_secret(cfg.planner.search_api_key_env) or ""
+            # The web-search key comes from the fixed BRAVE_SEARCH_API_KEY env var (never stored in
+            # config); brave.api_key() reads it normalized (CRLF-safe) — the CRLF was the illegal-
+            # header footgun, fixed once at the source (envfile) rather than stripped per-consumer.
+            search_key = brave.api_key() or ""
             # The coder runs on the STREAMING-guarded path so its reasoning is watched live: a
             # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
             # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
@@ -415,7 +415,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._shell_tool = needs_translation(body.get("tools"))
         self._synthetic: set[str] = set()
         self._native_search = None
-        self._brave_key = env_secret(self.server.cfg.planner.search_api_key_env)
+        self._brave_key = brave.api_key()
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             body["messages"] = represent_inbound(body.get("messages", []), rlog)

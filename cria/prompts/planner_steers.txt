@@ -5,5 +5,5 @@ fresh_note = [note: the workspace `{{CWD}}` does not exist yet — it's a FRESH 
 scratch_note = [note: nothing was saved there yet — a web_fetch returns its content into THIS conversation, not to a file. Read the fetched text above, or save it first with a redirect to /tmp.]
 gather_repeat = [you already ran {{TOOL}} with these exact arguments this gather — its result is already above. Don't repeat it: use that result, investigate something DIFFERENT, or if you have enough, output your plan.]
 unknown_tool = [planner has no `{{TOOL}}` tool — you are read-only: exec_command (read), read_file, web_fetch, web_search]
-no_search_key = [web_search error: no search API key configured — set planner.search_api_key_env]
+no_search_key = [web_search error: no search API key configured — set BRAVE_SEARCH_API_KEY in cria's env file]
 default_ask = Continue and finish the remaining work described in the summary.

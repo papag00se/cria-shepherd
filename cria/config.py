@@ -268,10 +268,9 @@ class PlannerConfig:
     it understands the task, then emits a plan grounded in what it found."""
 
     enabled: bool = True
-    # Env var holding the web-search (Brave) API key. The key itself is NEVER in
-    # config (see the module note) — only the name of the env var to read it from.
-    # Unset → the planner still gathers, but its web_search tool is disabled.
-    search_api_key_env: str | None = None
+    # The web-search (Brave) key is read from the fixed env var brave.API_KEY_ENV
+    # (BRAVE_SEARCH_API_KEY) — a constant, not a config knob. Unset → the planner still
+    # gathers, but its web_search tool is disabled.
     # Bound the planner's investigate loop — each round is one reasoner call plus its
     # tool runs on the shared GPU. On the cap the planner is forced to output the plan.
     max_gather_rounds: int = 12
@@ -319,11 +318,6 @@ class Config:
             ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),
-                search_api_key_env=(
-                    str(data["planner"]["search_api_key_env"])
-                    if data.get("planner", {}).get("search_api_key_env")
-                    else None
-                ),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
             ),
             env_file=(str(data["env_file"]) if data.get("env_file") else None),
