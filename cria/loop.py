@@ -102,6 +102,8 @@ MAX_PROBE_REISSUES = 2
 # NOT start with the indicator MARKER ("⟦cria⟧ "), so strip_history leaves it intact inbound.
 BRIEFING_OPEN = "⟦cria:briefing⟧"
 BRIEFING_CLOSE = "⟦/cria:briefing⟧"
+CONTINUATION_MARKER = "⟦cria:continuation⟧"   # leads cria's compaction reframe — marks it as cria
+#   scaffolding so classify.latest_user_text skips it (it reads as reasoning and mis-routes the role)
 # The re-anchor note injected on the FIRST turn after a detected harness compaction (the plan-off
 # path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
 # compacted model treated its OWN earlier work as a previous agent's and duplicated a file under a
@@ -1126,7 +1128,9 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
                 nl = text.find("\n", text.find(_COMPACTION_MARKER))
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
-            out.append({**m, "content": prompts.render("compaction_reframe", summary=summary)})
+            # Tag with a ⟦cria:⟧ marker so classify.latest_user_text skips it — this reframe is cria
+            # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
+            out.append({**m, "content": f"{CONTINUATION_MARKER} {prompts.render('compaction_reframe', summary=summary)}"})
             reframed = True
         else:
             out.append(m)

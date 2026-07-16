@@ -36,6 +36,28 @@ class ClassifyHelperTests(unittest.TestCase):
         msgs = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "x"}, {"role": "user", "content": "second"}]
         self.assertEqual(latest_user_text(msgs), "second")
 
+    def test_latest_user_text_skips_cria_injected_scaffolding(self):
+        # THE reasoner-misroute footgun: after a harness compaction the latest user turns are cria's
+        # own continuation reframe + squash note, which classify as reasoning and route a CODING
+        # session onto the reasoner. latest_user_text must skip cria scaffolding and return the task.
+        msgs = [
+            {"role": "user", "content": "<environment_context><cwd>/x</cwd></environment_context>"},
+            {"role": "user", "content": "Write a Python script that resolves an Ada Handle to an address"},
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": "⟦cria:continuation⟧ Earlier in THIS session you worked on this task and produced the summary below"},
+            {"role": "user", "content": "[cria removed 13 earlier failed attempts to keep you focused]"},
+            {"role": "user", "content": "⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems"},
+        ]
+        self.assertIn("Ada Handle", latest_user_text(msgs))     # the REAL task, not cria's briefing
+        self.assertNotIn("cria", latest_user_text(msgs))
+
+    def test_latest_user_text_returns_genuine_followup_over_older_task(self):
+        # a genuine NEW user turn is NOT cria scaffolding → it's still returned (follow-up detection kept)
+        msgs = [{"role": "user", "content": "old task"},
+                {"role": "user", "content": "⟦cria:rollup⟧ prior work summary"},
+                {"role": "user", "content": "now also add a CLI flag"}]
+        self.assertEqual(latest_user_text(msgs), "now also add a CLI flag")
+
     def test_completion_text_handles_list_content(self):
         raw = json.dumps({"choices": [{"message": {"content": [{"type": "text", "text": "hello"}]}}]}).encode()
         self.assertEqual(completion_text(raw), "hello")
