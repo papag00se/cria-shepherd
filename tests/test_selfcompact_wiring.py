@@ -2,7 +2,8 @@ import types
 import unittest
 
 from cria import selfcompact
-from cria.server import CriaHandler, _msg_digest
+from cria.selfcompact import msg_digest as _msg_digest
+from cria.server import CriaHandler
 
 
 class _Rlog:

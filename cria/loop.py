@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, focustrim, indicators, massage, probegate, proberun, prompts, toolmenu
+from . import callcapture, focustrim, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -165,8 +165,9 @@ class GuardState:
 class PlanSession(GuardState):
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
     phase: Phase = Phase.WORK
-    summary: str = ""  # running summary of completed steps
+    summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
+    compact_state: selfcompact.CompactState = field(default_factory=selfcompact.CompactState)  # mid-session rollup
     verify_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
@@ -374,6 +375,10 @@ class LoopContext:
     workspace_root: str | None = None
     # Focus-trim the OUTBOUND coder view (collapse exact-duplicate tool calls). [context] focus_trim.
     focus_trim: bool = True
+    # Roll the OLD middle of a long coder view into a reasoner summary (mid-STEP transcript bloat —
+    # orthogonal to `summary`, which only summarizes COMPLETED steps). [context] self_compact / trigger.
+    self_compact: bool = True
+    trigger_compaction: int = 16384
 
 
 class Loop:
@@ -544,6 +549,9 @@ class Loop:
             sess.nudge_reason = ""
             steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
         framed["messages"] = msgs
+        if self._ctx.self_compact:  # roll the old WORK-HISTORY middle into a rollup (the step framing
+            msgs = self._self_compact(msgs, sess, idx, rlog)  # lives in the protected system msg, untouched)
+            framed["messages"] = msgs
         if self._ctx.focus_trim:  # focus the OUTBOUND coder view (never the history the guards read)
             trimmed, rep = focustrim.trim(msgs)
             if rep.applied:
@@ -601,6 +609,21 @@ class Loop:
         """The loop's coder step — delegates to the shared :func:`guard_rumination` with the
         loop's watched coder call, so the plan-off proxy path runs the IDENTICAL guard."""
         return guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
+
+    def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog) -> list[dict]:
+        """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
+        into a ⟦cria:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
+        sess.summary (that's the cheap completed-STEP axis in the protected system message)."""
+        out, sess.compact_state, applied = selfcompact.compact(
+            msgs,
+            lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                 prompts.load("selfcompact_summary"), selfcompact.serialize(mm), rlog,
+                                 phase="self-compact"),
+            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction)
+        if applied:
+            rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out))
+            return out
+        return msgs
 
     def _guard_truncation(self, coder: dict, framed: dict, idx: int, rlog) -> dict:
         """The loop's coder step — delegates to the shared :func:`guard_truncation`."""
@@ -739,9 +762,8 @@ class Loop:
         user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
                               repeat_action=sess.repeat_action, evidence=evidence or "(none)",
                               truth=_clip_tail(truth, 1200))
-        text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=False)
-        if not text:
-            text = self._summarize(prompts.load("redirect"), user, rlog, reasoning_off=True)
+        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, prompts.load("redirect"),
+                         user, rlog, phase="reasoner")  # retry_off defaults True → the same two-pass
         if text:
             return _clip(text, 1200)
         # Reasoner unavailable → the SAME canned redirect the plan-off path uses (one steer text).
@@ -871,48 +893,15 @@ class Loop:
         user = prompts.render("done_summary_user", prior=prior, task=sess.plan.task,
                               checklist=checklist, log=log or "(no tool activity captured)")
         system = prompts.load("done_summary")
-        # First pass with the reasoner AS CONFIGURED. If it yields no text — a reasoning model can
-        # burn the whole max_tokens budget THINKING and emit an empty content (the observed
-        # loop.compact_empty) — retry with reasoning forced OFF: a briefing is extraction, not
-        # judgment, so reasoning-off answers directly instead of ruminating past the cap.
-        text = self._summarize(system, user, rlog, reasoning_off=False)
-        if not text:
-            text = self._summarize(system, user, rlog, reasoning_off=True)
+        # The shared summarize primitive handles the reasoning-off retry (a reasoning model can burn
+        # its whole budget THINKING and emit empty content — the observed loop.compact_empty).
+        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, system, user, rlog, phase="compactor")
         if text:
             rlog.emit("loop.compacted", id=sess.plan.id, chars=len(text))
             return text
         rlog.emit("loop.compact_empty", level="warn", id=sess.plan.id)
         # Fallback: the running per-step summary (or the bare checklist) still grounds a follow-up.
         return (sess.summary or checklist).strip()
-
-    def _summarize(self, system: str, user: str, rlog, *, reasoning_off: bool) -> str:
-        """One completion-compaction call → the summary text ("" on failure/empty). ``reasoning_off``
-        forces enable_thinking=false so a reasoning model can't exhaust its budget before answering."""
-        call = {
-            "stream": False,
-            "max_tokens": 1024,  # a briefing, not an essay — and an uncapped reasoner can hang the turn
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        }
-        role = self._ctx.reasoner_role
-        if reasoning_off:
-            role = replace(role, reasoning="off") if role is not None else None
-        if role is not None:
-            role.apply(call)
-        elif reasoning_off:
-            call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-        try:
-            rlog.phase = "compactor" + ("-noreason" if reasoning_off else "")
-            comp = _parse_completion(self._ctx.reasoner_chat(call, rlog))
-            # This call offered no tools — recover a dialect/tool-call "answer" back to text: the
-            # leak becomes tool_calls, then coerce drops them and promotes the reasoning summary.
-            comp = massage.coerce_text_answer(massage.apply(comp, None, rlog), rlog)
-            text = _completion_text(comp)
-            if role is not None:
-                text = role.clean_content(text)
-            return _strip_cria_banners(text).strip()
-        except Exception as e:  # a summary is a nicety — never let it break completion
-            rlog.emit("loop.compact_error", level="warn", error=str(e))
-            return ""
 
     def _closing(self, sess: PlanSession, briefing: str = "") -> str:
         """The final message. Report the truth: if any step was accepted UNVERIFIED (its
@@ -1588,6 +1577,38 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     findings = proberun.completion_block_nudge(outcome.report) if outcome.ran else None
     rlog.emit("loop.periodic_gate_result", clean=findings is None and outcome.ran, ran=outcome.ran)
     return prompts.render("periodic_gate", truth=_clip_tail(guard_ground_truth(outcome), 1800))
+
+
+def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
+              max_tokens: int = 1024, retry_off: bool = True) -> str:
+    """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
+    text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
+    the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
+    content); recovers a leaked tool-call 'answer' back to text. Shared by the loop's completion
+    compaction (_compact_done), the reasoned redirect (_author_redirect, single-pass), the plan-off
+    self-compaction, and the loop's mid-session rollup — one place, so the mechanism can't diverge.
+    ``chat_fn(body, rlog) -> bytes`` + ``role`` (LocalRole|None) are the caller's provider + sampling."""
+    def _one(reasoning_off: bool) -> str:
+        call = {"stream": False, "max_tokens": max_tokens,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        r = role
+        if reasoning_off:
+            r = replace(role, reasoning="off") if role is not None else None
+        if r is not None:
+            r.apply(call)
+        elif reasoning_off:
+            call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        try:
+            rlog.phase = phase + ("-noreason" if reasoning_off else "")
+            comp = massage.coerce_text_answer(massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog), rlog)
+            text = _completion_text(comp)
+            if role is not None:
+                text = role.clean_content(text)
+            return _strip_cria_banners(text).strip()
+        except Exception as e:
+            rlog.emit("summarize.error", level="warn", error=str(e))
+            return ""
+    return (_one(False) or _one(True)) if retry_off else _one(False)
 
 
 def _add_note(completion: dict, note: str) -> None:

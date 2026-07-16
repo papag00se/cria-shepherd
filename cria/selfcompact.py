@@ -78,6 +78,24 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     return i
 
 
+def msg_digest(m: dict) -> str:
+    """A compact one-line rendering of a message for a summarization transcript: its text plus any
+    tool call as ``name(args…)``. Shared by both paths so the rollup input is built the same way."""
+    parts = []
+    t = _text(m)
+    if t.strip():
+        parts.append(t[:800])
+    for tc in m.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        parts.append(f"{fn.get('name', '?')}({str(fn.get('arguments', ''))[:200]})")
+    return " ".join(p for p in parts if p)[:1000]
+
+
+def serialize(messages: list[dict]) -> str:
+    """The transcript span → one string fed to the summarizer."""
+    return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)[:20000]
+
+
 def _summary_msg(summary: str) -> dict:
     return {"role": "user", "content": (
         f"{SUMMARY_MARKER} Summary of your EARLIER work this session (older turns were elided to keep "

@@ -53,6 +53,7 @@ from .loop import (
     guard_periodic_result,
     guard_probe_reissue,
     guard_probe_steer,
+    summarize,
     guard_rumination,
     guard_track_repetition,
     guard_track_write_streak,
@@ -72,21 +73,6 @@ def _error_sse(message: str) -> bytes:
     """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
     payload = {"error": {"message": message, "type": "upstream_error"}}
     return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
-
-
-def _msg_digest(m: dict) -> str:
-    """A compact one-line rendering of a message for the self-compaction transcript: its text plus
-    any tool call as ``name(args…)`` and a clipped tool result — enough for a factual summary."""
-    parts = []
-    c = m.get("content")
-    if isinstance(c, str) and c.strip():
-        parts.append(c[:800])
-    elif isinstance(c, list):
-        parts.append(" ".join(p.get("text", "") for p in c if isinstance(p, dict))[:800])
-    for tc in m.get("tool_calls") or []:
-        fn = tc.get("function") or {}
-        parts.append(f"{fn.get('name', '?')}({str(fn.get('arguments', ''))[:200]})")
-    return " ".join(p for p in parts if p)[:1000]
 
 
 def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
@@ -251,6 +237,8 @@ class CriaServer(ThreadingHTTPServer):
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,
                     focus_trim=cfg.context.focus_trim,
+                    self_compact=cfg.context.self_compact,
+                    trigger_compaction=cfg.context.trigger_compaction,
                 ),
                 # The SAME store the plan-off path uses (created above). Completed-work briefings +
                 # session shapes survive a cria restart (the restarts this project makes constantly
@@ -476,19 +464,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         return {**framed, "messages": out}
 
     def _summarize(self, messages: list[dict], rlog) -> str:
-        """Reasoner call that folds a span of the coder transcript into a factual briefing."""
-        transcript = "\n".join(f"{m.get('role')}: {_msg_digest(m)}" for m in messages)[:20000]
-        body = {"stream": False, "temperature": 0, "max_tokens": 1024,
-                "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")},
-                             {"role": "user", "content": transcript}]}
-        if self.server.coder_role is not None:
-            self.server.coder_role.apply(body)  # coder role's sampling (no separate reasoner on plan-off)
-        rlog.phase = "self-compact"
-        try:
-            text = completion_text(self.server.upstream.chat(body, rlog)).strip()
-        except UpstreamError as e:
-            rlog.emit("context.self_compact_error", level="warn", error=str(e))
-            return "(earlier work — summary unavailable)"
+        """Fold a span of the coder transcript into a factual briefing — via the SHARED summarize
+        primitive (same mechanism the loop's completion compaction uses), so the two can't diverge."""
+        text = summarize(self.server.upstream.chat, self.server.coder_role,
+                         prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
+                         phase="self-compact")
         return text or "(earlier work this session)"
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

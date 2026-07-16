@@ -723,6 +723,51 @@ class ProbeReissueTests(unittest.TestCase):
         self.assertIsNone(guard_probe_reissue(GuardState(), self._SHELL, _Rlog(), rewritten=True))  # nothing pending
 
 
+class SharedSummarizeTests(unittest.TestCase):
+    def test_two_pass_retry_reasoning_off_when_first_is_empty(self):
+        from cria.loop import summarize
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(body)
+            # first pass (reasoning as configured) → empty; second (forced off) → text
+            off = (body.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+            content = "THE SUMMARY" if off else ""
+            return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        out = summarize(chat, None, "sys", "user", _Rlog(), phase="t")
+        self.assertEqual(out, "THE SUMMARY")
+        self.assertEqual(len(calls), 2)                       # retried with reasoning off
+
+    def test_single_pass_when_retry_off_false(self):
+        from cria.loop import summarize
+        calls = []
+        chat = lambda b, r: (calls.append(1), b"".join([b'{"choices":[{"message":{"content":""}}]}']))[1]
+        self.assertEqual(summarize(chat, None, "s", "u", _Rlog(), retry_off=False), "")
+        self.assertEqual(len(calls), 1)
+
+
+class LoopSelfCompactTests(unittest.TestCase):
+    def test_loop_rolls_up_a_big_coder_view(self):
+        from cria.loop import Loop, PlanSession
+        from dataclasses import replace
+        reasoner_calls = []
+
+        def reasoner(body, rlog):
+            reasoner_calls.append(body)
+            return json.dumps({"choices": [{"message": {"content": "ROLLUP"}}]}).encode()
+
+        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100)  # low trigger
+        loop = Loop(ctx)
+        sess = PlanSession(plan=_plan(1))
+        # total must exceed the 6000-token default tail so there's a middle to roll up (~50 * 250 tok)
+        big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
+        out = loop._self_compact(big, sess, 1, _Rlog())
+        self.assertLess(len(out), len(big))                                   # compacted
+        self.assertEqual(len(reasoner_calls), 1)                              # via the shared summarizer
+        self.assertTrue(any("⟦cria:rollup⟧" in str(m.get("content")) for m in out))
+
+
 class PeriodicGateTests(unittest.TestCase):
     _SHELL = {"tools": [{"type": "function", "function": {"name": "shell",
               "parameters": {"properties": {"command": {"type": "array"}}}}}], "messages": []}
