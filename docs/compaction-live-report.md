@@ -19,7 +19,7 @@ killing the run.
   `model_auto_compact_token_limit` UNSET, `compact_prompt` carries `<<<LOCAL_COMPACT>>>`.
 - cria code live as of 2026-07-07 22:55 restart: verifier fail-closed + reasoning-off retry;
   `content_reduce.py` ported but NOT wired; trim floor NOT ported.
-- Brave key sourced from `/home/jesse/.env/.env` (`BRAVE_SEARCH_API_KEY`).
+- Brave key: cria reads `BRAVE_SEARCH_API_KEY` from its own `env_file` (cria-only; never a shared/personal secrets file, never a coded path).
 - exec invocation: `codex-debug exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -C <ws> --json`.
 
 ---

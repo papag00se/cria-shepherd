@@ -114,15 +114,17 @@ model's settings match the doc before testing it.
   The floor guarantees this; a single `exceed` is a floor bug to fix, not a harness-config issue.
 
 ## Operational runbook
-- **BRAVE_API_KEY** (cria web_search): the key lives in `/home/jesse/.env/.env` as
-  `BRAVE_SEARCH_API_KEY`; load it into a shell var and hand it to cria as `BRAVE_API_KEY`. NEVER
-  print or commit it. (The old `codex.test.site/.codex-multi/config.toml` path is gone.)
-  `KEY=$(grep -E '^(export )?BRAVE_SEARCH_API_KEY=' /home/jesse/.env/.env | head -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')`
+- **Brave web_search key**: cria reads `BRAVE_SEARCH_API_KEY` from ITS OWN env file — the
+  `env_file` path in `~/.cria/cria.toml` (e.g. `~/.cria/.env`), which holds ONLY cria's own keys.
+  cria loads only its allowlisted vars, so it never pulls anything else out of that file. Populate
+  it once by copying the value from wherever you keep your secrets — a manual step; NEVER point
+  cria at a shared/personal secrets file and NEVER code that path here. Never print or commit the key.
 - **Restart cria** (from the cria-shepherd repo dir): kill the python3 procs whose
   `/proc/*/cmdline` contains `cria` (do NOT `pkill -f "python3 -m cria"` — it self-matches the
   launch shell and exits 144), then:
-  `BRAVE_API_KEY="$KEY" setsid nohup python3 -m cria > ~/.cria/cria.out 2>&1 < /dev/null &`
-  cria auto-finds `~/.cria/cria.toml`.
+  `setsid nohup python3 -m cria > ~/.cria/cria.out 2>&1 < /dev/null &`
+  cria auto-finds `~/.cria/cria.toml` and loads the Brave key from its configured `env_file` —
+  no key on the command line.
 - **Harness config**: cria needs **nothing special** from the harness — no context-window tuning,
   no compaction settings, no stripped/isolated config. Point the harness at cria's `/v1` and drive
   it with a realistic config. cria discovers the model window and enforces it itself.

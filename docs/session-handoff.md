@@ -120,8 +120,12 @@ reference files there:
   real `pytest` afterward — the critic's word is not proof.
 - **cria restart** (from repo dir; loads code + config): kill python3 procs whose `/proc/*/cmdline`
   has `-m cria` (NOT `pkill -f "python3 -m cria"` — self-matches, exit 144), then
-  `BRAVE_API_KEY="$KEY" setsid nohup python3 -m cria > ~/.cria/cria.out 2>&1 < /dev/null &`.
-- **BRAVE key** (cria web_search): `KEY=$(grep -E '^(export )?BRAVE_SEARCH_API_KEY=' /home/jesse/.env/.env | head -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')`. Never print/commit it.
+  `setsid nohup python3 -m cria > ~/.cria/cria.out 2>&1 < /dev/null &` (cria loads the Brave key
+  from its configured `env_file` itself — no key on the command line).
+- **Brave key** (cria web_search): cria reads `BRAVE_SEARCH_API_KEY` from its own `env_file`
+  (`~/.cria/cria.toml` → e.g. `~/.cria/.env`, cria-only). Populate that file once from your own
+  secrets store — a manual step; never point cria at a shared/personal env file, never code that
+  path. Never print/commit the key.
 - **LOG FILE GOTCHA:** cria names its log by **UTC** date — read `~/.cria/logs/cria-$(date -u +%Y%m%d).jsonl`,
   NOT `$(date +%Y%m%d)` (local date can be a day behind and points at a stale file). It's line-buffered/real-time.
 - **Model swap:** systemd (`systemctl` on the `llama-<model>` service) / `llama-fleet <model>`
