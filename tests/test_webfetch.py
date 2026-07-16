@@ -170,31 +170,37 @@ if __name__ == "__main__":
 
 
 class GateTests(unittest.TestCase):
-    """Coder-loop gates: exact-repeat fetch/search refusal + stop-guessing nudge (session-scoped)."""
+    """The exact-repeat gate refuses a repeat ONLY while its result is still visible (set_visible);
+    once compaction elides it, the model may re-read — the footgun fix. Plus the stop-guessing nudge."""
 
     def setUp(self):
         wf.clear_cache()
         self._orig = wf.fetch
         self.addCleanup(lambda: setattr(wf, "fetch", self._orig))
 
-    def test_search_exact_repeat_refused(self):
-        self.assertIsNone(wf.gate_search("s1", "ada handle api"))
-        r = wf.gate_search("s1", "ada handle api")            # exact repeat
+    def test_search_repeat_refused_only_while_visible(self):
+        self.assertIsNone(wf.gate_search("s1", "ada handle api"))     # nothing visible → proceed
+        wf.set_visible("s1", [], ["ada handle api"])                  # result now in context
+        r = wf.gate_search("s1", "ada handle api")
         self.assertIn("HTTP 400", r)
-        self.assertIn("already ran this search", r)
-        self.assertIsNone(wf.gate_search("s2", "ada handle api"))  # a different session is fine
-        self.assertIsNone(wf.gate_search(None, "x"))               # no session → always proceed
+        self.assertIn("still above", r)
+        wf.set_visible("s1", [], [])                                  # compacted away → allowed again
+        self.assertIsNone(wf.gate_search("s1", "ada handle api"))
+        self.assertIsNone(wf.gate_search(None, "x"))
 
-    def test_fetch_exact_repeat_refused_but_internal_never_gated(self):
+    def test_fetch_repeat_refused_only_while_visible(self):
         wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", '{"a":1}', False)
-        first = wf.fetch_nav("https://api.x/openapi.json", session="s1")
-        self.assertIn("HTTP 200", first)
-        repeat = wf.fetch_nav("https://api.x/openapi.json", session="s1")
-        self.assertIn("already fetched this exact request", repeat)
+        url = "https://api.x/openapi.json"
+        self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))            # first fetch
+        wf.set_visible("s1", [(url, "", "")], [])                            # its result is in context
+        self.assertIn("still above", wf.fetch_nav(url, session="s1"))        # → refused
+        wf.set_visible("s1", [], [])                                         # compaction elided it
+        self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))           # → re-read ALLOWED (the fix)
+        # internal host is never gated, even when marked visible
         wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "text/plain", "up", False)
-        wf.fetch_nav("http://localhost:8080/health", session="s1")
-        again = wf.fetch_nav("http://localhost:8080/health", session="s1")   # internal → never gated
-        self.assertNotIn("already fetched", again)
+        iu = "http://localhost:8080/health"
+        wf.set_visible("s1", [(iu, "", "")], [])
+        self.assertNotIn("still above", wf.fetch_nav(iu, session="s1"))
 
     def test_guess_streak_nudge_after_three_non_2xx(self):
         wf.fetch = lambda u, ua=None: wf.FetchResult(404, u, "text/plain", "nope", False)

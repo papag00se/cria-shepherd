@@ -148,11 +148,14 @@ def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: O
 
 
 # --- coder-loop gate state (cria is a persistent server) -----------------------------------
-# Exact external fetches/searches already made THIS SESSION (an identical repeat can only return
-# what the model has), and the consecutive-failure streak (the stop-guessing nudge). Bounded so a
-# long-lived server can't grow unboundedly. Internal/localhost URLs are never gated (a dev server
-# the model may be polling). Ports web_fetch.rs::gate_fetch + note_fetch_outcome + local_web_search
-# gate_search, adapted to cria's own session state instead of Rust's SessionTurnStore.
+# A repeat fetch/search is refused ONLY while its prior result is STILL VISIBLE in the conversation
+# — because the gate's whole justification ("it can only return what you already have") is FALSE
+# once self-compaction elides that result. So `_FETCH_SEEN`/`_SEARCH_SEEN` are not a forever-set;
+# `set_visible()` REPLACES them each request with what's actually in the current history (fed from
+# the sentinels of the web_fetch/web_search calls still present). This is the fix for the
+# session-permanent gate that refused a legitimate re-read of a compacted-away OpenAPI spec (a live
+# footgun). `_FETCH_STREAK` (the stop-guessing nudge) is genuinely consecutive, so it does persist.
+# Internal/localhost URLs are never gated. Spirit of web_fetch.rs::gate_fetch (turn-scoped there).
 _FETCH_SEEN: dict[str, set] = {}
 _FETCH_STREAK: dict[str, int] = {}
 _SEARCH_SEEN: dict[str, set] = {}
@@ -164,6 +167,18 @@ def clear_cache() -> None:
     _FETCH_SEEN.clear()
     _FETCH_STREAK.clear()
     _SEARCH_SEEN.clear()
+
+
+def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
+    """Record what's CURRENTLY visible in the conversation, so the gate refuses a repeat only while
+    the model still has that result. Called per request from the fetch/search results still in
+    history. ``fetch_keys`` = iterable of (url, find, cursor); ``search_queries`` = iterable of query."""
+    if not session:
+        return
+    _FETCH_SEEN[session] = {(u, f or "", c or "") for (u, f, c) in fetch_keys}
+    _SEARCH_SEEN[session] = {(q or "").strip().lower() for q in search_queries if (q or "").strip()}
+    _bound(_FETCH_SEEN)
+    _bound(_SEARCH_SEEN)
 
 
 def _bound(store: dict) -> None:
@@ -183,18 +198,15 @@ def _note_streak(session: str, status: int) -> int:
 
 
 def gate_search(session: Optional[str], query: str) -> Optional[str]:
-    """Refuse an exact-repeat web_search this session (results don't change turn to turn): returns
-    the HTTP-400 refusal text, or None to proceed (recording the query). No session → always proceed."""
+    """Refuse an exact-repeat web_search ONLY while its results are still in the conversation
+    (`set_visible`); else the model may re-run it. None → proceed."""
     q = (query or "").strip().lower()
     if not session or not q:
         return None
-    seen = _SEARCH_SEEN.setdefault(session, set())
-    if q in seen:
+    if q in _SEARCH_SEEN.get(session, ()):
         return (f'HTTP 400 Bad Request · web_search "{query}"\n'
-                "You already ran this search this session — the results won't differ. Use them, "
+                "You already ran this search and its results are still above — use them, "
                 "search something different, or web_fetch a specific URL.")
-    seen.add(q)
-    _bound(_SEARCH_SEEN)
     return None
 
 
@@ -211,14 +223,14 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate."""
     external = not is_internal_url(url)
     seen_key = (url, find or "", cursor or "")
+    # Refuse ONLY while the identical result is still in the conversation (set_visible); once
+    # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
         return (f"HTTP 400 Bad Request · web_fetch {url}\n"
-                "You already fetched this exact request (same url, find, cursor) this session — the "
-                "result won't differ. Use what you already have, or fetch something different.")
+                "You already fetched this exact request and its result is still above — use what you "
+                "have, or fetch something different.")
     out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent)
     if session and external and status is not None:
-        _FETCH_SEEN.setdefault(session, set()).add(seen_key)
-        _bound(_FETCH_SEEN)
         out += guess_hint(status, _note_streak(session, status))
     return out
 

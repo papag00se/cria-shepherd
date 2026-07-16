@@ -23,7 +23,7 @@ from . import focustrim, massage, prompts, responses, rumination, selfcompact
 from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
-from . import brave
+from . import brave, webfetch
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -73,6 +73,32 @@ def _error_sse(message: str) -> bytes:
     """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
     payload = {"error": {"message": message, "type": "upstream_error"}}
     return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
+
+
+def _visible_web_calls(messages: list) -> tuple[list, list]:
+    """The web_fetch (url, find, cursor) keys and web_search queries STILL PRESENT in the conversation
+    (post-represent_inbound, so the calls are labeled web_fetch/web_search). Feeds the exact-repeat
+    gate so it refuses a repeat only while the model can still read that result — not after
+    compaction elided it."""
+    from .toolargs import parse_args
+    fetch_keys, queries = [], []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if name == "web_fetch":
+                a = parse_args(fn.get("arguments"))
+                if a.get("url"):
+                    find = str(a["find"]) if a.get("find") else ""
+                    cursor = str(a["cursor"]) if a.get("cursor") not in (None, "") else ""
+                    fetch_keys.append((str(a["url"]), find, cursor))
+            elif name in ("web_search", "local_web_search"):
+                a = parse_args(fn.get("arguments"))
+                if a.get("query"):
+                    queries.append(str(a["query"]))
+    return fetch_keys, queries
 
 
 def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
@@ -420,6 +446,11 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._native_search = native_search_name(body.get("tools"))
             body["messages"] = represent_inbound(body.get("messages", []), rlog)
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
+            # The exact-repeat fetch/search gate refuses a repeat ONLY while its result is still in
+            # context — feed it the web calls STILL PRESENT, so a compacted-away result (an OpenAPI
+            # spec the model needs to re-read) can be re-fetched instead of blocked forever.
+            fk, sq = _visible_web_calls(body.get("messages", []))
+            webfetch.set_visible(session_key(self.headers, body.get("messages", [])), fk, sq)
 
     def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
