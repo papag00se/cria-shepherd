@@ -202,6 +202,16 @@ class GateTests(unittest.TestCase):
         wf.set_visible("s1", [(iu, "", "")], [])
         self.assertNotIn("still above", wf.fetch_nav(iu, session="s1"))
 
+    def test_find_cursor_gated_by_the_full_key(self):
+        # the gate key is (url, find, cursor) — a find/cursor repeat is handled just like a plain one
+        wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", '{"paths":{}}', False)
+        url = "https://x/spec"
+        wf.set_visible("s1", [(url, "resolve", "c500")], [])
+        self.assertIn("still above", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # exact repeat
+        self.assertNotIn("still above", wf.fetch_nav(url, find="holders", session="s1"))  # a DIFFERENT find = new nav
+        wf.set_visible("s1", [], [])                                                       # compaction elided it
+        self.assertNotIn("still above", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # allowed
+
     def test_guess_streak_nudge_after_three_non_2xx(self):
         wf.fetch = lambda u, ua=None: wf.FetchResult(404, u, "text/plain", "nope", False)
         self.assertNotIn("guessing", wf.fetch_nav("https://api.x/miss0", session="s1"))

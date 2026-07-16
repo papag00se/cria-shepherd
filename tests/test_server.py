@@ -583,5 +583,25 @@ class DirectRewriteDetectionTests(unittest.TestCase):
         self.assertFalse(h._detect_rewrite("task:xyz", b, _RewriteRlog()))
 
 
+class VisibleWebCallsTests(unittest.TestCase):
+    """_visible_web_calls extracts the full (url, find, cursor) key + queries from the calls still
+    present, so the exact-repeat gate only refuses a repeat while its result is in context."""
+
+    def test_extracts_url_find_cursor_and_queries(self):
+        from cria.server import _visible_web_calls
+        msgs = [
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "web_fetch", "arguments": '{"url":"https://x/spec","find":"resolve","cursor":"c500"}'}}]},
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "web_fetch", "arguments": '{"url":"https://y/"}'}},
+                {"function": {"name": "web_search", "arguments": '{"query":"ada handle api"}'}}]},
+            {"role": "user", "content": "not a tool call"},
+        ]
+        fk, sq = _visible_web_calls(msgs)
+        self.assertIn(("https://x/spec", "resolve", "c500"), fk)
+        self.assertIn(("https://y/", "", ""), fk)
+        self.assertEqual(sq, ["ada handle api"])
+
+
 if __name__ == "__main__":
     unittest.main()
