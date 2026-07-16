@@ -26,10 +26,16 @@ the pre-existing don't-wedge semantics instead of inventing a verdict.
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass, field
 
-from . import proberun
+from . import probeparse, proberun
+
+# Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
+# lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
+# line — its phrase check is substring so it already works either way.
+_LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
 from .proberun import ProbeReport
 
 # Marker line delimiting each section of the composed script's output. The id after the
@@ -105,6 +111,58 @@ def split_sections(text: str) -> dict[str, str]:
     if current is not None:
         sections[current] = "\n".join(buf).strip()
     return sections
+
+
+def clean_gate_output(raw: str) -> str | None:
+    """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
+
+    The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
+    ``___CRIA_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
+    ``Chunk ID / Process exited / …`` wrapper. Shown verbatim (and PROTECTED from trimming) it buried
+    the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model
+    then chased — even though the gate DIGEST already filters those. This strips all of it: the model
+    sees only error-class findings (syntax, undefined names, type errors, real test failures), or a
+    one-line "all pass". Returns ``None`` when ``raw`` is not a gate result (leave it untouched)."""
+    if SECTION_PREFIX not in (raw or ""):
+        return None
+    findings: list[str] = []
+    seen: set[str] = set()
+    for sid, body in split_sections(raw).items():
+        if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
+            continue
+        for ln in body.splitlines():
+            s = ln.strip()
+            if not s or s.startswith(proberun.PROBE_EXIT_SENTINEL):   # blank / EXIT:<n> sentinel
+                continue
+            # advisory either as a whole line (phrase/prefix forms) or once the location prefix is
+            # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered
+            if probeparse.is_advisory(s) or probeparse.is_advisory(_LOC_PREFIX.sub("", s)):
+                continue
+            if s not in seen:
+                seen.add(s)
+                findings.append(s)
+    if not findings:
+        return "⟦cria:checks⟧ the repo's own checks (syntax / lint / tests) pass on your current edits — no error-class findings."
+    return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at the "
+            "reported line:\n" + "\n".join(findings[:40]))
+
+
+def clean_gate_results(messages: list) -> list:
+    """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
+    a re-run over already-clean messages leaves them untouched. Non-gate messages pass through."""
+    out = []
+    for m in messages:
+        if isinstance(m, dict):
+            is_tool = m.get("role") == "tool" or m.get("type") == "function_call_output"
+            key = "content" if m.get("content") is not None else "output"
+            c = m.get(key)
+            if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
+                cleaned = clean_gate_output(c)
+                if cleaned is not None:
+                    out.append({**m, key: cleaned})
+                    continue
+        out.append(m)
+    return out
 
 
 def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:

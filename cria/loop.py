@@ -1219,6 +1219,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     """
     prompt = _item_prompt(item, summary, idx, total)
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
+    messages = probegate.clean_gate_results(messages)  # strip raw gate plumbing/advisory from the coder's view
     # cria's step instruction goes in the SYSTEM message, NOT a front user turn. The context floor
     # protects system messages but trims old user turns — and on a large history (after compaction)
     # it was trimming cria's own step framing AWAY, leaving the coder with no idea what step it was

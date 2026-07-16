@@ -465,19 +465,21 @@ _ADVISORY_PHRASES = (
 )
 
 
+def is_advisory(message: str) -> bool:
+    """True when a diagnostic is advisory/style — a ``note:``/``warning:`` severity prefix, a
+    pycodestyle/pylint style code (``W###``/``C####``/``R####``, E9xx syntax kept), or an
+    unused/never-used phrase (any linter). These must neither gate a step NOR reach the model as
+    a "problem to fix" — the single predicate used by both the gate filter and the gate-output
+    cleaner, so the two can't diverge."""
+    m = (message or "").lstrip()
+    low = m.lower()
+    return (low.startswith(("note:", "warning:", "hint:", "info:", "convention:", "refactor:"))
+            or bool(_STYLE_CODE.match(m))
+            or any(p in low for p in _ADVISORY_PHRASES))
+
+
 def _error_class_only(findings: list) -> list:
-    out = []
-    for f in findings:
-        m = (f.message or "").lstrip()
-        low = m.lower()
-        if low.startswith(("note:", "warning:", "hint:", "info:", "convention:", "refactor:")):
-            continue
-        if _STYLE_CODE.match(m):
-            continue
-        if any(p in low for p in _ADVISORY_PHRASES):  # unused/never-used cleanliness, any linter
-            continue
-        out.append(f)
-    return out
+    return [f for f in findings if not is_advisory(f.message or "")]
 
 
 def parse_output(command: str, family: str, exit_code: Optional[int],

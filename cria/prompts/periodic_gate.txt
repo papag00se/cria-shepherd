@@ -1,2 +1,2 @@
-I am giving you the CURRENT state of the repo (syntax / lint / tests). If anything below is broken, fix syntax/lint errors FIRST before continuing and then tests; if it's all clean, carry on.
+I am giving you the CURRENT state of the repo (syntax & tests). If anything below is broken, fix syntax errors FIRST before continuing and then tests; if it's all clean, carry on.
 {{TRUTH}}

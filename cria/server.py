@@ -23,7 +23,7 @@ from . import focustrim, massage, prompts, responses, rumination, selfcompact
 from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
-from . import brave, webfetch
+from . import brave, probegate, webfetch
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -175,6 +175,7 @@ def _direct_coder_body(body: dict) -> dict:
     # `.cria/` writes) before reframing — same scrub the loop's _frame_for_item does — so a
     # resumed/compacted plan-off conversation can't feed them to the coder to imitate.
     src = _strip_cria_file_ops(body.get("messages") or [])
+    src = probegate.clean_gate_results(src)  # strip raw gate plumbing/advisory from the coder's view
     msgs = [reframe_preamble(m) for m in src if m.get("role") not in ("system", "developer")]
     # Carry the menu-derived tool hint into cria's OWN system message: add_cheatsheet folded it
     # into the harness system message during prep, which we just dropped — so the coder would

@@ -176,3 +176,70 @@ class LintTierTests(unittest.TestCase):
         self.assertTrue(any("pyflakes" in c for c in cmds))       # Python lint
         self.assertTrue(any("go vet" in c for c in cmds))         # Go lint
         self.assertTrue(any("cargo clippy" in c for c in cmds))   # Rust lint
+
+
+class CleanGateOutputTests(unittest.TestCase):
+    """The gate RESULT the model reads must be error-class only — no ``___CRIA_GATE_`` plumbing,
+    no ``EXIT:`` sentinels, no git-hash section, no advisory lint (footguns #1/#2/#5)."""
+
+    def _raw(self, probe1_body):
+        # exec-wrapper preamble (ignored) + a clean tier-0 probe-0 + probe-1 + git section + trailer
+        return (
+            "Chunk ID: 7f3\n"
+            + _sec(0, "EXIT:0")
+            + _sec(1, probe1_body)
+            + _git("deadbeef")
+            + "Process exited with code 1\n"
+        )
+
+    def test_strips_plumbing_and_advisory_keeps_error(self):
+        raw = self._raw("x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIsNotNone(out)
+        self.assertIn("x.py:5:4 undefined name 'foo'", out)   # the real error survives
+        self.assertNotIn("imported but unused", out)          # advisory dropped
+        self.assertNotIn(probegate.SECTION_PREFIX, out)       # no section markers
+        self.assertNotIn("EXIT:", out)                        # no exit sentinels
+        self.assertNotIn("deadbeef", out)                     # git hash dropped
+        self.assertNotIn("Chunk ID", out)                     # exec wrapper dropped
+
+    def test_all_clean_or_advisory_reports_pass(self):
+        raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:0")
+        out = probegate.clean_gate_output(raw)
+        self.assertIsNotNone(out)
+        self.assertIn("pass", out.lower())
+        self.assertNotIn("imported but unused", out)
+
+    def test_bare_style_code_after_location_is_advisory(self):
+        # E501 sits AFTER the file:line:col prefix — is_advisory's anchored code check only fires
+        # once clean_gate_output strips that prefix.
+        raw = self._raw("x.py:80:1: E501 line too long (99 > 88 characters)\nEXIT:0")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("pass", out.lower())
+        self.assertNotIn("E501", out)
+
+    def test_non_gate_text_untouched(self):
+        self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers"))
+        self.assertIsNone(probegate.clean_gate_output(""))
+
+    def test_clean_gate_results_rewrites_tool_and_fco_messages(self):
+        raw = self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")
+        msgs = [
+            {"role": "user", "content": "go"},
+            {"role": "tool", "content": raw},                                  # chat-style tool result
+            {"type": "function_call_output", "output": raw},                   # responses-style result
+            {"role": "tool", "content": "unrelated tool output"},              # non-gate — untouched
+        ]
+        out = probegate.clean_gate_results(msgs)
+        self.assertEqual(out[0], msgs[0])                                       # user passes through
+        self.assertIn("⟦cria:checks⟧", out[1]["content"])
+        self.assertNotIn(probegate.SECTION_PREFIX, out[1]["content"])
+        self.assertIn("⟦cria:checks⟧", out[2]["output"])                       # rewrote the `output` key
+        self.assertEqual(out[3], msgs[3])                                       # non-gate untouched
+
+    def test_idempotent(self):
+        raw = self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")
+        msgs = [{"role": "tool", "content": raw}]
+        once = probegate.clean_gate_results(msgs)
+        twice = probegate.clean_gate_results(once)
+        self.assertEqual(once, twice)
