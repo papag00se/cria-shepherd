@@ -1,5 +1,11 @@
-You are compressing the earlier part of a coding session into a briefing for the SAME agent to keep working from. Summarize the transcript below into a concise, factual briefing:
-- What was accomplished (files created/edited, functions written).
-- The CURRENT state of the code and any tests (what passes, what still fails and why).
+You are compressing the earlier part of a coding session into a briefing for the SAME agent to keep working from. The agent will keep EDITING this code — so write the briefing as current state it can freely change, never as decisions it must preserve.
+
+Summarize the transcript below into a concise, factual briefing:
+- What now WORKS — describe each accomplishment by its behavior/capability and the FILE it lives in (e.g. "resolving a handle to an id now works — in auth.py"). Mention a function or variable name only as a pointer to find the code, never as a fact to keep: identifiers, signatures, and structure are the current implementation and MAY still be renamed or refactored.
+- The CURRENT state of the code and any tests: what passes, what still fails and why (quote the concrete error and file:line).
 - What remains to be done / the next step.
-Be specific — name files, functions, and concrete errors. Do NOT invent progress. Output only the briefing, no preamble.
+
+Rules:
+- Name FILES and concrete ERRORS precisely — those are stable ground truth the agent should trust.
+- Do NOT present any function name, variable name, or code shape as "done — don't change it." The agent may be mid-refactor; a briefing that freezes a name it is in the middle of renaming makes it thrash between the old and new name.
+- Do NOT invent progress. Output only the briefing, no preamble.
