@@ -99,14 +99,18 @@ class TranslateWriteTests(unittest.TestCase):
         self.assertEqual(tc["name"], "write_file")
         self.assertEqual(json.loads(tc["arguments"])["content"], content)
 
-    def test_empty_write_result_reframed_error_kept(self):
+    def test_write_result_reframed_only_on_the_success_token(self):
+        from cria.writeproxy import _WROTE
         comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="c9")
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
-        hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": "  "}]
-        out = represent_inbound(hist)
-        self.assertIn("x.py", str(out[-1]["content"]))            # empty success → confirmation
-        hist2 = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": "permission denied"}]
-        self.assertEqual(represent_inbound(hist2)[-1]["content"], "permission denied")  # real error kept
+        # SUCCESS: the result carries the positive token → clean confirmation (token hidden)
+        ok = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": _WROTE}]
+        self.assertIn("x.py", str(represent_inbound(ok)[-1]["content"]))
+        self.assertNotIn(_WROTE, str(represent_inbound(ok)[-1]["content"]))
+        # FAILURE: no token (error on stderr, or blank) → left UNTOUCHED, the model sees the failure
+        for failed in ("permission denied", "  ", ""):
+            hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": failed}]
+            self.assertEqual(represent_inbound(hist)[-1]["content"], failed)   # never fabricated success
 
 
 class TranslateEditReadTests(unittest.TestCase):

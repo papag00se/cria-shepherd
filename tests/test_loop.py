@@ -2004,3 +2004,34 @@ class CompactionReframeTests(unittest.TestCase):
         once, _ = reframe_compaction([{"role": "user", "content": self._MARKER}])
         twice, hit2 = reframe_compaction(once)                   # already reframed → no re-touch
         self.assertFalse(hit2)
+
+    def test_reframes_list_shaped_content(self):
+        # A2/A1: content as structured parts (a chat client) must still be matched (was isinstance str)
+        from cria.loop import reframe_compaction
+        msgs = [{"role": "user", "content": [{"type": "text", "text": self._MARKER}]}]
+        out, hit = reframe_compaction(msgs)
+        self.assertTrue(hit)
+        self.assertNotIn("Another language model", out[0]["content"])
+        self.assertIn("Built handler.py + tests", out[0]["content"])
+
+    def test_drifted_boundary_does_not_wrap_the_foreign_preamble(self):
+        # A3: boundary text absent → strip up to the marker's line-end, never wrap "another language
+        # model…" inside "this is YOUR OWN work".
+        from cria.loop import reframe_compaction
+        drifted = ("Another language model started to solve this problem and did a bunch.\n"
+                   "Built handler.py; tests failing.")
+        out, hit = reframe_compaction([{"role": "user", "content": drifted}])
+        self.assertTrue(hit)
+        self.assertNotIn("Another language model", out[0]["content"])   # preamble stripped
+        self.assertIn("Built handler.py", out[0]["content"])            # real content kept
+
+
+class GuardStoreIsolationTests(unittest.TestCase):
+    def test_unstable_keys_isolated_stable_persist_and_bounded(self):
+        from cria.loop import GuardStore, _MAX_GUARD_STATES
+        st = GuardStore()
+        self.assertIs(st.get("sid:abc"), st.get("sid:abc"))        # stable key → persists (same object)
+        self.assertIsNot(st.get("task:h"), st.get("task:h"))       # unstable → fresh each turn, no sharing
+        for i in range(_MAX_GUARD_STATES + 5):                     # never grows unboundedly
+            st.get(f"sid:{i}")
+        self.assertLessEqual(len(st._m), _MAX_GUARD_STATES + 1)

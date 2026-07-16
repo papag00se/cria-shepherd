@@ -46,6 +46,10 @@ _HD_B64 = "__CRIA_B64_EOF__"
 _HD_PY = "__CRIA_PY_EOF__"
 # A per-write temp suffix keeps the write atomic (write temp, then mv over the target).
 _TMP_SUFFIX = ".cria-tmp"
+# A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
+# this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
+# both look blank) would be reported to the model as "Wrote {path}" (false success).
+_WROTE = "⟦cria:wrote⟧"
 _FETCH_TIMEOUT_S = 20
 _FETCH_CAP_BYTES = 65536  # cap a fetched page so one tool result can't blow the window
 
@@ -169,8 +173,10 @@ def _write_command(path: str, content: str) -> str:
     """Byte-exact atomic write: base64 (on stdin via heredoc — no arg-size limit) decoded to a temp
     file, then moved over the target so a partial decode never leaves a half-written file."""
     q, tmp = _qbash(path), _qbash(path + _TMP_SUFFIX)
+    # &&-chain so a failure at ANY step (mkdir/decode/mv) short-circuits BEFORE the success token —
+    # blank/absent token ⇒ the write did not land, and the model sees the real stderr.
     return (f'mkdir -p "$(dirname {q})" && base64 -d > {tmp} <<\'{_HD_B64}\'\n'
-            f'{_b64(content)}\n{_HD_B64}\nmv {tmp} {q}')
+            f'{_b64(content)}\n{_HD_B64}\nmv {tmp} {q} && printf %s {_qbash(_WROTE)}')
 
 
 def _edit_command(path: str, old: str, new: str) -> str:
@@ -186,7 +192,7 @@ def _edit_command(path: str, old: str, new: str) -> str:
         "n=s.count(old)\n"
         "sys.exit('edit_file: old_string must occur exactly once (found %d)'%n) if n!=1 else None\n"
         "p.write_text(s.replace(old,new,1))\n"
-        "print('edited',p)\n"
+        f"print({_WROTE!r})\n"   # success token — a fail-closed sys.exit above prints NOTHING here
     )
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
@@ -335,7 +341,9 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                     swapped += 1
                 new_calls.append(tc)
             out.append({**m, "tool_calls": new_calls})
-        elif role == "tool" and m.get("tool_call_id") in write_paths and not str(m.get("content") or "").strip():
+        elif role == "tool" and _WROTE in str(m.get("content") or "") and m.get("tool_call_id") in write_paths:
+            # POSITIVE success signal only — a blank or error result (no token) is left untouched so
+            # the model sees the real failure instead of a fabricated "Wrote {path}".
             out.append({**m, "content": prompts.render("write_confirm", path=write_paths[m["tool_call_id"]])})
         else:
             out.append(m)

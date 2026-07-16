@@ -30,6 +30,35 @@ def _fat_tools(n, desc_len):
         for i in range(n)]
 
 
+class TestAnchorProtection(unittest.TestCase):
+    def test_markers_stay_in_sync_with_their_sources(self):
+        from cria.loop import BRIEFING_OPEN
+        from cria.probegate import SECTION_PREFIX
+        self.assertIn(BRIEFING_OPEN, contextfloor._PROTECT_MARKERS)
+        self.assertIn(SECTION_PREFIX, contextfloor._PROTECT_MARKERS)
+
+    def test_briefing_survives_drop_oldest(self):
+        # a huge history over budget: the ⟦cria:briefing⟧ anchor must NOT be dropped, so a follow-up
+        # can still re-read it (else replanning from scratch).
+        from cria.loop import BRIEFING_OPEN
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "user", "content": f"{BRIEFING_OPEN} prior work: built the resolver ⟦/cria:briefing⟧"}]
+        msgs += [_a("x" * 4000, [{"id": f"c{i}", "type": "function", "function": {"name": "s", "arguments": "{}"}}]) for i in range(40)]
+        msgs += [_u("the current request")]
+        kept, _ = contextfloor._drop_oldest(msgs, msg_budget=500)
+        self.assertTrue(any(BRIEFING_OPEN in str(m.get("content") or "") for m in kept))  # anchor kept
+        self.assertLess(len(kept), len(msgs))                                              # but it DID drop others
+
+    def test_gate_result_not_reduced(self):
+        from cria.probegate import SECTION_PREFIX
+        gate = f"{SECTION_PREFIX}probe-0___\n" + "mcp_client.py:14: SyntaxError bad\n" * 200  # bulky ground truth
+        msgs = [{"role": "system", "content": "s"}, _a("", [{"id": "g", "type": "function", "function": {"name": "s", "arguments": "{}"}}]),
+                _tool("g", gate), _u("go")]
+        out, _ = contextfloor._reduce_tool_outputs(msgs, msg_budget=50)  # force pressure
+        kept_gate = next(m for m in out if m.get("role") == "tool")
+        self.assertEqual(kept_gate["content"], gate)   # the ground truth is preserved verbatim
+
+
 class TestFits(unittest.TestCase):
     def test_noop_when_it_already_fits(self):
         msgs = [{"role": "system", "content": "sys"}, _u("hi")]

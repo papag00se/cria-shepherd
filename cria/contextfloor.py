@@ -36,6 +36,17 @@ from dataclasses import dataclass, field
 
 from .content_reduce import content_reduce, est_tokens
 
+# Anchors the floor must NOT silently trim: the completion-briefing envelope a follow-up re-reads
+# FROM history, and cria's ground-truth gate output the coder must read to fix a step. Literals
+# mirror loop.BRIEFING_OPEN / probegate.SECTION_PREFIX — contextfloor is low-level and imports
+# neither (avoids a cycle); a test asserts they stay in sync.
+_PROTECT_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_")
+
+
+def _has_protect_marker(m: dict) -> bool:
+    t = _msg_text(m)
+    return any(mk in t for mk in _PROTECT_MARKERS)
+
 # Real rendered tokens exceed the chars/4 estimate for code/JSON/tool-arg-heavy transcripts.
 # This is the DEFAULT inflation before the density is measured; the caller passes a LEARNED
 # per-model ratio (cria.tokenratio, updated from real usage) as `safety` once it knows better.
@@ -262,6 +273,8 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
         if sz < 256:  # not worth reducing a small output
             continue
         m = out[i]
+        if _has_protect_marker(m):  # never truncate cria's own ground-truth gate output
+            continue
         content = m.get("content")
         text = content if isinstance(content, str) else _msg_text(m)
         # Aim this output at a share of the remaining budget, not below a usable floor.
@@ -287,6 +300,8 @@ def _protected_mask(messages: list[dict]) -> list[bool]:
         if m.get("role") in ("system", "developer"):
             prot[i] = True
         if last_user >= 0 and i >= last_user:
+            prot[i] = True
+        if _has_protect_marker(m):  # the briefing / gate anchor — don't drop it from under a reference
             prot[i] = True
     return prot
 

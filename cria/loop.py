@@ -183,9 +183,18 @@ class GuardStore:
         self._lock = threading.Lock()
 
     def get(self, key: str) -> GuardState:
+        # An UNSTABLE (content-derived ``task:``) key must NOT persist cross-turn guard state: two
+        # unrelated conversations that open with the same text would share ONE GuardState, so one's
+        # held "done" answer/probe could be forwarded into the other (false completion + answer leak
+        # — the plan-cache-leak class, now on the guard). Hand those a fresh, memory-less state per
+        # turn; only a stable ``sid:`` key persists (and even that is bounded, like _shapes).
+        if not _stable_session(key):
+            return GuardState()
         with self._lock:
             gs = self._m.get(key)
             if gs is None:
+                if len(self._m) >= _MAX_GUARD_STATES:
+                    self._m.clear()  # bound the store — never grow unboundedly over a long-lived process
                 gs = self._m[key] = GuardState()
             return gs
 
@@ -199,6 +208,7 @@ class GuardStore:
 # How many session SHAPES to retain (conversation-root fingerprints, for harness-compaction
 # detection). Cheap (a hash + an int each); evicted oldest-first.
 _MAX_SHAPES = 256
+_MAX_GUARD_STATES = 256  # bound GuardStore like _shapes — a long-lived process must not grow it forever
 
 
 class LoopStore:
@@ -1108,10 +1118,16 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
     out: list[dict] = []
     reframed = False
     for m in messages:
-        c = m.get("content")
-        if isinstance(c, str) and m.get("role") == "user" and _COMPACTION_MARKER in c:
-            idx = c.find(_COMPACTION_BOUNDARY)  # split off the harness preamble, keep the summary tail
-            summary = c[idx + len(_COMPACTION_BOUNDARY):].lstrip("\n") if idx != -1 else c
+        text = _msg_text_content(m)  # handles list-shaped content (a chat client's structured parts)
+        if m.get("role") == "user" and _COMPACTION_MARKER in text:
+            idx = text.find(_COMPACTION_BOUNDARY)  # split off the harness preamble, keep the summary tail
+            if idx != -1:
+                summary = text[idx + len(_COMPACTION_BOUNDARY):].lstrip("\n")
+            else:
+                # boundary drifted/absent: strip up to the END of the marker's own line so the foreign
+                # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
+                nl = text.find("\n", text.find(_COMPACTION_MARKER))
+                summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
             out.append({**m, "content": prompts.render("compaction_reframe", summary=summary)})
             reframed = True
         else:
