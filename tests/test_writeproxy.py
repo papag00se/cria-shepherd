@@ -119,7 +119,7 @@ class TranslateEditReadTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"edit_file"})
         cmd = _lowered_cmd(comp)
         self.assertIn("python3", cmd)
-        self.assertIn("must occur exactly once", cmd)   # fail-closed on absent/ambiguous
+        self.assertIn("old_string not found", cmd)   # fail-closed on a miss (with a helpful error)
         back = represent_inbound(_history_from(comp))[0]["tool_calls"][0]["function"]
         self.assertEqual(back["name"], "edit_file")
         self.assertEqual(json.loads(back["arguments"])["new_string"], 'x, "id": id}')
@@ -207,3 +207,43 @@ class MiscTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EditCommandTests(unittest.TestCase):
+    """The edit executor: exact match, whitespace-flexible fallback (indent/blank-line drift), and a
+    helpful actual-content error on a real miss — instead of byte-exact-only failing ~1/3 of edits."""
+
+    def _run(self, content, old, new):
+        import base64, os, subprocess, sys, tempfile
+        from cria.writeproxy import _EDIT_PY, _WROTE
+        fd, path = tempfile.mkstemp(suffix=".py")
+        os.write(fd, content.encode()); os.close(fd)
+        b = lambda x: base64.b64encode(x.encode()).decode()
+        script = _EDIT_PY.format(path=b(path), old=b(old), new=b(new), wrote=_WROTE)
+        r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        out = open(path).read(); os.unlink(path)
+        return r.returncode, (r.stdout + r.stderr), out
+
+    def test_exact_match_replaces(self):
+        rc, msg, out = self._run("foo\nbar\n", "foo", "FOO")
+        self.assertEqual(rc, 0); self.assertIn("⟦cria:wrote⟧", msg); self.assertEqual(out, "FOO\nbar\n")
+
+    def test_blank_line_drift_still_matches(self):
+        # old has an EXTRA blank line vs the file — byte-exact would fail; whitespace-flexible matches.
+        rc, msg, out = self._run("a = 1\n\nb = 2\n", "a = 1\n\n\nb = 2", "a = 1\n\nc = 3")
+        self.assertEqual(rc, 0); self.assertIn("⟦cria:wrote⟧", msg); self.assertIn("c = 3", out)
+
+    def test_indentation_drift_still_matches(self):
+        rc, msg, out = self._run("    x = 1\n", "x = 1", "x = 2")
+        self.assertEqual(rc, 0); self.assertEqual(out, "    x = 2\n")   # file's indent preserved
+
+    def test_ambiguous_fails_closed(self):
+        rc, msg, out = self._run("x\nx\n", "x", "y")
+        self.assertNotEqual(rc, 0); self.assertIn("occurs 2 times", msg); self.assertEqual(out, "x\nx\n")
+
+    def test_miss_returns_actual_content(self):
+        rc, msg, out = self._run("def resolve(handle):\n    y = 2\n", "def resolve(handle):\n    x = 1", "z")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("not found", msg)
+        self.assertIn("y = 2", msg)                 # shows the file's ACTUAL content near the target
+        self.assertEqual(out, "def resolve(handle):\n    y = 2\n")   # unchanged

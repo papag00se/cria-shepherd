@@ -178,21 +178,46 @@ def _write_command(path: str, content: str) -> str:
             f'{_b64(content)}\n{_HD_B64}\nmv {tmp} {q} && printf %s {_qbash(_WROTE)}')
 
 
+# The edit executor (old/new/path base64'd — nothing to escape). Tries an EXACT single match first
+# (precise); then a WHITESPACE-FLEXIBLE match — the non-whitespace tokens of old_string separated by
+# any whitespace — which forgives the indentation / blank-line / trailing-space drift a 9B routinely
+# produces (a byte-exact-only match failed ~1/3 of real edits). Still fail-CLOSED: 0 or ambiguous
+# matches never write. On a genuine miss it hands the model the file's ACTUAL content near its target
+# so its next attempt can copy the exact text, instead of a bare "found 0" it can only guess against.
+_EDIT_PY = r'''import base64,sys,re,pathlib
+p=pathlib.Path(base64.b64decode('{path}').decode())
+old=base64.b64decode('{old}').decode()
+new=base64.b64decode('{new}').decode()
+s=p.read_text()
+n=s.count(old)
+if n==1:
+    p.write_text(s.replace(old,new,1)); print('{wrote}'); sys.exit()
+if n>1:
+    sys.exit('edit_file: old_string occurs %d times — add surrounding lines to make it unique'%n)
+toks=old.split()
+if toks:
+    ms=list(re.compile(r'\s+'.join(map(re.escape,toks))).finditer(s))
+    if len(ms)==1:
+        m=ms[0]; p.write_text(s[:m.start()]+new+s[m.end():]); print('{wrote}'); sys.exit()
+    if len(ms)>1:
+        sys.exit('edit_file: old_string matches %d places (ignoring whitespace) — add more surrounding context'%len(ms))
+key=next((l.strip() for l in old.split(chr(10)) if l.strip()),'')
+lines=s.split(chr(10)); ctx=''
+if key:
+    for i,l in enumerate(lines):
+        if key[:40] in l:
+            ctx=chr(10).join(lines[max(0,i-2):i+4]); break
+msg='edit_file: old_string not found in '+p.name+'.'
+if ctx:
+    msg+=' The file reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy that EXACT text (indentation included) into old_string, or use write_file.'
+else:
+    msg+=' Read the file first — your old_string does not match its current contents.'
+sys.exit(msg)
+'''
+
+
 def _edit_command(path: str, old: str, new: str) -> str:
-    """Byte-exact single-occurrence replace via python (old/new/path base64'd — nothing to escape).
-    Fails CLOSED if old_string is absent or ambiguous, so the model gets a real error, not a silent
-    no-op or a multi-hit clobber."""
-    py = (
-        "import base64,sys,pathlib\n"
-        f"p=pathlib.Path(base64.b64decode('{_b64(path)}').decode())\n"
-        f"old=base64.b64decode('{_b64(old)}').decode()\n"
-        f"new=base64.b64decode('{_b64(new)}').decode()\n"
-        "s=p.read_text()\n"
-        "n=s.count(old)\n"
-        "sys.exit('edit_file: old_string must occur exactly once (found %d)'%n) if n!=1 else None\n"
-        "p.write_text(s.replace(old,new,1))\n"
-        f"print({_WROTE!r})\n"   # success token — a fail-closed sys.exit above prints NOTHING here
-    )
+    py = _EDIT_PY.format(path=_b64(path), old=_b64(old), new=_b64(new), wrote=_WROTE)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
