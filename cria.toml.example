@@ -63,6 +63,10 @@ focus = true          # curate the tool menu down to coding essentials (drop non
 focus_trim = true     # collapse exact-duplicate tool calls (same name+args) to their LAST occurrence
                       #   before sending to the model, so a small model isn't drowning in its own
                       #   repeated failed commands. cria's detectors still see the FULL history.
+self_compact = true          # roll the OLD middle of a long plan-off coder history into a reasoner
+                             #   summary (info-preserving) instead of letting the floor drop it. Keeps
+                             #   the coder view lean: [system] + anchors + [rollup] + band + recent tail.
+trigger_compaction = 16384   # self-compact once the coder view exceeds this many TOKENS (stable sessions only)
 
 # --- the reasoned planner ------------------------------------------------------
 [planner]

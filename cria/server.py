@@ -463,10 +463,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         if not self.server.cfg.context.self_compact or not _stable_session(sess_key):
             return framed
         msgs = framed.get("messages") or []
-        if len(msgs) <= selfcompact.SELFCOMPACT_TRIGGER:
-            return framed
         state = self.server.compact_states.get(sess_key) or selfcompact.CompactState()
-        out, state, applied = selfcompact.compact(msgs, lambda mm: self._summarize(mm, rlog), state)
+        out, state, applied = selfcompact.compact(
+            msgs, lambda mm: self._summarize(mm, rlog), state,
+            trigger_tokens=self.server.cfg.context.trigger_compaction)
         if not applied:
             return framed
         if len(self.server.compact_states) >= 256:

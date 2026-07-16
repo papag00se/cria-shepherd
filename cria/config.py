@@ -250,9 +250,10 @@ class ContextConfig:
 
     focus_trim: bool = True
     # Roll the OLD middle of a long plan-off coder history into a reasoner summary (information-
-    # preserving) instead of letting the floor drop-oldest lose it. On above a message threshold;
-    # stable sessions only. See selfcompact.py.
+    # preserving) instead of letting the floor drop-oldest lose it. Fires once the coder view
+    # exceeds `trigger_compaction` TOKENS; stable sessions only. See selfcompact.py.
     self_compact: bool = True
+    trigger_compaction: int = 16384  # token budget above which the plan-off view is self-compacted
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,7 @@ class Config:
             context=ContextConfig(
                 focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
                 self_compact=bool(data.get("context", {}).get("self_compact", True)),
+                trigger_compaction=int(data.get("context", {}).get("trigger_compaction", 16384)),
             ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),

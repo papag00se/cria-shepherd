@@ -7,37 +7,42 @@ instead SUMMARIZES the old middle into one rolling briefing (reasoner-generated)
 coder gets a lean, information-PRESERVING view: [system] + anchors + [rollup summary] +
 a small verbatim band + the recent tail.
 
-Structure kept every turn:
+Everything is measured in TOKENS, not message count — the real constraint is the context
+window, and a few huge file reads matter more than many tiny turns (the same currency the
+floor uses). Structure kept every turn:
   - the leading system message (cria's coder framing),
   - any ANCHOR message (a ⟦cria:briefing⟧ handoff / a ___CRIA_GATE_ ground truth) — verbatim,
   - ONE ⟦cria:rollup⟧ summary of the old middle,
-  - a small VERBATIM band of old-but-not-yet-folded turns (bounded by RECOMPACT_EVERY),
-  - the last KEEP_TAIL messages verbatim (the live working set).
+  - a small VERBATIM band of old-but-not-yet-folded turns (bounded by RECOMPACT_TOKENS),
+  - the recent tail up to KEEP_TAIL_TOKENS verbatim (the live working set).
 
-The summary is THROTTLED: re-generated only when the unfolded band grows past RECOMPACT_EVERY,
-not every turn (one reasoner call amortized over ~20 turns). Boundary splits (a tail/summary
-edge landing between an assistant tool_call and its result) are cleaned by the floor's
-existing _strip_orphan_tools downstream — self-compaction runs BEFORE the floor.
+The summary is THROTTLED: re-generated only when the unfolded band grows past RECOMPACT_TOKENS,
+not every turn (one reasoner call amortized over many turns). Boundary splits (an edge landing
+between an assistant tool_call and its result) are cleaned by the floor's existing
+_strip_orphan_tools downstream — self-compaction runs BEFORE the floor.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Tunables (code constants, not env — they don't vary by environment).
-SELFCOMPACT_TRIGGER = 80   # only compact a plan-off coder view longer than this many messages
-KEEP_TAIL = 30             # keep the most recent N messages verbatim (the live working set)
-RECOMPACT_EVERY = 20       # re-summarize only after the unfolded band grows this much (throttle)
+from .content_reduce import est_tokens
+
+# Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
+# code constants (they don't vary by environment).
+TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exceeds this many tokens
+KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
+RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦cria:rollup⟧"     # tags the injected summary — floor-protected + identifiable
-# Anchor markers whose messages are ALWAYS kept verbatim (never summarized away). Mirrors
-# loop.BRIEFING_OPEN / probegate.SECTION_PREFIX (selfcompact is low-level; a test asserts sync).
+# Anchor markers whose messages are ALWAYS kept verbatim. Mirrors loop.BRIEFING_OPEN /
+# probegate.SECTION_PREFIX (selfcompact is low-level; a test asserts sync).
 _ANCHOR_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", SUMMARY_MARKER)
 
 
 @dataclass
 class CompactState:
     summary: str = ""      # the current rolling summary text
-    covered: int = 0       # message-count the summary represents (throttle reference)
+    covered: int = 0       # message INDEX the summary represents up to (throttle reference)
 
 
 def _text(m: dict) -> str:
@@ -47,9 +52,30 @@ def _text(m: dict) -> str:
     return c if isinstance(c, str) else ""
 
 
+def _msg_tokens(m: dict) -> int:
+    t = _text(m)
+    for tc in m.get("tool_calls") or []:
+        t += " " + str((tc.get("function") or {}).get("arguments") or "")
+    return est_tokens(t)
+
+
 def _has_anchor(m: dict) -> bool:
     t = _text(m)
     return any(mk in t for mk in _ANCHOR_MARKERS)
+
+
+def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
+    """The lowest index i (> head_end) such that messages[i:] fits in ``budget_tokens`` — i.e. the
+    recent verbatim working set. Keeps at least one message."""
+    acc = 0
+    i = len(messages)
+    while i > head_end + 1:
+        t = _msg_tokens(messages[i - 1])
+        if acc + t > budget_tokens:
+            break
+        acc += t
+        i -= 1
+    return i
 
 
 def _summary_msg(summary: str) -> dict:
@@ -59,20 +85,22 @@ def _summary_msg(summary: str) -> dict:
         f"{summary}")}
 
 
-def compact(messages: list[dict], summarize, state: CompactState) -> tuple[list[dict], CompactState, bool]:
+def compact(messages: list[dict], summarize, state: CompactState, *,
+            trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
+            recompact_tokens: int = RECOMPACT_TOKENS) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
-    a briefing (injected so this is testable without a model). No-op (same list) below the trigger."""
-    n = len(messages)
-    if n <= SELFCOMPACT_TRIGGER:
+    a briefing (injected so this is testable without a model). No-op (same list) at/below the token
+    trigger, or when there is no middle to compact (the recent tail already spans everything)."""
+    if sum(_msg_tokens(m) for m in messages) <= trigger_tokens:
         return messages, state, False
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
-    tail_start = n - KEEP_TAIL
+    tail_start = _tail_start(messages, head_end, keep_tail_tokens)
     if tail_start <= head_end:
         return messages, state, False
 
-    # (Re)generate the summary only when the unfolded band has grown past the throttle — or the first
-    # time, or if the cached coverage is stale/ahead of this (shorter) conversation.
-    if not state.summary or state.covered < head_end or (tail_start - state.covered) >= RECOMPACT_EVERY:
+    band_tokens = (sum(_msg_tokens(m) for m in messages[state.covered:tail_start])
+                   if head_end <= state.covered <= tail_start else None)
+    if not state.summary or band_tokens is None or band_tokens >= recompact_tokens:
         summarizable = [m for m in messages[head_end:tail_start] if not _has_anchor(m)]
         if summarizable:
             state = CompactState(summary=summarize(summarizable), covered=tail_start)

@@ -10,9 +10,9 @@ class _Rlog:
         pass
 
 
-def _stub_server(self_compact=True, chat_reply="ROLLUP SUMMARY"):
+def _stub_server(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
     import json
-    cfg = types.SimpleNamespace(context=types.SimpleNamespace(self_compact=self_compact))
+    cfg = types.SimpleNamespace(context=types.SimpleNamespace(self_compact=self_compact, trigger_compaction=trigger))
     upstream = types.SimpleNamespace(
         chat=lambda body, rlog: json.dumps({"choices": [{"message": {"content": chat_reply}}]}).encode())
     return types.SimpleNamespace(cfg=cfg, compact_states={}, coder_role=None, upstream=upstream)
@@ -25,8 +25,9 @@ def _handler(server):
 
 
 def _big(n):
+    # ~1000 chars/message so the token budgets (tail 6000) leave a compactable middle
     return {"messages": [{"role": "system", "content": "sys"}]
-            + [{"role": "assistant", "content": f"t{i}"} for i in range(n)]}
+            + [{"role": "assistant", "content": f"turn-{i} " + "x" * 1000} for i in range(n)]}
 
 
 class SelfCompactWiringTests(unittest.TestCase):
@@ -40,10 +41,10 @@ class SelfCompactWiringTests(unittest.TestCase):
 
     def test_skips_unstable_session_and_short_history(self):
         h = _handler(_stub_server())
-        big = _big(150)
+        big = _big(40)
         self.assertIs(h._maybe_self_compact(big, "task:hash", _Rlog()), big)   # unstable key → untouched
-        small = _big(10)
-        self.assertIs(h._maybe_self_compact(small, "sid:abc", _Rlog()), small)  # below trigger → untouched
+        small = {"messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]}
+        self.assertIs(h._maybe_self_compact(small, "sid:abc", _Rlog()), small)  # under the token trigger
 
     def test_disabled_by_config(self):
         h = _handler(_stub_server(self_compact=False))
