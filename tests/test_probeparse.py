@@ -62,7 +62,7 @@ class TestUpstreamParseOutput(unittest.TestCase):
         r = parse_output(
             "eslint .", "eslint", 1,
             "/repo/src/index.js\n"
-            "  10:5  error  'x' is assigned a value but never used  no-unused-vars\n"
+            "  10:5  error  'x' is not defined  no-undef\n"
             "  12:1  error  Unexpected console statement  no-console\n"
             "\n"
             "✖ 2 problems",
@@ -70,17 +70,18 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertEqual(len(r.findings), 2)
         self.assertEqual(r.findings[0].file, "/repo/src/index.js")
         self.assertEqual(r.findings[0].line, 10)
-        self.assertIn("never used", r.findings[0].message)
+        self.assertIn("not defined", r.findings[0].message)
 
     def test_parses_generic_ruff_mypy_go(self):
-        # ruff
+        # ruff (undefined-name — a real bug that survives the error-class filter, so
+        # the parse geometry is what's under test, not the filter)
         r = parse_output("ruff check .", "ruff", 1,
-                         "app/main.py:3:1: F401 `os` imported but unused", "")
+                         "app/main.py:3:1: F821 undefined name `os`", "")
         f = r.findings[0]
         self.assertEqual(f.file, "app/main.py")
         self.assertEqual(f.line, 3)
         self.assertEqual(f.col, 1)
-        self.assertIn("imported but unused", f.message)
+        self.assertIn("undefined name", f.message)
         # mypy (no "mypy" arm in parse_output — generic fallback; message keeps "error: ")
         r = parse_output("mypy .", "mypy", 1,
                          "src/x.py:7: error: Incompatible return value type", "")
@@ -318,7 +319,7 @@ class TestRunnerSeam(unittest.TestCase):
         self.assertEqual(r.findings, [])
 
     def test_timeout_overwrites_summary_keeps_partial_findings(self):
-        runner = _FakeRunner(None, "app/main.py:3:1: F401 `os` imported but unused\n", "",
+        runner = _FakeRunner(None, "app/main.py:3:1: F821 undefined name `os`\n", "",
                              timed_out=True)
         r = run_candidate(runner, ["ruff", "check", "."], "/tmp", 20.0)
         self.assertEqual(
@@ -406,13 +407,39 @@ class ErrorClassFilterTests(unittest.TestCase):
 
     def test_style_codes_dropped_error_codes_kept(self):
         r = parse_output("ruff check .", "", 1,
-                         "a.py:3:1: E501 line too long\n"
-                         "a.py:4:1: W291 trailing whitespace\n"
-                         "a.py:5:1: C0114 missing docstring\n"
-                         "a.py:6:1: F401 `os` imported but unused\n"
-                         "a.py:9:1: E999 SyntaxError: bad\n", "")
+                         "a.py:3:1: E501 line too long\n"       # style code → dropped
+                         "a.py:4:1: W291 trailing whitespace\n"  # style code → dropped
+                         "a.py:5:1: C0114 missing docstring\n"   # convention code → dropped
+                         "a.py:6:1: F401 `os` imported but unused\n"  # unused → dropped by phrase
+                         "a.py:7:1: F821 undefined name `foo`\n"      # real bug → kept
+                         "a.py:9:1: E999 SyntaxError: bad\n", "")      # E9xx syntax → kept
         msgs = [f.message for f in r.findings]
-        self.assertEqual(msgs, ["F401 `os` imported but unused", "E999 SyntaxError: bad"])
+        self.assertEqual(msgs, ["F821 undefined name `foo`", "E999 SyntaxError: bad"])
+
+    def test_unused_advisories_never_gate_across_linters(self):
+        # The unused/never-used family is cleanliness, not an error state, so it is
+        # dropped tool-agnostically (by message) — leaving any REAL error underneath
+        # to surface. This is the class the live session tripped on: pyflakes' bare
+        # "imported but unused" buried a genuine "undefined name".
+        r = parse_output("python3 -m pyflakes app tests", "", 1,
+                         "tests/t.py:1:1: 'json' imported but unused\n"
+                         "tests/t.py:7:18: undefined name 'resolver'\n", "")
+        self.assertEqual([f.message for f in r.findings], ["undefined name 'resolver'"])
+        # ruff attaches the SAME message to an F-code we otherwise keep → still dropped
+        r = parse_output("ruff check .", "", 1, "a.py:2:1: F401 `os` imported but unused\n", "")
+        self.assertEqual(r.findings, [])
+        # eslint no-unused-vars promoted to error-severity → dropped
+        r = parse_output("eslint .", "eslint", 1,
+                         "/w/a.js\n  3:7  error  'x' is defined but never used  no-unused-vars\n", "")
+        self.assertEqual(r.findings, [])
+        # tsc TS6133 (noUnusedLocals) → dropped
+        r = parse_output("tsc --noEmit", "tsc", 1,
+                         "src/a.ts(3,7): error TS6133: 'x' is declared but its value is never read.\n", "")
+        self.assertEqual(r.findings, [])
+        # BUT Go's unused import is a hard COMPILE error, not a lint advisory → keeps gating
+        r = parse_output("go build ./...", "", 1,
+                         './main.go:5:2: "fmt" imported and not used\n', "")
+        self.assertEqual(len(r.findings), 1)
 
     def test_compiler_warnings_dropped(self):
         r = parse_output("make", "", 1,

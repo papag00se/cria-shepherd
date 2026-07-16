@@ -442,6 +442,28 @@ _FAMILY_PARSERS = {
 # finding is treated as an error (under-filtering beats letting real bugs through).
 _STYLE_CODE = re.compile(r"^(?:W\d{3}|E(?!9)\d{3}|C\d{4}|R\d{4})\b")  # pycodestyle/pylint style codes; E9xx = syntax, kept
 
+# The unused / never-used family is cleanliness, not an error state — a program with
+# an unused import or a dead local still parses, compiles, and runs. Some linters tag
+# these with a severity code we already drop (pylint W0611, pycodestyle), but the most
+# common ones do NOT: pyflakes prints a bare English message with no code at all, and
+# ruff/flake8 attach the SAME message to an F-code we otherwise deliberately keep
+# (F-series = real bugs like undefined names). Keying off the code therefore can't work
+# uniformly — so we match on the MESSAGE, tool-agnostically: the identical phrase is
+# treated the same whether it came from pyflakes, ruff, flake8, eslint (no-unused-vars),
+# or tsc (TS6133/TS6196). Substring, case-insensitive — the same mechanic the errorish
+# scan uses. Deliberately EXCLUDES Go's "imported and not used" / "declared and not
+# used": those are hard COMPILE errors (the build fails), not lint advisories, so they
+# must keep gating — the "and"/"not" phrasing keeps them distinct from the advisories.
+_ADVISORY_PHRASES = (
+    "imported but unused",                   # pyflakes · ruff F401 · flake8
+    "assigned to but never used",            # pyflakes · ruff F841
+    "annotated but never used",              # pyflakes
+    "assigned a value but never used",       # eslint no-unused-vars
+    "defined but never used",                # eslint no-unused-vars
+    "declared but its value is never read",  # tsc TS6133 (unused local)
+    "declared but never used",               # tsc TS6196 (unused type)
+)
+
 
 def _error_class_only(findings: list) -> list:
     out = []
@@ -451,6 +473,8 @@ def _error_class_only(findings: list) -> list:
         if low.startswith(("note:", "warning:", "hint:", "info:", "convention:", "refactor:")):
             continue
         if _STYLE_CODE.match(m):
+            continue
+        if any(p in low for p in _ADVISORY_PHRASES):  # unused/never-used cleanliness, any linter
             continue
         out.append(f)
     return out

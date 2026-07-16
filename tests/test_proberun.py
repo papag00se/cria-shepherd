@@ -323,7 +323,7 @@ class TestInterpretProbeOutput(unittest.TestCase):
     def test_exit_124_maps_to_timeout_and_keeps_findings(self):
         c = synth(["ruff", "check", "."])
         r = interpret_probe_output(
-            c, "ruff check .", "app/main.py:3:1: F401 `os` imported but unused\n",
+            c, "ruff check .", "app/main.py:3:1: F821 undefined name `os`\n",
             124, 20.0)
         self.assertIsNone(r.exit_code)
         self.assertEqual(
@@ -349,7 +349,7 @@ class TestInterpretProbeOutput(unittest.TestCase):
         c = synth(["ruff", "check", "."])
         r = interpret_probe_output(
             c, "ruff check .",
-            "app/main.py:3:1: F401 `os` imported but unused\nEXIT:1\n", None, 20.0)
+            "app/main.py:3:1: F821 undefined name `os`\nEXIT:1\n", None, 20.0)
         self.assertEqual(r.exit_code, 1)
         self.assertEqual(len(r.findings), 1)
         self.assertEqual(r.findings[0].file, "app/main.py")
