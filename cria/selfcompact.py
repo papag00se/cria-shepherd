@@ -104,10 +104,18 @@ def serialize(messages: list[dict]) -> str:
 
 
 def _summary_msg(summary: str) -> dict:
+    # This rolls up MID-work turns (the work is NOT necessarily finished) — unlike the loop's
+    # completion compaction, which summarizes genuinely-done work. So it must NOT stamp "treat this as
+    # done": that blanket done-assertion drove premature completion and suppressed re-doing needed work
+    # (the model coasted to "done" over an unresolved pyproject blocker; a summary saying "I fetched the
+    # spec" made it skip re-fetching). Frame it truthfully as CONTEXT, and defer to the live results:
+    # anything unfinished/failing/blocked still needs doing.
     return {"role": "user", "content": (
-        f"{SUMMARY_MARKER} Summary of your EARLIER work this session (older turns were elided to keep "
-        f"you focused — the recent turns follow verbatim below). Treat this as done; don't redo it:\n"
-        f"{summary}")}
+        f"{SUMMARY_MARKER} Summary of your earlier turns this session (older turns were elided to keep "
+        f"you focused — the recent turns follow verbatim below). Use it as CONTEXT so you don't re-derive "
+        f"what you already worked out — but it is a summary, NOT a statement that the task is done: "
+        f"anything it describes as unfinished, failing, or blocked still needs doing, and the verbatim "
+        f"recent turns and tool results below are the ground truth if they disagree with it:\n{summary}")}
 
 
 def _task_msg(task: str) -> dict:
