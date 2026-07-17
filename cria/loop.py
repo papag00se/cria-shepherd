@@ -236,18 +236,49 @@ def satisfaction_check_due(drive_count: int) -> bool:
             and (drive_count - SATISFACTION_CHECK_START) % SATISFACTION_CHECK_EVERY == 0)
 
 
+def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool) -> dict | None:
+    """One critic call → the parsed {"satisfied": …} dict, or None if the model produced no parseable
+    JSON. Mirrors the plan-path _verdict: NOT summarize() — summarize returns free text and only retries
+    on EMPTY, but a reasoning-ON critic pass here does not go empty, it ROLE-PLAYS THE CODER (reasons
+    'reinstall and run tests', leaking a Bash/Read tool call) and returns non-empty non-JSON, so the
+    retry never fired and every verdict failed closed. Parse the completion directly and let the caller
+    retry reasoning-OFF on a parse miss — reasoning-off makes the model answer the JSON verdict directly
+    instead of thinking itself into the coder's seat."""
+    call = {"stream": False, "max_tokens": 1024,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    role = reasoner_role
+    if reasoning_off:
+        role = replace(role, reasoning="off") if role is not None else None
+    if role is not None:
+        role.apply(call)
+    elif reasoning_off:
+        call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+    try:
+        rlog.phase = "satisfaction" + ("-noreason" if reasoning_off else "")
+        vtext = _completion_text(_parse_completion(reasoner_chat(call, rlog)))
+        if reasoner_role is not None:
+            vtext = reasoner_role.clean_content(vtext)  # drop leaked reasoning when off
+        return extract_json_object(vtext)
+    except Exception as e:
+        rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
+        return None
+
+
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
-    Returns (satisfied, reason). Fails CLOSED — an unparseable/empty verdict is NOT satisfied, so a session
-    is never ended on the critic's silence."""
+    Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
+    otherwise role-plays the coder and never emits the verdict). Fails CLOSED — an unparseable verdict is
+    NOT satisfied, so a session is never ended on the critic's silence."""
     if not task.strip():
         return False, "no task text to judge"
+    system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=_clip(task, 1400),
                           evidence=_clip_tail(evidence, 2500) or "(no actions recorded yet)")
-    text = summarize(reasoner_chat, reasoner_role, prompts.load("satisfaction"), user, rlog, phase="satisfaction")
-    obj = extract_json_object(text)
-    if not obj:
+    obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False)
+    if obj is None:
+        obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
+    if obj is None:
         return False, "unverified (no parseable verdict)"
     return bool(obj.get("satisfied")), _clip(str(obj.get("reason", "")), 200)
 

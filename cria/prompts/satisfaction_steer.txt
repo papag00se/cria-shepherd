@@ -1,0 +1,2 @@
+cria's completion check finds the task is NOT done yet: {{REASON}}
+Focus on making THAT actually work (real output, passing tests) before adding or polishing anything else. Do not report the task complete until it genuinely is.

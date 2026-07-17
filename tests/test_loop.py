@@ -2294,6 +2294,24 @@ class SatisfactionCheckTests(unittest.TestCase):
         self.assertFalse(sat)                 # no JSON → NOT satisfied; never end a session on silence
         self.assertIn("unverified", reason)
 
+    def test_reasoning_off_retry_recovers_a_leaked_verdict(self):
+        # THE live bug: the reasoning-ON pass role-plays the coder (non-empty, non-JSON — a leaked
+        # tool call), so the old summarize-on-empty retry never fired and it failed closed forever.
+        # Now it retries reasoning-OFF on a parse miss and recovers the real verdict.
+        from cria.loop import judge_satisfaction
+        calls = []
+
+        def fake(body, rlog):
+            calls.append(body)
+            content = ("Re-install with the fixed pyproject and run both tests." if len(calls) == 1
+                       else '{"satisfied": true, "reason": "all three tests pass"}')
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
+
+        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        self.assertTrue(sat)                  # recovered on the reasoning-off retry
+        self.assertEqual(len(calls), 2)       # both passes ran (on, then off)
+        self.assertIn("tests pass", reason)
+
     def test_empty_task_is_not_satisfied(self):
         from cria.loop import judge_satisfaction
         sat, _ = judge_satisfaction("   ", "e", self._chat('{"satisfied": true}'), None, _Rlog())
