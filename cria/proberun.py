@@ -371,7 +371,10 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
         bucket.append(f"$ {r.command} — {r.summary}")
         for f in r.findings[:BLOCK_NUDGE_MAX_FINDINGS]:
             loc = f"{f.file}:{f.line}" if f.line is not None else f.file
-            bucket.append(f"  • {loc}: {f.message}")
+            bullet = f"{loc}: {f.message}"
+            if bullet == r.summary:
+                continue  # the "$ cmd — summary" header already IS this finding — don't echo it twice
+            bucket.append(f"  • {bullet}")
     combined = syntax_lines + lines  # floor first, exactly the old precedence
     if not combined:
         return None

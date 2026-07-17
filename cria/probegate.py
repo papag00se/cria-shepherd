@@ -199,9 +199,29 @@ def clean_gate_output(raw: str) -> str | None:
             "fixing it with a targeted edit.")
 
 
+CHECKS_MARKER = "⟦cria:checks⟧"
+CHECKS_REPEAT_NOTE = (CHECKS_MARKER + " (same result as a later check below — omitted here so the same "
+                      "finding isn't repeated across turns)")
+
+
+def _checks_payload(m) -> tuple[str, str] | None:
+    """(key, text) when ``m`` is a ⟦cria:checks⟧ tool result, else None."""
+    if not isinstance(m, dict):
+        return None
+    key = "content" if m.get("content") is not None else "output"
+    c = m.get(key)
+    return (key, c) if isinstance(c, str) and c.startswith(CHECKS_MARKER) else None
+
+
 def clean_gate_results(messages: list) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
-    a re-run over already-clean messages leaves them untouched. Non-gate messages pass through."""
+    a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
+
+    Then COLLAPSE repeats: when the same cleaned ⟦cria:checks⟧ payload appears more than once (a gate
+    finding that recurs unchanged across turns — e.g. the identical ImportError the model kept hitting),
+    keep only the most recent full copy and shorten the earlier identical ones to a one-line back-
+    reference. The model stops re-reading the same error N times (which reinforced its fixation), and
+    message count is preserved so no tool result is orphaned from its tool call."""
     out = []
     for m in messages:
         if isinstance(m, dict):
@@ -214,6 +234,17 @@ def clean_gate_results(messages: list) -> list:
                     out.append({**m, key: cleaned})
                     continue
         out.append(m)
+    last_of: dict[str, int] = {}
+    for i, m in enumerate(out):
+        p = _checks_payload(m)
+        if p is not None:
+            last_of[p[1]] = i
+    if any(idx != last_of[_checks_payload(out[idx])[1]]  # some earlier duplicate exists
+           for idx, m in enumerate(out) if _checks_payload(m) is not None):
+        for i, m in enumerate(out):
+            p = _checks_payload(m)
+            if p is not None and last_of[p[1]] != i:
+                out[i] = {**m, p[0]: CHECKS_REPEAT_NOTE}
     return out
 
 

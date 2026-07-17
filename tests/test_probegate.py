@@ -305,6 +305,7 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("undefined name 'foo'", out)
         self.assertNotIn("4 passed", out)
 
+
     def test_nonzero_exit_advisory_only_is_clean_not_a_failure(self):
         # ruff/tsc-style: exited non-zero but every line is advisory (unused import). Must read as
         # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.
@@ -339,6 +340,34 @@ class CleanGateOutputTests(unittest.TestCase):
         once = probegate.clean_gate_results(msgs)
         twice = probegate.clean_gate_results(once)
         self.assertEqual(once, twice)
+
+
+class CleanGateResultsDedupTests(unittest.TestCase):
+    """Repeated identical ⟦cria:checks⟧ results (a finding that recurs unchanged across turns) pile up
+    in the model's view and reinforce a fixation — collapse the earlier copies to a back-reference,
+    keeping the most recent full one, without dropping any message (tool/response pairing intact)."""
+
+    def _checks(self, text):
+        return {"role": "tool", "content": probegate.CHECKS_MARKER + " " + text}
+
+    def test_identical_checks_are_collapsed_keeping_the_last(self):
+        msgs = [self._checks("smoke_test.py:2: ImportError foo"),
+                {"role": "user", "content": "edit"},
+                self._checks("smoke_test.py:2: ImportError foo"),   # dup → back-reference
+                self._checks("smoke_test.py:2: ImportError foo")]   # LAST → full
+        out = probegate.clean_gate_results(msgs)
+        tools = [m for m in out if m.get("role") == "tool"]
+        self.assertEqual(len(tools), 3)                              # nothing dropped
+        self.assertIn("omitted", tools[0]["content"])               # earlier copy collapsed
+        self.assertIn("omitted", tools[1]["content"])
+        self.assertIn("ImportError foo", tools[2]["content"])        # last kept in full
+        self.assertNotIn("omitted", tools[2]["content"])
+
+    def test_distinct_checks_are_untouched(self):
+        msgs = [self._checks("finding A"), self._checks("finding B")]
+        out = probegate.clean_gate_results(msgs)
+        self.assertIn("finding A", out[0]["content"])
+        self.assertIn("finding B", out[1]["content"])
 
 
 class GitOnlyGateTests(unittest.TestCase):

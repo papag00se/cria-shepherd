@@ -238,6 +238,17 @@ class TestCompletionBlockNudge(unittest.TestCase):
         bullets = [l for l in nudge.split("\n") if l.startswith("  • ")]
         self.assertEqual(len(bullets), 5)
 
+    def test_single_finding_is_not_echoed_as_a_duplicate_bullet(self):
+        # When the "$ cmd — summary" header IS the one finding (summary == "file:line: msg"), the bullet
+        # would be byte-identical noise — suppress it. Multi-finding summaries ("… (+N more)") differ,
+        # so their bullets stay.
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "python3 -m pytest -q", 2, "smoke_test.py:2: ImportError: rel import",
+            [Finding("smoke_test.py", 2, None, "ImportError: rel import")])])
+        nudge = completion_block_nudge(report, LinterReport())
+        self.assertIn("$ python3 -m pytest -q — smoke_test.py:2: ImportError: rel import", nudge)
+        self.assertNotIn("  • ", nudge)   # no duplicate bullet
+
     def test_timeouts_and_launch_failures_never_block(self):
         report = ProbeReport(["python"], [], [
             ProbeResult("pytest -q", None,
