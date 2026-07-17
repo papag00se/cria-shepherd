@@ -1,0 +1,4 @@
+Earlier in THIS session you worked toward this task and produced the summary below. But the workspace ({{CWD}}) is EMPTY right now — none of that work is present here, and there are no files to read or build on. Do NOT go looking for those files in other directories; they are not elsewhere. Start the work FRESH in this workspace, treating the summary only as a record of what you intended to build — recreate what it describes here, in {{CWD}}.
+
+Your summary of the work so far:
+{{SUMMARY}}

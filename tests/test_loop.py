@@ -2100,6 +2100,38 @@ class CompactionReframeTests(unittest.TestCase):
         self.assertNotIn("Another language model", out[0]["content"])   # preamble stripped
         self.assertIn("Built handler.py", out[0]["content"])            # real content kept
 
+    def test_empty_workspace_inverts_the_reframe(self):
+        # THE DRIFT ROOT: over an EMPTY advertised cwd the "read the files that already exist, do NOT
+        # recreate" claim is false — invert it to "start fresh here, don't look elsewhere".
+        import tempfile
+        from cria.loop import reframe_compaction
+        with tempfile.TemporaryDirectory() as empty:   # exists but has no entries
+            msgs = [{"role": "user", "content": f"<environment_context><cwd>{empty}</cwd></environment_context>"},
+                    {"role": "user", "content": self._MARKER}]
+            out, hit = reframe_compaction(msgs)
+        self.assertTrue(hit)
+        new = out[1]["content"]
+        self.assertIn("EMPTY", new)                              # the workspace-empty framing
+        self.assertIn("Start the work FRESH", new)
+        self.assertIn(empty, new)                                # names the cwd to recreate in
+        self.assertNotIn("YOUR OWN prior work", new)             # NOT the "build on existing files" claim
+        self.assertNotIn("do NOT recreate", new.lower())         # the harmful instruction is gone
+        self.assertIn("Built handler.py + tests", new)           # the real summary still survives
+
+    def test_populated_workspace_keeps_the_normal_reframe(self):
+        # A non-empty workspace (real prior work) keeps the standard "build on it" reframe.
+        import os
+        import tempfile
+        from cria.loop import reframe_compaction
+        with tempfile.TemporaryDirectory() as ws:
+            with open(os.path.join(ws, "handler.py"), "w") as f:
+                f.write("x = 1\n")
+            msgs = [{"role": "user", "content": f"<environment_context><cwd>{ws}</cwd></environment_context>"},
+                    {"role": "user", "content": self._MARKER}]
+            out, hit = reframe_compaction(msgs)
+        self.assertTrue(hit)
+        self.assertIn("YOUR OWN prior work", out[1]["content"])  # normal reframe
+
 
 class GuardStoreIsolationTests(unittest.TestCase):
     def test_unstable_keys_isolated_stable_persist_and_bounded(self):

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -1183,11 +1184,35 @@ _COMPACTION_MARKER = "Another language model started to solve this problem"
 _COMPACTION_BOUNDARY = "assist with your own analysis:"
 
 
+def _workspace_is_empty(cwd: str) -> bool:
+    """True when the advertised workspace does not exist or is empty. The continuation reframe's
+    'the files that should already exist / do NOT recreate' claim is then objectively FALSE — the
+    drift ROOT: a fresh/restarted session over an empty cwd took that claim at face value and sent
+    the model hunting for its 'prior work' in sibling directories (the codex-handles drift).
+    Conservative: an unknown cwd ('.'/none — the harness advertised no workspace) or ANY entry at
+    all (even hidden) → NOT empty, so a repo with real work keeps the normal 'build on it' reframe."""
+    if not cwd or cwd == ".":
+        return False
+    try:
+        return not os.listdir(cwd)
+    except FileNotFoundError:
+        return True   # the advertised workspace is absent → the 'files already exist' claim is false
+    except OSError:
+        return False  # unreadable (permissions, not-a-dir) → can't assert emptiness; stay with normal
+
+
 def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
     """Reattribute the harness's 'another language model' compaction turn to the model itself and
     re-anchor it, keeping the summary. Returns (messages, reframed?) — the SAME list (no copy) when
     no compaction turn is present. Idempotent per turn: the reframed content no longer carries the
-    marker, so a later pass won't touch it again."""
+    marker, so a later pass won't touch it again.
+
+    Ground-truth guard: when the advertised workspace is EMPTY, the normal reframe's "read the files
+    that already exist, do NOT recreate" is false and harmful — it overrides the model's own correct
+    "the dir is empty, start fresh" and sends it hunting elsewhere. In that case emit the INVERTED
+    reframe ("none of that work is present here; start fresh in this workspace, don't look elsewhere")."""
+    cwd = _extract_cwd(messages)
+    template = "compaction_reframe_empty" if _workspace_is_empty(cwd) else "compaction_reframe"
     out: list[dict] = []
     reframed = False
     for m in messages:
@@ -1203,7 +1228,7 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
             # Tag with a ⟦cria:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
-            out.append({**m, "content": f"{CONTINUATION_MARKER} {prompts.render('compaction_reframe', summary=summary)}"})
+            out.append({**m, "content": f"{CONTINUATION_MARKER} {prompts.render(template, summary=summary, cwd=cwd)}"})
             reframed = True
         else:
             out.append(m)
