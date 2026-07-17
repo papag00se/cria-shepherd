@@ -264,6 +264,13 @@ class ContextConfig:
     # exceeds `trigger_compaction` TOKENS; stable sessions only. See selfcompact.py.
     self_compact: bool = True
     trigger_compaction: int = 16384  # token budget above which the plan-off view is self-compacted
+    # Periodic SATISFACTION check (plan-off): the reasoner judges whether the WHOLE task is done, and
+    # if so ends the session (objectively gated by the repo's checks). Starts at drive
+    # `satisfaction_check_start`, then re-runs every `satisfaction_check_every` drives. Operator-tunable
+    # because different models spiral at different rates (a weaker model may need an earlier/tighter
+    # cadence). Set either to 0 to DISABLE the check.
+    satisfaction_check_start: int = 100
+    satisfaction_check_every: int = 25
 
 
 @dataclass(frozen=True)
@@ -336,6 +343,8 @@ class Config:
                 focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
                 self_compact=bool(data.get("context", {}).get("self_compact", True)),
                 trigger_compaction=int(data.get("context", {}).get("trigger_compaction", 16384)),
+                satisfaction_check_start=int(data.get("context", {}).get("satisfaction_check_start", 100)),
+                satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),

@@ -607,7 +607,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         # the reasoner judges whether the USER'S WHOLE TASK is satisfied by the real work. If yes, cria
         # initiates the done-gate: verify against the repo's own checks (objective backstop), and on the
         # next turn end the session if they pass. The coder can't reliably signal done, so cria does.
-        if steer is None and not rewritten and not gs.done_probe and satisfaction_check_due(gs.drive_count):
+        if steer is None and not rewritten and not gs.done_probe and satisfaction_check_due(
+                gs.drive_count, self.server.cfg.context.satisfaction_check_start,
+                self.server.cfg.context.satisfaction_check_every):
             task = _history_root(body.get("messages", []))[0]
             satisfied, reason = judge_satisfaction(
                 task, _work_log(body.get("messages", [])),

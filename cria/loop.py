@@ -223,17 +223,17 @@ GATE_EVERY_CODER_TURNS = 15
 
 # Periodic SATISFACTION check (plan-off): a long session can finish the work but never STOP — the coder
 # keeps inventing completion actions (a .task_complete marker, a hallucinated checkpoint tool) so cria's
-# no-tool-call done-detection never triggers. Starting at drive SATISFACTION_CHECK_START, every
-# SATISFACTION_CHECK_EVERY drives, the reasoner judges the WHOLE user task against the real work; if it's
-# satisfied cria verifies against the repo's checks (the same objective backstop the done-gate uses) and
-# ends the turn. This is the off-ramp — the model can't stop itself, so cria stops it once it's actually done.
-SATISFACTION_CHECK_START = 100
-SATISFACTION_CHECK_EVERY = 25
+# no-tool-call done-detection never triggers. Starting at drive `start`, every `every` drives, the
+# reasoner judges the WHOLE user task against the real work; if satisfied cria verifies against the
+# repo's checks (the same objective backstop the done-gate uses) and ends the turn. The cadence is
+# operator-tunable ([context] satisfaction_check_start / satisfaction_check_every) — different models
+# spiral at different rates; either set to 0 DISABLES it.
 
 
-def satisfaction_check_due(drive_count: int) -> bool:
-    return (drive_count >= SATISFACTION_CHECK_START
-            and (drive_count - SATISFACTION_CHECK_START) % SATISFACTION_CHECK_EVERY == 0)
+def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
+    if start <= 0 or every <= 0:  # disabled
+        return False
+    return drive_count >= start and (drive_count - start) % every == 0
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool) -> dict | None:

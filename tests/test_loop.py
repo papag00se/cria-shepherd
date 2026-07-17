@@ -2262,12 +2262,16 @@ class SatisfactionCheckTests(unittest.TestCase):
 
     def test_cadence_starts_at_100_every_25(self):
         from cria.loop import satisfaction_check_due
-        self.assertFalse(satisfaction_check_due(99))
-        self.assertTrue(satisfaction_check_due(100))
-        self.assertFalse(satisfaction_check_due(101))
-        self.assertFalse(satisfaction_check_due(124))
-        self.assertTrue(satisfaction_check_due(125))
-        self.assertTrue(satisfaction_check_due(150))
+        self.assertFalse(satisfaction_check_due(99, 100, 25))
+        self.assertTrue(satisfaction_check_due(100, 100, 25))
+        self.assertFalse(satisfaction_check_due(101, 100, 25))
+        self.assertFalse(satisfaction_check_due(124, 100, 25))
+        self.assertTrue(satisfaction_check_due(125, 100, 25))
+        self.assertTrue(satisfaction_check_due(150, 100, 25))
+        # tunable + disable: a tighter cadence, and 0 turns it off
+        self.assertTrue(satisfaction_check_due(60, 50, 10))
+        self.assertFalse(satisfaction_check_due(1000, 0, 25))    # start=0 disables
+        self.assertFalse(satisfaction_check_due(1000, 100, 0))   # every=0 disables
 
     def _chat(self, content):
         def fake(body, rlog):
