@@ -1710,20 +1710,30 @@ class LoopDriveTests(unittest.TestCase):
         self.assertIn("loop.verify_retry", rlog.kinds())    # the reasoning-off retry fired
         self.assertEqual(reasoner.calls, 2, "first pass + reasoning-off retry")
 
-    def test_unparseable_verdict_recovers_on_reasoning_off_retry(self):
-        # First pass yields no JSON (budget exhausted); the reasoning-off retry lands a clean
-        # verdict → the step advances normally. The retry is the fix for the common case.
+    def test_careful_reasoning_verdict_completes_the_step(self):
+        # The reasoning-ON pass lands a clean verdict → the step advances normally (the trusted path).
         coder = _Scripted([_done()])
-        reasoner = _Scripted([_unparseable(), _verdict(True)])   # unparseable, then a real verdict
+        reasoner = _Scripted([_verdict(True)])
         loop = Loop(_ctx(coder, reasoner, _plan(1)))
         rlog = _Rlog()
         c1 = loop.drive(_body(), "sid:v", _Classification(), rlog)                           # work → done → PROBE
-        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "sid:v", _Classification(), rlog)  # probe clean → retry → done
+        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "sid:v", _Classification(), rlog)  # probe clean → verify → done
         self.assertIn("plan complete", c2["choices"][0]["message"]["content"])  # 1-step plan → completes this turn
         self.assertIn("loop.step_done", rlog.kinds())
-        # first verdict pass + reasoning-off retry, then the completion compaction on loop.done
-        # (the completion compaction runs for every key — the briefing rides the closing message)
-        self.assertEqual(reasoner.calls, 3)
+
+    def test_reasoning_off_retry_cannot_advance_the_step(self):
+        # THE both-paths mirror of the satisfaction fail-close: careful pass unparseable, reasoning-off
+        # retry says done=true → FAIL CLOSED (a rubber-stamp can't approve). The step does NOT complete;
+        # the loop re-nudges instead.
+        coder = _Scripted([_done()])
+        reasoner = _Scripted([_unparseable(), _verdict(True)])   # unparseable careful pass, then a reasoning-off "done"
+        loop = Loop(_ctx(coder, reasoner, _plan(1)))
+        rlog = _Rlog()
+        c1 = loop.drive(_body(), "sid:v", _Classification(), rlog)                           # work → done → PROBE
+        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "sid:v", _Classification(), rlog)  # probe clean → verify → FAIL CLOSED
+        self.assertNotIn("plan complete", c2["choices"][0]["message"].get("content") or "")  # did NOT complete
+        self.assertIn("loop.verify_failclosed", rlog.kinds())
+        self.assertNotIn("loop.step_done", rlog.kinds())
 
     def test_no_shell_tool_declines_to_proxy(self):
         # Without a shell tool the loop can't run: no plan file, no ground-truth probe, and the
@@ -2377,10 +2387,11 @@ class SatisfactionCheckTests(unittest.TestCase):
         self.assertFalse(sat)                 # no JSON → NOT satisfied; never end a session on silence
         self.assertIn("unverified", reason)
 
-    def test_reasoning_off_retry_recovers_a_leaked_verdict(self):
-        # THE live bug: the reasoning-ON pass role-plays the coder (non-empty, non-JSON — a leaked
-        # tool call), so the old summarize-on-empty retry never fired and it failed closed forever.
-        # Now it retries reasoning-OFF on a parse miss and recovers the real verdict.
+    def test_reasoning_off_retry_cannot_APPROVE_completion(self):
+        # THE false-complete: the reasoning-ON pass leaked a tool call (non-JSON), so the reasoning-OFF
+        # retry ran and said satisfied=true — but a reasoning-off judge is a rubber stamp that can't do
+        # the verification which catches a placeholder solution (hardcoded handles passing mocked
+        # tests). A "satisfied" that exists ONLY because the careful pass failed must FAIL CLOSED.
         from cria.loop import judge_satisfaction
         calls = []
 
@@ -2391,9 +2402,40 @@ class SatisfactionCheckTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
 
         sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
-        self.assertTrue(sat)                  # recovered on the reasoning-off retry
+        self.assertFalse(sat)                 # reasoning-off "satisfied" is FAILED CLOSED
         self.assertEqual(len(calls), 2)       # both passes ran (on, then off)
-        self.assertIn("tests pass", reason)
+        self.assertIn("keep working", reason)
+
+    def test_reasoning_off_retry_CAN_confirm_not_satisfied(self):
+        # Rejecting is safe — a reasoning-off NOT-satisfied is trustworthy and respected with its reason.
+        from cria.loop import judge_satisfaction
+        calls = []
+
+        def fake(body, rlog):
+            calls.append(body)
+            content = ("some leaked prose, not JSON" if len(calls) == 1
+                       else '{"satisfied": false, "reason": "the live test was never run against the API"}')
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
+
+        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        self.assertFalse(sat)
+        self.assertIn("never run", reason)
+
+    def test_careful_reasoning_on_pass_CAN_approve(self):
+        # The reasoning-ON pass cleanly saying satisfied=true IS trusted — the only approval path — and
+        # no reasoning-off retry is needed.
+        from cria.loop import judge_satisfaction
+        calls = []
+
+        def fake(body, rlog):
+            calls.append(body)
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                "content": '{"satisfied": true, "reason": "resolver + tests + README all present"}'}}]}).encode()
+
+        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        self.assertTrue(sat)
+        self.assertEqual(len(calls), 1)       # careful pass parsed → no retry
+        self.assertIn("resolver", reason)
 
     def test_empty_task_is_not_satisfied(self):
         from cria.loop import judge_satisfaction

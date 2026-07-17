@@ -277,11 +277,24 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     user = prompts.render("satisfaction_user", task=_clip(task, 1400),
                           evidence=_clip_tail(evidence, 2500) or "(no actions recorded yet)")
     obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False)
-    if obj is None:
-        obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
-    if obj is None:
+    if obj is not None:
+        # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
+        # ending the task, because approving requires the verification a reasoning-off judge can't do
+        # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
+        # unit tests pass while nothing really resolves).
+        return bool(obj.get("satisfied")), _clip(str(obj.get("reason", "")), 200)
+    # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
+    # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
+    # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
+    # "satisfied" that exists ONLY because the careful pass failed is downgraded and we fail CLOSED. A
+    # false "done" over fake work is far worse than a few more work turns.
+    retry = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
+    if retry is None:
         return False, "unverified (no parseable verdict)"
-    return bool(obj.get("satisfied")), _clip(str(obj.get("reason", "")), 200)
+    if retry.get("satisfied"):
+        rlog.emit("loop.satisfaction_failclosed", level="info")
+        return False, "unverified — the careful check could not confirm completion; keep working"
+    return False, _clip(str(retry.get("reason", "")), 200)
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -877,21 +890,29 @@ class Loop:
         # can burn its whole budget THINKING and never emit the closing JSON — which used to
         # fall through to a silent DONE. Reasoning-off makes it answer the JSON directly.
         obj = self._verdict(system, user, rlog, reasoning_off=False)
-        if obj is None:
-            rlog.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
-            obj = self._verdict(system, user, rlog, reasoning_off=True)
-
-        if obj is None:
-            # FAIL CLOSED. A step must never pass on the verifier's SILENCE — an unreadable or
-            # failed verdict is not evidence of completion. Treat it as not-done so the loop
-            # re-nudges; if it never verifies, _closing reports it honestly as accepted-unverified.
+        if obj is not None:
+            # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
+            # the verification a reasoning-off judge can't.
+            done, reason = bool(obj.get("done")), _clip(str(obj.get("reason", "")), 200)
+            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason)
+            return done, reason
+        # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
+        # reasoning-off, but a reasoning-off judge is a rubber stamp (competent to REJECT, not APPROVE):
+        # use it only to confirm NOT-done. A "done" that exists ONLY because the careful pass failed is
+        # FAILED CLOSED — a wrongly-passed step is never re-checked, so a shallow retry must never
+        # advance the plan (the plan-off satisfaction judge fails closed the same way).
+        rlog.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
+        retry = self._verdict(system, user, rlog, reasoning_off=True)
+        if retry is not None and retry.get("done"):
+            rlog.emit("loop.verify_failclosed", level="info")
+            retry = None
+        if retry is None:
             reason = "unverified (no parseable verdict)"
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
             return False, reason
-        done, reason = bool(obj.get("done")), _clip(str(obj.get("reason", "")), 200)
-        # Dump the EXACT context the critic judged on — so a human can see what it saw.
-        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason)
-        return done, reason
+        reason = _clip(str(retry.get("reason", "")), 200)   # a reasoning-off NOT-done is trustworthy
+        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
+        return False, reason
 
     def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool) -> dict | None:
         """One critic call → the parsed verdict dict, or None if the model produced no
