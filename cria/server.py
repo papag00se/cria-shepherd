@@ -623,12 +623,11 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return _completion_toolcalls([probe_tc],
                                                  note="cria completion check: the task looks done — verifying the repo's checks")
                 return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
-            if reason and "unverified" not in reason:
-                # NOT satisfied with a concrete reason → surface WHAT'S MISSING as a steer. The periodic
-                # gate only sees syntax/test errors; this is the higher-level "the deliverable isn't
-                # actually working" signal (e.g. a placeholder result) that a stuck session needs.
-                steer = prompts.render("satisfaction_steer", reason=reason)
-                gs.steer_source = "completion check (task not done)"
+            # NOT satisfied → do NOT steer. The reason is the reasoner's JUDGMENT, not ground truth;
+            # injecting a weak model's guess about "what's missing" as authoritative guidance every 25
+            # turns misleads as easily as it helps (an assist becomes a footgun). Real errors are already
+            # surfaced by the periodic gate from actual tool output; the satisfaction check only ENDS a
+            # session (objectively gated), it does not push speculative steers. Just log the verdict.
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — but only when
         # nothing else is steering this turn (a guard steer / re-anchor takes precedence).
         if steer is None and not rewritten:
