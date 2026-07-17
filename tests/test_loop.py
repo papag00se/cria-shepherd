@@ -2300,5 +2300,41 @@ class SatisfactionCheckTests(unittest.TestCase):
         self.assertFalse(sat)                 # nothing to judge → fail closed
 
 
+class PeriodicGateSilentOnCleanTests(unittest.TestCase):
+    """The periodic check-in must be SILENT on a clean result — only surface real problems. Prodding a
+    passing check-in with "checks pass but that's not correctness, keep fixing" made the model distrust
+    a genuine pass and keep working (feeding the can't-stop spiral)."""
+
+    def _oc(self, results):
+        from cria.probegate import GateOutcome
+        from cria.proberun import ProbeReport
+        return GateOutcome(ran=True, report=ProbeReport([], [], results))
+
+    def test_gate_error_text_empty_on_clean(self):
+        from cria.loop import gate_error_text
+        from cria.probeparse import ProbeResult
+        self.assertEqual(gate_error_text(self._oc([ProbeResult("pytest -q", 0, "3 passed", [])])), "")
+
+    def test_gate_error_text_surfaces_findings(self):
+        from cria.loop import gate_error_text
+        from cria.probeparse import Finding, ProbeResult
+        err = gate_error_text(self._oc([ProbeResult(
+            "pytest -q", 1, "1 failed", [Finding(file="x.py", line=5, message="undefined name 'foo'")])]))
+        self.assertIn("undefined name 'foo'", err)
+
+    def test_periodic_result_silent_on_clean(self):
+        from cria.loop import GuardState, guard_periodic_result
+        from cria.probegate import GatePlan, SECTION_PREFIX as P, SECTION_SUFFIX as S
+        from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
+        cand = ProbeCandidate(kind=ProbeKind.Test, command=["python3", "-m", "pytest", "-q"],
+                              working_dir="/tmp", confidence=90, expected_value=80, cost=ProbeCost.Cheap,
+                              mutates_code=False, may_hang=False, may_need_services=False, reason="t")
+        gs = GuardState(); gs.periodic_probe = True; gs.probe_call_id = "p1"
+        gs.gate_plan = GatePlan(workspace="/tmp", candidates=[cand])
+        clean = f"{P}probe-0{S}\n3 passed in 0.1s\nEXIT:0\n{P}git{S}\nabc\n"
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": clean}]}
+        self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # clean → no injection
+
+
 if __name__ == "__main__":
     unittest.main()

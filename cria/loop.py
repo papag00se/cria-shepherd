@@ -1607,11 +1607,11 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
 
 
 def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
-    """Read the periodic check-in probe's result and return the GROUND TRUTH to insert (via the shared
-    guard_ground_truth: the file:line findings or a neutral 'no error-class findings' that is not a
-    done-signal) — no verdict, the model keeps working. None when no periodic probe is pending, OR when
-    the checks produced no positive signal (couldn't run) — a check-in with nothing to report says
-    nothing rather than confessing cria couldn't run its own probe."""
+    """Read the periodic check-in probe's result and return the error-class GROUND TRUTH to insert
+    (file:line findings, or a check that ran and failed) — no verdict, the model keeps working. None
+    when no periodic probe is pending, OR when the checks are CLEAN / couldn't run: a periodic check-in
+    with nothing to FIX stays silent rather than prod a passing check-in with 'the checks pass but
+    that's not proof of correctness', which just makes the model distrust the pass and keep working."""
     if not gs.periodic_probe:
         return None
     gs.periodic_probe = False
@@ -1619,11 +1619,14 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
-    truth = guard_ground_truth(outcome)
-    rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(truth))
-    if not truth:
-        return None  # no positive signal → inject nothing (couldn't-run is cria's problem, not the model's)
-    return prompts.render("periodic_gate", truth=_clip_tail(truth, 1800))
+    # A periodic check-in speaks ONLY when there is a real PROBLEM to fix. On a CLEAN result it stays
+    # SILENT — prodding a passing check-in with "the checks pass but that's not proof of correctness"
+    # just makes the model distrust the pass and keep working (feeding the can't-stop spiral).
+    err = gate_error_text(outcome)
+    rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
+    if not err:
+        return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
+    return prompts.render("periodic_gate", truth=_clip_tail(err, 1800))
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
@@ -1693,6 +1696,26 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     return None  # genuinely clean, or only couldn't-run probes → accept
 
 
+def gate_error_text(outcome) -> str:
+    """The ERROR-class ground truth from a gate outcome — file:line findings, or a check that RAN and
+    FAILED with no parseable location. Returns '' when the gate is clean, couldn't run, or never ran.
+
+    This is the ONLY part a PERIODIC check-in surfaces. On a clean check-in there is nothing to fix, so
+    injecting the "the checks pass, but that's not proof of correct behaviour — keep fixing" hedge just
+    makes the model distrust a genuine pass and keep working (it can't stop). Judging "is the task
+    actually done" is the done-gate's + satisfaction check's job; the periodic gate only surfaces real
+    problems early."""
+    if not outcome.ran:
+        return ""
+    findings = proberun.completion_block_nudge(outcome.report)
+    if findings:
+        return findings
+    failed = proberun.failed_unparsed_probes(outcome.report)
+    if failed:
+        return prompts.render("ground_truth_failed", failed=_clip_tail("\n".join(failed), 800))
+    return ""
+
+
 def guard_ground_truth(outcome) -> str:
     """The coder-facing ground truth from a gate outcome — emitted ONLY when cria has a real,
     code-level signal. cria speaks to the model from POSITIVE signal (a check that actually ran); it
@@ -1708,16 +1731,11 @@ def guard_ground_truth(outcome) -> str:
       cria's failure as noise or, worse, risk reading as a pass. cria stays quiet; the model proceeds
       on its own judgement (it has its own shell); the miss is logged for the operator, not the model.
     """
-    if not outcome.ran:
-        return ""
-    findings = proberun.completion_block_nudge(outcome.report)
-    if findings:
-        return findings
-    failed = proberun.failed_unparsed_probes(outcome.report)
-    if failed:  # a check RAN and FAILED but cria couldn't parse a location → surface it coarsely
-        return prompts.render("ground_truth_failed", failed=_clip_tail("\n".join(failed), 800))
-    if proberun.unran_probes(outcome.report):  # a check couldn't launch → no clean signal → stay silent
-        return ""
+    err = gate_error_text(outcome)
+    if err:
+        return err   # a check ran and found a real error-class problem — surface it
+    if not outcome.ran or proberun.unran_probes(outcome.report):
+        return ""    # never ran / a probe couldn't launch → no clean signal → stay silent
     return prompts.load("ground_truth_clean")
 
 
