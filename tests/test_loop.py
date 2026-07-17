@@ -812,7 +812,7 @@ class LoopSelfCompactTests(unittest.TestCase):
         out = loop._self_compact(big, sess, 1, _Rlog())
         self.assertLess(len(out), len(big))                                   # compacted
         self.assertEqual(len(reasoner_calls), 1)                              # via the shared summarizer
-        self.assertTrue(any("⟦cria:rollup⟧" in str(m.get("content")) for m in out))
+        self.assertTrue(any("⟦ctx:rollup⟧" in str(m.get("content")) for m in out))
 
 
 class PeriodicGateTests(unittest.TestCase):

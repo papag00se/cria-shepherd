@@ -11,7 +11,7 @@ def _m(role, text):
     return {"role": role, "content": text}
 
 
-def _msgs(n, anchor_at=None, anchor_text="⟦cria:briefing⟧ prior"):
+def _msgs(n, anchor_at=None, anchor_text="⟦ctx:briefing⟧ prior"):
     out = [_m("system", "sys")]
     for i in range(n):
         if anchor_at is not None and i == anchor_at:
@@ -59,7 +59,7 @@ class SelfCompactTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_anchor_kept_verbatim_not_summarized(self):
-        m = _msgs(40, anchor_at=2, anchor_text="⟦cria:briefing⟧ the earlier plan handoff")
+        m = _msgs(40, anchor_at=2, anchor_text="⟦ctx:briefing⟧ the earlier plan handoff")
         out, _, _ = compact(m, lambda mm: "ROLLUP", CompactState(), **_KW)
         self.assertTrue(any("the earlier plan handoff" in str(x.get("content")) for x in out))
 
@@ -73,7 +73,7 @@ class SelfCompactTests(unittest.TestCase):
         self.assertIn(CONTINUATION_MARKER, selfcompact._ANCHOR_MARKERS)
 
     def test_continuation_reframe_is_not_fed_to_the_summarizer(self):
-        # A ⟦cria:continuation⟧ message in the middle must be kept verbatim, never summarized — so
+        # A ⟦ctx:continuation⟧ message in the middle must be kept verbatim, never summarized — so
         # cria's own reframed prior-summary can't compound into a rollup-of-a-rollup.
         from cria.loop import CONTINUATION_MARKER
         m = _msgs(40, anchor_at=2, anchor_text=f"{CONTINUATION_MARKER} your earlier work: built X")
@@ -91,7 +91,7 @@ if __name__ == "__main__":
 
 
 class PinnedTaskTests(unittest.TestCase):
-    """The conversation-root task is re-emitted verbatim as a ⟦cria:task⟧ north-star header on every
+    """The conversation-root task is re-emitted verbatim as a ⟦ctx:task⟧ north-star header on every
     compacted view — so it can't erode into the summary across rounds. Without it a plan-off session
     lost its goal (only an impoverished one-line rollup survived) and drifted onto tangential work."""
 

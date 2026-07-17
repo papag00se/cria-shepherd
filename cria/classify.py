@@ -142,14 +142,14 @@ def is_title_request(task: str) -> bool:
     return any(m in t for m in _TITLE_MARKERS)
 
 
-# cria's OWN injected user-role messages — a continuation reframe (⟦cria:continuation⟧), a
-# rollup/briefing/task/checks banner (⟦cria:…⟧), or a focustrim squash note ([cria removed …]). They
+# cria's OWN injected user-role messages — a continuation reframe (⟦ctx:continuation⟧), a
+# rollup/briefing/task/checks banner (⟦ctx:…⟧), or a focustrim squash note ([cria removed …]). They
 # are cria scaffolding, NOT the user's task. Classifying THEM as the task is a real footgun: a
 # continuation briefing ("Earlier in THIS session you worked… produced the summary below") reads as
 # task_type=reasoning, which routes the reasoning-ONLY chain — so after a harness compaction the whole
 # rest of a CODING session ran on the reasoner (temp 0.6, no coder output-reserve). Skip them and
 # classify the genuine user task underneath.
-_CRIA_INJECTION_MARKERS = ("⟦cria:", "[cria removed")
+_CRIA_INJECTION_MARKERS = ("⟦ctx:", "[removed")
 
 
 def latest_user_text(messages: list[dict]) -> str:

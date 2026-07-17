@@ -39,7 +39,7 @@ from .content_reduce import content_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
 # silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
-_COMPACTED_MARK = "⟦cria:compacted⟧"
+_COMPACTED_MARK = "⟦ctx:compacted⟧"
 _MAX_COMPACTED_FILES = 30
 # Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
 _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_editor",
@@ -50,7 +50,7 @@ _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_edit
 # synthesized-state note that stands in for dropped turns. Literals mirror loop.BRIEFING_OPEN /
 # probegate.SECTION_PREFIX — contextfloor is low-level and imports neither (avoids a cycle); a test
 # asserts they stay in sync.
-_PROTECT_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK)
+_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK)
 
 
 def _has_protect_marker(m: dict) -> bool:

@@ -122,7 +122,7 @@ class ErrorSquashTests(unittest.TestCase):
         self.assertEqual(len(survived), 2)
         self.assertIn('grep e', survived[0]); self.assertIn('cat f', survived[1])
         # the note names what was dropped
-        note = [m for m in out if m.get("role") == "user" and "cria removed" in str(m.get("content", ""))]
+        note = [m for m in out if m.get("role") == "user" and "[removed" in str(m.get("content", ""))]
         self.assertEqual(len(note), 1)
         self.assertIn("cat a", note[0]["content"])
         # no orphaned tool results
@@ -154,7 +154,7 @@ class ErrorSquashTests(unittest.TestCase):
         # the two most recent FAILURES survive; the earlier three are gone
         surviving_fail_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool" and m["tool_call_id"] != "ok"]
         self.assertEqual(surviving_fail_ids, ["d", "e"])
-        note = [m for m in out if "cria removed" in str(m.get("content", ""))]
+        note = [m for m in out if "[removed" in str(m.get("content", ""))]
         self.assertEqual(len(note), 1)
         self.assertIn("cat a", note[0]["content"])                        # the scattered dead-ends are named
 
@@ -177,7 +177,7 @@ class ErrorSquashTests(unittest.TestCase):
         surviving = "".join(str(m.get("content", "")) for m in out)
         self.assertIn("expected after dictionary key", surviving)         # the error is still present
         # …and the gate is NOT named in the "removed failed attempts" note
-        note = [m for m in out if "cria removed" in str(m.get("content", ""))][0]
+        note = [m for m in out if "[removed" in str(m.get("content", ""))][0]
         self.assertNotIn(GATE, note["content"])
 
 

@@ -89,7 +89,7 @@ _LEAK_DEBRIS = (_GEMMA_TC_OPEN, _GEMMA_TC_CLOSE, _GEMMA_STR, _LFM2_TC_OPEN, _LFM
 def has_tool_call_leak(text: str) -> bool:
     """True when ``text`` still carries tool-call-dialect debris — a leaked/mangled call, not prose.
     A caller that requires real prose (the summarizer) treats such a pass as failed and retries, so a
-    ⟦cria:rollup⟧ can't become a wall of `<|tool_call>call:Gemma4__…` hex that briefs the coder on
+    ⟦ctx:rollup⟧ can't become a wall of `<|tool_call>call:Gemma4__…` hex that briefs the coder on
     nothing."""
     return bool(text) and any(mk in text for mk in _LEAK_DEBRIS)
 

@@ -11,8 +11,8 @@ Everything is measured in TOKENS, not message count — the real constraint is t
 window, and a few huge file reads matter more than many tiny turns (the same currency the
 floor uses). Structure kept every turn:
   - the leading system message (cria's coder framing),
-  - any ANCHOR message (a ⟦cria:briefing⟧ handoff / a ___CRIA_GATE_ ground truth) — verbatim,
-  - ONE ⟦cria:rollup⟧ summary of the old middle,
+  - any ANCHOR message (a ⟦ctx:briefing⟧ handoff / a ___CRIA_GATE_ ground truth) — verbatim,
+  - ONE ⟦ctx:rollup⟧ summary of the old middle,
   - a small VERBATIM band of old-but-not-yet-folded turns (bounded by RECOMPACT_TOKENS),
   - the recent tail up to KEEP_TAIL_TOKENS verbatim (the live working set).
 
@@ -33,16 +33,16 @@ from .content_reduce import est_tokens
 TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exceeds this many tokens
 KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
-SUMMARY_MARKER = "⟦cria:rollup⟧"     # tags the injected summary — floor-protected + identifiable
-TASK_MARKER = "⟦cria:task⟧"          # tags the pinned original-task header — the session's north star
+SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
+TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
 # Anchor markers whose messages are ALWAYS kept verbatim — AND, critically, excluded from the
 # summarizer input, so cria's OWN prior briefings never become a rollup-of-a-rollup (each round
 # summarizing the last round's summary is how a transient hallucination hardened into authoritative
-# "Treat this as done" misdirection that inverted the task). ⟦cria:continuation⟧ (loop's harness-
+# "Treat this as done" misdirection that inverted the task). ⟦ctx:continuation⟧ (loop's harness-
 # compaction reframe) is one such cria-authored summary and MUST be here for the same reason as
-# ⟦cria:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
+# ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
 # (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦cria:briefing⟧", "⟦cria:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
+_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
 _TASK_CLIP = 2000   # chars — the task is the north star, kept verbatim but bounded against a huge spec
 
 
@@ -132,7 +132,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     trigger, or when there is no middle to compact (the recent tail already spans everything).
 
     ``pinned_task`` (the conversation's ROOT task, supplied by the caller — it alone can detect the
-    task past the harness env-context/reframe) is re-emitted verbatim as a ⟦cria:task⟧ header on every
+    task past the harness env-context/reframe) is re-emitted verbatim as a ⟦ctx:task⟧ header on every
     compacted view. Without it the task — a plain user message with no anchor marker — falls into the
     summarizable middle and ERODES across rounds (round 2's rollup summarizes round 1's rollup), which
     is how a plan-off session lost its goal and drifted onto tangential build/deploy work. Pinning it

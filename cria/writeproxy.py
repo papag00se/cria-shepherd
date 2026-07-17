@@ -8,7 +8,7 @@ these tools, cria:
 * **advertises** the synthetic tools to the MODEL (so it reaches for them),
 * translates each call **outbound** to a shell command the harness runs — byte-exact
   (base64 for writes/edits; heredoc-fed so there is no arg-size limit and no chunking),
-* stamps a **stateless sentinel** (`# ⟦cria:tool⟧<b64>`) into the command carrying the
+* stamps a **stateless sentinel** (`# ⟦ctx:tool⟧<b64>`) into the command carrying the
   ORIGINAL tool name + args, so the **inbound** pass re-presents the recorded shell call
   as the tool the model actually called — from the sentinel in the conversation itself,
   with NO in-process store (survives a restart mid-session; the old store did not).
@@ -44,9 +44,9 @@ _LIST_NAMES = {"list_dir"}
 # path and wrote a "message to the user" into it, having no other channel to speak. This is the dual of
 # the no-workspace-pollution rule, enforced at the same chokepoint that lowers the synthetic tools.
 _CRIA_HOME_REFUSAL = (
-    "⟦cria⟧ that path is inside cria's own private directory (~/.cria) and is off-limits — cria's "
-    "config, credentials, and state live there. Use the project workspace for any file you read or "
-    "write. If you meant to tell the user something, just say it in your reply — do not write a file."
+    "that path is inside a protected internal directory and is off-limits — config, credentials, and "
+    "state live there. Use the project workspace for any file you read or write. If you meant to tell "
+    "the user something, just say it in your reply — do not write a file."
 )
 
 
@@ -79,7 +79,7 @@ _SEARCH_NAMES = {"web_search", "local_web_search"}
 
 # The stateless re-presentation sentinel: a leading shell COMMENT line carrying the original
 # tool call, base64-encoded, so inbound can rebuild it from the command in history (no store).
-_SENTINEL = "⟦cria:tool⟧"
+_SENTINEL = "⟦ctx:tool⟧"
 _SENTINEL_LINE = re.compile(r"#\s*" + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)")
 # Heredoc terminators — the payload rides on stdin, so there is NO arg-size limit (no chunking).
 _HD_B64 = "__CRIA_B64_EOF__"
@@ -89,7 +89,7 @@ _TMP_SUFFIX = ".cria-tmp"
 # A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
 # both look blank) would be reported to the model as "Wrote {path}" (false success).
-_WROTE = "⟦cria:wrote⟧"
+_WROTE = "⟦ctx:wrote⟧"
 # When an edit_file misses AND its anchor line is gone (a prior edit deleted it), the near-context
 # fallback finds nothing and the model, handed a bare "read the file again", re-guesses the same stale
 # old_string and fails identically. If the file is at most this many chars, inline its FULL current

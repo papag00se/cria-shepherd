@@ -331,9 +331,9 @@ class CleanGateOutputTests(unittest.TestCase):
         ]
         out = probegate.clean_gate_results(msgs)
         self.assertEqual(out[0], msgs[0])                                       # user passes through
-        self.assertIn("⟦cria:checks⟧", out[1]["content"])
+        self.assertIn("⟦ctx:checks⟧", out[1]["content"])
         self.assertNotIn(probegate.SECTION_PREFIX, out[1]["content"])
-        self.assertIn("⟦cria:checks⟧", out[2]["output"])                       # rewrote the `output` key
+        self.assertIn("⟦ctx:checks⟧", out[2]["output"])                       # rewrote the `output` key
         self.assertEqual(out[3], msgs[3])                                       # non-gate untouched
 
     def test_idempotent(self):
@@ -345,7 +345,7 @@ class CleanGateOutputTests(unittest.TestCase):
 
 
 class CleanGateResultsDedupTests(unittest.TestCase):
-    """Repeated identical ⟦cria:checks⟧ results (a finding that recurs unchanged across turns) pile up
+    """Repeated identical ⟦ctx:checks⟧ results (a finding that recurs unchanged across turns) pile up
     in the model's view and reinforce a fixation — collapse the earlier copies to a back-reference,
     keeping the most recent full one, without dropping any message (tool/response pairing intact)."""
 
@@ -375,7 +375,7 @@ class CleanGateResultsDedupTests(unittest.TestCase):
 class GitOnlyGateTests(unittest.TestCase):
     """An empty/no-code repo yields zero probe candidates, so plan_gate composes a git-ONLY script.
     That must NOT read as 'checks pass' — no check actually ran (calls 12-34 of the empty-repo session
-    got a false '⟦cria:checks⟧ no error-class problems' on a git-only gate)."""
+    got a false '⟦ctx:checks⟧ no error-class problems' on a git-only gate)."""
 
     def test_interpret_git_only_gate_is_not_ran(self):
         from cria.probegate import GatePlan, interpret_gate, SECTION_PREFIX as P, SECTION_SUFFIX as S

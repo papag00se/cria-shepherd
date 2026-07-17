@@ -185,29 +185,29 @@ def clean_gate_output(raw: str) -> str | None:
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
     if findings:                    # a check RAN and found a real error-class problem — foreground it
-        return ("⟦cria:checks⟧ the repo's own checks report these error-class problems — fix them at "
+        return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — fix them at "
                 "the reported line:\n" + "\n".join(findings[:40]))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
-        return ("⟦cria:checks⟧ one of the repo's own checks FAILED but printed no location cria could "
-                "parse — run it yourself and read the actual error before continuing. Not done.")
+        return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
+                "run it yourself and read the actual error before continuing. Not done.")
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return "⟦cria:checks⟧ the automatic checks produced no usable result this turn — no signal either way."
+        return "⟦ctx:checks⟧ the automatic checks produced no usable result this turn — no signal either way."
     # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
     # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
     # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
     # coder that a green check might still be wrong. (Operator directive, twice.)
-    return "⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems."
+    return "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems."
 
 
-CHECKS_MARKER = "⟦cria:checks⟧"
+CHECKS_MARKER = "⟦ctx:checks⟧"
 CHECKS_REPEAT_NOTE = (CHECKS_MARKER + " (same result as a later check below — omitted here so the same "
                       "finding isn't repeated across turns)")
 
 
 def _checks_payload(m) -> tuple[str, str] | None:
-    """(key, text) when ``m`` is a ⟦cria:checks⟧ tool result, else None."""
+    """(key, text) when ``m`` is a ⟦ctx:checks⟧ tool result, else None."""
     if not isinstance(m, dict):
         return None
     key = "content" if m.get("content") is not None else "output"
@@ -219,7 +219,7 @@ def clean_gate_results(messages: list) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
-    Then COLLAPSE repeats: when the same cleaned ⟦cria:checks⟧ payload appears more than once (a gate
+    Then COLLAPSE repeats: when the same cleaned ⟦ctx:checks⟧ payload appears more than once (a gate
     finding that recurs unchanged across turns — e.g. the identical ImportError the model kept hitting),
     keep only the most recent full copy and shorten the earlier identical ones to a one-line back-
     reference. The model stops re-reading the same error N times (which reinforced its fixation), and

@@ -38,11 +38,11 @@ class TestAnchorProtection(unittest.TestCase):
         self.assertIn(SECTION_PREFIX, contextfloor._PROTECT_MARKERS)
 
     def test_briefing_survives_drop_oldest(self):
-        # a huge history over budget: the ⟦cria:briefing⟧ anchor must NOT be dropped, so a follow-up
+        # a huge history over budget: the ⟦ctx:briefing⟧ anchor must NOT be dropped, so a follow-up
         # can still re-read it (else replanning from scratch).
         from cria.loop import BRIEFING_OPEN
         msgs = [{"role": "system", "content": "sys"},
-                {"role": "user", "content": f"{BRIEFING_OPEN} prior work: built the resolver ⟦/cria:briefing⟧"}]
+                {"role": "user", "content": f"{BRIEFING_OPEN} prior work: built the resolver ⟦/ctx:briefing⟧"}]
         msgs += [_a("x" * 4000, [{"id": f"c{i}", "type": "function", "function": {"name": "s", "arguments": "{}"}}]) for i in range(40)]
         msgs += [_u("the current request")]
         kept, _ = contextfloor._drop_oldest(msgs, msg_budget=500)

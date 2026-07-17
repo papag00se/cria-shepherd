@@ -44,9 +44,9 @@ class ClassifyHelperTests(unittest.TestCase):
             {"role": "user", "content": "<environment_context><cwd>/x</cwd></environment_context>"},
             {"role": "user", "content": "Write a Python script that resolves an Ada Handle to an address"},
             {"role": "assistant", "content": "working"},
-            {"role": "user", "content": "⟦cria:continuation⟧ Earlier in THIS session you worked on this task and produced the summary below"},
-            {"role": "user", "content": "[cria removed 13 earlier failed attempts to keep you focused]"},
-            {"role": "user", "content": "⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems"},
+            {"role": "user", "content": "⟦ctx:continuation⟧ Earlier in THIS session you worked on this task and produced the summary below"},
+            {"role": "user", "content": "[removed 13 earlier failed attempts to keep you focused]"},
+            {"role": "user", "content": "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems"},
         ]
         self.assertIn("Ada Handle", latest_user_text(msgs))     # the REAL task, not cria's briefing
         self.assertNotIn("cria", latest_user_text(msgs))
@@ -54,7 +54,7 @@ class ClassifyHelperTests(unittest.TestCase):
     def test_latest_user_text_returns_genuine_followup_over_older_task(self):
         # a genuine NEW user turn is NOT cria scaffolding → it's still returned (follow-up detection kept)
         msgs = [{"role": "user", "content": "old task"},
-                {"role": "user", "content": "⟦cria:rollup⟧ prior work summary"},
+                {"role": "user", "content": "⟦ctx:rollup⟧ prior work summary"},
                 {"role": "user", "content": "now also add a CLI flag"}]
         self.assertEqual(latest_user_text(msgs), "now also add a CLI flag")
 

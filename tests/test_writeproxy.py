@@ -88,7 +88,7 @@ class TranslateWriteTests(unittest.TestCase):
         cmd = _lowered_cmd(comp)
         self.assertIn("base64 -d", cmd)
         self.assertIn("mv ", cmd)                  # atomic: temp then move
-        self.assertIn("⟦cria:tool⟧", cmd)          # the stateless sentinel
+        self.assertIn("⟦ctx:tool⟧", cmd)          # the stateless sentinel
 
     def test_write_round_trip_is_byte_exact_and_stateless(self):
         content = "line1\n\ttabbed 'quotes' \"dq\" $VAR `bt`\nend\n"
@@ -227,12 +227,12 @@ class EditCommandTests(unittest.TestCase):
 
     def test_exact_match_replaces(self):
         rc, msg, out = self._run("foo\nbar\n", "foo", "FOO")
-        self.assertEqual(rc, 0); self.assertIn("⟦cria:wrote⟧", msg); self.assertEqual(out, "FOO\nbar\n")
+        self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertEqual(out, "FOO\nbar\n")
 
     def test_blank_line_drift_still_matches(self):
         # old has an EXTRA blank line vs the file — byte-exact would fail; whitespace-flexible matches.
         rc, msg, out = self._run("a = 1\n\nb = 2\n", "a = 1\n\n\nb = 2", "a = 1\n\nc = 3")
-        self.assertEqual(rc, 0); self.assertIn("⟦cria:wrote⟧", msg); self.assertIn("c = 3", out)
+        self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertIn("c = 3", out)
 
     def test_indentation_drift_still_matches(self):
         rc, msg, out = self._run("    x = 1\n", "x = 1", "x = 2")

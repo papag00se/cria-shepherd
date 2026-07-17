@@ -19,7 +19,7 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertNotIn("{{", out)
 
     def test_nudge_carries_a_cria_marker(self):
-        # The steer/nudge is injected as a USER-role message; the ⟦cria:⟧ marker makes
+        # The steer/nudge is injected as a USER-role message; the ⟦ctx:⟧ marker makes
         # classify.latest_user_text SKIP it so an injected steer can't be misread as the user's task.
         from cria.classify import _CRIA_INJECTION_MARKERS
         out = prompts.render("nudge", reason="you keep rewriting the same file")

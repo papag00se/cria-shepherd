@@ -101,9 +101,9 @@ MAX_PROBE_REISSUES = 2
 # this envelope — so the harness stores it, its compactor summarizes FROM it, and cria re-reads it
 # from the history it's sent. No server-side copy of the summary. The envelope deliberately does
 # NOT start with the indicator MARKER ("⟦cria⟧ "), so strip_history leaves it intact inbound.
-BRIEFING_OPEN = "⟦cria:briefing⟧"
-BRIEFING_CLOSE = "⟦/cria:briefing⟧"
-CONTINUATION_MARKER = "⟦cria:continuation⟧"   # leads cria's compaction reframe — marks it as cria
+BRIEFING_OPEN = "⟦ctx:briefing⟧"
+BRIEFING_CLOSE = "⟦/ctx:briefing⟧"
+CONTINUATION_MARKER = "⟦ctx:continuation⟧"   # leads cria's compaction reframe — marks it as cria
 #   scaffolding so classify.latest_user_text skips it (it reads as reasoning and mis-routes the role)
 # The re-anchor note injected on the FIRST turn after a detected harness compaction (the plan-off
 # path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
@@ -299,7 +299,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
 
 def satisfaction_done_note(reason: str) -> str:
     """The completion text forwarded when the satisfaction check + repo checks agree the task is done."""
-    return f"Task complete — verified by cria's completion check and the repo's own checks. {reason}".strip()
+    return f"Task complete — verified by the completion check and the repo's own checks. {reason}".strip()
 
 
 class LoopStore:
@@ -700,7 +700,7 @@ class Loop:
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog) -> list[dict]:
         """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
-        into a ⟦cria:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
+        into a ⟦ctx:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
         sess.summary (that's the cheap completed-STEP axis in the protected system message)."""
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
@@ -1247,7 +1247,7 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
                 nl = text.find("\n", text.find(_COMPACTION_MARKER))
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
-            # Tag with a ⟦cria:⟧ marker so classify.latest_user_text skips it — this reframe is cria
+            # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
             out.append({**m, "content": f"{CONTINUATION_MARKER} {prompts.render(template, summary=summary, cwd=cwd)}"})
             reframed = True
