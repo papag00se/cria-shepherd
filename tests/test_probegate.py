@@ -264,6 +264,26 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("run it yourself", out.lower())
         self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message
 
+    def test_pytest_no_tests_collected_exit5_is_benign_not_a_failure(self):
+        # A fresh/testless project: pytest ran and collected nothing (exit 5). Its "no tests ran" line
+        # must NOT scrape as an error-class finding, and — with probe-0 clean — the gate must read as
+        # clean-ish ("no error-class problems"), NEVER "one of the checks FAILED".
+        raw = self._raw("no tests ran in 0.01s\nEXIT:5")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no error-class", out.lower())
+        self.assertNotIn("no tests ran", out.lower())      # benign line not surfaced as a finding
+        self.assertNotIn("failed", out.lower())            # not the failure message
+        self.assertNotIn("run it yourself", out.lower())
+
+    def test_pytest_no_tests_collected_alone_is_not_a_failure(self):
+        # Even when the ONLY non-git probe is pytest-no-tests (a bare python project the model just
+        # started), the gate must not read as a failure or "no usable result".
+        raw = ("Chunk ID: 7f3\n" + _sec(0, "no tests ran in 0.01s\nEXIT:5")
+               + _git("deadbeef") + "Process exited with code 1\n")
+        out = probegate.clean_gate_output(raw)
+        self.assertNotIn("failed", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+
     def test_nonzero_exit_advisory_only_is_clean_not_a_failure(self):
         # ruff/tsc-style: exited non-zero but every line is advisory (unused import). Must read as
         # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.

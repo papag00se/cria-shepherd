@@ -92,6 +92,7 @@ DIGEST_FLOOR_NONE = _DIGEST["floor_none"]
 DIGEST_NO_PROBES = _DIGEST["no_probes"]
 DIGEST_EXIT_CLEAN = _DIGEST["exit_clean"]
 DIGEST_EXIT_NO_LAUNCH = _DIGEST["exit_no_launch"]
+DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
 
 # ---------------------------------------------------------------------------
 # cria constants (proxy path — NOT probe_run.rs values)
@@ -117,6 +118,23 @@ NOT_FOUND_EXIT_CODE = 127    # shell: command not found -> upstream's spawn-Err 
 LAUNCH_FAILURE_EXIT_CODES = (125, NOT_EXECUTABLE_EXIT_CODE, NOT_FOUND_EXIT_CODE)
 NOT_FOUND_TEXT = "command not found"
 PROXY_LAUNCH_DETAIL = "command not found"  # the {e} detail when the shell, not the OS, tells us
+# pytest returns exit 5 when it collected ZERO tests (a fresh/testless project, or a target with no
+# matching tests). The runner launched fine and simply had nothing to run — NOT a failing test. Every
+# interpreter below treats it as a benign no-signal (like a launch failure), never a hard failure, or
+# a testless project's completion-gate reads "tests broke". pytest is the only common runner using 5
+# this way; the text markers CONFIRM it so a bare-text gate section (no command in hand) is still
+# recognized and some other tool's incidental exit-5 is not misclassified.
+PYTEST_NO_TESTS_EXIT = 5
+_NO_TESTS_MARKERS = ("no tests ran", "no tests collected", "collected 0 items")
+
+
+def is_no_tests_collected(exit_code: Optional[int], command: str = "", output: str = "") -> bool:
+    """True when a probe result is pytest's NO_TESTS_COLLECTED (exit 5 + a pytest fingerprint in the
+    command or output). Callers treat it as a neutral non-signal, never a failure."""
+    if exit_code != PYTEST_NO_TESTS_EXIT:
+        return False
+    hay = f"{command}\n{output}".lower()
+    return "pytest" in hay or any(m in hay for m in _NO_TESTS_MARKERS)
 
 
 @dataclass
@@ -314,6 +332,8 @@ def failed_unparsed_probes(report: ProbeReport) -> list[str]:
     kinds = _kind_by_command(report)
     out: list[str] = []
     for r in report.results:
+        if is_no_tests_collected(r.exit_code, r.command, r.summary):
+            continue  # pytest collected nothing — benign, not a failing test
         if r.exit_code not in (None, 0) and not r.findings \
                 and kinds.get(r.command) in _HARD_FAILURE_KINDS:
             out.append(f"$ {r.command} — {r.summary or f'exited {r.exit_code}'}")
@@ -390,6 +410,8 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
         for r in report.results:
             if r.exit_code == 0:
                 exit_txt = DIGEST_EXIT_CLEAN
+            elif is_no_tests_collected(r.exit_code, r.command, r.summary):
+                exit_txt = DIGEST_EXIT_NO_TESTS  # exit 5 = nothing collected, NOT a failing test
             elif r.exit_code is not None:
                 exit_txt = f"exit {r.exit_code}"
             else:

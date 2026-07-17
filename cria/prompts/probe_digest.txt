@@ -8,3 +8,4 @@ floor_none = did not run (no parse checks applicable)
 no_probes = PROBES: none ran — no lint/test command was discovered for this project.
 exit_clean = exit 0 (ran clean)
 exit_no_launch = did NOT launch (tool missing?)
+exit_no_tests = no tests collected (nothing to run — not a failure)

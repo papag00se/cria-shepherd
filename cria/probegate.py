@@ -146,6 +146,13 @@ def clean_gate_output(raw: str) -> str | None:
         if code in proberun.LAUNCH_FAILURE_EXIT_CODES or code == proberun.TIMEOUT_EXIT_CODE:
             could_not_run = True
             continue
+        # pytest exit 5 = no tests collected (a fresh/testless project). The runner ran fine and had
+        # nothing to assess — a benign non-signal. Skip the section so its "no tests ran" line isn't
+        # scraped as an error-class finding AND it doesn't set failed_no_detail; the OTHER probes that
+        # ran decide the gate's verdict. saw_probe stays True, so a pytest-only gate reads clean-ish
+        # ("checks that ran reported no problems"), never "one of the checks FAILED".
+        if proberun.is_no_tests_collected(code, output=text):
+            continue
         had_content = False
         section_findings: list[str] = []
         for ln in text.splitlines():

@@ -328,6 +328,18 @@ class TestFailedUnparsedProbes(unittest.TestCase):
         )
         self.assertEqual(failed_unparsed_probes(rep), [])
 
+    def test_pytest_no_tests_collected_exit5_is_not_a_failure(self):
+        # A fresh/testless project: pytest launches fine and collects nothing (exit 5). That is NOT a
+        # failing test — it must not read as "tests broke". A real cargo failure alongside still surfaces.
+        rep = self._report(
+            (["python3", "-m", "pytest", "-q"], 5, [], ProbeKind.Test),   # no tests collected
+            (["cargo", "check"], 101, [], ProbeKind.BuildCheck),          # real failure
+        )
+        out = failed_unparsed_probes(rep)
+        self.assertEqual(len(out), 1)
+        self.assertTrue(any("cargo" in o for o in out))
+        self.assertFalse(any("pytest" in o for o in out))
+
 
 # ---------------------------------------------------------------------------
 # completion_probe_digest extras (the upstream test covers the main shape).
@@ -353,6 +365,15 @@ class TestDigestExtras(unittest.TestCase):
         digest = completion_probe_digest(report, LinterReport())
         self.assertIn("did NOT launch (tool missing?)", digest)
         self.assertIn("0 structured finding(s)", digest)
+
+    def test_pytest_no_tests_collected_renders_benign_not_exit5(self):
+        # exit 5 with no tests must read as "nothing to run", not a bare "exit 5" the critic reads as a
+        # failing suite — the whole point of the digest is telling "tests pass" from "tests never ran".
+        report = ProbeReport(["python"], [], [ProbeResult(
+            "python3 -m pytest -q", 5, "no tests ran in 0.01s", [])])
+        digest = completion_probe_digest(report, LinterReport())
+        self.assertIn("no tests collected", digest)
+        self.assertNotIn("exit 5", digest)
 
 
 # ---------------------------------------------------------------------------
