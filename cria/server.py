@@ -58,8 +58,12 @@ from .loop import (
     guard_track_repetition,
     guard_track_write_streak,
     guard_truncation,
+    judge_satisfaction,
     reframe_preamble,
+    satisfaction_check_due,
+    satisfaction_done_note,
     session_key,
+    _work_log,
 )
 from .planner import Planner
 from .routing import Router
@@ -216,6 +220,7 @@ class CriaServer(ThreadingHTTPServer):
         # The coder role's sampling/reserve — needed for the rumination budget on BOTH the loop
         # and the plan-off proxy path (the guards are not gated behind the planner).
         self.coder_role = roles.get("coder")
+        self.reasoner_role = roles.get("reasoner")  # for the plan-off satisfaction critic (task-level judge)
         # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
         # own in PlanSession). Same shared guard implementation drives both.
         self.guard_store = GuardStore()
@@ -562,6 +567,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         per-turn hygiene. Cross-turn state lives in the per-session GuardState + the shared shape
         store. Returns the completion to send, or None on decode fail."""
         coder_chat = self._guarded_coder_chat(provider)
+        gs.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
         rewritten = self._detect_rewrite(sess_key, body, rlog)
         # A probe whose result a harness compaction erased is re-issued (parity with the loop),
         # rather than fail-open / downgrade to a canned steer with no ground truth.
@@ -596,6 +602,27 @@ class CriaHandler(BaseHTTPRequestHandler):
             return intervention
         if steer is None and gs.nudge_reason:
             steer, gs.nudge_reason = gs.nudge_reason, ""
+        # PERIODIC SATISFACTION CHECK (the off-ramp for a session that finished the work but can't STOP):
+        # on a long session — drive >= SATISFACTION_CHECK_START, then every SATISFACTION_CHECK_EVERY —
+        # the reasoner judges whether the USER'S WHOLE TASK is satisfied by the real work. If yes, cria
+        # initiates the done-gate: verify against the repo's own checks (objective backstop), and on the
+        # next turn end the session if they pass. The coder can't reliably signal done, so cria does.
+        if steer is None and not rewritten and not gs.done_probe and satisfaction_check_due(gs.drive_count):
+            task = _history_root(body.get("messages", []))[0]
+            satisfied, reason = judge_satisfaction(
+                task, _work_log(body.get("messages", [])),
+                self.server.upstream.chat, self.server.reasoner_role, rlog)
+            rlog.emit("loop.satisfaction_check", plan_off=True, drive=gs.drive_count, satisfied=satisfied)
+            if satisfied:
+                probe_tc = guard_gate_op(gs, body, rlog)
+                if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
+                    gs.done_probe = True
+                    gs.probe_call_id = probe_tc["id"]
+                    gs.pending_done = satisfaction_done_note(reason)
+                    gs.steer_source = "completion check (task satisfied)"
+                    return _completion_toolcalls([probe_tc],
+                                                 note="cria completion check: the task looks done — verifying the repo's checks")
+                return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — but only when
         # nothing else is steering this turn (a guard steer / re-anchor takes precedence).
         if steer is None and not rewritten:

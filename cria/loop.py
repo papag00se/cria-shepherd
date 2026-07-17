@@ -156,6 +156,7 @@ class GuardState:
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
+    drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
@@ -219,6 +220,41 @@ _MAX_GUARD_STATES = 256  # bound GuardStore like _shapes — a long-lived proces
 # the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
 # syntax/lint/test state early, not only when it thinks it's finished.
 GATE_EVERY_CODER_TURNS = 15
+
+# Periodic SATISFACTION check (plan-off): a long session can finish the work but never STOP — the coder
+# keeps inventing completion actions (a .task_complete marker, a hallucinated checkpoint tool) so cria's
+# no-tool-call done-detection never triggers. Starting at drive SATISFACTION_CHECK_START, every
+# SATISFACTION_CHECK_EVERY drives, the reasoner judges the WHOLE user task against the real work; if it's
+# satisfied cria verifies against the repo's checks (the same objective backstop the done-gate uses) and
+# ends the turn. This is the off-ramp — the model can't stop itself, so cria stops it once it's actually done.
+SATISFACTION_CHECK_START = 100
+SATISFACTION_CHECK_EVERY = 25
+
+
+def satisfaction_check_due(drive_count: int) -> bool:
+    return (drive_count >= SATISFACTION_CHECK_START
+            and (drive_count - SATISFACTION_CHECK_START) % SATISFACTION_CHECK_EVERY == 0)
+
+
+def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> tuple[bool, str]:
+    """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
+    original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
+    Returns (satisfied, reason). Fails CLOSED — an unparseable/empty verdict is NOT satisfied, so a session
+    is never ended on the critic's silence."""
+    if not task.strip():
+        return False, "no task text to judge"
+    user = prompts.render("satisfaction_user", task=_clip(task, 1400),
+                          evidence=_clip_tail(evidence, 2500) or "(no actions recorded yet)")
+    text = summarize(reasoner_chat, reasoner_role, prompts.load("satisfaction"), user, rlog, phase="satisfaction")
+    obj = extract_json_object(text)
+    if not obj:
+        return False, "unverified (no parseable verdict)"
+    return bool(obj.get("satisfied")), _clip(str(obj.get("reason", "")), 200)
+
+
+def satisfaction_done_note(reason: str) -> str:
+    """The completion text forwarded when the satisfaction check + repo checks agree the task is done."""
+    return f"Task complete — verified by cria's completion check and the repo's own checks. {reason}".strip()
 
 
 class LoopStore:

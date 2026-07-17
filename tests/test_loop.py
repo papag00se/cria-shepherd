@@ -2256,5 +2256,49 @@ class NavRepeatSignatureTests(unittest.TestCase):
         self.assertFalse(_actions_match(a, b))
 
 
+class SatisfactionCheckTests(unittest.TestCase):
+    """The periodic 'is the user's task satisfied?' off-ramp for a plan-off session that finished the
+    work but can't STOP. Cadence: drive 100, then every 25. Fails CLOSED on an unparseable verdict."""
+
+    def test_cadence_starts_at_100_every_25(self):
+        from cria.loop import satisfaction_check_due
+        self.assertFalse(satisfaction_check_due(99))
+        self.assertTrue(satisfaction_check_due(100))
+        self.assertFalse(satisfaction_check_due(101))
+        self.assertFalse(satisfaction_check_due(124))
+        self.assertTrue(satisfaction_check_due(125))
+        self.assertTrue(satisfaction_check_due(150))
+
+    def _chat(self, content):
+        def fake(body, rlog):
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
+        return fake
+
+    def test_satisfied_verdict_parsed(self):
+        from cria.loop import judge_satisfaction
+        sat, reason = judge_satisfaction("build a resolver", "wrote resolver.py; pytest: 3 passed",
+                                         self._chat('{"satisfied": true, "reason": "tests pass, live check works"}'),
+                                         None, _Rlog())
+        self.assertTrue(sat)
+        self.assertIn("tests pass", reason)
+
+    def test_not_satisfied_verdict(self):
+        from cria.loop import judge_satisfaction
+        sat, _ = judge_satisfaction("t", "e",
+                                    self._chat('{"satisfied": false, "reason": "tests failing"}'), None, _Rlog())
+        self.assertFalse(sat)
+
+    def test_fails_closed_on_unparseable_verdict(self):
+        from cria.loop import judge_satisfaction
+        sat, reason = judge_satisfaction("t", "e", self._chat("maybe it is done, hard to say"), None, _Rlog())
+        self.assertFalse(sat)                 # no JSON → NOT satisfied; never end a session on silence
+        self.assertIn("unverified", reason)
+
+    def test_empty_task_is_not_satisfied(self):
+        from cria.loop import judge_satisfaction
+        sat, _ = judge_satisfaction("   ", "e", self._chat('{"satisfied": true}'), None, _Rlog())
+        self.assertFalse(sat)                 # nothing to judge → fail closed
+
+
 if __name__ == "__main__":
     unittest.main()
