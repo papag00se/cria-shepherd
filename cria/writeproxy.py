@@ -247,11 +247,13 @@ if key:
     for i,l in enumerate(lines):
         if key[:40] in l:
             ctx=chr(10).join(lines[max(0,i-2):i+4]); break
-msg='edit_file: old_string not found in '+p.name+'.'
+msg=('edit_file: old_string is NOT in '+p.name+' — and this is not a spacing problem '
+     '(indentation/whitespace is already tolerated), so your text genuinely differs from the file '
+     '(likely a stale copy from before your last edit).')
 if ctx:
-    msg+=' The file reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy that EXACT text (indentation included) into old_string, or use write_file.'
+    msg+=' The file ACTUALLY reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy THAT exact text into old_string and edit again — do not rewrite the whole file.'
 else:
-    msg+=' Read the file first — your old_string does not match its current contents.'
+    msg+=' Read the file again to get its current contents, then edit — do not rewrite the whole file.'
 sys.exit(msg)
 '''
 

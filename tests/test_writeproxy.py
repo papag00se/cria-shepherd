@@ -120,7 +120,7 @@ class TranslateEditReadTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"edit_file"})
         cmd = _lowered_cmd(comp)
         self.assertIn("python3", cmd)
-        self.assertIn("old_string not found", cmd)   # fail-closed on a miss (with a helpful error)
+        self.assertIn("old_string is NOT in", cmd)   # fail-closed on a miss (with a helpful error)
         back = represent_inbound(_history_from(comp))[0]["tool_calls"][0]["function"]
         self.assertEqual(back["name"], "edit_file")
         self.assertEqual(json.loads(back["arguments"])["new_string"], 'x, "id": id}')
@@ -245,7 +245,7 @@ class EditCommandTests(unittest.TestCase):
     def test_miss_returns_actual_content(self):
         rc, msg, out = self._run("def resolve(handle):\n    y = 2\n", "def resolve(handle):\n    x = 1", "z")
         self.assertNotEqual(rc, 0)
-        self.assertIn("not found", msg)
+        self.assertIn("is NOT in", msg)
         self.assertIn("y = 2", msg)                 # shows the file's ACTUAL content near the target
         self.assertEqual(out, "def resolve(handle):\n    y = 2\n")   # unchanged
 
