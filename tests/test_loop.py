@@ -770,6 +770,29 @@ class SharedSummarizeTests(unittest.TestCase):
             {"choices": [{"message": {"content": "<|tool_call>call:X{<|\"|>y<|\"|>}"}}]}).encode()
         self.assertEqual(summarize(chat, None, "s", "u", _Rlog(), phase="t"), "")
 
+    def test_tool_call_answer_recovers_plan_is_discarded_and_retried(self):
+        # THE 6/6 compactor failure: the model answers a SUMMARIZE call with a leaked tool call, whose
+        # recovered reasoning is a forward PLAN, not a retrospective. has_tool_call_leak passes (clean
+        # plan-prose), so the answered-with-a-tool-call check must catch it and force the reasoning-off
+        # retry, which produces a real summary in content.
+        from cria.loop import summarize
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(body)
+            off = (body.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+            if off:
+                return json.dumps({"choices": [{"message": {
+                    "content": "Built the resolver; the live test fails on a 404."}}]}).encode()
+            # reasoning-on pass: a leaked tool call whose reasoning is forward planning
+            return json.dumps({"choices": [{"message": {
+                "content": "<|tool_call>call:Read{file_path:<|\"|>spec.json<|\"|>}<tool_call|>",
+                "reasoning_content": "Plan: 1. Read the OpenAPI spec. 2. Write resolve_handle."}}]}).encode()
+
+        out = summarize(chat, None, "summarize past work", "transcript", _Rlog(), phase="t")
+        self.assertEqual(out, "Built the resolver; the live test fails on a 404.")
+        self.assertEqual(len(calls), 2)   # the plan-recovered pass was discarded and retried off
+
 
 class LoopSelfCompactTests(unittest.TestCase):
     def test_loop_rolls_up_a_big_coder_view(self):

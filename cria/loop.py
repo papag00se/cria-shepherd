@@ -1712,7 +1712,17 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
             rlog.phase = phase + ("-noreason" if reasoning_off else "")
-            comp = massage.coerce_text_answer(massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog), rlog)
+            applied = massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog)
+            # A summarize/redirect call offers NO tools, so ANY tool call the model produced (native, or
+            # a dialect leak recover_leaked_tool_calls promoted) means it answered in ACT/PLAN mode, not
+            # prose. coerce_text_answer then salvages its reasoning_content — but on a "summarize past
+            # work" prompt that reasoning is forward PLANNING ("Plan: 1. …", "I should start by…"), not a
+            # retrospective. So a tool-call answer's recovered "summary" is the wrong text (the observed
+            # 6/6 compactor failures). Fail this (reasoning-ON) pass so the reasoning-OFF retry forces the
+            # summary straight into content, where there is no reasoning to leak.
+            answered_with_tool_call = bool(
+                ((applied.get("choices") or [{}])[0].get("message") or {}).get("tool_calls"))
+            comp = massage.coerce_text_answer(applied, rlog)
             text = _completion_text(comp)
             if role is not None:
                 text = role.clean_content(text)
@@ -1722,6 +1732,9 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
                 # fires. Returning it would inject a wall of `<|tool_call>…` garbage as the briefing.
                 rlog.emit("summarize.leaked_tool_call", level="warn", phase=rlog.phase)
                 return ""
+            if answered_with_tool_call and not reasoning_off:
+                rlog.emit("summarize.tool_call_answer", level="warn", phase=rlog.phase)
+                return ""  # recovered reasoning is a plan, not a summary — force the reasoning-off retry
             return text
         except Exception as e:
             rlog.emit("summarize.error", level="warn", error=str(e))
