@@ -153,6 +153,15 @@ def clean_gate_output(raw: str) -> str | None:
         # ("checks that ran reported no problems"), never "one of the checks FAILED".
         if proberun.is_no_tests_collected(code, output=text):
             continue
+        # A check that PASSED (exit 0) has, by definition, no error-class problem — its stdout is NOT a
+        # diagnosis. Linters/typecheckers print nothing on success, but pytest prints "…. [100%]\nN
+        # passed", go test prints "ok", etc. — and the raw-line scraper below would harvest those as
+        # "findings" and hand the model "fix them at the reported line: 4 passed" (a false-red that told
+        # the model to fix a GREEN suite ~20 times). Skip a passing section entirely; the exit code is
+        # the reliable signal (kept: a None code — sentinel lost, unknown — still gets scraped, never
+        # silently swallowed).
+        if code == 0:
+            continue
         had_content = False
         section_findings: list[str] = []
         for ln in text.splitlines():

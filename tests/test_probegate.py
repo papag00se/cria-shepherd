@@ -284,6 +284,27 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("failed", out.lower())
         self.assertNotIn("no usable result", out.lower())
 
+    def test_passing_pytest_is_not_scraped_as_error_class_findings(self):
+        # THE false-red: a GREEN pytest run (exit 0, "…. [100%]\nN passed") must NOT be harvested into
+        # "the repo's own checks report these error-class problems — fix them at the reported line: 4
+        # passed". A passing check's stdout is not a finding.
+        raw = self._raw("....                                    [100%]\n4 passed in 0.06s\nEXIT:0")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no error-class", out.lower())          # reads clean-ish, not red
+        self.assertNotIn("4 passed", out)                     # the passing summary is not a finding
+        self.assertNotIn("fix them at the reported line", out.lower())
+        self.assertNotIn("[100%]", out)
+
+    def test_passing_section_does_not_mask_a_failing_one(self):
+        # A passing pytest section is skipped, but a REAL failing section still surfaces.
+        raw = ("Chunk ID: 7f3\n"
+               + _sec(0, "....  [100%]\n4 passed in 0.06s\nEXIT:0")           # green — skipped
+               + _sec(1, "x.py:5:4 undefined name 'foo'\nEXIT:1")            # red — surfaced
+               + _git("deadbeef") + "Process exited with code 1\n")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("undefined name 'foo'", out)
+        self.assertNotIn("4 passed", out)
+
     def test_nonzero_exit_advisory_only_is_clean_not_a_failure(self):
         # ruff/tsc-style: exited non-zero but every line is advisory (unused import). Must read as
         # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.
