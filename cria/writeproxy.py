@@ -228,6 +228,8 @@ _EDIT_PY = r'''import base64,sys,re,pathlib
 p=pathlib.Path(base64.b64decode('{path}').decode())
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
+if old==new:
+    sys.exit('edit_file: old_string and new_string are IDENTICAL — this edit changes nothing. Put the text you actually want into new_string (or read the file to see what needs changing).')
 s=p.read_text()
 n=s.count(old)
 if n==1:

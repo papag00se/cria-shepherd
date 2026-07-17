@@ -249,6 +249,13 @@ class EditCommandTests(unittest.TestCase):
         self.assertIn("y = 2", msg)                 # shows the file's ACTUAL content near the target
         self.assertEqual(out, "def resolve(handle):\n    y = 2\n")   # unchanged
 
+    def test_no_op_edit_is_rejected(self):
+        # old_string == new_string changes nothing; reporting "wrote" wasted a turn in a live spiral
+        rc, msg, out = self._run("a = 1\n", "a = 1", "a = 1")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("IDENTICAL", msg)
+        self.assertEqual(out, "a = 1\n")            # file untouched
+
 
 class CriaHomeGuardTests(unittest.TestCase):
     """The driven model must never read or write inside cria's OWN private dir (~/.cria): no leaking
