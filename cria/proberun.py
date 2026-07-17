@@ -221,7 +221,7 @@ def run_candidate(runner: Runner, c: ProbeCandidate, timeout_s: float) -> ProbeR
     tool can't deadlock on a full pipe, the 40ms poll loop, kill+reap — lives
     behind the Runner; what is ported here is the result contract.
     """
-    joined = " ".join(c.command)
+    joined = display_command(c.command)
     if not c.command:
         return err_result(joined, EMPTY_COMMAND_SUMMARY)   # joined == "" here
     try:
@@ -278,7 +278,7 @@ def run_completion_probes(runner: Runner, root: str, timeout_s: float) -> ProbeR
 def _kind_by_command(report: ProbeReport) -> dict:
     """joined-command → ProbeKind, for results→candidate correlation (results may be a
     subset of selected when a section never came back)."""
-    return {" ".join(c.command): c.kind for c in report.selected}
+    return {display_command(c.command): c.kind for c in report.selected}
 
 
 def syntax_floor_clean(report: ProbeReport):
@@ -424,6 +424,16 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
 # ---------------------------------------------------------------------------
 # Proxy path: composed shell line out, tool result back in (both pure)
 # ---------------------------------------------------------------------------
+
+def display_command(command) -> str:
+    """The command string SHOWN to the model as ``r.command`` (and used as the results→kinds map key,
+    so every builder of it must agree). shlex.join, not a bare space-join: a probe argv can hold a
+    multi-line ``python3 -c '<script>'`` blob or a path with spaces, and a space-join renders an
+    UN-RUNNABLE command (the ``-c`` script unquoted, the file glued onto the end) that the model then
+    copies verbatim. shlex.join quotes each token so the echoed command is the runnable one.
+    ``shlex.join([]) == ""`` — the empty-argv contract is preserved."""
+    return shlex.join(command)
+
 
 def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     """One shell line the harness executes in place of upstream's spawn.

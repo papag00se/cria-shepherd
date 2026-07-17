@@ -226,7 +226,7 @@ def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
             continue  # never ran (script cut short) → no result; absence never blocks
         raw, code = proberun.scrape_exit(body)
         results.append(proberun.interpret_probe_output(
-            c, " ".join(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S))
+            c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S))
     out.report = ProbeReport(project_type=[], selected=list(plan.candidates), results=results)
 
     out.git_state = sections.get("git", "").strip().splitlines()[-1].strip() if sections.get("git") else ""

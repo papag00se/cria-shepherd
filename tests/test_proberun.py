@@ -401,6 +401,26 @@ class TestComposeProbeCommand(unittest.TestCase):
             compose_probe_command(synth([]), 10.0)
 
 
+class TestDisplayCommand(unittest.TestCase):
+    """The command STRING shown to the model (r.command) must be runnable — a naive space-join of a
+    `python3 -c '<multi-line script>' <file>` argv renders an un-runnable blob the model copies verbatim
+    (the pyproject-spiral footgun). shlex.join quotes each token."""
+
+    def test_multiline_dash_c_and_glued_file_are_quoted(self):
+        from cria.proberun import display_command
+        argv = ["python3", "-c", "import sys\ntry:\n    import tomllib\nexcept: pass\nsys.exit(1)",
+                "/home/x/pyproject.toml"]
+        shown = display_command(argv)
+        self.assertIn("'import sys\ntry:", shown)          # the -c script is a single quoted token
+        self.assertIn(" /home/x/pyproject.toml", shown)    # the file is a separate, distinct token
+        self.assertTrue(shown.startswith("python3 -c "))
+
+    def test_simple_argv_unchanged_and_empty_is_blank(self):
+        from cria.proberun import display_command
+        self.assertEqual(display_command(["python3", "-m", "pytest", "-q"]), "python3 -m pytest -q")
+        self.assertEqual(display_command([]), "")
+
+
 class TestScrapeExit(unittest.TestCase):
     def test_scrapes_trailing_sentinel(self):
         out, code = scrape_exit("src/x.py:9: error: boom\nEXIT:1\n")
