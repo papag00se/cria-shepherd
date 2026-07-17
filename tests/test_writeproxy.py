@@ -256,24 +256,34 @@ class EditCommandTests(unittest.TestCase):
         self.assertIn("IDENTICAL", msg)
         self.assertEqual(out, "a = 1\n")            # file untouched
 
-    def test_miss_with_deleted_anchor_shows_full_small_file(self):
-        # THE 0063->0067 re-fail: a prior edit deleted the anchor line, so there's no near-context to
-        # show. For a small file, hand the model the FULL current contents so it stops re-guessing the
-        # same stale old_string.
+    def test_identical_edit_on_a_small_file_offers_the_rewrite_escape(self):
+        # THE 707-call spiral: the model kept submitting old==new on a whitespace fix and never escaped.
+        # For a small file, the IDENTICAL rejection now points it at the write_file rewrite + shows the
+        # current contents, so a 1-char fix doesn't burn hundreds of calls.
+        rc, msg, out = self._run("    x = 1\n    y = 2\n", "    x = 1", "    x = 1")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("IDENTICAL", msg)
+        self.assertIn("REWRITE THE WHOLE FILE with write_file", msg)
+        self.assertIn("y = 2", msg)                  # current contents handed over to rewrite from
+        self.assertEqual(out, "    x = 1\n    y = 2\n")  # file untouched
+
+    def test_miss_with_deleted_anchor_small_file_offers_rewrite(self):
+        # THE 0063->0067 re-fail: a prior edit deleted the anchor line, so there's no near-context. For a
+        # small file, point the model at a whole-file write_file rewrite + hand it the current contents.
         rc, msg, out = self._run("[project]\nname = \"x\"\n", "[tool.setuptools]\npackage-dir = 1", "z")
         self.assertNotEqual(rc, 0)
         self.assertIn("is NOT in", msg)
-        self.assertIn("reads IN FULL", msg)              # the deleted-anchor branch fired
+        self.assertIn("REWRITE THE WHOLE FILE with write_file", msg)  # the small-file escape
         self.assertIn('name = "x"', msg)                 # actual current contents handed over
         self.assertNotIn("Read the file again to get", msg)  # not the bare fallback
 
     def test_miss_with_deleted_anchor_large_file_falls_back(self):
-        # A large file is NOT dumped — the bare "read the file again" fallback still applies.
+        # A large file is NOT dumped/rewritten — the bare "read the file again" fallback still applies.
         big = "\n".join(f"line_{i} = {i}" for i in range(400))  # > EDIT_SHOW_FULL_MAX chars
         rc, msg, out = self._run(big + "\n", "[tool.setuptools]\nx = 1", "z")
         self.assertNotEqual(rc, 0)
         self.assertIn("Read the file again to get", msg)
-        self.assertNotIn("reads IN FULL", msg)
+        self.assertNotIn("REWRITE THE WHOLE FILE", msg)
 
     def test_phantom_bug_already_applied_tells_the_model_to_stop(self):
         # THE observed loop: the model re-fixes a line that is already correct. Its old_string

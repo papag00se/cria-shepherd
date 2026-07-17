@@ -233,9 +233,20 @@ _EDIT_PY = r'''import base64,sys,re,pathlib,difflib
 p=pathlib.Path(base64.b64decode('{path}').decode())
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
-if old==new:
-    sys.exit('edit_file: old_string and new_string are IDENTICAL — this edit changes nothing. Put the text you actually want into new_string (or read the file to see what needs changing).')
 s=p.read_text()
+if old==new:
+    msg='edit_file: old_string and new_string are IDENTICAL — this edit changes nothing.'
+    if len(s)<={small}:
+        # The observed spiral: the model keeps submitting old==new (it can't pin down the exact current
+        # text, esp. a whitespace/indent diff) and burns dozens of edit_file calls on a one-char fix.
+        # For a SMALL file the reliable escape is to REWRITE it whole with write_file (it can produce the
+        # full corrected content directly), overriding the general "don't rewrite" guidance for this case.
+        msg+=(' You keep submitting an edit that changes nothing — you cannot pin down the exact current'
+              ' text. STOP using edit_file on this file. It is small: REWRITE THE WHOLE FILE with'
+              ' write_file, using its current contents below as your starting point:'+chr(10)+'---'+chr(10)+s+chr(10)+'---')
+    else:
+        msg+=' Put the text you actually want into new_string (or read the file to see what needs changing).'
+    sys.exit(msg)
 n=s.count(old)
 if n==1:
     p.write_text(s.replace(old,new,1)); print('{wrote}'); sys.exit()
@@ -277,7 +288,11 @@ elif close:
           '(e.g. a variable name):'+chr(10)+'---'+chr(10)+close+chr(10)+'---'+chr(10)+'Copy that line '
           'VERBATIM into old_string. Do not rewrite the whole file.')
 elif len(s)<={small}:
-    msg+=' The anchor line is gone (an earlier edit likely removed it), so there is nothing near it to show. The file CURRENTLY reads IN FULL — copy the exact text you want to change into old_string:'+chr(10)+'---'+chr(10)+s+chr(10)+'---'
+    # A small file whose anchor is gone (a prior edit removed it) and your old_string is stale — the
+    # reliable escape is to rewrite it whole rather than keep guessing at old_string.
+    msg+=(' The anchor line is gone (an earlier edit likely removed it). This file is small, and your'
+          ' old_string is stale — the simplest fix is to REWRITE THE WHOLE FILE with write_file rather'
+          ' than more edit_file guesses. Its current contents:'+chr(10)+'---'+chr(10)+s+chr(10)+'---')
 else:
     msg+=' Read the file again to get its current contents, then edit — do not rewrite the whole file.'
 sys.exit(msg)
