@@ -107,6 +107,35 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertEqual(r.findings[0].file, "tests/test_api.py")
         self.assertIn("AssertionError", r.findings[0].message)
 
+    def test_pytest_collection_error_is_localized(self):
+        # A collection ImportError prints "ERROR <file>" with no line/cause + a real traceback frame.
+        # Lift the frame's file:line + the E-line so the model gets a location, not a bare "test failed"
+        # with "go to the reported line" (which fed a stuck loop).
+        r = parse_output(
+            "python3 -m pytest -q", "pytest", 2,
+            "==================================== ERRORS ====================================\n"
+            "________________ ERROR collecting smoke_test.py ________________\n"
+            "smoke_test.py:2: in <module>\n"
+            "    from .resolve_handle import resolve_ada_handle\n"
+            "E   ImportError: attempted relative import with no known parent package\n"
+            "=========================== short test summary info ===========================\n"
+            "ERROR smoke_test.py\n"
+            "!!!!!!!! Interrupted: 1 error during collection !!!!!!!!",
+            "")
+        self.assertEqual(len(r.findings), 1)
+        f = r.findings[0]
+        self.assertEqual(f.file, "smoke_test.py")
+        self.assertEqual(f.line, 2)
+        self.assertIn("attempted relative import", f.message)
+        self.assertEqual(r.summary, "smoke_test.py:2: ImportError: attempted relative import with no known parent package")
+
+    def test_pytest_normal_failure_keeps_no_line(self):
+        # A plain assertion failure has no traceback :in <module>: frame — it stays line=None (unchanged).
+        r = parse_output("pytest", "pytest", 1,
+                         "FAILED tests/test_api.py::test_x - AssertionError: expected 200", "")
+        self.assertIsNone(r.findings[0].line)
+        self.assertIn("AssertionError", r.findings[0].message)
+
     def test_clean_run_has_no_findings(self):
         r = parse_output("cargo check", "cargo", 0, "    Finished dev [unoptimized]\n", "")
         self.assertEqual(r.findings, [])

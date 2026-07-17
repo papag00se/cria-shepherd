@@ -265,12 +265,21 @@ def parse_eslint(s: str) -> list[Finding]:
     return out
 
 
-def parse_pytest(s: str) -> list[Finding]:
-    """pytest short-test-summary lines only: ``FAILED path::test - Error: msg``.
+# A pytest traceback frame (``smoke_test.py:2: in <module>``) and the actual error line
+# (``E   ImportError: attempted relative import…``). Used to localize a COLLECTION error, whose
+# short-summary line (``ERROR smoke_test.py``) carries no line and no cause.
+_PYTEST_FRAME = re.compile(r"^([\w./\\-]+\.py):(\d+): in ", re.M)
+_PYTEST_ERR_LINE = re.compile(r"^E\s{2,}(.+)$", re.M)
 
-    No line numbers ever — pytest findings carry ``line=None``. Traceback
-    ``file:line:`` rows are deliberately NOT read here; the generic fallback
-    only runs if this returns zero findings.
+
+def parse_pytest(s: str) -> list[Finding]:
+    """pytest short-test-summary lines: ``FAILED path::test - Error: msg``.
+
+    Test FAILUREs carry no line (pytest doesn't put one in the summary). But a COLLECTION error
+    (an ImportError while importing the test module) prints ``ERROR <file>`` with no cause AND a real
+    traceback — ``<file>:<line>: in <module>`` + ``E   <Exc>: <msg>``. That bare "test failed" with no
+    line drove a stuck loop (cria told the model to "go to the reported line" with no line), so when a
+    finding has no line, enrich it from the traceback frame + the E-line.
     """
     out: list[Finding] = []
     for l in s.splitlines():
@@ -288,6 +297,15 @@ def parse_pytest(s: str) -> list[Finding]:
         file = nodeid.split("::", 1)[0]
         out.append(Finding(file, line=None, col=None,
                            message=(msg if msg != "" else DEFAULT_PYTEST_MESSAGE)))
+    if any(f.line is None for f in out):
+        frames = {m.group(1).replace("\\", "/").rsplit("/", 1)[-1]: (m.group(1), int(m.group(2)))
+                  for m in _PYTEST_FRAME.finditer(s)}          # basename → (file, line), deepest wins
+        errs = _PYTEST_ERR_LINE.findall(s)
+        err = errs[-1].strip() if errs else ""                # last `E   …` row = the actual exception
+        for i, f in enumerate(out):
+            fr = frames.get(f.file.replace("\\", "/").rsplit("/", 1)[-1])
+            if f.line is None and fr is not None:
+                out[i] = Finding(f.file, fr[1], None, err or f.message)
     return out
 
 
