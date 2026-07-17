@@ -373,7 +373,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         # our prior shell translations as write_file (so the model sees its own
         # tool) and advertise write_file to the model. Outbound lowering happens at
         # the send points via _translate_out.
-        self._setup_translation(body, rlog)
+        # Chat path: the downstream _translate_out uses session_key(self.headers, messages) too, so the
+        # fetch gate's write/read keys match here (session_key hashes the stable root, unchanged by
+        # represent_inbound).
+        self._setup_translation(body, session_key(self.headers, body.get("messages", [])), rlog)
 
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the
         # goal/MCP/connector firehose) — after advertise so cria's write_file survives.
@@ -438,12 +441,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             self.server.stats_store.reset(sess_key)
         return completion
 
-    def _setup_translation(self, body: dict, rlog) -> None:
+    def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:
         """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior
         shell translations as the tool the model called (from the sentinel in history), then advertise
         cria's synthetic tools. Records what to lower outbound (self._synthetic), the harness's search
         backend to route web_search to (self._native_search — read BEFORE advertise renames it), and
-        the Brave key for a synthesized web_search."""
+        the Brave key for a synthesized web_search.
+
+        ``sess_key`` MUST be the SAME key the outbound lowering uses (``_translate_out`` → ``fetch_nav``),
+        or the exact-repeat fetch/search gate is dead: it records the visible set under one key and
+        checks under another. On the Responses path the reader key is ``sid:<sess>`` (from the body's
+        cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
+        what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
         self._shell_tool = needs_translation(body.get("tools"))
         self._synthetic: set[str] = set()
         self._native_search = None
@@ -456,7 +465,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # context — feed it the web calls STILL PRESENT, so a compacted-away result (an OpenAPI
             # spec the model needs to re-read) can be re-fetched instead of blocked forever.
             fk, sq = _visible_web_calls(body.get("messages", []))
-            webfetch.set_visible(session_key(self.headers, body.get("messages", [])), fk, sq)
+            webfetch.set_visible(sess_key, fk, sq)
 
     def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
@@ -892,8 +901,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                 if reframed:
                     rlog.emit("loop.compaction_reframed")
 
-        # Same context-shaping as the chat path: write_file↔shell + cheat-sheet.
-        self._setup_translation(body, rlog)
+        # Same context-shaping as the chat path: write_file↔shell + cheat-sheet. Pass THIS path's
+        # sess_key (sid:<sess>) so the fetch gate's visible-set is recorded under the SAME key the
+        # outbound lowering reads — without this the exact-repeat gate is dead on the Responses path.
+        self._setup_translation(body, sess_key, rlog)
         if self.server.cfg.tools.focus:
             focus_tools(body, rlog)
         if self.server.cfg.tools.cheatsheet:
