@@ -1,2 +1,3 @@
+⟦cria:steer⟧ Automated note from cria — your coding harness, NOT the user. Do not attribute it to the user or thank them for it; just act on it:
 {{REASON}}
 Keep working on it, then stop.

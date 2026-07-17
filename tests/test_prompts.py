@@ -18,6 +18,16 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertNotIn("{{REASON}}", out)      # no placeholder left behind
         self.assertNotIn("{{", out)
 
+    def test_nudge_is_marked_as_cria_not_the_user(self):
+        # The steer/nudge is injected as a USER-role message; without a ⟦cria:⟧ marker the small model
+        # read it as the user talking ("The user correctly points out lint isn't a correctness
+        # verdict…"). It must carry a cria marker so classify.latest_user_text SKIPS it AND the model
+        # doesn't own it as the user's words.
+        from cria.classify import _CRIA_INJECTION_MARKERS
+        out = prompts.render("nudge", reason="you keep rewriting the same file")
+        self.assertTrue(any(m in out for m in _CRIA_INJECTION_MARKERS))   # classify will skip it
+        self.assertIn("NOT the user", out)
+
     def test_render_leaves_literal_single_braces_untouched(self):
         # the critic must be told to emit `{"done": true}` — a single-brace literal that
         # must survive rendering (only {{TOKEN}} is substituted).
