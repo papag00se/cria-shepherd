@@ -1716,7 +1716,13 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             text = _completion_text(comp)
             if role is not None:
                 text = role.clean_content(text)
-            return _strip_cria_banners(text).strip()
+            text = _strip_cria_banners(text).strip()
+            if massage.has_tool_call_leak(text):
+                # A leaked/mangled tool call, not prose — fail this pass so the reasoning-off retry
+                # fires. Returning it would inject a wall of `<|tool_call>…` garbage as the briefing.
+                rlog.emit("summarize.leaked_tool_call", level="warn", phase=rlog.phase)
+                return ""
+            return text
         except Exception as e:
             rlog.emit("summarize.error", level="warn", error=str(e))
             return ""

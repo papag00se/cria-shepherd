@@ -746,6 +746,30 @@ class SharedSummarizeTests(unittest.TestCase):
         self.assertEqual(summarize(chat, None, "s", "u", _Rlog(), retry_off=False), "")
         self.assertEqual(len(calls), 1)
 
+    def test_leaked_tool_call_first_pass_is_discarded_and_retried(self):
+        # A non-empty but MANGLED tool-call leak (`<|tool_call>call:Gemma4__…`) must NOT become the
+        # summary — it's failed like an empty pass so the reasoning-off retry produces real prose.
+        from cria.loop import summarize
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(body)
+            off = (body.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+            content = "A real briefing." if off else "<|tool_call>call:Gemma4__1025 abcd0000 hex"
+            return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        out = summarize(chat, None, "sys", "user", _Rlog(), phase="t")
+        self.assertEqual(out, "A real briefing.")
+        self.assertEqual(len(calls), 2)                       # garbage first pass triggered the retry
+
+    def test_leak_on_both_passes_returns_empty(self):
+        # If both passes leak, summarize returns "" — the caller's own fallback briefing applies,
+        # never a wall of tool-call sentinels.
+        from cria.loop import summarize
+        chat = lambda b, r: json.dumps(
+            {"choices": [{"message": {"content": "<|tool_call>call:X{<|\"|>y<|\"|>}"}}]}).encode()
+        self.assertEqual(summarize(chat, None, "s", "u", _Rlog(), phase="t"), "")
+
 
 class LoopSelfCompactTests(unittest.TestCase):
     def test_loop_rolls_up_a_big_coder_view(self):

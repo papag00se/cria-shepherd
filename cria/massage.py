@@ -79,6 +79,20 @@ _GEMMA_STR = '<|"|>'
 _LFM2_TC_OPEN = "<|tool_call_start|>"
 _LFM2_TC_CLOSE = "<|tool_call_end|>"
 
+# Tool-call-dialect sentinels that NEVER appear in legitimate prose. When any survives into a text
+# answer, that "answer" is a MANGLED leaked call the recover/strip pass couldn't clean (a truncated
+# `<|tool_call>call:Gemma4__…` blob with no proper close), not real content.
+_LEAK_DEBRIS = (_GEMMA_TC_OPEN, _GEMMA_TC_CLOSE, _GEMMA_STR, _LFM2_TC_OPEN, _LFM2_TC_CLOSE,
+                "<tool_call>", "</tool_call>")
+
+
+def has_tool_call_leak(text: str) -> bool:
+    """True when ``text`` still carries tool-call-dialect debris — a leaked/mangled call, not prose.
+    A caller that requires real prose (the summarizer) treats such a pass as failed and retries, so a
+    ⟦cria:rollup⟧ can't become a wall of `<|tool_call>call:Gemma4__…` hex that briefs the coder on
+    nothing."""
+    return bool(text) and any(mk in text for mk in _LEAK_DEBRIS)
+
 
 def apply(completion: dict, tools=None, rlog=None) -> dict:
     """Run all output massages, in order."""

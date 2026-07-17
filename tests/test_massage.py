@@ -5,6 +5,7 @@ from cria.massage import (
     coerce_text_answer,
     add_file_to_write_file,
     apply,
+    has_tool_call_leak,
     is_truncated,
     lower_edit_file,
     massage_stream,
@@ -433,3 +434,21 @@ class CoerceTextAnswerTests(unittest.TestCase):
         comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
         out = coerce_text_answer(apply(comp, None))
         self.assertEqual((out["choices"][0]["message"].get("content") or ""), "")
+
+
+class HasToolCallLeakTests(unittest.TestCase):
+    """A summarizer's 'prose' answer that still carries tool-call-dialect debris is a leaked call,
+    not a briefing — the summarizer uses this to fail the pass and retry."""
+
+    def test_detects_surviving_dialect_sentinels(self):
+        self.assertTrue(has_tool_call_leak("<|tool_call>call:Gemma4__1025 abcd0000 hex"))
+        self.assertTrue(has_tool_call_leak("done <tool_call|>"))
+        self.assertTrue(has_tool_call_leak('args {<|"|>value<|"|>}'))
+        self.assertTrue(has_tool_call_leak("<|tool_call_start|> leftover"))
+        self.assertTrue(has_tool_call_leak("<tool_call>{}</tool_call>"))
+
+    def test_clean_prose_and_empty_are_not_leaks(self):
+        self.assertFalse(has_tool_call_leak("Built the handler, added tests, migrated the error path."))
+        self.assertFalse(has_tool_call_leak(""))
+        # a legitimate summary that merely mentions the word 'call' in prose is fine
+        self.assertFalse(has_tool_call_leak("The function makes an API call to resolve the handle."))
