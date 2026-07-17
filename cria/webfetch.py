@@ -25,6 +25,7 @@ reducers and the token estimate.
 """
 from __future__ import annotations
 
+import difflib
 import ipaddress
 import json
 import urllib.error
@@ -323,13 +324,39 @@ def find_in(reduced: str, parsed: Optional[Any], query: str, cap_tokens: int) ->
     return find_text(reduced, q, cap_tokens)
 
 
+def _all_json_keys(node: Any, acc: set) -> None:
+    """Every dict key name anywhere in the tree — the bounded, well-defined vocabulary a fuzzy
+    'did you mean' can suggest from on a find miss."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            acc.add(str(k))
+            _all_json_keys(v, acc)
+    elif isinstance(node, list):
+        for v in node:
+            _all_json_keys(v, acc)
+
+
 def find_json(root: Any, query: str, cap_tokens: int) -> str:
     q = query.lower()
     matches: list[tuple[list, bool, bool]] = []  # (path, key_match, container)
     _collect_json_matches(root, q, [], matches)
     if not matches:
-        keys = top_level_keys(root)
-        return f'find "{query}": no match. Available top-level keys: {", ".join(keys)}.'
+        msg = f'find "{query}": no match. Available top-level keys: {", ".join(top_level_keys(root))}.'
+        # Miss-diagnosis (same shape as the edit_file miss assist): the substring search already
+        # handles case, so a miss means the term differs from every real key. Point at the CLOSEST real
+        # field name anywhere in the doc (typo / plural / snake-vs-camel) so the model re-finds with a
+        # real key instead of re-fetching the same doc and re-quoting terms. Additive + degrades safely:
+        # a conservative cutoff avoids a similarly-spelled-but-wrong suggestion, and no close key → the
+        # root-key fallback is unchanged.
+        by_lower: dict[str, str] = {}
+        acc: set = set()
+        _all_json_keys(root, acc)
+        for k in acc:
+            by_lower.setdefault(k.lower(), k)
+        close = difflib.get_close_matches(q, list(by_lower), n=3, cutoff=0.7)
+        if close:
+            msg += f' Closest field names in the document: {", ".join(by_lower[c] for c in close)} — try find with one of those.'
+        return msg
     # rank: key match first, container over leaf, shallower path first
     matches.sort(key=lambda m: (not m[1], not m[2], len(m[0])))
     out, shown, used = [], 0, 0

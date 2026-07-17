@@ -25,6 +25,16 @@ class FindJsonTests(unittest.TestCase):
         self.assertIn("no match", out)
         for k in ("paths", "components", "info"):
             self.assertIn(k, out)
+        self.assertNotIn("Closest field names", out)   # a distant miss → root-key fallback only
+
+    def test_no_match_suggests_the_closest_deep_field_name(self):
+        # miss-diagnosis: a near-miss (typo) that ISN'T a substring of any key gets pointed at the
+        # closest real field name anywhere in the doc — including a DEEP key root-keys never surface.
+        spec = {"openapi": "3.0", "components": {"schemas": {"ResolvedAddress": {"operationId": "x"}}}}
+        out = wf.find_json(spec, "operatoinId", 4000)   # typo of operationId
+        self.assertIn("no match", out)
+        self.assertIn("Closest field names", out)
+        self.assertIn("operationId", out)
 
     def test_find_in_strips_surrounding_quotes(self):
         obj = {"components": {"schemas": {"Holder": {"type": "object"}}}}
