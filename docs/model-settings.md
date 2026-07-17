@@ -28,7 +28,6 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
 | **fabliq-reasoning** | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
-| **fabliq** (non-reasoning sibling) | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | same author | same family/recommendation |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
@@ -60,11 +59,11 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **mellum2** | ✅ | ✅ clean direct answer | trained for it (embedded template) |
 | **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **gemma4** | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` |
-| **fabliq / fabliq-reasoning** | ✅ | ⚠ deliberation leaks into `content` (~1400 chars) | **LFM2 family** — never trained on the empty-think convention; the prefill is inert |
+| **fabliq-reasoning** | ✅ | ⚠ deliberation leaks into `content` (~1400 chars) | **LFM2 family** — never trained on the empty-think convention; the prefill is inert |
 | **lfm25** | ✅ | ⚠ same leak | LFM2.5 — same root cause (its toggle is byte-identical to fabliq's) |
 
 So **5 of 8 do OFF cleanly** (mellum2, qwopus, ornith, qwythos, gemma4). On the 3 LFM2-family models
-(fabliq, fabliq-reasoning, lfm25), `enable_thinking=false` empties `reasoning_content` but the model
+(fabliq-reasoning, lfm25), `enable_thinking=false` empties `reasoning_content` but the model
 still deliberates in prose in `content` — which cria's parsers can't strip (no `<think>` tags). This
 is a **model limitation**, not a missing manipulation.
 
@@ -110,7 +109,7 @@ Per-model differ only by source + chat template (all templates in `~/shepherd-ev
 
 | Model | Source | Template |
 |-------|--------|----------|
-| fabliq / fabliq-reasoning | `-hf mradermacher/Fabliq-8B-Agent[-Reasoning]-i1-GGUF --hf-file …Q6_K.gguf` | `fabliq-toggle.jinja` |
+| fabliq-reasoning | `-hf mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF --hf-file …Q6_K.gguf` | `fabliq-toggle.jinja` |
 | mellum2 | `-hf yuxinlu1/Mellum2-12B-A2.5B-…-GGUF --hf-file mellum2-claude-Q4_K_M.gguf` | *(embedded)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
 | lfm25 | `-hf unsloth/LFM2.5-8B-A1B-GGUF --hf-file …UD-Q6_K_XL.gguf` | `lfm25-toggle.jinja` |
