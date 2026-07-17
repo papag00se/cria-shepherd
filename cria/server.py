@@ -464,9 +464,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._synthetic: set[str] = set()
         self._native_search = None
         self._brave_key = brave.api_key()
+        # Re-present prior lowered shell calls as the synthetic tool the model actually called —
+        # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
+        # tools:[] (no shell tool), yet its history still holds cria's ⟦cria:tool⟧-lowered write_file/
+        # edit_file/read_file calls; without this the model summarizes ~28 raw `python3 - <<HEREDOC`
+        # blobs instead of its own tool calls, and that degraded summary becomes the next ⟦cria:
+        # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
+        body["messages"] = represent_inbound(body.get("messages", []), rlog)
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
-            body["messages"] = represent_inbound(body.get("messages", []), rlog)
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
             # The exact-repeat fetch/search gate refuses a repeat ONLY while its result is still in
             # context — feed it the web calls STILL PRESENT, so a compacted-away result (an OpenAPI
