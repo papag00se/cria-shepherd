@@ -603,5 +603,49 @@ class VisibleWebCallsTests(unittest.TestCase):
         self.assertEqual(sq, ["ada handle api"])
 
 
+class CompactorRoleWiringTests(unittest.TestCase):
+    """The self-compaction summarizer must ride the [models.local.compactor] role (temp 0.6, reasoning
+    on) — NEVER the coder role (temp 0.1, coding-primed: it misreads "summarize this" as "continue the
+    task"). Falls back to the reasoner (same sampling family) when no compactor table is configured."""
+
+    def _server(self, roles, planner=False):
+        from cria.config import PlannerConfig, RoutingConfig
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cfg = Config(
+            server=ServerConfig(host="127.0.0.1", port=0),
+            upstream=UpstreamConfig(base_url="http://127.0.0.1:1"),  # never called — __init__ only
+            logging=LoggingConfig(dir=tmp.name, capture_dir=tmp.name, console=False),
+            routing=RoutingConfig(local_only=True, local_roles=roles, failover={"coding": ("coder",)}),
+            planner=PlannerConfig(enabled=planner),
+        )
+        log = EventLog(dir=cfg.logging.dir, console=False)
+        self.addCleanup(log.close)
+        srv = CriaServer(cfg, log, Upstream(cfg.upstream.base_url))
+        self.addCleanup(srv.server_close)
+        return srv
+
+    def test_uses_compactor_role_when_configured(self):
+        compactor, coder, reasoner = LocalRole(temperature=0.6), LocalRole(temperature=0.1), LocalRole(temperature=0.6)
+        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner,
+                            "coder": coder, "compactor": compactor})
+        self.assertIs(srv.compactor_role, compactor)
+        self.assertIsNot(srv.compactor_role, coder)
+
+    def test_falls_back_to_reasoner_not_coder_when_no_compactor(self):
+        coder, reasoner = LocalRole(temperature=0.1), LocalRole(temperature=0.6)
+        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner, "coder": coder})
+        self.assertIs(srv.compactor_role, reasoner)
+        self.assertIsNot(srv.compactor_role, coder)
+
+    def test_loop_context_carries_the_compactor_role(self):
+        compactor, coder, reasoner = LocalRole(temperature=0.6), LocalRole(temperature=0.1), LocalRole(temperature=0.6)
+        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner,
+                            "coder": coder, "compactor": compactor}, planner=True)
+        self.assertIsNotNone(srv.loop)
+        self.assertIs(srv.loop._ctx.compactor_role, compactor)
+        self.assertIsNot(srv.loop._ctx.compactor_role, coder)
+
+
 if __name__ == "__main__":
     unittest.main()

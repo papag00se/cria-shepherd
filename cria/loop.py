@@ -434,6 +434,11 @@ class LoopContext:
     # server's loaded model (cria never pins an alias — the single-loaded-model posture).
     coder_role: object = None  # LocalRole | None — per-request sampling/reasoning for the coder
     reasoner_role: object = None  # LocalRole | None — for the critic
+    # Compaction/summarization sampling (temp 0.6, reasoning on) — the [models.local.compactor] role,
+    # falling back to the reasoner. Distinct from reasoner_role so the SUMMARIZE callers (self-compact,
+    # completion rollup) can't accidentally ride the coder's act-temp. The redirect/critic keep the
+    # reasoner_role — those are judgments, not rollups.
+    compactor_role: object = None  # LocalRole | None
     # Root of the per-run folders (the SAME root the call captures use, so one session's
     # plan mirror, verify dumps, and captures share one folder). cria's OWN dir — NEVER the
     # workspace. None → _RUNS_DIR_DEFAULT; "" → don't write run artifacts (tests).
@@ -685,7 +690,7 @@ class Loop:
         sess.summary (that's the cheap completed-STEP axis in the protected system message)."""
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
-            lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+            lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"), selfcompact.serialize(mm), rlog,
                                  phase="self-compact"),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction)
@@ -966,7 +971,8 @@ class Loop:
         system = prompts.load("done_summary")
         # The shared summarize primitive handles the reasoning-off retry (a reasoning model can burn
         # its whole budget THINKING and emit empty content — the observed loop.compact_empty).
-        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, system, user, rlog, phase="compactor")
+        text = summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
+                         system, user, rlog, phase="compactor")
         if text:
             rlog.emit("loop.compacted", id=sess.plan.id, chars=len(text))
             return text

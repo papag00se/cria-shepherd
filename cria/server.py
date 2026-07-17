@@ -221,6 +221,12 @@ class CriaServer(ThreadingHTTPServer):
         # and the plan-off proxy path (the guards are not gated behind the planner).
         self.coder_role = roles.get("coder")
         self.reasoner_role = roles.get("reasoner")  # for the plan-off satisfaction critic (task-level judge)
+        # Compaction/summarization sampling. The [models.local.compactor] role exists precisely for
+        # folding transcript spans into briefings (temp 0.6, reasoning on) — NOT the coder role
+        # (temp 0.1, coding-primed: it misreads "summarize this" as "continue the task" and emits a
+        # next-action instead of a backward-looking rollup). Fall back to the reasoner (same sampling
+        # family) when no compactor table is configured, never the coder.
+        self.compactor_role = roles.get("compactor") or roles.get("reasoner")
         # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
         # own in PlanSession). Same shared guard implementation drives both.
         self.guard_store = GuardStore()
@@ -265,6 +271,7 @@ class CriaServer(ThreadingHTTPServer):
                     reasoner_chat=upstream.chat,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
+                    compactor_role=self.compactor_role,
                     # ONE folder per run: plan mirror + verify dumps join the call captures
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,
@@ -516,7 +523,7 @@ class CriaHandler(BaseHTTPRequestHandler):
     def _summarize(self, messages: list[dict], rlog) -> str:
         """Fold a span of the coder transcript into a factual briefing — via the SHARED summarize
         primitive (same mechanism the loop's completion compaction uses), so the two can't diverge."""
-        text = summarize(self.server.upstream.chat, self.server.coder_role,
+        text = summarize(self.server.upstream.chat, self.server.compactor_role,
                          prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
                          phase="self-compact")
         return text or "(earlier work this session)"
