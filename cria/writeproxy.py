@@ -229,7 +229,7 @@ def _write_command(path: str, content: str) -> str:
 # produces (a byte-exact-only match failed ~1/3 of real edits). Still fail-CLOSED: 0 or ambiguous
 # matches never write. On a genuine miss it hands the model the file's ACTUAL content near its target
 # so its next attempt can copy the exact text, instead of a bare "found 0" it can only guess against.
-_EDIT_PY = r'''import base64,sys,re,pathlib
+_EDIT_PY = r'''import base64,sys,re,pathlib,difflib
 p=pathlib.Path(base64.b64decode('{path}').decode())
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
@@ -249,16 +249,33 @@ if toks:
     if len(ms)>1:
         sys.exit('edit_file: old_string matches %d places (ignoring whitespace) — add more surrounding context'%len(ms))
 key=next((l.strip() for l in old.split(chr(10)) if l.strip()),'')
-lines=s.split(chr(10)); ctx=''
+new_first=next((l.strip() for l in new.split(chr(10)) if l.strip()),'')
+lines=s.split(chr(10)); ctx=''; close=''
 if key:
     for i,l in enumerate(lines):
         if key[:40] in l:
             ctx=chr(10).join(lines[max(0,i-2):i+4]); break
+    if not ctx:  # no substring anchor — find the file line the old_string is CLOSEST to (a near-miss)
+        cm=difflib.get_close_matches(key, [l.strip() for l in lines if l.strip()], n=1, cutoff=0.75)
+        if cm:
+            close=cm[0]
 msg=('edit_file: old_string is NOT in '+p.name+' — and this is not a spacing problem '
      '(indentation/whitespace is already tolerated), so your text genuinely differs from the file '
      '(likely a stale copy from before your last edit).')
 if ctx:
     msg+=' The file ACTUALLY reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy THAT exact text into old_string and edit again — do not rewrite the whole file.'
+elif close and new_first and new_first in close:
+    # THE PHANTOM BUG: old_string is a near-miss of a real line, and that line ALREADY reads the way
+    # new_string wants — the model is re-fixing an already-correct line it misremembers (e.g. it thinks
+    # the file says `base_user` and keeps "fixing" it to `base_url`, which is already there).
+    msg+=(' In fact that file already reads: '+chr(10)+'---'+chr(10)+close+chr(10)+'--- '
+          +chr(10)+'which is ALREADY what your new_string makes it. This change is DONE — do NOT edit '
+          'this line again. Your old_string just misremembers the current text. Move on to the real '
+          'remaining problem (run the tests and read the actual failure).')
+elif close:
+    msg+=(' Your old_string is very CLOSE to this line but not identical — you likely mistyped a token '
+          '(e.g. a variable name):'+chr(10)+'---'+chr(10)+close+chr(10)+'---'+chr(10)+'Copy that line '
+          'VERBATIM into old_string. Do not rewrite the whole file.')
 elif len(s)<={small}:
     msg+=' The anchor line is gone (an earlier edit likely removed it), so there is nothing near it to show. The file CURRENTLY reads IN FULL — copy the exact text you want to change into old_string:'+chr(10)+'---'+chr(10)+s+chr(10)+'---'
 else:

@@ -275,6 +275,30 @@ class EditCommandTests(unittest.TestCase):
         self.assertIn("Read the file again to get", msg)
         self.assertNotIn("reads IN FULL", msg)
 
+    def test_phantom_bug_already_applied_tells_the_model_to_stop(self):
+        # THE observed loop: the model re-fixes a line that is already correct. Its old_string
+        # misremembers the current text (`base_user`), new_string is what the file ALREADY says
+        # (`base_url`) → cria tells it the change is DONE and to move on, not to keep editing.
+        rc, msg, out = self._run(
+            '    x = get(f"{base_url}/h")\n',
+            '    x = get(f"{base_user}/h")',   # old: misremembered
+            '    x = get(f"{base_url}/h")')    # new: already what the file reads
+        self.assertNotEqual(rc, 0)
+        self.assertIn("already", msg.lower())
+        self.assertIn("do NOT edit this line again", msg)
+        self.assertNotIn("reads IN FULL", msg)            # the phantom branch, not the full dump
+
+    def test_near_miss_points_at_the_closest_line(self):
+        # old_string is close to a real line but new_string is a GENUINE change → point at the exact
+        # line to copy (you likely mistyped a token), not "the anchor line is gone".
+        rc, msg, out = self._run("    timeout = 30\n",
+                                 "    timeoutt = 30",      # old: typo'd near-miss
+                                 "    timeout = 60")       # new: a real 30->60 change
+        self.assertNotEqual(rc, 0)
+        self.assertIn("very CLOSE", msg)
+        self.assertIn("timeout = 30", msg)                # the actual file line to copy
+        self.assertIn("VERBATIM", msg)
+
 
 class CriaHomeGuardTests(unittest.TestCase):
     """The driven model must never read or write inside cria's OWN private dir (~/.cria): no leaking
