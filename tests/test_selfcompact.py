@@ -64,10 +64,26 @@ class SelfCompactTests(unittest.TestCase):
         self.assertTrue(any("the earlier plan handoff" in str(x.get("content")) for x in out))
 
     def test_anchor_markers_stay_in_sync(self):
-        from cria.loop import BRIEFING_OPEN
+        from cria.loop import BRIEFING_OPEN, CONTINUATION_MARKER
         from cria.probegate import SECTION_PREFIX
         self.assertIn(BRIEFING_OPEN, selfcompact._ANCHOR_MARKERS)
         self.assertIn(SECTION_PREFIX, selfcompact._ANCHOR_MARKERS)
+        # cria's harness-compaction reframe is a cria-authored summary — it must be an anchor so the
+        # next self-compaction never summarizes it (the rollup-of-rollup task-inversion footgun).
+        self.assertIn(CONTINUATION_MARKER, selfcompact._ANCHOR_MARKERS)
+
+    def test_continuation_reframe_is_not_fed_to_the_summarizer(self):
+        # A ⟦cria:continuation⟧ message in the middle must be kept verbatim, never summarized — so
+        # cria's own reframed prior-summary can't compound into a rollup-of-a-rollup.
+        from cria.loop import CONTINUATION_MARKER
+        m = _msgs(40, anchor_at=2, anchor_text=f"{CONTINUATION_MARKER} your earlier work: built X")
+        captured = []
+        out, _, _ = compact(m, lambda mm: captured.append(mm) or "ROLLUP", CompactState(), **_KW)
+        # kept verbatim in the compacted view
+        self.assertTrue(any("your earlier work: built X" in str(x.get("content")) for x in out))
+        # and NOT among the messages handed to the summarizer
+        fed = captured[0] if captured else []
+        self.assertFalse(any(CONTINUATION_MARKER in selfcompact._text(x) for x in fed))
 
 
 if __name__ == "__main__":

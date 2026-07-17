@@ -35,9 +35,14 @@ KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to th
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦cria:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦cria:task⟧"          # tags the pinned original-task header — the session's north star
-# Anchor markers whose messages are ALWAYS kept verbatim. Mirrors loop.BRIEFING_OPEN /
-# probegate.SECTION_PREFIX (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦cria:briefing⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
+# Anchor markers whose messages are ALWAYS kept verbatim — AND, critically, excluded from the
+# summarizer input, so cria's OWN prior briefings never become a rollup-of-a-rollup (each round
+# summarizing the last round's summary is how a transient hallucination hardened into authoritative
+# "Treat this as done" misdirection that inverted the task). ⟦cria:continuation⟧ (loop's harness-
+# compaction reframe) is one such cria-authored summary and MUST be here for the same reason as
+# ⟦cria:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
+# (selfcompact is low-level; a test asserts sync).
+_ANCHOR_MARKERS = ("⟦cria:briefing⟧", "⟦cria:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
 _TASK_CLIP = 2000   # chars — the task is the north star, kept verbatim but bounded against a huge spec
 
 
