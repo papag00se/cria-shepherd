@@ -106,6 +106,19 @@ implied otherwise):
 - **TypeScript without a tsconfig** has no parse-only tier-0. — *Trigger:* such a repo in practice.
 - **`claude_cli` empty output = success**, where the Rust returns Err → failover. — *Trigger:* an
   empty escalation observed handing back a blank turn.
+- **PEP621 / setuptools SCHEMA floor for pyproject.toml** — the config-syntax floor (`_TOML_CHECK`)
+  only catches TOML *syntax*; a file that is valid TOML but broken schema (`[build-backend]` for
+  `[build-system]`, `[project].requires` for `dependencies`, a `[project.scripts]` targeting a
+  nonexistent package) parses clean and is never flagged. This is the small model's DOMINANT pyproject
+  failure (session 20260716T231524). Deferred deliberately: a hand-rolled schema linter fails the
+  assists-are-footguns bar (its assertions could be wrong/incomplete), and `validate_pyproject` is not
+  installed on the box (an always-abstaining probe adds nothing). — *Trigger:* a real ground-truth
+  validator is available (`python -m validate_pyproject`, or parsing the model's own `pip install -e .`
+  metadata errors) so the check stays fact-based, not judgment.
+- **Error-persistence detector** — surface a gate finding that recurs unchanged across N gate runs
+  (the model kept re-hitting `smoke_test.py:2` while the loop-breaker fingered the file it kept
+  rewriting). Partly mitigated now that a pytest collection error is localized to file:line. —
+  *Trigger:* a recurring-finding spiral observed despite the localized nudge.
 
 ## Deferred — loop refinements & behavior
 
