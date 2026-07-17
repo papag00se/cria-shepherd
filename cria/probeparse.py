@@ -309,6 +309,33 @@ def parse_generic(s: str) -> list[Finding]:
     return out
 
 
+# `(at line N, column M)` (tomllib) or `line N column M` (json.load) embedded in a decode-error
+# message. Both stdlib config parsers report location as PROSE, not the `file:line:col:` shape.
+_CONFIG_PROSE_LOC_RE = re.compile(r"(?:at\s+)?line\s+(\d+)(?:,?\s+column\s+(\d+))?", re.I)
+
+
+def parse_config_syntax(s: str) -> list[Finding]:
+    """The tier-0 CONFIG-syntax floor prints stdlib decode errors as ``<file>: <message>`` where the
+    message embeds the location in PROSE — ``Invalid value (at line 2, column 12)`` (tomllib) or
+    ``Expecting value: line 2 column 1 (char 5)`` (json.load). Neither is the ``file:line:col:`` shape
+    parse_generic recognizes, and the leading words ('Invalid'/'Expecting') aren't error-ish keywords,
+    so a broken pyproject.toml/tsconfig.json read as ``exited 1 with no parseable diagnostics`` and the
+    model was told to 'go to the reported line' with NO line (the pyproject spiral). Lift the prose
+    line/column into a real Finding. Runs LAST in the fallback chain, so it never shadows a tool that
+    already localized the error."""
+    out: list[Finding] = []
+    for l in s.splitlines():
+        file, sep, rest = l.strip().partition(": ")
+        if not sep or not looks_like_path(file):
+            continue
+        m = _CONFIG_PROSE_LOC_RE.search(rest)
+        if m is None:
+            continue
+        col = int(m.group(2)) if m.group(2) else None
+        out.append(Finding(file, int(m.group(1)), col, rest))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # assembly: dedup, summarize, parse_output
 # ---------------------------------------------------------------------------
@@ -493,6 +520,10 @@ def parse_output(command: str, family: str, exit_code: Optional[int],
         findings = parse_rustc(combined)
     if not findings:
         findings = parse_generic(combined)
+    if not findings:
+        # tier-0 config-syntax floor: tomllib/json decode errors report location as prose
+        # (`(at line N, column M)` / `line N column M`), not `file:line:col:`.
+        findings = parse_config_syntax(combined)
     findings = _error_class_only(findings)
     dedup(findings)
     summary = summarize(findings, exit_code, combined)

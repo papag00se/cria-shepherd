@@ -118,6 +118,38 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertIn("something broke", r.summary)
         self.assertEqual(r.summary, "exited 2: fatal: something broke")
 
+    def test_tomllib_prose_location_becomes_a_finding(self):
+        # The tier-0 TOML floor prints `<file>: Invalid value (at line 2, column 12)` — prose, not
+        # file:line:col. Without lifting it the model was told "go to the reported line" with no line.
+        r = parse_output("python3 -c <toml-check> /x/pyproject.toml", "generic", 1,
+                         "/x/pyproject.toml: Invalid value (at line 2, column 12)", "")
+        self.assertEqual(len(r.findings), 1)
+        f = r.findings[0]
+        self.assertEqual(f.file, "/x/pyproject.toml")
+        self.assertEqual(f.line, 2)
+        self.assertEqual(f.col, 12)
+        self.assertEqual(r.summary, "/x/pyproject.toml:2: Invalid value (at line 2, column 12)")
+
+    def test_json_prose_location_becomes_a_finding(self):
+        # json.load: `<file>: Expecting value: line 2 column 1 (char 5)` — different prose, still lifted.
+        r = parse_output("python3 -c <json-check> /x/tsconfig.json", "generic", 1,
+                         "/x/tsconfig.json: Expecting value: line 2 column 1 (char 5)", "")
+        self.assertEqual(len(r.findings), 1)
+        self.assertEqual(r.findings[0].file, "/x/tsconfig.json")
+        self.assertEqual(r.findings[0].line, 2)
+
+    def test_config_prose_needs_a_path_prefix_no_false_positive(self):
+        # A benign log line mentioning "line 5" with no path prefix must NOT become a finding.
+        r = parse_output("x", "", 1, "some log mentioning line 5 of the story", "")
+        self.assertEqual(r.findings, [])
+
+    def test_config_prose_does_not_shadow_a_real_file_line_col(self):
+        # A tool that already localized the error keeps its parse_generic finding — the prose arm
+        # only runs when nothing else matched.
+        r = parse_output("ruff", "generic", 1, "/x/a.py:5:4: undefined name foo", "")
+        self.assertEqual(r.findings[0].file, "/x/a.py")
+        self.assertEqual(r.findings[0].line, 5)
+
 
 # ---------------------------------------------------------------------------
 # Port regressions recommended by the spec (exact semantics, not in Rust tests).
