@@ -216,11 +216,11 @@ class EditCommandTests(unittest.TestCase):
 
     def _run(self, content, old, new):
         import base64, os, subprocess, sys, tempfile
-        from cria.writeproxy import _EDIT_PY, _WROTE
+        from cria.writeproxy import _EDIT_PY, _WROTE, EDIT_SHOW_FULL_MAX
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
         b = lambda x: base64.b64encode(x.encode()).decode()
-        script = _EDIT_PY.format(path=b(path), old=b(old), new=b(new), wrote=_WROTE)
+        script = _EDIT_PY.format(path=b(path), old=b(old), new=b(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         return r.returncode, (r.stdout + r.stderr), out
@@ -255,6 +255,25 @@ class EditCommandTests(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("IDENTICAL", msg)
         self.assertEqual(out, "a = 1\n")            # file untouched
+
+    def test_miss_with_deleted_anchor_shows_full_small_file(self):
+        # THE 0063->0067 re-fail: a prior edit deleted the anchor line, so there's no near-context to
+        # show. For a small file, hand the model the FULL current contents so it stops re-guessing the
+        # same stale old_string.
+        rc, msg, out = self._run("[project]\nname = \"x\"\n", "[tool.setuptools]\npackage-dir = 1", "z")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("is NOT in", msg)
+        self.assertIn("reads IN FULL", msg)              # the deleted-anchor branch fired
+        self.assertIn('name = "x"', msg)                 # actual current contents handed over
+        self.assertNotIn("Read the file again to get", msg)  # not the bare fallback
+
+    def test_miss_with_deleted_anchor_large_file_falls_back(self):
+        # A large file is NOT dumped — the bare "read the file again" fallback still applies.
+        big = "\n".join(f"line_{i} = {i}" for i in range(400))  # > EDIT_SHOW_FULL_MAX chars
+        rc, msg, out = self._run(big + "\n", "[tool.setuptools]\nx = 1", "z")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Read the file again to get", msg)
+        self.assertNotIn("reads IN FULL", msg)
 
 
 class CriaHomeGuardTests(unittest.TestCase):

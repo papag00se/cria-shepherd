@@ -90,6 +90,11 @@ _TMP_SUFFIX = ".cria-tmp"
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
 # both look blank) would be reported to the model as "Wrote {path}" (false success).
 _WROTE = "⟦cria:wrote⟧"
+# When an edit_file misses AND its anchor line is gone (a prior edit deleted it), the near-context
+# fallback finds nothing and the model, handed a bare "read the file again", re-guesses the same stale
+# old_string and fails identically. If the file is at most this many chars, inline its FULL current
+# contents in the failure so the model has exact text to copy. Bounded so a large file never dumps.
+EDIT_SHOW_FULL_MAX = 2000
 _FETCH_TIMEOUT_S = 20
 
 
@@ -254,6 +259,8 @@ msg=('edit_file: old_string is NOT in '+p.name+' — and this is not a spacing p
      '(likely a stale copy from before your last edit).')
 if ctx:
     msg+=' The file ACTUALLY reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy THAT exact text into old_string and edit again — do not rewrite the whole file.'
+elif len(s)<={small}:
+    msg+=' The anchor line is gone (an earlier edit likely removed it), so there is nothing near it to show. The file CURRENTLY reads IN FULL — copy the exact text you want to change into old_string:'+chr(10)+'---'+chr(10)+s+chr(10)+'---'
 else:
     msg+=' Read the file again to get its current contents, then edit — do not rewrite the whole file.'
 sys.exit(msg)
@@ -261,7 +268,7 @@ sys.exit(msg)
 
 
 def _edit_command(path: str, old: str, new: str) -> str:
-    py = _EDIT_PY.format(path=_b64(path), old=_b64(old), new=_b64(new), wrote=_WROTE)
+    py = _EDIT_PY.format(path=_b64(path), old=_b64(old), new=_b64(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
