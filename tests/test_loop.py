@@ -2248,8 +2248,11 @@ class GroundTruthSilenceTests(unittest.TestCase):
         from cria.probeparse import ProbeResult
         truth = guard_ground_truth(self._gate_outcome([ProbeResult("python3 -m pytest -q", 0, "3 passed", [])]))
         self.assertIn("no error-class", truth.lower())
-        self.assertIn("not a verdict", truth.lower())
-        self.assertNotIn("all pass", truth.lower())
+        self.assertNotIn("all pass", truth.lower())            # not a false "pass"/"done" verdict
+        # and NO "but correctness/behaviour might still be wrong / doesn't mean done" doubt-hedge
+        self.assertNotIn("not a verdict", truth.lower())
+        self.assertNotIn("mean the task is done", truth.lower())
+        self.assertNotIn("still wrong", truth.lower())
 
     def test_error_findings_are_surfaced(self):
         from cria.loop import guard_ground_truth

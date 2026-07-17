@@ -203,15 +203,17 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("deadbeef", out)                     # git hash dropped
         self.assertNotIn("Chunk ID", out)                     # exec wrapper dropped
 
-    def test_all_clean_or_advisory_is_not_a_done_signal(self):
+    def test_clean_is_reported_as_a_plain_fact_no_doubt_hedge(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:0")
         out = probegate.clean_gate_output(raw)
         self.assertIsNotNone(out)
         self.assertIn("no error-class", out.lower())
-        self.assertNotIn("imported but unused", out)
-        # must NOT read as "done"/verified — that talked the coder out of a still-needed fix
-        self.assertNotIn("all pass", out.lower())
-        self.assertIn("does not verify", out.lower())
+        self.assertNotIn("imported but unused", out)         # advisory still filtered
+        self.assertNotIn("all pass", out.lower())            # not a false "done"/verified claim
+        # and NO unactionable "but this might still be wrong / doesn't mean done" hedge (operator dir.)
+        self.assertNotIn("does not verify", out.lower())
+        self.assertNotIn("mean the task is done", out.lower())
+        self.assertNotIn("still wrong", out.lower())
 
     def test_bare_style_code_after_location_is_advisory(self):
         # E501 sits AFTER the file:line:col prefix — is_advisory's anchored code check only fires

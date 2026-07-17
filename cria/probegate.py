@@ -194,9 +194,11 @@ def clean_gate_output(raw: str) -> str | None:
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
         return "⟦cria:checks⟧ the automatic checks produced no usable result this turn — no signal either way."
-    return ("⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems. That does "
-            "not verify behaviour or mean the task is done — if you know something is still wrong, keep "
-            "fixing it with a targeted edit.")
+    # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
+    # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
+    # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
+    # coder that a green check might still be wrong. (Operator directive, twice.)
+    return "⟦cria:checks⟧ the repo's own checks that ran reported no error-class problems."
 
 
 CHECKS_MARKER = "⟦cria:checks⟧"
