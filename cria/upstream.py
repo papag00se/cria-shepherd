@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Iterator
 
-from . import callcapture, contextfloor, failover, tokenratio
+from . import callcapture, contextfloor, failover, rumination, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -368,6 +368,7 @@ class Upstream:
         usage: dict | None = None
         aborted: dict | None = None
         watched_len = 0
+        gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
         try:
             for raw in resp:
                 if not raw.startswith(b"data:"):
@@ -391,11 +392,26 @@ class Upstream:
                             t_first = time.monotonic()
                             rlog.emit("upstream.first_token", ttft_ms=round((t_first - t0) * 1000, 1))
                         reasoning.append(rc)
-                    _accumulate_tool_deltas(tool_acc, delta.get("tool_calls"))
+                    tcs = delta.get("tool_calls")
+                    _accumulate_tool_deltas(tool_acc, tcs)
+                    # Feed the degenerate-run backstop from EVERY generated stream — content,
+                    # reasoning, AND tool-call arguments (which the rumination watcher below skips) —
+                    # so a stuck single-token runaway is caught wherever it streams.
+                    for frag in (delta.get("content"), rc,
+                                 *(((tc.get("function") or {}).get("arguments")) for tc in (tcs or []))):
+                        if frag:
+                            gen_tail = (gen_tail + frag)[-rumination.DEGENERATE_RUN_CHARS:]
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
                 if obj.get("usage"):
                     usage = obj["usage"]
+                # Degenerate-run backstop (independent of the rumination watcher: it fires even on a
+                # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
+                # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
+                if aborted is None and rumination.degenerate_tail(gen_tail):
+                    aborted = {"degenerate": True, "hits": 0, "reasoning_tokens": len(gen_tail)}
+                    rlog.emit("rumination.abort", level="warning", degenerate=True, chars=len(gen_tail))
+                    break
                 if watch is not None and aborted is None:
                     # Watch reasoning if the server splits it out; else the content stream (a
                     # runaway that never calls a tool). Tool-call args are excluded on purpose.

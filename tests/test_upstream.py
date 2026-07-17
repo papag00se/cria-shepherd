@@ -143,6 +143,40 @@ class ChatWatchedTests(unittest.TestCase):
         self.assertEqual(json.loads(tc["function"]["arguments"])["path"], "h.py")
         self.assertEqual(c["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_degenerate_tool_arg_runaway_is_aborted(self):
+        # THE runaway: a model emits a stuck single-token stream inside tool-call ARGUMENTS (observed:
+        # 44,807 '0's in exec_command args), which the rumination watcher deliberately skips. The
+        # degenerate-run backstop must abort it — even with no rumination watch — so it doesn't burn
+        # the window to a dead turn.
+        run = "0" * 3000  # > DEGENERATE_RUN_CHARS (2048)
+        lines = [
+            _sse(_delta(tool_calls=[{"index": 0, "id": "c1", "function": {"name": "exec_command"}}])),
+            _sse(_delta(tool_calls=[{"index": 0, "function": {"arguments": '{"command":"'}}])),
+            _sse(_delta(tool_calls=[{"index": 0, "function": {"arguments": run}}])),
+            _sse(_delta(tool_calls=[{"index": 0, "function": {"arguments": run}}])),  # never reached — aborted
+            b"data: [DONE]\n",
+        ]
+        resp = _FakeResp(lines)
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            raw = self._upstream().chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog())
+        c = json.loads(raw)
+        self.assertEqual(c["choices"][0]["finish_reason"], "rumination")   # reuses the re-prompt path
+        self.assertTrue(c["cria_rumination"].get("degenerate"))
+        self.assertTrue(resp.closed)                                       # aborted in-flight, slot freed
+
+    def test_normal_tool_args_are_not_aborted(self):
+        # A legit write_file with varied content must NOT trip the degenerate backstop.
+        content = json.dumps({"path": "h.py", "content": "def f():\n    return 42\n" * 80})
+        lines = [
+            _sse(_delta(tool_calls=[{"index": 0, "id": "c1", "function": {"name": "write_file"}}])),
+            _sse(_delta(tool_calls=[{"index": 0, "function": {"arguments": content}}])),
+            _sse({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+            b"data: [DONE]\n",
+        ]
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
+            raw = self._upstream().chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog())
+        self.assertEqual(json.loads(raw)["choices"][0]["finish_reason"], "tool_calls")
+
     def test_saves_full_reasoning_untruncated_to_capture_sibling(self):
         import tempfile
         from pathlib import Path

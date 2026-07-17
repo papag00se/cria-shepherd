@@ -38,6 +38,23 @@ DEFAULT_MARKER_THRESHOLD = 6
 # reasoning. The detector's budget is seeded from output_reserve (NOT the hard cap max_tokens).
 DEFAULT_REASONING_BUDGET = 4096
 
+# A trailing run of this many IDENTICAL characters marks a stuck/degenerate generation — the model
+# emitting one token forever (observed: an exec_command call whose arguments were 44,807 '0's, only
+# stopped by the context window at finish_reason=length, a dead turn). This is orthogonal to the
+# reasoning-marker/length rumination check and, crucially, safe to run over tool-call ARGUMENTS: a
+# legitimate large write_file has varied bytes and never produces thousands of identical consecutive
+# characters, so a generous window can't false-fire on real output.
+DEGENERATE_RUN_CHARS = 2048
+
+
+def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
+    """True when the last ``window`` characters of ``text`` are a single repeated character — a stuck
+    single-token stream. Cheap (inspects only the tail), so it can run per streaming stride."""
+    if len(text) < window:
+        return False
+    return len(set(text[-window:])) == 1
+
+
 # Longest-first so a multi-word marker ("but wait") is preferred over its substring ("wait") at
 # the same position. `\b` behaves for these alternations because every marker starts and ends on a
 # word character. re.IGNORECASE for case-insensitive matching.

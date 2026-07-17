@@ -65,5 +65,18 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(v["reasoning_tokens"], 900)
 
 
+class DegenerateTailTests(unittest.TestCase):
+    def test_long_single_char_run_is_degenerate(self):
+        self.assertTrue(rumination.degenerate_tail("0" * 44807))
+        self.assertTrue(rumination.degenerate_tail("some code then " + "x" * 3000))  # tail is all x
+
+    def test_varied_or_short_is_not_degenerate(self):
+        self.assertFalse(rumination.degenerate_tail("def f():\n    return 1\n" * 300))  # varied
+        self.assertFalse(rumination.degenerate_tail("0" * 100))                        # below the window
+        self.assertFalse(rumination.degenerate_tail(""))
+        # a long run followed by real content is NOT degenerate (the tail recovered)
+        self.assertFalse(rumination.degenerate_tail("0" * 5000 + "back to real code here"))
+
+
 if __name__ == "__main__":
     unittest.main()
