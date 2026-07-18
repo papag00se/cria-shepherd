@@ -17,7 +17,7 @@ def _stub_server(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
     upstream = types.SimpleNamespace(
         chat=lambda body, rlog: json.dumps({"choices": [{"message": {"content": chat_reply}}]}).encode())
     return types.SimpleNamespace(cfg=cfg, compact_states={}, coder_role=None,
-                                 compactor_role=None, upstream=upstream)
+                                 compactor_role=None, upstream=upstream, compactor_upstream=upstream)
 
 
 def _handler(server):

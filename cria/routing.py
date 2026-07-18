@@ -101,6 +101,14 @@ class Router:
         return self._cached(("local", lr.base_url.rstrip("/")),
                             lambda: self._provider_factory(lr.base_url, None))
 
+    def endpoint_for(self, role: str) -> Upstream:
+        """The local Upstream a role runs on — its OWN base_url when the role sets one, else the shared
+        endpoint. The always-local roles (classifier / reasoner / planner / compactor) resolve THROUGH
+        this so a per-role base_url is honored for EVERY role, not only the coder (which already routed
+        per-role via route()). A role with no [models.local.<role>] table → the shared endpoint."""
+        lr = self._cfg.local_roles.get(role)
+        return self._local_endpoint(lr) if lr is not None else self._local
+
     def _resolve(self, role: str, rlog) -> tuple[object, str | None] | None:
         if role in self._cfg.local_roles:
             # There are no local aliases — cria always uses the server's loaded model. Resolve it now

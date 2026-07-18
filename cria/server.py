@@ -202,14 +202,20 @@ class CriaServer(ThreadingHTTPServer):
         roles = cfg.routing.local_roles  # per-role sampling + reasoning (cria.toml); NO model alias —
         # the wire model is always the server's loaded model. A role is "configured" by the PRESENCE
         # of its [models.local.<role>] table, so every gate below keys on membership in `roles`.
-        self.classifier = (
-            Classifier(upstream, cfg.routing.engagement_bias, role=roles.get("classifier"))
-            if "classifier" in roles
-            else None
-        )
         self.router = (
             Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds)
             if (roles or cfg.routing.failover)
+            else None
+        )
+        # PER-ROLE ENDPOINT: every role resolves its OWN base_url (or the shared endpoint), not just the
+        # coder — closes the bug where the classifier / reasoner / planner / compactor were hardwired to
+        # the shared upstream and silently ignored a per-role base_url (a role may run on another box).
+        def _ep(role):
+            return self.router.endpoint_for(role) if self.router is not None else upstream
+        self._endpoint_for = _ep
+        self.classifier = (
+            Classifier(_ep("classifier"), cfg.routing.engagement_bias, role=roles.get("classifier"))
+            if "classifier" in roles
             else None
         )
         # The plan-driven loop (phase 6) — active when a reasoner AND a coder role are configured
@@ -221,6 +227,11 @@ class CriaServer(ThreadingHTTPServer):
         # and the plan-off proxy path (the guards are not gated behind the planner).
         self.coder_role = roles.get("coder")
         self.reasoner_role = roles.get("reasoner")  # for the plan-off satisfaction critic (task-level judge)
+        # The ENDPOINTS the reasoner-family roles run on (each honors its own base_url) — used by the
+        # plan-off reasoner calls (satisfaction judge, redirect author) and self-compaction summaries,
+        # so they hit the reasoner/compactor box, not always the shared upstream.
+        self.reasoner_upstream = _ep("reasoner")
+        self.compactor_upstream = _ep("compactor") if "compactor" in roles else self.reasoner_upstream
         # Compaction/summarization sampling. The [models.local.compactor] role exists precisely for
         # folding transcript spans into briefings (temp 0.6, reasoning on) — NOT the coder role
         # (temp 0.1, coding-primed: it misreads "summarize this" as "continue the task" and emits a
@@ -260,15 +271,15 @@ class CriaServer(ThreadingHTTPServer):
             detector = rumination.Detector.from_reasoning_budget(
                 coder_role.output_reserve if coder_role else None)
 
-            def coder_chat(body, rlog, _up=upstream, _det=detector):
+            def coder_chat(body, rlog, _up=_ep("coder"), _det=detector):
                 return _up.chat_watched(body, rlog, watch=_det.check)
 
             self.loop = Loop(
                 LoopContext(
-                    planner=Planner(upstream, role=roles.get("reasoner"),
+                    planner=Planner(_ep("reasoner"), role=roles.get("reasoner"),
                                     search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds),
                     coder_chat=coder_chat,
-                    reasoner_chat=upstream.chat,
+                    reasoner_chat=_ep("reasoner").chat,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,
@@ -531,7 +542,7 @@ class CriaHandler(BaseHTTPRequestHandler):
     def _summarize(self, messages: list[dict], rlog) -> str:
         """Fold a span of the coder transcript into a factual briefing — via the SHARED summarize
         primitive (same mechanism the loop's completion compaction uses), so the two can't diverge."""
-        text = summarize(self.server.upstream.chat, self.server.compactor_role,
+        text = summarize(self.server.compactor_upstream.chat, self.server.compactor_role,
                          prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
                          phase="self-compact")
         return text or "(earlier work this session)"
@@ -660,7 +671,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                              "actually executed (0 collected / no test probe ran). If this task required "
                              "tests, a green result does NOT verify them; judge accordingly.")
             satisfied, reason = judge_satisfaction(
-                task, evidence, self.server.upstream.chat, self.server.reasoner_role, rlog)
+                task, evidence, self.server.reasoner_upstream.chat, self.server.reasoner_role, rlog)
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=gs.drive_count, satisfied=satisfied)
             if satisfied:
                 probe_tc = guard_gate_op(gs, body, rlog)

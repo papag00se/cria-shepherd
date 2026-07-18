@@ -46,6 +46,33 @@ def _router(cfg, factory=None, local=LOCAL):
     return Router(cfg, local, provider_factory=factory)
 
 
+class EndpointForTests(unittest.TestCase):
+    """Every role resolves its OWN base_url (not just the coder) — the fix for the class where the
+    classifier/reasoner/planner/compactor were hardwired to the shared upstream and ignored per-role
+    base_url. `endpoint_for` is what those always-local roles resolve through."""
+
+    def test_role_without_base_url_gets_the_shared_endpoint(self):
+        r = _router(_cfg())
+        self.assertIs(r.endpoint_for("reasoner"), LOCAL)     # no base_url → shared upstream
+        self.assertIs(r.endpoint_for("classifier"), LOCAL)
+
+    def test_role_with_its_own_base_url_gets_its_own_endpoint(self):
+        seen = {}
+        def factory(base_url, key):
+            seen["base_url"] = base_url
+            return ("box2", base_url)
+        cfg = RoutingConfig(local_roles={"coder": LocalRole(),
+                                         "reasoner": LocalRole(base_url="http://box2:5000")}, failover={})
+        r = Router(cfg, LOCAL, provider_factory=factory)
+        ep = r.endpoint_for("reasoner")
+        self.assertEqual(ep, ("box2", "http://box2:5000"))   # its OWN endpoint, not the shared LOCAL
+        self.assertIs(r.endpoint_for("coder"), LOCAL)        # the coder (no base_url) stays shared
+        self.assertIs(r.endpoint_for("reasoner"), ep)        # cached per endpoint
+
+    def test_unconfigured_role_falls_back_to_shared(self):
+        self.assertIs(_router(_cfg()).endpoint_for("compactor"), LOCAL)  # no table → shared
+
+
 class RoutingTests(unittest.TestCase):
     def test_local_only_collapses_chain_to_local(self):
         r = _router(_cfg()).route("coding", _Rlog())
