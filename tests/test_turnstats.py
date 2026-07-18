@@ -22,6 +22,23 @@ class TurnStatsTests(unittest.TestCase):
         st.observe({"choices": [{"message": {"content": "hi"}}]}, 50.0)
         self.assertNotIn("🛡", st.summary())
 
+    def test_generated_tokens_summed_and_shown(self):
+        st = TurnStats()
+        st.observe({"choices": [{"message": {"tool_calls": [{"id": "a"}]}}]}, 40.0, 1800)
+        st.observe({"choices": [{"message": {"content": "done"}}]}, 36.0, 1500)
+        s = st.summary()
+        self.assertIn("🔢 3.3k tok", s)             # 1800 + 1500 = 3300 → 3.3k
+
+    def test_small_token_count_not_abbreviated(self):
+        st = TurnStats()
+        st.observe({"choices": [{"message": {"content": "hi"}}]}, 50.0, 850)
+        self.assertIn("🔢 850 tok", st.summary())
+
+    def test_no_tokens_no_count_section(self):
+        st = TurnStats()
+        st.observe({"choices": [{"message": {"content": "hi"}}]}, 50.0)   # gen_tokens defaults to 0
+        self.assertNotIn("🔢", st.summary())
+
     def test_store_reset(self):
         store = StatsStore()
         store.get("k").calls = 5

@@ -133,6 +133,10 @@ class BoundLog:
         # so the response banner can show how fast the local model actually ran. Fresh per
         # request (a new BoundLog per turn), so it never shows a stale rate.
         self.last_tok_per_s: float | None = None
+        # Generated (completion) tokens SUMMED across every model call in this request — a request
+        # can drive several upstream calls (coder + a retry, reasoner, gate). The per-turn stats sum
+        # these per-request totals for the end-of-turn token count.
+        self.gen_tokens: int = 0
         # The role/phase of the NEXT upstream call (coder / critic / classifier / planner /
         # proxy) — set by the calling subsystem right before it calls the model, read by the
         # call-capture so each dump is labeled with what it is. None until set.
@@ -147,6 +151,9 @@ class BoundLog:
             tps = kw.get("tok_per_s")
             if isinstance(tps, (int, float)):
                 self.last_tok_per_s = float(tps)
+            toks = kw.get("tokens")
+            if isinstance(toks, (int, float)):
+                self.gen_tokens += int(toks)
         self._log.emit(kind, session=self._session, turn=self._turn, **kw)
 
     def decide(self, name: str, choice: object, reason: str, **kw: object) -> None:

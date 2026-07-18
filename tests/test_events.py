@@ -110,6 +110,15 @@ class BoundLogTpsTests(unittest.TestCase):
         rlog.emit("loop.item", step=1, total=3)
         self.assertIsNone(rlog.last_tok_per_s)
 
+    def test_generated_tokens_sum_across_calls_in_the_request(self):
+        rlog = self._rlog()
+        self.assertEqual(rlog.gen_tokens, 0)              # nothing generated yet
+        rlog.emit("upstream.done", tokens=50, tok_per_s=42.3)    # e.g. a reasoner call
+        rlog.emit("upstream.done", tokens=1200, tok_per_s=60.0)  # then the coder call
+        self.assertEqual(rlog.gen_tokens, 1250)           # SUMMED, not last-wins (unlike the rate)
+        rlog.emit("upstream.done", tokens=None, tok_per_s=None)  # a call with no usage → no-op
+        self.assertEqual(rlog.gen_tokens, 1250)
+
 
 if __name__ == "__main__":
     unittest.main()

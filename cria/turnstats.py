@@ -23,6 +23,11 @@ _GUARD_KINDS = (
 )
 
 
+def _fmt_tokens(n: int) -> str:
+    """Compact token count: 3.2k over a thousand, the bare number below it."""
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
 class TurnStats:
     """One user turn's running tally. ``observe`` folds in each harness response; ``summary``
     renders the terse ⟦cria⟧ line."""
@@ -31,14 +36,16 @@ class TurnStats:
         self.t0: float | None = None
         self.calls = 0
         self.tps: list[float] = []
+        self.tokens = 0
         self.guards: dict[str, int] = {}
 
-    def observe(self, completion: dict, tok_per_s: float | None) -> None:
+    def observe(self, completion: dict, tok_per_s: float | None, gen_tokens: int = 0) -> None:
         if self.t0 is None:
             self.t0 = time.monotonic()
         self.calls += 1
         if tok_per_s:
             self.tps.append(tok_per_s)
+        self.tokens += int(gen_tokens or 0)
         # Tally guard fires from BOTH channels: the out-of-band cria_notes (rumination/truncation/
         # steer) and any ⟦cria⟧ line already in the content (the repetition/wheel-spin probes).
         texts = list(completion.get("cria_notes") or [])
@@ -55,6 +62,8 @@ class TurnStats:
         secs = int(time.monotonic() - self.t0) if self.t0 is not None else 0
         avg = round(sum(self.tps) / len(self.tps), 1) if self.tps else 0
         parts = [f"⏱ {secs}s", f"🧮 {self.calls} calls", f"⚡ {avg} tok/s"]
+        if self.tokens:  # generated tokens this turn — the volume behind the rate
+            parts.append(f"🔢 {_fmt_tokens(self.tokens)} tok")
         if self.guards:
             parts.append("🛡 " + " ".join(f"{k}×{v}" for k, v in self.guards.items()))
         return f"{MARKER}turn done · " + " · ".join(parts)
