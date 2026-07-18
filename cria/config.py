@@ -512,6 +512,16 @@ def _routing(data: dict) -> RoutingConfig:
                 binary=str(pd.get("binary", "claude")),
                 cwd=(str(pd["cwd"]) if pd.get("cwd") else None),
             )
+        elif kind == "codex":
+            # Scheme A tool="codex" desugars here. The codex CLI exposes only an AGENTIC `codex exec`
+            # (an agent that runs its own tool-use/sandbox loop and writes a final message), NOT a raw
+            # chat completion like `claude -p`. It therefore cannot serve as a cria model provider for a
+            # role that needs a fast tool-less completion (reasoner/compactor/classifier), and as a coder
+            # it would double-orchestrate cria's own tool loop. Fail with the reason, not a broken hack.
+            raise ValueError(
+                f"[backends.{name}] tool=\"codex\" is not supported as a model provider: the codex CLI "
+                f"offers only an agentic `codex exec` (its own tool-use/sandbox agent), not a raw chat "
+                f"completion like `claude -p`. Use tool=\"claude\" or an http backend for this role.")
         else:
             raise ValueError(f"[providers.{name}] unknown kind {kind!r} (openai|claude_cli)")
 

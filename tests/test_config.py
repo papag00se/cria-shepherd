@@ -260,3 +260,19 @@ class SchemeABackendsRolesTests(unittest.TestCase):
     def test_role_with_unknown_backend_errors(self):
         with self.assertRaises(ValueError):
             self._parse({"backends": {}, "roles": {"coder": {"backend": "nope"}}})
+
+
+class CodexBackendTests(unittest.TestCase):
+    """B4: tool=codex parses but is rejected with a PRECISE reason — the codex CLI is an agent runner
+    (codex exec), not a raw chat completion like `claude -p`, so it can't be a cria model provider."""
+
+    def test_codex_backend_errors_with_the_reason(self):
+        from cria.config import _desugar_backends_roles, _routing
+        data = _desugar_backends_roles({
+            "backends": {"cx": {"transport": "cli", "tool": "codex"}},
+            "roles": {"reasoner": {"backend": "cx"}},
+        })
+        with self.assertRaises(ValueError) as cm:
+            _routing(data)
+        self.assertIn("codex exec", str(cm.exception))       # explains WHY, not a generic error
+        self.assertIn("claude", str(cm.exception).lower())   # points at the working alternative
