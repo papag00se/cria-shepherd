@@ -5,9 +5,8 @@ Aggregated from the parity-audit / semantic-failure / routing discussions. **All
 a2d1299·cf2cdfb·4f7089d·48c4a5a. 908 tests green; each unit committed + pushed + cria restarted.
 Residual (consistent with the plan's own framing): **B3b** reasoning-portability for cloud roles is a
 follow-on refinement (the desugar already carries the per-role reasoning field); **B4** codex resolved
-as a precise error (the codex CLI is an agent runner, not a raw-completion provider); **C6** self-
-recursion demoted (per the "unchanged arg ≠ unchanged value" correction) — folded into C5's evidence
-direction, not a standalone detector.
+as a precise error (the codex CLI is an agent runner, not a raw-completion provider). The
+self-recursion AST detector idea was DROPPED (false-flags correct recursion) — not built anywhere.
 
 Original plan below (three epics; B is the root and unblocks A and part of C).
 
@@ -115,10 +114,10 @@ never terminated).
   is pluggable, so the "weak-model-guess" footgun is config-bounded, not fundamental) → author a
   grounded next-step on the existing steer channel. Anchored so it degrades gracefully (weak
   reasoner ≈ bare-fact reflection; strong reasoner = the real unlock). Gated behind C1.
-- **C6 — self-recursion fact** *(demoted)*. "self-call with unchanged arg name" is NOT proof of
-  infinite recursion (the name can be rebound; external state can terminate it). Only viable as a
-  data-flow-sound, neutral-worded fact inside C5's evidence bundle — never a standalone "this
-  recurses forever" verdict.
+
+(A self-recursion AST detector was considered and DROPPED: "self-call with unchanged arg name" is not
+proof of infinite recursion — the name can be rebound and external state can terminate it — so it
+would false-flag correct recursion. Not built, not folded in anywhere.)
 
 ---
 
