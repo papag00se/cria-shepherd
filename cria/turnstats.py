@@ -34,15 +34,18 @@ class TurnStats:
 
     def __init__(self) -> None:
         self.t0: float | None = None
-        self.calls = 0
+        self.calls = 0          # finalized harness responses — the reset gate ("real work" = ≥2)
+        self.model_calls = 0    # ACTUAL model calls (upstream.done) — what "🧮 N calls" shows
         self.tps: list[float] = []
         self.tokens = 0
         self.guards: dict[str, int] = {}
 
-    def observe(self, completion: dict, tok_per_s: float | None, gen_tokens: int = 0) -> None:
+    def observe(self, completion: dict, tok_per_s: float | None,
+                gen_tokens: int = 0, model_calls: int = 0) -> None:
         if self.t0 is None:
             self.t0 = time.monotonic()
         self.calls += 1
+        self.model_calls += int(model_calls or 0)
         if tok_per_s:
             self.tps.append(tok_per_s)
         self.tokens += int(gen_tokens or 0)
@@ -61,7 +64,7 @@ class TurnStats:
     def summary(self) -> str:
         secs = int(time.monotonic() - self.t0) if self.t0 is not None else 0
         avg = round(sum(self.tps) / len(self.tps), 1) if self.tps else 0
-        parts = [f"⏱ {secs}s", f"🧮 {self.calls} calls", f"⚡ {avg} tok/s"]
+        parts = [f"⏱ {secs}s", f"🧮 {self.model_calls} calls", f"⚡ {avg} tok/s"]
         if self.tokens:  # generated tokens this turn — the volume behind the rate
             parts.append(f"🔢 {_fmt_tokens(self.tokens)} tok")
         if self.guards:

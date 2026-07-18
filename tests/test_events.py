@@ -116,8 +116,17 @@ class BoundLogTpsTests(unittest.TestCase):
         rlog.emit("upstream.done", tokens=50, tok_per_s=42.3)    # e.g. a reasoner call
         rlog.emit("upstream.done", tokens=1200, tok_per_s=60.0)  # then the coder call
         self.assertEqual(rlog.gen_tokens, 1250)           # SUMMED, not last-wins (unlike the rate)
-        rlog.emit("upstream.done", tokens=None, tok_per_s=None)  # a call with no usage → no-op
+        rlog.emit("upstream.done", tokens=None, tok_per_s=None)  # a call with no usage → no-op on tokens
         self.assertEqual(rlog.gen_tokens, 1250)
+
+    def test_model_calls_count_every_upstream_done(self):
+        rlog = self._rlog()
+        self.assertEqual(rlog.model_calls, 0)
+        rlog.emit("upstream.done", tokens=50, tok_per_s=42.3)
+        rlog.emit("upstream.done", tokens=None, tok_per_s=None)  # counts even with no usage/tokens
+        self.assertEqual(rlog.model_calls, 2)                    # one per upstream.done — the real calls
+        rlog.emit("loop.item", step=1)                           # a non-upstream event doesn't count
+        self.assertEqual(rlog.model_calls, 2)
 
 
 if __name__ == "__main__":

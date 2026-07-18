@@ -137,6 +137,11 @@ class BoundLog:
         # can drive several upstream calls (coder + a retry, reasoner, gate). The per-turn stats sum
         # these per-request totals for the end-of-turn token count.
         self.gen_tokens: int = 0
+        # Actual MODEL calls in this request (one per `upstream.done`). A request may drive several
+        # (coder + classifier + self-compact) or, when cria answers synthetically (a held 'done', a
+        # probe reissue, a canned steer), ZERO. The per-turn stats sum these so "🧮 N calls" is the
+        # real model-call count — matching the ~/.cria/calls capture folder — not finalized responses.
+        self.model_calls: int = 0
         # The role/phase of the NEXT upstream call (coder / critic / classifier / planner /
         # proxy) — set by the calling subsystem right before it calls the model, read by the
         # call-capture so each dump is labeled with what it is. None until set.
@@ -154,6 +159,7 @@ class BoundLog:
             toks = kw.get("tokens")
             if isinstance(toks, (int, float)):
                 self.gen_tokens += int(toks)
+            self.model_calls += 1  # one upstream.done == one real model call
         self._log.emit(kind, session=self._session, turn=self._turn, **kw)
 
     def decide(self, name: str, choice: object, reason: str, **kw: object) -> None:

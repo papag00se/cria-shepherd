@@ -438,7 +438,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         — append the terse end-of-turn summary and reset the turn."""
         ic = self.server.cfg.indicators
         stats = self.server.stats_store.get(sess_key)
-        stats.observe(completion, getattr(rlog, "last_tok_per_s", None), getattr(rlog, "gen_tokens", 0))
+        stats.observe(completion, getattr(rlog, "last_tok_per_s", None),
+                      getattr(rlog, "gen_tokens", 0), getattr(rlog, "model_calls", 0))
         completion = self._decorate(completion)
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
         if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
