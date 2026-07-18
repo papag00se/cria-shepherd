@@ -334,6 +334,17 @@ class TestFailedUnparsedProbes(unittest.TestCase):
         rep = self._report((["ruff", "check", "."], 1, [], ProbeKind.Lint))
         self.assertEqual(failed_unparsed_probes(rep), [])
 
+    def test_gate_ran_tests_true_only_when_a_test_probe_actually_ran(self):
+        from cria.proberun import gate_ran_tests
+        test = synth(["pytest", "-q"], ProbeKind.Test)
+        lint = synth(["ruff", "check", "."], ProbeKind.Lint)
+        self.assertTrue(gate_ran_tests(ProbeReport([], [test], [ProbeResult("pytest -q", 0, "3 passed", [])])))
+        # vacuous green: the test probe collected NOTHING (exit 5) → not a real test run
+        self.assertFalse(gate_ran_tests(ProbeReport([], [test], [ProbeResult("pytest -q", 5, "no tests ran", [])])))
+        # no test probe at all (lint-only green) → vacuous
+        self.assertFalse(gate_ran_tests(ProbeReport([], [lint], [ProbeResult("ruff check .", 0, "clean", [])])))
+        self.assertFalse(gate_ran_tests(None))
+
     def test_clean_and_launch_failure_and_parsed_failures_are_excluded(self):
         rep = self._report(
             (["pytest", "-q"], 0, [], ProbeKind.Test),                                # clean

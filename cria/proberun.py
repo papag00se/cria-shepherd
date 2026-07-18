@@ -343,6 +343,22 @@ def failed_unparsed_probes(report: ProbeReport) -> list[str]:
     return out
 
 
+def gate_ran_tests(report: ProbeReport) -> bool:
+    """True when a Test-kind probe in this report actually EXECUTED tests — ran and collected some, not
+    exit-5/no-tests-collected. A GREEN gate that rests on zero tests collected (or no test probe at all)
+    is a VACUOUS green: it verifies no behavior. Consumed non-model-facing as EVIDENCE for the
+    satisfaction judge, which holds the task and decides whether tests were part of the ask in the first
+    place (a testless script task is legitimately green; a 'unit tests required' task is not)."""
+    if report is None:
+        return False
+    kinds = _kind_by_command(report)
+    for r in report.results:
+        if kinds.get(r.command) is probediscovery.ProbeKind.Test \
+                and not is_no_tests_collected(r.exit_code, r.command, r.summary):
+            return True
+    return False
+
+
 def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
     """Returns None when everything the probes could check is clean (so
     completion is allowed).

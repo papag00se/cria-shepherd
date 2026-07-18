@@ -171,6 +171,10 @@ class GuardState:
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
     terminated: bool = False   # the stall terminator fired — guard against re-firing
+    last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
+    # VACUOUS green. Fed to the satisfaction judge as EVIDENCE (not a deterministic block): the judge
+    # holds the task and decides whether tests were even part of the ask (a script task is legitimately
+    # testless-green; deterministically blocking would wedge it AND push a weak model to fabricate tests).
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -1781,6 +1785,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
         track_gate_progress(gs, err)            # RED → streak++, stall on an unchanged finding
     elif outcome.ran:
         gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
+        gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
         track_gate_progress(gs, "")             # GREEN → reset the streak/stall
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
@@ -1877,6 +1882,7 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
         track_gate_progress(gs, msg)
         return msg
     gs.last_gate_red = False  # ran and genuinely clean → GREEN
+    gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence for the judge
     track_gate_progress(gs, "")
     return None
 

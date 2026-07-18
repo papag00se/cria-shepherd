@@ -654,9 +654,13 @@ class CriaHandler(BaseHTTPRequestHandler):
                 gs.drive_count, self.server.cfg.context.satisfaction_check_start,
                 self.server.cfg.context.satisfaction_check_every):
             task = _history_root(body.get("messages", []))[0]
+            evidence = _satisfaction_evidence(body.get("messages", []))
+            if gs.last_gate_testless:  # C4: the vacuous-green FACT — the judge holds the task and decides
+                evidence += ("\n\n[GROUND TRUTH] The repo's automated checks passed, but NO tests were "
+                             "actually executed (0 collected / no test probe ran). If this task required "
+                             "tests, a green result does NOT verify them; judge accordingly.")
             satisfied, reason = judge_satisfaction(
-                task, _satisfaction_evidence(body.get("messages", [])),
-                self.server.upstream.chat, self.server.reasoner_role, rlog)
+                task, evidence, self.server.upstream.chat, self.server.reasoner_role, rlog)
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=gs.drive_count, satisfied=satisfied)
             if satisfied:
                 probe_tc = guard_gate_op(gs, body, rlog)
