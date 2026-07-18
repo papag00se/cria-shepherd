@@ -159,6 +159,10 @@ class GuardState:
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
+    last_gate_red: bool = False  # the most recent gate/check-in found real error-class problems (RED). The
+    # plan-off satisfaction judge gates on this: while the deterministic checks already say NOT-done, the
+    # LLM done-judge is redundant (both say not-done) and — for a model that can't help emitting a "run the
+    # tests" tool call instead of a verdict — pure wasted, always-fail-closed calls. Only spend it on GREEN.
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -1731,6 +1735,11 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     # just makes the model distrust the pass and keep working (feeding the can't-stop spiral).
     err = gate_error_text(outcome)
     rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
+    if err:
+        gs.last_gate_red = True
+    elif outcome.ran:
+        gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
+    # a couldn't-run probe leaves last_gate_red unchanged — no evidence either way, don't flip the gate
     if not err:
         return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
     return prompts.render("periodic_gate", truth=err)
@@ -1815,11 +1824,14 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
     findings = proberun.completion_block_nudge(outcome.report)
     if findings:
+        gs.last_gate_red = True
         return findings
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:  # a check ran and FAILED (no parseable line) → the 'done' isn't genuine
+        gs.last_gate_red = True
         return "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
-    return None  # genuinely clean, or only couldn't-run probes → accept
+    gs.last_gate_red = False  # ran and genuinely clean → GREEN
+    return None
 
 
 def gate_error_text(outcome) -> str:

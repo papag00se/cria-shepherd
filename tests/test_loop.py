@@ -880,6 +880,31 @@ class PeriodicGateTests(unittest.TestCase):
         self.assertIsNotNone(truth)
         self.assertIn("SyntaxError", truth)                    # the failing check reaches the model
         self.assertFalse(gs.periodic_probe)                    # consumed
+        self.assertTrue(gs.last_gate_red)                      # RED → the satisfaction judge is gated off
+
+    def _armed(self, ws):
+        from cria.loop import GuardState, guard_periodic_gate
+        gs = GuardState(coder_turns=15)
+        guard_periodic_gate(gs, self._SHELL, _Rlog(), workspace_root=ws)
+        return gs
+
+    def test_clean_result_clears_last_gate_red(self):
+        import tempfile, os
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        from cria.loop import guard_periodic_result
+        ws = tempfile.mkdtemp(); open(os.path.join(ws, "x.py"), "w").write("print(1)\n")
+        gs = self._armed(ws); gs.last_gate_red = True          # a prior red
+        result = f'{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n'     # ran, no findings → GREEN
+        body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id, "content": result}]}
+        self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # stays silent on a pass
+        self.assertFalse(gs.last_gate_red)                     # GREEN → judge may run again
+
+    def test_couldnt_run_leaves_last_gate_red_unchanged(self):
+        from cria.loop import GuardState, guard_periodic_result
+        gs = GuardState(periodic_probe=True, probe_call_id="p1", last_gate_red=True)  # gate_plan None → couldn't run
+        body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "meh"}]}
+        self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))
+        self.assertTrue(gs.last_gate_red)                      # neutral non-signal must NOT flip the gate
 
 
 class ShellWritePathTests(unittest.TestCase):
@@ -2136,6 +2161,25 @@ class DirectCompletionGateTests(unittest.TestCase):
         gs = GuardState(); gs.probe_call_id = "p1"  # gate_plan None → couldn't run → accept the 'done'
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
         self.assertIsNone(guard_gate_verdict(gs, body, _Rlog()))
+
+    def test_gate_verdict_sets_last_gate_red_from_the_result(self):
+        import tempfile, os
+        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+        from cria.loop import GuardState, guard_gate_op, guard_gate_verdict
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "h.py"), "w").write("def f():\n    return 1\n")
+            body = {"tools": [{"type": "function", "function": {"name": "shell",
+                     "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}],
+                    "messages": [{"role": "user", "content": f"<environment_context><cwd>{tmp}</cwd></environment_context>"}]}
+            gs = GuardState(); guard_gate_op(gs, body, _Rlog())
+            red = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
+                                 "content": f'{P}probe-0{S}\n  File "h.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nz\n'}]}
+            self.assertIsNotNone(guard_gate_verdict(gs, red, _Rlog()))
+            self.assertTrue(gs.last_gate_red)               # a failing done-gate → RED
+            clean = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,   # reuse the same plan
+                                   "content": f'{P}probe-0{S}\nEXIT:0\n{P}git{S}\nz\n'}]}
+            self.assertIsNone(guard_gate_verdict(gs, clean, _Rlog()))
+            self.assertFalse(gs.last_gate_red)              # ran and clean → GREEN
 
     def test_gate_op_emits_a_shell_probe_and_stashes_the_plan(self):
         from cria.loop import GuardState, guard_gate_op

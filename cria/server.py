@@ -633,7 +633,12 @@ class CriaHandler(BaseHTTPRequestHandler):
         # the reasoner judges whether the USER'S WHOLE TASK is satisfied by the real work. If yes, cria
         # initiates the done-gate: verify against the repo's own checks (objective backstop), and on the
         # next turn end the session if they pass. The coder can't reliably signal done, so cria does.
-        if steer is None and not rewritten and not gs.done_probe and satisfaction_check_due(
+        # GATED ON GREEN: skip while the last gate/check-in was RED — the deterministic checks already
+        # say NOT-done, so the LLM judge is redundant and (for a model that answers a done-judge with a
+        # "run the tests" tool call and always fail-closes) pure waste. The judge earns its cost only on
+        # a GREEN gate, where it catches "checks pass but a deliverable is missing/shallow".
+        if steer is None and not rewritten and not gs.done_probe and not gs.last_gate_red \
+                and satisfaction_check_due(
                 gs.drive_count, self.server.cfg.context.satisfaction_check_start,
                 self.server.cfg.context.satisfaction_check_every):
             task = _history_root(body.get("messages", []))[0]
