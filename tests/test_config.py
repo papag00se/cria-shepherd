@@ -204,3 +204,59 @@ class IndicatorTogglesTests(unittest.TestCase):
         self.assertFalse(ic.assists)
         self.assertTrue(ic.enabled)   # unspecified → default on
         self.assertTrue(ic.metrics)
+
+
+class SchemeABackendsRolesTests(unittest.TestCase):
+    """Scheme A: [backends.*] + [roles.*] + [defaults] desugar to the classic shape (no-op for classic
+    configs). A backend is a named model target (transport http|cli); a role names a backend + sampling."""
+
+    def _parse(self, data):
+        from cria.config import _desugar_backends_roles, _routing, _upstream
+        d = _desugar_backends_roles(data)
+        return _upstream(d.get("upstream", {})), _routing(d)
+
+    def test_classic_config_is_untouched(self):
+        from cria.config import _desugar_backends_roles
+        classic = {"upstream": {"base_url": "http://x:1"}, "models": {"local": {"coder": {"temperature": 0.1}}}}
+        self.assertEqual(_desugar_backends_roles(classic), classic)  # no [backends]/[roles] → no-op
+
+    def test_local_roles_and_defaults_dissolve_upstream(self):
+        up, r = self._parse({
+            "defaults": {"base_url": "http://127.0.0.1:18084", "timeout_seconds": 7200},
+            "backends": {"local": {"transport": "http", "base_url": "http://127.0.0.1:18084"}},
+            "roles": {"coder": {"backend": "local", "temperature": 0.1, "reasoning": "off"}},
+        })
+        self.assertEqual((up.base_url, up.timeout_seconds), ("http://127.0.0.1:18084", 7200))
+        self.assertEqual(r.local_roles["coder"].temperature, 0.1)
+        self.assertEqual(r.local_roles["coder"].reasoning, "off")
+
+    def test_per_role_endpoint_and_remote_backend(self):
+        up, r = self._parse({
+            "defaults": {"base_url": "http://127.0.0.1:18084"},
+            "backends": {
+                "local": {"transport": "http", "base_url": "http://127.0.0.1:18084"},
+                "box2": {"transport": "http", "base_url": "http://box2:5000"},
+                "groq": {"transport": "http", "base_url": "https://groq/v1", "api_key_env": "GK", "model": "llama-70b"},
+            },
+            "roles": {"coder": {"backend": "local"}, "reasoner": {"backend": "box2"},
+                      "classifier": {"backend": "groq"}},
+            "failover": {"classification": ["classifier"]},
+        })
+        self.assertIsNone(r.local_roles["coder"].base_url)               # shared endpoint
+        self.assertEqual(r.local_roles["reasoner"].base_url, "http://box2:5000")  # per-role box
+        self.assertIn("cloud.classifier", r.cloud_pools)                 # keyed remote → cloud pool
+        self.assertEqual(r.cloud_pools["cloud.classifier"][0].model, "llama-70b")  # model naming (B3)
+        self.assertEqual(r.providers["groq"].kind, "openai")
+        self.assertEqual(r.failover["classification"], ("cloud.classifier",))  # chain rewritten
+
+    def test_cli_backend_becomes_a_provider(self):
+        _up, r = self._parse({
+            "backends": {"claude": {"transport": "cli", "tool": "claude"}},
+            "roles": {"reasoner": {"backend": "claude"}},
+        })
+        self.assertEqual(r.providers["claude"].kind, "claude_cli")
+        self.assertIn("cloud.reasoner", r.cloud_pools)
+
+    def test_role_with_unknown_backend_errors(self):
+        with self.assertRaises(ValueError):
+            self._parse({"backends": {}, "roles": {"coder": {"backend": "nope"}}})

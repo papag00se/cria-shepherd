@@ -329,6 +329,7 @@ class Config:
             for _q, d in layers:
                 data = _deep_merge(data, d)
             source = " + ".join(str(q) for q, _ in layers)
+        data = _desugar_backends_roles(data)  # Scheme A [backends]/[roles] → classic shape (no-op otherwise)
         return cls(
             server=_server(data.get("server", {})),
             upstream=_upstream(data.get("upstream", {})),
@@ -409,6 +410,79 @@ def _indicators(d: dict) -> IndicatorsConfig:
         reasoning=bool(d.get("reasoning", True)),
         reasoning_transcript=bool(d.get("reasoning_transcript", True)),
     )
+
+
+def _desugar_backends_roles(data: dict) -> dict:
+    """Scheme A front-end. ``[backends.*]`` (a named model target: transport ``http``|``cli`` + its
+    endpoint) + ``[roles.*]`` (names a backend + the role's sampling/reasoning) + ``[defaults]`` (the
+    shared base_url/timeout) DESUGAR to the classic ``[upstream]`` + ``[models.local]`` + ``[providers]``
+    + ``[models.cloud]`` + ``[failover]`` shape, so the whole existing parser/router/wiring is unchanged
+    and old configs keep working verbatim. This dissolves ``[upstream]`` and the misleading local/cloud
+    split at the SURFACE: a backend is just a model target, wherever it runs (llama.cpp on localhost, a
+    remote OpenAI-compatible endpoint like groq/openrouter, or a subprocess/OAuth CLI like claude/codex).
+    No-op unless the config opts in with ``[backends]``/``[roles]``."""
+    if "backends" not in data and "roles" not in data:
+        return data
+    data = dict(data)
+    defaults = data.get("defaults", {})
+    default_url = str(defaults.get("base_url", "http://127.0.0.1:18084")).rstrip("/")
+    data.setdefault("upstream", {"base_url": default_url,          # [upstream] dissolved into [defaults]
+                                 "timeout_seconds": int(defaults.get("timeout_seconds", 600))})
+    backends = data.get("backends", {})
+    roles = data.get("roles", {})
+    _SAMPLING = ("reasoning", "temperature", "temp", "top_p", "top_k", "repeat_penalty",
+                 "min_p", "max_tokens", "output_reserve")
+    models = dict(data.get("models", {}))
+    local = dict(models.get("local", {}))
+    cloud = dict(models.get("cloud", {}))
+    providers = dict(data.get("providers", {}))
+    failover = {str(t): [str(r) for r in chain] for t, chain in data.get("failover", {}).items()}
+    remote: dict[str, str] = {}                                    # role -> pool name (for the chain rewrite)
+    for rname, rspec in roles.items():
+        rname = str(rname)
+        if not isinstance(rspec, dict):
+            raise ValueError(f"[roles.{rname}] must be a table (backend = \"…\" + sampling)")
+        bname = str(rspec.get("backend", ""))
+        if bname not in backends:
+            raise ValueError(f"[roles.{rname}] backend = {bname!r} has no matching [backends.{bname}]")
+        b = backends[bname]
+        transport = str(b.get("transport", "http")).lower()
+        sampling = {k: rspec[k] for k in _SAMPLING if k in rspec}
+        if transport == "http" and not b.get("api_key_env"):      # LOCAL/keyless endpoint (loaded model)
+            row = dict(sampling)
+            burl = str(b.get("base_url", default_url)).rstrip("/")
+            if burl != default_url:
+                row["base_url"] = burl
+            local[rname] = row
+        elif transport in ("http", "cli"):                        # keyed http (groq/…) or a cli (claude/codex)
+            if transport == "cli":
+                tool = str(b.get("tool", "claude")).lower()
+                providers[bname] = {"kind": "claude_cli" if tool == "claude" else tool,
+                                    "binary": str(b.get("binary", tool))}
+                if b.get("cwd"):
+                    providers[bname]["cwd"] = str(b["cwd"])
+            else:
+                if not b.get("base_url"):
+                    raise ValueError(f"[backends.{bname}] (http) needs base_url")
+                providers[bname] = {"kind": "openai", "base_url": str(b["base_url"]),
+                                    "api_key_env": str(b["api_key_env"])}
+            entry = {"provider": bname, "model": str(b.get("model", rname))}
+            if rspec.get("reasoning"):
+                entry["reasoning"] = str(rspec["reasoning"])
+            cloud[rname] = {"entries": [entry]}
+            remote[rname] = f"cloud.{rname}"                       # addressed as cloud.<role> in a chain
+        else:
+            raise ValueError(f"[backends.{bname}] transport must be http|cli, got {transport!r}")
+    for t in list(failover):                                      # a role on a remote/cli backend → cloud.<role>
+        failover[t] = [remote.get(r, r) for r in failover[t]]
+    models["local"] = local
+    models["cloud"] = cloud
+    data["models"] = models
+    if providers:
+        data["providers"] = providers
+    if failover:
+        data["failover"] = failover
+    return data
 
 
 def _routing(data: dict) -> RoutingConfig:
