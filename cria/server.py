@@ -871,6 +871,17 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
+            # PARITY: the plan-off direct-coder path (with ALL its guards — repetition/wheel-spin, the
+            # completion gate, the satisfaction judge, the stall terminator) must run on the STREAMING
+            # transport too, not only the buffered one. Without this a streaming /v1/chat/completions
+            # coding task was a bare proxy — every plan-off guard bypassed. Drive it buffered, emit as SSE.
+            if (not server.cfg.planner.enabled and classification is not None
+                    and classification.task_type == "coding"):
+                rlog.emit("route.direct_coder", stream=True)
+                comp = self._drive_direct_coder(server.guard_store.get(sk), provider, indic, body, sk, rlog)
+                if comp is not None:
+                    yield from completion_to_sse(self._finalize(self._translate_out(comp, sk, rlog), sk, rlog))
+                    return
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(_proxy_body(body), indic), rlog),
                 body.get("model", ""),

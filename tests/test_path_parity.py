@@ -41,3 +41,14 @@ class PathParityTests(unittest.TestCase):
                         f"{p}: {fname}(...) called WITHOUT '{kw}=' — that silently selects the degraded "
                         f"default. Wire the capability on this path too (see the reasoned author on both "
                         f"loop.py and server.py's _drive_direct_coder).")
+
+    def test_direct_coder_runs_on_both_transports(self):
+        """The plan-off guard suite (_drive_direct_coder) must run on the streaming AND buffered
+        transports — else a streaming /v1/chat/completions coding task bypasses every plan-off guard."""
+        tree = ast.parse((_ROOT / "cria/server.py").read_text())
+        methods = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        for m in ("_produce_stream", "_produce_completion"):
+            self.assertIn(m, methods, f"{m} missing")
+            called = any(getattr(c.func, "attr", None) == "_drive_direct_coder"
+                         for c in ast.walk(methods[m]) if isinstance(c, ast.Call))
+            self.assertTrue(called, f"{m} never calls _drive_direct_coder — plan-off guards bypassed there")
