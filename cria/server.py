@@ -598,6 +598,19 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.emit("loop.history_rewritten", plan_off=True, n_messages=len(msgs))
         return rewritten
 
+    def _reasoned_reanchor(self, body: dict, rlog) -> str:
+        """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
+        summary): the reasoner reads the compaction SUMMARY and authors a grounded 'what's done / what
+        remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
+        reasoner or it yields nothing — a compacted coder is never left without re-orientation."""
+        canned = prompts.load("reanchor")
+        summary = _history_root(body.get("messages", []))[0]
+        if self.server.reasoner_role is None or not summary.strip():
+            return canned
+        text = summarize(self.server.reasoner_upstream.chat, self.server.reasoner_role,
+                         prompts.load("reanchor_reasoned"), summary, rlog, phase="reasoner")
+        return text or canned
+
     def _done_critic_says_incomplete(self, gs, body: dict, rlog) -> bool:
         """The task-level reasoner critic on a GREEN plan-off 'done' (parity with the loop's _verify):
         judge the WHOLE task against the real work + the vacuous-green fact. Marks gs.done_critiqued so
@@ -729,8 +742,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return periodic
         framed = _direct_coder_body(body)
         extra = []
-        if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix)
-            extra.append({"role": "user", "content": prompts.render("nudge", reason=prompts.load("reanchor"))})
+        if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix). PARITY:
+            # a REASONED continuation from the summary (like the loop's re-plan), canned only as fallback.
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
             self.server.loop_store.clear_rewrite(sess_key)  # acted on it (framing rebuilt each turn)
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})

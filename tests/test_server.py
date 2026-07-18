@@ -678,3 +678,30 @@ class DoneCriticTests(unittest.TestCase):
             self.assertFalse(h._done_critic_says_incomplete(GuardState(), body, _RewriteRlog()))  # satisfied → done
         finally:
             srv.judge_satisfaction = orig
+
+
+class ReasonedReanchorTests(unittest.TestCase):
+    """A3: the plan-off harness-compaction re-orientation is REASONER-authored from the summary (parity
+    with the loop's re-plan), with the canned reanchor only as a fallback."""
+
+    def _handler(self, reasoner=True, reply="X is done; finish Y"):
+        import json
+        from cria.server import CriaHandler
+        from cria.config import LocalRole
+        h = CriaHandler.__new__(CriaHandler)
+        chat = lambda b, r: json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
+        h.server = types.SimpleNamespace(
+            reasoner_upstream=types.SimpleNamespace(chat=chat),
+            reasoner_role=(LocalRole() if reasoner else None))
+        return h
+
+    def test_reasoner_authors_else_canned(self):
+        from cria import prompts
+        body = {"messages": [{"role": "user", "content": "SUMMARY: resolver built, tests remain"}]}
+        self.assertIn("X is done", self._handler()._reasoned_reanchor(body, _RewriteRlog()))
+        self.assertEqual(self._handler(reasoner=False)._reasoned_reanchor(body, _RewriteRlog()),
+                         prompts.load("reanchor"))                                     # no reasoner → canned
+        self.assertEqual(self._handler(reply="")._reasoned_reanchor(body, _RewriteRlog()),
+                         prompts.load("reanchor"))                                     # empty reply → canned
+        self.assertEqual(self._handler()._reasoned_reanchor({"messages": []}, _RewriteRlog()),
+                         prompts.load("reanchor"))                                     # no summary → canned
