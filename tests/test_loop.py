@@ -312,6 +312,31 @@ class CompactionTests(unittest.TestCase):
         self.assertIn("h.py", log)
         self.assertNotIn(".cria", log)  # cria's own plan-file op stripped, not counted as work
 
+    def test_satisfaction_evidence_includes_summary_after_a_compaction(self):
+        # THE false 'no work done': a harness compaction replaces the structured tool history with a
+        # ⟦ctx:...⟧ prose summary. _work_log alone is then EMPTY, so the judge hallucinated an empty
+        # workspace. _satisfaction_evidence must surface the summary as the record of the built work.
+        from cria.loop import _satisfaction_evidence, _work_log
+        compacted = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "⟦ctx:continuation⟧ Earlier you built resolve_handle.py, a test "
+                                        "suite, and a README; the live check still needs a real run."},
+            {"role": "assistant", "content": ""},   # no tool_calls survived the compaction
+        ]
+        self.assertFalse(_work_log(compacted).strip())            # old evidence: EMPTY → false 'no work'
+        ev = _satisfaction_evidence(compacted)
+        self.assertIn("resolve_handle.py", ev)                    # the real work is now visible
+        self.assertIn("README", ev)
+        self.assertIn("SUMMARY OF EARLIER WORK", ev)
+
+    def test_satisfaction_evidence_is_just_the_log_when_uncompacted(self):
+        # No summary markers → identical to _work_log (no spurious header).
+        from cria.loop import _satisfaction_evidence, _work_log
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "a", "function": {"name": "write_file", "arguments": '{"path":"h.py"}'}}]},
+                {"role": "tool", "tool_call_id": "a", "content": "wrote h.py"}]
+        self.assertEqual(_satisfaction_evidence(msgs), _work_log(msgs))
+        self.assertNotIn("SUMMARY OF EARLIER WORK", _satisfaction_evidence(msgs))
+
 
 def _body_rewritten(summary="Summary: built handler.py + tests; current goal: finish the live test."):
     """A post-compaction request: same session key, but the conversation ROOT was replaced

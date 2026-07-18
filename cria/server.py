@@ -63,7 +63,7 @@ from .loop import (
     satisfaction_check_due,
     satisfaction_done_note,
     session_key,
-    _work_log,
+    _satisfaction_evidence,
 )
 from .planner import Planner
 from .routing import Router
@@ -634,7 +634,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 self.server.cfg.context.satisfaction_check_every):
             task = _history_root(body.get("messages", []))[0]
             satisfied, reason = judge_satisfaction(
-                task, _work_log(body.get("messages", [])),
+                task, _satisfaction_evidence(body.get("messages", [])),
                 self.server.upstream.chat, self.server.reasoner_role, rlog)
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=gs.drive_count, satisfied=satisfied)
             if satisfied:

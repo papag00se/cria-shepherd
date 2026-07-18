@@ -1143,6 +1143,27 @@ def _work_log(messages: list[dict], limit: int = 6000) -> str:
     return _clip_tail("\n".join(lines), limit)
 
 
+def _satisfaction_evidence(messages: list[dict], limit: int = 6000) -> str:
+    """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
+    (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
+    because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
+    turn right after a compaction _work_log alone is empty, so the judge saw "(no actions recorded
+    yet)" and hallucinated that NO work was done (the observed false "the coder hasn't started" that
+    marked a real, in-progress build as not-satisfied). The summary is the best record of the
+    compacted-away work; the judge weighs it against the still-verbatim recent actions."""
+    log = _work_log(messages, limit)
+    summaries = [c.strip() for m in messages
+                 if any(mk in (c := _msg_text_content(m)) for mk in
+                        (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
+    if not summaries:
+        return log
+    head = ("SUMMARY OF EARLIER WORK (the detailed tool log was compacted to fit the window — treat "
+            "this as a record of what was already built, then check it against the recent actions):\n"
+            + "\n\n".join(summaries))
+    tail = ("\n\nRECENT VERBATIM ACTIONS:\n" + log) if log.strip() else ""
+    return _clip_tail(head + tail, limit)
+
+
 def _strip_cria_banners(text: str) -> str:
     """Drop cria's own `⟦cria⟧ …` status lines from a text blob — so the coder can't parrot
     them and they never reach the critic (via pending_coder_text) as 'the coder's summary'."""
