@@ -90,8 +90,8 @@ class ClaudeCliProvider:
             raise UpstreamError(f"claude CLI timed out after {self._timeout}s") from e
 
         if proc.returncode != 0:
-            rlog.emit("claude.error", level="error", code=proc.returncode, stderr=(proc.stderr or "")[:300])
-            raise UpstreamError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()[:200]}")
+            rlog.emit("claude.error", level="error", code=proc.returncode, stderr=(proc.stderr or ""))
+            raise UpstreamError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()}")
 
         result = _parse_claude_json(proc.stdout, fallback_model=model)
         if result.session_id:

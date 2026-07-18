@@ -286,3 +286,29 @@ class StepCleaningTests(unittest.TestCase):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step("Write the README with usage."), "Write the README with usage.")
 
+
+class AllStepsExecutedTests(unittest.TestCase):
+    """EVERY emitted step becomes a PlanItem — no 12-step cap. A longer decomposition previously
+    had its tail (steps 13+) silently dropped, so the loop ran a plan that structurally omitted
+    work and could declare done with work missing."""
+
+    def test_long_numbered_plan_keeps_every_step(self):
+        content = "\n".join(f"{i}. step number {i}" for i in range(1, 16))  # 15 steps
+        plan = _planner(content).plan_for(_msgs("a big task"), _Rlog())
+        self.assertEqual(len(plan.items), 15)
+        self.assertEqual(plan.items[-1].text, "step number 15")
+
+    def test_long_json_plan_keeps_every_step(self):
+        content = _json.dumps({"steps": [f"do thing {i}" for i in range(20)]})
+        plan = _planner(content).plan_for(_msgs("json task"), _Rlog())
+        self.assertEqual(len(plan.items), 20)
+
+    def test_long_submit_plan_keeps_every_step(self):
+        # the forced-plan / submit_plan path also keeps all steps (was sliced to 12 too)
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "x"}),
+            _tool_resp("submit_plan", {"steps": [f"do {i}" for i in range(15)]}),
+        ])
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), _Rlog())
+        self.assertEqual(len(plan.items), 15)
+

@@ -44,9 +44,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence
 
-# Summary truncation lengths (Unicode code points, matching Rust `chars()`).
-SUMMARY_MSG_LIMIT = 100    # first finding's message inside the summary line
-SUMMARY_LINE_LIMIT = 120   # last-error-line fallback for non-zero exits
+# Summary length ceilings (Unicode code points). These feed the MODEL — the summary line is what
+# completion_block_nudge / failed_unparsed / clean_gate_output show, and for a failed_unparsed probe
+# with no bullets this scraped line is the ONLY signal about the failure. A tight clip cut the tail off
+# a long fatal line and the model decided on a lie it couldn't see. Raised far past any real diagnostic
+# so the message flows whole; kept as a pathological-single-line guard only (a minified megabyte with no
+# newlines), with the window-aware context floor as the one place a real truncation may occur.
+SUMMARY_MSG_LIMIT = 8192   # first finding's message inside the summary line
+SUMMARY_LINE_LIMIT = 8192  # last-error-line fallback for non-zero exits
 TRUNCATION_SUFFIX = "…"  # … U+2026 HORIZONTAL ELLIPSIS
 
 # Error-ish keywords for the no-findings/non-zero-exit fallback: substring

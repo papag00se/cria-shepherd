@@ -40,7 +40,15 @@ from .content_reduce import content_reduce, est_tokens
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
 # silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
 _COMPACTED_MARK = "⟦ctx:compacted⟧"
-_MAX_COMPACTED_FILES = 30
+# The stand-in note preserves a content_reduce()d digest of each dropped turn — not just the filenames
+# it modified — so a dropped test-failure/error output survives as a SUMMARY rather than vanishing. The
+# digests together occupy at most this share of the message budget (split across the dropped turns, each
+# with a per-turn floor) so the stand-in note can't itself blow the window. content_reduce is lossless-
+# first and guarded (never a blind slice); a turn whose content it can't summarize under budget is
+# disclosed as omitted, never re-embedded verbatim (that would defeat the drop).
+_NOTE_DIGEST_FRACTION = 0.25
+_MIN_NOTE_DIGEST_TOKENS = 256   # total floor: even a tight budget leaves room for a real summary
+_MIN_PER_TURN_TOKENS = 64       # per-turn floor: each digested turn gets at least this much room
 # Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
 _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_editor",
                      "create_file", "text_editor")
@@ -320,7 +328,11 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
     """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
     never touching (a) system/developer messages, (b) the last user message — the request
     being answered, (c) the trailing OVERFLOW_KEEP_TAIL messages — the active work. Drops
-    from the oldest end of the span until the estimate fits or nothing droppable remains."""
+    from the oldest end of the span until the estimate fits or nothing droppable remains.
+    Protect-marked messages (the compacted-note summary, the briefing, the gate anchor) are
+    dropped LAST — they are the summary standing in for everything already dropped, so losing
+    one is the worst kind of loss; only sacrifice one when nothing unmarked remains to drop and
+    the window still doesn't fit (fit must be guaranteed or the model errors on every call)."""
     work = list(messages)
     dropped = 0
     while _msgs_tokens(work) > msg_budget:
@@ -329,9 +341,13 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
             if m.get("role") == "user":
                 last_user = i
         tail_start = max(len(work) - OVERFLOW_KEEP_TAIL, 0)
+        def _droppable(i, m):
+            return i > last_user and i < tail_start and m.get("role") not in ("system", "developer")
+        # Prefer an unmarked victim; fall back to a protect-marked one only if nothing else is left.
         victim = next((i for i, m in enumerate(work)
-                       if i > last_user and i < tail_start
-                       and m.get("role") not in ("system", "developer")), None)
+                       if _droppable(i, m) and not _has_protect_marker(m)), None)
+        if victim is None:
+            victim = next((i for i, m in enumerate(work) if _droppable(i, m)), None)
         if victim is None:
             break  # only the irreducible core remains
         work.pop(victim)
@@ -358,7 +374,7 @@ def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int
         dropped += 1
     kept = [m for i, m in enumerate(messages) if keep[i]]
     if dropped:
-        note = _compacted_note([m for i, m in enumerate(messages) if not keep[i]], dropped)
+        note = _compacted_note([m for i, m in enumerate(messages) if not keep[i]], dropped, msg_budget)
         kept = _insert_after_leading_system(kept, note)
     return kept, dropped
 
@@ -379,14 +395,52 @@ def _modified_files(msgs: list[dict]) -> list[str]:
     return out
 
 
-def _compacted_note(dropped_msgs: list[dict], dropped: int) -> dict:
-    """The synthesized stand-in for the dropped turns."""
-    body = f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."
+def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> dict:
+    """The synthesized stand-in for the dropped turns: a content_reduce()d digest of what each turn
+    CONTAINED (so a dropped test-failure/error output survives as a summary, not just a filename) plus
+    the full list of files those turns modified. Digests are lossless-first (content_reduce, never a
+    blind slice) and bounded to a share of the budget so the note can't itself blow the window."""
+    parts = [f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."]
+
+    # Per-turn digests. The digests together may occupy at most a share of the message budget; split
+    # that share across the dropped turns (each with a per-turn floor so a digest stays usable).
+    note_budget = max(_MIN_NOTE_DIGEST_TOKENS, int(msg_budget * _NOTE_DIGEST_FRACTION))
+    per_turn = max(_MIN_PER_TURN_TOKENS, note_budget // max(dropped, 1))
+    digests: list[tuple[int, str]] = []
+    spent = 0
+    omitted = 0
+    # Newest-dropped first so a tight budget spends on the turns adjacent to the surviving active span
+    # (most relevant to the current step); reassembled into chronological order for reading.
+    for idx in range(len(dropped_msgs) - 1, -1, -1):
+        text = _msg_text(dropped_msgs[idx]).strip()
+        if not text:
+            continue  # nothing to summarize (e.g. a bare tool-call frame) — not a loss to disclose
+        if spent >= note_budget:
+            omitted += 1
+            continue
+        sz = est_tokens(text)
+        digest = content_reduce(text, _sniff_content_type(text), per_turn).strip()
+        # Keep the digest only if content_reduce actually summarized it (or the turn was already small
+        # enough to carry verbatim). Never re-embed a full unreduced blob we just dropped — that would
+        # defeat the drop and risk the window; such a turn is disclosed as omitted instead. (Its file,
+        # if it wrote one, still survives via the file list below.)
+        if digest and (est_tokens(digest) < sz or sz <= per_turn):
+            digests.append((idx, digest))
+            spent += est_tokens(digest)
+        else:
+            omitted += 1
+    if digests:
+        digests.sort(key=lambda p: p[0])  # chronological
+        parts.append("Summary of what those turns contained:")
+        parts.extend("• " + d for _, d in digests)
+    if omitted:
+        parts.append(f"(+{omitted} further compacted turn(s) whose content could not be summarized here.)")
+
     files = _modified_files(dropped_msgs)
     if files:
-        body += (" Files modified in them (still on disk — re-read one if you need its current "
-                 "contents): " + ", ".join(files[:_MAX_COMPACTED_FILES]) + ".")
-    return {"role": "user", "content": body}
+        parts.append("Files modified in them (still on disk — re-read one if you need its current "
+                     "contents): " + ", ".join(files) + ".")
+    return {"role": "user", "content": "\n".join(parts)}
 
 
 def _insert_after_leading_system(msgs: list[dict], note: dict) -> list[dict]:

@@ -170,3 +170,71 @@ class FreshWorkspaceTests(unittest.TestCase):
         out = pt.execute_tool("exec_command", {"cmd": "ls"}, ws, "", [], _Rlog())
         self.assertIn("marker.txt", out)
         self.assertNotIn("does not exist yet", out)
+
+
+class FullContentTests(unittest.TestCase):
+    """Model-read gather content is returned in FULL (no blind byte/char clip) — the section the
+    planner needs may be past any fixed slice, and the context floor bounds the window downstream."""
+
+    def test_read_file_returns_full_content_past_old_clip(self):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "big.py"), "w").write("A" * 20000 + "NEEDLE_AT_END")
+        out = pt.execute_tool("read_file", {"path": "big.py"}, d, "", [], _Rlog())
+        self.assertIn("NEEDLE_AT_END", out)          # the tail survives (was cut at 8000)
+        self.assertNotIn("truncated at", out)         # no clip marker
+        self.assertGreaterEqual(len(out), 20000)
+
+    def test_exec_command_returns_full_output_past_old_clip(self):
+        out = pt.execute_tool("exec_command",
+                              {"cmd": "python3 -c \"print('X'*20000 + 'TAILMATCH')\""}, ".", "", [], _Rlog())
+        self.assertIn("TAILMATCH", out)               # the last line survives (was cut at 8000)
+        self.assertNotIn("truncated at", out)
+
+    def test_web_fetch_returns_full_body_past_old_clip(self):
+        big = ("B" * 20000) + "ENDPOINT_SIGNATURE"
+
+        class _Resp:
+            status = 200
+
+            def read(self, n=-1):
+                return big.encode()
+
+            def geturl(self):
+                return "https://x/api"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        orig = pt.urllib.request.urlopen
+        pt.urllib.request.urlopen = lambda req, timeout=None: _Resp()
+        try:
+            out = pt._web_fetch({"url": "https://x/api"})
+        finally:
+            pt.urllib.request.urlopen = orig
+        self.assertIn("ENDPOINT_SIGNATURE", out)      # the signature past 6000 survives
+        self.assertNotIn("truncated at", out)
+
+
+class SearchCountTests(unittest.TestCase):
+    """web_search asks Brave for its full result set (clamped to 20 in the API layer) and discloses
+    how many landed, so the planner isn't blind to an arbitrary 5-result slice."""
+
+    def test_requests_full_count_and_discloses_it(self):
+        captured = {}
+
+        def fake_brave(key, query, count=None):
+            captured["count"] = count
+            return [{"title": f"T{i}", "url": f"https://e/{i}", "description": "d"} for i in range(20)]
+
+        orig = pt.brave_search
+        pt.brave_search = fake_brave
+        try:
+            out = pt.execute_tool("web_search", {"query": "some unique query terms"}, ".", "KEY", [], _Rlog())
+        finally:
+            pt.brave_search = orig
+        self.assertEqual(captured["count"], 20)       # asked for the full set, not 5
+        self.assertIn("(20 results)", out)            # and disclosed the count

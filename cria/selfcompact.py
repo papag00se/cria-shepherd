@@ -43,7 +43,6 @@ TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header �
 # ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
 # (selfcompact is low-level; a test asserts sync).
 _ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
-_TASK_CLIP = 2000   # chars — the task is the north star, kept verbatim but bounded against a huge spec
 
 
 @dataclass
@@ -91,16 +90,16 @@ def msg_digest(m: dict) -> str:
     parts = []
     t = _text(m)
     if t.strip():
-        parts.append(t[:800])
+        parts.append(t)
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        parts.append(f"{fn.get('name', '?')}({str(fn.get('arguments', ''))[:200]})")
-    return " ".join(p for p in parts if p)[:1000]
+        parts.append(f"{fn.get('name', '?')}({str(fn.get('arguments', ''))})")
+    return " ".join(p for p in parts if p)
 
 
 def serialize(messages: list[dict]) -> str:
     """The transcript span → one string fed to the summarizer."""
-    return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)[:20000]
+    return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
 
 
 def _summary_msg(summary: str) -> dict:
@@ -121,7 +120,7 @@ def _summary_msg(summary: str) -> dict:
 def _task_msg(task: str) -> dict:
     return {"role": "user", "content": (
         f"{TASK_MARKER} Your ORIGINAL task for this session — keep it as your north star and do NOT "
-        f"drift onto tangential work; everything below serves THIS:\n{task[:_TASK_CLIP]}")}
+        f"drift onto tangential work; everything below serves THIS:\n{task}")}
 
 
 def compact(messages: list[dict], summarize, state: CompactState, *,

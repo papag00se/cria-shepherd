@@ -40,6 +40,10 @@ PLANNER_TOOLS = [
 ]
 
 _FETCH_MAX_BYTES = 512 * 1024
+# Ask Brave for as many results as it will return (its API clamps to 20 in brave.query_url), so a
+# planner's gather sees the fuller result set rather than an arbitrary 5. The count is disclosed in
+# format_results so the model knows how many landed.
+_SEARCH_COUNT = 20
 
 
 def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog,
@@ -85,7 +89,10 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
     try:
         out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, timeout=20, env=env)
-        text = _truncate((out.stdout + out.stderr).strip() or "[no output]", 8000)
+        # Full stdout+stderr — the failing assertion / the one grep match the planner needs may be
+        # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
+        # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
+        text = (out.stdout + out.stderr).strip() or "[no output]"
         if fresh:
             text += "\n" + prompts.fill(prompts.load_map("planner_steers")["fresh_note"], cwd=cwd)
         if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
@@ -105,7 +112,9 @@ def _read_file(args: dict, cwd: str) -> str:
     full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
     try:
         with open(full, encoding="utf-8", errors="replace") as fh:
-            return _truncate(fh.read(), 8000)
+            # Full file — the section the planner must modify may be past any fixed clip. The
+            # context floor bounds the window losslessly-first if this file is large.
+            return fh.read()
     except OSError as e:
         return f"[read_file error: {e}]"
 
@@ -220,7 +229,10 @@ def _web_fetch(args: dict) -> str:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read(_FETCH_MAX_BYTES)
             body = raw.decode("utf-8", "replace")
-            return f"HTTP {getattr(r, 'status', '?')} · {r.geturl()}\n{_truncate(body, 6000)}"
+            # Full decoded body (already bounded by the 512KB socket read above) — the endpoint /
+            # signature the planner needs may be past any fixed char clip. The context floor
+            # reduces it MIME-aware + losslessly-first if it's large for the window.
+            return f"HTTP {getattr(r, 'status', '?')} · {r.geturl()}\n{body}"
     except Exception as e:  # network, TLS, decode — surface the cause, don't crash the gather
         return f"[web_fetch error: {e}]"
 
@@ -235,12 +247,12 @@ def _web_search(args: dict, search_key: str, recent: list) -> str:
     if not (search_key or "").strip():
         return prompts.load_map("planner_steers")["no_search_key"]
     try:
-        return format_results(query, brave_search(search_key, query, 5))
+        return format_results(query, brave_search(search_key, query, _SEARCH_COUNT))
     except Exception as e:
         return f"[web_search error: {e}]"
 
 
-def brave_search(api_key: str, query: str, count: int = 5) -> list[dict]:
+def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:
     """One Brave Search GET. Returns a list of {title,url,description}. Endpoint/encoding/headers
     come from the shared `brave` module so the writeproxy's shell web_search can't diverge."""
     req = urllib.request.Request(brave.query_url(query, count), headers=brave.headers(api_key))
@@ -254,7 +266,8 @@ def brave_search(api_key: str, query: str, count: int = 5) -> list[dict]:
 def format_results(query: str, results: list[dict]) -> str:
     if not results:
         return f"No results for query: {query}"
-    out = f"Search results for: {query}\n"
+    # Disclose the count so the model knows how many results landed (Brave caps a request at 20).
+    out = f"Search results for: {query} ({len(results)} results)\n"
     for i, r in enumerate(results, 1):
         out += f"\n{i}. {r['title']}\n   {r['url']}\n   {(r['description'] or '').strip()}\n"
     return out
@@ -351,8 +364,3 @@ def _looks_like_domain(tok: str) -> bool:
     if len(tld) < 2 or not tld.isalpha() or tld in _FILE_EXTS:
         return False
     return all(lbl and all(c.isalnum() or c == "-" for c in lbl) for lbl in labels)
-
-
-def _truncate(s: str, cap: int) -> str:
-    s = s.strip()
-    return s if len(s) <= cap else s[:cap] + f"\n…[truncated at {cap} chars]"

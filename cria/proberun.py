@@ -76,8 +76,8 @@ DEFAULT_TIMEOUT_S = 120.0
 # Upstream's child try_wait() poll cadence (40ms). cria never polls a child —
 # this is the contract value a host-side Runner implementation should honor.
 CHILD_POLL_INTERVAL_S = 0.040
-# Findings shown per probe in the completion block nudge (.take(5)).
-BLOCK_NUDGE_MAX_FINDINGS = 5
+# (Upstream's .take(5) per-probe findings cap was removed — completion_block_nudge now shows EVERY
+# file:line finding so an error past the 5th is never hidden from the model.)
 
 # Message/format strings — byte-for-byte with upstream, now sourced from prompts/ so they're tunable
 # (loaded once at import; a cria restart re-tunes). The preamble ends with a newline `load` strips,
@@ -98,10 +98,13 @@ DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
 # cria constants (proxy path — NOT probe_run.rs values)
 # ---------------------------------------------------------------------------
 
-# Output cap applied at composition time. Upstream read_to_string'd the pipes
-# unbounded and let probe_parse truncate per-line; in cria the capture lands in
-# the model's context window, so the composed command caps it. tail (not head):
-# the fatal line prints LAST for pytest/build tools.
+# Output budget applied at composition time. Upstream read_to_string'd the pipes unbounded and let
+# probe_parse truncate per-line; in cria the capture lands in the model's context, so the composed
+# command bounds it. NOT tail-only: a test/build that prints its real failure EARLY then a long
+# teardown/summary would lose the failure under a tail clip. compose_probe_command keeps HEAD + TAIL
+# (half the budget each, with a disclosed "middle N bytes elided" marker) so an early failure AND a
+# late one both survive. Only bites on genuinely huge output; the window-aware context floor is the one
+# place a real truncation may happen.
 PROBE_OUTPUT_CAP_BYTES = 16384
 # Trailing sentinel that smuggles the probe's exit code through a text-only
 # shell-tool result; scrape_exit() recovers it.
@@ -369,7 +372,10 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
             continue
         bucket = syntax_lines if is_syntax else lines
         bucket.append(f"$ {r.command} — {r.summary}")
-        for f in r.findings[:BLOCK_NUDGE_MAX_FINDINGS]:
+        # EVERY finding, not a .take(5) slice: a probe with 12 real errors once showed only 5, so the
+        # model fixed those, re-ran, and hit the 6th it never saw. The window-aware context floor is the
+        # one place a truncation may happen — never a blind per-probe cap here.
+        for f in r.findings:
             loc = f"{f.file}:{f.line}" if f.line is not None else f.file
             bullet = f"{loc}: {f.message}"
             if bullet == r.summary:
@@ -446,19 +452,32 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     kept — ``timeout 0`` would DISABLE the timeout); Stdio::null ->
     ``</dev/null`` (probes must not block on interactive prompts); the drain
     threads -> the harness's own capture, with 2>&1 merging the streams the way
-    parse_output already combines them; unbounded read_to_string -> ``tail -c``
-    at PROBE_OUTPUT_CAP_BYTES; exit-code retrieval -> the EXIT: sentinel.
+    parse_output already combines them; unbounded read_to_string -> a HEAD+TAIL
+    budget of PROBE_OUTPUT_CAP_BYTES (half each end) so a failure printed EARLY
+    survives a long teardown/summary tail — with a disclosed ``middle N bytes
+    elided`` marker so nothing vanishes silently; exit-code retrieval -> the
+    EXIT: sentinel. Small output (the common case) passes through untouched.
     Every argv token is shlex-quoted — mandatory correctness under joining,
     not sanitization (discovery already vetted the command).
     """
     if not c.command:
         raise ValueError(EMPTY_COMMAND_SUMMARY)
     argv = " ".join(shlex.quote(t) for t in c.command)
+    half = PROBE_OUTPUT_CAP_BYTES // 2
+    # One physical shell line (no literal newlines — ``\\n`` are printf escapes): capture, then if the
+    # byte size is within budget print it whole, else print the first half + an elided-count marker +
+    # the last half, so BOTH an early and a late failure land in the parseable capture.
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
         f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} "
         f"</dev/null 2>&1); __cria_ec=$?; "
-        f"printf '%s\\n' \"$__cria_out\" | tail -c {PROBE_OUTPUT_CAP_BYTES}; "
+        f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c | tr -cd '0-9'); "
+        f"if [ \"$__cria_n\" -le {PROBE_OUTPUT_CAP_BYTES} ]; then "
+        f"printf '%s\\n' \"$__cria_out\"; "
+        f"else printf '%s' \"$__cria_out\" | head -c {half}; "
+        f"printf '\\n...[middle %d bytes elided; head+tail kept so an early failure survives]...\\n' "
+        f"\"$((__cria_n - {PROBE_OUTPUT_CAP_BYTES}))\"; "
+        f"printf '%s' \"$__cria_out\" | tail -c {half}; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
 

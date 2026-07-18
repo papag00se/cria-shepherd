@@ -36,7 +36,6 @@ from .loop import (
     _strip_cria_file_ops,
     LoopContext,
     LoopStore,
-    _clip_tail,
     _completion_final,
     _completion_text,
     _completion_toolcalls,
@@ -605,7 +604,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                 held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
                 return _completion_final(held or "Done.")
             rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
-            gs.nudge_reason = prompts.render("gate_fail_steer", errors=_clip_tail(errors, 1800))
+            # Pass the FULL failing-check output — no tail clip. Clipping to the last 1800 chars
+            # dropped the ROOT failure at the top and steered the coder to fix trailing symptoms;
+            # the context floor (contextfloor.fit) bounds the request losslessly-first at send time.
+            gs.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
             gs.steer_source = "completion gate (repo checks failed)"
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if gs.periodic_probe:

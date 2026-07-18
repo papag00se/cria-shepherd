@@ -63,8 +63,11 @@ def _steps_from_submit(msg: dict) -> list[str] | None:
 # The planner prompt lives in cria/prompts/plan.txt (edit it there). It asks for a
 # numbered LIST, not JSON: small local models emit a clean list far more reliably than
 # strict JSON — demanding JSON makes some (e.g. Gemma) emit a bespoke tool call instead.
-
-_MAX_STEPS = 12
+#
+# No step cap: EVERY emitted step is a PlanItem the loop executes. A prior 12-step slice
+# silently dropped the tail of a longer decomposition (steps 13+), so the loop ran a plan
+# that structurally omitted work and could declare done with work missing. The reasoner's
+# max_tokens already bounds how long a plan it can emit; the context floor bounds the window.
 
 # A numbered ("1." / "1)") or bulleted ("-" / "*" / "•") list line → its text.
 _LIST_LINE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.+\S)")
@@ -95,9 +98,9 @@ def parse_steps(text: str) -> list[str] | None:
     if obj and isinstance(obj.get("steps"), list):
         steps = [c for s in obj["steps"] if (c := _clean_step(s))]
         if steps:
-            return steps[:_MAX_STEPS]
+            return steps
     steps = [c for line in body.splitlines() if (m := _LIST_LINE.match(line)) and (c := _clean_step(m.group(1)))]
-    return steps[:_MAX_STEPS] or None
+    return steps or None
 
 
 class Planner:
@@ -211,7 +214,7 @@ class Planner:
                 steps = _steps_from_submit(msg)  # the model ended the gather by SUBMITTING its plan
                 if steps:
                     rlog.emit("plan.submitted", steps=len(steps))
-                    return steps[:_MAX_STEPS]
+                    return steps
                 sig = _calls_signature(calls)
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
                 # one `tool` result per call. NOT flattened to prose (the parroting trap).
@@ -251,7 +254,7 @@ class Planner:
             if steps:
                 if attempt:
                     rlog.emit("plan.final_recovered", attempt=attempt + 1)
-                return steps[:_MAX_STEPS]
+                return steps
             # Called something OTHER than submit_plan (e.g. a hallucinated `CreateNewProject`) →
             # retry. Log WHAT it called so the record shows it (not just "no plan").
             leaked = [((tc.get("function") or {}).get("name")) for tc in (msg.get("tool_calls") or [])]
@@ -263,9 +266,10 @@ class Planner:
         body: dict = {
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
-            # Cap the output so a reasoning model that fails to stop can't run to
-            # context-length and hang the request.
-            "max_tokens": 1536,
+            # Generous output room so a verbose reasoner's plan isn't cut mid-list — a truncated
+            # plan is parsed as a PARTIAL step list, silently dropping the tail work. Still bounded
+            # so a model that fails to stop can't run to context-length and hang the request.
+            "max_tokens": 8192,
             "messages": [{"role": "system", "content": prompts.load("plan")}] + messages,
         }
         if self._role is not None:

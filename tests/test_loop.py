@@ -312,6 +312,19 @@ class CompactionTests(unittest.TestCase):
         self.assertIn("h.py", log)
         self.assertNotIn(".cria", log)  # cria's own plan-file op stripped, not counted as work
 
+    def test_work_log_keeps_full_args_and_output_no_clip(self):
+        # The completion summary reads the work log; a 200-char clip of args/output would drop the
+        # real work before the reasoner ever sees it. Full content flows; the floor bounds the window.
+        from cria.loop import _work_log
+        body = "z" * 4000                                          # far past the old 200-char clip
+        msgs = [
+            {"role": "assistant", "tool_calls": [{"id": "a", "function": {"name": "write_file", "arguments": '{"path":"h.py","content":"' + body + '"}'}}]},
+            {"role": "tool", "tool_call_id": "a", "content": "OUTPUT " + body},
+        ]
+        log = _work_log(msgs)
+        self.assertEqual(log.count(body), 2)   # both the args body AND the tool output survive in full
+        self.assertNotIn("…", log)
+
     def test_satisfaction_evidence_includes_summary_after_a_compaction(self):
         # THE false 'no work done': a harness compaction replaces the structured tool history with a
         # ⟦ctx:...⟧ prose summary. _work_log alone is then EMPTY, so the judge hallucinated an empty
@@ -1967,6 +1980,18 @@ class CoderEvidenceTests(unittest.TestCase):
         ev = _coder_evidence(msgs, "probe1")
         self.assertIn("3 passed", ev)          # the coder's real run is the evidence
         self.assertNotIn("PROBE_EXIT", ev)     # cria's probe excluded
+
+    def test_keeps_all_runs_in_full_no_clip_no_last_n_drop(self):
+        # The critic must see the FULL ground truth: every coder run (not just the last 3) and each
+        # in full (no 400-char clip). A per-site slice here would be a lie the critic can't detect.
+        from cria.loop import _coder_evidence
+        big = "FAILED test_x " + ("y" * 5000)                       # far past the old 400-char clip
+        msgs = [{"role": "tool", "tool_call_id": f"c{i}", "content": f"run {i} {big}"} for i in range(8)]
+        ev = _coder_evidence(msgs, "probe1")
+        for i in range(8):                                          # all 8 kept, not just the last 3
+            self.assertIn(f"run {i}", ev)
+        self.assertIn("y" * 5000, ev)                              # each output in full, unclipped
+        self.assertNotIn("…", ev)
 
 
 class SharedGuardTests(unittest.TestCase):

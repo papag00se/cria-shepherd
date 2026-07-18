@@ -793,9 +793,12 @@ def build_glue(p: ProjectDir, out: list[ProbeCandidate]) -> None:
 #     .NET -> dotnet build · Elixir -> mix compile · TS -> tsc --noEmit
 #   (TypeScript without a tsconfig has no parse-only check — recorded in docs/port-fidelity-audit.md.)
 
-# Per-file parse checks are capped so a huge tree can't compose a giant script
-# (same bound the old floor used).
-MAX_FLOOR_FILES_PER_LANG = 40
+# Per-file parse checks carry a runaway guard ONLY — set far beyond any realistic
+# source tree so the floor covers EVERY file (a syntax error in .js #41, a broken
+# .toml #41, or an F821 in .py #45 must NOT escape the gate; the old 40-file clip
+# let them through). This is a pathological-tree/ARG_MAX ceiling, not a content
+# clip: any repo a coder actually works in gets full coverage.
+MAX_FLOOR_FILES_PER_LANG = 100_000
 # The same skip list the linter floor used, as a compileall -x regex.
 _COMPILEALL_SKIP_RE = r"(^|/)(\.git|\.cria|__pycache__|venv|\.venv|node_modules|dist|build)(/|$)"
 

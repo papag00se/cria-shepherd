@@ -22,8 +22,11 @@ def api_key() -> str | None:
     return env_secret(API_KEY_ENV)
 
 
-def query_url(query: str, count: int = 5) -> str:
-    """The full request URL with a properly %-encoded query (handles & ? # + and unicode)."""
+def query_url(query: str, count: int = 20) -> str:
+    """The full request URL with a properly %-encoded query (handles & ? # + and unicode).
+    Default requests Brave's per-request maximum (20): a caller that doesn't specify a count
+    should see the FULL result set, not a silent top-5 under-fetch. The clamp below is the only
+    bound — it prevents an invalid over-20 request, it never hides results the API would return."""
     count = max(1, min(20, count))
     return ENDPOINT + "?" + urllib.parse.urlencode({"q": query or "", "count": count})
 

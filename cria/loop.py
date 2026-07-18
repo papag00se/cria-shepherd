@@ -245,7 +245,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     retry never fired and every verdict failed closed. Parse the completion directly and let the caller
     retry reasoning-OFF on a parse miss — reasoning-off makes the model answer the JSON verdict directly
     instead of thinking itself into the coder's seat."""
-    call = {"stream": False, "max_tokens": 1024,
+    call = {"stream": False, "max_tokens": 8192,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     role = reasoner_role
     if reasoning_off:
@@ -274,15 +274,15 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if not task.strip():
         return False, "no task text to judge"
     system = prompts.load("satisfaction")
-    user = prompts.render("satisfaction_user", task=_clip(task, 1400),
-                          evidence=_clip_tail(evidence, 2500) or "(no actions recorded yet)")
+    user = prompts.render("satisfaction_user", task=task,
+                          evidence=evidence or "(no actions recorded yet)")
     obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
         # ending the task, because approving requires the verification a reasoning-off judge can't do
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
-        return bool(obj.get("satisfied")), _clip(str(obj.get("reason", "")), 200)
+        return bool(obj.get("satisfied")), str(obj.get("reason", ""))
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -294,7 +294,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, _clip(str(retry.get("reason", "")), 200)
+    return False, str(retry.get("reason", ""))
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -571,7 +571,7 @@ class Loop:
                 # The coder's protected prior-work context: cria's own briefing when we have one
                 # (compact, focused); else the harness summary TAIL, clipped — summaries put the
                 # current state / remaining work at the END, so the head is the droppable part.
-                sess = PlanSession(plan=plan, prior_work=briefing or _clip_tail(root_text, 4000))
+                sess = PlanSession(plan=plan, prior_work=briefing or root_text)
                 self._store.put(session_key, sess)
                 self._store.clear_rewrite(session_key)  # acted on it
                 rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
@@ -782,7 +782,7 @@ class Loop:
         if nudge is not None:  # GROUND TRUTH: floor or probes failed → the exact file:line errors
             sess.verify_fails += 1
             rlog.emit("loop.step_incomplete", step=idx, reason="probe failed", attempt=sess.verify_fails)
-            return self._renudge(sess, key, body, _clip_tail(nudge, 1800), rlog)
+            return self._renudge(sess, key, body, nudge, rlog)
 
         digest = proberun.completion_probe_digest(outcome.report)
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
@@ -803,7 +803,7 @@ class Loop:
         # what leaked "logs" into the plan file. The step line already says what was done.
         item.note = "verified" if ok else "accepted unverified"
         if not ok:  # remember WHY, for the honest closing (not written to the plan file)
-            item.fail_reason = _clip(reason, 200) or "its checks did not pass"
+            item.fail_reason = reason or "its checks did not pass"
         sess.summary = _extend_summary(sess.summary, idx, item.text)
         sess.verify_fails = 0
         sess.pending_coder_text = ""
@@ -850,12 +850,12 @@ class Loop:
         disk = _fresh_disk_facts(self._ctx.workspace_root, sess.recent_writes, sess.spin_path)
         user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
                               repeat_action=sess.repeat_action, evidence=evidence or "(none)",
-                              truth=_clip_tail(truth, 1200),
-                              disk=_clip_tail(disk, 2000) or "(no files touched yet)")
+                              truth=truth,
+                              disk=disk or "(no files touched yet)")
         text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, prompts.load("redirect"),
                          user, rlog, phase="reasoner")  # retry_off defaults True → the same two-pass
         if text:
-            return _clip(text, 1200)
+            return text
         # Reasoner unavailable → the SAME canned redirect the plan-off path uses (one steer text).
         return guard_canned_redirect(sess, outcome)
 
@@ -878,10 +878,10 @@ class Loop:
         labels = prompts.load_map("verify_user")
         parts = [prompts.fill(labels["step"], step=item)]
         if evidence:  # what the coder's OWN tools returned — real ground truth, not a claim
-            parts.append(prompts.fill(labels["evidence"], evidence=_clip(evidence, 900)))
+            parts.append(prompts.fill(labels["evidence"], evidence=evidence))
         if probe:
-            parts.append(prompts.fill(labels["probe"], probe=_clip(probe, 900)))
-        parts.append(prompts.fill(labels["summary"], coder_summary=_clip(coder_text, 800)))
+            parts.append(prompts.fill(labels["probe"], probe=probe))
+        parts.append(prompts.fill(labels["summary"], coder_summary=coder_text))
         user = "\n\n".join(parts)
 
         # First pass uses the reasoner role AS CONFIGURED (reasoning may be ON → a considered
@@ -893,7 +893,7 @@ class Loop:
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
-            done, reason = bool(obj.get("done")), _clip(str(obj.get("reason", "")), 200)
+            done, reason = bool(obj.get("done")), str(obj.get("reason", ""))
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -910,7 +910,7 @@ class Loop:
             reason = "unverified (no parseable verdict)"
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
             return False, reason
-        reason = _clip(str(retry.get("reason", "")), 200)   # a reasoning-off NOT-done is trustworthy
+        reason = str(retry.get("reason", ""))   # a reasoning-off NOT-done is trustworthy
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
         return False, reason
 
@@ -921,9 +921,10 @@ class Loop:
         body = {
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
-            # Bound the output: the verdict is a one-line JSON. Without a cap a reasoning
-            # model that fails to stop generates tens of thousands of tokens and HANGS the loop.
-            "max_tokens": 2048,
+            # Bound the output generously: the verdict's `reason` feeds the coder re-nudge, so it
+            # must never be truncated at generation. The cap stays only as a runaway backstop (a
+            # reasoning model that never stops) — well above any real verdict.
+            "max_tokens": 8192,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -1124,26 +1125,28 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     return "", ""
 
 
-def _work_log(messages: list[dict], limit: int = 6000) -> str:
-    """A compact log of the coder's REAL actions — the tool calls it made (file writes, commands)
+def _work_log(messages: list[dict]) -> str:
+    """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
-    Tool arguments are clipped (a write_file's full body is noise here; the path is the signal)."""
+    Full content flows: this is a model-read input (the summarizer/judge), and the context floor is
+    the one window-aware place any physical truncation happens — a per-site clip here would just be a
+    dumber, undetectable slice of what the model reads."""
     lines: list[str] = []
     for m in _strip_cria_file_ops(messages):
         role = m.get("role")
         if role == "assistant":
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
-                lines.append(f"$ {fn.get('name')} {_clip(str(fn.get('arguments', '')), 200)}")
+                lines.append(f"$ {fn.get('name')} {str(fn.get('arguments', '')).strip()}")
         elif role == "tool":
             c = str(m.get("content") or "").strip()
             if c and "PROBE_EXIT" not in c:  # skip cria's ground-truth probe output
-                lines.append(f"  -> {_clip(c, 200)}")
-    return _clip_tail("\n".join(lines), limit)
+                lines.append(f"  -> {c}")
+    return "\n".join(lines)
 
 
-def _satisfaction_evidence(messages: list[dict], limit: int = 6000) -> str:
+def _satisfaction_evidence(messages: list[dict]) -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -1151,7 +1154,7 @@ def _satisfaction_evidence(messages: list[dict], limit: int = 6000) -> str:
     yet)" and hallucinated that NO work was done (the observed false "the coder hasn't started" that
     marked a real, in-progress build as not-satisfied). The summary is the best record of the
     compacted-away work; the judge weighs it against the still-verbatim recent actions."""
-    log = _work_log(messages, limit)
+    log = _work_log(messages)
     summaries = [c.strip() for m in messages
                  if any(mk in (c := _msg_text_content(m)) for mk in
                         (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
@@ -1161,7 +1164,7 @@ def _satisfaction_evidence(messages: list[dict], limit: int = 6000) -> str:
             "this as a record of what was already built, then check it against the recent actions):\n"
             + "\n\n".join(summaries))
     tail = ("\n\nRECENT VERBATIM ACTIONS:\n" + log) if log.strip() else ""
-    return _clip_tail(head + tail, limit)
+    return head + tail
 
 
 def _strip_cria_banners(text: str) -> str:
@@ -1587,7 +1590,7 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> N
                 # it just fixed).
                 gs.recent_actions = []
                 gs.recent_writes = []
-                gs.repeat_action = f"{name} {_clip(args, 300)}"
+                gs.repeat_action = f"{name} {args}"
                 rlog.emit("loop.repetition", step=step, tool=name,
                           count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
 
@@ -1649,7 +1652,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
         gs.nudge_reason = prompts.render(
             "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N,
-            repeat_action=_clip(gs.repeat_action, 160), ground_truth="")
+            repeat_action=gs.repeat_action, ground_truth="")
         gs.steer_source = "repetition guard"
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
@@ -1730,11 +1733,11 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
     if not err:
         return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
-    return prompts.render("periodic_gate", truth=_clip_tail(err, 1800))
+    return prompts.render("periodic_gate", truth=err)
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
-              max_tokens: int = 1024, retry_off: bool = True) -> str:
+              max_tokens: int = 8192, retry_off: bool = True) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -1835,7 +1838,7 @@ def gate_error_text(outcome) -> str:
         return findings
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:
-        return prompts.render("ground_truth_failed", failed=_clip_tail("\n".join(failed), 800))
+        return prompts.render("ground_truth_failed", failed="\n".join(failed))
     return ""
 
 
@@ -1872,8 +1875,8 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
     just the 'you repeated an action, do something different' steer."""
     gt = guard_ground_truth(outcome)
     return prompts.render(
-        "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=_clip(gs.repeat_action, 160),
-        ground_truth=(f"{_clip_tail(gt, 900)}\n\n" if gt else ""))
+        "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=gs.repeat_action,
+        ground_truth=(f"{gt}\n\n" if gt else ""))
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:
@@ -1900,7 +1903,7 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=Non
     truth = guard_ground_truth(outcome)
     rlog.emit("loop.spin_probe_result", step=step, spoke=bool(truth))
     if truth:
-        return prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=_clip_tail(truth, 1800))
+        return prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=truth)
     return prompts.render("spin_no_truth", spin_path=gs.spin_path)
 
 
@@ -2028,23 +2031,21 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
 
 
 
-def _coder_evidence(messages: list[dict], probe_id, limit: int = 3) -> str:
-    """The results of the coder's OWN tool runs (its test/build/command output), for the
+def _coder_evidence(messages: list[dict], probe_id) -> str:
+    """The results of ALL the coder's OWN tool runs (its test/build/command output), for the
     critic to judge on — cria OBSERVES what the coder ran, it never fabricates a run.
-    Excludes cria's own probe and its silent `.cria/` writes."""
+    Excludes cria's own probe and its silent `.cria/` writes. Every output flows in full: this
+    is model-read evidence, and the context floor is the one window-aware place any physical
+    truncation happens — a per-site clip or last-N drop here would just be a dumber, undetectable
+    slice of the ground truth the critic decides on."""
     out: list[str] = []
     for m in reversed(messages):
         if m.get("role") != "tool" or m.get("tool_call_id") == probe_id:
             continue
         c = str(m.get("content") or "").strip()
         if c and "PROBE_EXIT" not in c and probegate.SECTION_PREFIX not in c:  # skip the probe/gate output
-            out.append(_clip(c, 400))
-            if len(out) >= limit:
-                break
+            out.append(c)
     return "\n---\n".join(reversed(out))
-
-
-MAX_REDIRECT_FILES = 5  # cap fresh-disk snapshots fed to a redirect — context, not the whole tree
 
 
 def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
@@ -2060,7 +2061,7 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
             paths.append(p)
     if not paths:
         return ""
-    snaps = groundtruth.file_snapshot(root, paths[:MAX_REDIRECT_FILES], groundtruth.DEFAULT_FILE_CAP)
+    snaps = groundtruth.file_snapshot(root, paths, groundtruth.DEFAULT_FILE_CAP)
     return groundtruth.GroundTruth(files=snaps).render()
 
 
@@ -2246,14 +2247,6 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
 def _clip(s: str, n: int) -> str:
     s = s.strip()
     return s if len(s) <= n else s[:n] + "…"
-
-
-def _clip_tail(s: str, n: int) -> str:
-    """Keep the LAST n chars. The probe's actionable output — the pytest short-summary
-    (`FAILED …`, `8 failed, 20 passed`) and the failing traceback — lands at the tail;
-    a head clip would hand the coder only the probe banner and miss the real error."""
-    s = s.strip()
-    return s if len(s) <= n else "…" + s[-n:]
 
 
 def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str, done: bool, reason: str) -> None:

@@ -42,13 +42,18 @@ except ImportError:  # pragma: no cover - environment without PyYAML
     _yaml = None
 
 # --- constants (mirrored from web_fetch.rs / content_reduce.rs) ----------------------------
-MAX_BODY_BYTES = 512 * 1024          # cap the raw body read (web_fetch.rs MAX_BODY_BYTES)
+MAX_BODY_BYTES = 8 * 1024 * 1024     # raw-body read cap; raised well past real specs (was 512 KiB in web_fetch.rs). A rare doc beyond this is DISCLOSED as truncated (FetchResult.truncated → render_page/find), never silently cut.
 CONTENT_CAP_TOKENS = 4000            # one page / one find response (WEB_FETCH_CONTENT_CAP_TOKENS)
 REQUEST_TIMEOUT_S = 30               # per-request (REQUEST_TIMEOUT_SECS)
 USER_AGENT = brave.USER_AGENT        # a real browser UA so ordinary sites don't 403 curl/8.x (curl_ua.rs)
 DOC_CACHE_CAP = 32                   # per-URL reduced-doc cache bound (DOC_CACHE_CAP)
 FIND_TOP_K = 3                       # best-N find matches returned (FIND_TOP_K)
 GUESS_STREAK_THRESHOLD = 3           # consecutive non-2xx before the stop-guessing nudge
+
+# Human-readable form of the body cap, for the truncation disclosure (so the model knows the
+# fetched doc was cut at a real boundary and content remains beyond it — not a silent slice).
+_BODY_CAP_LABEL = (f"{MAX_BODY_BYTES // (1024 * 1024)} MB" if MAX_BODY_BYTES >= 1024 * 1024
+                   else f"{MAX_BODY_BYTES // 1024} KB")
 
 
 @dataclass
@@ -139,13 +144,14 @@ def reduce_for_cache(body: str, content_type: Optional[str], url: str) -> tuple[
 
 # --- per-URL cache (web_fetch.rs DOC_CACHE) ------------------------------------------------
 
-_DOC_CACHE: dict[str, tuple[int, Optional[str], str, Optional[Any]]] = {}
+_DOC_CACHE: dict[str, tuple[int, Optional[str], str, Optional[Any], bool]] = {}
 
 
-def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any]) -> None:
+def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
+               truncated: bool) -> None:
     if len(_DOC_CACHE) >= DOC_CACHE_CAP and url not in _DOC_CACHE:
         _DOC_CACHE.clear()  # simple bound (Rust clears on overflow too)
-    _DOC_CACHE[url] = (status, ct, reduced, parsed)
+    _DOC_CACHE[url] = (status, ct, reduced, parsed, truncated)
 
 
 # --- coder-loop gate state (cria is a persistent server) -----------------------------------
@@ -242,7 +248,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
     navigating = bool(find) or bool(cursor)
     cached = _DOC_CACHE.get(url) if navigating else None
     if cached is not None:
-        status, ct, reduced, parsed = cached
+        status, ct, reduced, parsed, truncated = cached
     else:
         try:
             r = fetch(url, user_agent)
@@ -251,8 +257,8 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
         except (urllib.error.URLError, OSError) as e:
             return f"web_fetch error fetching {url}: {e}", None
         reduced, parsed = reduce_for_cache(r.body, r.content_type, url)
-        status, ct = r.status, r.content_type
-        _cache_put(url, status, ct, reduced, parsed)
+        status, ct, truncated = r.status, r.content_type, r.truncated
+        _cache_put(url, status, ct, reduced, parsed, truncated)
 
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
@@ -260,10 +266,16 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
                 "result — try a different source or path."), status
     if find:
         slice_ = find_in(reduced, parsed, find, cap_tokens)
+        # A find MISS on a truncated doc is the Ada-handle lie: the target may lie beyond the cut,
+        # not be absent. Disclose so a miss isn't mistaken for "doesn't exist" (final-page parity).
+        if truncated and ": no match" in slice_:
+            slice_ += (f"\n\n⚠ This document exceeded the {_BODY_CAP_LABEL} fetch limit and was cut; "
+                       "the term you searched may lie in the un-fetched remainder. Fetch a more "
+                       "specific URL/path or an alternate source.")
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 f'find="{find.strip()}"\n\n---\n{slice_}'), status
     offset = _parse_cursor(cursor) if cursor else 0
-    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens), status
+    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated), status
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------
@@ -295,7 +307,7 @@ def page_from(content: str, offset: int, cap_tokens: int) -> tuple[str, int, int
 
 
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
-                offset: int, cap_tokens: int) -> str:
+                offset: int, cap_tokens: int, truncated: bool = False) -> str:
     body, nxt, total = page_from(reduced, offset, cap_tokens)
     head = f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
     # For a large structured doc, lead with the shape so the model can `find=` a key instead
@@ -309,6 +321,12 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '
                 f'SAME url and cursor="c{nxt}", or call find="<keyword>" to jump to a section.')
+    elif truncated:
+        # End of what we fetched, but the raw body hit the read cap — the ORIGINAL doc is longer.
+        # Disclose so the paging end isn't mistaken for the real end-of-document (a silent slice).
+        out += (f"\n⚠ This document exceeded the {_BODY_CAP_LABEL} fetch limit and was cut here; "
+                "content remains beyond this point that was NOT fetched. If you need it, fetch a "
+                "more specific URL/path or an alternate source.")
     return out
 
 
@@ -436,8 +454,10 @@ def _resolve_ref_path(root: Any, ref: str) -> Any:
 
 
 def top_level_keys(root: Any) -> list[str]:
+    # ALL keys, uncapped: this is the navigation vocabulary on a find MISS and the shape hint for a
+    # structured doc — a cap would hide the very key the model needs (its target may be key #27).
     if isinstance(root, dict):
-        return [str(k) for k in list(root.keys())[:20]]
+        return [str(k) for k in root.keys()]
     if isinstance(root, list):
         return ["[array]"]
     return []
@@ -447,6 +467,9 @@ def find_text(content: str, query: str, cap_tokens: int) -> str:
     q = query.lower()
     lc = content.lower()
     per = max(256, (cap_tokens * 4) // max(1, FIND_TOP_K))
+    # Collect ALL distinct match windows, then show the top FIND_TOP_K and DISCLOSE the residual —
+    # a silent stop at FIND_TOP_K is a truncation the model can't detect (it may conclude the match
+    # it wants doesn't exist when it was really the 4th hit). Mirrors find_json's disclosure.
     results: list[str] = []
     frm = 0
     while True:
@@ -457,14 +480,18 @@ def find_text(content: str, query: str, cap_tokens: int) -> str:
         if not any(slice_ in r or r in slice_ for r in results):
             results.append(slice_)
         frm = rel + max(1, len(q))
-        if len(results) >= FIND_TOP_K:
-            break
     if not results:
-        heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")][:15]
+        # ALL headings, uncapped: on a miss this outline is how the model re-targets its find —
+        # the section it wants may be the 20th heading. The floor bounds the request downstream.
+        heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")]
         if not heads:
             return f'find "{query}": no match.'
         return f'find "{query}": no match. Sections:\n' + "\n".join(heads)
-    return "\n\n---\n\n".join(results)
+    shown = results[:FIND_TOP_K]
+    body = "\n\n---\n\n".join(shown)
+    if len(results) > len(shown):
+        body += f"\n\n[{len(results) - len(shown)} more match(es); narrow your find]"
+    return body
 
 
 def _extract_around(content: str, at: int, budget: int) -> str:

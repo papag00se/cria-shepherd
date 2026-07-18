@@ -17,12 +17,18 @@ _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 def strip_think(text: str) -> str:
     """Remove ``<think>…</think>`` blocks (reasoning models emit these before the
-    answer). Also drops a dangling unclosed ``<think>`` and everything after it."""
+    answer). Also drops a dangling unclosed ``<think>`` and everything after it —
+    UNLESS a parseable JSON object follows the tag. A model that forgot to close
+    its ``<think>`` before emitting the answer (``<think>deciding…\n{"x":1}``)
+    still has a real object in the tail; blindly slicing from ``<think`` to the
+    end would silently discard that answer, so we keep the tail when it parses.
+    """
     text = _THINK.sub("", text)
     lower = text.lower()
     idx = lower.rfind("<think")
     if idx != -1 and "</think" not in lower[idx:]:
-        text = text[:idx]
+        if _scan_object(text[idx:]) is None:
+            text = text[:idx]
     return text
 
 
@@ -36,9 +42,14 @@ def extract_json_object(text: str) -> dict | None:
     if not text:
         return None
     cleaned = _FENCE.sub("", strip_think(text)).replace("```", "")
-    start = cleaned.find("{")
+    return _scan_object(cleaned)
+
+
+def _scan_object(s: str) -> dict | None:
+    """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
+    start = s.find("{")
     while start != -1:
-        span = _balanced_object(cleaned, start)
+        span = _balanced_object(s, start)
         if span is not None:
             try:
                 obj = json.loads(span)
@@ -46,7 +57,7 @@ def extract_json_object(text: str) -> dict | None:
                 obj = None
             if isinstance(obj, dict):
                 return obj
-        start = cleaned.find("{", start + 1)
+        start = s.find("{", start + 1)
     return None
 
 

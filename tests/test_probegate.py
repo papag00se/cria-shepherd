@@ -317,6 +317,16 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("failed", out.lower())
         self.assertNotIn("imported but unused", out)
 
+    def test_all_error_class_findings_shown_no_40_line_clip(self):
+        # A 40-line clip once hid findings 41+, so the model "fixed" the visible ones and claimed done
+        # while real errors below the fold stayed invisible. Every error-class finding must appear.
+        lines = [f"x.py:{i}:4 undefined name 'v{i}'" for i in range(1, 51)]   # 50 distinct real errors
+        raw = self._raw("\n".join(lines) + "\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("x.py:1:4 undefined name 'v1'", out)
+        self.assertIn("x.py:50:4 undefined name 'v50'", out)   # the 50th survives — no 40-line clip
+        self.assertEqual(sum(1 for l in out.splitlines() if "undefined name" in l), 50)
+
     def test_non_gate_text_untouched(self):
         self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers"))
         self.assertIsNone(probegate.clean_gate_output(""))

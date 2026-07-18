@@ -262,6 +262,21 @@ class ProtectedOverflowTests(unittest.TestCase):
         out, tools, rep = contextfloor.fit(msgs, None, window=8000, reserve=1000, safety=1.8)
         self.assertTrue(rep.over_budget)                  # honest: nothing droppable remained
 
+    def test_lever5_sacrifices_protect_marked_last(self):
+        # A protect-marked anchor (the compacted-note summary / briefing / gate anchor) sitting in
+        # the droppable active span is dropped LAST — unmarked neighbors go first. It is the summary
+        # standing in for everything already gone, so losing it is the worst loss.
+        anchor = {"role": "tool", "tool_call_id": "gate",
+                  "content": "___CRIA_GATE_ the ground-truth check output " + "g" * 600}
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "user", "content": "request"}]     # last_user = 1
+        for i in range(40):
+            msgs.append({"role": "assistant", "content": "a" * 600})
+        msgs.insert(5, anchor)                              # protect-marked, near the OLDEST droppable
+        out, dropped = contextfloor._drop_protected_overflow(msgs, msg_budget=1500)
+        self.assertGreater(dropped, 10)                    # lots of unmarked turns dropped
+        self.assertIn(anchor, out)                         # ...but the anchor survived them all
+
 
 class FloorSynthesisTests(unittest.TestCase):
     """Dropping old turns SYNTHESIZES their durable state (files modified) instead of deleting it."""
@@ -281,3 +296,35 @@ class FloorSynthesisTests(unittest.TestCase):
         self.assertIn(contextfloor._COMPACTED_MARK, joined)   # dropped turns synthesized, not vanished
         self.assertIn("app/resolver.py", joined)              # the modified file survives the drop
         self.assertEqual(out[0]["role"], "system")            # system stays at the front
+
+    def test_drop_oldest_digests_dropped_prose_output(self):
+        # A dropped test-failure / error output must survive as a content_reduce()d SUMMARY in the
+        # stand-in note — not vanish, and not be carried whole. This is the core enrichment.
+        fail = ("The test suite failed because the resolver returned None for the Ada handle "
+                "and the assertion did not hold on the second row. ") * 30
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "assistant", "content": "run tests",
+             "tool_calls": [{"id": "c1", "function": {"name": "shell", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": fail},
+            {"role": "user", "content": "x" * 4000},
+        ]
+        out, dropped = contextfloor._drop_oldest(msgs, msg_budget=400)
+        self.assertGreater(dropped, 0)
+        note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
+        self.assertIn("resolver", note["content"])            # the failure's substance survives
+        self.assertIn("assertion", note["content"])
+        self.assertLess(est_tokens(note["content"]), est_tokens(fail))  # summarized, not carried whole
+
+    def test_drop_oldest_lists_all_modified_files_no_cap(self):
+        # No 30-file cap: every file the dropped turns modified is listed, however many.
+        writes = [{"role": "assistant", "content": "",
+                   "tool_calls": [{"id": f"c{i}", "function": {"name": "write_file",
+                                   "arguments": json.dumps({"path": f"pkg/mod_{i}.py", "content": "x"})}}]}
+                  for i in range(40)]
+        msgs = [{"role": "system", "content": "sys"}] + writes + [{"role": "user", "content": "y" * 4000}]
+        out, dropped = contextfloor._drop_oldest(msgs, msg_budget=200)
+        self.assertEqual(dropped, 40)
+        note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
+        for i in range(40):
+            self.assertIn(f"pkg/mod_{i}.py", note["content"])   # all 40 listed, no silent omission

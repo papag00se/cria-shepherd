@@ -96,6 +96,11 @@ _WROTE = "⟦ctx:wrote⟧"
 # contents in the failure so the model has exact text to copy. Bounded so a large file never dumps.
 EDIT_SHOW_FULL_MAX = 2000
 _FETCH_TIMEOUT_S = 20
+# Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
+# actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
+# total count, so the model is never silently capped at the top few and knows how many exist. 20 is
+# Brave's hard per-request ceiling (query_url clamps to it); this requests it, it does not exceed it.
+_SEARCH_MAX_RESULTS = 20
 
 
 # --------------------------------------------------------------------- synthetic schemas
@@ -345,12 +350,15 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
 def _search_command(args: dict, brave_key: str) -> str:
     """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
     shared `brave` module (same request the planner's in-process search builds), then parsed to
-    compact "title / url / description" lines the model can pair with web_fetch."""
-    url = brave.query_url(args.get("query") or "")
+    compact "title / url / description" lines the model can pair with web_fetch. Requests Brave's
+    per-request maximum and prints EVERY returned result (no display slice) with a total-count header
+    so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
+    url = brave.query_url(args.get("query") or "", count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     parse = (r"""python3 -c 'import sys,json"""
              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
-             r""";print("\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r[:8]) or "no results")'""")
+             r""";body="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
+             r""";print(("%d results:\n"%len(r))+body if r else "no results")'""")
     return f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse}"
 
 

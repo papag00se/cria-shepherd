@@ -185,8 +185,12 @@ def clean_gate_output(raw: str) -> str | None:
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
     if findings:                    # a check RAN and found a real error-class problem — foreground it
+        # Show EVERY error-class finding — a 40-line clip once hid findings 41+, so the model "fixed"
+        # what it saw and claimed done while real errors remained invisible. The context floor
+        # (contextfloor.fit) is the one window-aware place a truncation may happen, and only when the
+        # physical window forces it — never a blind per-site clip here.
         return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — fix them at "
-                "the reported line:\n" + "\n".join(findings[:40]))
+                "the reported line:\n" + "\n".join(findings))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")

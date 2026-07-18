@@ -8,19 +8,22 @@ re-deciding to repeat them. This trims what the MODEL sees so it stays focused o
 
 Two rules, applied in order:
 
-  A. COLLAPSE EXACT DUPLICATES — a tool call with the same (name, canonicalized arguments) appearing
-     more than once is reduced to its LAST occurrence (the freshest result: a `cat x` that failed
-     then succeeded after an edit keeps the success). This also subsumes "superseded errors" (same
-     command failed then succeeded) and exact re-reads of a file.
+  A. COLLAPSE EXACT DUPLICATES — a tool call with the same (name, canonicalized arguments, AND
+     result content) appearing more than once is reduced to its LAST occurrence. The OUTPUT is part
+     of the key: a `cat config` run before vs after an edit returns DIFFERENT content, so BOTH are
+     kept (the earlier output is never lost to a silent collapse). Only a byte-identical re-run —
+     same command AND same result — collapses, subsuming an exact re-read of a file whose content
+     did not change.
 
-  B. SQUASH ERROR-SPAM — failed actions (an assistant turn with one tool call whose result is an
-     error: non-zero exit, file-not-found, command-not-found) are collapsed once there are more than
-     `_SPAM_KEEP` of them: the last `_SPAM_KEEP` FAILURES survive (a live error the model is fixing
-     is never removed, even across intervening successes), all EARLIER failures are removed wherever
-     they sit, and one note names everything that was tried. They need NOT be consecutive — a
-     dead-end is noise whether it flails in a spree or is scattered across the session; the note
-     carries the negative information ("these were tried and FAILED; don't retry them") regardless of
-     position. Successful actions are always kept, in place.
+  B. SQUASH SOFT ERROR-SPAM — soft-failed actions (an assistant turn with one tool call whose result
+     is a dead-end LOOKUP: file-not-found, command-not-found, a bare "not found" with no explicit
+     success) are collapsed once there are more than `_SPAM_KEEP` of them: the last `_SPAM_KEEP`
+     survive, all EARLIER ones are removed wherever they sit, and one note names everything that was
+     tried. They need NOT be consecutive — a dead-end lookup is noise whether it flails in a spree or
+     is scattered across the session. HARD failures (the tool itself exited non-zero — a failing
+     pytest / build / live-test) are NEVER squashed: their output carries the traceback / assertion /
+     error the coder needs to fix the problem, so every one is kept IN FULL, in place. Successful
+     actions are always kept too.
 
 Both drop tool calls and their paired results as UNITS, so no `tool` result is ever orphaned from
 its `assistant` tool_call (the one hard constraint in the OpenAI/Responses message format). Neither
@@ -43,9 +46,10 @@ from . import probegate, prompts
 # folds it into a note that tells the model "don't repeat these". It must survive the squash.
 _GATE_MARKER = probegate.SECTION_PREFIX
 
-# Error-spam squash tuning. Squash only once there are MORE than _SPAM_KEEP failed actions (so a
-# couple of failures are left alone); the most recent _SPAM_KEEP failures always survive (a live
-# error the model is fixing is never removed, even across intervening successes).
+# Error-spam squash tuning. Squash only once there are MORE than _SPAM_KEEP SOFT-failed actions (so
+# a couple of dead-end lookups are left alone); the most recent _SPAM_KEEP soft failures always
+# survive (a live dead-end the model is fixing is never removed, even across intervening successes).
+# HARD failures (non-zero exit) are exempt entirely — see _is_hard_failure — never dropped.
 _SPAM_KEEP = 2
 
 # HARD failures — the tool itself exited non-zero. Unambiguous dead ends.
@@ -82,11 +86,6 @@ class TrimReport:
         return self.dropped_calls > 0 or self.dropped_msgs > 0 or self.squashed_runs > 0
 
 
-def _clip(s: str, n: int) -> str:
-    s = str(s)
-    return s if len(s) <= n else s[: n - 1] + "…"
-
-
 def _fingerprint(tc: dict) -> tuple[str, str]:
     """(name, normalized-arguments) — JSON args are canonicalized (key order / whitespace
     insensitive); non-JSON falls back to the stripped string."""
@@ -117,6 +116,13 @@ def _is_failure(content) -> bool:
     return any(p.search(content) for p in _SOFT_FAIL_SIGNATURES)
 
 
+def _is_hard_failure(content) -> bool:
+    """The tool itself exited NON-ZERO (matches a HARD signature). Unlike a soft dead-end lookup, its
+    output carries the traceback / assertion / build error the coder needs to fix the problem — so it
+    is exempt from the error-spam squash and kept in full, never folded into a 'tried' note."""
+    return isinstance(content, str) and any(p.search(content) for p in _HARD_FAIL_SIGNATURES)
+
+
 def _call_is_gate(tc: dict) -> bool:
     """The tool call is cria's own gate probe — its command carries the ___CRIA_GATE_ marker."""
     args = (tc.get("function") or {}).get("arguments") or ""
@@ -140,12 +146,27 @@ def _tried_label(tc: dict) -> str:
         detail = d.get("cmd") or d.get("command") or d.get("path") or json.dumps(d, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
         detail = str(args)
-    return f"{name}({_clip(str(detail), 60)})"
+    # Full command text — a model can't recognize (and so can't avoid retrying) a command shown as
+    # "python -m pytest tests/really/long/pa…". The whole label rides in the squash note.
+    return f"{name}({str(detail)})"
 
 
 def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
-    """Rule A — collapse exact-duplicate tool calls to their LAST occurrence."""
-    occ: dict[tuple[str, str], list[str]] = {}
+    """Rule A — collapse duplicate tool calls to their LAST occurrence. The key is (name, canonical
+    arguments, AND result content): a command re-run with DIFFERENT output (e.g. `cat config` before
+    vs after an edit) is NOT a duplicate, so both are kept and no earlier output is lost. Only a
+    byte-identical re-run — same args AND same result — collapses."""
+    # Map each tool_call id → its result content so identical args with DIFFERING output stay
+    # distinct. Missing result → "" (two argless-identical calls with no result collapse harmlessly;
+    # a present-vs-missing result differs → both kept).
+    result_by_id: dict[str, str] = {}
+    for m in messages:
+        if m.get("role") == "tool":
+            rid = m.get("tool_call_id")
+            if rid is not None:
+                result_by_id[rid] = str(m.get("content") or "")
+
+    occ: dict[tuple[str, str, str], list[str]] = {}
     for m in messages:
         if m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
@@ -154,7 +175,8 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
                 # would collapse and drop an earlier probe+result pair cria depends on (same class
                 # as the failure-squash exemption).
                 if cid is not None and not _call_is_gate(tc):
-                    occ.setdefault(_fingerprint(tc), []).append(cid)
+                    name, norm = _fingerprint(tc)
+                    occ.setdefault((name, norm, result_by_id.get(cid, "")), []).append(cid)
     drop_ids = {cid for cids in occ.values() if len(cids) > 1 for cid in cids[:-1]}
     if not drop_ids:
         return messages, TrimReport()
@@ -182,11 +204,13 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
 
 
 def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
-    """Rule B — collapse stale failed actions (position-independent). Keep the last _SPAM_KEEP
-    FAILURES (a live error survives even across intervening successes); remove every earlier failure
-    wherever it sits, and replace them with ONE note naming what was tried. Successful actions are
-    always kept. An 'action' is an assistant turn with one tool call immediately followed by its
-    (failing) result."""
+    """Rule B — collapse stale SOFT-failed actions (position-independent). Keep the last _SPAM_KEEP
+    soft failures (a live dead-end the model is fixing survives even across intervening successes);
+    remove every earlier soft failure wherever it sits, and replace them with ONE note naming what
+    was tried. HARD failures (non-zero exit — a failing pytest / build / live-test) are NEVER a
+    squash candidate: their output carries the traceback / assertion the coder needs, so they are
+    kept in full, in place. Successful actions are always kept. An 'action' is an assistant turn with
+    one tool call immediately followed by its (failing) result."""
     failed: list[tuple[int, int, dict]] = []  # (assistant_idx, result_idx, tool_call), in order
     i, n = 0, len(messages)
     while i < n - 1:
@@ -194,6 +218,7 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         nxt = messages[i + 1]
         if (tc is not None and nxt.get("role") == "tool"
                 and nxt.get("tool_call_id") == tc.get("id") and _is_failure(nxt.get("content"))
+                and not _is_hard_failure(nxt.get("content"))  # hard fail carries diagnostics — keep in full
                 and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
             failed.append((i, i + 1, tc))
             i += 2
@@ -206,7 +231,7 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     remove = {idx for a, r, _tc in drop for idx in (a, r)}
     note_at = drop[-1][0]  # the last removed failure's position → the note sits just before the kept ones
     tried = "; ".join(_tried_label(tc) for _a, _r, tc in drop)
-    note = prompts.render("trim_error_squash", n=len(drop), tried=_clip(tried, 400))
+    note = prompts.render("trim_error_squash", n=len(drop), tried=tried)  # full list — don't elide squashed attempts
     rep = TrimReport(dropped_calls=len(drop), dropped_msgs=len(drop) * 2, squashed_runs=1)
 
     out: list[dict] = []

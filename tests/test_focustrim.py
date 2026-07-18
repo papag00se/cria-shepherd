@@ -13,21 +13,25 @@ def _result(cid, content):
 
 
 class FocusTrimTests(unittest.TestCase):
-    def test_collapses_exact_duplicate_calls_keeping_last(self):
+    def test_collapses_only_calls_with_identical_output_keeping_last(self):
+        # The dedup key is (name, args, RESULT). A and B are byte-identical (same cmd, same output) →
+        # they collapse to the last (B). C reruns the same cmd but its OUTPUT differs (the file now
+        # exists after an edit) → it is NOT a duplicate; both B and C survive so the before/after
+        # content is preserved (the earlier output is never silently lost).
         msgs = [
             {"role": "user", "content": "build it"},
             _asst("A", "exec", '{"cmd": "cat x"}'), _result("A", "no such file"),
-            _asst("B", "exec", '{"cmd": "cat x"}'), _result("B", "no such file"),  # dup
-            _asst("C", "exec", '{"cmd": "cat x"}'), _result("C", "def f(): ..."),  # dup (last → kept)
+            _asst("B", "exec", '{"cmd": "cat x"}'), _result("B", "no such file"),  # identical → dup of A
+            _asst("C", "exec", '{"cmd": "cat x"}'), _result("C", "def f(): ..."),  # DIFFERENT output → kept
         ]
         out, rep = trim(msgs)
         self.assertTrue(rep.applied)
-        self.assertEqual(rep.dropped_calls, 2)
-        self.assertEqual(rep.dropped_msgs, 2)                 # both emptied assistant turns dropped
+        self.assertEqual(rep.dropped_calls, 1)                # only A (its output matches B) is dropped
+        self.assertEqual(rep.dropped_msgs, 1)                 # A's emptied assistant turn dropped
         ids = [tc["id"] for m in out if m.get("role") == "assistant" for tc in m["tool_calls"]]
-        self.assertEqual(ids, ["C"])                          # only the last occurrence survives
+        self.assertEqual(ids, ["B", "C"])                     # the differing-output rerun survives
         tool_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool"]
-        self.assertEqual(tool_ids, ["C"])                     # its result stays; the orphans go
+        self.assertEqual(tool_ids, ["B", "C"])                # both distinct outputs kept
         self.assertEqual(out[0], {"role": "user", "content": "build it"})
 
     def test_no_orphaned_results_and_distinct_calls_kept(self):
@@ -87,9 +91,12 @@ if __name__ == "__main__":
 
 
 def _fail_action(cid, cmd):
+    # A SOFT dead-end lookup (file-not-found, no hard non-zero-exit line). These are the noise the
+    # squash collapses. A HARD failure (non-zero exit carrying a traceback) is exempt — see
+    # HardFailKeptTests — so squash-behavior fixtures must be soft-only.
     return [{"role": "assistant", "tool_calls": [{"id": cid, "type": "function",
              "function": {"name": "exec_command", "arguments": '{"cmd": "%s"}' % cmd}}]},
-            {"role": "tool", "tool_call_id": cid, "content": "%s: No such file or directory\nProcess exited with code 1" % cmd}]
+            {"role": "tool", "tool_call_id": cid, "content": "%s: No such file or directory" % cmd}]
 
 
 class GateDupCollapseTests(unittest.TestCase):
@@ -179,6 +186,58 @@ class ErrorSquashTests(unittest.TestCase):
         # …and the gate is NOT named in the "removed failed attempts" note
         note = [m for m in out if "[removed" in str(m.get("content", ""))][0]
         self.assertNotIn(GATE, note["content"])
+
+    def test_full_command_and_tried_list_are_not_clipped_in_the_note(self):
+        # The squash note names what was tried so the model won't retry it. A model can't recognize a
+        # command that was cut to 60 chars ("python -m pytest tests/really/long/pa…"), nor a Tried:
+        # list cut at 400 — so the full command text of every dropped attempt must appear in full.
+        long_paths = [f"tests/really/long/path/that/exceeds/sixty/characters/module_{i}/test_case_{i}.py"
+                      for i in range(6)]
+        msgs = [{"role": "user", "content": "x"}]
+        for i, p in enumerate(long_paths):
+            cmd = f"python -m pytest {p}"
+            msgs += [{"role": "assistant", "tool_calls": [{"id": f"c{i}", "type": "function",
+                      "function": {"name": "exec_command", "arguments": '{"cmd": "%s"}' % cmd}}]},
+                     {"role": "tool", "tool_call_id": f"c{i}", "content": "%s: No such file or directory" % cmd}]
+        out, rep = trim(msgs)
+        self.assertEqual(rep.squashed_runs, 1)
+        note = [m for m in out if "[removed" in str(m.get("content", ""))][0]["content"]
+        self.assertNotIn("…", note)                                   # nothing elided
+        # every dropped command appears in full (the 4 oldest of the 6 are dropped)
+        for p in long_paths[:4]:
+            self.assertIn(p, note)
+
+
+class HardFailKeptTests(unittest.TestCase):
+    """A HARD failure (non-zero exit — a failing pytest / build / live-test) carries the traceback /
+    assertion the coder needs. It must NEVER be folded into a 'tried' note or dropped as spam, no
+    matter how many pile up — every one is kept in full, in place."""
+
+    def test_hard_failures_are_never_squashed(self):
+        # 5 DISTINCT failing pytest runs (distinct args + distinct output so Rule-A dedup can't touch
+        # them either). All exit non-zero → all exempt → nothing squashed, nothing dropped.
+        msgs = [{"role": "user", "content": "fix it"}]
+        for i in range(5):
+            tb = f"tests/test_{i}.py::test_case FAILED\nAssertionError: expected 3 got {i}\nProcess exited with code 1"
+            msgs += [{"role": "assistant", "tool_calls": [{"id": f"h{i}", "type": "function",
+                      "function": {"name": "exec_command", "arguments": '{"cmd": "pytest tests/test_%d.py"}' % i}}]},
+                     {"role": "tool", "tool_call_id": f"h{i}", "content": tb}]
+        out, rep = trim(msgs)
+        self.assertEqual(rep.squashed_runs, 0)                        # no hard fail squashed
+        self.assertEqual(rep.dropped_calls, 0)                        # none dropped
+        self.assertFalse(rep.applied)
+        # every traceback is still present in full
+        surviving = "".join(str(m.get("content", "")) for m in out)
+        for i in range(5):
+            self.assertIn(f"expected 3 got {i}", surviving)
+        kept_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool"]
+        self.assertEqual(kept_ids, [f"h{i}" for i in range(5)])
+
+    def test_is_hard_failure_matches_only_nonzero_exit(self):
+        from cria.focustrim import _is_hard_failure
+        self.assertTrue(_is_hard_failure("AssertionError\nProcess exited with code 1"))
+        self.assertFalse(_is_hard_failure("cat: x: No such file or directory"))  # soft dead-end, no exit line
+        self.assertFalse(_is_hard_failure("all good\nProcess exited with code 0"))
 
 
 class IsFailureExitCodeTests(unittest.TestCase):

@@ -231,12 +231,15 @@ class TestCompletionBlockNudge(unittest.TestCase):
         self.assertEqual(lines[1], "  • src/b.py:9: boom")
         self.assertEqual(lines[2], "  • src/c.py: bad")  # line=None -> bare file
 
-    def test_findings_capped_at_five_per_probe(self):
+    def test_all_findings_shown_per_probe(self):
+        # No .take(5) clip: EVERY finding a probe produced is shown, so an error past the 5th is never
+        # hidden from the model (a probe with 12 real errors once surfaced only 5). The window-aware
+        # context floor is the only place a truncation may happen.
         findings = [Finding("f.py", i, None, f"m{i}") for i in range(1, 8)]
         report = ProbeReport(["python"], [], [ProbeResult("ruff check .", 1, "s", findings)])
         nudge = completion_block_nudge(report, LinterReport())
         bullets = [l for l in nudge.split("\n") if l.startswith("  • ")]
-        self.assertEqual(len(bullets), 5)
+        self.assertEqual(len(bullets), 7)
 
     def test_single_finding_is_not_echoed_as_a_duplicate_bullet(self):
         # When the "$ cmd — summary" header IS the one finding (summary == "file:line: msg"), the bullet
@@ -396,10 +399,13 @@ class TestComposeProbeCommand(unittest.TestCase):
         c = synth(["echo", "a b"])
         c.working_dir = "/tmp/with space"
         line = compose_probe_command(c, 10.0)
+        half = PROBE_OUTPUT_CAP_BYTES // 2
         self.assertIn("cd '/tmp/with space' && ", line)        # cwd, quoted
         self.assertIn("timeout -k 5 10 echo 'a b'", line)      # hard timeout + quoted argv
         self.assertIn("</dev/null 2>&1", line)                 # stdin null, merged streams
-        self.assertIn(f"tail -c {PROBE_OUTPUT_CAP_BYTES}", line)  # context-bomb cap
+        self.assertIn(f"head -c {half}", line)                 # head+tail budget: an EARLY failure survives
+        self.assertIn(f"tail -c {half}", line)                 # ...and a late one
+        self.assertIn("elided", line)                          # middle-elision disclosed, never silent
         self.assertIn(PROBE_EXIT_SENTINEL, line)               # exit-code sentinel
 
     def test_fractional_timeout_is_not_truncated_to_zero(self):
@@ -521,6 +527,21 @@ class TestComposedRoundtrip(unittest.TestCase):
         r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 5.0)
         self.assertIsNone(r.exit_code)
         self.assertIn("failed to launch", r.summary)
+
+    def test_head_tail_preserves_an_early_failure_under_a_huge_tail(self):
+        # THE tail-only footgun: a real failure printed EARLY, then buried under a long teardown/summary.
+        # head+tail keeps the head, so parse_output still localizes it (a tail -c clip would have lost
+        # the failure entirely). The elided middle is disclosed, never silently dropped.
+        code = ("import sys\n"
+                "print('src/x.py:9: error: boom')\n"     # the real failure, printed FIRST
+                "print('z' * 40000)\n"                    # a huge teardown tail > the output budget
+                "sys.exit(1)")
+        c = synth(["python3", "-c", code])
+        proc = self._run(compose_probe_command(c, 10.0))
+        r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 10.0)
+        self.assertEqual(r.exit_code, 1)
+        self.assertTrue(any(f.file == "src/x.py" and f.line == 9 for f in r.findings))
+        self.assertIn("elided", proc.stdout)              # the middle-elision was disclosed
 
 
 if __name__ == "__main__":

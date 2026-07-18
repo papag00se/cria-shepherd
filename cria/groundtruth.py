@@ -29,11 +29,19 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .content_reduce import content_reduce, est_tokens
 from .linterprobe import Runner, run_linter_probe
 
-# Per-file snapshot cap, in bytes: enough to show a whole small module verbatim without
-# letting one fat file drown the redirect prompt.
-DEFAULT_FILE_CAP = 8 * 1024
+# Per-file snapshot cap, in tokens. This module exists to replace the transcript's
+# *truncated* tool outputs with the REAL disk bytes for the stuck-coder redirect reasoner —
+# so a blind byte slice here would reintroduce the exact lie it was built to cure (a bug
+# past the cut would be invisible to the reasoner, which then decides on falsified input).
+# The default therefore reads the WHOLE file: the context floor (contextfloor.fit, run on
+# every outbound call) is the one window-aware place that bounds the request, and it is
+# lossless-first. This cap is a generous last-resort valve for a *pathologically* huge file,
+# and even then the reduction goes through content_reduce (lossless-first — source code is
+# returned verbatim, HTML/JSON shrink losslessly, prose is guarded) — never a mid-file cut.
+DEFAULT_FILE_CAP = 200_000  # tokens (~800 KB of text); real redirect files sit far below this
 
 
 @dataclass
@@ -87,9 +95,13 @@ def resolve(root: str, path: str) -> str:
     return os.path.join(root, path)
 
 
-def file_snapshot(root: str, paths: list[str], max_bytes: int) -> list[FileSnapshot]:
-    """Read each path from the live disk (never the transcript), byte-capped. A missing
-    or unreadable file is a *fact* (exists=False), not an exception."""
+def file_snapshot(root: str, paths: list[str], cap_tokens: int = DEFAULT_FILE_CAP) -> list[FileSnapshot]:
+    """Read each path from the live disk (never the transcript). The FULL file bytes flow to
+    the reasoner — that is the whole point of this module, and the context floor bounds the
+    outbound window downstream. Only a file over ``cap_tokens`` is shrunk, and then via
+    content_reduce (lossless-first; source code passes through verbatim) — never a blind byte
+    slice the reasoner cannot detect. A missing or unreadable file is a *fact*
+    (exists=False), not an exception."""
     out: list[FileSnapshot] = []
     for p in paths:
         try:
@@ -98,10 +110,12 @@ def file_snapshot(root: str, paths: list[str], max_bytes: int) -> list[FileSnaps
         except OSError:
             out.append(FileSnapshot(path=p, content="", exists=False, truncated=False))
             continue
-        truncated = len(raw) > max_bytes
-        end = max_bytes if truncated else len(raw)
-        out.append(FileSnapshot(path=p, content=raw[:end].decode("utf-8", errors="replace"),
-                                exists=True, truncated=truncated))
+        content = raw.decode("utf-8", errors="replace")
+        reduced = content
+        if cap_tokens > 0 and est_tokens(content) > cap_tokens:
+            reduced = content_reduce(content, None, cap_tokens)
+        out.append(FileSnapshot(path=p, content=reduced, exists=True,
+                                truncated=reduced != content))
     return out
 
 

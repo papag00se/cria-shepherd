@@ -16,8 +16,21 @@ class JsonTextTests(unittest.TestCase):
         self.assertEqual(extract_json_object(raw), {"task_type": "coding"})
 
     def test_unclosed_think_dropped(self):
-        # a dangling <think> with no close: everything after it goes, so no object.
+        # a dangling <think> with no close AND no real object after it: tail goes.
         self.assertIsNone(extract_json_object("<think>reasoning with { a brace"))
+
+    def test_unclosed_think_preserves_following_object(self):
+        # model forgot to close <think> before emitting the answer JSON: the real
+        # object in the tail must survive (never blindly slice from <think to end).
+        raw = '<think>deciding what to do…\n{"engagement": "task"}'
+        self.assertEqual(extract_json_object(raw), {"engagement": "task"})
+        # strip_think keeps the tail so the answer is still reachable.
+        self.assertIn('{"engagement": "task"}', strip_think(raw))
+
+    def test_unclosed_think_preserves_fenced_following_object(self):
+        # same, but the answer arrives inside a ```json fence after the open tag.
+        raw = '<think>hmm\n```json\n{"task_type": "coding"}\n```'
+        self.assertEqual(extract_json_object(raw), {"task_type": "coding"})
 
     def test_trailing_prose_ignored(self):
         raw = '{"x": 1} and then some explanation about why.'

@@ -177,12 +177,27 @@ class TestGroundTruth(_TmpDirTest):
         self.assertFalse(snaps[0].truncated)
         self.assertFalse(snaps[1].exists)
 
-    def test_snapshot_is_bounded(self):
+    def test_snapshot_reads_full_source_no_blind_slice(self):
+        # This module exists to feed the reasoner the REAL disk bytes; a mid-file byte cut
+        # would reintroduce the exact truncation lie it was built to cure. Even a tiny cap
+        # must NOT blind-slice: source code passes through content_reduce verbatim, so the
+        # whole file reaches the reasoner and the context floor bounds the window downstream.
         d = self.tmpdir()
-        _write(d, "big.txt", "x" * 10_000)
-        (snap,) = file_snapshot(d, ["big.txt"], 100)
-        self.assertTrue(snap.truncated)
-        self.assertEqual(len(snap.content), 100)
+        body = "def f():\n    return 1\n" * 1000  # ~22 KB, far past the old 8 KiB cap
+        _write(d, "big.py", body)
+        (snap,) = file_snapshot(d, ["big.py"], 1)  # cap of 1 token — must still be lossless
+        self.assertTrue(snap.exists)
+        self.assertFalse(snap.truncated)
+        self.assertEqual(snap.content, body)  # full file, verbatim — no mid-file cut
+
+    def test_snapshot_default_cap_reads_whole_file(self):
+        d = self.tmpdir()
+        big = "line\n" * 5000  # ~25 KB, well over the retired 8 KiB byte cap
+        _write(d, "big.txt", big)
+        (snap,) = file_snapshot(d, ["big.txt"])  # default cap = whole file
+        self.assertTrue(snap.exists)
+        self.assertFalse(snap.truncated)
+        self.assertEqual(snap.content, big)
 
     def test_absolute_path_resolves_regardless_of_root(self):
         d = self.tmpdir()

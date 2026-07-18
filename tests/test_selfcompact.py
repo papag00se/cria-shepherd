@@ -122,7 +122,10 @@ class PinnedTaskTests(unittest.TestCase):
         self.assertTrue(applied)
         self.assertFalse(any(selfcompact.TASK_MARKER in str(x.get("content")) for x in out))
 
-    def test_huge_task_is_clipped(self):
+    def test_huge_task_is_kept_verbatim(self):
+        # The pinned task is the north star on every compacted turn — it is NEVER clipped. The
+        # summarizer's own request passes through the context floor, which is the one window-aware
+        # place truncation may happen; a per-site clip here would be a lie the model can't detect.
         out, _, _ = compact(_msgs(40), lambda mm: "R", CompactState(), pinned_task="Z" * 5000, **_KW)
         header = next(str(x["content"]) for x in out if selfcompact.TASK_MARKER in str(x.get("content")))
-        self.assertEqual(header.count("Z"), selfcompact._TASK_CLIP)   # task body clipped to the cap
+        self.assertEqual(header.count("Z"), 5000)   # full task body, no clip

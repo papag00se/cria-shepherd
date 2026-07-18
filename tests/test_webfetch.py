@@ -175,6 +175,73 @@ class FetchNavSeedTests(unittest.TestCase):
         self.assertIn("EMPTY", out)
 
 
+class UncappedNavHintsTests(unittest.TestCase):
+    """Navigation hints on a MISS must be complete — a cap would hide the very key/section the
+    model needs to re-target (its target may be key #27)."""
+
+    def test_top_level_keys_are_uncapped(self):
+        root = {f"k{i}": i for i in range(30)}
+        keys = wf.top_level_keys(root)
+        self.assertEqual(len(keys), 30)            # no 20-cap
+        self.assertIn("k27", keys)
+
+    def test_find_json_miss_lists_all_top_keys(self):
+        root = {f"section{i}": {} for i in range(30)}
+        out = wf.find_json(root, "zzzznope", 4000)
+        self.assertIn("no match", out)
+        self.assertIn("section27", out)            # a beyond-20th key still surfaces on a miss
+
+    def test_find_text_miss_lists_all_headings(self):
+        body = "\n".join(f"# Heading {i}" for i in range(30))
+        out = wf.find_text(body, "zzzznope", 4000)
+        self.assertIn("no match", out)
+        self.assertIn("# Heading 27", out)         # no 15-cap on the Sections outline
+
+    def test_find_text_hit_discloses_residual_matches(self):
+        # 5 distinct paragraphs each contain the query → top-FIND_TOP_K shown, the rest DISCLOSED,
+        # never silently stopped at FIND_TOP_K (the match the model wants may be the 4th).
+        body = "\n\n".join(f"Paragraph {i} mentions the needle right here." for i in range(5))
+        out = wf.find_text(body, "needle", 4000)
+        self.assertIn(f"{5 - wf.FIND_TOP_K} more match(es)", out)
+
+
+class TruncationDisclosureTests(unittest.TestCase):
+    """A body cut at the read cap must be DISCLOSED — the paging/find end must never look like a
+    clean end-of-document (the silent-slice lie)."""
+
+    def setUp(self):
+        wf.clear_cache()
+
+    def test_final_page_discloses_truncation(self):
+        out = wf.render_page("https://x/big", 200, "text/plain", "body content", None, 0, 200, True)
+        self.assertNotIn("More remains", out)
+        self.assertIn("fetch limit", out)
+        self.assertIn("NOT fetched", out)
+
+    def test_final_page_no_disclosure_when_not_truncated(self):
+        out = wf.render_page("https://x/big", 200, "text/plain", "body content", None, 0, 200, False)
+        self.assertNotIn("fetch limit", out)
+
+    def test_fetch_nav_discloses_truncation_at_end(self):
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "text/plain", "line0\nline1\nline2", True)
+        try:
+            out = wf.fetch_nav("https://x/big")
+        finally:
+            wf.fetch = orig
+        self.assertIn("fetch limit", out)
+
+    def test_find_miss_on_truncated_doc_discloses(self):
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", '{"a":1}', True)
+        try:
+            out = wf.fetch_nav("https://x/spec", find="nonexistentkey")
+        finally:
+            wf.fetch = orig
+        self.assertIn("no match", out)
+        self.assertIn("fetch limit", out)          # a miss may be a cut, not an absence
+
+
 if __name__ == "__main__":
     unittest.main()
 
