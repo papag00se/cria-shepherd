@@ -53,6 +53,9 @@ from .loop import (
     guard_periodic_result,
     guard_probe_reissue,
     guard_probe_steer,
+    author_redirect,
+    CANNED,
+    _extract_cwd,
     summarize,
     guard_rumination,
     guard_track_repetition,
@@ -644,7 +647,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         steer, intervention = None, None
         if gs.awaiting_probe:
             gs.awaiting_probe = False
-            steer = guard_probe_steer(gs, body, rlog)  # canned (no reasoner on plan-off)
+            # PARITY: plan-off now gets the SAME reasoner-authored redirect as the loop (via the shared
+            # author_redirect on the correctly-routed reasoner endpoint), not a canned template — the seed
+            # the parity audit caught. CANNED only if this deployment has no reasoner role at all.
+            def _redirect_author(g, outcome, b, r):
+                task = _history_root(b.get("messages", []))[0] or "the user's task"
+                return author_redirect(self.server.reasoner_upstream.chat, self.server.reasoner_role,
+                                       _extract_cwd(b.get("messages", [])), task, g, outcome, b, r)
+            author = _redirect_author if self.server.reasoner_role is not None else CANNED
+            steer = guard_probe_steer(gs, body, rlog, author=author)
         elif not gs.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
             intervention = guard_intervene(gs, body, rlog)
         if intervention is not None:

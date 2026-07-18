@@ -1006,17 +1006,17 @@ class WheelSpinTests(unittest.TestCase):
     def test_probe_steer_labels_which_guard_fired(self):
         # The ⟦cria⟧ note must say WHICH guard steered the coder, not just "a guard" — so a
         # wheel-spin steer and a repetition redirect are distinguishable in the scrollback.
-        from cria.loop import GuardState, guard_probe_steer
+        from cria.loop import GuardState, guard_probe_steer, CANNED
         rlog = _Rlog()
         # wheel-spin probe resolving → labels "wheel-spin guard"
         gs = GuardState(spin_probe=True, probe_call_id="p1", spin_path="x.py")
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
-        self.assertIsNotNone(guard_probe_steer(gs, body, rlog))
+        self.assertIsNotNone(guard_probe_steer(gs, body, rlog, author=CANNED))
         self.assertEqual(gs.steer_source, "wheel-spin guard")
         # repetition redirect resolving (canned, no author) → labels "repetition guard"
         gs2 = GuardState(redirect_probe=True, probe_call_id="p2", repeat_action="write_file(h.py)")
         body2 = {"messages": [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
-        steer = guard_probe_steer(gs2, body2, rlog)
+        steer = guard_probe_steer(gs2, body2, rlog, author=CANNED)
         self.assertIn("[REDIRECT]", steer)
         self.assertEqual(gs2.steer_source, "repetition guard")
 
@@ -2155,10 +2155,10 @@ class SharedRepetitionGuardTests(unittest.TestCase):
         self.assertFalse(gs.spin_probe_due)
 
     def test_probe_steer_returns_spin_ground_truth(self):
-        from cria.loop import GuardState, guard_probe_steer
+        from cria.loop import GuardState, guard_probe_steer, CANNED
         gs = GuardState(); gs.spin_probe = True; gs.spin_path = "h.py"; gs.probe_call_id = "p1"
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "PROBE_EXIT=0"}]}
-        steer = guard_probe_steer(gs, body, _Rlog())  # author=None → canned (plan-off)
+        steer = guard_probe_steer(gs, body, _Rlog(), author=CANNED)  # explicit CANNED (no reasoner)
         self.assertIn("rewritten `h.py`", steer)
         self.assertFalse(gs.spin_probe)  # consumed
 
@@ -2399,15 +2399,34 @@ class GroundTruthSilenceTests(unittest.TestCase):
     def test_spin_steer_falls_back_to_behavioral_nudge_when_silent(self):
         # the wheel-spin steer must still fire (with a DIFFERENT-action nudge) even when the checks
         # gave no signal — it just carries no checks claim.
-        from cria.loop import GuardState, guard_probe_steer
+        from cria.loop import GuardState, guard_probe_steer, CANNED
         gs = GuardState(); gs.spin_probe = True; gs.spin_path = "handle_api.py"; gs.probe_call_id = "p1"
         gs.gate_plan = None  # → outcome.ran False → guard_ground_truth "" → spin_no_truth path
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
-        steer = guard_probe_steer(gs, body, _Rlog())
+        steer = guard_probe_steer(gs, body, _Rlog(), author=CANNED)
         self.assertIsNotNone(steer)
         self.assertIn("handle_api.py", steer)
         self.assertIn("different next action", steer.lower())
         self.assertNotIn("pass", steer.lower())
+
+
+class ReasonedRedirectTests(unittest.TestCase):
+    """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner
+    authors the steer from ground truth; an empty reasoner reply falls back to canned — a stuck coder
+    is never left without a steer."""
+
+    def test_uses_reasoner_reply_then_falls_back_to_canned(self):
+        import json, tempfile
+        from cria.loop import GuardState, author_redirect
+        from cria.probegate import GateOutcome
+        gs = GuardState(probe_call_id="p1", spin_path="x.py", repeat_action="edit_file x.py")
+        gs.recent_writes = []
+        ws, outcome, body = tempfile.mkdtemp(), GateOutcome(ran=False), {"messages": []}
+        reply = lambda b, r: json.dumps({"choices": [{"message": {"content": "do X instead of Y"}}]}).encode()
+        self.assertIn("do X instead",
+                      author_redirect(reply, None, ws, "the task", gs, outcome, body, _Rlog()))
+        empty = lambda b, r: json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
+        self.assertTrue(author_redirect(empty, None, ws, "the task", gs, outcome, body, _Rlog()))  # canned fallback
 
     def _test_cand(self, cmd, kind):
         from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind  # noqa: F401

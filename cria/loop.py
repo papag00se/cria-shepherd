@@ -882,31 +882,12 @@ class Loop:
         guard_track_repetition(sess, coder, rlog, step=idx)
 
     def _author_redirect(self, sess: PlanSession, outcome, body: dict, rlog) -> str:
-        """The reasoned redirect (codex-local's reasoned-guidance pattern): hand the reasoner the
-        step, the REPEATED ACTION, its recent tool results, and the fresh probe findings; it
-        authors the coder's next instruction. Falls back to a canned redirect when the reasoner
-        produces nothing — a stuck coder must never be left without a steer."""
+        """The loop's reasoned redirect — a thin wrapper over the SHARED :func:`author_redirect` (so the
+        plan-off path runs the identical reasoning). Supplies the loop's step text + reasoner endpoint."""
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
-        # a FACT for the reasoner, not an inference: it sees the recent tool results (which reveal
-        # whether the repeats hit the same or different targets) and decides. Via the shared
-        # guard_ground_truth: findings or a neutral clean note, and "" when the checks gave no positive
-        # signal (couldn't run) — the reasoner then steers on the repetition itself, with no checks claim.
-        truth = guard_ground_truth(outcome) or "(no check results this turn — steer on the repeated action itself)"
-        evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
-        # Fresh-disk grounding: read the files the coder is touching as they ARE on disk now, so the
-        # reasoner reasons from real bytes instead of the transcript's stale view (the groundtruth port).
-        disk = _fresh_disk_facts(self._ctx.workspace_root, sess.recent_writes, sess.spin_path)
-        user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
-                              repeat_action=sess.repeat_action, evidence=evidence or "(none)",
-                              truth=truth,
-                              disk=disk or "(no files touched yet)")
-        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role, prompts.load("redirect"),
-                         user, rlog, phase="reasoner")  # retry_off defaults True → the same two-pass
-        if text:
-            return text
-        # Reasoner unavailable → the SAME canned redirect the plan-off path uses (one steer text).
-        return guard_canned_redirect(sess, outcome)
+        return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                               self._ctx.workspace_root, step_text, sess, outcome, body, rlog)
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
         """The loop's coder step — delegates to the shared :func:`guard_track_write_streak`."""
@@ -1944,21 +1925,43 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
         ground_truth=(f"{gt}\n\n" if gt else ""))
 
 
-def guard_probe_steer(gs: GuardState, body: dict, rlog, *, step=None, author=None) -> str | None:
-    """A guard probe (repetition redirect or wheel-spin) we emitted last turn has now run — read
-    its result, interpret the gate, and return the steer text to hand the coder (the caller injects
-    it as a nudge). ``author`` (loop only) reasons the redirect from the ground truth; without it
-    (plan-off) the redirect is canned. Returns None when this isn't a guard probe (a plan
-    completion-gate — the loop handles that itself)."""
+def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
+                    gs: GuardState, outcome, body: dict, rlog) -> str:
+    """The REASONED redirect — SHARED by both paths so they cannot diverge. Hand the reasoner the step,
+    the repeated action, the coder's recent tool results, the fresh probe findings, and the files' real
+    ON-DISK bytes; it authors the coder's next instruction. Falls back to the canned redirect when the
+    reasoner yields nothing — a stuck coder is never left without a steer."""
+    truth = guard_ground_truth(outcome) or "(no check results this turn — steer on the repeated action itself)"
+    evidence = _coder_evidence(body.get("messages", []), gs.probe_call_id)
+    disk = _fresh_disk_facts(workspace_root, gs.recent_writes, gs.spin_path)
+    user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
+                          repeat_action=gs.repeat_action, evidence=evidence or "(none)",
+                          truth=truth, disk=disk or "(no files touched yet)")
+    text = summarize(reasoner_chat, reasoner_role, prompts.load("redirect"), user, rlog, phase="reasoner")
+    return text or guard_canned_redirect(gs, outcome)
+
+
+# Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the
+# arg. `author` is REQUIRED (below) so a path can never silently select the degraded canned redirect by
+# omission — the failure class the parity audit caught (a shared guard with an optional-degraded default).
+CANNED = object()
+
+
+def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) -> str | None:
+    """A guard probe (repetition redirect or wheel-spin) we emitted last turn has now run — read its
+    result, interpret the gate, and return the steer text to hand the coder. ``author`` is REQUIRED: a
+    callable that REASONS the redirect from ground truth (both paths now supply one via
+    :func:`author_redirect`), or the ``CANNED`` sentinel when a path truly has no reasoner. Returns None
+    when this isn't a guard probe (a plan completion-gate — the loop handles that itself)."""
     if not (gs.spin_probe or gs.redirect_probe):
         return None
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
-    if gs.redirect_probe:  # repetition: ground truth → a redirect (reasoner-authored, or canned)
+    if gs.redirect_probe:  # repetition: ground truth → a redirect (reasoner-authored, or explicit CANNED)
         gs.redirect_probe = False
         gs.steer_source = "repetition guard"
-        redirect = author(gs, outcome, body, rlog) if author is not None else guard_canned_redirect(gs, outcome)
+        redirect = guard_canned_redirect(gs, outcome) if author is CANNED else author(gs, outcome, body, rlog)
         rlog.emit("loop.redirect", step=step, chars=len(redirect))
         return f"[REDIRECT]\n{redirect}"
     # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open. When the
