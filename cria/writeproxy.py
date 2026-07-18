@@ -81,8 +81,8 @@ _SEARCH_NAMES = {"web_search", "local_web_search"}
 # tool call, base64-encoded, so inbound can rebuild it from the command in history (no store).
 _SENTINEL = "⟦ctx:tool⟧"
 _SENTINEL_LINE = re.compile(r"#\s*" + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)")
-# Heredoc terminators — the payload rides on stdin, so there is NO arg-size limit (no chunking).
-_HD_B64 = "__CRIA_B64_EOF__"
+# Heredoc terminator — the payload rides on stdin, so there is NO arg-size limit (no chunking). Both
+# the write and edit commands are python heredocs (they share the validate-before-lower syntax check).
 _HD_PY = "__CRIA_PY_EOF__"
 # A per-write temp suffix keeps the write atomic (write temp, then mv over the target).
 _TMP_SUFFIX = ".cria-tmp"
@@ -218,14 +218,65 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
 
+# VALIDATE-BEFORE-LOWER: a shared, in-process syntax check for the languages cria can parse with the
+# stdlib (Python via compile, JSON via json, TOML via tomllib/tomli). Returns a parser message on a
+# syntax error, else None. It runs INSIDE the lowered write/edit command, so a syntactically-broken
+# file never reaches disk — the model gets the exact parser error immediately instead of the churn of
+# writing garbage, hitting the completion gate two turns later, and re-breaking on the next edit.
+# REGRESSION-ONLY (the write/edit callers gate on the BEFORE state): it refuses only when a write/edit
+# would break a file that currently PARSES; it NEVER blocks a model from editing an already-broken file
+# toward valid (broken→still-broken and broken→valid both write freely). Version-scoped to what the
+# workspace python's own compile() accepts, which is the interpreter that will run the code anyway.
+_VALIDATE_FN = r'''def _v(path, raw):
+    try:
+        text = raw.decode() if isinstance(raw, bytes) else raw
+    except Exception:
+        return None
+    low = path.lower()
+    try:
+        if low.endswith(('.py', '.pyi')):
+            compile(text, path, 'exec')
+        elif low.endswith('.json'):
+            import json as _json; _json.loads(text)
+        elif low.endswith('.toml'):
+            try:
+                import tomllib as _t
+            except ImportError:
+                try:
+                    import tomli as _t
+                except ImportError:
+                    return None
+            _t.loads(text)
+    except Exception as _e:
+        return str(_e)
+    return None
+'''
+
+# Byte-exact atomic write (python heredoc — content rides in the source on stdin, no arg-size limit /
+# no chunking), with validate-before-write: refuse only when this would replace a currently-VALID file
+# with content that does not parse. A new file or an already-broken file writes freely.
+_WRITE_PY = r'''import base64,sys,pathlib,os
+p=pathlib.Path(base64.b64decode('{path}').decode())
+raw=base64.b64decode('{content}')
+_after=_v(str(p),raw)
+if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
+    sys.exit('write_file REFUSED (not written): this would replace a currently-valid '+p.name+
+             ' with content that does not parse — '+_after+'. Fix the content so the file is valid, then write again.')
+p.parent.mkdir(parents=True,exist_ok=True)
+tmp=str(p)+'{suffix}'
+pathlib.Path(tmp).write_bytes(raw)
+os.replace(tmp,str(p))
+print('{wrote}')
+'''
+
+
 def _write_command(path: str, content: str) -> str:
-    """Byte-exact atomic write: base64 (on stdin via heredoc — no arg-size limit) decoded to a temp
-    file, then moved over the target so a partial decode never leaves a half-written file."""
-    q, tmp = _qbash(path), _qbash(path + _TMP_SUFFIX)
-    # &&-chain so a failure at ANY step (mkdir/decode/mv) short-circuits BEFORE the success token —
-    # blank/absent token ⇒ the write did not land, and the model sees the real stderr.
-    return (f'mkdir -p "$(dirname {q})" && base64 -d > {tmp} <<\'{_HD_B64}\'\n'
-            f'{_b64(content)}\n{_HD_B64}\nmv {tmp} {q} && printf %s {_qbash(_WROTE)}')
+    """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
+    file is refused), then write to a temp and os.replace over the target so a partial write never
+    leaves a half-written file. No arg-size limit / no chunking — the content rides in the heredoc."""
+    py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
+                                           suffix=_TMP_SUFFIX, wrote=_WROTE)
+    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
 # The edit executor (old/new/path base64'd — nothing to escape). Tries an EXACT single match first
@@ -252,16 +303,24 @@ if old==new:
     else:
         msg+=' Put the text you actually want into new_string (or read the file to see what needs changing).'
     sys.exit(msg)
+_before=_v(str(p),s)
+def _w(res):
+    if _before is None:                       # the file PARSES now — do not let this edit break it
+        _e=_v(str(p),res)
+        if _e is not None:
+            sys.exit('edit_file REFUSED (not written): this edit would break '+p.name+', which currently'
+                     ' parses cleanly — '+_e+'. Fix new_string so the file stays valid, then edit again.')
+    p.write_text(res); print('{wrote}'); sys.exit()
 n=s.count(old)
 if n==1:
-    p.write_text(s.replace(old,new,1)); print('{wrote}'); sys.exit()
+    _w(s.replace(old,new,1))
 if n>1:
     sys.exit('edit_file: old_string occurs %d times — add surrounding lines to make it unique'%n)
 toks=old.split()
 if toks:
     ms=list(re.compile(r'\s+'.join(map(re.escape,toks))).finditer(s))
     if len(ms)==1:
-        m=ms[0]; p.write_text(s[:m.start()]+new+s[m.end():]); print('{wrote}'); sys.exit()
+        m=ms[0]; _w(s[:m.start()]+new+s[m.end():])
     if len(ms)>1:
         sys.exit('edit_file: old_string matches %d places (ignoring whitespace) — add more surrounding context'%len(ms))
 key=next((l.strip() for l in old.split(chr(10)) if l.strip()),'')
@@ -305,7 +364,8 @@ sys.exit(msg)
 
 
 def _edit_command(path: str, old: str, new: str) -> str:
-    py = _EDIT_PY.format(path=_b64(path), old=_b64(old), new=_b64(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
+    py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
+                                          wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 

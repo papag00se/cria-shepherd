@@ -79,15 +79,16 @@ class AdvertiseTests(unittest.TestCase):
 
 
 class TranslateWriteTests(unittest.TestCase):
-    def test_write_lowers_to_one_atomic_base64_command_no_chunking(self):
+    def test_write_lowers_to_one_atomic_command_no_chunking(self):
         big = "x" * 500_000  # far over any old chunk size — must still be ONE call (heredoc stdin)
         comp = _call("write_file", {"path": "a/b.py", "content": big})
         translate_outbound(comp, _ARR_SHELL, injected={"write_file"})
         calls = comp["choices"][0]["message"]["tool_calls"]
         self.assertEqual(len(calls), 1)            # no chunking
         cmd = _lowered_cmd(comp)
-        self.assertIn("base64 -d", cmd)
-        self.assertIn("mv ", cmd)                  # atomic: temp then move
+        self.assertIn("write_bytes", cmd)
+        self.assertIn("os.replace", cmd)           # atomic: temp then replace
+        self.assertIn("def _v(", cmd)              # validate-before-write is composed in
         self.assertIn("⟦ctx:tool⟧", cmd)          # the stateless sentinel
 
     def test_write_round_trip_is_byte_exact_and_stateless(self):
@@ -300,17 +301,67 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ValidateBeforeLowerTests(unittest.TestCase):
+    """A syntactically-broken write/edit never reaches disk — but ONLY as a regression guard: it
+    refuses to break a file that currently parses, and NEVER blocks a model from fixing a broken one."""
+
+    def _exec(self, cmd):
+        import subprocess
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        return (r.stdout + r.stderr)
+
+    def _tmp(self, name, content=None):
+        import os, tempfile
+        p = os.path.join(tempfile.mkdtemp(), name)
+        if content is not None:
+            open(p, "w").write(content)
+        return p
+
+    def test_write_refuses_to_break_a_currently_valid_file(self):
+        from cria.writeproxy import _write_command, _WROTE
+        p = self._tmp("a.py", "def f():\n    return 1\n")            # currently valid
+        out = self._exec(_write_command(p, "def f(:\n"))            # broken replacement
+        self.assertIn("REFUSED", out)
+        self.assertNotIn(_WROTE, out)
+        self.assertEqual(open(p).read(), "def f():\n    return 1\n")  # untouched
+
+    def test_write_allows_a_new_or_already_broken_file(self):
+        from cria.writeproxy import _write_command, _WROTE
+        new = self._tmp("new.py")                                   # does not exist yet
+        self.assertIn(_WROTE, self._exec(_write_command(new, "def g(:\n")))   # regression-only → allowed
+        broken = self._tmp("b.py", "def h(:\n")                     # already broken on disk
+        self.assertIn(_WROTE, self._exec(_write_command(broken, "def h(:\n  pass\n")))
+
+    def test_write_validates_toml_and_json_too(self):
+        from cria.writeproxy import _write_command, _WROTE
+        t = self._tmp("c.toml", "[a]\nx = 1\n")
+        self.assertIn("REFUSED", self._exec(_write_command(t, "[a]\nx = = 1\n")))
+        j = self._tmp("d.json", '{"a": 1}')
+        self.assertIn("REFUSED", self._exec(_write_command(j, '{"a": }')))
+        md = self._tmp("e.md", "# ok")                              # non-code → not validated
+        self.assertIn(_WROTE, self._exec(_write_command(md, "# hi (unbalanced")))
+
+    def test_edit_refuses_a_regression_but_allows_fixing_a_broken_file(self):
+        from cria.writeproxy import _edit_command, _WROTE
+        valid = self._tmp("f.py", "x = 1\ny = 2\n")
+        self.assertIn("REFUSED", self._exec(_edit_command(valid, "y = 2", "y = (2")))  # would break → refused
+        self.assertEqual(open(valid).read(), "x = 1\ny = 2\n")                          # untouched
+        broken = self._tmp("g.py", "def h(:\n    pass\n")                               # already broken
+        self.assertIn(_WROTE, self._exec(_edit_command(broken, "def h(:", "def h():")))  # fixing → allowed
+        self.assertIn("def h():", open(broken).read())
+
+
 class EditCommandTests(unittest.TestCase):
     """The edit executor: exact match, whitespace-flexible fallback (indent/blank-line drift), and a
     helpful actual-content error on a real miss — instead of byte-exact-only failing ~1/3 of edits."""
 
     def _run(self, content, old, new):
         import base64, os, subprocess, sys, tempfile
-        from cria.writeproxy import _EDIT_PY, _WROTE, EDIT_SHOW_FULL_MAX
+        from cria.writeproxy import _EDIT_PY, _VALIDATE_FN, _WROTE, EDIT_SHOW_FULL_MAX
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
         b = lambda x: base64.b64encode(x.encode()).decode()
-        script = _EDIT_PY.format(path=b(path), old=b(old), new=b(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
+        script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         return r.returncode, (r.stdout + r.stderr), out
@@ -414,7 +465,7 @@ class CriaHomeGuardTests(unittest.TestCase):
     def test_write_into_cria_home_is_refused(self):
         cmd = self._lowered("write_file", {"path": str(CRIA_HOME / "chat-123.txt"), "content": "hi"})
         self.assertIn("off-limits", cmd)
-        self.assertNotIn("base64 -d", cmd)          # the real write was never composed
+        self.assertNotIn("os.replace", cmd)          # the real write was never composed
 
     def test_read_of_cria_env_secret_is_refused(self):
         cmd = self._lowered("read_file", {"path": str(CRIA_HOME / ".env")})
@@ -435,12 +486,12 @@ class CriaHomeGuardTests(unittest.TestCase):
 
     def test_workspace_relative_write_is_allowed(self):
         cmd = self._lowered("write_file", {"path": "src/app.py", "content": "x"})
-        self.assertIn("base64 -d", cmd)             # normal lowering, not refused
+        self.assertIn("os.replace", cmd)             # normal lowering, not refused
         self.assertNotIn("off-limits", cmd)
 
     def test_absolute_path_outside_cria_home_is_allowed(self):
         cmd = self._lowered("write_file", {"path": "/tmp/scratch/app.py", "content": "x"})
-        self.assertIn("base64 -d", cmd)
+        self.assertIn("os.replace", cmd)
         self.assertNotIn("off-limits", cmd)
 
 

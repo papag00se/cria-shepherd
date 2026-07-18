@@ -1,1 +1,1 @@
-[GROUND TRUTH — the repo's own checks fail] Fix these exact problems; go to the reported line, do not rewrite whole files:
+[GROUND TRUTH — the repo's own checks fail] Each problem below is the checker's OWN message and the line it flagged. Read each message and resolve exactly what it names; make the smallest change that clears it — don't rewrite whole files unless that IS the smallest fix:

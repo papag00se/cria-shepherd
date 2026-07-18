@@ -97,6 +97,7 @@ def has_tool_call_leak(text: str) -> bool:
 def apply(completion: dict, tools=None, rlog=None) -> dict:
     """Run all output massages, in order."""
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
+    completion = normalize_tool_names(completion, tools, rlog)  # EditFile/edit-file → edit_file (case/sep)
     completion = repair_tool_args(completion, rlog)  # fenced / raw-newline args → clean JSON
     completion = normalize_tool_calls(completion, tools, rlog)  # ls/read_file/exec → shell shape
     completion = lower_edit_file(completion, tools, rlog)  # edit_file → apply_patch
@@ -220,6 +221,50 @@ def _to_shell(fn: dict, shell: dict, cmd, why: str, rlog) -> None:
     fn["name"] = shell["name"]
     fn["arguments"] = json.dumps(shell_args(shell, cmd))
     _log(rlog, "massage.tool_normalized", why=why)
+
+
+def _canon_key(name: str) -> str:
+    """Fold case + separators only (EditFile / edit-file / Edit_File → 'editfile'). Deliberately NOT
+    fuzzy — no edit-distance/plurals — so only a near-identical spelling collapses, never a different
+    intent (bare `edit` stays `edit`)."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _canonical_name_map(tools) -> dict:
+    """canon-key → the ONE advertised tool with that key; a key shared by ≥2 advertised tools is
+    poisoned to None (ambiguous → never guess a rename)."""
+    out: dict = {}
+    for nm in _tool_names(tools):
+        if not nm:
+            continue
+        k = _canon_key(nm)
+        out[k] = None if k in out else nm
+    return out
+
+
+def normalize_tool_names(completion: dict, tools=None, rlog=None) -> dict:
+    """A ~12B model spells an advertised tool with the wrong CASE/separators (``EditFile`` / ``edit-file``
+    for ``edit_file``). The exact-string dispatch downstream (normalize_tool_calls, writeproxy's
+    ``name in _EDIT_NAMES``) then can't route it, so the call SILENTLY FAILS and the model believes it
+    edited when it didn't — the exact churn seen live. Fold a mis-spelled name back to the one advertised
+    tool with the same canonical key. Safety: matches ONLY tools actually advertised this request (can't
+    invent a tool off the menu), only on an EXACT canonical-key hit, skips a name that is already valid
+    (idempotent), and refuses when two advertised tools share a key. No-op when there are no tools."""
+    cmap = _canonical_name_map(tools)
+    if not cmap:
+        return completion
+    advertised = _tool_names(tools)
+    for choice in completion.get("choices", []):
+        for tc in (choice.get("message") or {}).get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if not name or name in advertised:      # empty, or already a real tool → leave it
+                continue
+            canon = cmap.get(_canon_key(name))
+            if canon and canon != name:
+                fn["name"] = canon
+                _log(rlog, "massage.tool_renamed", was=name, now=canon)
+    return completion
 
 
 def _reshape_shell(fn: dict, shell: dict, rlog) -> None:

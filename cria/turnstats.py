@@ -38,6 +38,7 @@ _RESHAPE_EVENTS = {
     "massage.leaked_recovered": "massage",
     "massage.text_from_reasoning": "massage",
     "massage.args_repaired": "massage",
+    "massage.tool_renamed": "massage",
     "summarize.tool_call_answer": "recover",
     "summarize.leaked_tool_call": "recover",
 }

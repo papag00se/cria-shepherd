@@ -240,7 +240,7 @@ class CleanGateOutputTests(unittest.TestCase):
                         "x.py:5:4 undefined name 'foo'\nEXIT:1")
         out = probegate.clean_gate_output(raw)
         self.assertIn("undefined name 'foo'", out)
-        self.assertIn("fix them at", out.lower())
+        self.assertIn("checker's own message", out.lower())
 
     def test_real_error_mentioning_no_such_file_is_not_couldnt_run(self):
         # THE _INFRA_FAILURE false-positive: a genuine test failure whose message contains "No such
@@ -250,7 +250,7 @@ class CleanGateOutputTests(unittest.TestCase):
                         "[Errno 2] No such file or directory: 'data.csv'\nEXIT:1")
         out = probegate.clean_gate_output(raw)
         self.assertIn("No such file or directory", out)     # surfaced, not swallowed
-        self.assertIn("fix them at", out.lower())
+        self.assertIn("checker's own message", out.lower())
         self.assertNotIn("no usable result", out.lower())   # NOT the couldn't-run message
 
     def test_timeout_exit_is_couldnt_run(self):
@@ -288,13 +288,13 @@ class CleanGateOutputTests(unittest.TestCase):
 
     def test_passing_pytest_is_not_scraped_as_error_class_findings(self):
         # THE false-red: a GREEN pytest run (exit 0, "…. [100%]\nN passed") must NOT be harvested into
-        # "the repo's own checks report these error-class problems — fix them at the reported line: 4
+        # "the repo's own checks report these error-class problems ...": 4
         # passed". A passing check's stdout is not a finding.
         raw = self._raw("....                                    [100%]\n4 passed in 0.06s\nEXIT:0")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no error-class", out.lower())          # reads clean-ish, not red
         self.assertNotIn("4 passed", out)                     # the passing summary is not a finding
-        self.assertNotIn("fix them at the reported line", out.lower())
+        self.assertNotIn("checker's own message", out.lower())
         self.assertNotIn("[100%]", out)
 
     def test_passing_section_does_not_mask_a_failing_one(self):

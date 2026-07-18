@@ -257,6 +257,38 @@ class NormalizeToolCallsTests(unittest.TestCase):
         self.assertEqual(_first(c)["message"]["tool_calls"][0]["function"]["name"], "read_file")  # harness has it
 
 
+class NormalizeToolNamesTests(unittest.TestCase):
+    _TOOLS = [_SHELL,
+              {"type": "function", "function": {"name": "edit_file"}},
+              {"type": "function", "function": {"name": "write_file"}},
+              {"type": "function", "function": {"name": "read_file"}}]
+
+    _DEFAULT = object()
+    def _name(self, called, tools=_DEFAULT):
+        from cria.massage import normalize_tool_names
+        use = self._TOOLS if tools is self._DEFAULT else tools
+        c = normalize_tool_names(_completion(tool_calls=[_tc(called, "{}")]), use)
+        return _first(c)["message"]["tool_calls"][0]["function"]["name"]
+
+    def test_case_and_separator_spellings_fold_to_the_advertised_name(self):
+        self.assertEqual(self._name("EditFile"), "edit_file")     # CamelCase (the observed leak)
+        self.assertEqual(self._name("edit-file"), "edit_file")    # hyphen
+        self.assertEqual(self._name("Write_File"), "write_file")  # mixed case
+
+    def test_already_valid_or_genuinely_different_names_are_untouched(self):
+        self.assertEqual(self._name("edit_file"), "edit_file")    # idempotent on a real tool
+        self.assertEqual(self._name("edit"), "edit")              # different intent → not folded
+        self.assertEqual(self._name("totally_unknown"), "totally_unknown")
+
+    def test_ambiguous_key_is_never_guessed(self):
+        amb = [{"type": "function", "function": {"name": "read_file"}},
+               {"type": "function", "function": {"name": "readfile"}}]   # share canon key 'readfile'
+        self.assertEqual(self._name("ReadFile", amb), "ReadFile")        # refuse to guess
+
+    def test_no_tools_is_a_no_op(self):
+        self.assertEqual(self._name("EditFile", None), "EditFile")       # nothing to match against
+
+
 class TruncationTests(unittest.TestCase):
     def test_detects_length_finish(self):
         self.assertTrue(is_truncated({"choices": [{"finish_reason": "length", "message": {}}]}))

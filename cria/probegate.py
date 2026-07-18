@@ -189,8 +189,9 @@ def clean_gate_output(raw: str) -> str | None:
         # what it saw and claimed done while real errors remained invisible. The context floor
         # (contextfloor.fit) is the one window-aware place a truncation may happen, and only when the
         # physical window forces it — never a blind per-site clip here.
-        return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — fix them at "
-                "the reported line:\n" + "\n".join(findings))
+        return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the "
+                "checker's OWN message and the line it flagged; resolve what each one names with the "
+                "smallest change that clears it:\n" + "\n".join(findings))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")
