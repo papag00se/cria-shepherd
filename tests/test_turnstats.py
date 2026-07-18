@@ -1,21 +1,42 @@
 import unittest
+from collections import Counter
 
 from cria.turnstats import StatsStore, TurnStats
 
 
 class TurnStatsTests(unittest.TestCase):
-    def test_tallies_calls_tps_and_guards(self):
+    def test_tallies_calls_tps_and_steers_from_events(self):
         st = TurnStats()
-        st.observe({"choices": [{"message": {"tool_calls": [{"id": "a"}]}}],
-                    "cria_notes": ["reasoning loop detected — refocused (1×)"]}, 40.0, model_calls=1)
-        st.observe({"choices": [{"message": {
-            "content": "⟦cria⟧ running the repo's checks (repeated rewrites detected)"}}]}, 36.0, model_calls=1)
+        # steer fires arrive as event counters (one entry per distinct fire), not note text
+        st.observe({}, 40.0, model_calls=1, events=Counter({"rumination.abort": 1}))
+        st.observe({}, 36.0, model_calls=1, events=Counter({"loop.wheel_spinning": 1}))
         s = st.summary()
         self.assertTrue(s.startswith("⟦cria⟧ turn done"))
         self.assertIn("🧮 2 calls", s)
         self.assertIn("38.0 tok/s", s)          # (40 + 36) / 2
+        self.assertIn("🛡 ", s)
         self.assertIn("rumination×1", s)
         self.assertIn("wheel-spin×1", s)
+
+    def test_steers_and_reshapes_are_separate_buckets(self):
+        st = TurnStats()
+        # a heavy turn: model-facing steers AND silent context reshaping, from authoritative events
+        st.observe({}, 60.0, model_calls=1, events=Counter({
+            "loop.periodic_gate": 3, "loop.gate.blocked": 1, "loop.wheel_spinning": 1,
+            "context.self_compact": 22, "context.focus_trim": 21,
+            "massage.leaked_recovered": 4, "massage.text_from_reasoning": 2,
+            "loop.gate": 1,                       # a clean gate pass → NOT counted (only .blocked is)
+        }))
+        s = st.summary()
+        self.assertIn("🛡 ", s)
+        self.assertIn("periodic-gate×3", s)       # was invisible under the old text-match
+        self.assertIn("gate×1", s)                # from loop.gate.blocked, not the clean loop.gate
+        self.assertIn("wheel-spin×1", s)          # distinct fire count, not note echoes
+        self.assertIn("🧰 ", s)
+        self.assertIn("compact×22", s)
+        self.assertIn("focus-trim×21", s)
+        self.assertIn("massage×6", s)             # 4 + 2 across the two massage kinds → one label
+        self.assertNotIn("gate×2", s)             # the clean pass was not miscounted as a steer
 
     def test_calls_counts_model_calls_not_finalized_responses(self):
         # THREE finalized responses, but the model-call reality: 1 (a normal request), 0 (a synthetic
@@ -29,10 +50,20 @@ class TurnStatsTests(unittest.TestCase):
         self.assertIn("🧮 4 calls", st.summary())   # 1 + 0 + 3 model calls, NOT the 3 finalized responses
         self.assertEqual(st.calls, 3)               # the reset gate still counts finalized responses
 
-    def test_no_guards_no_shield_section(self):
+    def test_no_interventions_no_shield_or_toolbox_section(self):
         st = TurnStats()
-        st.observe({"choices": [{"message": {"content": "hi"}}]}, 50.0)
-        self.assertNotIn("🛡", st.summary())
+        st.observe({}, 50.0, model_calls=1)   # a clean turn, no intervention events
+        s = st.summary()
+        self.assertNotIn("🛡", s)
+        self.assertNotIn("🧰", s)
+
+    def test_non_intervention_events_are_ignored(self):
+        st = TurnStats()
+        st.observe({}, 50.0, model_calls=1,
+                   events=Counter({"upstream.request": 5, "ctx.estimate": 5, "route.classify": 5}))
+        s = st.summary()
+        self.assertNotIn("🛡", s)   # plumbing events never appear in the ledger
+        self.assertNotIn("🧰", s)
 
     def test_generated_tokens_summed_and_shown(self):
         st = TurnStats()

@@ -27,6 +27,7 @@ import json
 import sys
 import threading
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -142,6 +143,11 @@ class BoundLog:
         # probe reissue, a canned steer), ZERO. The per-turn stats sum these so "🧮 N calls" is the
         # real model-call count — matching the ~/.cria/calls capture folder — not finalized responses.
         self.model_calls: int = 0
+        # A count of every event kind emitted this request — the AUTHORITATIVE per-fire record the
+        # turn-stats bucket into the 🛡 steer / 🧰 reshape ledger (counting distinct fires, never a
+        # text-match of note echoes). `loop.gate` is split by its `blocked` flag so only a BLOCKING
+        # gate (a real steer) is counted, not a clean pass.
+        self.events: Counter = Counter()
         # The role/phase of the NEXT upstream call (coder / critic / classifier / planner /
         # proxy) — set by the calling subsystem right before it calls the model, read by the
         # call-capture so each dump is labeled with what it is. None until set.
@@ -160,6 +166,9 @@ class BoundLog:
             if isinstance(toks, (int, float)):
                 self.gen_tokens += int(toks)
             self.model_calls += 1  # one upstream.done == one real model call
+        self.events[kind] += 1
+        if kind == "loop.gate" and kw.get("blocked"):
+            self.events["loop.gate.blocked"] += 1  # a BLOCKING gate is a steer; a clean pass is not
         self._log.emit(kind, session=self._session, turn=self._turn, **kw)
 
     def decide(self, name: str, choice: object, reason: str, **kw: object) -> None:
