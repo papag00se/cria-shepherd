@@ -461,7 +461,7 @@ _ENVELOPE_ADVISORY = re.compile(r"^(?:Warning: truncated output.*|Total output l
 
 
 def _strip_exec_envelope(content: str) -> str:
-    """The harness exec envelope around a re-presented web_fetch/web_search result → just the payload.
+    """The harness exec envelope around a re-presented synthetic-tool result → just the payload.
     Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
     if not content:
         return content
@@ -476,14 +476,17 @@ def _strip_exec_envelope(content: str) -> str:
 
 def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
-    from the sentinel in each stored command, so it survives a restart. A write/edit's empty success
-    is reframed as a confirmation (never overriding a real error). A web_fetch/web_search result has
-    the harness exec envelope stripped so it reads as a clean read tool, not a disk-caching shell
-    command. A harness ``local_web_search`` in history is re-presented as ``web_search``."""
+    from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
+    to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
+    exited / Output: / …). That envelope is stripped from read/nav results (read_file, list_dir,
+    web_fetch, web_search) and from write/edit FAILURES so the tool reads as its own abstraction, not a
+    disk-caching shell command. A write/edit SUCCESS is reframed as a clean confirmation (never over a
+    real error). A harness ``local_web_search`` is re-presented as ``web_search``. The model's OWN
+    exec_command calls keep their envelope — there the shell framing is the truth."""
     out: list[dict] = []
     swapped = 0
-    write_paths: dict[str, str] = {}  # tool_call_id -> path, for the empty-success reframe
-    fetch_ids: set[str] = set()       # tool_call_ids of re-presented web_fetch/web_search → strip envelope
+    write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
+    strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -499,20 +502,25 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
                             write_paths[tc.get("id")] = _tool_path(p) or ""
-                        elif orig["name"] in (_FETCH_NAMES | _SEARCH_NAMES):
-                            fetch_ids.add(tc.get("id"))
+                        elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
+                            strip_ids.add(tc.get("id"))
                 elif name == "local_web_search":  # always present the Brave tool as web_search
                     tc = {**tc, "function": {**fn, "name": "web_search"}}
                     swapped += 1
-                    fetch_ids.add(tc.get("id"))
+                    strip_ids.add(tc.get("id"))
                 new_calls.append(tc)
             out.append({**m, "tool_calls": new_calls})
-        elif role == "tool" and m.get("tool_call_id") in fetch_ids:
-            out.append({**m, "content": _strip_exec_envelope(str(m.get("content") or ""))})
-        elif role == "tool" and _WROTE in str(m.get("content") or "") and m.get("tool_call_id") in write_paths:
-            # POSITIVE success signal only — a blank or error result (no token) is left untouched so
-            # the model sees the real failure instead of a fabricated "Wrote {path}".
-            out.append({**m, "content": prompts.render("write_confirm", path=write_paths[m["tool_call_id"]])})
+        elif role == "tool":
+            tid = m.get("tool_call_id")
+            content = str(m.get("content") or "")
+            if tid in strip_ids:                          # read/nav result → drop the shell envelope
+                out.append({**m, "content": _strip_exec_envelope(content)})
+            elif tid in write_paths and _WROTE in content:  # write/edit SUCCESS → clean confirmation
+                out.append({**m, "content": prompts.render("write_confirm", path=write_paths[tid])})
+            elif tid in write_paths:                      # write/edit FAILURE → strip envelope, keep the
+                out.append({**m, "content": _strip_exec_envelope(content)})  # real error the model must see
+            else:
+                out.append(m)
         else:
             out.append(m)
     if swapped and rlog is not None:

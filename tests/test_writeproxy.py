@@ -252,6 +252,33 @@ class WebFetchEnvelopeTests(unittest.TestCase):
         out = represent_inbound(hist)
         self.assertEqual(out[-1]["content"], gate)               # untouched: not a re-presented fetch
 
+    def test_read_file_and_list_dir_results_are_also_stripped(self):
+        # read_file (254×/session) and list_dir leak the SAME envelope — they must read as a file
+        # read / dir listing, not a shell command that cached a chunk to disk.
+        for tool, args, cid, payload in (
+            ("read_file", {"path": "m.py"}, "r1", "def resolve(handle):\n    return handle"),
+            ("list_dir", {"path": "src"}, "l1", "m.py\ntests/\nREADME.md"),
+        ):
+            comp = _call(tool, args, cid=cid)
+            translate_outbound(comp, _CMD_SHELL, injected={tool})
+            enveloped = f"Chunk ID: 77\nProcess exited with code 0\nOutput:\n{payload}"
+            hist = _history_from(comp) + [{"role": "tool", "tool_call_id": cid, "content": enveloped}]
+            out = represent_inbound(hist)
+            self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], tool)   # name restored
+            self.assertEqual(str(out[-1]["content"]), payload)                    # envelope gone, payload exact
+
+    def test_write_failure_strips_envelope_but_keeps_the_error(self):
+        from cria.writeproxy import _WROTE
+        comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="w9")
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        enveloped = "Chunk ID: 5\nProcess exited with code 1\nOutput:\nsed: cannot write: Permission denied"
+        hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "w9", "content": enveloped}]
+        out = represent_inbound(hist)
+        content = str(out[-1]["content"])
+        self.assertNotIn("Chunk ID", content)                    # envelope noise gone
+        self.assertNotIn(_WROTE, content)                        # never fabricates success on a failure
+        self.assertIn("Permission denied", content)              # the REAL error survives
+
 
 class MiscTests(unittest.TestCase):
     def test_inbound_leaves_unrelated_calls_alone(self):
