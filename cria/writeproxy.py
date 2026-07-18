@@ -444,14 +444,46 @@ def _read_sentinel(command: str) -> dict | None:
         return None
 
 
+# The Codex exec-output envelope wrapped around a lowered synthetic tool's result:
+#   ``Chunk ID: <hex>`` / ``Wall time: <n> seconds`` / ``Process exited with code <n>`` /
+#   ``Original token count: <n>`` / ``Output:`` / [``Warning: truncated output …``] /
+#   [``Total output lines: <n>``] then the real stdout.
+# web_fetch/web_search are SYNTHETIC tools cria lowers to a shell exec, so the harness wraps their
+# result in this envelope. Re-presented as a web_fetch value it reads as a SHELL command that cached
+# a "chunk" to disk: the model then greps a phantom cache path and re-fetches the whole page instead
+# of paging with cursor/find (observed live — a 57K OpenAPI doc grepped at an imagined
+# .cache/mcp-server/… file, then re-fetched 7×, its reasoning derailed across 10 turns by a "cache is
+# gone" delusion). The tool's OWN "⚠ More remains … cursor=" footer is the real pagination signal;
+# the envelope adds only a false disk-cache mental model (and a spurious "truncated output" warning —
+# webfetch PAGINATES, it does not truncate). Strip it back to the payload. A no-op when absent.
+_ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
+_ENVELOPE_ADVISORY = re.compile(r"^(?:Warning: truncated output.*|Total output lines: \d+)[ \t]*$")
+
+
+def _strip_exec_envelope(content: str) -> str:
+    """The harness exec envelope around a re-presented web_fetch/web_search result → just the payload.
+    Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
+    if not content:
+        return content
+    m = _ENVELOPE_OUTPUT_LINE.search(content)
+    if not m or "Process exited with code" not in content[:m.start()]:
+        return content
+    lines = content[m.end():].split("\n")
+    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or not lines[0].strip()):
+        lines.pop(0)  # drop the harness's leading truncation advisories + blank lines
+    return "\n".join(lines).rstrip("\n")
+
+
 def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. A write/edit's empty success
-    is reframed as a confirmation (never overriding a real error). A harness ``local_web_search`` in
-    history is re-presented as ``web_search`` to match what the model was shown."""
+    is reframed as a confirmation (never overriding a real error). A web_fetch/web_search result has
+    the harness exec envelope stripped so it reads as a clean read tool, not a disk-caching shell
+    command. A harness ``local_web_search`` in history is re-presented as ``web_search``."""
     out: list[dict] = []
     swapped = 0
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the empty-success reframe
+    fetch_ids: set[str] = set()       # tool_call_ids of re-presented web_fetch/web_search → strip envelope
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -467,11 +499,16 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
                             write_paths[tc.get("id")] = _tool_path(p) or ""
+                        elif orig["name"] in (_FETCH_NAMES | _SEARCH_NAMES):
+                            fetch_ids.add(tc.get("id"))
                 elif name == "local_web_search":  # always present the Brave tool as web_search
                     tc = {**tc, "function": {**fn, "name": "web_search"}}
                     swapped += 1
+                    fetch_ids.add(tc.get("id"))
                 new_calls.append(tc)
             out.append({**m, "tool_calls": new_calls})
+        elif role == "tool" and m.get("tool_call_id") in fetch_ids:
+            out.append({**m, "content": _strip_exec_envelope(str(m.get("content") or ""))})
         elif role == "tool" and _WROTE in str(m.get("content") or "") and m.get("tool_call_id") in write_paths:
             # POSITIVE success signal only — a blank or error result (no token) is left untouched so
             # the model sees the real failure instead of a fabricated "Wrote {path}".

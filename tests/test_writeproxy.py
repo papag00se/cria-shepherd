@@ -190,6 +190,69 @@ class WebTests(unittest.TestCase):
         self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "web_search")
 
 
+class WebFetchEnvelopeTests(unittest.TestCase):
+    """A synthetic web_fetch is lowered to a shell exec, so the harness wraps its result in the Codex
+    exec envelope (Chunk ID / Process exited / Output: / truncation advisories). Left in a re-presented
+    web_fetch value it reads as a disk-caching shell command — the model then greps a phantom cache path
+    and re-fetches the whole page. The envelope must be stripped back to the tool's own payload."""
+
+    _ENVELOPE = (
+        "Chunk ID: 805c35\n"
+        "Wall time: 0.0000 seconds\n"
+        "Process exited with code 0\n"
+        "Original token count: 4106\n"
+        "Output:\n"
+        "Warning: truncated output (original token count: 4106)\n"
+        "Total output lines: 8\n"
+        "\n"
+        "HTTP 200 OK · https://api.handle.me/openapi.json\n"
+        "Content-Type: application/json\n"
+        "--- (chars 0-16000 of 57548) ---\n"
+        '{"openapi":"3.0.3"}\n'
+        '⚠ More remains (41548 of 57548 chars left). Continue with cursor="c16000".'
+    )
+
+    def test_strip_removes_envelope_keeps_payload_and_real_footer(self):
+        from cria.writeproxy import _strip_exec_envelope
+        out = _strip_exec_envelope(self._ENVELOPE)
+        self.assertTrue(out.startswith("HTTP 200 OK"))          # the payload leads
+        for noise in ("Chunk ID", "Process exited", "Wall time", "Original token count",
+                      "Warning: truncated output", "Total output lines"):
+            self.assertNotIn(noise, out)                         # no shell/cache/truncation signal
+        self.assertIn("⚠ More remains", out)                    # webfetch's OWN accurate footer survives
+        self.assertIn('cursor="c16000"', out)
+
+    def test_strip_is_a_no_op_without_the_envelope(self):
+        from cria.writeproxy import _strip_exec_envelope
+        clean = 'HTTP 200 OK · https://x\n{"a":1}'
+        self.assertEqual(_strip_exec_envelope(clean), clean)     # already clean → untouched
+        self.assertEqual(_strip_exec_envelope(""), "")
+
+    def test_web_fetch_result_stripped_end_to_end(self):
+        comp = _call("web_fetch", {"url": "https://api.handle.me/openapi.json"}, cid="c7")
+        translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+        hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c7", "content": self._ENVELOPE}]
+        out = represent_inbound(hist)
+        self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "web_fetch")   # name restored
+        content = str(out[-1]["content"])
+        self.assertNotIn("Chunk ID", content)                    # envelope stripped from the result
+        self.assertNotIn("Process exited", content)
+        self.assertTrue(content.startswith("HTTP 200 OK"))
+        self.assertIn("⚠ More remains", content)
+
+    def test_gate_result_is_not_stripped_no_fetch_sentinel(self):
+        # A gate/exec result whose call carries NO fetch sentinel is left untouched — the gate path
+        # (probegate) needs its envelope + ___CRIA_GATE_ sections; this must never be collateral damage.
+        gate = ("Chunk ID: ab\nProcess exited with code 0\nOutput:\n"
+                "___CRIA_GATE_probe-1___\nEXIT:0")
+        hist = [{"role": "assistant", "tool_calls": [
+                    {"id": "g1", "type": "function",
+                     "function": {"name": "exec_command", "arguments": '{"cmd":"git status"}'}}]},
+                {"role": "tool", "tool_call_id": "g1", "content": gate}]
+        out = represent_inbound(hist)
+        self.assertEqual(out[-1]["content"], gate)               # untouched: not a re-presented fetch
+
+
 class MiscTests(unittest.TestCase):
     def test_inbound_leaves_unrelated_calls_alone(self):
         hist = [{"role": "assistant", "tool_calls": [
