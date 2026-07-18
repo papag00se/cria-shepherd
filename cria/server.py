@@ -598,6 +598,22 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.emit("loop.history_rewritten", plan_off=True, n_messages=len(msgs))
         return rewritten
 
+    def _done_critic_says_incomplete(self, gs, body: dict, rlog) -> bool:
+        """The task-level reasoner critic on a GREEN plan-off 'done' (parity with the loop's _verify):
+        judge the WHOLE task against the real work + the vacuous-green fact. Marks gs.done_critiqued so
+        it runs at most ONCE. Returns True only on a NOT-satisfied verdict (fail-open: a judge that can't
+        decide fail-closes to not-satisfied, but the ONCE bound means the next green 'done' still ends)."""
+        gs.done_critiqued = True
+        task = _history_root(body.get("messages", []))[0]
+        ev = _satisfaction_evidence(body.get("messages", []))
+        if gs.last_gate_testless:  # C4 vacuous-green evidence
+            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
+                   "If this task required tests, green does NOT verify them; judge accordingly.")
+        satisfied, _reason = judge_satisfaction(
+            task, ev, self.server.reasoner_upstream.chat, self.server.reasoner_role, rlog)
+        rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
+        return not satisfied
+
     def _drive_direct_coder(self, gs, provider, indic, body: dict, sess_key: str, rlog):
         """The plan-off direct-coder turn with the SAME protections the loop gives its coder: the
         repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify
@@ -616,16 +632,22 @@ class CriaHandler(BaseHTTPRequestHandler):
         if gs.done_probe:
             gs.done_probe = False
             errors = guard_gate_verdict(gs, body, rlog)
-            if not errors:  # no failing check (clean, or couldn't run → fail-open) → forward the held answer
+            if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
+                rlog.emit("loop.gate", plan_off=True, blocked=True)
+                gs.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
+                gs.steer_source = "completion gate (repo checks failed)"
+            elif self.server.reasoner_role is not None and not gs.done_critiqued and self._done_critic_says_incomplete(gs, body, rlog):
+                # A2 PARITY: the objective gate is GREEN, but the task-level reasoner critic (like the
+                # loop's _verify) says the WHOLE task isn't done (a shallow/mocked/missing deliverable
+                # green checks miss). Don't end; nudge to finish. BOUNDED to once + fail-open, so a flaky
+                # judge delays a genuinely-green 'done' by at most one turn and can never block it.
+                gs.nudge_reason = prompts.load("done_incomplete")
+                gs.steer_source = "completion critic (task not fully done)"
+                gs.pending_done = ""
+            else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
                 rlog.emit("loop.gate", plan_off=True, blocked=False)
                 held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
                 return _completion_final(held or "Done.")
-            rlog.emit("loop.gate", plan_off=True, blocked=True)  # checks failed → steer to fix
-            # Pass the FULL failing-check output — no tail clip. Clipping to the last 1800 chars
-            # dropped the ROOT failure at the top and steered the coder to fix trailing symptoms;
-            # the context floor (contextfloor.fit) bounds the request losslessly-first at send time.
-            gs.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
-            gs.steer_source = "completion gate (repo checks failed)"
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if gs.periodic_probe:
             truth = guard_periodic_result(gs, body, rlog)

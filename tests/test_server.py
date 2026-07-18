@@ -649,3 +649,32 @@ class CompactorRoleWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoneCriticTests(unittest.TestCase):
+    """A2: a plan-off GREEN 'done' runs a bounded task-level reasoner critic (parity with the loop's
+    _verify). Bounded to once + fail-open, so a flaky judge can never permanently block a green done."""
+
+    def _handler(self):
+        from cria.server import CriaHandler
+        h = CriaHandler.__new__(CriaHandler)
+        h.server = types.SimpleNamespace(
+            reasoner_upstream=types.SimpleNamespace(chat=lambda b, r: b"{}"),
+            reasoner_role="reasoner")
+        return h
+
+    def test_critic_verdict_and_bounded_once(self):
+        import cria.server as srv
+        from cria.loop import GuardState
+        h = self._handler()
+        body = {"messages": [{"role": "user", "content": "build X with tests"}]}
+        orig = srv.judge_satisfaction
+        try:
+            srv.judge_satisfaction = lambda *a, **k: (False, "no tests")
+            gs = GuardState()
+            self.assertTrue(h._done_critic_says_incomplete(gs, body, _RewriteRlog()))  # not satisfied → incomplete
+            self.assertTrue(gs.done_critiqued)                                          # marked → bounded once
+            srv.judge_satisfaction = lambda *a, **k: (True, "all present")
+            self.assertFalse(h._done_critic_says_incomplete(GuardState(), body, _RewriteRlog()))  # satisfied → done
+        finally:
+            srv.judge_satisfaction = orig

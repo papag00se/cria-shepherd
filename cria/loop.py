@@ -179,6 +179,10 @@ class GuardState:
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
+    done_critiqued: bool = False  # the task-level reasoner critic ran on a GREEN 'done' this session. Bounded
+    # to ONCE: it catches an obviously shallow/mocked/missing-deliverable 'done' despite green checks
+    # (parity with the loop's _verify), but a flaky judge can then never BLOCK a genuinely-green done from
+    # finishing — the next green 'done' trusts the objective gate and ends. Fail-open on the judge.
 
 
 @dataclass
