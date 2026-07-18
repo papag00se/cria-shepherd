@@ -1,8 +1,15 @@
-# cria work plan — open items (2026-07-18)
+# cria work plan (2026-07-18) — ✅ COMPLETE
 
-Aggregated from the recent parity-audit / semantic-failure / routing discussions. Three epics
-(B is the root and unblocks A and part of C), plus a quick-win convergence set. Nothing here is
-committed yet; the "Done" section lists what already shipped.
+Aggregated from the parity-audit / semantic-failure / routing discussions. **All three epics shipped**
+(the /goal run): Epic C 711c8e7·2061184·4912756 · Epic B 56b7330·c18b4e1·52d63de · Epic A
+a2d1299·cf2cdfb·4f7089d·48c4a5a. 908 tests green; each unit committed + pushed + cria restarted.
+Residual (consistent with the plan's own framing): **B3b** reasoning-portability for cloud roles is a
+follow-on refinement (the desugar already carries the per-role reasoning field); **B4** codex resolved
+as a precise error (the codex CLI is an agent runner, not a raw-completion provider); **C6** self-
+recursion demoted (per the "unchanged arg ≠ unchanged value" correction) — folded into C5's evidence
+direction, not a standalone detector.
+
+Original plan below (three epics; B is the root and unblocks A and part of C).
 
 ---
 
