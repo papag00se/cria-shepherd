@@ -2428,6 +2428,17 @@ class ReasonedRedirectTests(unittest.TestCase):
         empty = lambda b, r: json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
         self.assertTrue(author_redirect(empty, None, ws, "the task", gs, outcome, body, _Rlog()))  # canned fallback
 
+    def test_thrash_steer_diagnoses_else_raw_truth(self):
+        import json, tempfile
+        from cria.loop import GuardState, author_thrash_steer
+        gs = GuardState(probe_call_id="p1", gate_stall=2)
+        gs.recent_writes = []
+        ws, truth, body = tempfile.mkdtemp(), "x.py:1: SyntaxError: bad", {"messages": []}
+        reply = lambda b, r: json.dumps({"choices": [{"message": {"content": "you keep re-adding a colon on line 1; delete it"}}]}).encode()
+        self.assertIn("delete it", author_thrash_steer(reply, None, ws, gs, truth, body, _Rlog()))
+        empty = lambda b, r: json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
+        self.assertEqual(author_thrash_steer(empty, None, ws, gs, truth, body, _Rlog()), truth)  # fall back to ground truth
+
     def _test_cand(self, cmd, kind):
         from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind  # noqa: F401
         return ProbeCandidate(kind=kind, command=cmd, working_dir="/tmp", confidence=90,

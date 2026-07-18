@@ -263,6 +263,10 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
 # session has driven at least this many turns — i.e. a long stretch with no GREEN and no off-ramp.
 STALL_TERMINATE_RED_CYCLES = 4    # consecutive RED gate results (each ~GATE_EVERY_CODER_TURNS turns apart)
 STALL_TERMINATE_MIN_DRIVES = 80   # and a total-drive floor, so a short task is never cut off
+# C5: when the SAME check error has persisted this many gate cycles (the coder is STUCK on one thing,
+# not just churning), replace the raw ground-truth insertion with a REASONED thrash-diagnosis + next-step.
+# Below the terminate threshold, so a stuck coder gets a reasoned unstick BEFORE cria gives up on it.
+THRASH_STALL_CYCLES = 2
 
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
@@ -1943,6 +1947,26 @@ def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str
                           truth=truth, disk=disk or "(no files touched yet)")
     text = summarize(reasoner_chat, reasoner_role, prompts.load("redirect"), user, rlog, phase="reasoner")
     return text or guard_canned_redirect(gs, outcome)
+
+
+def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardState,
+                        truth: str, body: dict, rlog) -> str:
+    """C5 — the reasoned thrash-assist. When the coder is STUCK (the same check error has persisted for
+    THRASH_STALL_CYCLES gate cycles while it keeps editing), a no-tools REASONER is handed the grounded
+    evidence bundle — the persistent error, the files it keeps changing (real on-disk bytes), its own
+    recent tool results, the vacuous-green fact — and asked to diagnose WHY it is stuck and give ONE
+    concrete next step. Anchored in ground truth so it degrades gracefully: a weak reasoner restates the
+    facts (no worse than the raw insertion), a stronger reasoner supplies the real unlock. Falls back to
+    the raw ground truth when it yields nothing."""
+    disk = _fresh_disk_facts(workspace_root, gs.recent_writes, gs.spin_path)
+    evidence = _coder_evidence(body.get("messages", []), gs.probe_call_id)
+    note = ""
+    if gs.last_gate_testless:
+        note = "\n\nNOTE: the checks pass on some files but NO tests were actually executed (0 collected)."
+    user = prompts.render("thrash_diagnose_user", stall=gs.gate_stall, truth=truth,
+                          disk=(disk or "(no files touched yet)"), evidence=(evidence or "(none)")) + note
+    text = summarize(reasoner_chat, reasoner_role, prompts.load("thrash_diagnose"), user, rlog, phase="reasoner")
+    return text or truth
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the

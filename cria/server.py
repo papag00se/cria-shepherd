@@ -54,6 +54,8 @@ from .loop import (
     guard_probe_reissue,
     guard_probe_steer,
     author_redirect,
+    author_thrash_steer,
+    THRASH_STALL_CYCLES,
     CANNED,
     _extract_cwd,
     summarize,
@@ -665,6 +667,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         if gs.periodic_probe:
             truth = guard_periodic_result(gs, body, rlog)
             if truth:
+                # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
+                # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
+                # the routed reasoner). Fires BELOW the terminate threshold — a reasoned unstick before
+                # cria gives up. Degrades gracefully: a weak reasoner just restates the ground truth.
+                if self.server.reasoner_role is not None and gs.gate_stall >= THRASH_STALL_CYCLES:
+                    truth = author_thrash_steer(
+                        self.server.reasoner_upstream.chat, self.server.reasoner_role,
+                        _extract_cwd(body.get("messages", [])), gs, truth, body, rlog)
+                    rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=gs.gate_stall)
                 gs.nudge_reason = truth
                 gs.steer_source = "periodic check-in"
         # STALL TERMINATOR (the mirror of the satisfaction off-ramp — that ends on GREEN, this ends on
