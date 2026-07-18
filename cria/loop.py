@@ -163,6 +163,14 @@ class GuardState:
     # plan-off satisfaction judge gates on this: while the deterministic checks already say NOT-done, the
     # LLM done-judge is redundant (both say not-done) and — for a model that can't help emitting a "run the
     # tests" tool call instead of a verdict — pure wasted, always-fail-closed calls. Only spend it on GREEN.
+    # STALL TERMINATOR (plan-off): a session whose checks NEVER go green has no off-ramp (the satisfaction
+    # judge is gated on GREEN, the plan loop's off-ramp is its plan) — so it churns until the user kills it
+    # (the observed 169/326-call runaways). Track the RED-gate streak (never-green count) and the identical-
+    # finding stall (same error unchanged = no progress) to end the session HONESTLY back to the user.
+    gate_red_streak: int = 0   # consecutive RED gate results (reset on a GREEN); drives the terminator
+    gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
+    gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
+    terminated: bool = False   # the stall terminator fired — guard against re-firing
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -239,6 +247,39 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
     if start <= 0 or every <= 0:  # disabled
         return False
     return drive_count >= start and (drive_count - start) % every == 0
+
+
+# STALL TERMINATOR thresholds (plan-off). GENEROUS on purpose — a floor on wasted work, not an eager
+# quitter (a stochastic model may converge late). It ends the session back to the USER (who was already
+# killing these by hand) only after the repo's checks have stayed RED for this many gate cycles AND the
+# session has driven at least this many turns — i.e. a long stretch with no GREEN and no off-ramp.
+STALL_TERMINATE_RED_CYCLES = 4    # consecutive RED gate results (each ~GATE_EVERY_CODER_TURNS turns apart)
+STALL_TERMINATE_MIN_DRIVES = 80   # and a total-drive floor, so a short task is never cut off
+
+
+def track_gate_progress(gs: GuardState, finding: str) -> None:
+    """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
+    a FALSY value on a GREEN/clean gate. Maintains the RED streak (never-green count that drives the
+    terminator) and the identical-finding stall (same error unchanged across gates = no progress). A
+    COULDN'T-RUN gate must NOT call this (it is a neutral non-signal — neither red nor green)."""
+    if not finding:
+        gs.gate_red_streak = 0
+        gs.gate_stall = 0
+        gs.gate_sig = ""
+        return
+    gs.gate_red_streak += 1
+    if finding == gs.gate_sig:
+        gs.gate_stall += 1
+    else:
+        gs.gate_stall = 1
+        gs.gate_sig = finding
+
+
+def stall_terminated(gs: GuardState) -> bool:
+    """True when the plan-off session should END: the checks have been RED for STALL_TERMINATE_RED_CYCLES
+    straight (never went green) and the session has driven past the generous floor."""
+    return (gs.gate_red_streak >= STALL_TERMINATE_RED_CYCLES
+            and gs.drive_count >= STALL_TERMINATE_MIN_DRIVES)
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool) -> dict | None:
@@ -1737,9 +1778,11 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
     if err:
         gs.last_gate_red = True
+        track_gate_progress(gs, err)            # RED → streak++, stall on an unchanged finding
     elif outcome.ran:
         gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
-    # a couldn't-run probe leaves last_gate_red unchanged — no evidence either way, don't flip the gate
+        track_gate_progress(gs, "")             # GREEN → reset the streak/stall
+    # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
         return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
     return prompts.render("periodic_gate", truth=err)
@@ -1825,12 +1868,16 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     findings = proberun.completion_block_nudge(outcome.report)
     if findings:
         gs.last_gate_red = True
+        track_gate_progress(gs, findings)
         return findings
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:  # a check ran and FAILED (no parseable line) → the 'done' isn't genuine
         gs.last_gate_red = True
-        return "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
+        msg = "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
+        track_gate_progress(gs, msg)
+        return msg
     gs.last_gate_red = False  # ran and genuinely clean → GREEN
+    track_gate_progress(gs, "")
     return None
 
 

@@ -47,6 +47,7 @@ from .loop import (
     reframe_compaction,
     guard_gate_op,
     guard_gate_verdict,
+    stall_terminated,
     guard_intervene,
     guard_periodic_gate,
     guard_periodic_result,
@@ -617,6 +618,17 @@ class CriaHandler(BaseHTTPRequestHandler):
             if truth:
                 gs.nudge_reason = truth
                 gs.steer_source = "periodic check-in"
+        # STALL TERMINATOR (the mirror of the satisfaction off-ramp — that ends on GREEN, this ends on
+        # persistent-RED): the checks have stayed red for a generous stretch with no off-ramp, so END the
+        # session honestly back to the USER instead of churning forever (the 169/326-call runaways). The
+        # coder can't reliably STOP; when it also can't converge, cria stops FOR it and reports the state.
+        if not gs.terminated and stall_terminated(gs):
+            gs.terminated = True
+            rlog.emit("loop.stall_terminated", drive=gs.drive_count,
+                      red_streak=gs.gate_red_streak, stall=gs.gate_stall)
+            return _completion_final(prompts.render(
+                "stall_terminated", drives=gs.drive_count, cycles=gs.gate_red_streak,
+                checks=gs.gate_sig or "(no parseable check output)"))
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
         if gs.awaiting_probe:
