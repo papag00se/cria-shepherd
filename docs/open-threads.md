@@ -41,18 +41,20 @@ unify** — every role now goes through `role.apply()`, which translates via its
       (a loop role on groq/openrouter is now reachable, not just the proxy coder).
 - [x] `cria.example.toml` (all keys, terse) + live `~/.cria/cria.toml` converted; cria restarted. 930 tests.
 
-### Theme 3 — Route unification  🔄 IN PROGRESS (D4b)
-Make plan-off a degenerate 1-item plan → ONE driver (`Loop.drive`), planner an internal on/off
-stage. Delete `_drive_direct_coder`/`_gate_direct_done`. **Preserve 3 invariants:** (1) off-ramps
-(stall-terminate / task satisfaction / done-critic) run *conditionally* in single-item mode;
-(2) no "step 1/1" framing when `total==1` (raw task); (3) the synthetic plan stays **non-persisted**
-on unstable `task:` keys (or the plan-cache cross-session leak returns).
+### Theme 3 — Route unification  ✅ SHIPPED (`10404d0`→`1d128f9`, live-smoked)
+Plan-off is now a degenerate 1-item plan → ONE driver (`Loop.drive`); the planner is an internal
+on/off stage. `_drive_direct_coder`/`_gate_direct_done` + 8 more server helpers DELETED. All 3
+invariants held: (1) the off-ramps (stall-terminate / satisfaction / done-critic) live in
+`Loop._drive_single_item`, reached only via `sess.synthetic` — the multi-item path is untouched;
+(2) `_frame_for_item(synthetic=True)` = raw task, no "step 1/1", byte-equivalent to the old framing;
+(3) synthetic session persists on stable `sid:` keys, **ephemeral** on unstable `task:` keys.
+The shell-tool decline is gated to planner-ON (else the synthetic path would lose its guards).
 
-- [ ] Design pass (deep read of both drive loops) → concrete line-level plan.
-- [ ] Synthetic 1-item plan + always-build-Loop; collapse `_produce_completion`/`_produce_stream`
-      dispatch to one `Loop.drive`.
-- [ ] Conditional off-ramps + framing branch + persistence guard.
-- [ ] Delete the plan-off path; update its tests; verify + live-smoke.
+- [x] Design pass → `docs/route-unify-plan.md`.
+- [x] Phase 1 synthetic framing; Phase 2 relocate into `Loop`; Phase 3 creation + persistence;
+      Phase 4 flip dispatch + delete plan-off path; Phase 5 remove dead `GuardStore`.
+- [x] 944 tests; **live smoke**: a coding turn drove `loop.start synthetic=true steps=1`, ZERO
+      `plan_off`/`direct_coder` events, HTTP 200 coder `write_file`.
 
 ### Residual — a cli backend can't be a loop-internal endpoint (B1-cli)
 `endpoint_for` now resolves served + keyed-http; a **cli** backend (claude) still falls back to the
