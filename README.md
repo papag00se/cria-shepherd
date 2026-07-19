@@ -54,11 +54,11 @@ pip install -e .          # installs the `cria` and `cria-tail` scripts; no thir
 
 ## Configure
 
-Copy the template — it's auto-discovered (`~/.cria/cria.toml` → `./cria.toml` →
-`~/.config/cria/config.toml`; override with `--config` or `CRIA_CONFIG`):
+cria auto-discovers `~/.cria/cria.toml` then `./cria.toml` (deep-merged, cwd wins), or pass
+`--config`:
 
 ```bash
-mkdir -p ~/.cria && cp cria.toml.example ~/.cria/cria.toml && $EDITOR ~/.cria/cria.toml
+mkdir -p ~/.cria && cp cria.example.toml ~/.cria/cria.toml && $EDITOR ~/.cria/cria.toml
 ```
 
 Minimum config — a transparent, assist-applying proxy in front of one model server:
@@ -67,31 +67,34 @@ Minimum config — a transparent, assist-applying proxy in front of one model se
 [server]
 port = 18085                            # 18084 = raw model, 18085 = cria
 
-[upstream]
-base_url = "http://127.0.0.1:18084"     # your OpenAI-compatible model server
+[defaults]
+base_url = "http://127.0.0.1:18084"     # shared endpoint for backends that omit their own
 ```
 
-cria addresses the model in four **roles** — `classifier`, `reasoner`, `coder`,
-`compactor`. Each names a model alias plus the sampling + reasoning cria attaches to every
-request for that role, applied per request (change = cria restart, not a model reload):
+cria uses ONE config model: **`[backends]`** say WHERE a model runs (transport `http` | `cli`);
+**`[roles]`** bind a backend to the sampling + reasoning cria attaches to every request for that
+role (applied per request — change = cria restart, not a model reload). cria addresses four roles —
+`classifier`, `reasoner`, `coder`, `compactor`:
 
 ```toml
-[routing]
-local_only = true          # no cloud; failover chains collapse to their local links
+[backends.local]
+transport = "http"
+base_url  = "http://127.0.0.1:18084"    # a served (keyless) endpoint — cria uses the loaded model
 
-[models.local.coder]
-model          = "fabliq_8b_reasoning_q6"
-reasoning      = "on"       # "on" | "off" | "auto"
+[roles.coder]
+backend        = "local"
+reasoning      = "on"                    # "on" | "off" | "auto"
 temperature    = 0.0
-repeat_penalty = 1.05       # also: top_p · top_k · min_p · max_tokens
+repeat_penalty = 1.05                    # also: top_p · top_k · min_p · max_tokens · output_reserve
 ```
 
-Optional: route by task type through a failover chain, and escalate to a cloud provider
-or the `claude` CLI when `local_only = false`. Secrets stay in the environment — the
-config names an env var (`api_key_env = "OPENAI_API_KEY"`), never the key. Model **launch**
-settings (context, quant, GPU) belong to the model server, not cria — see
-[`docs/model-settings.md`](docs/model-settings.md). Every key is documented inline in
-[`cria.toml.example`](cria.toml.example).
+Route by task type through a `[failover]` chain, and escalate off-box by adding a **keyed** backend
+(`api_key_env = "GROQ_API_KEY"` + `model = "…"`) or a `transport = "cli"` backend (the `claude`
+CLI) and appending its role to the chain — a role whose backend needs a missing key/binary is
+simply skipped, so the chain collapses to whatever resolves. Secrets stay in the environment (the
+config names the env var, never the key). Model **launch** settings (context, quant, GPU) belong to
+the model server, not cria — see [`docs/model-settings.md`](docs/model-settings.md). Every key is
+documented inline in [`cria.example.toml`](cria.example.toml).
 
 ## Run
 

@@ -9,7 +9,7 @@ Settings live in **two files**, split by whether they need a model reload:
 | Layer | File | Holds | Changing it needs |
 |---|---|---|---|
 | **Server launch** | `~/.config/llama-fleet/models.toml` (read by `llama-fleet`) | model source, quant, **ctx**, KV, GPU layers, chat template | a **model-server restart** (`systemctl restart llama-<model>`) — rare |
-| **Client / per-role** | `~/.cria/cria.toml` `[models.local.<role>]` | **sampling** (temperature/top_p/top_k/repeat_penalty/min_p/max_tokens) + **reasoning** | a **cria restart** (seconds) — no model reload |
+| **Client / per-role** | `~/.cria/cria.toml` `[roles.<role>]` | **sampling** (temperature/top_p/top_k/repeat_penalty/min_p/max_tokens) + **reasoning** | a **cria restart** (seconds) — no model reload |
 
 cria attaches the **role's** sampling + reasoning to **every request** it makes for that
 role (`temperature`, `repeat_penalty`, … and reasoning as `chat_template_kwargs.enable_thinking`).
