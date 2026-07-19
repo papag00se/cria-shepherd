@@ -529,6 +529,18 @@ class LoopContext:
     # orthogonal to `summary`, which only summarizes COMPLETED steps). [context] self_compact / trigger.
     self_compact: bool = True
     trigger_compaction: int = 16384
+    # Is the planner stage ON? False = plan-off: the loop synthesizes a degenerate 1-item plan
+    # (PlanSession.synthetic) and drives it through _drive_single_item — the relocated plan-off path.
+    # The planner object above is then dormant (plan_for is never called on the synthetic path).
+    planner_enabled: bool = True
+    # Periodic SATISFACTION check cadence for the single-item path — start at drive `start`, then every
+    # `every` drives (operator-tunable [context]; 0 disables). Only the single-item off-ramps use these.
+    satisfaction_check_start: int = 100
+    satisfaction_check_every: int = 25
+    # The COMPACTOR endpoint's chat for the single-item self-compaction summary — rides the compactor
+    # box (compactor_upstream.chat) like the plan-off _summarize did, so a compactor on its own base_url
+    # is honored. None → fall back to reasoner_chat (the summarize sampling still uses compactor_role).
+    compactor_chat: object = None  # (body, rlog) -> bytes | None
 
 
 class Loop:
@@ -1067,6 +1079,252 @@ class Loop:
             lines.append(f"  ⚠ step {n}: {it.text}{why}")
         lines.append("\nThose steps ran but their checks never passed — the result needs review before it can be trusted (e.g. the tests may still be failing).")
         return ("\n".join(lines) + brief_block).strip()
+
+    # -------------------------------------------------------- single-item (plan-off) mode
+    # A degenerate 1-item "plan" (``sess.synthetic``) is driven HERE, not through ``_work``: the whole
+    # task is ONE implicit step, so the coder gets RAW-task framing (no "step k/n") and the off-ramps a
+    # finite multi-step plan doesn't need — the stall terminator + a task-level satisfaction/done critic.
+    # These methods are the relocated plan-off direct-coder path (formerly ``server._drive_direct_coder``
+    # et al.): the SAME shared guard/gate/author/summarize primitives, rewired onto the loop's OWN
+    # LoopContext so ONE driver serves both producers. Reached only via ``sess.synthetic`` in _drive_locked.
+
+    def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False) -> dict | None:
+        """The single-item coder turn with the SAME protections the loop gives its coder: the
+        repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify the
+        repo's checks before ending), harness-compaction re-anchoring, the stall terminator, and the
+        periodic + done satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
+        stable keys, ephemeral for ``task:`` keys). Returns the completion to send, or None on decode fail."""
+        sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
+        # A probe whose result a harness compaction erased is re-issued (parity with the loop), rather
+        # than fail-open / downgrade to a canned steer with no ground truth.
+        reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=self._ctx.workspace_root)
+        if reissue is not None:
+            return reissue
+        # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
+        if sess.done_probe:
+            sess.done_probe = False
+            errors = guard_gate_verdict(sess, body, rlog)
+            if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
+                rlog.emit("loop.gate", plan_off=True, blocked=True)
+                sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
+                sess.steer_source = "completion gate (repo checks failed)"
+            elif self._ctx.reasoner_role is not None and not sess.done_critiqued and self._done_critic_says_incomplete(sess, body, rlog):
+                # A2 PARITY: the objective gate is GREEN, but the task-level reasoner critic (like the
+                # loop's _verify) says the WHOLE task isn't done. BOUNDED to once + fail-open, so a flaky
+                # judge delays a genuinely-green 'done' by at most one turn and can never block it.
+                sess.nudge_reason = prompts.load("done_incomplete")
+                sess.steer_source = "completion critic (task not fully done)"
+                sess.pending_done = ""
+            else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
+                rlog.emit("loop.gate", plan_off=True, blocked=False)
+                held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
+                return _completion_final(held or "Done.")
+        # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
+        if sess.periodic_probe:
+            truth = guard_periodic_result(sess, body, rlog)
+            if truth:
+                # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
+                # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
+                # the routed reasoner). Fires BELOW the terminate threshold — a reasoned unstick first.
+                if self._ctx.reasoner_role is not None and sess.gate_stall >= THRASH_STALL_CYCLES:
+                    truth = author_thrash_steer(
+                        self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                        self._ctx.workspace_root or _extract_cwd(body.get("messages", [])), sess, truth, body, rlog)
+                    rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=sess.gate_stall)
+                sess.nudge_reason = truth
+                sess.steer_source = "periodic check-in"
+        # STALL TERMINATOR (the mirror of the satisfaction off-ramp — that ends on GREEN, this ends on
+        # persistent-RED): the checks have stayed red for a generous stretch with no off-ramp → END the
+        # session honestly back to the USER instead of churning forever.
+        if not sess.terminated and stall_terminated(sess):
+            sess.terminated = True
+            rlog.emit("loop.stall_terminated", drive=sess.drive_count,
+                      red_streak=sess.gate_red_streak, stall=sess.gate_stall)
+            return _completion_final(prompts.render(
+                "stall_terminated", drives=sess.drive_count, cycles=sess.gate_red_streak,
+                checks=sess.gate_sig or "(no parseable check output)"))
+        # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
+        steer, intervention = None, None
+        if sess.awaiting_probe:
+            sess.awaiting_probe = False
+            # PARITY: the single-item path gets the SAME reasoner-authored redirect as the loop (via the
+            # shared author_redirect on the routed reasoner endpoint). CANNED only if there's no reasoner.
+            def _redirect_author(g, outcome, b, r):
+                task = _history_root(b.get("messages", []))[0] or "the user's task"
+                return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                       self._ctx.workspace_root or _extract_cwd(b.get("messages", [])),
+                                       task, g, outcome, b, r)
+            author = _redirect_author if self._ctx.reasoner_role is not None else CANNED
+            steer = guard_probe_steer(sess, body, rlog, author=author)
+        elif not sess.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
+            intervention = guard_intervene(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+        if intervention is not None:
+            return intervention
+        if steer is None and sess.nudge_reason:
+            steer, sess.nudge_reason = sess.nudge_reason, ""
+        # PERIODIC SATISFACTION CHECK (the off-ramp for a session that finished the work but can't STOP):
+        # on a long session the reasoner judges whether the USER'S WHOLE TASK is satisfied; if yes, cria
+        # initiates the done-gate (verify the repo's checks) and ends next turn. GATED ON GREEN.
+        if steer is None and not rewritten and not sess.done_probe and not sess.last_gate_red \
+                and satisfaction_check_due(
+                sess.drive_count, self._ctx.satisfaction_check_start, self._ctx.satisfaction_check_every):
+            task = _history_root(body.get("messages", []))[0]
+            evidence = _satisfaction_evidence(body.get("messages", []))
+            if sess.last_gate_testless:  # C4: the vacuous-green FACT — the judge holds the task and decides
+                evidence += ("\n\n[GROUND TRUTH] The repo's automated checks passed, but NO tests were "
+                             "actually executed (0 collected / no test probe ran). If this task required "
+                             "tests, a green result does NOT verify them; judge accordingly.")
+            satisfied, reason = judge_satisfaction(
+                task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+            rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
+            if satisfied:
+                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+                if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
+                    sess.done_probe = True
+                    sess.probe_call_id = probe_tc["id"]
+                    sess.pending_done = satisfaction_done_note(reason)
+                    sess.steer_source = "completion check (task satisfied)"
+                    return _completion_toolcalls([probe_tc],
+                                                 note="cria completion check: the task looks done — verifying the repo's checks")
+                return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
+            # NOT satisfied → do NOT steer (the reason is judgment, not ground truth). Just log the verdict.
+        # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
+        # else is steering this turn (a guard steer / re-anchor takes precedence).
+        if steer is None and not rewritten:
+            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+            if periodic is not None:
+                return periodic
+        framed = {**body, "messages": _frame_for_item(
+            body.get("messages", []), "", sess.summary, 1, 1,
+            prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True)}
+        extra = []
+        if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
+            self._store.clear_rewrite(session_key)  # acted on it (framing rebuilt each turn)
+        if steer:  # inject the steer into the coder framing this turn
+            extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
+        if extra:
+            framed = {**framed, "messages": framed["messages"] + extra}
+        # Pin the conversation-root task (from the RAW body, where env-context detection still works —
+        # framed has already been reframed) so self-compaction can't summarize it away.
+        framed = self._self_compact_single(framed, sess, rlog,
+                                           root_task=_history_root(body.get("messages", []))[0])
+        if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
+            self._ctx.coder_role.apply(framed)
+        if self._ctx.focus_trim:  # focus the OUTBOUND view (logged, not bannered — routine housekeeping)
+            trimmed, rep = focustrim.trim(framed["messages"])
+            if rep.applied:
+                framed = {**framed, "messages": trimmed}
+                rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
+        comp = self._run_single_coder(framed, sess, rlog)
+        if comp is None:
+            return None
+        if rewritten:  # no hidden guards: surface that cria re-anchored the turn
+            _add_note(comp, "re-anchored after a harness compaction")
+        if steer:  # no hidden guards: surface WHICH guard steered the coder
+            _add_note(comp, f"steered the coder — {sess.steer_source or 'guard'}")
+            sess.steer_source = ""
+        if _has_tool_calls(comp):
+            sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
+            return comp  # acting → forward
+        return self._gate_single_done(sess, comp, framed, body, rlog)
+
+    def _gate_single_done(self, sess: PlanSession, comp: dict, framed: dict, body: dict, rlog) -> dict:
+        """The coder answered with NO tool call (thinks it's done). Verify before ending: LEG0 (never
+        acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
+        checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
+        tags from ``framed``)."""
+        if sess.action_seq == 0 and not sess.leg0_nudged:  # the session never acted at all
+            sess.leg0_nudged = True
+            rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
+            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=prompts.load("leg0_nudge"))}]
+            recall = self._run_single_coder({**framed, "messages": conv}, sess, rlog)
+            if recall is not None:
+                comp = recall
+                if _has_tool_calls(comp):
+                    return comp  # it acted after the nudge
+        probe = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)  # body, NOT framed
+        if probe is not None:
+            sess.done_probe = True
+            sess.probe_call_id = probe["id"]
+            sess.pending_done = _completion_text(comp)
+            rlog.emit("loop.completion_probe", plan_off=True)
+            return _completion_toolcalls([probe], note="verifying — running the repo's checks")
+        return comp  # no shell tool → can't gate; forward the 'done' as-is
+
+    def _run_single_coder(self, framed: dict, sess: PlanSession, rlog) -> dict | None:
+        """One guarded + cleaned coder call on the single-item path (shared by the main turn and the
+        LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin tracking
+        if it acted. Uses the loop's watched coder call (``ctx.coder_chat`` already carries the rumination
+        watch). Returns the completion, or None on a decode failure."""
+        try:
+            comp = massage.apply(json.loads(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        comp = guard_rumination(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
+        comp = guard_truncation(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
+        _strip_completion_banners(comp)
+        if self._ctx.coder_role is not None:
+            _clean_completion(comp, self._ctx.coder_role)
+        if _has_tool_calls(comp):
+            guard_track_repetition(sess, comp, rlog)
+            guard_track_write_streak(sess, comp, rlog)
+        return comp
+
+    def _done_critic_says_incomplete(self, sess: PlanSession, body: dict, rlog) -> bool:
+        """The task-level reasoner critic on a GREEN single-item 'done' (parity with the loop's _verify):
+        judge the WHOLE task against the real work + the vacuous-green fact. Marks done_critiqued so it
+        runs at most ONCE. True only on a NOT-satisfied verdict (fail-open: an undecidable judge fail-
+        closes to not-satisfied, but the ONCE bound means the next green 'done' still ends)."""
+        sess.done_critiqued = True
+        task = _history_root(body.get("messages", []))[0]
+        ev = _satisfaction_evidence(body.get("messages", []))
+        if sess.last_gate_testless:  # C4 vacuous-green evidence
+            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
+                   "If this task required tests, green does NOT verify them; judge accordingly.")
+        satisfied, _reason = judge_satisfaction(
+            task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+        rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
+        return not satisfied
+
+    def _reasoned_reanchor(self, body: dict, rlog) -> str:
+        """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
+        summary): the reasoner reads the compaction SUMMARY and authors a grounded 'what's done / what
+        remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
+        reasoner or it yields nothing — a compacted coder is never left without re-orientation."""
+        canned = prompts.load("reanchor")
+        summary = _history_root(body.get("messages", []))[0]
+        if self._ctx.reasoner_role is None or not summary.strip():
+            return canned
+        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                         prompts.load("reanchor_reasoned"), summary, rlog, phase="reasoner")
+        return text or canned
+
+    def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
+        """Roll the OLD middle of a long single-item coder history into a compactor summary (info-
+        preserving) instead of letting the floor drop-oldest lose it. Uses ``sess.compact_state`` (per-
+        session), so it can't leak across conversations — an unstable-key session is ephemeral anyway.
+        ``root_task`` is pinned verbatim so it can't erode across compaction rounds. Runs BEFORE the floor."""
+        if not self._ctx.self_compact:
+            return framed
+        msgs = framed.get("messages") or []
+        out, sess.compact_state, applied = selfcompact.compact(
+            msgs, lambda mm: self._summarize_single(mm, rlog), sess.compact_state,
+            trigger_tokens=self._ctx.trigger_compaction, pinned_task=root_task)
+        if not applied:
+            return framed
+        rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=sess.compact_state.covered)
+        return {**framed, "messages": out}
+
+    def _summarize_single(self, messages: list[dict], rlog) -> str:
+        """Fold a span of the single-item coder transcript into a factual briefing — via the SHARED
+        summarize primitive on the COMPACTOR endpoint (``compactor_chat``, falling back to the reasoner
+        endpoint), same mechanism the loop's completion compaction uses, so the two can't diverge."""
+        text = summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
+                         self._ctx.compactor_role or self._ctx.reasoner_role,
+                         prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
+                         phase="self-compact")
+        return text or "(earlier work this session)"
 
 
 # ------------------------------------------------------------------ module functions

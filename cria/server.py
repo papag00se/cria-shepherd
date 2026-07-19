@@ -284,10 +284,19 @@ class CriaServer(ThreadingHTTPServer):
                     planner=Planner(_ep("reasoner"), role=roles.get("reasoner"),
                                     search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds),
                     coder_chat=coder_chat,
+                    # reasoner_chat/reasoner_role are wired UNCONDITIONALLY (even with no reasoner role,
+                    # _ep resolves the shared endpoint and role is None) — the single-item off-ramps gate
+                    # on `reasoner_role is not None`, so a plan-off Loop without a reasoner just skips them.
                     reasoner_chat=_ep("reasoner").chat,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,
+                    # The compactor ENDPOINT's chat for the single-item self-compaction (rides the
+                    # compactor box like the plan-off _summarize did); None-safe (falls back to reasoner).
+                    compactor_chat=self.compactor_upstream.chat,
+                    planner_enabled=cfg.planner.enabled,
+                    satisfaction_check_start=cfg.context.satisfaction_check_start,
+                    satisfaction_check_every=cfg.context.satisfaction_check_every,
                     # ONE folder per run: plan mirror + verify dumps join the call captures
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,

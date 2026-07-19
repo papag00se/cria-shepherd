@@ -2679,5 +2679,119 @@ class PeriodicGateSilentOnCleanTests(unittest.TestCase):
         self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # clean → no injection
 
 
+def _single_loop(coder_chat, *, reasoner_chat=None, reasoner_role=None, compactor_chat=None,
+                 compactor_role=None, coder_role=None, workspace_root=None, store=None,
+                 satisfaction_check_start=100, satisfaction_check_every=25):
+    """A Loop wired for the single-item (plan-off) path: planner_enabled=False, a dormant planner."""
+    ctx = LoopContext(
+        planner=_Planner(_plan()), coder_chat=coder_chat,
+        reasoner_chat=reasoner_chat or coder_chat, reasoner_role=reasoner_role,
+        compactor_chat=compactor_chat, compactor_role=compactor_role, coder_role=coder_role,
+        planner_enabled=False, runs_dir="", workspace_root=workspace_root,
+        satisfaction_check_start=satisfaction_check_start, satisfaction_check_every=satisfaction_check_every)
+    return Loop(ctx, store or LoopStore())
+
+
+def _synth(n=1):
+    return PlanSession(plan=_plan(n), synthetic=True)
+
+
+class SingleItemMethodTests(unittest.TestCase):
+    """Phase 2: the plan-off direct-coder path relocated onto Loop. These exercise the moved METHODS
+    directly (dormant until phase 3 wires the synthetic dispatch) — the server keeps its own copy still."""
+
+    def _reasoner_chat(self, reply):
+        return lambda b, r: json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
+
+    # ---- _run_single_coder -------------------------------------------------------------------
+    def test_run_single_coder_forwards_toolcall_and_tracks(self):
+        loop = _single_loop(_Scripted([_toolcall()]))
+        sess = _synth()
+        comp = loop._run_single_coder({"messages": [], "tools": [_SHELL]}, sess, _Rlog())
+        self.assertTrue(comp["choices"][0]["message"]["tool_calls"])   # acting turn forwarded
+        self.assertIsNotNone(sess.recent_actions)                      # repetition tracking ran
+
+    def test_run_single_coder_none_on_decode_fail(self):
+        loop = _single_loop(lambda b, r: b"not json")
+        self.assertIsNone(loop._run_single_coder({"messages": [], "tools": []}, _synth(), _Rlog()))
+
+    # ---- _reasoned_reanchor ------------------------------------------------------------------
+    def test_reasoned_reanchor_authors_else_canned(self):
+        from cria import prompts
+        from cria.config import Role
+        body = {"messages": [{"role": "user", "content": "SUMMARY: resolver built, tests remain"}]}
+        role = Role(name="reasoner", backend="local")
+        self.assertIn("X is done", _single_loop(_Scripted([_done()]),
+            reasoner_chat=self._reasoner_chat("X is done; finish Y"), reasoner_role=role)._reasoned_reanchor(body, _Rlog()))
+        self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("x"),
+            reasoner_role=None)._reasoned_reanchor(body, _Rlog()), prompts.load("reanchor"))   # no reasoner → canned
+        self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat(""),
+            reasoner_role=role)._reasoned_reanchor(body, _Rlog()), prompts.load("reanchor"))   # empty → canned
+        self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("x"),
+            reasoner_role=role)._reasoned_reanchor({"messages": []}, _Rlog()), prompts.load("reanchor"))  # no summary → canned
+
+    # ---- _done_critic_says_incomplete --------------------------------------------------------
+    def test_done_critic_verdict_and_bounded_once(self):
+        import cria.loop as loopmod
+        from cria.config import Role
+        body = {"messages": [{"role": "user", "content": "build X with tests"}]}
+        loop = _single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("x"),
+                            reasoner_role=Role(name="reasoner", backend="local"))
+        orig = loopmod.judge_satisfaction
+        try:
+            loopmod.judge_satisfaction = lambda *a, **k: (False, "no tests")
+            sess = _synth()
+            self.assertTrue(loop._done_critic_says_incomplete(sess, body, _Rlog()))  # not satisfied → incomplete
+            self.assertTrue(sess.done_critiqued)                                     # marked → bounded once
+            loopmod.judge_satisfaction = lambda *a, **k: (True, "all present")
+            self.assertFalse(loop._done_critic_says_incomplete(_synth(), body, _Rlog()))  # satisfied → done
+        finally:
+            loopmod.judge_satisfaction = orig
+
+    # ---- _gate_single_done -------------------------------------------------------------------
+    def test_gate_single_done_no_shell_forwards_the_done(self):
+        loop = _single_loop(_Scripted([_done()]))
+        sess = _synth(); sess.action_seq = 1  # already acted → skip LEG0
+        framed = {"messages": [{"role": "user", "content": "x"}]}
+        body = {"messages": [{"role": "user", "content": "x"}], "tools": []}  # no shell → can't gate
+        out = loop._gate_single_done(sess, _done("all done"), framed, body, _Rlog())
+        self.assertEqual(out["choices"][0]["message"]["content"], "all done")
+
+    def test_gate_single_done_emits_probe_with_shell(self):
+        import os
+        import tempfile
+        loop = _single_loop(_Scripted([_done()]))
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "h.py"), "w") as f:
+                f.write("def f():\n    return 1\n")
+            body = {"tools": [_SHELL],
+                    "messages": [{"role": "user", "content": f"<environment_context><cwd>{tmp}</cwd></environment_context>"}]}
+            sess = _synth(); sess.action_seq = 1
+            out = loop._gate_single_done(sess, _done("done"), {"messages": []}, body, _Rlog())
+            self.assertTrue(sess.done_probe)                              # a gate probe is now in flight
+            self.assertTrue(out["choices"][0]["message"]["tool_calls"])   # emitted as a shell tool call
+
+    # ---- _drive_single_item ------------------------------------------------------------------
+    def test_drive_single_item_forwards_coder_action(self):
+        loop = _single_loop(_Scripted([_toolcall()]))
+        sess = _synth()
+        comp = loop._drive_single_item(sess, _body(), "sid:x", _Rlog())
+        self.assertTrue(comp["choices"][0]["message"]["tool_calls"])  # coder acting → forwarded
+        self.assertEqual(sess.drive_count, 1)
+        self.assertEqual(sess.coder_turns, 1)
+
+    def test_drive_single_item_stall_terminates(self):
+        # a session past the floor with a persistent RED streak ends honestly back to the user
+        from cria.loop import STALL_TERMINATE_RED_CYCLES, STALL_TERMINATE_MIN_DRIVES
+        loop = _single_loop(_Scripted([_toolcall()]))
+        sess = _synth()
+        sess.drive_count = STALL_TERMINATE_MIN_DRIVES
+        sess.gate_red_streak = STALL_TERMINATE_RED_CYCLES
+        sess.gate_sig = "SyntaxError"
+        out = loop._drive_single_item(sess, _body(), "sid:x", _Rlog())
+        self.assertTrue(sess.terminated)
+        self.assertIsNone(out["choices"][0]["message"].get("tool_calls"))  # a final answer, not a tool call
+
+
 if __name__ == "__main__":
     unittest.main()
