@@ -698,7 +698,7 @@ class Loop:
                 and _flail_candidate(sess.recent_reasoning) \
                 and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
             sess.last_flail_drive = sess.drive_count
-            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, rlog)
+            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
             if diag:
                 sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
                 rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
@@ -1169,7 +1169,7 @@ class Loop:
                 and _flail_candidate(sess.recent_reasoning) \
                 and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
             sess.last_flail_drive = sess.drive_count
-            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, rlog)
+            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
             if diag:
                 steer, sess.steer_source = diag, "reasoning appears to be circling"
                 rlog.emit("loop.flail_steer", plan_off=True, drive=sess.drive_count)
@@ -2381,16 +2381,22 @@ def _flail_candidate(window: list[str]) -> bool:
     return sum(1 for r in window if _STRUGGLE_RE.search(r)) >= FLAIL_MIN_STRUGGLING
 
 
-def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], rlog) -> str | None:
-    """The reasoned FLAIL-assist. The pre-filter fired, so a no-tools REASONER reads the coder's last few
-    private reasonings and decides: is it stuck repeating a failed approach? If so it authors ONE concrete
-    unstick step; if it's actually progressing it replies NOT_STUCK and cria injects nothing. Grounded in
-    the coder's OWN thinking, so it degrades gracefully — a weak reasoner restates the loop (which alone
-    helps the coder see it), a stronger one names the real escape. Returns the steer, or None (not stuck /
-    no reasoner output)."""
-    joined = "\n\n--- turn ---\n".join(window)
+def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog) -> str | None:
+    """The reasoned FLAIL-assist. The pre-filter fired, so a no-tools REASONER reads the ACTUAL coding
+    session — the whole conversation (the task, every tool call, every result), scrubbed of cria's own
+    plumbing — PLUS the coder's recent private reasoning (the circling signal, which the transcript
+    doesn't carry), and decides: is it stuck repeating a failed approach? If so it authors ONE concrete
+    unstick step; if it's actually progressing it replies NOT_STUCK and cria injects nothing.
+
+    We hand it the real session rather than a curated slice: the context floor trims the request to the
+    window anyway, so there is no size reason to chop it, and a curated view is exactly what made it
+    invent paths. Grounded in what actually happened, it can't hallucinate a filesystem it can't see."""
+    convo = probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", [])))
+    session = selfcompact.serialize(convo)
+    reasoning = "\n\n--- turn ---\n".join(window)
     text = summarize(reasoner_chat, reasoner_role, prompts.load("flail_diagnose"),
-                     prompts.render("flail_diagnose_user", reasonings=joined), rlog, phase="reasoner")
+                     prompts.render("flail_diagnose_user", session=session, reasonings=reasoning),
+                     rlog, phase="reasoner")
     text = (text or "").strip()
     if not text or "NOT_STUCK" in text[:60].upper():
         return None

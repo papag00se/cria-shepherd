@@ -74,14 +74,32 @@ class ReasonerJudgeTests(unittest.TestCase):
         return lambda body, rlog: json.dumps({"choices": [{"message": {"content": content}}]}).encode()
 
     def test_not_stuck_yields_no_steer(self):
-        self.assertIsNone(author_flail_steer(self._chat("NOT_STUCK"), self.ROLE, CAPSYS, _Rlog()))
+        self.assertIsNone(author_flail_steer(self._chat("NOT_STUCK"), self.ROLE, CAPSYS, {"messages": []}, _Rlog()))
 
     def test_diagnosis_becomes_the_steer(self):
         d = "You keep guessing the capsys attribute. Stop guessing and run dir(capsys) from a scratch file."
-        self.assertEqual(author_flail_steer(self._chat(d), self.ROLE, CAPSYS, _Rlog()), d)
+        self.assertEqual(author_flail_steer(self._chat(d), self.ROLE, CAPSYS, {"messages": []}, _Rlog()), d)
 
     def test_empty_reasoner_output_yields_no_steer(self):
-        self.assertIsNone(author_flail_steer(self._chat(""), self.ROLE, CAPSYS, _Rlog()))
+        self.assertIsNone(author_flail_steer(self._chat(""), self.ROLE, CAPSYS, {"messages": []}, _Rlog()))
+
+    def test_reasoner_is_given_the_actual_session_not_just_reasoning(self):
+        # the reasoner must SEE the conversation (task + tool results), so it grounds instead of guessing
+        import json
+        seen = {}
+
+        def capture(body, rlog):
+            seen["user"] = body["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {"content": "NOT_STUCK"}}]}).encode()
+
+        body = {"messages": [
+            {"role": "user", "content": "Build the resolver in /home/jesse/src/proj"},
+            {"role": "tool", "tool_call_id": "1", "content": "bash: syntax error near unexpected token"},
+        ]}
+        author_flail_steer(capture, self.ROLE, CAPSYS, body, _Rlog())
+        self.assertIn("/home/jesse/src/proj", seen["user"])          # the real task/path is in front of it
+        self.assertIn("syntax error", seen["user"])                  # the actual tool result too
+        self.assertIn("keep guessing", seen["user"])                 # plus the reasoning window
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
-The coding model's private reasoning over its recent turns (oldest first, most recent last):
+Here is the coding session so far — the task, and every tool call the coder made with its result:
+
+{{SESSION}}
+
+And the coder's private reasoning over its recent turns (oldest first, most recent last):
 
 {{REASONINGS}}
 
-Is it stuck? Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder.
+Is it stuck? Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder — grounded ONLY in what you see above.
