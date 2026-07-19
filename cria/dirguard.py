@@ -56,6 +56,20 @@ def is_external(path: str, workspace: str | None) -> bool:
     return full != ws and not full.startswith(ws + os.sep)
 
 
+# System I/O plumbing — NOT external data. `2>/dev/null`, `> /dev/stderr`, `/dev/fd/…` etc. are
+# ordinary shell redirection targets and device files; never treat them as an external file access.
+# /proc and /sys are read-only kernel views a coder legitimately inspects. This guard is about the
+# model reaching into another PROJECT's files, not the OS's plumbing.
+_EXEMPT_PREFIXES = ("/dev/", "/proc/", "/sys/")
+_EXEMPT_EXACT = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin", "/dev/tty"}
+
+
+def _exempt(path: str) -> bool:
+    """A system path the guard must always allow (device/plumbing), even under ``none``."""
+    p = os.path.normpath(os.path.expanduser(path.strip()))
+    return p in _EXEMPT_EXACT or any(p == pre.rstrip("/") or p.startswith(pre) for pre in _EXEMPT_PREFIXES)
+
+
 def _refusal(verb: str, path: str) -> str:
     return (f"{verb} outside the working directory is not permitted here — keep every file you read or "
             f"write inside the project directory. The path {path!r} is outside it; use a path within the "
@@ -65,7 +79,7 @@ def _refusal(verb: str, path: str) -> str:
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:
     """The refusal for a synthetic file tool's EXPLICIT path, or None when allowed. read_file/list_dir
     are reads; write_file/edit_file are writes."""
-    if level == "write" or not is_external(path, workspace):
+    if level == "write" or _exempt(path) or not is_external(path, workspace):
         return None
     if level == "read" and not is_write:
         return None
@@ -79,7 +93,7 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     if level == "write" or not command:
         return None
     external = next((m.group(0) for m in _PATH_TOKEN.finditer(command)
-                     if is_external(m.group(0), workspace)), None)
+                     if is_external(m.group(0), workspace) and not _exempt(m.group(0))), None)
     if external is None:
         return None
     if level == "read" and not _WRITE_VERB.search(command):

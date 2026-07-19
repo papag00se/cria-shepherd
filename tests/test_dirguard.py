@@ -78,6 +78,17 @@ class CommandRefusalTests(unittest.TestCase):
         # the URL is fine, but writing the download to an external path is a real external write
         self.assertTrue(dirguard.command_refusal("curl https://x.com/a -o /etc/evil", "none", WS))
 
+    def test_device_files_and_plumbing_are_exempt(self):
+        # /dev/null redirection & friends are I/O plumbing, NOT external data — must never be refused
+        for cmd in ("grep -n x resolve.py 2>/dev/null",
+                    "echo hi > /dev/stderr",
+                    "python3 test.py > /dev/null 2>&1",
+                    "cat /proc/cpuinfo",
+                    "curl -s https://api.handle.me/x 2>/dev/null"):
+            self.assertIsNone(dirguard.command_refusal(cmd, "none", WS), cmd)
+        self.assertIsNone(dirguard.path_refusal("/dev/null", True, "none", WS))     # synthetic path too
+        self.assertTrue(dirguard.path_refusal("/etc/passwd", False, "none", WS))    # real external read still blocked
+
 
 class TranslateOutboundEnforcementTests(unittest.TestCase):
     """The guard fires at the writeproxy chokepoint: a violating call is replaced with a refusal
