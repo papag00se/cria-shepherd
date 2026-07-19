@@ -1,9 +1,55 @@
 import json
 import unittest
 
-from cria.loop import Loop, LoopContext, LoopStore, PlanSession, _frame_for_item, completion_to_sse, session_key
+from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
+                       _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
+                       completion_to_sse, session_key)
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
+
+
+class _NullRlog:
+    def emit(self, *a, **k):
+        pass
+
+
+class CompletionToolTests(unittest.TestCase):
+    """The task_complete tool is an EXPLICIT 'done' the driver folds into the normal flow — a lone
+    call becomes a plain-text done (running the SAME gate a bare done does); alongside real work it's
+    dropped. It is advertised on coder turns but never lowered/forwarded."""
+
+    def _comp(self, tcs, content=None):
+        return {"choices": [{"message": {"content": content, "tool_calls": tcs}}]}
+
+    def _tc(self, name, args):
+        return {"id": "x", "type": "function", "function": {"name": name, "arguments": args}}
+
+    def test_lone_task_complete_becomes_plain_done_with_summary(self):
+        c = _normalize_completion(self._comp([self._tc(TASK_COMPLETE_TOOL, '{"summary": "made hello.py"}')]), _NullRlog())
+        self.assertFalse(_has_tool_calls(c))                 # no longer an acting turn → routes to the gate
+        self.assertEqual(_completion_text(c), "made hello.py")  # the summary is the completion text (pending_done)
+
+    def test_task_complete_alongside_real_work_is_dropped(self):
+        c = _normalize_completion(
+            self._comp([self._tc(TASK_COMPLETE_TOOL, '{"summary": "x"}'), self._tc("write_file", '{"path": "a"}')]),
+            _NullRlog())
+        names = [t["function"]["name"] for t in c["choices"][0]["message"]["tool_calls"]]
+        self.assertEqual(names, ["write_file"])              # still working → the premature done is ignored
+
+    def test_real_tools_and_bare_done_pass_through(self):
+        real = _normalize_completion(self._comp([self._tc("write_file", "{}")]), _NullRlog())
+        self.assertTrue(_has_tool_calls(real))
+        bare = _normalize_completion(self._comp(None, content="all done"), _NullRlog())
+        self.assertFalse(_has_tool_calls(bare))
+        self.assertEqual(_completion_text(bare), "all done")
+
+    def test_advertised_once_on_a_coder_turn(self):
+        framed = {"tools": [{"type": "function", "function": {"name": "shell"}}]}
+        _add_completion_tool(framed)
+        _add_completion_tool(framed)  # idempotent — no duplicate
+        names = [t["function"]["name"] for t in framed["tools"]]
+        self.assertEqual(names.count(TASK_COMPLETE_TOOL), 1)
+        self.assertIn("shell", names)
 
 
 class SyntheticFramingTests(unittest.TestCase):

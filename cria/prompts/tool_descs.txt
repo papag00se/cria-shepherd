@@ -1,9 +1,10 @@
-# Descriptions the model reads for cria's synthetic lean tools (writeproxy advertises these).
-# Format: `<tool> = <description>` (one per line). Schemas live in writeproxy.py; only the
-# model-facing description is tunable here.
+# Descriptions the model reads for cria's synthetic tools. Format: `<tool> = <description>` (one per
+# line). Schemas live in writeproxy.py (the file/web tools it advertises) and loop.py (task_complete,
+# advertised on coder turns); only the model-facing description is tunable here.
 write_file = Create or completely overwrite a file with its FULL content. The most reliable way to write a file — you supply the whole file, nothing to escape.
 read_file = Read a file's contents (read-only). Optionally pass a 1-based inclusive line range with start_line/end_line.
 list_dir = List the entries of a directory (read-only). Defaults to the current directory.
 edit_file = Replace ONE exact snippet in an existing file. Copy old_string VERBATIM from the file (it must occur exactly once); set new_string to "" to delete. For a small change this is far better than rewriting the whole file. If it won't apply, fall back to write_file.
 web_fetch = Fetch a web page (read-only) and return its text. To navigate a long page WITHOUT re-fetching it, pass find to return only the section containing that text, or cursor (from a previous response) to page further.
 web_search = Search the web and return result titles, URLs, and short snippets. Pair with web_fetch to read a specific result in full.
+task_complete = Signal that the task is FULLY finished. Call this ONLY when everything the user asked for is done and working — the deliverable exists and you have confirmed it does what was asked. Pass `summary`: a short plain-text description of what you did. This is the clean, explicit way to end your work (equivalent to replying with no tool call). You may use any other tool — including writing and running tests — right up until you call this; do NOT call it while work remains.

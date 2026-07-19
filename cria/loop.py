@@ -724,8 +724,10 @@ class Loop:
             self._ctx.coder_role.apply(framed)
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
 
+        _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{idx}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
         coder = self._guard_rumination(coder, framed, idx, rlog)  # reasoning-loop → refocus, don't accept empty
         coder = self._guard_truncation(coder, framed, idx, rlog)  # cut-off write → incremental, don't ship partial
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted (both
@@ -1257,10 +1259,12 @@ class Loop:
         LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin tracking
         if it acted. Uses the loop's watched coder call (``ctx.coder_chat`` already carries the rumination
         watch). Returns the completion, or None on a decode failure."""
+        _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         try:
             comp = massage.apply(json.loads(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError):
             return None
+        comp = _normalize_completion(comp, rlog)  # a task_complete call → a plain 'done' (or dropped)
         comp = guard_rumination(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
         comp = guard_truncation(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
         _strip_completion_banners(comp)
@@ -1757,6 +1761,71 @@ def _has_tool_calls(completion: dict) -> bool:
         if (ch.get("message") or {}).get("tool_calls"):
             return True
     return False
+
+
+# ---- completion tool: an EXPLICIT "done" the model can CALL, instead of the harder-for-a-tool-
+# trained-model absence of a tool call. NOT lowered or forwarded — the driver folds it into the
+# normal flow (a lone call → a plain-text 'done' that runs the SAME LEG0 → gate → verdict a bare done
+# does). Description in prompts/tool_descs.txt (tunable). Advertised on coder turns only.
+TASK_COMPLETE_TOOL = "task_complete"
+
+
+def _tool_name(tc) -> str:
+    """The name of a tool CALL or tool SCHEMA (both nest it under `function`)."""
+    fn = (tc.get("function") or tc) if isinstance(tc, dict) else {}
+    return fn.get("name") or ""
+
+
+def _completion_tool() -> dict:
+    desc = prompts.load_map("tool_descs").get(
+        TASK_COMPLETE_TOOL, "Call this when the task is fully done and verified. Pass a short summary.")
+    return {"type": "function", "function": {
+        "name": TASK_COMPLETE_TOOL, "description": desc,
+        "parameters": {"type": "object", "required": ["summary"],
+                       "properties": {"summary": {"type": "string",
+                                      "description": "A short plain-text summary of what you did."}}}}}
+
+
+def _add_completion_tool(framed: dict) -> None:
+    """Advertise the completion tool on a coder turn (a fresh tools list, so the caller's body isn't
+    mutated). No-op when the menu already carries a task_complete."""
+    tools = list(framed.get("tools") or [])
+    if not any(_tool_name(t) == TASK_COMPLETE_TOOL for t in tools):
+        tools.append(_completion_tool())
+    framed["tools"] = tools
+
+
+def _tc_summary(tc) -> str:
+    try:
+        return str(json.loads(((tc.get("function") or {}).get("arguments")) or "{}").get("summary", "")).strip()
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return ""
+
+
+def _normalize_completion(comp: dict, rlog) -> dict:
+    """Fold a `task_complete` call into the normal flow, in place. Called ALONE → rewrite the turn
+    into a plain-text 'done' carrying the summary (so the existing LEG0 → gate → verdict runs
+    unchanged, and the checks still verify before the session ends). Called ALONGSIDE real tool calls
+    → drop it (the coder is still working; the done is premature). No-op when it wasn't called."""
+    for ch in comp.get("choices", []):
+        msg = ch.get("message") or {}
+        tcs = msg.get("tool_calls")
+        if not tcs:
+            continue
+        done = [tc for tc in tcs if _tool_name(tc) == TASK_COMPLETE_TOOL]
+        if not done:
+            continue
+        real = [tc for tc in tcs if _tool_name(tc) != TASK_COMPLETE_TOOL]
+        if real:
+            msg["tool_calls"] = real
+            rlog.emit("loop.task_complete_ignored", reason="called alongside real tool calls")
+        else:
+            summary = _tc_summary(done[0])
+            msg.pop("tool_calls", None)
+            if summary:
+                msg["content"] = summary  # becomes the bare-done text → pending_done
+            rlog.emit("loop.task_complete", summary=summary[:160])
+    return comp
 
 
 _PATH_KEYS = PATH_KEYS  # the one shared alias set (also used by the raw-regex fallback below)
