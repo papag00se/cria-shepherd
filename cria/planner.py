@@ -108,7 +108,7 @@ class Planner:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
         # No model: the planner's bodies carry no `model`, so the upstream fills the server's loaded
         # model (cria never pins an alias — the single-loaded-model posture).
-        self._role = role  # LocalRole | None — the reasoner role's per-request sampling/reasoning
+        self._role = role  # Role | None — the reasoner role's per-request sampling/reasoning
         self._search_key = search_key or ""  # Brave key for the planner's web_search (may be "")
         self._max_rounds = max(1, max_gather_rounds)
         self._clock = clock or (lambda: datetime.now(timezone.utc))

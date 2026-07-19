@@ -47,7 +47,7 @@ class Classifier:
         # No model: the classify body carries no `model`, so the upstream fills the server's loaded
         # model (the single-loaded-model posture — cria never pins an alias).
         self._bias = bias if bias in _ENGAGEMENTS else "task"
-        self._role = role  # LocalRole | None — this role's per-request sampling/reasoning
+        self._role = role  # Role | None — this role's per-request sampling/reasoning
         self._cache: dict[str, Classification] = {}
         self._lock = threading.Lock()
         self._consec_fail = 0  # consecutive classify failures → escalate (a broken classifier

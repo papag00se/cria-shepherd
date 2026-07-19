@@ -1,0 +1,111 @@
+# cria config — ONE format: [backends] (WHERE a model runs) + [roles] (HOW cria uses it).
+# No secrets here — keys come from the environment; api_key_env names the var.
+
+env_file = "~/.cria/.env"          # env file cria loads at startup (its secrets)
+
+[server]
+host = "127.0.0.1"
+port = 18085                       # cria's port (fronts the model server)
+heartbeat_seconds = 5              # SSE keepalive; 0 disables
+
+[logging]
+level = "info"                     # debug | info | warn | error (console filter)
+dir = "~/.cria/logs"               # JSONL record dir
+console = true
+jsonl = true
+capture_calls = false              # write exact per-call body to capture_dir
+capture_dir = "~/.cria/calls"
+capture_rendered = true            # also capture the template-rendered prompt
+
+[indicators]
+enabled = true                     # master switch for all cria decoration
+metrics = true                     # "· N tok/s" suffix
+route = true                       # "⟦cria⟧ <role> · <model>" banner
+assists = true                     # "⟦cria⟧ <note>" guard lines
+stats = true                       # end-of-turn summary line
+reasoning = true                   # forward thinking on native channel (transient)
+reasoning_transcript = true        # also fold thinking into scrollback
+
+[tools]
+focus = true                       # curate menu to coding essentials
+cheatsheet = true                  # inject per-tool usage note
+
+[context]
+focus_trim = true                  # collapse duplicate tool calls
+self_compact = true                # summarize the old history middle
+trigger_compaction = 16384         # tokens before self-compact
+satisfaction_check_start = 100     # first "task done?" check at drive N
+satisfaction_check_every = 25      # then re-check every N (0 disables)
+
+[planner]
+enabled = false                    # plan-first loop on/off
+max_gather_rounds = 12             # cap the planner investigate loop
+
+[engagement]
+bias = "task"                      # unsure classifier → task | simple | question
+
+[defaults]
+base_url = "http://127.0.0.1:18084"   # shared by http backends that omit their own
+timeout_seconds = 7200                # one timeout for all backends
+
+# --- Backends: WHERE a model runs. transport = "http" (server) | "cli" (subprocess) ---
+[backends.local]
+transport = "http"                 # OpenAI-compatible endpoint
+base_url = "http://127.0.0.1:18084"   # omit → [defaults].base_url
+# api_key_env = "..."              # names the key var; absent = keyless served endpoint
+# model = "..."                    # wire model; absent = server's loaded model
+# reasoning_style = "openai"       # override; auto-detected from base_url
+
+# [backends.groq]                  # example: keyed remote endpoint
+# transport = "http"
+# base_url = "https://api.groq.com/openai/v1"
+# api_key_env = "GROQ_API_KEY"
+# model = "llama-3.3-70b"
+
+# [backends.claude]                # example: CLI subprocess (Claude Code)
+# transport = "cli"
+# tool = "claude"                  # which CLI
+# binary = "claude"                # on PATH, or an absolute path
+# cwd = "..."                      # where it runs; omit → cria's cwd
+
+# --- Roles: HOW cria uses a backend. backend + sampling + reasoning ---
+[roles.classifier]
+backend = "local"                  # names a [backends.*]
+reasoning = "on"                   # on | off | auto
+temperature = 0.0
+top_p = 0.95
+top_k = 64
+repeat_penalty = 1.1
+
+[roles.reasoner]                   # the planner + the step/task critic
+backend = "local"
+reasoning = "on"
+temperature = 0.6
+top_p = 0.95
+top_k = 64
+repeat_penalty = 1.1
+
+[roles.coder]
+backend = "local"
+reasoning = "on"
+temperature = 0.1
+top_p = 0.95
+top_k = 64
+repeat_penalty = 1.1
+output_reserve = 8192              # input-side reserve; keeps a big write_file uncut
+# min_p = 0.0                      # sampling floor
+# max_tokens = 4096                # HARD output cap; don't set on the coder
+# temp = 0.1                       # alias for temperature
+
+[roles.compactor]
+backend = "local"
+reasoning = "on"
+temperature = 0.6
+top_p = 0.95
+top_k = 64
+repeat_penalty = 1.1
+
+# --- Failover: task_type → ordered role chain (first RESOLVABLE role wins) ---
+[failover]
+coding = ["coder", "reasoner"]     # a role whose backend needs a missing key/binary is skipped
+reasoning = ["reasoner"]           # a "question" turn uses this chain, then coding

@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from cria.config import Config, IndicatorsConfig, LocalRole, LoggingConfig, ServerConfig, UpstreamConfig
+from cria.config import Backend, Config, IndicatorsConfig, LoggingConfig, Role, ServerConfig, UpstreamConfig
 from cria.events import EventLog
 from cria.server import CriaServer, _direct_coder_body, _has_visible_output, _proxy_body
 from cria.upstream import Upstream
@@ -48,13 +48,13 @@ class ApplyRouteRoleTests(unittest.TestCase):
         from cria.server import CriaHandler
         h = CriaHandler.__new__(CriaHandler)  # bare instance, no socket
         h.server = types.SimpleNamespace(cfg=types.SimpleNamespace(
-            routing=types.SimpleNamespace(local_roles=roles)))
+            routing=types.SimpleNamespace(roles=roles)))
         return h
 
     def test_applies_the_indicated_role(self):
-        from cria.config import LocalRole
-        coder = LocalRole(reasoning="on", temperature=0.0, top_p=0.95,
-                          top_k=64, repeat_penalty=1.1)
+        from cria.config import Role
+        coder = Role(name="coder", backend="local", reasoning="on", temperature=0.0, top_p=0.95,
+                     top_k=64, repeat_penalty=1.1)
         h = self._handler({"coder": coder})
         indic = types.SimpleNamespace(role="coder")
         body = {"messages": [{"role": "user", "content": "x"}]}
@@ -297,8 +297,9 @@ class RoutedTests(unittest.TestCase):
             upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{fake_port}"),
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
-                local_only=True,
-                local_roles={"classifier": LocalRole(), "coder": LocalRole()},
+                backends={"local": Backend("local")},
+                roles={"classifier": Role(name="classifier", backend="local"),
+                       "coder": Role(name="coder", backend="local")},
                 failover={"coding": ("coder",)},
                 engagement_bias="task",
             ),
@@ -361,8 +362,10 @@ class PlanningTests(unittest.TestCase):
             upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
-                local_only=True,
-                local_roles={"classifier": LocalRole(), "reasoner": LocalRole(), "coder": LocalRole()},
+                backends={"local": Backend("local")},
+                roles={"classifier": Role(name="classifier", backend="local"),
+                       "reasoner": Role(name="reasoner", backend="local"),
+                       "coder": Role(name="coder", backend="local")},
                 failover={"coding": ("coder",)},
             ),
             planner=PlannerConfig(enabled=True),
@@ -450,8 +453,10 @@ class ResilienceTests(unittest.TestCase):
             upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
             routing=RoutingConfig(
-                local_only=True,
-                local_roles={"classifier": LocalRole(), "reasoner": LocalRole(), "coder": LocalRole()},
+                backends={"local": Backend("local")},
+                roles={"classifier": Role(name="classifier", backend="local"),
+                       "reasoner": Role(name="reasoner", backend="local"),
+                       "coder": Role(name="coder", backend="local")},
                 failover={"coding": ("coder",)},
             ),
             planner=PlannerConfig(enabled=True),
@@ -508,7 +513,9 @@ class ResponsesApiTests(unittest.TestCase):
             server=ServerConfig(host="127.0.0.1", port=0),
             upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
             logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
-            routing=RoutingConfig(local_only=True, local_roles={"classifier": LocalRole(), "coder": LocalRole()},
+            routing=RoutingConfig(backends={"local": Backend("local")},
+                                  roles={"classifier": Role(name="classifier", backend="local"),
+                                         "coder": Role(name="coder", backend="local")},
                                   failover={"coding": ("coder",)}),
             indicators=IndicatorsConfig(enabled=False),  # test raw translation (no ⟦cria⟧ banner)
         )
@@ -616,7 +623,7 @@ class CompactorRoleWiringTests(unittest.TestCase):
             server=ServerConfig(host="127.0.0.1", port=0),
             upstream=UpstreamConfig(base_url="http://127.0.0.1:1"),  # never called — __init__ only
             logging=LoggingConfig(dir=tmp.name, capture_dir=tmp.name, console=False),
-            routing=RoutingConfig(local_only=True, local_roles=roles, failover={"coding": ("coder",)}),
+            routing=RoutingConfig(backends={"local": Backend("local")}, roles=roles, failover={"coding": ("coder",)}),
             planner=PlannerConfig(enabled=planner),
         )
         log = EventLog(dir=cfg.logging.dir, console=False)
@@ -626,21 +633,26 @@ class CompactorRoleWiringTests(unittest.TestCase):
         return srv
 
     def test_uses_compactor_role_when_configured(self):
-        compactor, coder, reasoner = LocalRole(temperature=0.6), LocalRole(temperature=0.1), LocalRole(temperature=0.6)
-        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner,
+        compactor = Role(name="compactor", backend="local", temperature=0.6)
+        coder = Role(name="coder", backend="local", temperature=0.1)
+        reasoner = Role(name="reasoner", backend="local", temperature=0.6)
+        srv = self._server({"classifier": Role(name="classifier", backend="local"), "reasoner": reasoner,
                             "coder": coder, "compactor": compactor})
         self.assertIs(srv.compactor_role, compactor)
         self.assertIsNot(srv.compactor_role, coder)
 
     def test_falls_back_to_reasoner_not_coder_when_no_compactor(self):
-        coder, reasoner = LocalRole(temperature=0.1), LocalRole(temperature=0.6)
-        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner, "coder": coder})
+        coder = Role(name="coder", backend="local", temperature=0.1)
+        reasoner = Role(name="reasoner", backend="local", temperature=0.6)
+        srv = self._server({"classifier": Role(name="classifier", backend="local"), "reasoner": reasoner, "coder": coder})
         self.assertIs(srv.compactor_role, reasoner)
         self.assertIsNot(srv.compactor_role, coder)
 
     def test_loop_context_carries_the_compactor_role(self):
-        compactor, coder, reasoner = LocalRole(temperature=0.6), LocalRole(temperature=0.1), LocalRole(temperature=0.6)
-        srv = self._server({"classifier": LocalRole(), "reasoner": reasoner,
+        compactor = Role(name="compactor", backend="local", temperature=0.6)
+        coder = Role(name="coder", backend="local", temperature=0.1)
+        reasoner = Role(name="reasoner", backend="local", temperature=0.6)
+        srv = self._server({"classifier": Role(name="classifier", backend="local"), "reasoner": reasoner,
                             "coder": coder, "compactor": compactor}, planner=True)
         self.assertIsNotNone(srv.loop)
         self.assertIs(srv.loop._ctx.compactor_role, compactor)
@@ -687,12 +699,12 @@ class ReasonedReanchorTests(unittest.TestCase):
     def _handler(self, reasoner=True, reply="X is done; finish Y"):
         import json
         from cria.server import CriaHandler
-        from cria.config import LocalRole
+        from cria.config import Role
         h = CriaHandler.__new__(CriaHandler)
         chat = lambda b, r: json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
         h.server = types.SimpleNamespace(
             reasoner_upstream=types.SimpleNamespace(chat=chat),
-            reasoner_role=(LocalRole() if reasoner else None))
+            reasoner_role=(Role(name="reasoner", backend="local") if reasoner else None))
         return h
 
     def test_reasoner_authors_else_canned(self):

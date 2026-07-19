@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     # ONLY its own declared vars (the Brave key + any configured cloud-provider key) — never
     # anything else in the file, so a shared/home env file can't leak unrelated secrets into cria.
     if cfg.env_file:
-        allow = {brave.API_KEY_ENV} | {p.api_key_env for p in cfg.routing.providers.values() if p.api_key_env}
+        allow = {brave.API_KEY_ENV} | {b.api_key_env for b in cfg.routing.backends.values() if b.api_key_env}
         loaded = load_env_file(cfg.env_file, allow)
         log.emit("env.loaded", file=cfg.env_file, count=loaded, vars=sorted(allow),
                  level=("info" if loaded else "warn"))

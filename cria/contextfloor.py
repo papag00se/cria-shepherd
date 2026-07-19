@@ -475,7 +475,7 @@ def reserve_for(body: dict) -> int:
     """Generation budget to hold back from the window for this request's own reply — the
     INPUT/output split of a fixed window (llama.cpp ``n_ctx`` covers prompt + generation).
 
-    Precedence (codex-local's two-knob split — see ``LocalRole``):
+    Precedence (codex-local's two-knob split — see ``Role``):
       1. ``cria_output_reserve`` — the role's explicit input-side reserve. This is the intended
          lever for file-writing roles: generous, and INDEPENDENT of ``max_tokens``. Because it
          wins here, an overflow-driven re-trim reserves the SAME generous output room every time —

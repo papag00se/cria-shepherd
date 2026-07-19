@@ -19,7 +19,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import focustrim, massage, prompts, reasoning, responses, rumination, selfcompact
+from . import focustrim, massage, prompts, responses, rumination, selfcompact
 from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
@@ -202,11 +202,11 @@ class CriaServer(ThreadingHTTPServer):
         self.cfg = cfg
         self.log = log
         self.upstream = upstream
-        # Routing engages only when configured. With no [models.local]/[failover],
-        # cria is a plain phase-1 passthrough.
-        roles = cfg.routing.local_roles  # per-role sampling + reasoning (cria.toml); NO model alias —
-        # the wire model is always the server's loaded model. A role is "configured" by the PRESENCE
-        # of its [models.local.<role>] table, so every gate below keys on membership in `roles`.
+        # Routing engages only when configured. With no [roles]/[failover], cria is a plain
+        # phase-1 passthrough.
+        roles = cfg.routing.roles  # each role = a backend binding + per-request sampling + reasoning.
+        # A role is "configured" by the PRESENCE of its [roles.<name>] table, so every gate below keys
+        # on membership in `roles`.
         self.router = (
             Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds)
             if (roles or cfg.routing.failover)
@@ -237,7 +237,7 @@ class CriaServer(ThreadingHTTPServer):
         # so they hit the reasoner/compactor box, not always the shared upstream.
         self.reasoner_upstream = _ep("reasoner")
         self.compactor_upstream = _ep("compactor") if "compactor" in roles else self.reasoner_upstream
-        # Compaction/summarization sampling. The [models.local.compactor] role exists precisely for
+        # Compaction/summarization sampling. The [roles.compactor] role exists precisely for
         # folding transcript spans into briefings (temp 0.6, reasoning on) — NOT the coder role
         # (temp 0.1, coding-primed: it misreads "summarize this" as "continue the task" and emits a
         # next-action instead of a backward-looking rollup). Fall back to the reasoner (same sampling
@@ -829,14 +829,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         route = server.router.route(classification.task_type, rlog)
         if route is None:
             return passthrough()
-        if route.model:  # None = the role omitted its alias → leave the request's model; the
+        if route.model:  # None = a served role with no alias → leave the request's model; the
             body["model"] = route.model  # upstream fills the server's loaded model in _prep
-        # A cloud role's reasoning on/off is llama.cpp's `enable_thinking` on a LOCAL role, but a
-        # remote endpoint ignores that — so translate it here into the endpoint's own convention
-        # (reasoning_effort / openrouter object / nothing). Local routes carry reasoning=None and
-        # apply theirs via _apply_route_role → LocalRole.apply instead.
-        if route.reasoning is not None:
-            reasoning.apply_reasoning(body, route.reasoning, route.reasoning_style or "openai")
+        # (Sampling + reasoning are applied by _apply_route_role → role.apply, which translates the
+        # role's one portable reasoning value into its backend's convention — served or remote alike.)
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
         return route.provider, Indicator(
@@ -846,13 +842,14 @@ class CriaHandler(BaseHTTPRequestHandler):
         )
 
     def _apply_route_role(self, pbody: dict, indic) -> dict:
-        """Attach the routed local role's sampling + reasoning (temp/top_p/top_k/repeat_penalty/
-        enable_thinking) to a proxy-path body, in place. WITHOUT this a local model on the proxy
-        path runs on llama.cpp's defaults — no repeat_penalty (gemma4 then leaks
-        `<|tool_call>`/`<|channel>` tokens), wrong temperature, no reasoning toggle — i.e. NOT the
-        model the toml configures. The plan loop applies the role per call (loop.py); the proxy and
-        direct-coder paths must do the same, or the same model behaves like a different one."""
-        role = self.server.cfg.routing.local_roles.get(indic.role) if getattr(indic, "role", None) else None
+        """Attach the routed role's sampling + reasoning (temp/top_p/top_k/repeat_penalty + the
+        reasoning toggle, translated to its backend's convention) to a proxy-path body, in place.
+        WITHOUT this a model on the proxy path runs on the server's defaults — no repeat_penalty
+        (gemma4 then leaks `<|tool_call>`/`<|channel>` tokens), wrong temperature, no reasoning
+        toggle — i.e. NOT the model the toml configures. The plan loop applies the role per call
+        (loop.py); the proxy and direct-coder paths must do the same, or the same model behaves like
+        a different one."""
+        role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, "role", None) else None
         if role is not None:
             role.apply(pbody)
         return pbody

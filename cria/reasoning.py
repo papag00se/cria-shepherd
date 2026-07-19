@@ -5,7 +5,7 @@ it to each backend's convention at send time:
 
   * ``chat_template`` — llama.cpp / vLLM / SGLang. A ``chat_template_kwargs.enable_thinking``
     boolean baked into the prompt template (plus, for OFF, a nothink prefill for models that
-    narrate in ``content`` — that message-mutation stays in ``LocalRole.apply``). LOCAL default.
+    narrate in ``content`` — that message-mutation stays in ``Role.apply``). LOCAL default.
 
   * ``openai`` — OpenAI, Groq, Fireworks, Together, and most OpenAI-compatible gateways: a
     top-level ``reasoning_effort`` string. Values ``"low" | "medium" | "high"``; ``"none"``
@@ -64,7 +64,7 @@ def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
     so a body never carries a mix that a strict endpoint would reject.
 
     NOTE: the ``chat_template`` OFF nothink prefill (a message mutation) is NOT done here — it
-    stays in ``LocalRole.apply`` where the messages are owned. This function only writes the
+    stays in ``Role.apply`` where the messages are owned. This function only writes the
     top-level reasoning parameter(s)."""
     if reasoning in (None, "auto"):
         return

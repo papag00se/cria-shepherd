@@ -503,13 +503,13 @@ class LoopContext:
     reasoner_chat: object  # (body, rlog) -> bytes
     # No coder_model / reasoner_model: the loop's bodies carry no `model`, so the upstream fills the
     # server's loaded model (cria never pins an alias — the single-loaded-model posture).
-    coder_role: object = None  # LocalRole | None — per-request sampling/reasoning for the coder
-    reasoner_role: object = None  # LocalRole | None — for the critic
-    # Compaction/summarization sampling (temp 0.6, reasoning on) — the [models.local.compactor] role,
+    coder_role: object = None  # Role | None — per-request sampling/reasoning for the coder
+    reasoner_role: object = None  # Role | None — for the critic
+    # Compaction/summarization sampling (temp 0.6, reasoning on) — the [roles.compactor] role,
     # falling back to the reasoner. Distinct from reasoner_role so the SUMMARIZE callers (self-compact,
     # completion rollup) can't accidentally ride the coder's act-temp. The redirect/critic keep the
     # reasoner_role — those are judgments, not rollups.
-    compactor_role: object = None  # LocalRole | None
+    compactor_role: object = None  # Role | None
     # Root of the per-run folders (the SAME root the call captures use, so one session's
     # plan mirror, verify dumps, and captures share one folder). cria's OWN dir — NEVER the
     # workspace. None → _RUNS_DIR_DEFAULT; "" → don't write run artifacts (tests).
@@ -1790,7 +1790,7 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
     content); recovers a leaked tool-call 'answer' back to text. Shared by the loop's completion
     compaction (_compact_done), the reasoned redirect (_author_redirect, single-pass), the plan-off
     self-compaction, and the loop's mid-session rollup — one place, so the mechanism can't diverge.
-    ``chat_fn(body, rlog) -> bytes`` + ``role`` (LocalRole|None) are the caller's provider + sampling."""
+    ``chat_fn(body, rlog) -> bytes`` + ``role`` (Role|None) are the caller's provider + sampling."""
     def _one(reasoning_off: bool) -> str:
         call = {"stream": False, "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
