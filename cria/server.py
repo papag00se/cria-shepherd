@@ -19,7 +19,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import focustrim, massage, prompts, responses, rumination, selfcompact
+from . import focustrim, massage, prompts, reasoning, responses, rumination, selfcompact
 from .classify import Classifier, completion_text
 from .content_reduce import est_tokens
 from .config import Config
@@ -831,6 +831,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             return passthrough()
         if route.model:  # None = the role omitted its alias → leave the request's model; the
             body["model"] = route.model  # upstream fills the server's loaded model in _prep
+        # A cloud role's reasoning on/off is llama.cpp's `enable_thinking` on a LOCAL role, but a
+        # remote endpoint ignores that — so translate it here into the endpoint's own convention
+        # (reasoning_effort / openrouter object / nothing). Local routes carry reasoning=None and
+        # apply theirs via _apply_route_role → LocalRole.apply instead.
+        if route.reasoning is not None:
+            reasoning.apply_reasoning(body, route.reasoning, route.reasoning_style or "openai")
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
         return route.provider, Indicator(

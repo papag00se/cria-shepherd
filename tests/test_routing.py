@@ -117,6 +117,41 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(r.model, "gpt-x")
         self.assertEqual(captured, {"base_url": "https://api.openai.test/v1", "key": "sk-abc"})
 
+    def test_cloud_route_carries_reasoning_and_inferred_style(self):
+        os.environ["TEST_OPENAI_KEY"] = "sk-abc"
+        self.addCleanup(lambda: os.environ.pop("TEST_OPENAI_KEY", None))
+        cfg = _cfg(
+            local_only=False,
+            cloud_pools={"cloud.coder": (CloudEntry("openai", "gpt-x", 100, reasoning="off"),)},
+            failover={"coding": ("cloud.coder",)},
+        )
+        r = _router(cfg, lambda b, k: ("cloud",)).route("coding", _Rlog())
+        # the entry's reasoning + the style inferred from the provider base_url ride on the Route,
+        # so the send site can translate on/off into the endpoint's own convention
+        self.assertEqual(r.reasoning, "off")
+        self.assertEqual(r.reasoning_style, "openai")  # api.openai.test → effort-style
+
+    def test_cloud_route_honors_explicit_provider_reasoning_style(self):
+        os.environ["TEST_OPENAI_KEY"] = "sk-abc"
+        self.addCleanup(lambda: os.environ.pop("TEST_OPENAI_KEY", None))
+        cfg = _cfg(
+            local_only=False,
+            providers={"openai": ProviderConfig(
+                "openai", base_url="https://api.openai.test/v1",
+                api_key_env="TEST_OPENAI_KEY", reasoning_style="openrouter")},  # override the inference
+            cloud_pools={"cloud.coder": (CloudEntry("openai", "gpt-x", 100, reasoning="on"),)},
+            failover={"coding": ("cloud.coder",)},
+        )
+        r = _router(cfg, lambda b, k: ("cloud",)).route("coding", _Rlog())
+        self.assertEqual(r.reasoning_style, "openrouter")
+
+    def test_local_route_carries_no_reasoning(self):
+        # a local route applies reasoning via LocalRole.apply, not the Route — so these stay None
+        r = _router(_cfg()).route("coding", _Rlog())
+        self.assertEqual(r.role, "coder")
+        self.assertIsNone(r.reasoning)
+        self.assertIsNone(r.reasoning_style)
+
     def test_cloud_skipped_without_key_falls_to_local(self):
         os.environ.pop("TEST_OPENAI_KEY", None)
         cfg = _cfg(local_only=False, failover={"coding": ("cloud.coder", "coder")})

@@ -261,6 +261,26 @@ class SchemeABackendsRolesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._parse({"backends": {}, "roles": {"coder": {"backend": "nope"}}})
 
+    def test_cloud_role_reasoning_survives_desugar(self):
+        # B3b: a role on a remote backend keeps its reasoning setting on the CloudEntry, so the
+        # send site can translate it into the endpoint's own convention (it isn't dropped).
+        _up, r = self._parse({
+            "backends": {"groq": {"transport": "http", "base_url": "https://api.groq.com/openai/v1",
+                                  "api_key_env": "GK", "model": "gpt-oss"}},
+            "roles": {"reasoner": {"backend": "groq", "reasoning": "off"}},
+            "failover": {"reasoning": ["reasoner"]},
+        })
+        self.assertEqual(r.cloud_pools["cloud.reasoner"][0].reasoning, "off")
+        self.assertIsNone(r.providers["groq"].reasoning_style)  # unset → inferred at resolve time
+
+    def test_backend_reasoning_style_override_parses(self):
+        _up, r = self._parse({
+            "backends": {"odd": {"transport": "http", "base_url": "https://odd-host/v1",
+                                 "api_key_env": "K", "reasoning_style": "openrouter"}},
+            "roles": {"coder": {"backend": "odd"}},
+        })
+        self.assertEqual(r.providers["odd"].reasoning_style, "openrouter")
+
 
 class CodexBackendTests(unittest.TestCase):
     """B4: tool=codex parses but is rejected with a PRECISE reason — the codex CLI is an agent runner

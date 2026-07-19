@@ -20,6 +20,7 @@ import random
 import shutil
 from dataclasses import dataclass
 
+from . import reasoning
 from .claude_cli import ClaudeCliProvider
 from .config import CloudEntry, ProviderConfig, RoutingConfig
 from .envfile import env_secret
@@ -32,6 +33,11 @@ class Route:
     model: str | None  # None = the role omitted its alias; the upstream fills the server's loaded model
     role: str
     reason: str
+    # A CLOUD entry's reasoning setting + the endpoint's reasoning convention, so the send site can
+    # translate on/off into the backend's shape (reasoning.apply_reasoning). None for local routes —
+    # a local role's reasoning is applied separately via LocalRole.apply.
+    reasoning: str | None = None
+    reasoning_style: str | None = None
 
 
 class Router:
@@ -64,9 +70,9 @@ class Router:
         for role in chain:
             resolved = self._resolve(role, rlog)
             if resolved is not None:
-                provider, model = resolved
+                provider, model, rsn, style = resolved
                 rlog.decide("route", role, f"task_type={task_type}", model=model)
-                return Route(provider, model, role, f"chain[{task_type}] -> {role}")
+                return Route(provider, model, role, f"chain[{task_type}] -> {role}", rsn, style)
             rlog.emit("route.skip", role=role, reason="unresolvable")
         rlog.emit("route.exhausted", level="warn", task_type=task_type, chain=list(chain))
         return None
@@ -87,8 +93,8 @@ class Router:
         for role in self._chain_for(task_type):
             resolved = self._resolve(role, rlog)
             if resolved is not None:
-                provider, model = resolved
-                routes.append(Route(provider, model, role, f"chain[{task_type}] -> {role}"))
+                provider, model, rsn, style = resolved
+                routes.append(Route(provider, model, role, f"chain[{task_type}] -> {role}", rsn, style))
             else:
                 rlog.emit("route.skip", role=role, reason="unresolvable")
         return routes
@@ -115,7 +121,7 @@ class Router:
             # so the wire model + banner + density key carry the real name. None if the server is
             # unreachable; the upstream fills it (or leaves the request's own model) at call time.
             provider = self._local_endpoint(self._cfg.local_roles[role])
-            return provider, provider.loaded_model(rlog)
+            return provider, provider.loaded_model(rlog), None, None
         if role in self._cfg.cloud_pools:
             if self._cfg.local_only:
                 return None
@@ -128,7 +134,8 @@ class Router:
             provider = self._build_cloud(provider_cfg, rlog)
             if provider is None:
                 return None
-            return provider, entry.model
+            style = provider_cfg.reasoning_style or reasoning.infer_style(provider_cfg.base_url)
+            return provider, entry.model, entry.reasoning, style
         return None
 
     def _build_cloud(self, pc: ProviderConfig, rlog=None) -> object | None:

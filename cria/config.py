@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import prompts
+from . import prompts, reasoning
 
 # Where ``Config.load(None)`` looks, in order, when no explicit path is given.
 # cria's config lives in exactly two places: the user's HOME (global defaults) and the CURRENT
@@ -104,6 +104,11 @@ class ProviderConfig:
     api_key_env: str | None = None
     binary: str = "claude"
     cwd: str | None = None
+    # Which reasoning-control convention this endpoint speaks (see cria.reasoning). Unset →
+    # inferred from base_url (openrouter.ai → "openrouter"; every other OpenAI-compatible host →
+    # "openai"/`reasoning_effort`). Set it explicitly ("openai" | "openrouter" | "chat_template"
+    # | "none") for a host the inference guesses wrong, or "none" to leave reasoning untouched.
+    reasoning_style: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,9 +188,11 @@ class LocalRole:
             # A cria-internal hint the context floor reads for the input/output split; NOT a wire
             # field — `Upstream._prep` strips it before the body is sent to (or captured for) the model.
             body["cria_output_reserve"] = self.output_reserve
-        if self.reasoning in ("on", "off"):
-            # Toggle-template models (fabliq, qwopus, …) gate thinking on `enable_thinking`.
-            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = self.reasoning == "on"
+        # A local llama.cpp/vLLM/SGLang role gates thinking on the chat template's
+        # `enable_thinking` (fabliq, qwopus, …). reasoning.apply_reasoning is the shared
+        # translator — the SAME one the cloud path uses, so on/off means the same thing wherever
+        # a role runs; here it's pinned to the local convention.
+        reasoning.apply_reasoning(body, self.reasoning, "chat_template")
         if self.reasoning == "off":
             # The empty-`<think></think>` prefill suppresses thinking on models TRAINED for it
             # (Qwen/gemma/mellum) but is inert for the LFM2 family (fabliq/lfm25), which then
@@ -466,6 +473,8 @@ def _desugar_backends_roles(data: dict) -> dict:
                     raise ValueError(f"[backends.{bname}] (http) needs base_url")
                 providers[bname] = {"kind": "openai", "base_url": str(b["base_url"]),
                                     "api_key_env": str(b["api_key_env"])}
+                if b.get("reasoning_style"):  # override the base_url inference for an odd host
+                    providers[bname]["reasoning_style"] = str(b["reasoning_style"])
             entry = {"provider": bname, "model": str(b.get("model", rname))}
             if rspec.get("reasoning"):
                 entry["reasoning"] = str(rspec["reasoning"])
@@ -504,6 +513,7 @@ def _routing(data: dict) -> RoutingConfig:
                 kind="openai",
                 base_url=str(base).rstrip("/"),
                 api_key_env=(str(pd["api_key_env"]) if pd.get("api_key_env") else None),
+                reasoning_style=(str(pd["reasoning_style"]) if pd.get("reasoning_style") else None),
             )
         elif kind == "claude_cli":
             providers[str(name)] = ProviderConfig(
