@@ -1002,39 +1002,26 @@ class PeriodicGateTests(unittest.TestCase):
         self.assertTrue(gs.last_gate_red)                      # neutral non-signal must NOT flip the gate
 
 
-class StallTerminatorTests(unittest.TestCase):
-    """A plan-off session whose checks never go green has no off-ramp — end it back to the user after a
-    generous never-green stretch, instead of the observed 169/326-call churn."""
+class GateProgressTrackingTests(unittest.TestCase):
+    """Plan-off gate-progress tracking — the same-finding stall that drives the reasoned thrash-assist.
+    There is NO stall terminator: cria never ends a non-converging session by handing back to a human;
+    a persistent RED keeps driving the unstick steers (mission: the model succeeds on its own)."""
 
-    def test_track_gate_progress_streak_and_stall(self):
+    def test_stall_grows_on_the_same_finding_resets_on_change_or_green(self):
         from cria.loop import GuardState, track_gate_progress
         gs = GuardState()
-        track_gate_progress(gs, "err A"); self.assertEqual((gs.gate_red_streak, gs.gate_stall), (1, 1))
-        track_gate_progress(gs, "err A"); self.assertEqual((gs.gate_red_streak, gs.gate_stall), (2, 2))  # same → stall grows
-        track_gate_progress(gs, "err B"); self.assertEqual((gs.gate_red_streak, gs.gate_stall), (3, 1))  # changed → stall resets, streak grows
-        track_gate_progress(gs, "")                                                                       # GREEN → both reset
-        self.assertEqual((gs.gate_red_streak, gs.gate_stall, gs.gate_sig), (0, 0, ""))
+        track_gate_progress(gs, "err A"); self.assertEqual(gs.gate_stall, 1)
+        track_gate_progress(gs, "err A"); self.assertEqual(gs.gate_stall, 2)   # same finding → stall grows
+        track_gate_progress(gs, "err B"); self.assertEqual(gs.gate_stall, 1)   # changed → stall resets
+        track_gate_progress(gs, "")                                            # GREEN → reset
+        self.assertEqual((gs.gate_stall, gs.gate_sig), (0, ""))
 
-    def test_terminates_only_after_red_streak_AND_drive_floor(self):
-        from cria.loop import GuardState, stall_terminated, STALL_TERMINATE_RED_CYCLES, STALL_TERMINATE_MIN_DRIVES
-        gs = GuardState(gate_red_streak=STALL_TERMINATE_RED_CYCLES, drive_count=STALL_TERMINATE_MIN_DRIVES - 1)
-        self.assertFalse(stall_terminated(gs))       # streak met but drive floor not → don't cut a short task
-        gs.drive_count = STALL_TERMINATE_MIN_DRIVES
-        self.assertTrue(stall_terminated(gs))        # both met → terminate
-        gs.gate_red_streak = STALL_TERMINATE_RED_CYCLES - 1   # a green dropped the streak
-        self.assertFalse(stall_terminated(gs))       # → keep going, not stuck
-
-    def test_couldnt_run_gate_does_not_advance_the_streak(self):
+    def test_couldnt_run_gate_does_not_advance_the_stall(self):
         from cria.loop import GuardState, guard_periodic_result
-        gs = GuardState(periodic_probe=True, probe_call_id="p1", gate_red_streak=2)  # gate_plan None → couldn't run
+        gs = GuardState(periodic_probe=True, probe_call_id="p1", gate_stall=2)  # gate_plan None → couldn't run
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
         guard_periodic_result(gs, body, _Rlog())
-        self.assertEqual(gs.gate_red_streak, 2)      # neutral non-signal → streak unchanged
-
-    def test_report_template_renders_with_no_unfilled_tokens(self):
-        from cria import prompts
-        out = prompts.render("stall_terminated", drives=90, cycles=4, checks="x.py:1: boom")
-        self.assertIn("90", out); self.assertIn("boom", out); self.assertNotIn("{{", out)
+        self.assertEqual(gs.gate_stall, 2)      # neutral non-signal → stall unchanged
 
 
 class ShellWritePathTests(unittest.TestCase):
@@ -2826,17 +2813,16 @@ class SingleItemMethodTests(unittest.TestCase):
         self.assertEqual(sess.drive_count, 1)
         self.assertEqual(sess.coder_turns, 1)
 
-    def test_drive_single_item_stall_terminates(self):
-        # a session past the floor with a persistent RED streak ends honestly back to the user
-        from cria.loop import STALL_TERMINATE_RED_CYCLES, STALL_TERMINATE_MIN_DRIVES
+    def test_drive_single_item_never_gives_up_on_persistent_red(self):
+        # No stall terminator: a session past the old floor with a persistent RED keeps DRIVING the
+        # coder (forwards its action / steers) — it never ends the session back to the human.
         loop = _single_loop(_Scripted([_toolcall()]))
         sess = _synth()
-        sess.drive_count = STALL_TERMINATE_MIN_DRIVES
-        sess.gate_red_streak = STALL_TERMINATE_RED_CYCLES
+        sess.drive_count = 200
+        sess.gate_stall = 10
         sess.gate_sig = "SyntaxError"
         out = loop._drive_single_item(sess, _body(), "sid:x", _Rlog())
-        self.assertTrue(sess.terminated)
-        self.assertIsNone(out["choices"][0]["message"].get("tool_calls"))  # a final answer, not a tool call
+        self.assertIsNotNone(out["choices"][0]["message"].get("tool_calls"))  # still driving, not a give-up
 
 
 class _Class:

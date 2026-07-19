@@ -167,10 +167,8 @@ class GuardState:
     # judge is gated on GREEN, the plan loop's off-ramp is its plan) — so it churns until the user kills it
     # (the observed 169/326-call runaways). Track the RED-gate streak (never-green count) and the identical-
     # finding stall (same error unchanged = no progress) to end the session HONESTLY back to the user.
-    gate_red_streak: int = 0   # consecutive RED gate results (reset on a GREEN); drives the terminator
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
-    terminated: bool = False   # the stall terminator fired — guard against re-firing
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
     # VACUOUS green. Fed to the satisfaction judge as EVIDENCE (not a deterministic block): the judge
     # holds the task and decides whether tests were even part of the ask (a script task is legitimately
@@ -241,37 +239,27 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
 # quitter (a stochastic model may converge late). It ends the session back to the USER (who was already
 # killing these by hand) only after the repo's checks have stayed RED for this many gate cycles AND the
 # session has driven at least this many turns — i.e. a long stretch with no GREEN and no off-ramp.
-STALL_TERMINATE_RED_CYCLES = 4    # consecutive RED gate results (each ~GATE_EVERY_CODER_TURNS turns apart)
-STALL_TERMINATE_MIN_DRIVES = 80   # and a total-drive floor, so a short task is never cut off
 # C5: when the SAME check error has persisted this many gate cycles (the coder is STUCK on one thing,
-# not just churning), replace the raw ground-truth insertion with a REASONED thrash-diagnosis + next-step.
-# Below the terminate threshold, so a stuck coder gets a reasoned unstick BEFORE cria gives up on it.
+# not just churning), replace the raw ground-truth insertion with a REASONED thrash-diagnosis + next-step
+# to get the coder UNSTUCK. cria never gives up on a non-converging session (no stall terminator / human
+# escalation — the mission is for the model to succeed on its own); it keeps trying to unstick it.
 THRASH_STALL_CYCLES = 2
 
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
-    a FALSY value on a GREEN/clean gate. Maintains the RED streak (never-green count that drives the
-    terminator) and the identical-finding stall (same error unchanged across gates = no progress). A
-    COULDN'T-RUN gate must NOT call this (it is a neutral non-signal — neither red nor green)."""
+    a FALSY value on a GREEN/clean gate. Maintains the identical-finding stall (same error unchanged
+    across gates = no progress → the reasoned thrash-assist). A COULDN'T-RUN gate must NOT call this
+    (it is a neutral non-signal — neither red nor green)."""
     if not finding:
-        gs.gate_red_streak = 0
         gs.gate_stall = 0
         gs.gate_sig = ""
         return
-    gs.gate_red_streak += 1
     if finding == gs.gate_sig:
         gs.gate_stall += 1
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
-
-
-def stall_terminated(gs: GuardState) -> bool:
-    """True when the plan-off session should END: the checks have been RED for STALL_TERMINATE_RED_CYCLES
-    straight (never went green) and the session has driven past the generous floor."""
-    return (gs.gate_red_streak >= STALL_TERMINATE_RED_CYCLES
-            and gs.drive_count >= STALL_TERMINATE_MIN_DRIVES)
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool) -> dict | None:
@@ -1150,16 +1138,10 @@ class Loop:
                     rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=sess.gate_stall)
                 sess.nudge_reason = truth
                 sess.steer_source = "periodic check-in"
-        # STALL TERMINATOR (the mirror of the satisfaction off-ramp — that ends on GREEN, this ends on
-        # persistent-RED): the checks have stayed red for a generous stretch with no off-ramp → END the
-        # session honestly back to the USER instead of churning forever.
-        if not sess.terminated and stall_terminated(sess):
-            sess.terminated = True
-            rlog.emit("loop.stall_terminated", drive=sess.drive_count,
-                      red_streak=sess.gate_red_streak, stall=sess.gate_stall)
-            return _completion_final(prompts.render(
-                "stall_terminated", drives=sess.drive_count, cycles=sess.gate_red_streak,
-                checks=sess.gate_sig or "(no parseable check output)"))
+        # (No stall terminator: cria never ends a non-converging session by handing back to the human —
+        # the mission is for the model to succeed on its own. A persistent RED drives the reasoned
+        # thrash-assist above and the redirect/flail steers to keep getting the coder unstuck, never a
+        # give-up. Stall detection/escalation may return later, only after every unstick lever is built.)
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
         if sess.awaiting_probe:

@@ -1,4 +1,0 @@
-⟦cria⟧ Ending this session and handing control back to you. The repo's own checks have stayed red for {{CYCLES}} check-in cycles across {{DRIVES}} turns without ever passing, so the work is not converging — more turns would just churn. Here is where it stands so you can decide what to do next.
-
-The latest failing checks:
-{{CHECKS}}
