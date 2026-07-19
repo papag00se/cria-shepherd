@@ -23,11 +23,22 @@ class SyntheticFramingTests(unittest.TestCase):
             ],
         }
 
-    def test_synthetic_matches_direct_coder_body(self):
-        from cria.server import _direct_coder_body
+    def test_synthetic_drops_harness_system_and_banner_leads_with_coder_prompt(self):
+        # The former server._direct_coder_body framing, now produced by _frame_for_item(synthetic=True):
+        # cria's coder_system (+ menu hint) leads, the harness system + cria's own ⟦cria⟧ banner are
+        # dropped, the env-preamble + raw task + work history are kept.
+        from cria import prompts
+        from cria.toolmenu import cheatsheet
         body = self._body()
-        synthetic = _frame_for_item(body["messages"], "", "", 1, 1, prior_work="", tools=body.get("tools"), synthetic=True)
-        self.assertEqual(synthetic, _direct_coder_body(body)["messages"])
+        out = _frame_for_item(body["messages"], "", "", 1, 1, prior_work="", tools=body.get("tools"), synthetic=True)
+        hint = cheatsheet(body.get("tools"))
+        expected_system = prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
+        self.assertEqual(out[0], {"role": "system", "content": expected_system})     # cria's coder prompt leads
+        self.assertEqual([m["role"] for m in out], ["system", "user", "user", "tool"])  # harness sys + banner dropped
+        joined = " ".join(m.get("content") or "" for m in out)
+        self.assertIn("--verbose flag", joined)                                       # raw task kept
+        self.assertNotIn("You are Codex", joined)                                     # harness system gone
+        self.assertNotIn("⟦cria⟧", joined)                                            # cria's banner scrubbed
 
     def test_synthetic_keeps_raw_task_and_no_step_prompt(self):
         body = self._body()

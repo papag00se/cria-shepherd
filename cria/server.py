@@ -19,60 +19,25 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import focustrim, massage, prompts, responses, rumination, selfcompact
-from .classify import Classifier, completion_text
+from . import focustrim, massage, responses, rumination
+from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
-from . import brave, probegate, webfetch
+from . import brave, webfetch
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
 from .loop import (
-    GuardStore,
     Loop,
-    _add_note,
-    _clean_completion,
-    _strip_completion_banners,
-    _strip_cria_file_ops,
     LoopContext,
     LoopStore,
-    _completion_final,
-    _completion_text,
-    _completion_toolcalls,
-    _has_tool_calls,
-    _history_root,
-    _read_tool_result,
-    _stable_session,
     completion_to_sse,
     reframe_compaction,
-    guard_gate_op,
-    guard_gate_verdict,
-    stall_terminated,
-    guard_intervene,
-    guard_periodic_gate,
-    guard_periodic_result,
-    guard_probe_reissue,
-    guard_probe_steer,
-    author_redirect,
-    author_thrash_steer,
-    THRASH_STALL_CYCLES,
-    CANNED,
-    _extract_cwd,
-    summarize,
-    guard_rumination,
-    guard_track_repetition,
-    guard_track_write_streak,
-    guard_truncation,
-    judge_satisfaction,
-    reframe_preamble,
-    satisfaction_check_due,
-    satisfaction_done_note,
     session_key,
-    _satisfaction_evidence,
 )
 from .planner import Planner
 from .routing import Router
-from .toolmenu import add_cheatsheet, cheatsheet, focus_tools
+from .toolmenu import add_cheatsheet, focus_tools
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
 from .writeproxy import advertise, native_search_name, needs_translation, represent_inbound, translate_outbound
@@ -175,25 +140,6 @@ def _proxy_body(body: dict) -> dict:
     return {**body, "messages": kept}
 
 
-def _direct_coder_body(body: dict) -> dict:
-    """Planner-bypass framing ([planner] enabled = false): drop the harness system prompt and LEAD
-    with cria's own coder system prompt (prompts/coder_system.txt) — the SAME guidance the plan
-    loop gives the coder, minus the plan. So turning planning off is a fair 'coder without a
-    planner' (like codex-local drives it), not a bare passthrough with no coding-agent framing."""
-    # Strip cria's own artifacts from the REPLAYED history (its ⟦cria⟧ banners + any historical
-    # `.cria/` writes) before reframing — same scrub the loop's _frame_for_item does — so a
-    # resumed/compacted plan-off conversation can't feed them to the coder to imitate.
-    src = _strip_cria_file_ops(body.get("messages") or [])
-    src = probegate.clean_gate_results(src)  # strip raw gate plumbing/advisory from the coder's view
-    msgs = [reframe_preamble(m) for m in src if m.get("role") not in ("system", "developer")]
-    # Carry the menu-derived tool hint into cria's OWN system message: add_cheatsheet folded it
-    # into the harness system message during prep, which we just dropped — so the coder would
-    # otherwise get no tool guidance and the prompt could name tools not in the menu.
-    hint = cheatsheet(body.get("tools"))
-    system = prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
-    return {**body, "messages": [{"role": "system", "content": system}] + msgs}
-
-
 class CriaServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -223,17 +169,17 @@ class CriaServer(ThreadingHTTPServer):
             if "classifier" in roles
             else None
         )
-        # The plan-driven loop (phase 6) — active when a reasoner AND a coder role are configured
-        # and the planner is enabled. It owns the planner and drives a coding task item by item.
-        # Without it, cria is a smart proxy.
+        # The loop is cria's ONE coder driver: with the planner ON it decomposes and drives item by
+        # item; with the planner OFF it drives a degenerate 1-item (synthetic) plan — the relocated
+        # plan-off direct-coder path. So it is built whenever a coder exists (and, when the planner is
+        # on, a reasoner too). Without a coder, cria is a smart proxy.
         has_reasoner = "reasoner" in roles
         has_coder = "coder" in roles
-        # The coder role's sampling/reserve — needed for the rumination budget on BOTH the loop
-        # and the plan-off proxy path (the guards are not gated behind the planner).
+        # The coder role's sampling/reserve — the rumination budget for the loop's coder call.
         self.coder_role = roles.get("coder")
-        self.reasoner_role = roles.get("reasoner")  # for the plan-off satisfaction critic (task-level judge)
+        self.reasoner_role = roles.get("reasoner")  # for the single-item satisfaction critic (task-level judge)
         # The ENDPOINTS the reasoner-family roles run on (each honors its own base_url) — used by the
-        # plan-off reasoner calls (satisfaction judge, redirect author) and self-compaction summaries,
+        # loop's reasoner calls (satisfaction judge, redirect author) and self-compaction summaries,
         # so they hit the reasoner/compactor box, not always the shared upstream.
         self.reasoner_upstream = _ep("reasoner")
         self.compactor_upstream = _ep("compactor") if "compactor" in roles else self.reasoner_upstream
@@ -243,28 +189,22 @@ class CriaServer(ThreadingHTTPServer):
         # next-action instead of a backward-looking rollup). Fall back to the reasoner (same sampling
         # family) when no compactor table is configured, never the coder.
         self.compactor_role = roles.get("compactor") or roles.get("reasoner")
-        # Per-session repetition/wheel-spin guard state for the plan-off path (the loop keeps its
-        # own in PlanSession). Same shared guard implementation drives both.
-        self.guard_store = GuardStore()
-        self.compact_states: dict = {}  # per-(stable)-session selfcompact.CompactState rollup cache
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}
         self._streams_lock = threading.Lock()
-        # Conversation-shape store for HARNESS-COMPACTION detection — shared by BOTH paths. It lives
-        # OUTSIDE the planner gate: the plan-off/proxy path (the user's path) equally needs to notice
-        # when the harness replaced the history and re-anchor the coder, or it treats its own prior
-        # work as a stranger's and duplicates files. Within one process the planner is globally on or
-        # off, so a session is only ever driven by the loop OR by plan-off — never both — so one store
-        # serves both with no contention. When the loop is built it uses this same instance.
+        # Conversation-shape store for HARNESS-COMPACTION detection (structural rewrite detection +
+        # the completion-briefing `done` bit) — persisted so a cria restart doesn't orphan detection.
         self.loop_store = LoopStore(state_path=os.path.join(cfg.logging.dir, "loopstate.json"))
         self.loop = None
         # Surface a misconfigured-looking feature at startup instead of silently degrading — the
         # class of failure that hid the Brave-key bug (web_search just quietly never ran).
         _warn_config(cfg, has_reasoner, has_coder, log)
-        if cfg.planner.enabled and has_reasoner and has_coder:
+        # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
+        # Planner OFF → the loop drives the synthetic 1-item path (guards but no decomposition).
+        if has_coder and (has_reasoner or not cfg.planner.enabled):
             # The web-search key comes from the fixed BRAVE_SEARCH_API_KEY env var (never stored in
             # config); brave.api_key() reads it normalized (CRLF-safe) — the CRLF was the illegal-
             # header footgun, fixed once at the source (envfile) rather than stripped per-consumer.
@@ -304,10 +244,10 @@ class CriaServer(ThreadingHTTPServer):
                     self_compact=cfg.context.self_compact,
                     trigger_compaction=cfg.context.trigger_compaction,
                 ),
-                # The SAME store the plan-off path uses (created above). Completed-work briefings +
-                # session shapes survive a cria restart (the restarts this project makes constantly
-                # were wiping the context a follow-up / a post-compaction continuation needs). Live
-                # plans are NOT persisted — see LoopStore.
+                # Completed-work briefings + session shapes survive a cria restart (the restarts this
+                # project makes constantly were wiping the context a follow-up / a post-compaction
+                # continuation needs). Live multi-item plans + synthetic sessions on stable keys are
+                # persisted; unstable task: keys are ephemeral — see LoopStore.
                 self.loop_store,
             )
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
@@ -517,50 +457,6 @@ class CriaHandler(BaseHTTPRequestHandler):
                                native_search=getattr(self, "_native_search", None), session=sess_key)
         return completion
 
-    def _guarded_coder_chat(self, provider):
-        """A coder call carrying the loop's in-flight rumination watch (a fresh detector per
-        request, budgeted from the coder role's output_reserve) and returning a buffered
-        completion — so the plan-off direct-coder path runs the SAME guard as the loop. A
-        provider without watching (a cloud provider) falls back to a plain buffered chat."""
-        coder_role = self.server.coder_role
-        detector = rumination.Detector.from_reasoning_budget(
-            coder_role.output_reserve if coder_role else None)
-        watched = getattr(provider, "chat_watched", None)
-        if watched is None:
-            return provider.chat
-        return lambda body, rlog: watched(body, rlog, watch=detector.check)
-
-    def _maybe_self_compact(self, framed: dict, sess_key: str, rlog, root_task: str = "") -> dict:
-        """Roll the OLD middle of a long plan-off coder history into a reasoner summary (info-
-        preserving) instead of letting the floor drop-oldest lose it. Gated by [context] self_compact
-        and STABLE sessions only (an unstable task: key can't persist the throttle state without the
-        cross-conversation leak — same posture as the guard/gate). Runs BEFORE focus_trim + the floor.
-        ``root_task`` (the raw conversation-root task from the caller) is pinned verbatim so it can't
-        erode across compaction rounds — the plan loop keeps it in the protected system message, but the
-        plan-off coder carries the task as a plain user turn that would otherwise be summarized away."""
-        if not self.server.cfg.context.self_compact or not _stable_session(sess_key):
-            return framed
-        msgs = framed.get("messages") or []
-        state = self.server.compact_states.get(sess_key) or selfcompact.CompactState()
-        out, state, applied = selfcompact.compact(
-            msgs, lambda mm: self._summarize(mm, rlog), state,
-            trigger_tokens=self.server.cfg.context.trigger_compaction, pinned_task=root_task)
-        if not applied:
-            return framed
-        if len(self.server.compact_states) >= 256:
-            self.server.compact_states.clear()  # bound like the other per-session stores
-        self.server.compact_states[sess_key] = state
-        rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=state.covered)
-        return {**framed, "messages": out}
-
-    def _summarize(self, messages: list[dict], rlog) -> str:
-        """Fold a span of the coder transcript into a factual briefing — via the SHARED summarize
-        primitive (same mechanism the loop's completion compaction uses), so the two can't diverge."""
-        text = summarize(self.server.compactor_upstream.chat, self.server.compactor_role,
-                         prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
-                         phase="self-compact")
-        return text or "(earlier work this session)"
-
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
         """Collapse exact-duplicate tool calls in the OUTBOUND coder body so the model stays focused
         on current state — applied to the FRAMED copy, never the history cria's detectors read.
@@ -575,244 +471,6 @@ class CriaHandler(BaseHTTPRequestHandler):
             return framed, False
         rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
         return {**framed, "messages": trimmed}, True
-
-    def _run_coder(self, framed: dict, coder_chat, gs, rlog):
-        """One guarded + cleaned coder call on the plan-off path (shared by the main turn and the
-        LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin
-        tracking if it acted. Returns the completion, or None on a decode failure."""
-        try:
-            comp = massage.apply(json.loads(coder_chat(framed, rlog)), framed.get("tools"), rlog)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        comp = guard_rumination(comp, framed, coder_chat, rlog, phase="direct-coder")
-        comp = guard_truncation(comp, framed, coder_chat, rlog, phase="direct-coder")
-        _strip_completion_banners(comp)
-        if self.server.coder_role is not None:
-            _clean_completion(comp, self.server.coder_role)
-        if _has_tool_calls(comp):
-            guard_track_repetition(gs, comp, rlog)
-            guard_track_write_streak(gs, comp, rlog)
-        return comp
-
-    def _detect_rewrite(self, sess_key: str, body: dict, rlog) -> bool:
-        """Harness-compaction detection on the plan-off path — the SAME structural signal the loop
-        uses (a changed conversation root under a stable session key = the history was replaced), via
-        the SAME shared LoopStore. No phrase-matching. Records this turn's shape every call so a later
-        rewrite is caught; returns True on the first turn after a rewrite (sticky until cleared)."""
-        store = self.server.loop_store
-        if store is None or not _stable_session(sess_key):
-            return False  # only content-independent (sid:) keys can detect this — see the loop
-        msgs = body.get("messages", [])
-        _root_text, fp = _history_root(msgs)
-        rewritten = store.observe_shape(sess_key, fp, len(msgs))
-        if rewritten:
-            rlog.emit("loop.history_rewritten", plan_off=True, n_messages=len(msgs))
-        return rewritten
-
-    def _reasoned_reanchor(self, body: dict, rlog) -> str:
-        """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
-        summary): the reasoner reads the compaction SUMMARY and authors a grounded 'what's done / what
-        remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
-        reasoner or it yields nothing — a compacted coder is never left without re-orientation."""
-        canned = prompts.load("reanchor")
-        summary = _history_root(body.get("messages", []))[0]
-        if self.server.reasoner_role is None or not summary.strip():
-            return canned
-        text = summarize(self.server.reasoner_upstream.chat, self.server.reasoner_role,
-                         prompts.load("reanchor_reasoned"), summary, rlog, phase="reasoner")
-        return text or canned
-
-    def _done_critic_says_incomplete(self, gs, body: dict, rlog) -> bool:
-        """The task-level reasoner critic on a GREEN plan-off 'done' (parity with the loop's _verify):
-        judge the WHOLE task against the real work + the vacuous-green fact. Marks gs.done_critiqued so
-        it runs at most ONCE. Returns True only on a NOT-satisfied verdict (fail-open: a judge that can't
-        decide fail-closes to not-satisfied, but the ONCE bound means the next green 'done' still ends)."""
-        gs.done_critiqued = True
-        task = _history_root(body.get("messages", []))[0]
-        ev = _satisfaction_evidence(body.get("messages", []))
-        if gs.last_gate_testless:  # C4 vacuous-green evidence
-            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
-                   "If this task required tests, green does NOT verify them; judge accordingly.")
-        satisfied, _reason = judge_satisfaction(
-            task, ev, self.server.reasoner_upstream.chat, self.server.reasoner_role, rlog)
-        rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
-        return not satisfied
-
-    def _drive_direct_coder(self, gs, provider, indic, body: dict, sess_key: str, rlog):
-        """The plan-off direct-coder turn with the SAME protections the loop gives its coder: the
-        repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify
-        against the repo's checks before ending the turn), harness-compaction re-anchoring, and
-        per-turn hygiene. Cross-turn state lives in the per-session GuardState + the shared shape
-        store. Returns the completion to send, or None on decode fail."""
-        coder_chat = self._guarded_coder_chat(provider)
-        gs.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
-        rewritten = self._detect_rewrite(sess_key, body, rlog)
-        # A probe whose result a harness compaction erased is re-issued (parity with the loop),
-        # rather than fail-open / downgrade to a canned steer with no ground truth.
-        reissue = guard_probe_reissue(gs, body, rlog, rewritten=rewritten)
-        if reissue is not None:
-            return reissue
-        # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
-        if gs.done_probe:
-            gs.done_probe = False
-            errors = guard_gate_verdict(gs, body, rlog)
-            if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
-                rlog.emit("loop.gate", plan_off=True, blocked=True)
-                gs.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
-                gs.steer_source = "completion gate (repo checks failed)"
-            elif self.server.reasoner_role is not None and not gs.done_critiqued and self._done_critic_says_incomplete(gs, body, rlog):
-                # A2 PARITY: the objective gate is GREEN, but the task-level reasoner critic (like the
-                # loop's _verify) says the WHOLE task isn't done (a shallow/mocked/missing deliverable
-                # green checks miss). Don't end; nudge to finish. BOUNDED to once + fail-open, so a flaky
-                # judge delays a genuinely-green 'done' by at most one turn and can never block it.
-                gs.nudge_reason = prompts.load("done_incomplete")
-                gs.steer_source = "completion critic (task not fully done)"
-                gs.pending_done = ""
-            else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
-                rlog.emit("loop.gate", plan_off=True, blocked=False)
-                held, gs.pending_done, gs.leg0_nudged = gs.pending_done, "", False
-                return _completion_final(held or "Done.")
-        # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
-        if gs.periodic_probe:
-            truth = guard_periodic_result(gs, body, rlog)
-            if truth:
-                # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
-                # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
-                # the routed reasoner). Fires BELOW the terminate threshold — a reasoned unstick before
-                # cria gives up. Degrades gracefully: a weak reasoner just restates the ground truth.
-                if self.server.reasoner_role is not None and gs.gate_stall >= THRASH_STALL_CYCLES:
-                    truth = author_thrash_steer(
-                        self.server.reasoner_upstream.chat, self.server.reasoner_role,
-                        _extract_cwd(body.get("messages", [])), gs, truth, body, rlog)
-                    rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=gs.gate_stall)
-                gs.nudge_reason = truth
-                gs.steer_source = "periodic check-in"
-        # STALL TERMINATOR (the mirror of the satisfaction off-ramp — that ends on GREEN, this ends on
-        # persistent-RED): the checks have stayed red for a generous stretch with no off-ramp, so END the
-        # session honestly back to the USER instead of churning forever (the 169/326-call runaways). The
-        # coder can't reliably STOP; when it also can't converge, cria stops FOR it and reports the state.
-        if not gs.terminated and stall_terminated(gs):
-            gs.terminated = True
-            rlog.emit("loop.stall_terminated", drive=gs.drive_count,
-                      red_streak=gs.gate_red_streak, stall=gs.gate_stall)
-            return _completion_final(prompts.render(
-                "stall_terminated", drives=gs.drive_count, cycles=gs.gate_red_streak,
-                checks=gs.gate_sig or "(no parseable check output)"))
-        # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
-        steer, intervention = None, None
-        if gs.awaiting_probe:
-            gs.awaiting_probe = False
-            # PARITY: plan-off now gets the SAME reasoner-authored redirect as the loop (via the shared
-            # author_redirect on the correctly-routed reasoner endpoint), not a canned template — the seed
-            # the parity audit caught. CANNED only if this deployment has no reasoner role at all.
-            def _redirect_author(g, outcome, b, r):
-                task = _history_root(b.get("messages", []))[0] or "the user's task"
-                return author_redirect(self.server.reasoner_upstream.chat, self.server.reasoner_role,
-                                       _extract_cwd(b.get("messages", [])), task, g, outcome, b, r)
-            author = _redirect_author if self.server.reasoner_role is not None else CANNED
-            steer = guard_probe_steer(gs, body, rlog, author=author)
-        elif not gs.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
-            intervention = guard_intervene(gs, body, rlog)
-        if intervention is not None:
-            return intervention
-        if steer is None and gs.nudge_reason:
-            steer, gs.nudge_reason = gs.nudge_reason, ""
-        # PERIODIC SATISFACTION CHECK (the off-ramp for a session that finished the work but can't STOP):
-        # on a long session — drive >= SATISFACTION_CHECK_START, then every SATISFACTION_CHECK_EVERY —
-        # the reasoner judges whether the USER'S WHOLE TASK is satisfied by the real work. If yes, cria
-        # initiates the done-gate: verify against the repo's own checks (objective backstop), and on the
-        # next turn end the session if they pass. The coder can't reliably signal done, so cria does.
-        # GATED ON GREEN: skip while the last gate/check-in was RED — the deterministic checks already
-        # say NOT-done, so the LLM judge is redundant and (for a model that answers a done-judge with a
-        # "run the tests" tool call and always fail-closes) pure waste. The judge earns its cost only on
-        # a GREEN gate, where it catches "checks pass but a deliverable is missing/shallow".
-        if steer is None and not rewritten and not gs.done_probe and not gs.last_gate_red \
-                and satisfaction_check_due(
-                gs.drive_count, self.server.cfg.context.satisfaction_check_start,
-                self.server.cfg.context.satisfaction_check_every):
-            task = _history_root(body.get("messages", []))[0]
-            evidence = _satisfaction_evidence(body.get("messages", []))
-            if gs.last_gate_testless:  # C4: the vacuous-green FACT — the judge holds the task and decides
-                evidence += ("\n\n[GROUND TRUTH] The repo's automated checks passed, but NO tests were "
-                             "actually executed (0 collected / no test probe ran). If this task required "
-                             "tests, a green result does NOT verify them; judge accordingly.")
-            satisfied, reason = judge_satisfaction(
-                task, evidence, self.server.reasoner_upstream.chat, self.server.reasoner_role, rlog)
-            rlog.emit("loop.satisfaction_check", plan_off=True, drive=gs.drive_count, satisfied=satisfied)
-            if satisfied:
-                probe_tc = guard_gate_op(gs, body, rlog)
-                if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
-                    gs.done_probe = True
-                    gs.probe_call_id = probe_tc["id"]
-                    gs.pending_done = satisfaction_done_note(reason)
-                    gs.steer_source = "completion check (task satisfied)"
-                    return _completion_toolcalls([probe_tc],
-                                                 note="cria completion check: the task looks done — verifying the repo's checks")
-                return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
-            # NOT satisfied → do NOT steer. The reason is the reasoner's JUDGMENT, not ground truth;
-            # injecting a weak model's guess about "what's missing" as authoritative guidance every 25
-            # turns misleads as easily as it helps (an assist becomes a footgun). Real errors are already
-            # surfaced by the periodic gate from actual tool output; the satisfaction check only ENDS a
-            # session (objectively gated), it does not push speculative steers. Just log the verdict.
-        # PERIODIC gate: every N acting turns, run the checks and insert ground truth — but only when
-        # nothing else is steering this turn (a guard steer / re-anchor takes precedence).
-        if steer is None and not rewritten:
-            periodic = guard_periodic_gate(gs, body, rlog)
-            if periodic is not None:
-                return periodic
-        framed = _direct_coder_body(body)
-        extra = []
-        if rewritten:  # first turn after a harness compaction → re-orient the coder (the seed fix). PARITY:
-            # a REASONED continuation from the summary (like the loop's re-plan), canned only as fallback.
-            extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
-            self.server.loop_store.clear_rewrite(sess_key)  # acted on it (framing rebuilt each turn)
-        if steer:  # inject the steer into the coder framing this turn
-            extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
-        if extra:
-            framed = {**framed, "messages": framed["messages"] + extra}
-        # Pin the conversation-root task (extracted from the RAW body, where env-context detection
-        # still works — framed has already been reframed) so self-compaction can't summarize it away.
-        framed = self._maybe_self_compact(framed, sess_key, rlog,
-                                          root_task=_history_root(body.get("messages", []))[0])
-        framed = self._apply_route_role(framed, indic)
-        framed, _ = self._focus_trim(framed, rlog)  # focus the OUTBOUND view (logged, not bannered —
-        comp = self._run_coder(framed, coder_chat, gs, rlog)  # routine housekeeping, not an intervention)
-        if comp is None:
-            return None
-        if rewritten:  # no hidden guards: surface that cria re-anchored the turn
-            _add_note(comp, "re-anchored after a harness compaction")
-        if steer:  # no hidden guards: surface WHICH guard steered the coder (not just "a guard")
-            _add_note(comp, f"steered the coder — {gs.steer_source or 'guard'}")
-            gs.steer_source = ""
-        if _has_tool_calls(comp):
-            gs.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
-            return comp  # acting → forward
-        return self._gate_direct_done(gs, comp, framed, body, coder_chat, rlog)
-
-    def _gate_direct_done(self, gs, comp, framed: dict, body: dict, coder_chat, rlog):
-        """The coder answered with NO tool call (thinks it's done). Verify before ending the turn:
-        LEG0 (never acted this session → one act-first nudge, re-call once), then the OBJECTIVE
-        completion gate (run the repo's checks; on failure the next turn steers, on pass the 'done'
-        is forwarded). The same protection the loop's LEG0 + gate give — no false 'done, tests pass'.
-        NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd> tags
-        from `framed`)."""
-        if gs.action_seq == 0 and not gs.leg0_nudged:  # the session never acted at all
-            gs.leg0_nudged = True
-            rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
-            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=prompts.load("leg0_nudge"))}]
-            recall = self._run_coder({**framed, "messages": conv}, coder_chat, gs, rlog)
-            if recall is not None:
-                comp = recall
-                if _has_tool_calls(comp):
-                    return comp  # it acted after the nudge
-        probe = guard_gate_op(gs, body, rlog)  # body, NOT framed — reframe stripped the <cwd> tags
-        if probe is not None:
-            gs.done_probe = True
-            gs.probe_call_id = probe["id"]
-            gs.pending_done = _completion_text(comp)
-            rlog.emit("loop.completion_probe", plan_off=True)
-            return _completion_toolcalls([probe], note="verifying — running the repo's checks")
-        return comp  # no shell tool → can't gate; forward the 'done' as-is
 
     def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
         """Resolve the provider/model for this classification and build the
@@ -887,6 +545,24 @@ class CriaHandler(BaseHTTPRequestHandler):
         finally:
             hb.stop()
 
+    def _engages_loop(self, sk: str, classification) -> bool:
+        """Should this turn go through the loop (cria's ONE coder driver) rather than the proxy?
+        A KNOWN session always continues — a mid-plan tool result / a post-compaction continuation
+        classifies as non-task, and gating on per-turn classification would abandon the work. For a
+        FRESH turn, classification gates STARTING: planner ON → an ``engagement == "task"``; planner
+        OFF → a ``task_type == "coding"`` (the synthetic 1-item path). Used by BOTH producers so the
+        buffered and streaming transports dispatch identically."""
+        loop = self.server.loop
+        if loop is None:
+            return False
+        if loop.knows_session(sk):
+            return True
+        if classification is None:
+            return False
+        if self.server.cfg.planner.enabled:
+            return classification.engagement == "task"
+        return classification.task_type == "coding"
+
     def _produce_stream(self, body: dict, rlog):
         """The SSE chunk generator. The blocking model work happens here on the first
         iteration, so the heartbeat running in `_respond_stream` covers it.
@@ -898,27 +574,16 @@ class CriaHandler(BaseHTTPRequestHandler):
         try:
             classification = self._classify(body, rlog)
             sk = session_key(self.headers, body.get("messages", []))
-            # Drive the loop when the loop KNOWS this session (a live plan to continue; a completed
-            # briefing / recorded shape, so a post-compaction rewrite is detected structurally) OR
-            # when a fresh turn is a task. Classification gates only STARTING a fresh plan.
-            if server.loop is not None and (server.loop.knows_session(sk) or (classification is not None and classification.engagement == "task")):
+            # ONE coder driver: engage the loop when it should (a known session, or a fresh turn the
+            # loop would start — see _engages_loop). It drives a real multi-item plan OR the synthetic
+            # 1-item plan-off path; both come back as a completion. Otherwise fall through to the proxy.
+            if self._engages_loop(sk, classification):
                 completion = server.loop.drive(body, sk, classification, rlog)
                 if completion is not None:
                     yield from completion_to_sse(self._finalize(self._translate_out(completion, sk, rlog), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
-            # PARITY: the plan-off direct-coder path (with ALL its guards — repetition/wheel-spin, the
-            # completion gate, the satisfaction judge, the stall terminator) must run on the STREAMING
-            # transport too, not only the buffered one. Without this a streaming /v1/chat/completions
-            # coding task was a bare proxy — every plan-off guard bypassed. Drive it buffered, emit as SSE.
-            if (not server.cfg.planner.enabled and classification is not None
-                    and classification.task_type == "coding"):
-                rlog.emit("route.direct_coder", stream=True)
-                comp = self._drive_direct_coder(server.guard_store.get(sk), provider, indic, body, sk, rlog)
-                if comp is not None:
-                    yield from completion_to_sse(self._finalize(self._translate_out(comp, sk, rlog), sk, rlog))
-                    return
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(_proxy_body(body), indic), rlog),
                 body.get("model", ""),
@@ -938,12 +603,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         Shared by the buffered chat path and the Responses adapter."""
         server: CriaServer = self.server
         classification = self._classify(body, rlog)
-        # Route through the loop when it KNOWS this session (live plan → continue regardless of the
-        # turn's classification; completed/shaped → structural compaction-rewrite detection) or when
-        # a fresh turn is a task. Classification only gates STARTING a fresh plan. See
-        # Loop.knows_session — without this the loop is abandoned mid-plan ("stopped after a command")
-        # or a post-compaction continuation is proxied blind.
-        if server.loop is not None and (server.loop.knows_session(sess_key) or (classification is not None and classification.engagement == "task")):
+        # ONE coder driver: engage the loop (a real multi-item plan OR the synthetic 1-item plan-off
+        # path) whenever it should; otherwise proxy. See _engages_loop — a known session ALWAYS
+        # continues (a mid-plan tool result / continuation classifies as non-task, and gating on that
+        # would abandon the work: "stopped after a command"); classification only gates STARTING.
+        if self._engages_loop(sess_key, classification):
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
@@ -951,24 +615,12 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
         rlog.phase = "proxy"
-        # Planner OFF ([planner] enabled = false) + a coding task → frame the coder directly (its
-        # own system prompt, no plan) AND run it through the SAME guards the loop uses (rumination
-        # + truncation). Plan-off means NO PLAN, not NO PROTECTION — the guards are not gated behind
-        # the planner. A small model left to relay bare is exactly what runs away / thrashes.
-        direct = (not server.cfg.planner.enabled and classification is not None
-                  and classification.task_type == "coding")
-        if direct:
-            rlog.emit("route.direct_coder")
-            comp = self._drive_direct_coder(server.guard_store.get(sess_key), provider, indic, body, sess_key, rlog)
-            if comp is None:
-                return {}, indic
-        else:
-            pbody, _ = self._focus_trim(self._apply_route_role(_proxy_body(body), indic), rlog)
-            raw = provider.chat(pbody, rlog)
-            try:
-                comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
-            except (json.JSONDecodeError, TypeError):
-                return {}, indic
+        pbody, _ = self._focus_trim(self._apply_route_role(_proxy_body(body), indic), rlog)
+        raw = provider.chat(pbody, rlog)
+        try:
+            comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
+        except (json.JSONDecodeError, TypeError):
+            return {}, indic
         if not body.get("tools"):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty

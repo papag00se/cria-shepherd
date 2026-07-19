@@ -16,7 +16,7 @@ from tempfile import TemporaryDirectory
 
 from cria.config import Backend, Config, IndicatorsConfig, LoggingConfig, Role, ServerConfig, UpstreamConfig
 from cria.events import EventLog
-from cria.server import CriaServer, _direct_coder_body, _has_visible_output, _proxy_body
+from cria.server import CriaServer, _has_visible_output, _proxy_body
 from cria.upstream import Upstream
 
 
@@ -68,36 +68,6 @@ class ApplyRouteRoleTests(unittest.TestCase):
         body = {"messages": []}
         h._apply_route_role(body, types.SimpleNamespace(role=None))
         self.assertNotIn("temperature", body)  # passthrough → untouched
-
-
-class DirectCoderBodyTests(unittest.TestCase):
-    """Planner-bypass ([planner] enabled = false) frames the coder with cria's OWN coder system
-    prompt in place of the dropped harness one — a fair 'coder without a planner', not a bare relay."""
-
-    def test_drops_harness_system_and_leads_with_coder_prompt(self):
-        from cria import prompts
-        body = {"tools": [{"x": 1}], "messages": [
-            {"role": "system", "content": "You are Codex..."},
-            {"role": "developer", "content": "boilerplate"},
-            {"role": "user", "content": "port the lambda"},
-        ]}
-        out = _direct_coder_body(body)
-        self.assertEqual(out["messages"][0]["role"], "system")
-        self.assertEqual(out["messages"][0]["content"], prompts.load("coder_system"))
-        self.assertEqual([m["role"] for m in out["messages"][1:]], ["user"])  # harness system+dev gone
-        self.assertEqual(out["tools"], body["tools"])
-        self.assertEqual(body["messages"][0]["content"], "You are Codex...")  # input not mutated
-
-    def test_carries_menu_derived_tool_hint_into_cria_system(self):
-        # the hint add_cheatsheet folded into the (now dropped) harness system message must be
-        # re-carried into cria's own system message, naming the tools actually in the menu
-        body = {"tools": [{"type": "function", "function": {"name": "write_file"}},
-                          {"type": "function", "function": {"name": "read_file"}}],
-                "messages": [{"role": "system", "content": "harness"},
-                             {"role": "user", "content": "build it"}]}
-        sysmsg = _direct_coder_body(body)["messages"][0]["content"]
-        self.assertIn("read_file", sysmsg)
-        self.assertIn('"content"', sysmsg)  # argument shapes carried too
 
 
 class HasVisibleOutputTests(unittest.TestCase):
@@ -553,41 +523,27 @@ class ResponsesApiTests(unittest.TestCase):
         self.assertIn("data", doc)    # plain OpenAI clients want this one
 
 
-class _RewriteRlog:
-    def emit(self, kind, **kw):
-        pass
+class RewriteDetectionTests(unittest.TestCase):
+    """Harness-compaction detection (the seed anomaly): a changed conversation root under a stable
+    session key = the history was replaced → re-anchor the coder. The single driver composes it in
+    _drive_locked as `_stable_session(key) and store.observe_shape(key, root_fp, n)` — no phrase-
+    matching. (Both the multi-item and synthetic paths go through that one detection now.)"""
 
-
-class DirectRewriteDetectionTests(unittest.TestCase):
-    """Harness-compaction detection on the PLAN-OFF path (the seed anomaly): a changed conversation
-    root under a stable session key = the history was replaced → re-anchor the coder. Same structural
-    signal + same shared LoopStore the loop uses; no phrase-matching."""
-
-    def _handler(self, store):
-        from cria.server import CriaHandler
-        h = CriaHandler.__new__(CriaHandler)  # bare instance, no socket
-        h.server = types.SimpleNamespace(loop_store=store)
-        return h
+    def _fp(self, text):
+        from cria.loop import _history_root
+        return _history_root([{"role": "user", "content": text}])[1]
 
     def test_rewrite_detected_on_replaced_root_under_stable_key(self):
-        from cria.loop import LoopStore
-        h = self._handler(LoopStore())
-        key = "sid:abc"
-        first = {"messages": [{"role": "user", "content": "build the lambda"}]}
-        self.assertFalse(h._detect_rewrite(key, first, _RewriteRlog()))  # first sight → no rewrite
-        appended = {"messages": [{"role": "user", "content": "build the lambda"},
-                                 {"role": "assistant", "content": "ok"}]}
-        self.assertFalse(h._detect_rewrite(key, appended, _RewriteRlog()))  # append keeps the root
-        compacted = {"messages": [{"role": "user", "content": "SUMMARY: earlier we built the lambda…"}]}
-        self.assertTrue(h._detect_rewrite(key, compacted, _RewriteRlog()))  # root replaced → rewrite
+        from cria.loop import LoopStore, _stable_session
+        store, key = LoopStore(), "sid:abc"
+        self.assertTrue(_stable_session(key))
+        self.assertFalse(store.observe_shape(key, self._fp("build the lambda"), 1))  # first sight → no rewrite
+        self.assertFalse(store.observe_shape(key, self._fp("build the lambda"), 2))  # append keeps the root
+        self.assertTrue(store.observe_shape(key, self._fp("SUMMARY: earlier we built the lambda…"), 1))  # replaced
 
-    def test_no_rewrite_for_content_derived_task_key(self):
-        from cria.loop import LoopStore
-        h = self._handler(LoopStore())
-        a = {"messages": [{"role": "user", "content": "a"}]}
-        b = {"messages": [{"role": "user", "content": "TOTALLY DIFFERENT"}]}
-        self.assertFalse(h._detect_rewrite("task:xyz", a, _RewriteRlog()))  # unstable key → disabled
-        self.assertFalse(h._detect_rewrite("task:xyz", b, _RewriteRlog()))
+    def test_task_keys_never_detect_rewrite(self):
+        from cria.loop import _stable_session
+        self.assertFalse(_stable_session("task:xyz"))  # the loop gates observe_shape on this → no detection
 
 
 class VisibleWebCallsTests(unittest.TestCase):
@@ -659,61 +615,42 @@ class CompactorRoleWiringTests(unittest.TestCase):
         self.assertIsNot(srv.loop._ctx.compactor_role, coder)
 
 
+class LoopConstructionGateTests(unittest.TestCase):
+    """Route-unify: the loop is cria's ONE coder driver, so it is built whenever a coder exists — with
+    the planner OFF too (it then drives the synthetic 1-item path). A reasoner is required only when the
+    planner is ON. No coder → no loop (a smart proxy)."""
+
+    def _server(self, roles, planner):
+        from cria.config import PlannerConfig, RoutingConfig
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cfg = Config(
+            server=ServerConfig(host="127.0.0.1", port=0),
+            upstream=UpstreamConfig(base_url="http://127.0.0.1:1"),  # never called — __init__ only
+            logging=LoggingConfig(dir=tmp.name, capture_dir=tmp.name, console=False),
+            routing=RoutingConfig(backends={"local": Backend("local")}, roles=roles, failover={"coding": ("coder",)}),
+            planner=PlannerConfig(enabled=planner),
+        )
+        log = EventLog(dir=cfg.logging.dir, console=False)
+        self.addCleanup(log.close)
+        srv = CriaServer(cfg, log, Upstream(cfg.upstream.base_url))
+        self.addCleanup(srv.server_close)
+        return srv
+
+    def test_built_when_planner_off_even_without_a_reasoner(self):
+        srv = self._server({"coder": Role(name="coder", backend="local")}, planner=False)
+        self.assertIsNotNone(srv.loop)                     # the synthetic 1-item driver
+        self.assertFalse(srv.loop._ctx.planner_enabled)
+        self.assertIsNone(srv.loop._ctx.reasoner_role)     # off-ramps that need it just skip
+
+    def test_requires_reasoner_when_planner_on(self):
+        srv = self._server({"coder": Role(name="coder", backend="local")}, planner=True)
+        self.assertIsNone(srv.loop)                        # planner on but no reasoner → no loop
+
+    def test_no_coder_means_no_loop(self):
+        srv = self._server({"reasoner": Role(name="reasoner", backend="local")}, planner=False)
+        self.assertIsNone(srv.loop)                        # no coder → a smart proxy
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
-class DoneCriticTests(unittest.TestCase):
-    """A2: a plan-off GREEN 'done' runs a bounded task-level reasoner critic (parity with the loop's
-    _verify). Bounded to once + fail-open, so a flaky judge can never permanently block a green done."""
-
-    def _handler(self):
-        from cria.server import CriaHandler
-        h = CriaHandler.__new__(CriaHandler)
-        h.server = types.SimpleNamespace(
-            reasoner_upstream=types.SimpleNamespace(chat=lambda b, r: b"{}"),
-            reasoner_role="reasoner")
-        return h
-
-    def test_critic_verdict_and_bounded_once(self):
-        import cria.server as srv
-        from cria.loop import GuardState
-        h = self._handler()
-        body = {"messages": [{"role": "user", "content": "build X with tests"}]}
-        orig = srv.judge_satisfaction
-        try:
-            srv.judge_satisfaction = lambda *a, **k: (False, "no tests")
-            gs = GuardState()
-            self.assertTrue(h._done_critic_says_incomplete(gs, body, _RewriteRlog()))  # not satisfied → incomplete
-            self.assertTrue(gs.done_critiqued)                                          # marked → bounded once
-            srv.judge_satisfaction = lambda *a, **k: (True, "all present")
-            self.assertFalse(h._done_critic_says_incomplete(GuardState(), body, _RewriteRlog()))  # satisfied → done
-        finally:
-            srv.judge_satisfaction = orig
-
-
-class ReasonedReanchorTests(unittest.TestCase):
-    """A3: the plan-off harness-compaction re-orientation is REASONER-authored from the summary (parity
-    with the loop's re-plan), with the canned reanchor only as a fallback."""
-
-    def _handler(self, reasoner=True, reply="X is done; finish Y"):
-        import json
-        from cria.server import CriaHandler
-        from cria.config import Role
-        h = CriaHandler.__new__(CriaHandler)
-        chat = lambda b, r: json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
-        h.server = types.SimpleNamespace(
-            reasoner_upstream=types.SimpleNamespace(chat=chat),
-            reasoner_role=(Role(name="reasoner", backend="local") if reasoner else None))
-        return h
-
-    def test_reasoner_authors_else_canned(self):
-        from cria import prompts
-        body = {"messages": [{"role": "user", "content": "SUMMARY: resolver built, tests remain"}]}
-        self.assertIn("X is done", self._handler()._reasoned_reanchor(body, _RewriteRlog()))
-        self.assertEqual(self._handler(reasoner=False)._reasoned_reanchor(body, _RewriteRlog()),
-                         prompts.load("reanchor"))                                     # no reasoner → canned
-        self.assertEqual(self._handler(reply="")._reasoned_reanchor(body, _RewriteRlog()),
-                         prompts.load("reanchor"))                                     # empty reply → canned
-        self.assertEqual(self._handler()._reasoned_reanchor({"messages": []}, _RewriteRlog()),
-                         prompts.load("reanchor"))                                     # no summary → canned
