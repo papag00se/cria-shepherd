@@ -1,0 +1,5 @@
+The coding model's private reasoning over its recent turns (oldest first, most recent last):
+
+{{REASONINGS}}
+
+Is it stuck? Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder.

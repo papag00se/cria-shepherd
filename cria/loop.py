@@ -203,6 +203,8 @@ class PlanSession(GuardState):
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
+    recent_reasoning: list[str] = field(default_factory=list)  # coder's last FLAIL_WINDOW reasonings (flail detector)
+    last_flail_drive: int = -100  # drive_count at the last flail diagnosis (cooldown gate)
 
 
 # GROUND-TRUTH gate: composed per verification by probegate.plan_gate (syntax floor +
@@ -700,6 +702,18 @@ class Loop:
         intervention = guard_intervene(sess, body, rlog, step=idx, workspace_root=self._ctx.workspace_root)
         if intervention is not None:
             return intervention
+        sess.drive_count += 1  # session-wide drive counter (feeds the flail cooldown; read only here + single-item)
+        # QUIET-FLAIL catcher (parity with the single-item driver): the coder's REASONING is circling and
+        # nothing else is nudging → a reasoner reads its recent thinking and, only if genuinely stuck,
+        # authors one unstick step. Cheap pre-filter + cooldown gate the reasoner call.
+        if not sess.nudge_reason and self._ctx.reasoner_role is not None \
+                and _flail_candidate(sess.recent_reasoning) \
+                and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
+            sess.last_flail_drive = sess.drive_count
+            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, rlog)
+            if diag:
+                sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
+                rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
@@ -732,6 +746,7 @@ class Loop:
         coder = self._guard_truncation(coder, framed, idx, rlog)  # cut-off write → incremental, don't ship partial
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted (both
         #   forwarded to the harness AND captured below as pending_coder_text for the critic)
+        _record_reasoning(sess, coder)  # keep the coder's thinking for the quiet-flail detector
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
         if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
@@ -1164,6 +1179,18 @@ class Loop:
             return intervention
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
+        # QUIET-FLAIL catcher: nothing above is steering, but the coder's REASONING has been circling on a
+        # failure (the thrash the gate misses — the checks aren't even red). A no-tools reasoner reads its
+        # recent thinking and, ONLY if it judges the coder genuinely stuck, authors one unstick step. The
+        # cheap lexical pre-filter + a cooldown gate the reasoner call; the reasoner is the real judge.
+        if steer is None and self._ctx.reasoner_role is not None and not rewritten and not sess.done_probe \
+                and _flail_candidate(sess.recent_reasoning) \
+                and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
+            sess.last_flail_drive = sess.drive_count
+            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, rlog)
+            if diag:
+                steer, sess.steer_source = diag, "reasoning appears to be circling"
+                rlog.emit("loop.flail_steer", plan_off=True, drive=sess.drive_count)
         # PERIODIC SATISFACTION CHECK (the off-ramp for a session that finished the work but can't STOP):
         # on a long session the reasoner judges whether the USER'S WHOLE TASK is satisfied; if yes, cria
         # initiates the done-gate (verify the repo's checks) and ends next turn. GATED ON GREEN.
@@ -1268,6 +1295,7 @@ class Loop:
         comp = guard_rumination(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
         comp = guard_truncation(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
         _strip_completion_banners(comp)
+        _record_reasoning(sess, comp)  # keep the coder's thinking for the quiet-flail detector
         if self._ctx.coder_role is not None:
             _clean_completion(comp, self._ctx.coder_role)
         if _has_tool_calls(comp):
@@ -2326,6 +2354,65 @@ def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardS
                           disk=(disk or "(no files touched yet)"), evidence=(evidence or "(none)")) + note
     text = summarize(reasoner_chat, reasoner_role, prompts.load("thrash_diagnose"), user, rlog, phase="reasoner")
     return text or truth
+
+
+# ---- QUIET-FLAIL detector: the coder's REASONING is circling (re-trying the same failed thing) while
+# no gate/guard is steering. The gate catches "the checks stay red"; this catches "the coder keeps
+# THINKING the same thing" — the thrash the capsys/venv sessions showed with almost no gate activity.
+# A cheap LENIENT lexical pre-filter (below) only decides whether to spend a reasoner call; the reasoner
+# makes the real stuck/not-stuck call. Calibrated on real captured reasoning: fires on both thrash
+# sessions, never on the clean one. See docs + tests/test_flail.py.
+FLAIL_WINDOW = 4             # coder reasonings examined for circling
+FLAIL_MIN_STRUGGLING = 2     # of the window, how many must show struggle language to spend a reasoner call
+FLAIL_COOLDOWN = 5           # coder drives between flail diagnoses (a steer needs room to land)
+# BROAD struggle vocabulary — a PRE-FILTER, not a judge: its only job is to skip windows with no failure
+# language at all (obvious progress) so the reasoner isn't run on healthy work. The reasoner judges.
+_STRUGGLE_RE = re.compile(
+    r"\b(?:fail(?:ed|ing|ure)?|doesn't|does not|didn't|isn't|is not|wasn't|can't|cannot|won't|error|"
+    r"broke|broken|still|again|instead|guessing|keep|the real|tried|another|revert|retry|no longer|"
+    r"but the|however|wrong|invalid|not exist|neither|turns out|mistake)\b", re.IGNORECASE)
+
+
+def _reasoning_of(comp: dict) -> str:
+    """The coder's private reasoning from a completion (upstream assembles message.reasoning_content)."""
+    for ch in comp.get("choices", []):
+        msg = ch.get("message") or {}
+        r = msg.get("reasoning_content") or msg.get("reasoning")
+        if isinstance(r, str) and r.strip():
+            return r.strip()
+    return ""
+
+
+def _record_reasoning(sess, comp: dict) -> None:
+    """Keep the coder's last FLAIL_WINDOW reasonings on the session for the flail pre-filter."""
+    r = _reasoning_of(comp)
+    if r:
+        sess.recent_reasoning = (sess.recent_reasoning + [r])[-FLAIL_WINDOW:]
+
+
+def _flail_candidate(window: list[str]) -> bool:
+    """LENIENT pre-filter: does the recent reasoning look like it MIGHT be circling on a failure? Skips
+    windows with no struggle language (clear progress) so the reasoner isn't spent on healthy work — the
+    reasoner then makes the real call. Needs a full window of FLAIL_WINDOW turns first."""
+    if len(window) < FLAIL_WINDOW:
+        return False
+    return sum(1 for r in window if _STRUGGLE_RE.search(r)) >= FLAIL_MIN_STRUGGLING
+
+
+def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], rlog) -> str | None:
+    """The reasoned FLAIL-assist. The pre-filter fired, so a no-tools REASONER reads the coder's last few
+    private reasonings and decides: is it stuck repeating a failed approach? If so it authors ONE concrete
+    unstick step; if it's actually progressing it replies NOT_STUCK and cria injects nothing. Grounded in
+    the coder's OWN thinking, so it degrades gracefully — a weak reasoner restates the loop (which alone
+    helps the coder see it), a stronger one names the real escape. Returns the steer, or None (not stuck /
+    no reasoner output)."""
+    joined = "\n\n--- turn ---\n".join(window)
+    text = summarize(reasoner_chat, reasoner_role, prompts.load("flail_diagnose"),
+                     prompts.render("flail_diagnose_user", reasonings=joined), rlog, phase="reasoner")
+    text = (text or "").strip()
+    if not text or "NOT_STUCK" in text[:60].upper():
+        return None
+    return text
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the
