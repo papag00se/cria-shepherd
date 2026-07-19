@@ -826,7 +826,7 @@ class Loop:
             else probegate.GateOutcome(ran=False)
         # Guard-probe result (repetition redirect / wheel-spin ground truth) — shared with the
         # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
-        steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._author_redirect)
+        steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._probe_author)
         if steer is not None:
             return self._renudge(sess, key, body, steer, rlog)
         if not outcome.ran:
@@ -911,13 +911,19 @@ class Loop:
         plan-off path runs the IDENTICAL detection."""
         guard_track_repetition(sess, coder, rlog, step=idx)
 
-    def _author_redirect(self, sess: PlanSession, outcome, body: dict, rlog) -> str:
-        """The loop's reasoned redirect — a thin wrapper over the SHARED :func:`author_redirect` (so the
-        plan-off path runs the identical reasoning). Supplies the loop's step text + reasoner endpoint."""
+    def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
+        """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
+        to the SHARED authors (so the plan-off path runs the identical reasoning) on the routed reasoner
+        endpoint. Repetition keeps a canned floor (via author_redirect); wheel-spin may return None
+        (NOT_STUCK / nothing → inject nothing)."""
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
-        return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                               self._ctx.workspace_root, step_text, sess, outcome, body, rlog)
+        root = self._ctx.workspace_root
+        if condition == "repetition":
+            return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                   root, step_text, sess, outcome, body, rlog)
+        return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, sess, body, rlog,
+                            condition="wheel_spin", outcome=outcome, step_text=step_text)
 
     def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
         """The loop's coder step — delegates to the shared :func:`guard_track_write_streak`."""
@@ -1146,14 +1152,17 @@ class Loop:
         steer, intervention = None, None
         if sess.awaiting_probe:
             sess.awaiting_probe = False
-            # PARITY: the single-item path gets the SAME reasoner-authored redirect as the loop (via the
-            # shared author_redirect on the routed reasoner endpoint). CANNED only if there's no reasoner.
-            def _redirect_author(g, outcome, b, r):
-                task = _history_root(b.get("messages", []))[0] or "the user's task"
-                return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                       self._ctx.workspace_root or _extract_cwd(b.get("messages", [])),
-                                       task, g, outcome, b, r)
-            author = _redirect_author if self._ctx.reasoner_role is not None else CANNED
+            # PARITY: the single-item path gets the SAME reasoner-authored steers as the loop (via the
+            # shared authors on the routed reasoner endpoint). CANNED only if there's no reasoner.
+            def _author(condition, g, outcome, b, r):
+                root = self._ctx.workspace_root or _extract_cwd(b.get("messages", []))
+                if condition == "repetition":
+                    task = _history_root(b.get("messages", []))[0] or "the user's task"
+                    return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                           root, task, g, outcome, b, r)
+                return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, g, b, r,
+                                    condition="wheel_spin", outcome=outcome)
+            author = _author if self._ctx.reasoner_role is not None else CANNED
             steer = guard_probe_steer(sess, body, rlog, author=author)
         elif not sess.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
             intervention = guard_intervene(sess, body, rlog, workspace_root=self._ctx.workspace_root)
@@ -2302,40 +2311,78 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
         ground_truth=(f"{gt}\n\n" if gt else ""))
 
 
+# ---- ONE reasoned steer author behind EVERY detector. A detector (repetition / wheel-spin / thrash /
+# flail) is a cheap deterministic TRIGGER; the steer itself is always REASONED here, grounded in the real
+# session + the churned files' real on-disk bytes + the repo's checks (+ the coder's private reasoning
+# when that was the trigger). It replaces the family of canned "stop rewriting / do something different"
+# templates that could prescribe a broken tool or be misread as "abandon the file". The reasoner may
+# reply NOT_STUCK (the detector was a false positive) → we inject nothing (silence over a bad steer).
+# One-line description of WHAT tripped, per condition — the only condition-specific text. Grounded in gs
+# so the reasoner knows the concrete signal; the rest of the bundle (session/disk/truth) is uniform.
+_STEER_TRIGGER = {
+    "repetition": lambda gs, step: (
+        f"It keeps repeating the SAME action {REPEAT_FINGERPRINT_N}× without the outcome changing: {gs.repeat_action}"),
+    "wheel_spin": lambda gs, step: (
+        f"It has rewritten the file `{gs.spin_path}` at least {WHEEL_SPIN_WRITES} times with varying "
+        f"content and it still is not converging."),
+    "thrash": lambda gs, step: (
+        f"The repo's own checks have failed with the SAME error for {gs.gate_stall} rounds while it kept "
+        f"editing — it is not converging."),
+    "flail": lambda gs, step: (
+        "Its recent private reasoning (below) looks like it may be circling on a failure, while no check "
+        "is currently steering it."),
+}
+
+
+def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
+                 condition: str, outcome=None, truth_text: str = "", step_text: str = "",
+                 reasoning_window=None) -> str | None:
+    """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
+    FULL grounded picture — the real session (scrubbed of cria's own plumbing), the churned files' real
+    ON-DISK bytes, the repo's check output, and (for the flail trigger) the coder's recent private
+    reasoning — and let it diagnose why the coder is stuck and give ONE concrete, grounded next step.
+    Returns the directive, or ``None`` when the reasoner judges the coder is actually progressing
+    (``NOT_STUCK``) or yields nothing — the caller decides whether to fall back or stay silent.
+
+    We hand it the real session rather than a curated slice: the context floor trims the request to the
+    window anyway, so there is no size reason to chop it, and a curated view is exactly what made an
+    earlier steer invent a path. Grounded in what actually happened, it cannot hallucinate a filesystem
+    it cannot see."""
+    session = selfcompact.serialize(probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", []))))
+    disk = _fresh_disk_facts(workspace_root, getattr(gs, "recent_writes", None), getattr(gs, "spin_path", "")) \
+        if gs is not None else ""
+    truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
+    reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
+    trigger = _STEER_TRIGGER[condition](gs, step_text)
+    user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
+                          disk=(disk or "(no files touched yet)"),
+                          truth=(truth or "(no check results for this steer)"),
+                          reasoning=(reasoning or "(not captured for this trigger)"))
+    text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
+                      phase="reasoner") or "").strip()
+    if not text or "NOT_STUCK" in text[:60].upper():
+        return None
+    return text
+
+
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
                     gs: GuardState, outcome, body: dict, rlog) -> str:
-    """The REASONED redirect — SHARED by both paths so they cannot diverge. Hand the reasoner the step,
-    the repeated action, the coder's recent tool results, the fresh probe findings, and the files' real
-    ON-DISK bytes; it authors the coder's next instruction. Falls back to the canned redirect when the
-    reasoner yields nothing — a stuck coder is never left without a steer."""
-    truth = guard_ground_truth(outcome) or "(no check results this turn — steer on the repeated action itself)"
-    evidence = _coder_evidence(body.get("messages", []), gs.probe_call_id)
-    disk = _fresh_disk_facts(workspace_root, gs.recent_writes, gs.spin_path)
-    user = prompts.render("redirect_user", step=step_text, repeat_n=REPEAT_FINGERPRINT_N,
-                          repeat_action=gs.repeat_action, evidence=evidence or "(none)",
-                          truth=truth, disk=disk or "(no files touched yet)")
-    text = summarize(reasoner_chat, reasoner_role, prompts.load("redirect"), user, rlog, phase="reasoner")
-    return text or guard_canned_redirect(gs, outcome)
+    """The REASONED redirect (repetition trigger) — a thin wrapper over :func:`author_steer`. Falls back
+    to the canned redirect when the reasoner declines/yields nothing: the identical-repeat signal is
+    strong, so a stuck repeater is never left without a steer."""
+    return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
+                        condition="repetition", outcome=outcome, step_text=step_text) \
+        or guard_canned_redirect(gs, outcome)
 
 
 def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardState,
                         truth: str, body: dict, rlog) -> str:
-    """C5 — the reasoned thrash-assist. When the coder is STUCK (the same check error has persisted for
-    THRASH_STALL_CYCLES gate cycles while it keeps editing), a no-tools REASONER is handed the grounded
-    evidence bundle — the persistent error, the files it keeps changing (real on-disk bytes), its own
-    recent tool results, the vacuous-green fact — and asked to diagnose WHY it is stuck and give ONE
-    concrete next step. Anchored in ground truth so it degrades gracefully: a weak reasoner restates the
-    facts (no worse than the raw insertion), a stronger reasoner supplies the real unlock. Falls back to
-    the raw ground truth when it yields nothing."""
-    disk = _fresh_disk_facts(workspace_root, gs.recent_writes, gs.spin_path)
-    evidence = _coder_evidence(body.get("messages", []), gs.probe_call_id)
-    note = ""
-    if gs.last_gate_testless:
-        note = "\n\nNOTE: the checks pass on some files but NO tests were actually executed (0 collected)."
-    user = prompts.render("thrash_diagnose_user", stall=gs.gate_stall, truth=truth,
-                          disk=(disk or "(no files touched yet)"), evidence=(evidence or "(none)")) + note
-    text = summarize(reasoner_chat, reasoner_role, prompts.load("thrash_diagnose"), user, rlog, phase="reasoner")
-    return text or truth
+    """C5 — the reasoned thrash-assist (thrash trigger) — a thin wrapper over :func:`author_steer`. The
+    persistent-error string is the trigger's ground truth; on a NOT_STUCK / empty reasoner reply we fall
+    back to inserting that raw ground truth (the periodic check-in's baseline behaviour, valuable on its
+    own — the reasoned diagnosis is an upgrade of it, not a replacement)."""
+    return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
+                        condition="thrash", truth_text=truth, step_text="") or truth
 
 
 # ---- QUIET-FLAIL detector: the coder's REASONING is circling (re-trying the same failed thing) while
@@ -2382,25 +2429,13 @@ def _flail_candidate(window: list[str]) -> bool:
 
 
 def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog) -> str | None:
-    """The reasoned FLAIL-assist. The pre-filter fired, so a no-tools REASONER reads the ACTUAL coding
-    session — the whole conversation (the task, every tool call, every result), scrubbed of cria's own
-    plumbing — PLUS the coder's recent private reasoning (the circling signal, which the transcript
-    doesn't carry), and decides: is it stuck repeating a failed approach? If so it authors ONE concrete
-    unstick step; if it's actually progressing it replies NOT_STUCK and cria injects nothing.
-
-    We hand it the real session rather than a curated slice: the context floor trims the request to the
-    window anyway, so there is no size reason to chop it, and a curated view is exactly what made it
-    invent paths. Grounded in what actually happened, it can't hallucinate a filesystem it can't see."""
-    convo = probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", [])))
-    session = selfcompact.serialize(convo)
-    reasoning = "\n\n--- turn ---\n".join(window)
-    text = summarize(reasoner_chat, reasoner_role, prompts.load("flail_diagnose"),
-                     prompts.render("flail_diagnose_user", session=session, reasonings=reasoning),
-                     rlog, phase="reasoner")
-    text = (text or "").strip()
-    if not text or "NOT_STUCK" in text[:60].upper():
-        return None
-    return text
+    """The reasoned FLAIL-assist (flail trigger) — a thin wrapper over :func:`author_steer`. The pre-filter
+    fired on the coder's circling PRIVATE reasoning (which the transcript doesn't carry), so we pass that
+    reasoning window alongside the real session; the reasoner decides stuck-or-NOT_STUCK. There is no gate
+    outcome and no GuardState here (the trigger is reasoning, not a check/write count), so disk facts are
+    empty — the reasoner grounds on the session's own tool results and reads on demand via the steer."""
+    return author_steer(reasoner_chat, reasoner_role, None, None, body, rlog,
+                        condition="flail", reasoning_window=window)
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the
@@ -2420,21 +2455,26 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
-    if gs.redirect_probe:  # repetition: ground truth → a redirect (reasoner-authored, or explicit CANNED)
+    if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
         gs.steer_source = "repetition guard"
-        redirect = guard_canned_redirect(gs, outcome) if author is CANNED else author(gs, outcome, body, rlog)
+        redirect = guard_canned_redirect(gs, outcome) if author is CANNED \
+            else author("repetition", gs, outcome, body, rlog)  # author_redirect keeps a canned floor → never None
         rlog.emit("loop.redirect", step=step, chars=len(redirect))
         return f"[REDIRECT]\n{redirect}"
-    # wheel-spin: INSERT the ground truth and keep working — no verdict, the step stays open. When the
-    # checks gave no positive signal (couldn't run), steer on the repetition alone — no checks claim.
+    # wheel-spin: the same file rewritten with varying content. A REASONER reads the file's real on-disk
+    # bytes + the checks + the session and authors a grounded unstick — NOT a canned "stop rewriting"
+    # that prescribes a broken edit or reads as "abandon the file". When it declines / there's no reasoner,
+    # fall back to INSERTING the ground truth (fact, always worth surfacing) — never a suppressed probe (a
+    # None here would misroute into the completion gate). The step stays open either way; no verdict.
     gs.spin_probe = False
     gs.steer_source = "wheel-spin guard"
     truth = guard_ground_truth(outcome)
-    rlog.emit("loop.spin_probe_result", step=step, spoke=bool(truth))
-    if truth:
-        return prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=truth)
-    return prompts.render("spin_no_truth", spin_path=gs.spin_path)
+    canned = prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=truth) if truth \
+        else prompts.render("spin_no_truth", spin_path=gs.spin_path)
+    steer = canned if author is CANNED else (author("wheel_spin", gs, outcome, body, rlog) or canned)
+    rlog.emit("loop.spin_probe_result", step=step, spoke=True)
+    return steer
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:

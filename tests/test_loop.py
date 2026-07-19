@@ -1056,14 +1056,24 @@ class WheelSpinTests(unittest.TestCase):
         t = tempfile.mkdtemp()
         with open(os.path.join(t, "x.py"), "w") as f:
             f.write("print(1)\n")
+        with open(os.path.join(t, "handler.py"), "w") as f:
+            f.write("def handle():\n    return 1\n")   # the file _VaryingWriter churns — real on disk for the steer
         return t
 
-    def test_five_rewrites_trigger_a_spin_probe_and_insert_results(self):
+    def test_five_rewrites_trigger_a_spin_probe_and_reasoner_authors_the_steer(self):
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
+        captured = {}
+
+        class _Reasoner:                           # the wheel-spin is now REASONED, not canned
+            def __call__(self, body, rlog):
+                captured["user"] = body["messages"][-1]["content"]
+                return json.dumps({"choices": [{"message": {"content":
+                    "Read handler.py as it stands on disk and run the failing check to see the real error."}}]}).encode()
+
         coder = _VaryingWriter()                   # rewrites handler.py forever (content varies)
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         c = None
         for _ in range(WHEEL_SPIN_WRITES):         # five forwarded writes, one per turn
@@ -1076,12 +1086,14 @@ class WheelSpinTests(unittest.TestCase):
         args = json.loads(gate["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
         self.assertIn(P.rstrip("_"), " ".join(args["command"]))
         self.assertIn("loop.spin_probe", rlog.kinds())
-        # gate result: failing checks → findings INSERTED into the coder's next turn
+        # gate result: failing checks → REASONER authors the grounded steer → inserted into the coder's next turn
         result = (f"{P}probe-0{S}\n  File \"x.py\", line 3\nSyntaxError: bad\nEXIT:1\n"
                   f"{P}git{S}\nabc\n")
         nxt = loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
-        self.assertIn("rewritten `handler.py`", coder.last_user())
-        self.assertIn("SyntaxError", coder.last_user())
+        self.assertIn("Read handler.py", coder.last_user())   # the reasoner's grounded words, not a canned template
+        # ...and the reasoner SAW the wheel-spin trigger, the churned file, and the ground truth
+        self.assertIn("handler.py", captured["user"])
+        self.assertIn("SyntaxError", captured["user"])
         self.assertNotIn("loop.step_done", rlog.kinds())   # inserted, never judged
         self.assertIn("loop.spin_probe_result", rlog.kinds())
 
@@ -1102,26 +1114,37 @@ class WheelSpinTests(unittest.TestCase):
         self.assertIn("[REDIRECT]", steer)
         self.assertEqual(gs2.steer_source, "repetition guard")
 
-    def test_clean_checks_report_the_pass_without_editorializing(self):
-        # Round-6: the clean-gate message must NOT claim "the problem is elsewhere" — a
-        # content-blind streak can't distinguish a spiral from an honest sequence of edits to
-        # one file (applying review findings one by one). It states the checks pass, no more.
+    def test_clean_gate_lets_the_reasoner_judge_without_canned_editorializing(self):
+        # Round-6 lives on: a content-blind streak can't tell a spiral from honest edits (applying review
+        # findings one by one). So there's no canned "the problem is elsewhere" steer — the reasoner is
+        # handed the CLEAN ground truth + the real session and DECIDES. Here it judges the coder fine
+        # (NOT_STUCK); we fall back to inserting the clean FACT, never an "elsewhere" editorialization.
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
+        captured = {}
+
+        class _Reasoner:
+            def __call__(self, body, rlog):
+                captured["user"] = body["messages"][-1]["content"]
+                return json.dumps({"choices": [{"message": {"content": "NOT_STUCK"}}]}).encode()
+
         coder = _VaryingWriter()
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
+        loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         for _ in range(WHEEL_SPIN_WRITES):
             loop.drive(_body(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        # the reasoner SAW the clean ground truth, free of any "elsewhere" premise it could parrot
+        self.assertIn("no error-class", captured["user"].lower())
+        self.assertNotIn("elsewhere", captured["user"].lower())
+        # NOT_STUCK → the canned FACT is inserted (states the clean result), never an editorializing steer
         msg = coder.last_user()
-        self.assertIn("no error-class", msg.lower())      # states the clean fact...
-        self.assertNotIn("all pass", msg.lower())         # ...without overclaiming a verified/done state
-        self.assertNotIn("NOT in the file", msg)          # no false "look elsewhere" steer
-        self.assertNotIn("elsewhere", msg)
+        self.assertNotIn("all pass", msg.lower())         # no overclaimed verified/done state
+        self.assertNotIn("elsewhere", msg.lower())        # no false "look elsewhere" steer
+        self.assertIn("loop.spin_probe_result", rlog.kinds())
 
     def test_other_file_writes_do_not_shield_the_count(self):
         # WINDOWED (operator, 2026-07-12), not consecutive: the tiny-edit spiral interleaves
@@ -1322,17 +1345,18 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertIn("loop.redirect", rlog.kinds())
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("Patch handler.requests", coder.last_user())   # the reasoner's words
-        # ...and the reasoner SAW the evidence: step, repeated action, ground truth
-        self.assertIn("THE ACTION IT KEEPS REPEATING", captured["user"])
+        # ...and the reasoner SAW the evidence: the trigger, the repeated action, the session, ground truth
+        self.assertIn("WHAT TRIPPED THE DETECTOR", captured["user"])
+        self.assertIn("THE CODING SESSION SO FAR", captured["user"])
         self.assertIn("write_file", captured["user"])
         self.assertIn("SyntaxError", captured["user"])
 
     def test_redirect_prompt_does_not_order_a_look_elsewhere_steer(self):
-        # Round-7: de-editorializing the code-side fact was nullified because redirect.txt
-        # (the reasoner's SYSTEM prompt) still ordered "say the problem is NOT in the file".
-        # The prompt must not instruct any where-the-problem-is claim on a clean gate.
+        # Round-7: de-editorializing the code-side fact was nullified because the reasoner's SYSTEM
+        # prompt still ordered "say the problem is NOT in the file". The unified steer prompt must not
+        # instruct any where-the-problem-is claim on a clean gate.
         from cria import prompts
-        txt = prompts.load("redirect").lower()
+        txt = prompts.load("steer_diagnose").lower()
         self.assertNotIn("not in the file", txt)
         self.assertNotIn("look elsewhere", txt)
 
@@ -2479,6 +2503,61 @@ class GroundTruthSilenceTests(unittest.TestCase):
         self.assertIn("handle_api.py", steer)
         self.assertIn("different next action", steer.lower())
         self.assertNotIn("pass", steer.lower())
+
+
+class UnifiedSteerAuthorTests(unittest.TestCase):
+    """ONE reasoned author (author_steer) behind EVERY detector: repetition / wheel-spin / thrash /
+    flail all route through it, grounded in the real session + churned files + checks. It may reply
+    NOT_STUCK (a false-positive trigger) → the caller injects nothing."""
+
+    def _gs(self):
+        from cria.loop import GuardState
+        gs = GuardState(probe_call_id="p1", spin_path="x.py", repeat_action="write_file x.py", gate_stall=3)
+        gs.recent_writes = []
+        return gs
+
+    def _chat(self, content):
+        return lambda b, r: json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+    def test_every_condition_yields_the_reasoners_directive_when_stuck(self):
+        import tempfile
+        from cria.loop import author_steer
+        from cria.probegate import GateOutcome
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        for cond in ("repetition", "wheel_spin", "thrash", "flail"):
+            out = author_steer(self._chat("read the real file and run the failing test"), None, ws, gs,
+                               {"messages": []}, _Rlog(), condition=cond, outcome=GateOutcome(ran=False),
+                               reasoning_window=["keep guessing at the attr"])
+            self.assertIn("read the real file", out, cond)
+
+    def test_not_stuck_reply_suppresses_the_steer(self):
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        self.assertIsNone(author_steer(self._chat("NOT_STUCK"), None, ws, gs,
+                                       {"messages": []}, _Rlog(), condition="wheel_spin"))
+
+    def test_empty_reasoner_reply_is_none(self):
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        self.assertIsNone(author_steer(self._chat(""), None, ws, gs,
+                                       {"messages": []}, _Rlog(), condition="thrash"))
+
+    def test_trigger_slots_the_grounded_per_condition_signal(self):
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        seen = {}
+
+        def cap(b, r):
+            seen["u"] = b["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+
+        author_steer(cap, None, ws, gs, {"messages": []}, _Rlog(), condition="wheel_spin")
+        self.assertIn("x.py", seen["u"])          # spin_path names the churned file
+        author_steer(cap, None, ws, gs, {"messages": []}, _Rlog(), condition="thrash")
+        self.assertIn("3 rounds", seen["u"])       # gate_stall count is in the trigger
 
 
 class ReasonedRedirectTests(unittest.TestCase):

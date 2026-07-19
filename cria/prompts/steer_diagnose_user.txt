@@ -1,0 +1,16 @@
+WHAT TRIPPED THE DETECTOR:
+{{TRIGGER}}
+
+THE CODING SESSION SO FAR (the task, and every tool call the coder made with its result):
+{{SESSION}}
+
+THE FILES IT HAS BEEN CHANGING, AS THEY ARE ON DISK RIGHT NOW (fresh — trust this over the transcript):
+{{DISK}}
+
+GROUND TRUTH FROM THE REPO'S CHECKS:
+{{TRUTH}}
+
+ITS RECENT PRIVATE REASONING (oldest first, most recent last — present only when the trigger was its own thinking):
+{{REASONING}}
+
+Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder — grounded ONLY in what you see above.
