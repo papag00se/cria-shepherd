@@ -188,6 +188,11 @@ class GuardState:
 @dataclass
 class PlanSession(GuardState):
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
+    # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
+    # raw-task framing (no "step k/n") and runs the off-ramps a finite multi-step plan doesn't need
+    # (stall terminator + task-level satisfaction/done-critic). The explicit flag — NOT len(items)==1 —
+    # is the key: a genuine planner 1-step plan must keep step framing and skip those off-ramps.
+    synthetic: bool = False
     phase: Phase = Phase.WORK
     summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
@@ -1128,6 +1133,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "summary": sess.summary,
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
+        "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
+        #                               flip to multi-step framing after a restart
     }
 
 
@@ -1142,7 +1149,8 @@ def _session_from_dict(d) -> PlanSession | None:
                            for it in p["items"]])
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
-                           verify_fails=int(d.get("verify_fails", 0)))
+                           verify_fails=int(d.get("verify_fails", 0)),
+                           synthetic=bool(d.get("synthetic")))
     except Exception:  # noqa: BLE001
         return None
 
@@ -1381,7 +1389,7 @@ def _is_env_context(m: dict) -> bool:
     return "<environment_context>" in c or "<user_instructions>" in c
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None) -> list[dict]:
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -1400,19 +1408,32 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       system message so the coder knows what already exists this session — same reason as the step:
       system is protected from floor-trimming and authoritative.
     """
-    prompt = _item_prompt(item, summary, idx, total)
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
     messages = probegate.clean_gate_results(messages)  # strip raw gate plumbing/advisory from the coder's view
+    hint = toolmenu.cheatsheet(tools)
+    done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
+    if synthetic:
+        # RAW-TASK MODE (plan-off / degenerate 1-item plan): cria's coder_system + the menu-derived
+        # tool hint (+ a follow-up done-context when prior_work is set), NO step prompt, and the user's
+        # real task message is KEPT (never replaced). Byte-equivalent to the former _direct_coder_body,
+        # so turning the planner off is a fair 'coder without a planner', not a bare passthrough.
+        system = (prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
+                  + (f"\n\n{done_block.rstrip()}" if prior_work else ""))
+        out: list[dict] = [{"role": "system", "content": system}]
+        for m in messages:
+            if m.get("role") in ("system", "developer"):
+                continue  # harness agent boilerplate → replaced by cria's coder_system above
+            out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice; task kept raw
+        return out
     # cria's step instruction goes in the SYSTEM message, NOT a front user turn. The context floor
     # protects system messages but trims old user turns — and on a large history (after compaction)
     # it was trimming cria's own step framing AWAY, leaving the coder with no idea what step it was
     # on (it then flails and the re-nudge loop never converges = "Thinking forever"). In the system
     # message the instruction can never be dropped, and system is authoritative for the model.
-    done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
     # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
     # told to use ONLY the tools actually in this turn's menu — the harness system message that
     # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).
-    hint = toolmenu.cheatsheet(tools)
+    prompt = _item_prompt(item, summary, idx, total)
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
                         "content": prompts.load("coder_system") + "\n\n" + hint_block + done_block + prompt}]

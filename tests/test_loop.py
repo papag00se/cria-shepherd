@@ -1,9 +1,47 @@
 import json
 import unittest
 
-from cria.loop import Loop, LoopContext, LoopStore, PlanSession, completion_to_sse, session_key
+from cria.loop import Loop, LoopContext, LoopStore, PlanSession, _frame_for_item, completion_to_sse, session_key
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
+
+
+class SyntheticFramingTests(unittest.TestCase):
+    """Single-item plan-off mode frames the RAW task (no 'step k/n') — byte-equivalent to the
+    former server._direct_coder_body, so 'planner off' stays a fair 'coder without a planner'."""
+
+    def _body(self):
+        return {
+            "model": "m",
+            "tools": [{"type": "function", "function": {"name": "shell", "description": "run", "parameters": {}}}],
+            "messages": [
+                {"role": "system", "content": "You are Codex, an autonomous agent."},
+                {"role": "user", "content": "<env>cwd=/repo</env>"},
+                {"role": "user", "content": "Add a --verbose flag to the CLI."},
+                {"role": "assistant", "content": "⟦cria⟧ coder · gemma"},
+                {"role": "tool", "content": "ok"},
+            ],
+        }
+
+    def test_synthetic_matches_direct_coder_body(self):
+        from cria.server import _direct_coder_body
+        body = self._body()
+        synthetic = _frame_for_item(body["messages"], "", "", 1, 1, prior_work="", tools=body.get("tools"), synthetic=True)
+        self.assertEqual(synthetic, _direct_coder_body(body)["messages"])
+
+    def test_synthetic_keeps_raw_task_and_no_step_prompt(self):
+        body = self._body()
+        out = _frame_for_item(body["messages"], "IGNORED-STEP", "IGNORED-SUMMARY", 1, 1, tools=body.get("tools"), synthetic=True)
+        self.assertEqual(out[0]["role"], "system")
+        self.assertNotIn("step 1", " ".join(m.get("content", "") for m in out).lower())  # no "step 1/1"
+        self.assertTrue(any("--verbose flag" in m.get("content", "") for m in out))       # raw task kept
+
+    def test_multi_item_still_step_frames(self):
+        # A genuine plan step (synthetic=False) keeps the step framing — the flag, not len==1, is the key.
+        body = self._body()
+        out = _frame_for_item(body["messages"], "Write the flag parser", "", 2, 3, tools=body.get("tools"))
+        joined = " ".join(m.get("content", "") for m in out)
+        self.assertIn("Write the flag parser", joined)   # the STEP is the ask, not the raw task
 
 
 class _Rlog:
