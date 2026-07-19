@@ -66,6 +66,18 @@ class CommandRefusalTests(unittest.TestCase):
     def test_write_level_never_refuses(self):
         self.assertIsNone(dirguard.command_refusal("rm -rf /etc/x", "write", WS))
 
+    def test_urls_are_not_treated_as_external_paths(self):
+        # the guard governs the FILESYSTEM, never the network — a curl/wget to a URL must pass
+        for cmd in ("curl -s https://api.handle.me/handles/goose",
+                    "wget http://example.com/x",
+                    "curl https://x.com/a | jq .",
+                    "python3 -c 'import requests; requests.get(\"https://x/y\")'"):
+            self.assertIsNone(dirguard.command_refusal(cmd, "none", WS), cmd)
+
+    def test_a_download_TARGET_outside_the_workspace_is_still_caught(self):
+        # the URL is fine, but writing the download to an external path is a real external write
+        self.assertTrue(dirguard.command_refusal("curl https://x.com/a -o /etc/evil", "none", WS))
+
 
 class TranslateOutboundEnforcementTests(unittest.TestCase):
     """The guard fires at the writeproxy chokepoint: a violating call is replaced with a refusal

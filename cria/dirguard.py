@@ -23,10 +23,12 @@ import re
 
 LEVELS = ("none", "read", "write")
 
-# Absolute or ~-anchored path tokens in a shell command. The lookbehind rejects a `/` that follows a
-# word char or a dot, so RELATIVE paths (`a/b`, `./x`, `../x`, `.venv/bin`) are NOT matched — only a
-# rooted `/...` or `~/...`. The token ends at whitespace or a shell metacharacter.
-_PATH_TOKEN = re.compile(r"(?<![\w.])(?:~/|/)[^\s'\";|&><()`$*]*")
+# Absolute or ~-anchored FILE path tokens in a shell command. The lookbehind rejects a `/` that
+# follows a word char, dot, COLON, or SLASH — so RELATIVE paths (`a/b`, `./x`, `.venv/bin`) AND URLs
+# (`https://host/path`, `//host`) are NOT matched; only a rooted single-`/...` or `~/...`. This guard
+# governs the FILESYSTEM, never the network — a `curl https://…`/`wget` must never be mistaken for an
+# external file access. The token ends at whitespace or a shell metacharacter.
+_PATH_TOKEN = re.compile(r"(?<![\w.:/])(?:~/|/(?!/))[^\s'\";|&><()`$*]*")
 # Does the command WRITE (create/modify/delete a file) rather than only read? Heuristic: a write verb,
 # or a `>`/`>>` redirection to a file (but not `>&`, an fd dup like `2>&1`).
 _WRITE_VERB = re.compile(
