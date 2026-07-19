@@ -275,6 +275,17 @@ class ContextConfig:
 
 
 @dataclass(frozen=True)
+class SafetyConfig:
+    """cria-side guards on what the driven model may touch, enforced REGARDLESS of the harness's own
+    sandbox — so a harness run with approvals/sandbox off (``--yolo``) is still bounded when it fronts
+    a fledgling, untrusted model. ``external_dir_permission`` governs file access outside the
+    workspace: ``none`` (default — no external reads/writes) | ``read`` (external reads only) |
+    ``write`` (unrestricted; the harness sandbox, if any, still applies). See cria/dirguard.py."""
+
+    external_dir_permission: str = "none"
+
+
+@dataclass(frozen=True)
 class PlannerConfig:
     """The reasoned planner. Runs on a fresh coding task when a ``reasoner`` role is configured;
     drafts the plan. The loop drives execution from the plan in memory and mirrors it to cria's OWN
@@ -302,6 +313,7 @@ class Config:
     indicators: IndicatorsConfig = field(default_factory=IndicatorsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     # Path to an env file cria loads at startup so it has its secrets (Brave key, provider keys)
     # no matter how it's launched — a systemd service does NOT source a shell `.env`. Values the
@@ -347,6 +359,7 @@ class Config:
                 satisfaction_check_start=int(data.get("context", {}).get("satisfaction_check_start", 100)),
                 satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),
+            safety=_safety(data.get("safety", {})),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", True)),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
@@ -399,6 +412,13 @@ def _logging(d: dict) -> LoggingConfig:
         capture_dir=str(d.get("capture_dir", "~/.cria/calls")),
         capture_rendered=bool(d.get("capture_rendered", True)),
     )
+
+
+def _safety(d: dict) -> SafetyConfig:
+    perm = str(d.get("external_dir_permission", "none")).lower()
+    if perm not in {"none", "read", "write"}:
+        raise ValueError(f"[safety] external_dir_permission must be none|read|write, got {perm!r}")
+    return SafetyConfig(external_dir_permission=perm)
 
 
 def _indicators(d: dict) -> IndicatorsConfig:

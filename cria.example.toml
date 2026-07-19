@@ -30,6 +30,11 @@ reasoning_transcript = true        # also fold thinking into scrollback
 focus = true                       # curate menu to coding essentials
 cheatsheet = true                  # inject per-tool usage note
 
+[safety]
+# cria bounds the model to the workspace even if the harness runs --yolo (sandbox/approvals off) —
+# a backstop for a fledgling, untrusted model. Governs FILE access outside the workspace:
+external_dir_permission = "none"   # none = no external reads/writes | read = external reads only | write = unrestricted
+
 [context]
 focus_trim = true                  # collapse duplicate tool calls
 self_compact = true                # summarize the old history middle

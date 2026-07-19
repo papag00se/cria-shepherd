@@ -35,7 +35,7 @@ from .loop import (
     reframe_compaction,
     session_key,
 )
-from .planner import Planner
+from .planner import Planner, _extract_cwd
 from .routing import Router
 from .toolmenu import add_cheatsheet, focus_tools
 from .turnstats import StatsStore
@@ -431,6 +431,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._synthetic: set[str] = set()
         self._native_search = None
         self._brave_key = brave.api_key()
+        # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
+        # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
+        self._workspace_root = _extract_cwd(body.get("messages", [])) or None
         # Re-present prior lowered shell calls as the synthetic tool the model actually called —
         # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
         # tools:[] (no shell tool), yet its history still holds cria's ⟦ctx:tool⟧-lowered write_file/
@@ -454,7 +457,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         if self._shell_tool is not None:
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
-                               native_search=getattr(self, "_native_search", None), session=sess_key)
+                               native_search=getattr(self, "_native_search", None), session=sess_key,
+                               workspace_root=getattr(self, "_workspace_root", None),
+                               external_dir_permission=self.server.cfg.safety.external_dir_permission)
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

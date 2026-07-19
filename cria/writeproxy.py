@@ -29,6 +29,7 @@ from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import brave, prompts, webfetch
+from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
 from .toolargs import parse_args as _parse, tool_path as _tool_path
@@ -422,9 +423,30 @@ def _search_command(args: dict, brave_key: str) -> str:
     return f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse}"
 
 
+def _external_refusal(name, args, fn, injected, level: str, workspace: str | None) -> str | None:
+    """A refusal string when this tool call reaches outside the workspace beyond ``level``, else None.
+    A synthetic file tool is checked by its explicit path + operation; a raw shell command by a
+    heuristic scan. cria's OWN composed commands (the gate probe / a lowered synthetic, carrying a
+    marker) are exempt — trusted and always workspace-scoped. See cria/dirguard.py."""
+    if level == "write" or not workspace:  # unrestricted, or no known workspace to classify against
+        return None
+    if name in injected:  # a synthetic file tool cria advertised → explicit path + operation
+        target = _guarded_path(name, args)
+        if not target:
+            return None
+        return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace)
+    if name in SHELL_TOOL_NAMES:  # the harness's raw shell → heuristic path/verb scan
+        command = _command_of(fn.get("arguments"))
+        if _SENTINEL in command or "___CRIA_GATE_" in command:  # cria's own composed command → trust
+            return None
+        return dirguard.command_refusal(command, level, workspace)
+    return None
+
+
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
-                       session: str | None = None) -> dict:
+                       session: str | None = None, workspace_root: str | None = None,
+                       external_dir_permission: str = "write") -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -440,10 +462,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
             cmd = None
+            # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
+            # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
+            # tool or raw shell command reaching outside the workspace beyond [safety] permission.
+            if (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
+                cmd = f"printf %s {_qbash(reason)}"
+                if rlog is not None:
+                    rlog.emit("writeproxy.blocked_external", tool=name, level=external_dir_permission)
             # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
             # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
             # stray write corrupt its state. The refusal is a normal tool result the model reads.
-            if name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
+            elif name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
                 cmd = f"printf %s {_qbash(_CRIA_HOME_REFUSAL)}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
