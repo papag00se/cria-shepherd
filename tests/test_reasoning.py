@@ -1,6 +1,49 @@
 import unittest
 
-from cria.reasoning import apply_reasoning, infer_style
+from cria.reasoning import apply_reasoning, apply_sampling, infer_style
+
+
+class ApplySamplingTests(unittest.TestCase):
+    """Sampling is translated per backend dialect — a llama.cpp-only knob must never 400 or silently
+    vanish on a cloud backend (the same portability fix as reasoning)."""
+
+    P = {"temperature": 0.1, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1, "min_p": 0.0, "max_tokens": 4096}
+
+    def _apply(self, style):
+        b = {}
+        apply_sampling(b, self.P, style)
+        return b
+
+    def test_chat_template_passes_all_natively(self):
+        self.assertEqual(self._apply("chat_template"),
+                         {"temperature": 0.1, "top_p": 0.95, "top_k": 64, "min_p": 0.0,
+                          "repeat_penalty": 1.1, "max_tokens": 4096})
+
+    def test_openrouter_keeps_extensions_and_renames_repeat_penalty(self):
+        b = self._apply("openrouter")
+        self.assertEqual(b["repetition_penalty"], 1.1)     # renamed to OpenRouter's name
+        self.assertNotIn("repeat_penalty", b)
+        self.assertIn("top_k", b)
+        self.assertIn("min_p", b)
+
+    def test_openai_drops_the_llama_only_knobs(self):
+        b = self._apply("openai")
+        self.assertEqual(b, {"temperature": 0.1, "top_p": 0.95, "max_tokens": 4096})
+        for k in ("top_k", "min_p", "repeat_penalty", "repetition_penalty"):
+            self.assertNotIn(k, b)                          # would 400 / have no equivalent
+
+    def test_cli_none_sends_no_sampling(self):
+        self.assertEqual(self._apply("none"), {})
+
+    def test_zero_min_p_is_a_real_value_not_dropped(self):
+        b = self._apply("chat_template")
+        self.assertIn("min_p", b)                           # 0.0 != None
+        self.assertEqual(b["min_p"], 0.0)
+
+    def test_unset_params_are_omitted(self):
+        b = {}
+        apply_sampling(b, {"temperature": 0.5}, "openai")   # only temperature set
+        self.assertEqual(b, {"temperature": 0.5})
 
 
 class InferStyleTests(unittest.TestCase):

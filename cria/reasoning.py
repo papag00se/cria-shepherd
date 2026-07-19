@@ -80,3 +80,41 @@ def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
         body["reasoning"] = {"enabled": False} if effort == "none" else {"effort": effort}
     else:  # "openai" and any other effort-shaped OpenAI-compatible gateway
         body["reasoning_effort"] = effort
+
+
+# temperature/top_p/max_tokens are the OpenAI-standard sampling knobs every backend understands.
+# top_k/min_p are llama.cpp/vLLM/OpenRouter extensions; repeat_penalty is llama.cpp's NAME for what
+# OpenRouter/vLLM call `repetition_penalty` and strict OpenAI has no equivalent for (its
+# frequency_penalty is different, additive math). Same portability problem the reasoning knob had.
+_UNIVERSAL_SAMPLING = ("temperature", "top_p", "max_tokens")
+_EXTENSION_SAMPLING = ("top_k", "min_p")
+
+
+def apply_sampling(body: dict, params: dict, style: str) -> None:
+    """Write a role's sampling params onto ``body`` in the given backend's convention, in place — so a
+    role configured for llama.cpp doesn't 400 or silently no-op on a cloud backend. ``params`` holds
+    only the SET values (None = leave the backend default). Per dialect:
+
+    * ``chat_template`` (served llama.cpp / vLLM) — all of them, native.
+    * ``openrouter`` — the universal three + top_k/min_p, with ``repeat_penalty`` renamed to the name
+      OpenRouter uses (``repetition_penalty``).
+    * ``openai`` (OpenAI / Groq / strict gateways) — ONLY the universal three; top_k/min_p/repeat_penalty
+      are DROPPED (they'd be rejected or ignored, and repeat_penalty has no same-semantics equivalent).
+    * ``none`` (a cli backend) — nothing; the CLI owns its own sampling.
+    """
+    if style == "none":
+        return
+    for k in _UNIVERSAL_SAMPLING:
+        if params.get(k) is not None:
+            body[k] = params[k]
+    if style in ("chat_template", "openrouter"):
+        for k in _EXTENSION_SAMPLING:
+            if params.get(k) is not None:
+                body[k] = params[k]
+    rp = params.get("repeat_penalty")
+    if rp is not None:
+        if style == "chat_template":
+            body["repeat_penalty"] = rp
+        elif style == "openrouter":
+            body["repetition_penalty"] = rp
+        # "openai"/strict: dropped — no same-semantics knob (frequency_penalty is additive/different).

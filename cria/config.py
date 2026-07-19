@@ -173,12 +173,13 @@ class Role:
     def apply(self, body: dict) -> None:
         """Attach this role's sampling + reasoning to a chat-completions body, in place.
         Only keys that are set are written (an unset key leaves the server/internal default)."""
-        for key, val in (
-            ("temperature", self.temperature), ("top_p", self.top_p), ("top_k", self.top_k),
-            ("repeat_penalty", self.repeat_penalty), ("min_p", self.min_p), ("max_tokens", self.max_tokens),
-        ):
-            if val is not None:
-                body[key] = val
+        # Sampling is translated into this backend's dialect (same portability fix as reasoning): a
+        # llama.cpp-only knob (top_k/min_p/repeat_penalty) is dropped or renamed on a cloud backend
+        # instead of 400-ing or silently vanishing. See reasoning.apply_sampling.
+        reasoning.apply_sampling(body, {
+            "temperature": self.temperature, "top_p": self.top_p, "top_k": self.top_k,
+            "repeat_penalty": self.repeat_penalty, "min_p": self.min_p, "max_tokens": self.max_tokens,
+        }, self.think_protocol)
         if self.output_reserve is not None:
             # A cria-internal hint the context floor reads for the input/output split; NOT a wire
             # field — `Upstream._prep` strips it before the body is sent to (or captured for) the model.
