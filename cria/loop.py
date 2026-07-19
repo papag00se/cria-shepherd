@@ -205,32 +205,6 @@ class PlanSession(GuardState):
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
 
 
-class GuardStore:
-    """Per-session GuardState for the plan-off path — the loop keeps its guard state inside its
-    PlanSession, but the plan-off direct path is otherwise stateless, so it holds the cross-turn
-    repetition/spin windows here (keyed by session, like the write-translation store)."""
-
-    def __init__(self) -> None:
-        self._m: dict[str, GuardState] = {}
-        self._lock = threading.Lock()
-
-    def get(self, key: str) -> GuardState:
-        # An UNSTABLE (content-derived ``task:``) key must NOT persist cross-turn guard state: two
-        # unrelated conversations that open with the same text would share ONE GuardState, so one's
-        # held "done" answer/probe could be forwarded into the other (false completion + answer leak
-        # — the plan-cache-leak class, now on the guard). Hand those a fresh, memory-less state per
-        # turn; only a stable ``sid:`` key persists (and even that is bounded, like _shapes).
-        if not _stable_session(key):
-            return GuardState()
-        with self._lock:
-            gs = self._m.get(key)
-            if gs is None:
-                if len(self._m) >= _MAX_GUARD_STATES:
-                    self._m.clear()  # bound the store — never grow unboundedly over a long-lived process
-                gs = self._m[key] = GuardState()
-            return gs
-
-
 # GROUND-TRUTH gate: composed per verification by probegate.plan_gate (syntax floor +
 # repo-discovered top probe + top TEST probe + git snapshot), run BY THE HARNESS, and
 # interpreted through the ported probe modules. Replaces the old fixed Python-only
@@ -240,7 +214,6 @@ class GuardStore:
 # How many session SHAPES to retain (conversation-root fingerprints, for harness-compaction
 # detection). Cheap (a hash + an int each); evicted oldest-first.
 _MAX_SHAPES = 256
-_MAX_GUARD_STATES = 256  # bound GuardStore like _shapes — a long-lived process must not grow it forever
 # The gate normally fires only on a "done" claim or a guard trip, so an acting-heavy model can edit
 # for a long stretch with NO ground truth (it circled on a broken pyproject.toml for ~90 turns). Run
 # the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
@@ -639,7 +612,7 @@ class Loop:
                                    synthetic=True, prior_work=briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
                 # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
-                # exactly as GuardStore handed unstable keys a fresh state, so a synthetic session
+                # exactly as the plan-off path handed unstable keys a fresh state, so a synthetic session
                 # can't leak across unrelated same-prompt conversations (the plan-cache-leak class).
                 # A synthetic plan is NEVER mirrored to disk (no _persist_plan): it's just the raw task.
                 if _stable_session(session_key):

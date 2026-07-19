@@ -2368,17 +2368,6 @@ class CompactionReframeTests(unittest.TestCase):
         self.assertIn("YOUR OWN prior work", out[1]["content"])  # normal reframe
 
 
-class GuardStoreIsolationTests(unittest.TestCase):
-    def test_unstable_keys_isolated_stable_persist_and_bounded(self):
-        from cria.loop import GuardStore, _MAX_GUARD_STATES
-        st = GuardStore()
-        self.assertIs(st.get("sid:abc"), st.get("sid:abc"))        # stable key → persists (same object)
-        self.assertIsNot(st.get("task:h"), st.get("task:h"))       # unstable → fresh each turn, no sharing
-        for i in range(_MAX_GUARD_STATES + 5):                     # never grows unboundedly
-            st.get(f"sid:{i}")
-        self.assertLessEqual(len(st._m), _MAX_GUARD_STATES + 1)
-
-
 class FreshDiskFactsTests(unittest.TestCase):
     """The reasoned redirect now grounds on the files as they ARE on disk (groundtruth port),
     not the transcript's stale view."""
