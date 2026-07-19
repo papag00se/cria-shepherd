@@ -2793,5 +2793,57 @@ class SingleItemMethodTests(unittest.TestCase):
         self.assertIsNone(out["choices"][0]["message"].get("tool_calls"))  # a final answer, not a tool call
 
 
+class _Class:
+    """A minimal classification stub for the loop's drive gates (task_type + engagement only)."""
+
+    def __init__(self, task_type="coding", engagement="task"):
+        self.task_type = task_type
+        self.engagement = engagement
+
+
+class SingleItemModeTests(unittest.TestCase):
+    """Phase 3+: the synthetic 1-item plan reached via Loop.drive (planner_enabled=False). Creation +
+    persistence (Invariant 3: stable sid: persists+resumes, unstable task: is ephemeral) + the
+    shell-tool-decline TRAP (plan-off runs the guarded coder even with NO shell tool)."""
+
+    def test_unstable_task_key_is_ephemeral_never_persisted(self):
+        store = LoopStore()
+        loop = _single_loop(_Scripted([_toolcall()]), store=store)
+        out = loop.drive(_body(), "task:xyz", _Class(), _Rlog())
+        self.assertTrue(out["choices"][0]["message"]["tool_calls"])  # driven (coder acted)
+        self.assertEqual(store._sessions, {})                        # NEVER persisted — re-synthesized each turn
+        self.assertNotIn("task:xyz", store._shapes)                  # and no shape recorded for an unstable key
+
+    def test_stable_sid_key_persists_and_resumes_synthetic(self):
+        store = LoopStore()
+        loop = _single_loop(_Scripted([_toolcall()]), store=store)
+        loop.drive(_body(), "sid:abc", _Class(), _Rlog())
+        sess = store.get("sid:abc")
+        self.assertIsNotNone(sess)
+        self.assertTrue(sess.synthetic)                              # a synthetic 1-item plan, persisted
+        self.assertEqual(len(sess.plan.items), 1)
+        loop.drive(_body(), "sid:abc", _Class(engagement="chat"), _Rlog())  # a non-task turn mid-session
+        self.assertIs(store.get("sid:abc"), sess)                    # RESUMED, not re-planned or dropped
+
+    def test_noncoding_turn_declines_to_proxy(self):
+        loop = _single_loop(_Scripted([_toolcall()]))
+        self.assertIsNone(loop.drive(_body(), "sid:q", _Class(task_type="chat", engagement="chat"), _Rlog()))
+
+    def test_no_shell_tool_still_drives_when_planner_off(self):
+        # THE TRAP: plan-off runs the guarded coder even with NO shell tool (the gate fails open),
+        # so a native-write_file harness keeps every rumination/truncation/repetition guard.
+        loop = _single_loop(_Scripted([_toolcall()]))
+        body = {"stream": True, "messages": [{"role": "user", "content": "build it"}],
+                "tools": [{"type": "function", "function": {"name": "write_file", "parameters": {}}}]}
+        out = loop.drive(body, "sid:ns", _Class(), _Rlog())
+        self.assertIsNotNone(out)                                    # NOT declined to proxy
+
+    def test_synthetic_survives_dict_roundtrip(self):
+        from cria.loop import _session_to_dict, _session_from_dict
+        d = _session_to_dict(_synth())
+        self.assertTrue(d["synthetic"])
+        self.assertTrue(_session_from_dict(d).synthetic)             # a resumed session stays single-item
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -30,7 +30,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
@@ -595,13 +595,17 @@ class Loop:
 
     def _drive_locked(self, body: dict, session_key: str, classification, rlog) -> dict | None:
         messages = body.get("messages", [])
-        # The loop can only run a coding task when the harness will RUN tools for it. The shell tool
-        # is the primitive it needs — for its plan file, for the ground-truth probe, AND for the
+        # The PLAN loop can only run a coding task when the harness will RUN tools for it. The shell
+        # tool is the primitive it needs — for its plan file, for the ground-truth probe, AND for the
         # coder's file writes (the writeproxy lowers write_file → a shell command, so NO shell tool =
         # no writes at all). Harnesses (Codex) also send genuinely tool-less requests — title /
         # summarize turns — that can classify as 'task' but aren't drivable. Decline → proxy; a LIVE
         # plan is NOT dropped, so the next tool-bearing turn resumes it (has_session keeps it alive).
-        if find_shell_tool(body.get("tools")) is None:
+        # PLAN-OFF is the exception: the single-item path runs the guarded coder even with NO shell
+        # tool (the completion gate simply fails open on a native-write_file harness), so gating this
+        # decline to planner-ON is load-bearing — otherwise the synthetic path silently loses every
+        # rumination/truncation/repetition guard on a shell-less harness.
+        if self._ctx.planner_enabled and find_shell_tool(body.get("tools")) is None:
             live = self._store.get(session_key) is not None
             rlog.emit("loop.no_shell_tool", level="info", deferred=live)
             return None
@@ -624,46 +628,69 @@ class Loop:
             # see _closing) — cria re-reads it from the history the harness sends back. Nothing is
             # stored server-side; the harness owns the transcript, cria owns the content.
             briefing = _briefing_from_history(messages)
-            # A rewrite is a CONTINUATION only as a pure handoff — the summary IS the latest user
-            # text (the harness replaced history, the user typed nothing new). Then a completed
-            # plan on record (the shape's `done` bit — the briefing itself was likely folded into
-            # the harness summary) proves the session was a task, and the classifier's opinion of
-            # the summary text (unparseable half the time) is ignored. But when the user DID type
-            # a new ask after the compaction, the classifier judged THAT text — respect it: a
-            # question stays a question (proxied), never hijacked into a plan.
-            pure_handoff = rewritten and latest_user_text(messages).strip() == root_text.strip()
-            was_task = bool(briefing) or self._store.shape_done(session_key)
-            classified_task = classification is not None and classification.engagement == "task"
-            if rewritten and ((was_task and pure_handoff) or classified_task):
-                # Post-compaction continuation: plan the REMAINING work from the harness's summary
-                # (the new conversation root) via the rewrite frame — never as a fresh task, and
-                # never stacking cria's own briefing on top of the harness summary (two summaries
-                # drowned the planner → the placeholder plan).
-                plan = self._ctx.planner.plan_for(messages, rlog, rewrite_summary=root_text)
-                if plan is None:
-                    return None  # rewrite stays PENDING (sticky) — the next turn can still continue
-                # The coder's protected prior-work context: cria's own briefing when we have one
-                # (compact, focused); else the harness summary TAIL, clipped — summaries put the
-                # current state / remaining work at the END, so the head is the droppable part.
-                sess = PlanSession(plan=plan, prior_work=briefing or root_text)
-                self._store.put(session_key, sess)
-                self._store.clear_rewrite(session_key)  # acted on it
-                rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
-                self._persist_plan(plan, rlog)
-            else:
-                if classification is None or classification.engagement != "task":
-                    return None  # a pending rewrite (if any) stays pending for a later task turn
-                # A follow-up on a FINISHED session starts from the completion-compaction of the
-                # prior plan (see loop.done), so the planner isn't blind to what it already built —
-                # it plans the new ask ON TOP of the done work, not from the latest sentence.
-                plan = self._ctx.planner.plan_for(messages, rlog, prior_work=briefing)
-                if plan is None:
+            if not self._ctx.planner_enabled:
+                # PLAN-OFF: the whole task is ONE implicit step — synthesize a degenerate 1-item plan
+                # and drive it through the single-item path (raw-task framing + the off-ramps). A
+                # non-coding turn is NOT ours (mirrors the old _produce_completion direct-coder gate) —
+                # proxy it. A live synthetic session (loaded above) skips this entirely.
+                if classification is None or classification.task_type != "coding":
                     return None
-                sess = PlanSession(plan=plan, prior_work=briefing)
-                self._store.put(session_key, sess)
-                rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
-                self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
-                # drive straight into the first item — cria's scratch stays out of the project
+                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages)),
+                                   synthetic=True, prior_work=briefing)
+                # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
+                # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
+                # exactly as GuardStore handed unstable keys a fresh state, so a synthetic session
+                # can't leak across unrelated same-prompt conversations (the plan-cache-leak class).
+                # A synthetic plan is NEVER mirrored to disk (no _persist_plan): it's just the raw task.
+                if _stable_session(session_key):
+                    self._store.put(session_key, sess)
+                rlog.emit("loop.start", id=sess.plan.id, steps=1, synthetic=True)
+            else:
+                # A rewrite is a CONTINUATION only as a pure handoff — the summary IS the latest user
+                # text (the harness replaced history, the user typed nothing new). Then a completed
+                # plan on record (the shape's `done` bit — the briefing itself was likely folded into
+                # the harness summary) proves the session was a task, and the classifier's opinion of
+                # the summary text (unparseable half the time) is ignored. But when the user DID type
+                # a new ask after the compaction, the classifier judged THAT text — respect it: a
+                # question stays a question (proxied), never hijacked into a plan.
+                pure_handoff = rewritten and latest_user_text(messages).strip() == root_text.strip()
+                was_task = bool(briefing) or self._store.shape_done(session_key)
+                classified_task = classification is not None and classification.engagement == "task"
+                if rewritten and ((was_task and pure_handoff) or classified_task):
+                    # Post-compaction continuation: plan the REMAINING work from the harness's summary
+                    # (the new conversation root) via the rewrite frame — never as a fresh task, and
+                    # never stacking cria's own briefing on top of the harness summary (two summaries
+                    # drowned the planner → the placeholder plan).
+                    plan = self._ctx.planner.plan_for(messages, rlog, rewrite_summary=root_text)
+                    if plan is None:
+                        return None  # rewrite stays PENDING (sticky) — the next turn can still continue
+                    # The coder's protected prior-work context: cria's own briefing when we have one
+                    # (compact, focused); else the harness summary TAIL, clipped — summaries put the
+                    # current state / remaining work at the END, so the head is the droppable part.
+                    sess = PlanSession(plan=plan, prior_work=briefing or root_text)
+                    self._store.put(session_key, sess)
+                    self._store.clear_rewrite(session_key)  # acted on it
+                    rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
+                    self._persist_plan(plan, rlog)
+                else:
+                    if classification is None or classification.engagement != "task":
+                        return None  # a pending rewrite (if any) stays pending for a later task turn
+                    # A follow-up on a FINISHED session starts from the completion-compaction of the
+                    # prior plan (see loop.done), so the planner isn't blind to what it already built —
+                    # it plans the new ask ON TOP of the done work, not from the latest sentence.
+                    plan = self._ctx.planner.plan_for(messages, rlog, prior_work=briefing)
+                    if plan is None:
+                        return None
+                    sess = PlanSession(plan=plan, prior_work=briefing)
+                    self._store.put(session_key, sess)
+                    rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
+                    self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
+                    # drive straight into the first item — cria's scratch stays out of the project
+
+        if sess.synthetic:  # degenerate 1-item plan → the single-item driver (raw-task framing +
+            # the off-ramps a finite multi-step plan doesn't need). Placed BEFORE the multi-item
+            # awaiting_probe branch: the single-item path reads its own probe results internally.
+            return self._drive_single_item(sess, body, session_key, rlog, rewritten=rewritten)
 
         if sess.awaiting_probe:  # the ground-truth probe we emitted last turn has now run
             sess.awaiting_probe = False
@@ -1411,6 +1438,17 @@ def _session_from_dict(d) -> PlanSession | None:
                            synthetic=bool(d.get("synthetic")))
     except Exception:  # noqa: BLE001
         return None
+
+
+def _synthetic_plan(task: str, clock=None) -> Plan:
+    """A degenerate 1-item 'plan' for PLAN-OFF mode: the whole task is ONE implicit step whose item
+    text IS the raw task. The PlanSession carries the ``synthetic`` flag (which selects raw-task
+    framing + the single-item off-ramps); the Plan itself is an ordinary 1-item Plan. id/created match
+    the Planner's convention (clock + task-key) so a resumed synthetic session keeps a stable id. Never
+    mirrored to disk (no ``_persist_plan``) — it holds no decomposition, only the user's own words."""
+    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    return Plan(id=f"{now.strftime('%Y%m%dT%H%M%S')}-{_task_key(task)[:8]}", task=task,
+                created=now.isoformat(timespec="seconds"), items=[PlanItem(text=task)])
 
 
 def _history_root(messages: list[dict]) -> tuple[str, str]:
