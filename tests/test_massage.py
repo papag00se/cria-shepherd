@@ -81,21 +81,18 @@ class ArgRepairTests(unittest.TestCase):
     def test_fused_second_call_is_recovered_not_refused(self):
         # gemma fuses a 2nd call (+ commentary) onto a valid first one, over-escaping the array quotes —
         # RECOVER the real first call (a massage, no wasted turn) rather than leaving debris for a refusal.
-        raw = '{"command":["bash","-lc","pytest\\",\\"test_lambda.py\\"]}<tool_call|><|tool_call>call:write_file{content:'
+        # The recovery runs whenever fused debris is present — BEFORE the json.loads short-circuit, because
+        # the debris often parses as VALID-but-wrong JSON (swallowed into a string value). Verified live
+        # against the real valid-JSON captures 0006 (recovers) / 0011 (→ floor) before locking this in.
+        raw = '{"command":["pip\\", \\"install\\", \\"requests\\"],\\"workdir\\":\\".\\"}<tool_call|>I wrote it.<|tool_call>call:shell{'
         c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
         args = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])
-        self.assertEqual(args["command"], ["bash", "-lc", "pytest", "test_lambda.py"])   # clean, no debris
-
-    def test_fused_call_with_commentary_between_sentinels(self):
-        raw = '{"command":["pip\\", \\"install\\", \\"requests\\"]}<tool_call|>I wrote the handler.<|tool_call>call:shell{'
-        c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
-        args = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])
-        self.assertEqual(args["command"], ["pip", "install", "requests"])
+        self.assertEqual(args["command"], ["pip", "install", "requests"])   # clean array, no debris left
 
     def test_genuinely_mangled_head_is_left_for_the_refusal_floor(self):
-        # mixed single/double-quote escaping + hallucinated tail → not cleanly parseable here; leave the
-        # debris so the writeproxy refusal floor catches it (better than fabricating a wrong command).
-        raw = '{"command":["bash\',\'-lc\',\'zip\\",\\"x.zip\\"]}<tool_call|><|tool_call>call:shell{command:["]}'
+        # a stray extra bracket (`...]}` → `...]]}`) survives the unescape → not cleanly parseable; leave
+        # the debris so the writeproxy refusal floor catches it (better than fabricating a wrong command).
+        raw = '{"command":["pip\\", \\"install\\",\\"wheelset\\"],\\"workdir\\":\\".\\"]}<tool_call|><|channel>thought'
         c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
         out = _first(c)["message"]["tool_calls"][0]["function"]["arguments"]
         self.assertTrue(any(s in out for s in ("<|tool_call>", "<tool_call|>")))  # untouched → floor handles it

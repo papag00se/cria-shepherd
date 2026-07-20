@@ -783,15 +783,22 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
             if not isinstance(raw, str):
                 fn["arguments"] = json.dumps(raw if raw is not None else {})
                 continue
+            # A fused 2nd call trailing the real one comes FIRST — before the valid-JSON short-circuit —
+            # because the leaked debris often parses as VALID-but-wrong JSON (it gets swallowed into a
+            # string value), which `json.loads` would wave through unrecovered. Recover the real first
+            # call (cut + unescape); if it can't be reconstructed, leave the debris for the writeproxy
+            # refusal floor rather than mangling it further.
+            if any(t in raw for t in _FUSED_SENTINELS):
+                obj = _recover_fused_call(raw)
+                if obj is not None:
+                    fn["arguments"] = json.dumps(obj, ensure_ascii=False)
+                    _log(rlog, "massage.fused_call_recovered", tool=fn.get("name"))
+                continue
             try:
                 json.loads(raw)
                 continue  # already valid
             except json.JSONDecodeError:
-                obj = _recover_fused_call(raw)  # a fused 2nd call trailing the real one → cut + unescape
-                if obj is not None:
-                    _log(rlog, "massage.fused_call_recovered", tool=fn.get("name"))
-                if obj is None:
-                    obj = extract_json_object(raw)
+                obj = extract_json_object(raw)
                 if obj is None:
                     obj = _recover_write_args(raw)  # raw newlines / unescaped quotes in content
                 if obj is not None:
