@@ -142,7 +142,7 @@ class TranslateEditReadTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"edit_file"})
         cmd = _lowered_cmd(comp)
         self.assertIn("python3", cmd)
-        self.assertIn("old_string is NOT in", cmd)   # fail-closed on a miss (with a helpful error)
+        self.assertIn("editfail", cmd)   # fail-closed on a miss → a structured ⟦ctx:editfail⟧ fact-report
         back = represent_inbound(_history_from(comp))[0]["tool_calls"][0]["function"]
         self.assertEqual(back["name"], "edit_file")
         self.assertEqual(json.loads(back["arguments"])["new_string"], 'x, "id": id}')
@@ -363,9 +363,13 @@ class ValidateBeforeLowerTests(unittest.TestCase):
         self.assertIn(_WROTE, self._exec(_write_command(md, "# hi (unbalanced")))
 
     def test_edit_refuses_a_regression_but_allows_fixing_a_broken_file(self):
+        import base64, json
         from cria.writeproxy import _edit_command, _WROTE
+        from cria import editrecovery
         valid = self._tmp("f.py", "x = 1\ny = 2\n")
-        self.assertIn("REFUSED", self._exec(_edit_command(valid, "y = 2", "y = (2")))  # would break → refused
+        out = self._exec(_edit_command(valid, "y = 2", "y = (2"))                       # would break a valid file
+        fail = json.loads(base64.b64decode(out.split(editrecovery.EDITFAIL, 1)[1].strip()).decode())
+        self.assertEqual(fail["mode"], "would_break")                                   # reported, not applied
         self.assertEqual(open(valid).read(), "x = 1\ny = 2\n")                          # untouched
         broken = self._tmp("g.py", "def h(:\n    pass\n")                               # already broken
         self.assertIn(_WROTE, self._exec(_edit_command(broken, "def h(:", "def h():")))  # fixing → allowed
@@ -373,103 +377,130 @@ class ValidateBeforeLowerTests(unittest.TestCase):
 
 
 class EditCommandTests(unittest.TestCase):
-    """The edit executor: exact match, whitespace-flexible fallback (indent/blank-line drift), and a
-    helpful actual-content error on a real miss — instead of byte-exact-only failing ~1/3 of edits."""
+    """The edit EXECUTOR: exact match, whitespace-flexible fallback (indent/blank-line drift), and — on a
+    miss — a STRUCTURED ⟦ctx:editfail⟧ fact-report (mode + real bytes + near anchor). Prose/policy is no
+    longer composed here; cria.editrecovery turns the facts into the one directive (see EditRecoveryTests)."""
 
     def _run(self, content, old, new):
-        import base64, os, subprocess, sys, tempfile
-        from cria.writeproxy import _EDIT_PY, _VALIDATE_FN, _WROTE, EDIT_SHOW_FULL_MAX
+        import base64, json, os, subprocess, sys, tempfile
+        from cria.writeproxy import _EDIT_PY, _VALIDATE_FN, _WROTE
+        from cria import editrecovery
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
         b = lambda x: base64.b64encode(x.encode()).decode()
-        script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new), wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
+        script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new),
+                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
-        return r.returncode, (r.stdout + r.stderr), out
+        msg = (r.stdout + r.stderr).strip()
+        fail = None
+        if msg.startswith(editrecovery.EDITFAIL):
+            fail = json.loads(base64.b64decode(msg[len(editrecovery.EDITFAIL):]).decode())
+        return r.returncode, msg, out, fail
 
     def test_exact_match_replaces(self):
-        rc, msg, out = self._run("foo\nbar\n", "foo", "FOO")
+        rc, msg, out, _ = self._run("foo\nbar\n", "foo", "FOO")
         self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertEqual(out, "FOO\nbar\n")
 
     def test_blank_line_drift_still_matches(self):
         # old has an EXTRA blank line vs the file — byte-exact would fail; whitespace-flexible matches.
-        rc, msg, out = self._run("a = 1\n\nb = 2\n", "a = 1\n\n\nb = 2", "a = 1\n\nc = 3")
+        rc, msg, out, _ = self._run("a = 1\n\nb = 2\n", "a = 1\n\n\nb = 2", "a = 1\n\nc = 3")
         self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertIn("c = 3", out)
 
     def test_indentation_drift_still_matches(self):
-        rc, msg, out = self._run("    x = 1\n", "x = 1", "x = 2")
+        rc, msg, out, _ = self._run("    x = 1\n", "x = 1", "x = 2")
         self.assertEqual(rc, 0); self.assertEqual(out, "    x = 2\n")   # file's indent preserved
 
-    def test_ambiguous_fails_closed(self):
-        rc, msg, out = self._run("x\nx\n", "x", "y")
-        self.assertNotEqual(rc, 0); self.assertIn("occurs 2 times", msg); self.assertEqual(out, "x\nx\n")
+    def test_ambiguous_reports_multi(self):
+        rc, msg, out, fail = self._run("x\nx\n", "x", "y")
+        self.assertNotEqual(rc, 0); self.assertEqual(fail["mode"], "multi"); self.assertEqual(fail["n"], 2)
+        self.assertEqual(out, "x\nx\n")
 
-    def test_miss_returns_actual_content(self):
-        rc, msg, out = self._run("def resolve(handle):\n    y = 2\n", "def resolve(handle):\n    x = 1", "z")
+    def test_miss_reports_anchor_with_real_bytes(self):
+        rc, msg, out, fail = self._run("def resolve(handle):\n    y = 2\n", "def resolve(handle):\n    x = 1", "z")
         self.assertNotEqual(rc, 0)
-        self.assertIn("is NOT in", msg)
-        self.assertIn("y = 2", msg)                 # shows the file's ACTUAL content near the target
+        self.assertEqual(fail["mode"], "anchor")
+        self.assertIn("y = 2", fail["anchor"])       # the file's ACTUAL text near the target
+        self.assertIn("y = 2", fail["current"])      # AND the whole current file for the escalation path
         self.assertEqual(out, "def resolve(handle):\n    y = 2\n")   # unchanged
 
-    def test_no_op_edit_is_rejected(self):
-        # old_string == new_string changes nothing; reporting "wrote" wasted a turn in a live spiral
-        rc, msg, out = self._run("a = 1\n", "a = 1", "a = 1")
+    def test_identical_reports_identical_with_full_current(self):
+        rc, msg, out, fail = self._run("    x = 1\n    y = 2\n", "    x = 1", "    x = 1")
         self.assertNotEqual(rc, 0)
-        self.assertIn("IDENTICAL", msg)
-        self.assertEqual(out, "a = 1\n")            # file untouched
-
-    def test_identical_edit_on_a_small_file_offers_the_rewrite_escape(self):
-        # THE 707-call spiral: the model kept submitting old==new on a whitespace fix and never escaped.
-        # For a small file, the IDENTICAL rejection now points it at the write_file rewrite + shows the
-        # current contents, so a 1-char fix doesn't burn hundreds of calls.
-        rc, msg, out = self._run("    x = 1\n    y = 2\n", "    x = 1", "    x = 1")
-        self.assertNotEqual(rc, 0)
-        self.assertIn("IDENTICAL", msg)
-        self.assertIn("REWRITE THE WHOLE FILE with write_file", msg)
-        self.assertIn("y = 2", msg)                  # current contents handed over to rewrite from
+        self.assertEqual(fail["mode"], "identical")
+        self.assertIn("y = 2", fail["current"])      # the real bytes ride along; cria decides what to show
         self.assertEqual(out, "    x = 1\n    y = 2\n")  # file untouched
 
-    def test_miss_with_deleted_anchor_small_file_offers_rewrite(self):
-        # THE 0063->0067 re-fail: a prior edit deleted the anchor line, so there's no near-context. For a
-        # small file, point the model at a whole-file write_file rewrite + hand it the current contents.
-        rc, msg, out = self._run("[project]\nname = \"x\"\n", "[tool.setuptools]\npackage-dir = 1", "z")
+    def test_no_anchor_reports_no_anchor(self):
+        rc, msg, out, fail = self._run("[project]\nname = \"x\"\n", "[tool.setuptools]\npackage-dir = 1", "z")
         self.assertNotEqual(rc, 0)
-        self.assertIn("is NOT in", msg)
-        self.assertIn("REWRITE THE WHOLE FILE with write_file", msg)  # the small-file escape
-        self.assertIn('name = "x"', msg)                 # actual current contents handed over
-        self.assertNotIn("Read the file again to get", msg)  # not the bare fallback
+        self.assertEqual(fail["mode"], "no_anchor")
+        self.assertIn('name = "x"', fail["current"])   # current bytes present regardless of file size
 
-    def test_miss_with_deleted_anchor_large_file_falls_back(self):
-        # A large file is NOT dumped/rewritten — the bare "read the file again" fallback still applies.
-        big = "\n".join(f"line_{i} = {i}" for i in range(400))  # > EDIT_SHOW_FULL_MAX chars
-        rc, msg, out = self._run(big + "\n", "[tool.setuptools]\nx = 1", "z")
-        self.assertNotEqual(rc, 0)
-        self.assertIn("Read the file again to get", msg)
-        self.assertNotIn("REWRITE THE WHOLE FILE", msg)
-
-    def test_phantom_bug_already_applied_tells_the_model_to_stop(self):
-        # THE observed loop: the model re-fixes a line that is already correct. Its old_string
-        # misremembers the current text (`base_user`), new_string is what the file ALREADY says
-        # (`base_url`) → cria tells it the change is DONE and to move on, not to keep editing.
-        rc, msg, out = self._run(
+    def test_phantom_reports_phantom(self):
+        # the model re-fixes an already-correct line: old misremembers (base_user), new is what the file
+        # already reads (base_url) → mode=phantom; the directive tells it the change is DONE.
+        rc, msg, out, fail = self._run(
             '    x = get(f"{base_url}/h")\n',
-            '    x = get(f"{base_user}/h")',   # old: misremembered
-            '    x = get(f"{base_url}/h")')    # new: already what the file reads
+            '    x = get(f"{base_user}/h")', '    x = get(f"{base_url}/h")')
         self.assertNotEqual(rc, 0)
-        self.assertIn("already", msg.lower())
-        self.assertIn("do NOT edit this line again", msg)
-        self.assertNotIn("reads IN FULL", msg)            # the phantom branch, not the full dump
+        self.assertEqual(fail["mode"], "phantom")
+        self.assertIn("base_url", fail["anchor"])
 
-    def test_near_miss_points_at_the_closest_line(self):
-        # old_string is close to a real line but new_string is a GENUINE change → point at the exact
-        # line to copy (you likely mistyped a token), not "the anchor line is gone".
-        rc, msg, out = self._run("    timeout = 30\n",
-                                 "    timeoutt = 30",      # old: typo'd near-miss
-                                 "    timeout = 60")       # new: a real 30->60 change
+    def test_near_miss_reports_close(self):
+        rc, msg, out, fail = self._run("    timeout = 30\n", "    timeoutt = 30", "    timeout = 60")
         self.assertNotEqual(rc, 0)
-        self.assertIn("very CLOSE", msg)
-        self.assertIn("timeout = 30", msg)                # the actual file line to copy
-        self.assertIn("VERBATIM", msg)
+        self.assertEqual(fail["mode"], "close")
+        self.assertIn("timeout = 30", fail["anchor"])   # the closest real line
+
+
+class EditRecoveryTests(unittest.TestCase):
+    """The ONE edit-recovery owner: turns the heredoc's fact-report into a single MONOTONIC directive,
+    keyed on the file's failure history — surgical first, then a committed whole-file-rewrite escalation.
+    Replaces the old per-branch, history-blind rewrite/don't-rewrite prose that whipsawed the model."""
+
+    def _fail(self, mode, **kw):
+        kw.setdefault("path", "resolve_handle.py"); kw.setdefault("current", "a = 1\nb = 2\n")
+        return {"mode": mode, **kw}
+
+    def test_surgical_then_escalates_to_whole_rewrite(self):
+        from cria import editrecovery
+        fail = self._fail("anchor", anchor="a = 1")
+        early = editrecovery.compose(fail, prior=0)
+        self.assertIn("VERBATIM", early)                              # surgical: copy the exact text
+        self.assertNotIn("FULL file", early)
+        late = editrecovery.compose(fail, prior=editrecovery.ESCALATE_AFTER - 1)
+        self.assertIn("produce the corrected FULL file", late)        # committed rewrite
+        self.assertIn("a = 1\nb = 2", late)                           # grounded in the real current bytes
+
+    def test_phantom_and_would_break_are_history_independent(self):
+        from cria import editrecovery
+        ph = editrecovery.compose(self._fail("phantom", anchor="x = get(base_url)"), prior=9)
+        self.assertIn("DONE", ph); self.assertNotIn("FULL file", ph)   # never escalates to a rewrite
+        wb = editrecovery.compose(self._fail("would_break", err="SyntaxError: bad"), prior=9)
+        self.assertIn("SyntaxError", wb); self.assertIn("stays valid", wb)
+
+    def test_recover_counts_history_and_escalates(self):
+        import base64, json
+        from cria import editrecovery
+        raw = editrecovery.EDITFAIL + base64.b64encode(
+            json.dumps(self._fail("no_anchor")).encode()).decode()
+        # no prior steers → surgical; ESCALATE_AFTER prior steers for this file → committed rewrite
+        self.assertNotIn("FULL file", editrecovery.recover(raw, []))
+        hist = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} resolve_handle.py — x"}
+                for _ in range(editrecovery.ESCALATE_AFTER)]
+        self.assertIn("FULL file", editrecovery.recover(raw, hist))
+
+    def test_non_editfail_passes_through(self):
+        from cria import editrecovery
+        self.assertEqual(editrecovery.recover("a real error, not a marker", []), "a real error, not a marker")
+
+    def test_rewrite_sanctioned_detects_escalation(self):
+        from cria import editrecovery
+        esc = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} h.py — … produce the corrected FULL file …"}]
+        self.assertTrue(editrecovery.rewrite_sanctioned(esc, "h.py"))
+        self.assertFalse(editrecovery.rewrite_sanctioned(esc, "other.py"))
+        self.assertFalse(editrecovery.rewrite_sanctioned([], "h.py"))
 
 
 class CriaHomeGuardTests(unittest.TestCase):

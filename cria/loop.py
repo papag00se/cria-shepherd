@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
+from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
@@ -742,7 +742,7 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             self._track_repetition(sess, coder, idx, rlog)
-            self._track_write_streak(sess, coder, idx, rlog)
+            self._track_write_streak(sess, coder, idx, rlog, body.get("messages"))
             return coder  # coder is acting → forward; the harness runs it, then loops back here
 
         # coder produced no tool call → it thinks the step is done.
@@ -925,9 +925,9 @@ class Loop:
         return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, sess, body, rlog,
                             condition="wheel_spin", outcome=outcome, step_text=step_text)
 
-    def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
+    def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog, messages=None) -> None:
         """The loop's coder step — delegates to the shared :func:`guard_track_write_streak`."""
-        guard_track_write_streak(sess, coder, rlog, step=idx)
+        guard_track_write_streak(sess, coder, rlog, step=idx, messages=messages)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
@@ -1291,7 +1291,7 @@ class Loop:
             _clean_completion(comp, self._ctx.coder_role)
         if _has_tool_calls(comp):
             guard_track_repetition(sess, comp, rlog)
-            guard_track_write_streak(sess, comp, rlog)
+            guard_track_write_streak(sess, comp, rlog, messages=framed.get("messages"))
         return comp
 
     def _done_critic_says_incomplete(self, sess: PlanSession, body: dict, rlog) -> bool:
@@ -2011,7 +2011,7 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> N
                           count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
 
 
-def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None) -> None:
+def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
     """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
     WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
     calls (sized to five write→read→test cycles). Consecutive is not required: the tiny-edit
@@ -2037,7 +2037,12 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None) ->
             if (path is not None
                     and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES
                     and not gs.spin_probe_due and not gs.spin_probe
-                    and not gs.redirect_due and not gs.redirect_probe):
+                    and not gs.redirect_due and not gs.redirect_probe
+                    # Don't flag a rewrite cria ITSELF ordered: when edit-recovery has escalated this file
+                    # to a whole-file rewrite, its compliance rewrites are sanctioned. Once that guidance
+                    # scrolls out of the recent window (the model moved on to pure rewriting), the spin
+                    # re-arms and the reasoned wheel-spin can diagnose the real bug.
+                    and not editrecovery.rewrite_sanctioned(messages or [], path)):
                 gs.spin_probe_due = True
                 gs.spin_path = path
                 # flush BOTH windows (one intervention at a time — a pending redirect's

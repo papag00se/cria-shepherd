@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, prompts, webfetch
+from . import brave, editrecovery, prompts, webfetch
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
@@ -114,11 +114,6 @@ _TMP_SUFFIX = ".cria-tmp"
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
 # both look blank) would be reported to the model as "Wrote {path}" (false success).
 _WROTE = "⟦ctx:wrote⟧"
-# When an edit_file misses AND its anchor line is gone (a prior edit deleted it), the near-context
-# fallback finds nothing and the model, handed a bare "read the file again", re-guesses the same stale
-# old_string and fails identically. If the file is at most this many chars, inline its FULL current
-# contents in the failure so the model has exact text to copy. Bounded so a large file never dumps.
-EDIT_SHOW_FULL_MAX = 2000
 _FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
@@ -309,44 +304,39 @@ def _write_command(path: str, content: str) -> str:
 # produces (a byte-exact-only match failed ~1/3 of real edits). Still fail-CLOSED: 0 or ambiguous
 # matches never write. On a genuine miss it hands the model the file's ACTUAL content near its target
 # so its next attempt can copy the exact text, instead of a bare "found 0" it can only guess against.
-_EDIT_PY = r'''import base64,sys,re,pathlib,difflib
+# On a MISS the heredoc does NOT compose prose — it reports the FACTS (mode + the file's real current
+# bytes + the near anchor) as a ``⟦ctx:editfail⟧`` marker; cria.editrecovery turns that into the one
+# monotonic directive (surgical → committed whole-file rewrite), keyed on the file's failure history.
+# This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
+_EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
 p=pathlib.Path(base64.b64decode('{path}').decode())
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
 s=p.read_text()
+def _fail(mode,**kw):
+    kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
+    sys.exit('{editfail}'+base64.b64encode(json.dumps(kw).encode()).decode())
 if old==new:
-    msg='edit_file: old_string and new_string are IDENTICAL — this edit changes nothing.'
-    if len(s)<={small}:
-        # The observed spiral: the model keeps submitting old==new (it can't pin down the exact current
-        # text, esp. a whitespace/indent diff) and burns dozens of edit_file calls on a one-char fix.
-        # For a SMALL file the reliable escape is to REWRITE it whole with write_file (it can produce the
-        # full corrected content directly), overriding the general "don't rewrite" guidance for this case.
-        msg+=(' You keep submitting an edit that changes nothing — you cannot pin down the exact current'
-              ' text. STOP using edit_file on this file. It is small: REWRITE THE WHOLE FILE with'
-              ' write_file, using its current contents below as your starting point:'+chr(10)+'---'+chr(10)+s+chr(10)+'---')
-    else:
-        msg+=' Put the text you actually want into new_string (or read the file to see what needs changing).'
-    sys.exit(msg)
+    _fail('identical')
 _before=_v(str(p),s)
 def _w(res):
     if _before is None:                       # the file PARSES now — do not let this edit break it
         _e=_v(str(p),res)
         if _e is not None:
-            sys.exit('edit_file REFUSED (not written): this edit would break '+p.name+', which currently'
-                     ' parses cleanly — '+_e+'. Fix new_string so the file stays valid, then edit again.')
+            _fail('would_break',err=_e)
     p.write_text(res); print('{wrote}'); sys.exit()
 n=s.count(old)
 if n==1:
     _w(s.replace(old,new,1))
 if n>1:
-    sys.exit('edit_file: old_string occurs %d times — add surrounding lines to make it unique'%n)
+    _fail('multi',n=n)
 toks=old.split()
 if toks:
     ms=list(re.compile(r'\s+'.join(map(re.escape,toks))).finditer(s))
     if len(ms)==1:
         m=ms[0]; _w(s[:m.start()]+new+s[m.end():])
     if len(ms)>1:
-        sys.exit('edit_file: old_string matches %d places (ignoring whitespace) — add more surrounding context'%len(ms))
+        _fail('multi_flex',n=len(ms))
 key=next((l.strip() for l in old.split(chr(10)) if l.strip()),'')
 new_first=next((l.strip() for l in new.split(chr(10)) if l.strip()),'')
 lines=s.split(chr(10)); ctx=''; close=''
@@ -358,38 +348,20 @@ if key:
         cm=difflib.get_close_matches(key, [l.strip() for l in lines if l.strip()], n=1, cutoff=0.75)
         if cm:
             close=cm[0]
-msg=('edit_file: old_string is NOT in '+p.name+' — and this is not a spacing problem '
-     '(indentation/whitespace is already tolerated), so your text genuinely differs from the file '
-     '(likely a stale copy from before your last edit).')
 if ctx:
-    msg+=' The file ACTUALLY reads near there:'+chr(10)+'---'+chr(10)+ctx+chr(10)+'---'+chr(10)+'Copy THAT exact text into old_string and edit again — do not rewrite the whole file.'
+    _fail('anchor',anchor=ctx)
 elif close and new_first and new_first in close:
-    # THE PHANTOM BUG: old_string is a near-miss of a real line, and that line ALREADY reads the way
-    # new_string wants — the model is re-fixing an already-correct line it misremembers (e.g. it thinks
-    # the file says `base_user` and keeps "fixing" it to `base_url`, which is already there).
-    msg+=(' In fact that file already reads: '+chr(10)+'---'+chr(10)+close+chr(10)+'--- '
-          +chr(10)+'which is ALREADY what your new_string makes it. This change is DONE — do NOT edit '
-          'this line again. Your old_string just misremembers the current text. Move on to the real '
-          'remaining problem (run the tests and read the actual failure).')
+    _fail('phantom',anchor=close)   # already-correct line the model misremembers
 elif close:
-    msg+=(' Your old_string is very CLOSE to this line but not identical — you likely mistyped a token '
-          '(e.g. a variable name):'+chr(10)+'---'+chr(10)+close+chr(10)+'---'+chr(10)+'Copy that line '
-          'VERBATIM into old_string. Do not rewrite the whole file.')
-elif len(s)<={small}:
-    # A small file whose anchor is gone (a prior edit removed it) and your old_string is stale — the
-    # reliable escape is to rewrite it whole rather than keep guessing at old_string.
-    msg+=(' The anchor line is gone (an earlier edit likely removed it). This file is small, and your'
-          ' old_string is stale — the simplest fix is to REWRITE THE WHOLE FILE with write_file rather'
-          ' than more edit_file guesses. Its current contents:'+chr(10)+'---'+chr(10)+s+chr(10)+'---')
+    _fail('close',anchor=close)     # near-miss: a mistyped token
 else:
-    msg+=' Read the file again to get its current contents, then edit — do not rewrite the whole file.'
-sys.exit(msg)
+    _fail('no_anchor')
 '''
 
 
 def _edit_command(path: str, old: str, new: str) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
-                                          wrote=_WROTE, small=EDIT_SHOW_FULL_MAX)
+                                          wrote=_WROTE, editfail=editrecovery.EDITFAIL)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -636,8 +608,11 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 out.append({**m, "content": _strip_exec_envelope(content)})
             elif tid in write_paths and _WROTE in content:  # write/edit SUCCESS → clean confirmation
                 out.append({**m, "content": prompts.render("write_confirm", path=write_paths[tid])})
-            elif tid in write_paths:                      # write/edit FAILURE → strip envelope, keep the
-                out.append({**m, "content": _strip_exec_envelope(content)})  # real error the model must see
+            elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
+                # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
+                # composes the single monotonic directive keyed on this file's failure history so far
+                # (``out``). A non-edit-fail failure (write refusal, real error) passes through unchanged.
+                out.append({**m, "content": editrecovery.recover(_strip_exec_envelope(content), out)})
             else:
                 out.append(m)
         else:
