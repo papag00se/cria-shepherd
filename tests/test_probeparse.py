@@ -22,7 +22,6 @@ from cria.probeparse import (
     split_diag,
     split_loc,
     split_line_col,
-    truncate,
 )
 
 
@@ -136,6 +135,34 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertIsNone(r.findings[0].line)
         self.assertIn("AssertionError", r.findings[0].message)
 
+    def test_pytest_traceback_block_gives_full_message_and_real_line(self):
+        # Read the failure BLOCK (full E-line + real test:line), NEVER pytest's width-clipped short-summary
+        # (which arrives as `… - Asserti…` on an 80-col non-tty). This is the session-3 blindfold.
+        out = ("=================================== FAILURES ===================================\n"
+               "_______________________________ test_status _______________________________\n"
+               ">       self.assertEqual(resp['statusCode'], 200)\n"
+               "E       AssertionError: 400 != 200\n"
+               "test_lambda.py:15: AssertionError\n"
+               "=========================== short test summary info ============================\n"
+               "FAILED test_lambda.py::TestX::test_status - Asserti...\n")
+        fs = probeparse.parse_pytest(out)
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].file, "test_lambda.py")
+        self.assertEqual(fs[0].line, 15)
+        self.assertEqual(fs[0].message, "AssertionError: 400 != 200")   # FULL, from the block not the summary
+
+    def test_pytest_multiline_assertion_is_joined_whole(self):
+        # a dict-diff assertion spans several E-lines — keep the header AND the diff, drop nothing
+        out = ("=================================== FAILURES ===================================\n"
+               "____________________________________ test_d ____________________________________\n"
+               "E       AssertionError: assert {'x': 1} == {'x': 2}\n"
+               "E         Differing items:\n"
+               "E         {'x': 1} != {'x': 2}\n"
+               "test_d.py:9: AssertionError\n")
+        msg = probeparse.parse_pytest(out)[0].message
+        self.assertIn("AssertionError: assert {'x': 1} == {'x': 2}", msg)   # header kept
+        self.assertIn("{'x': 1} != {'x': 2}", msg)                          # diff rows kept too
+
     def test_clean_run_has_no_findings(self):
         r = parse_output("cargo check", "cargo", 0, "    Finished dev [unoptimized]\n", "")
         self.assertEqual(r.findings, [])
@@ -195,11 +222,6 @@ class TestPortRegressions(unittest.TestCase):
         self.assertEqual(len(findings), 2)
         self.assertEqual(findings[0].col, 5)  # first occurrence kept, order preserved
         self.assertEqual(findings[1].line, 2)
-
-    def test_truncate_boundary(self):
-        self.assertEqual(truncate("x" * 100, 100), "x" * 100)          # exactly at limit: untouched
-        self.assertEqual(truncate("x" * 101, 100), "x" * 100 + "…")   # one over: capped + ellipsis
-        self.assertEqual(truncate("  padded  ", 100), "padded")        # strips first
 
     def test_unknown_exit_with_no_findings_reads_clean(self):
         # CONTRACT HAZARD preserved: exit_code=None is treated as success.

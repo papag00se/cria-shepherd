@@ -44,15 +44,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence
 
-# Summary length ceilings (Unicode code points). These feed the MODEL — the summary line is what
-# completion_block_nudge / failed_unparsed / clean_gate_output show, and for a failed_unparsed probe
-# with no bullets this scraped line is the ONLY signal about the failure. A tight clip cut the tail off
-# a long fatal line and the model decided on a lie it couldn't see. Raised far past any real diagnostic
-# so the message flows whole; kept as a pathological-single-line guard only (a minified megabyte with no
-# newlines), with the window-aware context floor as the one place a real truncation may occur.
-SUMMARY_MSG_LIMIT = 8192   # first finding's message inside the summary line
-SUMMARY_LINE_LIMIT = 8192  # last-error-line fallback for non-zero exits
-TRUNCATION_SUFFIX = "…"  # … U+2026 HORIZONTAL ELLIPSIS
+# NOTE: summary/finding messages now flow WHOLE — the summary line and every finding carry the full
+# checker text (a failed_unparsed probe's scraped line is the ONLY signal, and pytest's own width-clip is
+# routed around by reading the traceback, not its short-summary). The window-aware context floor is the
+# one place a real truncation may occur. (Former SUMMARY_*_LIMIT ceilings + truncate() removed as dead.)
 
 # Error-ish keywords for the no-findings/non-zero-exit fallback: substring
 # containment against the lowercased line, scanning lines in REVERSE (the last
@@ -107,12 +102,6 @@ def parse_u32(s: str) -> Optional[int]:
         return None
     value = int(s)
     return value if value <= U32_MAX else None
-
-
-def truncate(s: str, n: int) -> str:
-    """Trim, then cap at ``n`` code points with a trailing ellipsis (only when over)."""
-    s = s.strip()
-    return s if len(s) <= n else s[:n] + TRUNCATION_SUFFIX
 
 
 def looks_like_path(f: str) -> bool:
@@ -270,23 +259,50 @@ def parse_eslint(s: str) -> list[Finding]:
     return out
 
 
-# A pytest traceback frame (``smoke_test.py:2: in <module>``) and the actual error line
-# (``E   ImportError: attempted relative import…``). Used to localize a COLLECTION error, whose
-# short-summary line (``ERROR smoke_test.py``) carries no line and no cause.
-_PYTEST_FRAME = re.compile(r"^([\w./\\-]+\.py):(\d+): in ", re.M)
-_PYTEST_ERR_LINE = re.compile(r"^E\s{2,}(.+)$", re.M)
+# pytest structure. A per-failure traceback BLOCK is headed by ``_____ TestClass.test_name _____``; it
+# ends with the failing location ``path:line: ErrorType`` and carries the FULL error on ``E   <Exc>: msg``.
+# We read the BLOCK, never pytest's short-summary line — pytest width-truncates that summary to the
+# (tty-less → 80-col) terminal, so ``AssertionError: 400 != 200`` arrives as ``Asserti…``. The block's
+# ``E`` line is never width-clipped, so the finding gets the real expected-vs-got. Never touch COLUMNS.
+_PYTEST_BLOCK_HDR = re.compile(r"^_{3,} .+? _{3,}\s*$", re.M)          # ____ TestClass.test_name ____
+_PYTEST_SUMMARY_HDR = re.compile(r"^=+ short test summary", re.M)     # the width-clipped summary section
+_PYTEST_LOC_LINE = re.compile(r"^([\w./\\-]+\.py):(\d+): (\S.*)$", re.M)  # path:line: ErrorType / "in fn"
+_PYTEST_FRAME = re.compile(r"^([\w./\\-]+\.py):(\d+): in ", re.M)     # a traceback frame (fallback localize)
+_PYTEST_ERR_LINE = re.compile(r"^E\s{2,}(.+)$", re.M)                 # E   <full error, never width-clipped>
+
+
+def _pytest_blocks(s: str) -> list[str]:
+    """Split pytest output into per-failure traceback blocks (text after each ``____ header ____``, up to
+    the next header or the short-summary section). Empty when there are no tracebacks (e.g. ``--tb=no``)."""
+    end = m.start() if (m := _PYTEST_SUMMARY_HDR.search(s)) else len(s)
+    starts = [h.end() for h in _PYTEST_BLOCK_HDR.finditer(s) if h.start() < end]
+    if not starts:
+        return []
+    bounds = starts + [end]
+    return [s[bounds[i]:bounds[i + 1]] for i in range(len(starts))]
 
 
 def parse_pytest(s: str) -> list[Finding]:
-    """pytest short-test-summary lines: ``FAILED path::test - Error: msg``.
-
-    Test FAILUREs carry no line (pytest doesn't put one in the summary). But a COLLECTION error
-    (an ImportError while importing the test module) prints ``ERROR <file>`` with no cause AND a real
-    traceback — ``<file>:<line>: in <module>`` + ``E   <Exc>: <msg>``. That bare "test failed" with no
-    line drove a stuck loop (cria told the model to "go to the reported line" with no line), so when a
-    finding has no line, enrich it from the traceback frame + the E-line.
+    """Prefer the per-failure TRACEBACK BLOCKS: each ends with the failing ``path:line: ErrorType`` and
+    carries the FULL error on ``E   …`` — so the finding gets the real test-file location and the
+    un-clipped message (we never read pytest's width-truncated short-summary). Falls back to the
+    short-summary ``FAILED/ERROR`` lines only when no traceback block is present (``--tb=no``); a bare
+    summary FAILURE has no line, so it is still enriched from any traceback frame + the ``E`` line.
     """
     out: list[Finding] = []
+    for block in _pytest_blocks(s):
+        locs = _PYTEST_LOC_LINE.findall(block)   # (file, line, tail); the LAST is the failing assertion's own
+        errs = _PYTEST_ERR_LINE.findall(block)   # every E-line — the FULL error (multi-line assertions too)
+        if not locs:
+            continue
+        file, line, tail = locs[-1]
+        # Join ALL E-lines, not just one: a multi-line assertion (`E AssertionError: …` + diff rows) must
+        # arrive whole — taking a single row would drop either the header or the diff. Never clipped.
+        msg = "\n".join(e.strip() for e in errs) if errs else tail.strip()
+        out.append(Finding(file, int(line), None, msg))
+    if out:
+        return out
+    # No traceback blocks → read the short-summary lines (pytest may have width-clipped these).
     for l in s.splitlines():
         t = l.strip()
         if t.startswith("FAILED "):
@@ -295,10 +311,7 @@ def parse_pytest(s: str) -> list[Finding]:
             rest = t[len("ERROR "):]
         else:
             continue
-        if " - " in rest:
-            nodeid, msg = rest.split(" - ", 1)  # FIRST " - " splits node-id from message
-        else:
-            nodeid, msg = rest, ""
+        nodeid, msg = rest.split(" - ", 1) if " - " in rest else (rest, "")
         file = nodeid.split("::", 1)[0]
         out.append(Finding(file, line=None, col=None,
                            message=(msg if msg != "" else DEFAULT_PYTEST_MESSAGE)))
@@ -390,7 +403,7 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
         else:
             loc = UNKNOWN_LOCATION
         more = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
-        return f"{loc}: {truncate(f.message, SUMMARY_MSG_LIMIT)}{more}"
+        return f"{loc}: {f.message.strip()}{more}"   # FULL message — never width/length-clipped
     if exit_code == 0 or exit_code is None:
         # Unknown exit reads as clean — see the CONTRACT HAZARD note in the module doc.
         return CLEAN_SUMMARY
@@ -406,7 +419,7 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
     line = line.strip()
     if line == "":
         return f"exited {exit_code} with no parseable diagnostics"
-    return f"exited {exit_code}: {truncate(line, SUMMARY_LINE_LIMIT)}"
+    return f"exited {exit_code}: {line}"   # FULL last error line — never clipped
 
 
 # Family dispatch: exact match on the `family` argument. No caller ever passes

@@ -74,7 +74,7 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
         return "[no command given]"
     ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
     if not ok:
-        return prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd[:100], why=why)
+        return prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd, why=why)
     # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
     # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
     env = dict(os.environ)
