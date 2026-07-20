@@ -74,6 +74,20 @@ class CommandRefusalTests(unittest.TestCase):
                     "python3 -c 'import requests; requests.get(\"https://x/y\")'"):
             self.assertIsNone(dirguard.command_refusal(cmd, "none", WS), cmd)
 
+    def test_url_path_fragment_built_across_a_variable_is_not_a_file_path(self):
+        # THE recurring footgun: the URL path is concatenated to a variable, so the regex sees a bare
+        # `/handles/goose` after the `}` and read it as an external FILE path — refusing an HTTP request.
+        for cmd in (
+            "python3 -c \"import requests; BASE='https://api.handle.me'; requests.get(f'{BASE}/handles/goose')\"",
+            "python3 -c \"import urllib.request as u; u.urlopen(f'https://api.handle.me/holders/{addr}')\"",
+            "cd " + WS + " && curl -s \"https://api.handle.me/handles/${h}\""):
+            self.assertIsNone(dirguard.command_refusal(cmd, "none", WS), cmd)
+        # ...but an explicit external write TARGET in the same network command is STILL caught
+        self.assertTrue(dirguard.command_refusal("curl https://x/a > /tmp/out.json", "none", WS))
+        self.assertTrue(dirguard.command_refusal("curl https://x/a -o /home/jesse/other/x", "none", WS))
+        # and a non-network external read is unaffected
+        self.assertTrue(dirguard.command_refusal("cat /home/jesse/other/secret", "none", WS))
+
     def test_a_download_TARGET_outside_the_workspace_is_still_caught(self):
         # the URL is fine, but writing the download to an external path is a real external write
         self.assertTrue(dirguard.command_refusal("curl https://x.com/a -o /etc/evil", "none", WS))

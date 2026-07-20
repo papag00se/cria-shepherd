@@ -35,6 +35,26 @@ _WRITE_VERB = re.compile(
     r"(?:^|[\s;&|(])(?:rm|mv|cp|dd|tee|mkdir|rmdir|touch|truncate|ln|chmod|chown|install|rsync)\b"
     r"|\bsed\s+-i\b|>>?(?![&\s]*&)", re.IGNORECASE)
 
+# A command that makes a NETWORK request — a network URL scheme (even one built across a variable, the
+# literal scheme still appears in the command text) or a known HTTP client. In such a command the
+# rooted path-shaped tokens are almost always URL PATH fragments (`f'{BASE}/handles/goose'` → the regex
+# sees `/handles/goose` after the `}`), NOT filesystem paths. This guard governs the FILESYSTEM, so it
+# must never refuse a network call — the recurring footgun where a `requests.get(...)` read as an
+# "external file" derailed the model into a false "no network from shell" theory.
+_NETWORK_CMD = re.compile(
+    r"\b(?:https?|ftps?|wss?)://|\b(?:curl|wget|requests|urllib3?|httpx|aiohttp|http\.client|socket)\b",
+    re.IGNORECASE)
+# The one external FILE access that survives the network-command exemption: an explicit write TARGET —
+# the path is preceded by a `>`/`>>` redirect or a `-o`/`-O`/`--output`/`tee` (so `curl … -o /etc/x` and
+# `curl … > /tmp/y` are still caught, but a URL path in the request is not).
+_WRITE_TARGET_BEFORE = re.compile(r"(?:>>?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\s)tee)\s*$")
+
+
+def _is_write_target(command: str, start: int) -> bool:
+    """True when the path token at ``start`` is the target of a file WRITE (a redirect or an output
+    flag) — the only external file access still refused inside a network command."""
+    return bool(_WRITE_TARGET_BEFORE.search(command[:start]))
+
 
 def normalize_level(value: str | None) -> str:
     v = (value or "none").strip().lower()
@@ -92,8 +112,18 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
     if level == "write" or not command:
         return None
-    external = next((m.group(0) for m in _PATH_TOKEN.finditer(command)
-                     if is_external(m.group(0), workspace) and not _exempt(m.group(0))), None)
+    network = bool(_NETWORK_CMD.search(command))
+    external = None
+    for m in _PATH_TOKEN.finditer(command):
+        tok = m.group(0)
+        if not is_external(tok, workspace) or _exempt(tok):
+            continue
+        # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
+        # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
+        if network and not _is_write_target(command, m.start()):
+            continue
+        external = tok
+        break
     if external is None:
         return None
     if level == "read" and not _WRITE_VERB.search(command):
