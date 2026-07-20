@@ -50,14 +50,14 @@ _CRIA_HOME_REFUSAL = (
     "the user something, just say it in your reply — do not write a file."
 )
 
-# Tool-call-dialect special-token sentinels that a weak model leaks into a shell command when it FUSES
-# two calls into one turn (observed live on gemma: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:
-# write_file{…`). These tokens never occur in a real command; when one survives into the command the call
-# is corrupt and un-runnable (bash dies on the unbalanced quotes), wasting the turn on a cryptic EOF. A
-# fused/broken call can't be reliably reconstructed, so we REFUSE it with guidance the model can act on —
-# the same "replace the bad call with a model-read refusal" pattern used for the dir guards. (Mirrors
-# massage.py's _GEMMA/_LFM2 dialect sentinels; kept local because massage imports writeproxy, not vice
-# versa.)
+# Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
+# calls into one turn (gemma live: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:write_file{…`).
+# massage._recover_fused_call already RECOVERS the real first call for the ~83% that's cleanly parseable
+# (a true massage — no wasted turn); this is the FLOOR beneath it: when even that can't reconstruct the
+# command (mixed quoting / hallucinated paths), the debris survives into the lowered command and bash
+# dies on the unbalanced quotes on a cryptic EOF. Rather than run garbage, REFUSE with guidance the model
+# can act on — the "replace the bad call with a model-read refusal" pattern used for the dir guards.
+# (Mirrors massage.py's dialect sentinels; kept local because massage imports writeproxy, not vice versa.)
 _TC_DEBRIS = ("<|tool_call>", "<tool_call|>", '<|"|>', "<|tool_call_start|>", "<|tool_call_end|>")
 _MALFORMED_TC_REFUSAL = (
     "Your last tool call was malformed: tool-call marker tokens leaked into the command text, so it is "

@@ -94,6 +94,35 @@ def has_tool_call_leak(text: str) -> bool:
     return bool(text) and any(mk in text for mk in _LEAK_DEBRIS)
 
 
+# A weak model routinely FUSES a second tool call (often + a line of commentary) onto a valid first one,
+# so the first call's ``arguments`` carry trailing tool-call / reasoning-channel sentinels:
+#   {"command":["pip","install","pytest"]}<tool_call|>I've written…<|tool_call>call:shell{command:[…
+# The REAL first call is recoverable — cut at the first sentinel and parse the head. RECOVER it (a
+# massage: the command just runs, no wasted turn) rather than refusing (which offloads the fix to the
+# same weak model). Only the genuinely-mangled residual (mixed quoting, hallucinated paths) can't be
+# parsed here — that falls to the writeproxy refusal floor. Measured 83% recoverable on real captures.
+_FUSED_SENTINELS = _LEAK_DEBRIS + ("<|channel>", "<channel|>")
+
+
+def _recover_fused_call(raw: str) -> dict | None:
+    """Recover the real first call from a fused/leaked ``arguments`` string: cut at the first tool-call/
+    channel sentinel, then parse the head — first as-is, then undoing the over-escaped quotes (``\\"``→
+    ``"``, ``\\'``→``'``) the model routinely emits inside the array. Returns the parsed args dict, or
+    None when the head is still not valid JSON (genuinely mangled → the writeproxy refusal is the floor)."""
+    cut = min([i for i in (raw.find(t) for t in _FUSED_SENTINELS) if i >= 0], default=-1)
+    if cut < 0:
+        return None
+    head = raw[:cut].strip()
+    for cand in (head, head.replace('\\"', '"').replace("\\'", "'")):
+        try:
+            obj = json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 def apply(completion: dict, tools=None, rlog=None) -> dict:
     """Run all output massages, in order."""
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
@@ -758,7 +787,11 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
                 json.loads(raw)
                 continue  # already valid
             except json.JSONDecodeError:
-                obj = extract_json_object(raw)
+                obj = _recover_fused_call(raw)  # a fused 2nd call trailing the real one → cut + unescape
+                if obj is not None:
+                    _log(rlog, "massage.fused_call_recovered", tool=fn.get("name"))
+                if obj is None:
+                    obj = extract_json_object(raw)
                 if obj is None:
                     obj = _recover_write_args(raw)  # raw newlines / unescaped quotes in content
                 if obj is not None:

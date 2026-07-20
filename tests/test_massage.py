@@ -78,6 +78,28 @@ class ArgRepairTests(unittest.TestCase):
         c = repair_tool_args(_completion(tool_calls=[_tc("x", '{"a": 1} hope that helps')]))
         self.assertEqual(json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"]), {"a": 1})
 
+    def test_fused_second_call_is_recovered_not_refused(self):
+        # gemma fuses a 2nd call (+ commentary) onto a valid first one, over-escaping the array quotes —
+        # RECOVER the real first call (a massage, no wasted turn) rather than leaving debris for a refusal.
+        raw = '{"command":["bash","-lc","pytest\\",\\"test_lambda.py\\"]}<tool_call|><|tool_call>call:write_file{content:'
+        c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
+        args = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual(args["command"], ["bash", "-lc", "pytest", "test_lambda.py"])   # clean, no debris
+
+    def test_fused_call_with_commentary_between_sentinels(self):
+        raw = '{"command":["pip\\", \\"install\\", \\"requests\\"]}<tool_call|>I wrote the handler.<|tool_call>call:shell{'
+        c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
+        args = json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual(args["command"], ["pip", "install", "requests"])
+
+    def test_genuinely_mangled_head_is_left_for_the_refusal_floor(self):
+        # mixed single/double-quote escaping + hallucinated tail → not cleanly parseable here; leave the
+        # debris so the writeproxy refusal floor catches it (better than fabricating a wrong command).
+        raw = '{"command":["bash\',\'-lc\',\'zip\\",\\"x.zip\\"]}<tool_call|><|tool_call>call:shell{command:["]}'
+        c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
+        out = _first(c)["message"]["tool_calls"][0]["function"]["arguments"]
+        self.assertTrue(any(s in out for s in ("<|tool_call>", "<tool_call|>")))  # untouched → floor handles it
+
 
 class ApplyPatchTests(unittest.TestCase):
     def test_decodes_double_escaped_newlines(self):
