@@ -25,19 +25,20 @@ absent or silenced.
   A flagged-incomplete plan-off 'done' ended on the 2nd try. **FIXED 2026-07-20**: removed the bound; the
   critic re-runs on EVERY green 'done' and steers back with its CONCRETE reason (via `done_incomplete`'s
   new `{{REASON}}`) until the task is actually satisfied. Fail-closed (undecidable judge = not-done).
-- [ ] **Plan-off no-shell 'done' ends with ZERO verification.** `_gate_single_done` `loop.py:~1275`
-  `return comp` — no gate AND no critic. The multi-step loop path runs `_verify` first (`:766-773`); the
-  synthetic/plan-off path does not. → route the no-shell 'done' through the reasoner critic before
-  forwarding (parity with the loop path).
-- [ ] **Dead human-handback residual.** `_closing` `loop.py:~1074-1094` can emit "N of M steps did NOT
-  pass verification … the result needs review before it can be trusted" (surface untrusted work to a
-  human) via `_advance(ok=False)`. Currently UNREACHABLE (the fail-cap was removed; every `_advance`
-  caller guards on `if ok:`), so it is dead residual of the removed accept-and-advance/terminator. →
-  delete it (or confirm intentional).
-- [ ] **Stale stall-terminator comments.** `loop.py:~166-169` still frames "ending the session HONESTLY
-  back to the user"; `:~855-856` narrates the codex-local "ACCEPTS with an UNRESOLVED banner" cria
-  rejected. Fields (`gate_stall`/`gate_sig`) are legitimately repurposed for the thrash-assist; only the
-  prose is stale. → rewrite to the no-terminator reality.
+- [x] **Plan-off no-shell 'done' ends with ZERO verification.** `_gate_single_done` `return comp` — no
+  gate AND no critic; the multi-step loop path runs `_verify` first, the plan-off path did not. **FIXED**:
+  the no-shell 'done' now runs the fail-closed done-critic when a reasoner is available and re-nudges with
+  the concrete gap; forwards only when there is genuinely no way to verify (no shell AND no reasoner —
+  Tier-2, left).
+- [x] **Dead human-handback residual.** `_closing` could emit "N of M steps did NOT pass … needs review"
+  via `_advance(ok=False)` — unreachable (the fail-cap was removed; every `_advance` caller guards `if
+  ok:`), a residual of the removed accept-and-advance/terminator. **FIXED**: deleted — `_closing` is now
+  always a clean completion; `_advance` dropped its `ok`/`reason` params and accept-unverified handling;
+  the `fail_reason` field + its serialization + the dead `UNVERIFIED` briefing marker are removed.
+- [x] **Stale stall-terminator comments.** `loop.py` framed "ending the session HONESTLY back to the
+  user" and listed "the stall terminator" among the plan-off off-ramps. **FIXED**: rewritten to the
+  no-terminator reality (the `gate_stall`/`gate_sig` fields drive the reasoned thrash-assist, never a
+  give-up).
 
 ## Tier 2 — the "can't verify → fail-open vs loop-forever" cluster (a policy decision)
 

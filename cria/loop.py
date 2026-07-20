@@ -163,10 +163,9 @@ class GuardState:
     # plan-off satisfaction judge gates on this: while the deterministic checks already say NOT-done, the
     # LLM done-judge is redundant (both say not-done) and — for a model that can't help emitting a "run the
     # tests" tool call instead of a verdict — pure wasted, always-fail-closed calls. Only spend it on GREEN.
-    # STALL TERMINATOR (plan-off): a session whose checks NEVER go green has no off-ramp (the satisfaction
-    # judge is gated on GREEN, the plan loop's off-ramp is its plan) — so it churns until the user kills it
-    # (the observed 169/326-call runaways). Track the RED-gate streak (never-green count) and the identical-
-    # finding stall (same error unchanged = no progress) to end the session HONESTLY back to the user.
+    # STALL tracking (NOT termination — the stall terminator was removed; cria never ends a non-converging
+    # session or hands back to a human). A RED-gate streak with the SAME unchanged finding = the coder is
+    # stuck on one thing; that drives the REASONED thrash-assist (a concrete unstick step), never a give-up.
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
@@ -183,8 +182,8 @@ class GuardState:
 class PlanSession(GuardState):
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
     # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
-    # raw-task framing (no "step k/n") and runs the off-ramps a finite multi-step plan doesn't need
-    # (stall terminator + task-level satisfaction/done-critic). The explicit flag — NOT len(items)==1 —
+    # raw-task framing (no "step k/n") and runs the off-ramp a finite multi-step plan doesn't need
+    # (the task-level satisfaction/done-critic). The explicit flag — NOT len(items)==1 —
     # is the key: a genuine planner 1-step plan must keep step framing and skip those off-ramps.
     synthetic: bool = False
     phase: Phase = Phase.WORK
@@ -231,14 +230,11 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
     return drive_count >= start and (drive_count - start) % every == 0
 
 
-# STALL TERMINATOR thresholds (plan-off). GENEROUS on purpose — a floor on wasted work, not an eager
-# quitter (a stochastic model may converge late). It ends the session back to the USER (who was already
-# killing these by hand) only after the repo's checks have stayed RED for this many gate cycles AND the
-# session has driven at least this many turns — i.e. a long stretch with no GREEN and no off-ramp.
-# C5: when the SAME check error has persisted this many gate cycles (the coder is STUCK on one thing,
-# not just churning), replace the raw ground-truth insertion with a REASONED thrash-diagnosis + next-step
-# to get the coder UNSTUCK. cria never gives up on a non-converging session (no stall terminator / human
-# escalation — the mission is for the model to succeed on its own); it keeps trying to unstick it.
+# THRASH-ASSIST threshold (plan-off). When the SAME check error has persisted this many gate cycles (the
+# coder is STUCK on one thing, not just churning), replace the raw ground-truth insertion with a REASONED
+# thrash-diagnosis + one concrete next step to get the coder UNSTUCK. cria NEVER gives up on a
+# non-converging session (the stall terminator + human-escalation were removed — the mission is for the
+# model to succeed on its OWN); it just keeps trying to unstick it.
 THRASH_STALL_CYCLES = 2
 
 
@@ -763,7 +759,7 @@ class Loop:
         evidence = _coder_evidence(body.get("messages", []), None)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key)
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
-            return self._advance(sess, key, body, idx, total, ok, rlog, reason)
+            return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge(sess, key, body, reason, rlog)
@@ -835,7 +831,7 @@ class Loop:
             evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)
             if ok:
-                return self._advance(sess, key, body, idx, total, ok, rlog, reason)
+                return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
             rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
             return self._renudge(sess, key, body, reason, rlog)
@@ -865,22 +861,19 @@ class Loop:
         evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
-            return self._advance(sess, key, body, idx, total, ok, rlog, reason)
+            return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge(sess, key, body, reason, rlog)
 
-    def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, ok: bool, rlog, reason: str = "") -> dict:
-        """Mark the current step done (verified or accepted-unverified), update the plan
-        file through the harness, and move on."""
+    def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
+        """Mark the current step VERIFIED (a step advances ONLY on a genuine pass — there is no
+        accept-unverified), update cria's plan mirror, and move on."""
         item = sess.plan.current()
         item.done = True
-        # A CLEAN status only — never the coder's raw output. The coder's text is
-        # unbounded prose (and small models parrot cria's own banners back), which is
-        # what leaked "logs" into the plan file. The step line already says what was done.
-        item.note = "verified" if ok else "accepted unverified"
-        if not ok:  # remember WHY, for the honest closing (not written to the plan file)
-            item.fail_reason = reason or "its checks did not pass"
+        # A CLEAN status only — never the coder's raw output. The coder's text is unbounded prose (and
+        # small models parrot cria's own banners back), which is what leaked "logs" into the plan file.
+        item.note = "verified"
         sess.summary = _extend_summary(sess.summary, idx, item.text)
         sess.verify_fails = 0
         sess.pending_coder_text = ""
@@ -891,7 +884,7 @@ class Loop:
         sess.recent_actions = []
         sess.redirect_due = False
         sess.last_gate_flag = ""   # convergence tracking is per step
-        rlog.emit("loop.step_done", step=idx, verified=ok, accepted_unverified=not ok)
+        rlog.emit("loop.step_done", step=idx, verified=True)
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
 
@@ -1047,8 +1040,7 @@ class Loop:
         guesses. Best-effort: on any failure, fall back to the running per-step summary / checklist.
         A prior session summary is threaded in so a chain of follow-ups keeps ONE cumulative briefing."""
         checklist = "\n".join(
-            f"{i + 1}. [{'done' if it.done else 'incomplete'}"
-            f"{'' if it.note == 'verified' or not it.done else ', UNVERIFIED'}] {it.text}"
+            f"{i + 1}. [{'done' if it.done else 'incomplete'}] {it.text}"
             for i, it in enumerate(sess.plan.items)
         )
         log = _work_log(body.get("messages", []))
@@ -1068,31 +1060,21 @@ class Loop:
         return (sess.summary or checklist).strip()
 
     def _closing(self, sess: PlanSession, briefing: str = "") -> str:
-        """The final message. Report the truth: if any step was accepted UNVERIFIED (its
-        checks never passed after the retry budget), say so and name it — don't claim a
-        clean completion when e.g. the test step's tests don't pass.
+        """The final message — a clean completion. Every step is VERIFIED: cria advances a step ONLY on a
+        genuine pass and re-nudges INDEFINITELY otherwise, so a step is never 'accepted unverified' and
+        cria never ends a plan with untrusted work (the removed accept-and-advance/handback path).
 
-        The completion BRIEFING is embedded here, in the enveloped block — this message is the
-        briefing's home. The harness stores it in the conversation, its compactor summarizes
-        from it, and cria re-reads it from history (``_briefing_from_history``). One summary,
-        carried by the transcript — never a server-side copy."""
-        items = sess.plan.items
-        total = len(items)
-        unverified = [(i + 1, it) for i, it in enumerate(items) if it.done and it.note != "verified"]
+        The completion BRIEFING is embedded here, in the enveloped block — this message is the briefing's
+        home. The harness stores it in the conversation, its compactor summarizes from it, and cria
+        re-reads it from history (``_briefing_from_history``). One summary, carried by the transcript —
+        never a server-side copy."""
         brief_block = f"\n\n{BRIEFING_OPEN}\n{briefing}\n{BRIEFING_CLOSE}" if briefing else ""
-        if not unverified:
-            return f"{indicators.MARKER}plan complete — all {total} steps verified.{brief_block}".strip()
-        lines = [f"{indicators.MARKER}plan finished, but {len(unverified)} of {total} steps did NOT pass verification:"]
-        for n, it in unverified:
-            why = f" — {it.fail_reason}" if it.fail_reason else ""
-            lines.append(f"  ⚠ step {n}: {it.text}{why}")
-        lines.append("\nThose steps ran but their checks never passed — the result needs review before it can be trusted (e.g. the tests may still be failing).")
-        return ("\n".join(lines) + brief_block).strip()
+        return f"{indicators.MARKER}plan complete — all {len(sess.plan.items)} steps verified.{brief_block}".strip()
 
     # -------------------------------------------------------- single-item (plan-off) mode
     # A degenerate 1-item "plan" (``sess.synthetic``) is driven HERE, not through ``_work``: the whole
-    # task is ONE implicit step, so the coder gets RAW-task framing (no "step k/n") and the off-ramps a
-    # finite multi-step plan doesn't need — the stall terminator + a task-level satisfaction/done critic.
+    # task is ONE implicit step, so the coder gets RAW-task framing (no "step k/n") and the off-ramp a
+    # finite multi-step plan doesn't need — the task-level satisfaction/done critic.
     # These methods are the relocated plan-off direct-coder path (formerly ``server._drive_direct_coder``
     # et al.): the SAME shared guard/gate/author/summarize primitives, rewired onto the loop's OWN
     # LoopContext so ONE driver serves both producers. Reached only via ``sess.synthetic`` in _drive_locked.
@@ -1100,8 +1082,8 @@ class Loop:
     def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False) -> dict | None:
         """The single-item coder turn with the SAME protections the loop gives its coder: the
         repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify the
-        repo's checks before ending), harness-compaction re-anchoring, the stall terminator, and the
-        periodic + done satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
+        repo's checks before ending), harness-compaction re-anchoring, and the periodic + done
+        satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
         stable keys, ephemeral for ``task:`` keys). Returns the completion to send, or None on decode fail."""
         sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
         # A probe whose result a harness compaction erased is re-issued (parity with the loop), rather
@@ -1136,7 +1118,7 @@ class Loop:
             if truth:
                 # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
                 # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
-                # the routed reasoner). Fires BELOW the terminate threshold — a reasoned unstick first.
+                # the routed reasoner). A reasoned unstick on a persistent RED stall — never a give-up.
                 if self._ctx.reasoner_role is not None and sess.gate_stall >= THRASH_STALL_CYCLES:
                     truth = author_thrash_steer(
                         self._ctx.reasoner_chat, self._ctx.reasoner_role,
@@ -1247,9 +1229,9 @@ class Loop:
         if _has_tool_calls(comp):
             sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
             return comp  # acting → forward
-        return self._gate_single_done(sess, comp, framed, body, rlog)
+        return self._gate_single_done(sess, comp, framed, body, session_key, rlog)
 
-    def _gate_single_done(self, sess: PlanSession, comp: dict, framed: dict, body: dict, rlog) -> dict:
+    def _gate_single_done(self, sess: PlanSession, comp: dict, framed: dict, body: dict, key: str, rlog) -> dict:
         """The coder answered with NO tool call (thinks it's done). Verify before ending: LEG0 (never
         acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
         checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
@@ -1270,7 +1252,13 @@ class Loop:
             sess.pending_done = _completion_text(comp)
             rlog.emit("loop.completion_probe", plan_off=True)
             return _completion_toolcalls([probe], note="verifying — running the repo's checks")
-        return comp  # no shell tool → can't gate; forward the 'done' as-is
+        # No shell tool → the objective gate can't run. Don't exit BLIND: if a reasoner is available, run
+        # the task-level critic (fail-closed) — a NOT-satisfied verdict steers the coder back with the
+        # concrete gap instead of forwarding an unverified 'done' (parity with the loop's no-shell _verify).
+        if self._ctx.reasoner_role is not None and (critic_reason := self._done_critic_reason(sess, body, rlog)):
+            sess.steer_source = "completion critic (task not fully done)"
+            return self._renudge(sess, key, body, prompts.render("done_incomplete", reason=critic_reason), rlog)
+        return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _run_single_coder(self, framed: dict, sess: PlanSession, rlog) -> dict | None:
         """One guarded + cleaned coder call on the single-item path (shared by the main turn and the
@@ -1409,8 +1397,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "plan": {
             "id": sess.plan.id, "task": sess.plan.task, "created": sess.plan.created,
             "status": sess.plan.status,
-            "items": [{"text": it.text, "done": it.done, "note": it.note,
-                       "fail_reason": it.fail_reason} for it in sess.plan.items],
+            "items": [{"text": it.text, "done": it.done, "note": it.note} for it in sess.plan.items],
         },
         "summary": sess.summary,
         "prior_work": sess.prior_work,
@@ -1426,8 +1413,7 @@ def _session_from_dict(d) -> PlanSession | None:
         p = d["plan"]
         plan = Plan(id=str(p["id"]), task=str(p["task"]), created=str(p["created"]),
                     status=str(p.get("status", "in_progress")),
-                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")),
-                                    note=it.get("note"), fail_reason=it.get("fail_reason"))
+                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"))
                            for it in p["items"]])
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),

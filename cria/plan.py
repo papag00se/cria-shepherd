@@ -39,9 +39,7 @@ _NOTE = re.compile(r"^\s+>\s?(.*)$")
 class PlanItem:
     text: str
     done: bool = False
-    note: str | None = None  # phase 6: a clean status ("verified" / "accepted unverified")
-    fail_reason: str | None = None  # why a step was accepted UNVERIFIED (runtime-only; not
-    #                                 written to the plan file — used for the honest closing)
+    note: str | None = None  # a clean status — only ever "verified" (a step advances ONLY on a pass)
 
 
 @dataclass

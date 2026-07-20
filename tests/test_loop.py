@@ -2004,18 +2004,18 @@ class ClosingTests(unittest.TestCase):
         msg = self._loop()._closing(PlanSession(plan=plan))
         self.assertIn("plan complete — all 2 steps verified", msg)
 
-    def test_flags_unverified_steps_with_reason(self):
-        # A step advanced "accepted unverified" (its checks never passed) must be named in
-        # the final message with WHY — not hidden behind a clean "plan complete".
+    def test_closing_never_hands_back_untrusted_work(self):
+        # The accept-unverified / "N steps did NOT pass — needs review" HANDBACK was removed: a step
+        # advances ONLY on a genuine pass (the loop re-nudges indefinitely otherwise), so _closing is
+        # always a clean completion — cria never ends a plan by surfacing untrusted work to a human.
         plan = Plan(id="x", task="t", created="c", items=[
             PlanItem("Create handler.py", done=True, note="verified"),
-            PlanItem("Run pytest", done=True, note="accepted unverified", fail_reason="tests failed: 0 collected"),
+            PlanItem("Run pytest", done=True, note="verified"),
         ])
         msg = self._loop()._closing(PlanSession(plan=plan))
-        self.assertNotIn("plan complete", msg)
-        self.assertIn("did NOT pass verification", msg)
-        self.assertIn("step 2: Run pytest", msg)
-        self.assertIn("tests failed: 0 collected", msg)  # the reason is surfaced
+        self.assertIn("plan complete", msg)
+        self.assertNotIn("did NOT pass", msg)
+        self.assertNotIn("needs review", msg)
 
 
 class HelperTests(unittest.TestCase):
@@ -2883,13 +2883,30 @@ class SingleItemMethodTests(unittest.TestCase):
             loopmod.judge_satisfaction = orig
 
     # ---- _gate_single_done -------------------------------------------------------------------
-    def test_gate_single_done_no_shell_forwards_the_done(self):
-        loop = _single_loop(_Scripted([_done()]))
+    def test_gate_single_done_no_shell_no_reasoner_forwards_the_done(self):
+        loop = _single_loop(_Scripted([_done()]))  # no reasoner_role → nothing can verify
         sess = _synth(); sess.action_seq = 1  # already acted → skip LEG0
         framed = {"messages": [{"role": "user", "content": "x"}]}
         body = {"messages": [{"role": "user", "content": "x"}], "tools": []}  # no shell → can't gate
-        out = loop._gate_single_done(sess, _done("all done"), framed, body, _Rlog())
-        self.assertEqual(out["choices"][0]["message"]["content"], "all done")
+        out = loop._gate_single_done(sess, _done("all done"), framed, body, "k", _Rlog())
+        self.assertEqual(out["choices"][0]["message"]["content"], "all done")  # can't verify at all → forward
+
+    def test_gate_single_done_no_shell_but_reasoner_critiques_before_ending(self):
+        # No shell tool → the objective gate can't run, but a reasoner CAN judge: a NOT-satisfied critic
+        # re-nudges the coder instead of forwarding an unverified 'done' (no blind exit when we can judge).
+        import cria.loop as loopmod
+        from cria.config import Role
+        loop = _single_loop(_Scripted([_toolcall()]), reasoner_chat=self._reasoner_chat("x"),
+                            reasoner_role=Role(name="reasoner", backend="local"))
+        sess = _synth(); sess.action_seq = 1
+        body = {"messages": [{"role": "user", "content": "build X"}], "tools": []}  # no shell
+        orig = loopmod.judge_satisfaction
+        try:
+            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing")
+            out = loop._gate_single_done(sess, _done("all done"), {"messages": []}, body, "k", _Rlog())
+            self.assertNotEqual(out["choices"][0]["message"].get("content"), "all done")  # NOT forwarded
+        finally:
+            loopmod.judge_satisfaction = orig
 
     def test_gate_single_done_emits_probe_with_shell(self):
         import os
@@ -2901,7 +2918,7 @@ class SingleItemMethodTests(unittest.TestCase):
             body = {"tools": [_SHELL],
                     "messages": [{"role": "user", "content": f"<environment_context><cwd>{tmp}</cwd></environment_context>"}]}
             sess = _synth(); sess.action_seq = 1
-            out = loop._gate_single_done(sess, _done("done"), {"messages": []}, body, _Rlog())
+            out = loop._gate_single_done(sess, _done("done"), {"messages": []}, body, "k", _Rlog())
             self.assertTrue(sess.done_probe)                              # a gate probe is now in flight
             self.assertTrue(out["choices"][0]["message"]["tool_calls"])   # emitted as a shell tool call
 
