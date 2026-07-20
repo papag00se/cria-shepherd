@@ -918,18 +918,34 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     return out
 
 
+# Config-free TEST floors, congruent with the syntax/lint floors' per-language tables. A language earns an
+# entry ONLY when it has a runner that (a) auto-discovers test files with NO manifest and (b) runs the
+# common test styles correctly. The gap this closes is language-neutral — "test files present, ecosystem
+# not detected (no manifest), so ranked discovery adds no test probe" — but which languages hit it is not:
+# for Go/Rust/JS/PHP/Ruby a test suite comes WITH its manifest (go.mod, Cargo.toml, package.json, …), and
+# the manifest both names the runner (go test / cargo test / jest|vitest) AND triggers ecosystem discovery,
+# which adds that exact test probe. So those are covered there, agnostically. Python is the one language
+# where test files routinely exist with no manifest, and pytest safely auto-discovers `test_*.py`/`*_test`
+# and runs unittest- AND pytest-style tests. (`node --test` is deliberately NOT an entry: it cannot run
+# jest/vitest/mocha suites — different globals — so it would falsely fail them.) Add a language here the
+# day it has an equally safe zero-config runner.
+_TEST_FLOORS: list[tuple[str, list[str], str]] = [
+    ("py", ["python3", "-m", "pytest", "-q"],
+     "Python tests: pytest auto-discovers test_*.py / *_test.py (zero-config)"),
+]
+
+
 def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
-    """TESTING, congruently with the syntax/lint floors: a config-free pytest run when the tree has
-    ``test_*.py`` / ``*_test.py`` files pytest auto-discovers — even with NO pyproject / pytest.ini /
-    tests dir. Without this a bare "script + test file" project (the exact shape a "write a script and
-    its tests" task produces) runs syntax + lint but NEVER its tests: a VACUOUS-GREEN gate that reports
-    "no error-class problems" while the tests are broken, and a satisfaction judge that can complete on
-    them. Config-DRIVEN runners (tox, nox, pytest-configured, uv/poetry-prefixed) still arrive via ranked
-    discovery; this is the guaranteed floor for the config-free case."""
+    """The guaranteed TEST floor for the config-free case: a runner is added when the tree has that
+    language's test files but no manifest to trigger ecosystem discovery. Without it a bare "script +
+    test file" project runs syntax + lint but NEVER its tests — a VACUOUS-GREEN gate that reports "no
+    error-class problems" while the tests are broken, and a satisfaction judge that can complete on them.
+    See ``_TEST_FLOORS`` for why the table is (currently) Python-only and how other languages are covered."""
     from . import linterprobe  # local import: linterprobe never imports this module
     root = Path(root)
-    py = linterprobe.collect_files(str(root), ["py"])
-    if any(Path(f).name.startswith("test_") or Path(f).name.endswith("_test.py") for f in py):
-        return [cand(ProbeKind.Test, ["python3", "-m", "pytest", "-q"], root, 60, 90,
-                     ProbeCost.Moderate, "Python tests: pytest auto-discovers test_*.py (zero-config)")]
-    return []
+    out: list[ProbeCandidate] = []
+    for ext, command, reason in _TEST_FLOORS:
+        names = [Path(f).name for f in linterprobe.collect_files(str(root), [ext])]
+        if any(n.startswith("test_") or n.endswith(f"_test.{ext}") for n in names):
+            out.append(cand(ProbeKind.Test, list(command), root, 60, 90, ProbeCost.Moderate, reason))
+    return out
