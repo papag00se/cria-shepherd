@@ -1,1 +1,4 @@
-The repo's automated checks pass, but the task is not fully done yet — a deliverable the user asked for may be missing, only stubbed/mocked, or never actually exercised. Re-read the ORIGINAL task and confirm EVERY deliverable it named is present and genuinely works (the code, tests that actually test it, the docs, any live check the task required). Finish whatever is missing, then stop.
+The repo's automated checks pass, but the task is NOT fully done yet:
+{{REASON}}
+
+Re-read the ORIGINAL task and confirm EVERY deliverable it named is present and genuinely works (the code, tests that actually test it, the docs, any live check the task required). Do NOT declare done, rationalize a missing piece as impossible, or stop — finish exactly what is called out above, then continue.

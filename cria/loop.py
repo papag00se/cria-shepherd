@@ -177,10 +177,6 @@ class GuardState:
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
-    done_critiqued: bool = False  # the task-level reasoner critic ran on a GREEN 'done' this session. Bounded
-    # to ONCE: it catches an obviously shallow/mocked/missing-deliverable 'done' despite green checks
-    # (parity with the loop's _verify), but a flaky judge can then never BLOCK a genuinely-green done from
-    # finishing — the next green 'done' trusts the objective gate and ends. Fail-open on the judge.
 
 
 @dataclass
@@ -1121,11 +1117,13 @@ class Loop:
                 rlog.emit("loop.gate", plan_off=True, blocked=True)
                 sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
                 sess.steer_source = "completion gate (repo checks failed)"
-            elif self._ctx.reasoner_role is not None and not sess.done_critiqued and self._done_critic_says_incomplete(sess, body, rlog):
-                # A2 PARITY: the objective gate is GREEN, but the task-level reasoner critic (like the
-                # loop's _verify) says the WHOLE task isn't done. BOUNDED to once + fail-open, so a flaky
-                # judge delays a genuinely-green 'done' by at most one turn and can never block it.
-                sess.nudge_reason = prompts.load("done_incomplete")
+            elif self._ctx.reasoner_role is not None and (critic_reason := self._done_critic_reason(sess, body, rlog)):
+                # The objective gate is GREEN, but the task-level reasoner critic (parity with the loop's
+                # _verify) says the WHOLE task isn't done. NO once-bound: this re-runs on EVERY green
+                # 'done', steering the coder back with the critic's CONCRETE reason, until the task is
+                # actually satisfied. cria never lets a still-incomplete task exit early — the model
+                # finishes the real work on its own; there is no "give up after one look".
+                sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason)
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
@@ -1296,21 +1294,22 @@ class Loop:
             guard_track_write_streak(sess, comp, rlog, messages=framed.get("messages"))
         return comp
 
-    def _done_critic_says_incomplete(self, sess: PlanSession, body: dict, rlog) -> bool:
+    def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
         """The task-level reasoner critic on a GREEN single-item 'done' (parity with the loop's _verify):
-        judge the WHOLE task against the real work + the vacuous-green fact. Marks done_critiqued so it
-        runs at most ONCE. True only on a NOT-satisfied verdict (fail-open: an undecidable judge fail-
-        closes to not-satisfied, but the ONCE bound means the next green 'done' still ends)."""
-        sess.done_critiqued = True
+        judge the WHOLE task against the real work + the vacuous-green fact. Returns the critic's CONCRETE
+        reason when the task is NOT satisfied — a specific unmet deliverable to steer the coder back with —
+        or "" when satisfied. Runs on EVERY green 'done' (NO once-bound): cria never lets a still-
+        incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
+        undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         if sess.last_gate_testless:  # C4 vacuous-green evidence
             ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
                    "If this task required tests, green does NOT verify them; judge accordingly.")
-        satisfied, _reason = judge_satisfaction(
+        satisfied, reason = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
-        return not satisfied
+        return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
 
     def _reasoned_reanchor(self, body: dict, rlog) -> str:
         """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the

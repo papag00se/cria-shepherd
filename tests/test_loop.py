@@ -2862,8 +2862,8 @@ class SingleItemMethodTests(unittest.TestCase):
         self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("x"),
             reasoner_role=role)._reasoned_reanchor({"messages": []}, _Rlog()), prompts.load("reanchor"))  # no summary → canned
 
-    # ---- _done_critic_says_incomplete --------------------------------------------------------
-    def test_done_critic_verdict_and_bounded_once(self):
+    # ---- _done_critic_reason (NO once-bound: re-runs on every green 'done' until satisfied) -------
+    def test_done_critic_returns_concrete_reason_and_re_runs(self):
         import cria.loop as loopmod
         from cria.config import Role
         body = {"messages": [{"role": "user", "content": "build X with tests"}]}
@@ -2871,12 +2871,14 @@ class SingleItemMethodTests(unittest.TestCase):
                             reasoner_role=Role(name="reasoner", backend="local"))
         orig = loopmod.judge_satisfaction
         try:
-            loopmod.judge_satisfaction = lambda *a, **k: (False, "no tests")
+            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing")
             sess = _synth()
-            self.assertTrue(loop._done_critic_says_incomplete(sess, body, _Rlog()))  # not satisfied → incomplete
-            self.assertTrue(sess.done_critiqued)                                     # marked → bounded once
+            # NOT satisfied → returns the critic's CONCRETE reason (to steer the coder back with)...
+            self.assertEqual(loop._done_critic_reason(sess, body, _Rlog()), "total_handles is missing")
+            # ...and it is NOT bounded — a second still-incomplete 'done' is critiqued again, not waved through
+            self.assertEqual(loop._done_critic_reason(sess, body, _Rlog()), "total_handles is missing")
             loopmod.judge_satisfaction = lambda *a, **k: (True, "all present")
-            self.assertFalse(loop._done_critic_says_incomplete(_synth(), body, _Rlog()))  # satisfied → done
+            self.assertEqual(loop._done_critic_reason(_synth(), body, _Rlog()), "")  # satisfied → "" → done
         finally:
             loopmod.judge_satisfaction = orig
 
