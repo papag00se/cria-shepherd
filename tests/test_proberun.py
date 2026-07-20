@@ -194,6 +194,24 @@ class TestCompletionSelection(unittest.TestCase):
         with mock.patch("cria.probediscovery.discover", return_value=[]):
             self.assertEqual(select_completion_probes("/nonexistent"), [])
 
+    def test_bare_dir_with_root_test_file_gets_a_test_floor_probe(self):
+        # A bare "script + test_*.py" project (no pyproject / pytest.ini / tests dir) is not a detected
+        # ecosystem, so ranked discovery yields NO test probe — the gate would run syntax+lint but never
+        # the tests (vacuous green). The TEST FLOOR guarantees a pytest probe so the tests actually run.
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as t:
+            open(os.path.join(t, "app.py"), "w").write("def f():\n    return 1\n")
+            open(os.path.join(t, "test_app.py"), "w").write("def test_f():\n    assert 1\n")
+            tests = [c for c in select_completion_probes(t) if c.kind is ProbeKind.Test]
+            self.assertEqual(len(tests), 1)
+            self.assertEqual(tests[0].command, ["python3", "-m", "pytest", "-q"])
+
+    def test_bare_dir_without_test_files_gets_no_test_probe(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as t:
+            open(os.path.join(t, "app.py"), "w").write("x = 1\n")
+            self.assertEqual([c for c in select_completion_probes(t) if c.kind is ProbeKind.Test], [])
+
 
 # ---------------------------------------------------------------------------
 # completion_block_nudge (pure rendering).

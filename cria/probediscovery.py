@@ -916,3 +916,20 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
                             p.dir, 60, 82, ProbeCost.Cheap,
                             "Go linting: go vet (zero-config)"))
     return out
+
+
+def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
+    """TESTING, congruently with the syntax/lint floors: a config-free pytest run when the tree has
+    ``test_*.py`` / ``*_test.py`` files pytest auto-discovers — even with NO pyproject / pytest.ini /
+    tests dir. Without this a bare "script + test file" project (the exact shape a "write a script and
+    its tests" task produces) runs syntax + lint but NEVER its tests: a VACUOUS-GREEN gate that reports
+    "no error-class problems" while the tests are broken, and a satisfaction judge that can complete on
+    them. Config-DRIVEN runners (tox, nox, pytest-configured, uv/poetry-prefixed) still arrive via ranked
+    discovery; this is the guaranteed floor for the config-free case."""
+    from . import linterprobe  # local import: linterprobe never imports this module
+    root = Path(root)
+    py = linterprobe.collect_files(str(root), ["py"])
+    if any(Path(f).name.startswith("test_") or Path(f).name.endswith("_test.py") for f in py):
+        return [cand(ProbeKind.Test, ["python3", "-m", "pytest", "-q"], root, 60, 90,
+                     ProbeCost.Moderate, "Python tests: pytest auto-discovers test_*.py (zero-config)")]
+    return []
