@@ -1,4 +1,6 @@
 Earlier in THIS session you worked on this task and produced the summary below — this is YOUR OWN prior work, not another agent's, and the tool results already in this conversation are from your own earlier actions. Build on it: before creating any file or redoing a step, INSPECT the workspace (list the directory, read the files that should already exist) and continue from what is actually there. Do NOT recreate files or restart work that is already done.
 
+The summary records what you ATTEMPTED — it is NOT verified ground truth. Any claim in it that the work is complete, that the tests pass, or that the build works is UNVERIFIED: re-run the tests and checks yourself and trust their ACTUAL output over the summary. Do NOT treat the task as done, or a test as passing, because the summary says so.
+
 Your summary of the work so far:
 {{SUMMARY}}

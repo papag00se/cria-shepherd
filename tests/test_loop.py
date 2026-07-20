@@ -947,6 +947,26 @@ class LoopSelfCompactTests(unittest.TestCase):
         self.assertEqual(len(reasoner_calls), 1)                              # via the shared summarizer
         self.assertTrue(any("⟦ctx:rollup⟧" in str(m.get("content")) for m in out))
 
+    def test_rollup_is_grounded_by_the_real_gate_state(self):
+        # a summary that LAUNDERS an unverified "tests pass" claim is overridden by cria's real last
+        # check state, appended to the rolling briefing so the coder can't trust the false claim.
+        from cria.loop import Loop, PlanSession
+        from dataclasses import replace
+
+        def reasoner(body, rlog):
+            return json.dumps({"choices": [{"message": {"content": "all 7 tests now pass"}}]}).encode()
+
+        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100)
+        sess = PlanSession(plan=_plan(1))
+        sess.last_gate_red = True
+        sess.last_gate_flag = "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
+        big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
+        rollup = next(m["content"] for m in Loop(ctx)._self_compact(big, sess, 1, _Rlog())
+                      if "⟦ctx:rollup⟧" in str(m.get("content")))
+        self.assertIn("all 7 tests now pass", rollup)    # the laundered claim is still there...
+        self.assertIn("currently FAIL", rollup)          # ...but so is the real gate state, which wins
+        self.assertIn("400 != 200", rollup)
+
 
 class PeriodicGateTests(unittest.TestCase):
     _SHELL = {"tools": [{"type": "function", "function": {"name": "shell",

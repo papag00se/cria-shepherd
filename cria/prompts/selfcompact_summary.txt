@@ -7,5 +7,6 @@ Summarize the transcript below into a concise, factual briefing:
 
 Rules:
 - Name FILES and concrete ERRORS precisely — those are stable ground truth the agent should trust.
+- Only state that tests PASS or the build WORKS if the transcript shows the check ACTUALLY RAN and passed (a real command with passing output). If the coder merely ASSERTED success without a passing run in the transcript, record it as an unverified claim ("the coder reported the tests pass — not verified by a run"), never as established fact. A confident claim is not a passing test.
 - Do NOT present any function name, variable name, or code shape as "done — don't change it." The agent may be mid-refactor; a briefing that freezes a name it is in the middle of renaming makes it thrash between the old and new name.
 - Do NOT invent progress. Output only the briefing, no preamble.

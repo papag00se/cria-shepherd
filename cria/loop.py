@@ -783,9 +783,11 @@ class Loop:
         sess.summary (that's the cheap completed-STEP axis in the protected system message)."""
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
+            # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
+            # an unverified 'tests pass' claim is overridden by what the checks actually reported.
             lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"), selfcompact.serialize(mm), rlog,
-                                 phase="self-compact"),
+                                 phase="self-compact") + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction)
         if applied:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out))
@@ -2276,6 +2278,21 @@ def gate_error_text(outcome) -> str:
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:
         return prompts.render("ground_truth_failed", failed="\n".join(failed))
+    return ""
+
+
+def _briefing_gate_ground_truth(sess) -> str:
+    """A ground-truth check-state line appended to cria's rolling briefing, so a summary that LAUNDERS
+    the coder's unverified 'tests pass' claim into a fact is OVERRIDDEN by what the repo's own checks
+    actually reported. Silent when cria has no negative signal — it never manufactures a 'green' the gate
+    did not give (a red gate with findings, or a green-but-testless gate, are the only claims made)."""
+    if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
+        return ("\n\n⟦ctx:checks⟧ GROUND TRUTH — cria ran the repo's own checks and they currently FAIL:\n"
+                + sess.last_gate_flag.strip()
+                + "\nTrust this over any claim above that the work is done or the tests pass.")
+    if getattr(sess, "last_gate_testless", False):
+        return ("\n\n⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but executed NO tests, so "
+                "the tests are UNVERIFIED. Run them before treating them as passing.")
     return ""
 
 
