@@ -50,6 +50,29 @@ _CRIA_HOME_REFUSAL = (
     "the user something, just say it in your reply — do not write a file."
 )
 
+# Tool-call-dialect special-token sentinels that a weak model leaks into a shell command when it FUSES
+# two calls into one turn (observed live on gemma: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:
+# write_file{…`). These tokens never occur in a real command; when one survives into the command the call
+# is corrupt and un-runnable (bash dies on the unbalanced quotes), wasting the turn on a cryptic EOF. A
+# fused/broken call can't be reliably reconstructed, so we REFUSE it with guidance the model can act on —
+# the same "replace the bad call with a model-read refusal" pattern used for the dir guards. (Mirrors
+# massage.py's _GEMMA/_LFM2 dialect sentinels; kept local because massage imports writeproxy, not vice
+# versa.)
+_TC_DEBRIS = ("<|tool_call>", "<tool_call|>", '<|"|>', "<|tool_call_start|>", "<|tool_call_end|>")
+_MALFORMED_TC_REFUSAL = (
+    "Your last tool call was malformed: tool-call marker tokens leaked into the command text, so it is "
+    "not a runnable command — this usually means two calls got fused into one turn (or broken quoting). "
+    "Nothing was run. Send ONE clean tool call this turn: a single shell command as a plain JSON array of "
+    "strings, and stop after it."
+)
+
+
+def _has_tc_debris(arguments) -> bool:
+    """True when a tool call's raw arguments carry leaked tool-call special tokens — a fused/corrupt call
+    whose command would reach bash as garbage. Cheap substring scan over the raw string."""
+    s = arguments if isinstance(arguments, str) else ("" if arguments is None else str(arguments))
+    return any(tok in s for tok in _TC_DEBRIS)
+
 
 def _targets_cria_home(path: str) -> bool:
     """True when a synthetic tool's path resolves INTO cria's own home (~/.cria). Only absolute / ~
@@ -462,10 +485,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
             cmd = None
+            # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
+            # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
+            # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
+            if name == "shell" and _has_tc_debris(fn.get("arguments")):
+                cmd = f"printf %s {_qbash(_MALFORMED_TC_REFUSAL)}"
+                if rlog is not None:
+                    rlog.emit("writeproxy.blocked_malformed_call", tool=name)
             # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
             # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
             # tool or raw shell command reaching outside the workspace beyond [safety] permission.
-            if (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
+            elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
                 cmd = f"printf %s {_qbash(reason)}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_external", tool=name, level=external_dir_permission)

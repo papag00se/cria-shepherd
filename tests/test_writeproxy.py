@@ -115,6 +115,27 @@ class TranslateWriteTests(unittest.TestCase):
             self.assertEqual(represent_inbound(hist)[-1]["content"], failed)   # never fabricated success
 
 
+class MalformedFusedCallTests(unittest.TestCase):
+    """A weak model fuses two calls into one turn, leaking tool-call marker tokens into the shell
+    command (gemma live: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:write_file{…`). It can't
+    be reconstructed and dies in bash as a cryptic EOF — refuse it with guidance instead of running it."""
+
+    def test_fused_call_debris_is_refused_with_guidance(self):
+        comp = _call("shell", {"command": ["bash", "-lc", 'pytest"]}<tool_call|><|tool_call>call:write_file{content:']})
+        translate_outbound(comp, _CMD_SHELL, injected=set())
+        cmd = _lowered_cmd(comp)
+        self.assertIn("malformed", cmd.lower())
+        self.assertIn("ONE clean tool call", cmd)
+        self.assertNotIn("<|tool_call>", cmd)          # the debris is gone — the refusal replaced the call
+
+    def test_clean_shell_call_is_untouched(self):
+        comp = _call("shell", {"command": ["bash", "-lc", "pytest test_lambda.py"]})
+        translate_outbound(comp, _CMD_SHELL, injected=set())
+        cmd = _lowered_cmd(comp)
+        self.assertIn("pytest test_lambda.py", cmd)
+        self.assertNotIn("malformed", cmd.lower())
+
+
 class TranslateEditReadTests(unittest.TestCase):
     def test_edit_file_lowers_to_python_replace_and_round_trips(self):
         comp = _call("edit_file", {"path": "m.py", "old_string": 'x, "id"}', "new_string": 'x, "id": id}'})
