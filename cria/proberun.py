@@ -110,6 +110,13 @@ PROBE_OUTPUT_CAP_BYTES = 16384
 # shell-tool result; scrape_exit() recovers it.
 PROBE_EXIT_SENTINEL = "EXIT:"
 # coreutils timeout(1) semantics standing in for upstream's kill loop.
+# A probe runs with its output CAPTURED (not a tty), so width-aware tools fall back to 80 columns and
+# TRUNCATE. pytest's short-summary is the worst offender: `FAILED …::test - AssertionError: 400 != 200`
+# becomes `… - Asserti…`, so the gate parser (and every reasoner it feeds) sees the error CLASS but not
+# the actual expected-vs-got — the one thing that diagnoses a test failure. Set COLUMNS wide so the tool
+# prints its full first line; the byte cap above still bounds total output. (COLUMNS is the standard
+# override shutil.get_terminal_size / pytest honor when there's no tty.)
+PROBE_TERMINAL_COLUMNS = 1000
 TIMEOUT_KILL_GRACE_S = 5     # timeout -k 5: SIGKILL follow-up for SIGTERM-ignoring tools
 TIMEOUT_EXIT_CODE = 124      # timeout(1) fired -> upstream's timed_out=true branch
 NOT_EXECUTABLE_EXIT_CODE = 126  # shell: found but not executable (permission/broken interpreter)
@@ -485,7 +492,7 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     # the last half, so BOTH an early and a late failure land in the parseable capture.
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
-        f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} "
+        f"__cria_out=$(COLUMNS={PROBE_TERMINAL_COLUMNS} timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} "
         f"</dev/null 2>&1); __cria_ec=$?; "
         f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c | tr -cd '0-9'); "
         f"if [ \"$__cria_n\" -le {PROBE_OUTPUT_CAP_BYTES} ]; then "

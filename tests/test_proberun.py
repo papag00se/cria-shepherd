@@ -412,6 +412,7 @@ class TestComposeProbeCommand(unittest.TestCase):
         line = compose_probe_command(c, 10.0)
         half = PROBE_OUTPUT_CAP_BYTES // 2
         self.assertIn("cd '/tmp/with space' && ", line)        # cwd, quoted
+        self.assertIn("COLUMNS=1000 timeout", line)            # wide COLUMNS so pytest doesn't width-clip its summary
         self.assertIn("timeout -k 5 10 echo 'a b'", line)      # hard timeout + quoted argv
         self.assertIn("</dev/null 2>&1", line)                 # stdin null, merged streams
         self.assertIn(f"head -c {half}", line)                 # head+tail budget: an EARLY failure survives
