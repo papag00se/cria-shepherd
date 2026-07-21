@@ -2600,6 +2600,16 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     from byte N' isn't needed (and the truncated text is unreliable anyway).
 
     ``coder_chat`` is injected so the loop and the plan-off proxy path share ONE guard."""
+    # SELF-TRUNCATED write: the model cut its own write_file off mid-content (a normal `tool_calls`
+    # finish, not `length` — so `is_truncated` never sees it), leaving the `content` string unclosed.
+    # massage's arg-recovery refuses to salvage a partial, so the arguments are still malformed here.
+    # Refuse it the SAME way as a length-truncation: never lower a half-written file to disk. The turn
+    # then reads as non-acting and the caller gates on ground truth rather than a broken file.
+    if not massage.is_truncated(coder) and massage.has_incomplete_write_args(coder):
+        rlog.emit("loop.incomplete_write_dropped", step=step)
+        _drop_tool_calls(coder)
+        _add_note(coder, "write call was cut off mid-content — partial write refused (re-send the complete file)")
+        return coder
     attempt = 0
     conv = list(body.get("messages") or [])
     while massage.is_truncated(coder) and attempt < MAX_TRUNCATION_RETRIES:

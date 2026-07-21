@@ -856,7 +856,14 @@ _CONTENT_RE = re.compile(r'"(?:content|contents|text|body)"\s*:\s*"')
 def _recover_write_args(raw: str) -> dict | None:
     """Last-resort recovery of a write_file-style call whose `content` value has
     raw newlines / unescaped quotes that break JSON: pull the path, then take the
-    content up to the closing quote before the final `}`."""
+    content up to the closing quote before the final `}`.
+
+    Recovers ONLY a structurally COMPLETE call. A call whose `content` string was cut
+    off mid-value (the model self-truncated its own generation — a normal `tool_calls`
+    finish, not `length`, so `is_truncated` never sees it) must NOT be salvaged: the
+    recovered body would be a partial file, and lowering it to disk writes a broken file
+    that reports success. Refuse (→ None) when the content value isn't properly closed;
+    :func:`has_incomplete_write_args` then flags it so the loop drops the partial write."""
     pm = _PATH_RE.search(raw)
     if not pm:
         return None
@@ -865,11 +872,43 @@ def _recover_write_args(raw: str) -> dict | None:
     if cm:
         tail = raw[cm.end():]
         end = tail.rfind('"')  # closing quote of the content value
-        body = tail[:end] if end >= 0 else tail
+        if end < 0:
+            return None  # content value never closed → truncated mid-content
+        # The char after the closing quote must terminate the object (`}`) or start the
+        # next key (`,`). Anything else means `rfind` picked a quote INSIDE the content
+        # because the real closing quote was never emitted — a cut-off / truncated write.
+        if tail[end + 1:].lstrip()[:1] not in ("}", ","):
+            return None
+        body = tail[:end]
         # undo the escapes that WERE applied; raw newlines/quotes pass through as-is
         body = body.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
         args["content"] = body
     return args
+
+
+# Content-bearing file mutations. A cut-off call to one of these must never be lowered to disk
+# (the content rides verbatim into the byte-exact write) — kept in sync with writeproxy's names.
+_MUTATION_TOOLS = ("write_file", "create_file", "edit_file", "str_replace", "apply_patch")
+
+
+def has_incomplete_write_args(completion: dict) -> bool:
+    """A content-bearing file-mutation call whose `arguments` are STILL unparseable after repair —
+    the model cut the call off mid-content (a normal `tool_calls` finish, not `length`), so
+    :func:`_recover_write_args` refused to salvage a partial. Shipping it would lower a broken,
+    half-written file to disk and report success. The loop refuses it like a length-truncation."""
+    for ch in completion.get("choices", []):
+        for tc in (ch.get("message") or {}).get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") not in _MUTATION_TOOLS:
+                continue
+            raw = fn.get("arguments")
+            if not isinstance(raw, str):
+                continue
+            try:
+                json.loads(raw, strict=False)
+            except (json.JSONDecodeError, ValueError):
+                return True  # repair could not close it → incomplete/malformed mutation
+    return False
 
 
 # ------------------------------------------------------------------ apply_patch

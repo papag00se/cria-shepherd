@@ -350,6 +350,36 @@ class TruncationTests(unittest.TestCase):
         self.assertFalse(is_truncated({"choices": [{"finish_reason": "stop", "message": {}}]}))
 
 
+class IncompleteWriteTests(unittest.TestCase):
+    """A write_file call the model cut off mid-content must NOT be salvaged into a partial file."""
+
+    def test_recover_refuses_truncated_content(self):
+        from cria.massage import _recover_write_args
+        cut = r'{"path":"r.py","content":"print(f\"a: {r[\'k'  # unclosed content, invalid \' escape
+        self.assertIsNone(_recover_write_args(cut))
+
+    def test_recover_keeps_complete_messy_content(self):
+        # A COMPLETE call whose content merely has a raw newline + unescaped quotes is still recovered.
+        from cria.massage import _recover_write_args
+        messy = '{"path":"a.py","content":"print(\\"hi\\")\nx = \\"q\\"here"}'
+        got = _recover_write_args(messy)
+        self.assertEqual(got, {"path": "a.py", "content": 'print("hi")\nx = "q"here'})
+
+    def test_flags_incomplete_after_repair(self):
+        from cria.massage import repair_tool_args, has_incomplete_write_args
+        cut = r'{"path":"r.py","content":"print(f\"a: {r[\'k'
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"function": {"name": "write_file", "arguments": cut}}]}}]}
+        repair_tool_args(comp)                       # recovery refuses → args stay malformed
+        self.assertTrue(has_incomplete_write_args(comp))
+
+    def test_complete_write_not_flagged(self):
+        from cria.massage import has_incomplete_write_args
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"function": {"name": "write_file", "arguments": '{"path":"a.py","content":"print(1)"}'}}]}}]}
+        self.assertFalse(has_incomplete_write_args(comp))
+
+
 class AddFileTests(unittest.TestCase):
     def test_pure_add_becomes_write_file(self):
         patch = "*** Begin Patch\n*** Add File: new.py\n+import os\n+print(os.getcwd())\n*** End Patch"

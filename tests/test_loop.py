@@ -2243,6 +2243,27 @@ class SharedGuardTests(unittest.TestCase):
         self.assertEqual(calls, [])  # not truncated → no retry, no coder call
         self.assertEqual(out["choices"][0]["message"]["content"], "done")
 
+    def test_guard_truncation_refuses_self_truncated_write(self):
+        # The model cut its OWN write_file off mid-content: finish_reason is "tool_calls" (NOT
+        # "length", so is_truncated never sees it), and the `content` string is unclosed with an
+        # invalid `\'` escape — exactly the api.handle.me run that wrote a broken resolver.py.
+        # cria must NOT lower the partial to disk; it drops the call so the turn gates on truth.
+        from cria.loop import guard_truncation
+        raw = r'{"path":"/x/resolver.py","content":"print(f\"hi\")\n    print(f\"a: {r[\'k'  # cut off mid-f-string
+        trunc = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "w1", "function": {"name": "write_file", "arguments": raw}}]}, "finish_reason": "tool_calls"}]}
+        calls = []
+
+        def coder_chat(body, rlog):  # must NOT be called — this isn't a length-cap retry
+            calls.append(1)
+            return b"{}"
+
+        rlog = _Rlog()
+        out = guard_truncation(dict(trunc), {"messages": [], "tools": None}, coder_chat, rlog)
+        self.assertEqual(calls, [])                                             # no incremental-write retry
+        self.assertFalse(out["choices"][0]["message"].get("tool_calls"))       # partial write refused
+        self.assertIn("loop.incomplete_write_dropped", rlog.kinds())
+
 
 class ReframePreambleTests(unittest.TestCase):
     """The harness env-context/instructions preamble is re-presented in cria's own clean voice
