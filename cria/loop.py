@@ -1253,6 +1253,10 @@ class Loop:
         if steer:  # no hidden guards: surface WHICH guard steered the coder
             _add_note(comp, f"steered the coder — {sess.steer_source or 'guard'}")
             sess.steer_source = ""
+        # SEARCH-LOOP escape — BOTH paths (this synthetic/plan-off path is the live one with the planner
+        # off; _work is the plan-loop twin). A run of near-identical web_searches with no fetch → cria
+        # fetches FOR it (reasoner picks the url from the full context, we swap the search for a web_fetch).
+        comp = guard_search_escalation(sess, comp, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         if _has_tool_calls(comp):
             sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
             return comp  # acting → forward
