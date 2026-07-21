@@ -3,7 +3,7 @@ import unittest
 
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
-                       completion_to_sse, session_key)
+                       completion_to_sse, guard_rumination, guard_truncation, session_key)
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
 
@@ -224,11 +224,19 @@ class GuardTests(unittest.TestCase):
         from cria.loop import Loop
         return Loop(_ctx(coder, _Scripted([_verdict()])))
 
+    # The coder-turn guards are module functions (run by the shared _coder_turn); test them with the
+    # loop's watched coder_chat — exactly what _coder_turn passes them.
+    def _trunc(self, rec, coder, idx, rlog):
+        return guard_truncation(coder, _framed(), self._loop(rec)._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
+
+    def _rum(self, rec, coder, idx, rlog):
+        return guard_rumination(coder, _framed(), self._loop(rec)._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
+
     # -------- truncation guard --------
     def test_truncation_steers_incremental_and_recovers(self):
         rec = _Recorder([_toolcall()])  # the retry succeeds with a clean tool call
         rlog = _Rlog()
-        out = self._loop(rec)._guard_truncation(_trunc_write(), _framed(), idx=4, rlog=rlog)
+        out = self._trunc(rec, _trunc_write(), 4, rlog)
         self.assertTrue(out["choices"][0]["message"].get("tool_calls"))       # recovered (retry's call)
         self.assertIn("loop.truncated", rlog.kinds())
         ev = dict(rlog.events)["loop.truncated"]
@@ -239,7 +247,7 @@ class GuardTests(unittest.TestCase):
     def test_truncation_exhausted_refuses_partial_write(self):
         rec = _Recorder([_trunc_write()])  # ALWAYS truncates
         rlog = _Rlog()
-        out = self._loop(rec)._guard_truncation(_trunc_write(), _framed(), idx=4, rlog=rlog)
+        out = self._trunc(rec, _trunc_write(), 4, rlog)
         self.assertEqual(rec.calls, 3)                                        # capped at MAX_TRUNCATION_RETRIES
         self.assertIn("loop.truncated_dropped", rlog.kinds())
         self.assertFalse(out["choices"][0]["message"].get("tool_calls"))      # partial write NOT forwarded
@@ -251,7 +259,7 @@ class GuardTests(unittest.TestCase):
         trunc_noargs = {"choices": [{"message": {"role": "assistant", "content": "x"}, "finish_reason": "length"}]}
         rec = _Recorder([_toolcall()])
         rlog = _Rlog()
-        out = self._loop(rec)._guard_truncation(trunc_noargs, _framed(), idx=2, rlog=rlog)
+        out = self._trunc(rec, trunc_noargs, 2, rlog)
         self.assertEqual(rec.calls, 0)                                        # no write path → no retry
         self.assertIn("loop.truncated_dropped", rlog.kinds())
 
@@ -259,7 +267,7 @@ class GuardTests(unittest.TestCase):
     def test_rumination_refocuses_and_recovers(self):
         rec = _Recorder([_toolcall()])
         rlog = _Rlog()
-        out = self._loop(rec)._guard_rumination(_ruminating(), _framed(), idx=4, rlog=rlog)
+        out = self._rum(rec, _ruminating(), 4, rlog)
         self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
         self.assertIn("loop.rumination", rlog.kinds())
         self.assertIn("RUMINATION GUARD", rec.last_user())
@@ -268,7 +276,7 @@ class GuardTests(unittest.TestCase):
     def test_rumination_exhausted_normalizes_and_stops(self):
         rec = _Recorder([_ruminating()])  # never focuses
         rlog = _Rlog()
-        out = self._loop(rec)._guard_rumination(_ruminating(), _framed(), idx=4, rlog=rlog)
+        out = self._rum(rec, _ruminating(), 4, rlog)
         self.assertEqual(rec.calls, 3)
         self.assertEqual(out["choices"][0]["finish_reason"], "stop")         # sentinel normalized on exit
         self.assertNotIn("cria_rumination", out)
@@ -2939,23 +2947,33 @@ def _synth(n=1):
 
 
 class SingleItemMethodTests(unittest.TestCase):
-    """Phase 2: the plan-off direct-coder path relocated onto Loop. These exercise the moved METHODS
-    directly (dormant until phase 3 wires the synthetic dispatch) — the server keeps its own copy still."""
+    """The SHARED _coder_turn (one guarded coder call behind BOTH driver halves — _work and the plan-off
+    _drive_single_item — so a coder-turn guard can never land in one and miss the other)."""
 
     def _reasoner_chat(self, reply):
         return lambda b, r: json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
 
-    # ---- _run_single_coder -------------------------------------------------------------------
-    def test_run_single_coder_forwards_toolcall_and_tracks(self):
+    # ---- _coder_turn (the shared coder call) --------------------------------------------------
+    def test_coder_turn_forwards_toolcall_and_tracks(self):
         loop = _single_loop(_Scripted([_toolcall()]))
         sess = _synth()
-        comp = loop._run_single_coder({"messages": [], "tools": [_SHELL]}, sess, _Rlog())
+        comp = loop._coder_turn(sess, {"messages": [], "tools": [_SHELL]}, {"messages": []}, step=1, rlog=_Rlog())
         self.assertTrue(comp["choices"][0]["message"]["tool_calls"])   # acting turn forwarded
         self.assertIsNotNone(sess.recent_actions)                      # repetition tracking ran
 
-    def test_run_single_coder_none_on_decode_fail(self):
+    def test_coder_turn_empty_on_decode_fail(self):
         loop = _single_loop(lambda b, r: b"not json")
-        self.assertIsNone(loop._run_single_coder({"messages": [], "tools": []}, _synth(), _Rlog()))
+        comp = loop._coder_turn(_synth(), {"messages": [], "tools": []}, {"messages": []}, step=1, rlog=_Rlog())
+        self.assertFalse(_has_tool_calls(comp))                        # decode fail → empty 'done', gate handles it
+
+    def test_both_driver_halves_route_through_the_shared_coder_turn(self):
+        # THE "both paths" INVARIANT (this is the regression guard for the search-escape divergence): a
+        # coder-turn guard added to _coder_turn reaches BOTH halves. If a future edit re-inlines a coder
+        # call in one half, a new guard could silently miss it again — this catches that.
+        import inspect
+        for method in ("_work", "_drive_single_item", "_gate_single_done"):
+            src = inspect.getsource(getattr(Loop, method))
+            self.assertIn("_coder_turn", src, f"{method} must route its coder call through _coder_turn")
 
     # ---- _reasoned_reanchor ------------------------------------------------------------------
     def test_reasoned_reanchor_authors_else_canned(self):

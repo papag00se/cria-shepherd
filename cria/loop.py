@@ -681,6 +681,35 @@ class Loop:
 
     # ------------------------------------------------------------------ work
 
+    def _coder_turn(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog) -> dict:
+        """ONE guarded coder call — the shared core of BOTH driver halves (``_work`` multi-item and
+        ``_drive_single_item`` synthetic/plan-off), so a coder-turn guard can NEVER land in one and
+        silently miss the other (the divergence that killed the search-escape on the live path). The
+        caller owns the framing (before) and the GATE (after — the ONE thing that legitimately differs:
+        multi-step probe/`_verify` vs single `_gate_single_done`); this owns everything between:
+        advertise the completion tool → call the coder → normalise a `task_complete` → rumination +
+        truncation guards → banner/reasoning hygiene → track repetition + write-streak on an acting turn
+        → the search-loop escape. Returns the guarded completion ({} on a decode failure — a no-tool
+        'done' the caller's gate then handles)."""
+        _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
+        rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
+        coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
+        coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
+        coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
+        _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
+        _record_reasoning(sess, coder)  # keep the coder's thinking for the quiet-flail detector
+        if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
+            _clean_completion(coder, self._ctx.coder_role)
+        # SEARCH-LOOP escape: a run of near-identical web_searches with no fetch → cria fetches FOR it
+        # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
+        # tracking, so the repetition/write-streak see what's actually FORWARDED.
+        coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+        if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
+            guard_track_repetition(sess, coder, rlog, step=step)
+            guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
+        return coder
+
     def _work(self, sess: PlanSession, key: str, body: dict, rlog) -> dict:
         item = sess.plan.current()
         if item is None:  # every step done
@@ -741,27 +770,11 @@ class Loop:
             self._ctx.coder_role.apply(framed)
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
 
-        _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
-        rlog.phase = f"coder-s{idx}"  # label the call capture with the role + step
-        coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
-        coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
-        coder = self._guard_rumination(coder, framed, idx, rlog)  # reasoning-loop → refocus, don't accept empty
-        coder = self._guard_truncation(coder, framed, idx, rlog)  # cut-off write → incremental, don't ship partial
-        _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted (both
-        #   forwarded to the harness AND captured below as pending_coder_text for the critic)
-        _record_reasoning(sess, coder)  # keep the coder's thinking for the quiet-flail detector
-        if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
-            _clean_completion(coder, self._ctx.coder_role)
+        coder = self._coder_turn(sess, framed, body, step=idx, rlog=rlog)  # SHARED coder turn (see _drive_single_item)
         if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
             _add_note(coder, f"steered the coder — {steered}")
-        # SEARCH-LOOP escape: a run of near-identical web_searches with no fetch → cria fetches FOR it
-        # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
-        # forward, so the substituted fetch is what the harness runs. Any non-search action resets the streak.
-        coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
-            self._track_repetition(sess, coder, idx, rlog)
-            self._track_write_streak(sess, coder, idx, rlog, body.get("messages"))
             return coder  # coder is acting → forward; the harness runs it, then loops back here
 
         # coder produced no tool call → it thinks the step is done.
@@ -791,11 +804,6 @@ class Loop:
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge(sess, key, body, reason, rlog)
 
-    def _guard_rumination(self, coder: dict, framed: dict, idx: int, rlog) -> dict:
-        """The loop's coder step — delegates to the shared :func:`guard_rumination` with the
-        loop's watched coder call, so the plan-off proxy path runs the IDENTICAL guard."""
-        return guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
-
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog) -> list[dict]:
         """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
         into a ⟦ctx:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
@@ -812,10 +820,6 @@ class Loop:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out))
             return out
         return msgs
-
-    def _guard_truncation(self, coder: dict, framed: dict, idx: int, rlog) -> dict:
-        """The loop's coder step — delegates to the shared :func:`guard_truncation`."""
-        return guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=idx, phase=f"coder-s{idx}")
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
         """The ground-truth probe cria emitted last turn has run — read its result and
@@ -924,11 +928,6 @@ class Loop:
         sess.nudge_reason = reason
         return self._work(sess, key, body, rlog)
 
-    def _track_repetition(self, sess: PlanSession, coder: dict, idx: int, rlog) -> None:
-        """The loop's coder step — delegates to the shared :func:`guard_track_repetition` so the
-        plan-off path runs the IDENTICAL detection."""
-        guard_track_repetition(sess, coder, rlog, step=idx)
-
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
         to the SHARED authors (so the plan-off path runs the identical reasoning) on the routed reasoner
@@ -942,10 +941,6 @@ class Loop:
                                    root, step_text, sess, outcome, body, rlog)
         return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, sess, body, rlog,
                             condition="wheel_spin", outcome=outcome, step_text=step_text)
-
-    def _track_write_streak(self, sess: PlanSession, coder: dict, idx: int, rlog, messages=None) -> None:
-        """The loop's coder step — delegates to the shared :func:`guard_track_write_streak`."""
-        guard_track_write_streak(sess, coder, rlog, step=idx, messages=messages)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
@@ -1245,18 +1240,12 @@ class Loop:
             if rep.applied:
                 framed = {**framed, "messages": trimmed}
                 rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
-        comp = self._run_single_coder(framed, sess, rlog)
-        if comp is None:
-            return None
+        comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog)  # SHARED coder turn (see _work)
         if rewritten:  # no hidden guards: surface that cria re-anchored the turn
             _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface WHICH guard steered the coder
             _add_note(comp, f"steered the coder — {sess.steer_source or 'guard'}")
             sess.steer_source = ""
-        # SEARCH-LOOP escape — BOTH paths (this synthetic/plan-off path is the live one with the planner
-        # off; _work is the plan-loop twin). A run of near-identical web_searches with no fetch → cria
-        # fetches FOR it (reasoner picks the url from the full context, we swap the search for a web_fetch).
-        comp = guard_search_escalation(sess, comp, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         if _has_tool_calls(comp):
             sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
             return comp  # acting → forward
@@ -1271,11 +1260,9 @@ class Loop:
             sess.leg0_nudged = True
             rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
             conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=prompts.load("leg0_nudge"))}]
-            recall = self._run_single_coder({**framed, "messages": conv}, sess, rlog)
-            if recall is not None:
-                comp = recall
-                if _has_tool_calls(comp):
-                    return comp  # it acted after the nudge
+            comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
+            if _has_tool_calls(comp):
+                return comp  # it acted after the nudge
         probe = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)  # body, NOT framed
         if probe is not None:
             sess.done_probe = True
@@ -1290,28 +1277,6 @@ class Loop:
             sess.steer_source = "completion critic (task not fully done)"
             return self._renudge(sess, key, body, prompts.render("done_incomplete", reason=critic_reason), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
-
-    def _run_single_coder(self, framed: dict, sess: PlanSession, rlog) -> dict | None:
-        """One guarded + cleaned coder call on the single-item path (shared by the main turn and the
-        LEG0 re-call): call → rumination + truncation guards → hygiene → repetition/wheel-spin tracking
-        if it acted. Uses the loop's watched coder call (``ctx.coder_chat`` already carries the rumination
-        watch). Returns the completion, or None on a decode failure."""
-        _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
-        try:
-            comp = massage.apply(json.loads(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        comp = _normalize_completion(comp, rlog)  # a task_complete call → a plain 'done' (or dropped)
-        comp = guard_rumination(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
-        comp = guard_truncation(comp, framed, self._ctx.coder_chat, rlog, phase="direct-coder")
-        _strip_completion_banners(comp)
-        _record_reasoning(sess, comp)  # keep the coder's thinking for the quiet-flail detector
-        if self._ctx.coder_role is not None:
-            _clean_completion(comp, self._ctx.coder_role)
-        if _has_tool_calls(comp):
-            guard_track_repetition(sess, comp, rlog)
-            guard_track_write_streak(sess, comp, rlog, messages=framed.get("messages"))
-        return comp
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
         """The task-level reasoner critic on a GREEN single-item 'done' (parity with the loop's _verify):
