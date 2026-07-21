@@ -2579,6 +2579,48 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         author_steer(cap, None, ws, gs, {"messages": []}, _Rlog(), condition="thrash")
         self.assertIn("3 rounds", seen["u"])       # gate_stall count is in the trigger
 
+    def test_session_drops_harness_frame_but_keeps_the_real_turns(self):
+        # The serialized session handed to the reasoner must NOT carry the harness's own agent prompt
+        # (Codex ships ~7.8K tokens of update_plan/apply_patch/planning boilerplate — a full quarter of
+        # the steer prompt, and pure noise to a reasoner with its own supervisor prompt). It's the same
+        # drop _frame_for_item does for the coder. Every real user/assistant/tool turn stays verbatim.
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        body = {"messages": [
+            {"role": "system", "content": "You are a coding agent running in the Codex CLI. Use update_plan and apply_patch."},
+            {"role": "developer", "content": "High-quality plans Example 1: Add CLI entry"},
+            {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
+            {"role": "assistant", "content": "web_fetch swagger.json"},
+            {"role": "tool", "content": "HTTP 200 OK swagger schema Handle"},
+        ]}
+        seen = {}
+
+        def cap(b, r):
+            seen["u"] = b["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+
+        author_steer(cap, None, ws, gs, body, _Rlog(), condition="wheel_spin")
+        u = seen["u"]
+        self.assertNotIn("Codex CLI", u)            # harness agent prompt GONE
+        self.assertNotIn("update_plan", u)          # its tool boilerplate GONE
+        self.assertNotIn("High-quality plans", u)   # developer boilerplate GONE
+        self.assertIn("Ada Handle", u)              # the real task KEPT
+        self.assertIn("swagger.json", u)            # the real tool call KEPT
+        self.assertIn("HTTP 200", u)                # the real tool result KEPT
+
+    def test_drop_harness_frame_keeps_non_frame_roles(self):
+        from cria.loop import _drop_harness_frame
+        msgs = [
+            {"role": "system", "content": "harness agent prompt"},
+            {"role": "developer", "content": "more harness"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "did a thing"},
+            {"role": "tool", "content": "result"},
+        ]
+        out = _drop_harness_frame(msgs)
+        self.assertEqual([m["role"] for m in out], ["user", "assistant", "tool"])
+
 
 class ReasonedRedirectTests(unittest.TestCase):
     """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner

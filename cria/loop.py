@@ -1545,6 +1545,21 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _drop_harness_frame(messages: list[dict]) -> list[dict]:
+    """Drop the harness's own agent system/developer prompt from a session about to be serialized for a
+    reasoner. When cria hands a critic/steer-author the raw ``body`` transcript, message[0] is the
+    harness's coding-agent boilerplate (Codex ships ~7.8K tokens of it — ``update_plan``/``apply_patch``
+    docs, planning examples ×2, plugin blurbs); it is a full QUARTER of the steer prompt and pure noise
+    to a reasoner that has its OWN supervisor system prompt. The coder path already drops exactly this
+    (:func:`_frame_for_item` — cria owns the system prompt); this is the same drop for the reasoner path.
+
+    This removes the FRAME only — every ``user``/``assistant``/``tool`` turn (the real task, every tool
+    call and its result) is kept verbatim — so it is NOT the 'curated slice' :func:`author_steer` warns
+    against (a curated view once made a steer hallucinate a path). Harness-agnostic: any role the harness
+    puts its agent prompt in (``system``/``developer``) is dropped."""
+    return [m for m in messages if m.get("role") not in ("system", "developer")]
+
+
 # Codex's VS Code extension compacts by APPENDING this user turn (it keeps the original task as the
 # root, so the structural rewrite detection never fires) and frames the model's OWN earlier summary
 # as "another language model's". That misattribution makes a small model disown its prior work and
@@ -2345,17 +2360,20 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                  condition: str, outcome=None, truth_text: str = "", step_text: str = "",
                  reasoning_window=None) -> str | None:
     """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
-    FULL grounded picture — the real session (scrubbed of cria's own plumbing), the churned files' real
-    ON-DISK bytes, the repo's check output, and (for the flail trigger) the coder's recent private
-    reasoning — and let it diagnose why the coder is stuck and give ONE concrete, grounded next step.
-    Returns the directive, or ``None`` when the reasoner judges the coder is actually progressing
-    (``NOT_STUCK``) or yields nothing — the caller decides whether to fall back or stay silent.
+    FULL grounded picture — the real session (scrubbed of cria's own plumbing AND the harness's own agent
+    prompt), the churned files' real ON-DISK bytes, the repo's check output, and (for the flail trigger)
+    the coder's recent private reasoning — and let it diagnose why the coder is stuck and give ONE
+    concrete, grounded next step. Returns the directive, or ``None`` when the reasoner judges the coder is
+    actually progressing (``NOT_STUCK``) or yields nothing — the caller decides whether to fall back.
 
-    We hand it the real session rather than a curated slice: the context floor trims the request to the
-    window anyway, so there is no size reason to chop it, and a curated view is exactly what made an
-    earlier steer invent a path. Grounded in what actually happened, it cannot hallucinate a filesystem
-    it cannot see."""
-    session = selfcompact.serialize(probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", []))))
+    We hand it the real session rather than a curated slice: a curated view is exactly what made an
+    earlier steer invent a path. The one thing dropped is the harness's agent system prompt
+    (:func:`_drop_harness_frame`) — that is the coder's FRAME, not part of what the coder DID, and the
+    reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
+    the curation the note above warns against. Grounded in what actually happened (and no longer padded
+    with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
+    session = selfcompact.serialize(
+        _drop_harness_frame(probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", [])))))
     disk = _fresh_disk_facts(workspace_root, getattr(gs, "recent_writes", None), getattr(gs, "spin_path", "")) \
         if gs is not None else ""
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
