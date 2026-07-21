@@ -2078,8 +2078,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             rlog.emit("loop.redirect_probe", step=step)
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
         gs.nudge_reason = prompts.render(
-            "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N,
-            repeat_action=gs.repeat_action, ground_truth="")
+            "redirect_canned", repeat_action=gs.repeat_action, ground_truth="")
         gs.steer_source = "repetition guard"
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
@@ -2333,7 +2332,7 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
     just the 'you repeated an action, do something different' steer."""
     gt = guard_ground_truth(outcome)
     return prompts.render(
-        "redirect_canned", repeat_n=REPEAT_FINGERPRINT_N, repeat_action=gs.repeat_action,
+        "redirect_canned", repeat_action=gs.repeat_action,
         ground_truth=(f"{gt}\n\n" if gt else ""))
 
 

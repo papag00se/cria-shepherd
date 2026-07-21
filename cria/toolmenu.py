@@ -144,10 +144,10 @@ def cheatsheet(tools) -> str | None:
         lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
     if not lines:
         return None
-    body = frag["header"] + "\n" + "\n".join(lines)
-    if shell is not None and (names & {"write_file", "read_file", "list_dir", "web_search", "web_fetch"}):
-        body += "\n" + prompts.fill(frag["footer"], shell=shell["name"])  # worth saying only when a focused tool exists to prefer
-    return body
+    # No footer recap: the header ("prefer a purpose-built tool before a raw shell command") and the
+    # shell entry ("LAST RESORT … don't use it to read/write/list when a focused tool exists") already
+    # carry the prefer-tool rule — a third restatement was the same rule a 5th way to a small model.
+    return frag["header"] + "\n" + "\n".join(lines)
 
 
 def _path_arg(tool, default: str = "path") -> str:

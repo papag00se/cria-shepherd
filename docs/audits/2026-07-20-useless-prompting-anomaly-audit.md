@@ -54,41 +54,41 @@ Composing a judge prompt is *not* the coder's read — bounding it there breaks 
   `developer` roles but kept Codex's `<environment_context>` + `# AGENTS.md <INSTRUCTIONS>…` **user**
   block verbatim (~290 tok/steer). Now maps the coder path's `reframe_preamble` over each kept turn, so
   the reasoner sees cria's clean cwd/shell/date voice instead of raw XML. 1002 tests.
-- [ ] **Dead render kwarg** *(dim 3, LOW)*. `redirect_canned` is rendered with `repeat_n=…`
-  (`loop.py:2077`, `:2332`) but the template has no `{{REPEAT_N}}` slot (silently dropped). Drop the
-  kwarg at both sites. *(deferred — trivial, no behavior change)*
+- [x] **Dead render kwarg** *(dim 3, LOW)*. **FIXED 2026-07-20.** `redirect_canned` was rendered with
+  `repeat_n=…` at both sites but the template has no `{{REPEAT_N}}` slot; dropped the dead kwarg.
 - [ ] **Confirm the seed fix is live.** A capture (`0051-reasoner.prompt.txt`) still showed the ~30K
   harness preamble (dim 4, LOW #5) — but that capture predates the `7c656dd` deploy (cria not yet
   restarted). Verify post-restart that the steer session is actually frame-stripped; no code change
   expected.
 
-## Tier 2 — structural cleanup, scoped
+## Tier 2 — prevalence-checked 2026-07-20 (measured across all 9 real sessions before acting)
 
-- [ ] **Tool/editing guidance is triplicated into every coder turn** *(dim 3 HIGH + dim 5 MED, ~1.5 KB/
-  turn)*. The prefer-a-tool-over-shell rule appears ~5× (`coder_system.txt` "# Tools" + `cheatsheet.txt`
-  header/footer/shell-entry) and the edit_file-VERBATIM/write-whole-file policy appears in
-  `coder_system.txt`, `cheatsheet.txt`, AND `tool_descs.txt`. **Fix:** delete `coder_system` "# Tools"
-  (covered by the cheatsheet header), cut "# Editing files" to the one non-mechanical rule (don't
-  rewrite a whole file for a one-line change), drop the cheatsheet footer + its duplicated edit policy —
-  let the schemas own mechanics. Re-test the coder path after.
+- [~] **Tool/editing guidance is triplicated into every coder turn** *(dim 3 HIGH + dim 5 MED)*.
+  **PARTIALLY FIXED.** Frequency: every coder turn (264 calls). Only the SAFE part was taken: dropped
+  the `cheatsheet` **footer** (`toolmenu.py:148-149` + template key) — it restated the cheatsheet's own
+  header + shell-entry, which are always injected in the same fragment (same on/off gate), so 4×
+  reinforcement of the prefer-tool rule remains and no coverage is lost. **Left (footgun-prone):**
+  trimming `coder_system.txt` "# Tools"/"# Editing files" — the `cheatsheet` is CONFIG-GATED
+  (`[tools] cheatsheet`); with it off, coder_system becomes the sole carrier of the prefer-tool /
+  edit-VERBATIM rules. Its duplicate has a *different presence gate*, so merging is unsafe. Not done.
 - [ ] **Already-seen web_search / web_fetch blobs ride into every downstream reasoner call**
-  *(dim 4, HIGH #2)*. `writeproxy.py:410-419` keeps every Brave result (no display slice); a `19 results`
-  block (~1.6K tok) + a `swagger.json` fetch (~2.5K tok) re-serialize into ALL ~15 reasoner prompts
-  (~60K tok/session repeated). **Fix (compose-side only, never touches coder reads):** in the
-  critic/steer serialization, replace an already-seen web result/fetch tool output with a one-line stub
-  (`web_fetch(swagger.json) → 10KB JSON, keys: …`); the coder's live turn keeps the full body.
-- [ ] **A churned file's contents appear 2–3× in one reasoner prompt** *(dim 2, MED #3)*. Stale
-  `write_file` content arg in the transcript + inside the traceback + the authoritative
-  `_fresh_disk_facts` on-disk render. **Fix:** in the reasoner serialize, elide `write_file` CONTENT
-  args for files `_fresh_disk_facts` already renders (keep "wrote X", drop stale bytes — disk is
-  authoritative, zero signal lost).
-- [ ] **Step framing duplicated verbatim in system AND user turn** *(dim 2, MED #4, planned path only)*.
-  `_item_prompt` output goes in both the system message (`loop.py:1733`) and the replacing user turn
-  (`:1739`). **Fix:** keep the floor-protected system copy; make the user turn a short pointer.
-- [ ] **Template micro-dupes** *(dim 3, MED)*. `selfcompact_summary.txt` states the
-  "identifiers may still be renamed" caution 3× (intro + bullet 1 + rule 3) — state once. The 6-rule
-  DO-NOT-GUESS block is duplicated in `coder_system.txt` and `plan.txt`, and the planner's copy carries
-  a VALIDATE/"linting" rule nonsensical for a role that "DO NOT CODE" — trim the planner's copy.
+  *(dim 4, HIGH #2)*. **MEASURED VERY FREQUENT — but LEFT (footgun-prone).** 43% of all request bodies
+  carry a web result; reasoner bodies that do carry a **median ~11.8K tokens** of web blob each (61 of
+  137 reasoner calls). Real bloat. BUT stubbing it means curating the serialized steer/critic session —
+  the exact path `author_steer`'s docstring warns caused a hallucination. Same class as the Tier-3
+  whole-session item; do not fix on sight. Needs the deliberate design call, not a heuristic stub.
+- [ ] **A churned file's contents appear 2–3× in one reasoner prompt** *(dim 2, MED #3)*. **MEASURED
+  MODERATE (14 of 137 reasoner bodies) — LEFT (same sensitive path).** Eliding transcript `write_file`
+  args when `_fresh_disk_facts` renders the file is *defensible* (disk is authoritative) but still edits
+  the steer session; grouped with the design-call items rather than fixed blind.
+- [~] **Step framing duplicated in system AND user turn** *(dim 2, MED #4)*. **NOT FREQUENT in the live
+  config — dropped.** It only fires on the multi-item *planned* path; the planner is OFF (plan-off /
+  synthetic single-item is the live path, which keeps the task once — already clean).
+- [~] **Template micro-dupes** *(dim 3, MED)*. **LEFT.** `selfcompact_summary.txt`'s "identifiers may
+  still be renamed" caution appears ~3× but it is a *correctness* caution (prevents the briefing from
+  freezing a name mid-refactor → thrash); the repetition is defensible reinforcement (cf. the posture
+  note on `satisfaction.txt`), and the savings are marginal. The `plan.txt` 6-rule duplication is on the
+  OFF planner path. Neither is worth the risk/effort.
 
 ## Tier 3 — bigger / needs a design call
 
