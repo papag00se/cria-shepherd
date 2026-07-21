@@ -699,8 +699,15 @@ class CriaHandler(BaseHTTPRequestHandler):
 
         self._ctx_tokens = _incoming_ctx_tokens(body, rlog)  # honest token accounting for the harness
         stream = bool(rbody.get("stream"))
+        # Definitive tool attribution (harness-vs-us): what the harness SENT (raw inbound, pre-convert)
+        # + its tool TYPES (catches a non-`function` type our converter would drop) vs what SURVIVES
+        # cria's convert + focus. inbound>0 but after==0 ⇒ cria dropped them; inbound==0 ⇒ harness sent none.
+        _raw_tools = rbody.get("tools") or []
         rlog.emit("request.recv", api="responses", model=body.get("model"), stream=stream,
-                  n_messages=len(body.get("messages", [])), has_tools=bool(body.get("tools")))
+                  n_messages=len(body.get("messages", [])),
+                  inbound_tools=len(_raw_tools),
+                  inbound_tool_types=sorted({(t.get("type") if isinstance(t, dict) else "?") for t in _raw_tools}),
+                  tools_after=len(body.get("tools") or []))
         if stream:
             self._respond_responses_stream(body, sess_key, rlog)
         else:

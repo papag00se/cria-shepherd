@@ -564,6 +564,16 @@ class Loop:
             live = self._store.get(session_key) is not None
             rlog.emit("loop.no_shell_tool", level="info", deferred=live)
             return None
+        # NO ACTIONABLE TOOLS — the harness advertised nothing the coder can write/edit/run with (only
+        # the completion tool, or none at all: Codex's post-auto-compaction request can arrive tool-less).
+        # The plan-off note above assumes native write_file exists; with NOTHING, the coder can only call
+        # task_complete → the critic rejects → re-nudge → repeat, and with no shell the re-nudge recurses
+        # INLINE until the SSE times out (observed: 170 attempts on one turn). Decline → proxy; a LIVE
+        # session is NOT dropped, so the next tool-bearing turn resumes it (has_session keeps it alive).
+        if not _has_actionable_tools(body.get("tools")):
+            rlog.emit("loop.no_actionable_tools", level="warn",
+                      live=self._store.get(session_key) is not None, n_tools=len(body.get("tools") or []))
+            return None
         # HARNESS-COMPACTION detection, structural (no phrase-matching): the session key (a header /
         # Codex's prompt_cache_key) is stable across a compaction, but compaction REPLACES the
         # conversation root — the first real user message becomes the harness's summary. So a
@@ -1799,6 +1809,13 @@ def _tool_name(tc) -> str:
     """The name of a tool CALL or tool SCHEMA (both nest it under `function`)."""
     fn = (tc.get("function") or tc) if isinstance(tc, dict) else {}
     return fn.get("name") or ""
+
+
+def _has_actionable_tools(tools) -> bool:
+    """True if the harness advertised ANY tool the coder can ACT with — anything other than the
+    completion tool. A coding turn with none (Codex's post-auto-compaction request can arrive
+    tool-less) can only call ``task_complete`` forever, so cria must not drive it."""
+    return any(_tool_name(t) and _tool_name(t) != TASK_COMPLETE_TOOL for t in tools or [])
 
 
 def _completion_tool() -> dict:
