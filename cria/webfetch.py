@@ -35,6 +35,7 @@ from typing import Any, Optional
 
 from . import brave
 from .content_reduce import est_tokens, html_to_text
+from .searchloop import first_domain_in, normalize_search, searches_match
 
 try:  # structural YAML is best-effort — the Rust degrades YAML to text too when it can't parse
     import yaml as _yaml
@@ -205,15 +206,28 @@ def _note_streak(session: str, status: int) -> int:
 
 
 def gate_search(session: Optional[str], query: str) -> Optional[str]:
-    """Refuse an exact-repeat web_search ONLY while its results are still in the conversation
-    (`set_visible`); else the model may re-run it. None → proceed."""
-    q = (query or "").strip().lower()
+    """Refuse a repeat web_search ONLY while its results are still in the conversation
+    (`set_visible`); else the model may re-run it. None → proceed.
+
+    Matches on the normalized word-SET, not the exact string (the codex-local loop_detector
+    ported in `searchloop`): a weak model ruminating on the same search tweaks the wording just
+    enough to slip past an exact-string guard — the live path saw a model run ~30 near-identical
+    searches by alternating "…API resolve…" / "…API endpoint resolve…". A genuine refinement or a
+    new direction is NOT matched; only a re-hunt (see `searches_match`)."""
+    q = (query or "").strip()
     if not session or not q:
         return None
-    if q in _SEARCH_SEEN.get(session, ()):
+    words = normalize_search(q)
+    if not words:
+        return None
+    if any(searches_match(words, normalize_search(prev)) for prev in _SEARCH_SEEN.get(session, ())):
+        domain = first_domain_in(query)
+        steer = (f"\nThis query names a domain — stop searching ABOUT it and FETCH it directly: "
+                 f"web_fetch https://{domain} , then read the response for what you need."
+                 if domain else "")
         return (f'HTTP 400 Bad Request · web_search "{query}"\n'
-                "You already ran this search and its results are still above — use them, "
-                "search something different, or web_fetch a specific URL.")
+                "You already ran this (or a near-identical) search and its results are still above — "
+                f"use them, make a MAJOR change to the query, or web_fetch a specific URL.{steer}")
     return None
 
 

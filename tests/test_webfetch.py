@@ -265,6 +265,25 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))
         self.assertIsNone(wf.gate_search(None, "x"))
 
+    def test_search_gate_matches_near_duplicate_word_set_not_just_exact(self):
+        # a weak model evades an EXACT-string gate by tweaking the wording; the word-set matcher
+        # (searchloop, the codex-local port) catches the re-hunt. Real case: fabliq alternated
+        # "…API resolve…" / "…API endpoint resolve…" ~30x. Both, once visible, block their repeats,
+        # and a word-swap re-hunt is refused; a genuinely new direction still proceeds.
+        A = "ADA Handle API resolve handle to address holder address total handles"
+        B = "ADA Handle API endpoint resolve handle to address holder address total handles"
+        wf.set_visible("s1", [], [A, B])
+        self.assertIn("HTTP 400", wf.gate_search("s1", A))                    # exact repeat of a visible
+        self.assertIn("HTTP 400", wf.gate_search("s1", B))
+        self.assertIn("HTTP 400", wf.gate_search("s1", "ADA Handle API resolve handle holder"))  # word-swap re-hunt
+        self.assertIsNone(wf.gate_search("s1", "python requests connection timeout retry"))       # new direction → proceed
+
+    def test_search_gate_steers_to_fetch_a_named_domain(self):
+        wf.set_visible("s1", [], ["resolve handle address holder api.handle.me"])
+        r = wf.gate_search("s1", "resolve handle address total api.handle.me")  # swaps holder→total; re-hunt naming a domain
+        self.assertIn("HTTP 400", r)
+        self.assertIn("web_fetch https://api.handle.me", r)
+
     def test_fetch_repeat_refused_only_while_visible(self):
         wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", '{"a":1}', False)
         url = "https://api.x/openapi.json"
