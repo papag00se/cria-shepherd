@@ -2626,6 +2626,70 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         self.assertEqual([m["role"] for m in out], ["user", "assistant", "tool"])
 
 
+class SearchEscalationTests(unittest.TestCase):
+    """A weak model can web_search the same thing over and over without ever web_fetch-ing (fabliq: 9
+    near-identical searches, 0 fetches, then a hallucinated endpoint). At the streak cap cria stops
+    asking and FETCHES for it — the reasoner picks the url from the full context, cria substitutes a
+    web_fetch for the search. Any other action resets the streak."""
+
+    def _reasoner(self, content):
+        return lambda b, r: json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _search(self, q):
+        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": q})}}]}}]}
+
+    def _fn(self, coder):
+        return coder["choices"][0]["message"]["tool_calls"][0]["function"]
+
+    def _run(self, gs, coder, reasoner):
+        from cria.loop import guard_search_escalation
+        return guard_search_escalation(gs, coder, {"messages": [{"role": "user", "content": "use api.handle.me"}]},
+                                       reasoner, self._role(), _Rlog())
+
+    def test_fifth_similar_search_becomes_a_cria_web_fetch(self):
+        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
+        gs = GuardState()
+        reasoner = self._reasoner("Fetch https://api.handle.me/swagger.json for the endpoints.")
+        for i in range(SEARCH_STREAK_ESCALATE - 1):
+            out = self._run(gs, self._search("ADA Handle API resolve handle to address"), reasoner)
+            self.assertEqual(self._fn(out)["name"], "web_search")   # still forwarded as the search
+        out = self._run(gs, self._search("ADA Handle API resolve handle to address"), reasoner)
+        self.assertEqual(self._fn(out)["name"], "web_fetch")        # the Nth is SWAPPED for a fetch
+        self.assertIn("api.handle.me/swagger.json", self._fn(out)["arguments"])
+        self.assertEqual(gs.search_streak, 0)                        # reset after escalating
+
+    def test_reasoner_declines_leaves_the_search(self):
+        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
+        gs = GuardState()
+        reasoner = self._reasoner("NONE")
+        for _ in range(SEARCH_STREAK_ESCALATE):
+            out = self._run(gs, self._search("ADA Handle API resolve handle"), reasoner)
+        self.assertEqual(self._fn(out)["name"], "web_search")       # no url → not substituted
+
+    def test_a_write_resets_the_streak(self):
+        from cria.loop import GuardState
+        gs = GuardState(); gs.search_streak = 4; gs.search_words = ["ada", "handle"]
+        write = {"choices": [{"message": {"tool_calls": [
+            {"id": "w", "type": "function", "function": {"name": "write_file", "arguments": "{}"}}]}}]}
+        self._run(gs, write, self._reasoner("NONE"))
+        self.assertEqual(gs.search_streak, 0)
+
+    def test_a_new_direction_search_resets_the_streak(self):
+        from cria.loop import GuardState
+        gs = GuardState()
+        r = self._reasoner("NONE")
+        self._run(gs, self._search("ADA Handle API resolve handle to address"), r)
+        self._run(gs, self._search("ADA Handle API resolve handle to address"), r)
+        self.assertEqual(gs.search_streak, 2)
+        self._run(gs, self._search("cardano staking rewards calculator python"), r)  # unrelated
+        self.assertEqual(gs.search_streak, 1)
+
+
 class ReasonedRedirectTests(unittest.TestCase):
     """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner
     authors the steer from ground truth; an empty reasoner reply falls back to canned — a stuck coder

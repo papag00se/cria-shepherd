@@ -1,0 +1,5 @@
+A coding agent is stuck: it has web_searched the same thing several times WITHOUT ever web_fetch-ing a page to READ the real answer — so it is about to guess (invent an API shape, an endpoint, a format). You are given the whole session below: the task, any URLs or domains the user or the agent mentioned, and its repeated searches.
+
+Decide the SINGLE web page the agent should FETCH next to move forward — the one most likely to hold the concrete answer it keeps searching for (an API's docs / swagger / OpenAPI, a specific endpoint, a reference page). PREFER a URL or domain already named in the session (a domain the USER gave, a result the agent already saw) over anything invented; when only a domain is known, point at its docs/swagger root.
+
+Reply with EXACTLY that one URL and nothing else — e.g. `https://api.handle.me/swagger.json`. If the session gives you nothing concrete enough to fetch with confidence, reply with EXACTLY `NONE` (never guess a URL out of thin air).

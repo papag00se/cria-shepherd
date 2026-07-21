@@ -39,7 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
-from .searchloop import normalize_search
+from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
@@ -176,6 +176,13 @@ class GuardState:
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
+    # SEARCH-LOOP escalation: a weak model can web_search the same thing over and over without ever
+    # web_fetch-ing to read a page — then hallucinate the API (fabliq: 9 near-identical searches, 0
+    # fetches, wrong endpoint). At the streak cap cria stops asking and FETCHES for it (reasoner picks
+    # the URL from the full context, cria substitutes a web_fetch for the search — the escape a stuck
+    # model won't take itself).
+    search_words: list = None  # the last web_search's normalized word-set (searchloop)
+    search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
 
 
 @dataclass
@@ -236,6 +243,12 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
 # non-converging session (the stall terminator + human-escalation were removed — the mission is for the
 # model to succeed on its OWN); it just keeps trying to unstick it.
 THRASH_STALL_CYCLES = 2
+
+# SEARCH-LOOP escalation threshold. After this many consecutive near-identical web_searches (matched by
+# searchloop.searches_match) with no fetch/other action between, the coder is clearly not going to
+# web_fetch on its own — cria asks the reasoner (given the WHOLE context, so a domain the USER mentioned
+# is in reach) which URL to read, then SUBSTITUTES a web_fetch for the search. The escape, done for it.
+SEARCH_STREAK_ESCALATE = 5
 
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
@@ -741,6 +754,10 @@ class Loop:
             _clean_completion(coder, self._ctx.coder_role)
         if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
             _add_note(coder, f"steered the coder — {steered}")
+        # SEARCH-LOOP escape: a run of near-identical web_searches with no fetch → cria fetches FOR it
+        # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
+        # forward, so the substituted fetch is what the harness runs. Any non-search action resets the streak.
+        coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             self._track_repetition(sess, coder, idx, rlog)
@@ -2481,6 +2498,52 @@ def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: di
     empty — the reasoner grounds on the session's own tool results and reads on demand via the steer."""
     return author_steer(reasoner_chat, reasoner_role, None, None, body, rlog,
                         condition="flail", reasoning_window=window)
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>)\]}]+")
+
+
+def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
+    """Stuck-search escalation: the coder keeps web_searching without ever web_fetch-ing. Hand the reasoner
+    the WHOLE conversation (scrubbed of the harness frame) — so a domain the USER named is in reach — and
+    ask for the ONE url it should read to move forward. Returns a bare URL, or "" (reasoner declined)."""
+    session = selfcompact.serialize(_drop_harness_frame(_strip_cria_file_ops(body.get("messages", []))))
+    text = (summarize(reasoner_chat, reasoner_role, prompts.load("search_fetch"),
+                      prompts.render("search_fetch_user", session=session), rlog, phase="reasoner") or "").strip()
+    if "NONE" in text[:12].upper():
+        return ""
+    m = _URL_RE.search(text)
+    return m.group(0).rstrip(".,);") if m else ""
+
+
+def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
+                            reasoner_chat, reasoner_role, rlog) -> dict:
+    """Track a consecutive near-identical web_search streak; at ``SEARCH_STREAK_ESCALATE`` the coder is
+    plainly not going to fetch on its own, so cria SUBSTITUTES a web_fetch (URL authored by the reasoner
+    from the full context) for the search — the escape done FOR the stuck model. Any other action (a
+    fetch, a write, a genuinely-new search) resets the streak. Returns the coder, search→fetch swapped."""
+    msg = (coder.get("choices") or [{}])[0].get("message") or {}
+    tcs = msg.get("tool_calls") or []
+    search_tc = next((tc for tc in tcs if _tool_name(tc) == "web_search"), None)
+    if search_tc is None:
+        sess.search_streak, sess.search_words = 0, None   # a different action → not looping on search
+        return coder
+    query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", ""))
+    words = normalize_search(query)
+    sess.search_streak = sess.search_streak + 1 if (sess.search_words and searches_match(words, sess.search_words)) else 1
+    sess.search_words = words
+    if sess.search_streak < SEARCH_STREAK_ESCALATE or reasoner_role is None:
+        return coder
+    url = author_search_fetch(reasoner_chat, reasoner_role, body, rlog)
+    sess.search_streak, sess.search_words = 0, None       # cooldown whether or not a url came back
+    if not url:
+        rlog.emit("loop.search_escalation", url=None)     # reasoner had nothing → let the search go (gate refuses a repeat)
+        return coder
+    msg["tool_calls"] = [{"id": search_tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
+                          "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]
+    _add_note(coder, f"searched {SEARCH_STREAK_ESCALATE}× without fetching — fetching {url} for you")
+    rlog.emit("loop.search_escalation", url=url)
+    return coder
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the
