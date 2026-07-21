@@ -122,6 +122,24 @@ def _append_content_line(completion: dict, line: str) -> None:
 # in phase 6 with the per-item plan loop).
 SESSION_HEADER = "X-Cria-Session-Id"
 
+# The handshake marker a compaction request leads with — the operator wires the harness's
+# compaction prompt to start with it (Codex: `compact_prompt = "<<<LOCAL_COMPACT>>> Summarize …"`),
+# so cria can recognize a SUMMARIZE turn (correctly tool-less) and route it to the compactor role's
+# tuned sampling, never the classifier's guess or a bare passthrough. Harness-agnostic: any harness
+# that leads its compaction prompt with this marker gets the compactor.
+LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
+
+
+def _is_compaction_request(messages: list) -> bool:
+    """True when the latest user turn is the harness's compaction/summarize request (see marker)."""
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            return isinstance(c, str) and LOCAL_COMPACT_MARKER in c
+    return False
+
 
 def _proxy_body(body: dict) -> dict:
     """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
@@ -495,6 +513,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             return server.upstream, Indicator(ic.enabled, ic.metrics,
                                               model=banner_model(server.upstream, str(body.get("model") or "?")),
                                               role=None, route=ic.route, assists=ic.assists)
+
+        # A harness COMPACTION request (the `<<<LOCAL_COMPACT>>>` handshake) is a SUMMARIZE — route it
+        # to the compactor role's tuned sampling on the compactor endpoint, not the classifier's guess
+        # (its text reads as a plain 'question' → the reasoner). The compactor endpoint falls back to the
+        # reasoner/shared upstream when no [roles.compactor] is set, so this is safe unconfigured too.
+        if _is_compaction_request(body.get("messages", [])):
+            role_name = "compactor" if "compactor" in server.cfg.routing.roles else "reasoner"
+            rlog.emit("route.compaction", role=role_name)
+            return server.compactor_upstream, Indicator(
+                ic.enabled, ic.metrics,
+                model=banner_model(server.compactor_upstream, str(body.get("model") or "?")),
+                role=role_name, route=ic.route, assists=ic.assists)
 
         if server.router is None or classification is None:
             return passthrough()

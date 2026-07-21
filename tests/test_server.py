@@ -615,6 +615,50 @@ class CompactorRoleWiringTests(unittest.TestCase):
         self.assertIsNot(srv.loop._ctx.compactor_role, coder)
 
 
+class CompactionRoutingTests(unittest.TestCase):
+    """A harness `<<<LOCAL_COMPACT>>>` request is a SUMMARIZE turn (correctly tool-less) — it must route
+    to the COMPACTOR endpoint + role's tuned sampling, never the classifier's guess (its text reads as a
+    plain question → reasoner) or a bare passthrough (server-default sampling misreads 'summarize')."""
+
+    def _handler(self, roles, compactor_upstream, upstream):
+        from cria.server import CriaHandler
+        h = CriaHandler.__new__(CriaHandler)
+        h.server = types.SimpleNamespace(
+            compactor_upstream=compactor_upstream, upstream=upstream, router=None,
+            cfg=types.SimpleNamespace(
+                routing=types.SimpleNamespace(roles=roles),
+                indicators=types.SimpleNamespace(enabled=True, metrics=True, route=True, assists=True)))
+        return h
+
+    def _rlog(self):
+        return types.SimpleNamespace(emit=lambda *a, **k: None)
+
+    def _compact_body(self):
+        return {"messages": [{"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread."}]}
+
+    def test_routes_to_compactor_endpoint_and_role(self):
+        compactor_up = object()
+        h = self._handler({"compactor": object()}, compactor_up, object())
+        provider, indic = h._route(self._compact_body(), None, self._rlog())
+        self.assertIs(provider, compactor_up)       # the compactor ENDPOINT, not the shared upstream
+        self.assertEqual(indic.role, "compactor")   # → _apply_route_role applies compactor sampling
+
+    def test_falls_back_to_reasoner_role_when_no_compactor(self):
+        compactor_up = object()
+        h = self._handler({"reasoner": object()}, compactor_up, object())
+        provider, indic = h._route(self._compact_body(), None, self._rlog())
+        self.assertIs(provider, compactor_up)
+        self.assertEqual(indic.role, "reasoner")     # compactor_upstream falls back to reasoner's box too
+
+    def test_normal_request_is_not_treated_as_compaction(self):
+        upstream = object()
+        h = self._handler({"compactor": object()}, object(), upstream)  # router None → passthrough
+        body = {"messages": [{"role": "user", "content": "Write an Ada Handle resolver."}]}
+        provider, indic = h._route(body, None, self._rlog())
+        self.assertIs(provider, upstream)            # passthrough, NOT the compactor endpoint
+        self.assertIsNone(indic.role)
+
+
 class LoopConstructionGateTests(unittest.TestCase):
     """Route-unify: the loop is cria's ONE coder driver, so it is built whenever a coder exists — with
     the planner OFF too (it then drives the synthetic 1-item path). A reasoner is required only when the
