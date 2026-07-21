@@ -3,6 +3,6 @@
 # between them; `evidence` and `probe` are dropped entirely when there's nothing to show.
 # `\n` in a value becomes a real newline. Format is `key = value`, one per line.
 step = STEP: {{STEP}}
-evidence = WHAT THE CODER'S TOOLS RETURNED (real ground truth):\n{{EVIDENCE}}
+evidence = WHAT THE CODER DID — its tool CALLS and what they returned (real ground truth):\n{{EVIDENCE}}
 probe = GROUND-TRUTH CHECKS (lint · type-check · tests · git): {{PROBE}}
 summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n{{CODER_SUMMARY}}

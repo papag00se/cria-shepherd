@@ -796,7 +796,7 @@ class Loop:
             sess.pending_coder_text = _completion_text(coder)
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
-        evidence = _coder_evidence(body.get("messages", []), None)
+        evidence = _work_log(body.get("messages", []))
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key)
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
@@ -859,7 +859,7 @@ class Loop:
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
-            evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
+            evidence = _work_log(body.get("messages", []))
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
@@ -889,7 +889,7 @@ class Loop:
             return self._renudge(sess, key, body, nudge, rlog)
 
         digest = proberun.completion_probe_digest(outcome.report)
-        evidence = _coder_evidence(body.get("messages", []), sess.probe_call_id)
+        evidence = _work_log(body.get("messages", []))
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
@@ -2676,23 +2676,6 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
     return ""
 
 
-
-
-def _coder_evidence(messages: list[dict], probe_id) -> str:
-    """The results of ALL the coder's OWN tool runs (its test/build/command output), for the
-    critic to judge on — cria OBSERVES what the coder ran, it never fabricates a run.
-    Excludes cria's own probe and its silent `.cria/` writes. Every output flows in full: this
-    is model-read evidence, and the context floor is the one window-aware place any physical
-    truncation happens — a per-site clip or last-N drop here would just be a dumber, undetectable
-    slice of the ground truth the critic decides on."""
-    out: list[str] = []
-    for m in reversed(messages):
-        if m.get("role") != "tool" or m.get("tool_call_id") == probe_id:
-            continue
-        c = str(m.get("content") or "").strip()
-        if c and "PROBE_EXIT" not in c and probegate.SECTION_PREFIX not in c:  # skip the probe/gate output
-            out.append(c)
-    return "\n---\n".join(reversed(out))
 
 
 def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:

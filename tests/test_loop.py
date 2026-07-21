@@ -2163,28 +2163,46 @@ class FrameForItemTests(unittest.TestCase):
         self.assertEqual(sum(1 for m in framed if m["role"] == "system"), 1)  # exactly one system msg
 
 
-class CoderEvidenceTests(unittest.TestCase):
-    def test_excludes_probe_and_empty_keeps_coder_runs(self):
-        from cria.loop import _coder_evidence
+class VerifyEvidenceTests(unittest.TestCase):
+    """The per-step critic (_verify) now judges on the ACTION LOG (_work_log) — the coder's tool CALLS
+    AND their results, not results alone — so it can see 'searched but never fetched the real docs' and
+    refuse a research step done from a guess, not just check that a file exists."""
+
+    def test_action_log_shows_the_calls_not_just_results(self):
+        # THE point of the change: a research step that only SEARCHED (never web_fetch-ed) is visible.
+        from cria.loop import _work_log
         msgs = [
-            {"role": "tool", "tool_call_id": "probe1", "content": "--- cria probe ---\nPROBE_EXIT=0"},  # cria's probe
-            {"role": "tool", "tool_call_id": "fileop", "content": ""},                                   # cria's .cria write
-            {"role": "tool", "tool_call_id": "c1", "content": "3 passed, 0 failed in 0.12s"},            # coder's own test run
+            {"role": "assistant", "tool_calls": [{"function": {"name": "web_search", "arguments": '{"query":"ADA Handle API"}'}}]},
+            {"role": "tool", "content": "19 results: generic snippets, no endpoint"},
+            {"role": "assistant", "tool_calls": [{"function": {"name": "write_file", "arguments": '{"path":"r.py"}'}}]},
+            {"role": "tool", "content": "wrote r.py"},
         ]
-        ev = _coder_evidence(msgs, "probe1")
+        log = _work_log(msgs)
+        self.assertIn("$ web_search", log)          # the CALL is in the evidence now
+        self.assertIn("$ write_file", log)
+        self.assertNotIn("web_fetch", log)          # …and its ABSENCE is visible → research not obtained
+
+    def test_excludes_probe_and_empty_keeps_coder_runs(self):
+        from cria.loop import _work_log
+        msgs = [
+            {"role": "tool", "content": "--- cria probe ---\nPROBE_EXIT=0"},   # cria's probe output
+            {"role": "tool", "content": ""},                                    # empty
+            {"role": "tool", "content": "3 passed, 0 failed in 0.12s"},         # coder's own test run
+        ]
+        ev = _work_log(msgs)
         self.assertIn("3 passed", ev)          # the coder's real run is the evidence
         self.assertNotIn("PROBE_EXIT", ev)     # cria's probe excluded
 
     def test_keeps_all_runs_in_full_no_clip_no_last_n_drop(self):
         # The critic must see the FULL ground truth: every coder run (not just the last 3) and each
-        # in full (no 400-char clip). A per-site slice here would be a lie the critic can't detect.
-        from cria.loop import _coder_evidence
-        big = "FAILED test_x " + ("y" * 5000)                       # far past the old 400-char clip
-        msgs = [{"role": "tool", "tool_call_id": f"c{i}", "content": f"run {i} {big}"} for i in range(8)]
-        ev = _coder_evidence(msgs, "probe1")
-        for i in range(8):                                          # all 8 kept, not just the last 3
+        # in full (no clip). A per-site slice here would be a lie the critic can't detect.
+        from cria.loop import _work_log
+        big = "FAILED test_x " + ("y" * 5000)
+        msgs = [{"role": "tool", "content": f"run {i} {big}"} for i in range(8)]
+        ev = _work_log(msgs)
+        for i in range(8):
             self.assertIn(f"run {i}", ev)
-        self.assertIn("y" * 5000, ev)                              # each output in full, unclipped
+        self.assertIn("y" * 5000, ev)
         self.assertNotIn("…", ev)
 
 
