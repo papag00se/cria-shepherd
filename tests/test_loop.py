@@ -2590,6 +2590,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         body = {"messages": [
             {"role": "system", "content": "You are a coding agent running in the Codex CLI. Use update_plan and apply_patch."},
             {"role": "developer", "content": "High-quality plans Example 1: Add CLI entry"},
+            {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS> my project rules </INSTRUCTIONS>\n<environment_context><cwd>/repo</cwd></environment_context>"},
             {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
             {"role": "assistant", "content": "web_fetch swagger.json"},
             {"role": "tool", "content": "HTTP 200 OK swagger schema Handle"},
@@ -2605,6 +2606,9 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         self.assertNotIn("Codex CLI", u)            # harness agent prompt GONE
         self.assertNotIn("update_plan", u)          # its tool boilerplate GONE
         self.assertNotIn("High-quality plans", u)   # developer boilerplate GONE
+        self.assertNotIn("<INSTRUCTIONS>", u)       # env-context user block REFRAMED, not raw XML
+        self.assertNotIn("<environment_context>", u)
+        self.assertIn("my project rules", u)        # the user's real instructions KEPT (clean voice)
         self.assertIn("Ada Handle", u)              # the real task KEPT
         self.assertIn("swagger.json", u)            # the real tool call KEPT
         self.assertIn("HTTP 200", u)                # the real tool result KEPT

@@ -44,21 +44,19 @@ Composing a judge prompt is *not* the coder's read — bounding it there breaks 
   **Decision: don't build it** — rarity doesn't justify the machinery or the false-merge risk. If the
   stuck-session bloat ever needs addressing, the lever is the Tier-3 "feed the rollup, not the raw
   growing body" item, not per-token normalization.
-- [ ] **`coder_system.txt` "# Finishing" contradicts the `task_complete` tool** *(dim 3, HIGH)*. It
-  says *"a response with no tool call … is the ONLY way to end,"* yet cria advertises `task_complete`
-  on coder turns (`loop.py:1791-1848`) and `tool_descs.txt` calls it *"the clean, explicit way to end."*
-  The small model is told the only exit is silence, then handed an exit button — the repo's known
-  contradiction bug-class, in its most important prompt. **Fix:** reword "# Finishing" to name
-  `task_complete` as the equivalent explicit exit (drop "the ONLY way").
-- [ ] **Env-context / AGENTS-`<INSTRUCTIONS>` user block still leaks into the steer reasoner**
-  *(dim 1, MED — the seed's residual)*. `_drop_harness_frame` (`loop.py:1548-1560`) drops `system`/
-  `developer` roles but keeps Codex's `<environment_context>` + `# AGENTS.md <INSTRUCTIONS>…` **user**
-  block verbatim (~290 tok/steer, foreign XML + sandbox plumbing). The coder path already reframes this
-  via `reframe_preamble` (`loop.py:1720/1742`). **Fix:** run `reframe_preamble` over each turn in the
-  `author_steer` serialize path (or inside `_drop_harness_frame`).
+- [x] **`coder_system.txt` "# Finishing" contradicts the `task_complete` tool** *(dim 3, HIGH)*.
+  **FIXED 2026-07-20.** It said *"a response with no tool call … is the ONLY way to end,"* yet
+  `task_complete` is advertised on every coder turn (`_add_completion_tool`, `loop.py:721`). Reworded
+  "# Finishing" to name the two equivalent exits (no tool call OR `task_complete`) and reinforce "don't
+  end while unverified." 1002 tests.
+- [x] **Env-context / AGENTS-`<INSTRUCTIONS>` user block still leaks into the steer reasoner**
+  *(dim 1, MED — the seed's residual)*. **FIXED 2026-07-20.** `_drop_harness_frame` dropped `system`/
+  `developer` roles but kept Codex's `<environment_context>` + `# AGENTS.md <INSTRUCTIONS>…` **user**
+  block verbatim (~290 tok/steer). Now maps the coder path's `reframe_preamble` over each kept turn, so
+  the reasoner sees cria's clean cwd/shell/date voice instead of raw XML. 1002 tests.
 - [ ] **Dead render kwarg** *(dim 3, LOW)*. `redirect_canned` is rendered with `repeat_n=…`
   (`loop.py:2077`, `:2332`) but the template has no `{{REPEAT_N}}` slot (silently dropped). Drop the
-  kwarg at both sites.
+  kwarg at both sites. *(deferred — trivial, no behavior change)*
 - [ ] **Confirm the seed fix is live.** A capture (`0051-reasoner.prompt.txt`) still showed the ~30K
   harness preamble (dim 4, LOW #5) — but that capture predates the `7c656dd` deploy (cria not yet
   restarted). Verify post-restart that the steer session is actually frame-stripped; no code change

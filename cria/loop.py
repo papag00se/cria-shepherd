@@ -1556,8 +1556,12 @@ def _drop_harness_frame(messages: list[dict]) -> list[dict]:
     This removes the FRAME only — every ``user``/``assistant``/``tool`` turn (the real task, every tool
     call and its result) is kept verbatim — so it is NOT the 'curated slice' :func:`author_steer` warns
     against (a curated view once made a steer hallucinate a path). Harness-agnostic: any role the harness
-    puts its agent prompt in (``system``/``developer``) is dropped."""
-    return [m for m in messages if m.get("role") not in ("system", "developer")]
+    puts its agent prompt in (``system``/``developer``) is dropped.
+
+    The harness's env-context/`<INSTRUCTIONS>` USER preamble is not dropped but REFRAMED (same
+    :func:`reframe_preamble` the coder path applies), so the reasoner sees cria's clean cwd/shell/date
+    voice instead of the raw foreign XML + sandbox plumbing — the residual of the same passthrough class."""
+    return [reframe_preamble(m) for m in messages if m.get("role") not in ("system", "developer")]
 
 
 # Codex's VS Code extension compacts by APPENDING this user turn (it keeps the original task as the
