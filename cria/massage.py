@@ -807,6 +807,48 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
     return completion
 
 
+def repair_history_tool_args(messages: list, rlog=None) -> list:
+    """Ensure every tool_call in the REPLAYED HISTORY has valid-JSON ``arguments``, so ONE malformed
+    call can't 500 a strict chat template on EVERY subsequent turn.
+
+    A weak model can emit a tool_call whose arguments aren't valid JSON — e.g. a `python3 -c "..."`
+    shell command where it backslash-escaped a quote inside an f-string (`{handle}\'`), which is a
+    valid shell/Python escape but a FORBIDDEN JSON one. llama.cpp records the call, then on every later
+    turn re-parses each historical tool_call's arguments as JSON while rendering the chat template —
+    the one bad call throws and the server returns HTTP 500. Because the poison lives in the HISTORY,
+    not the fresh generation, it bricks the whole session and never recovers (observed on Fabliq).
+
+    :func:`repair_tool_args` fixes the model's FRESH response but never touched the history cria
+    forwards. Repair each malformed historical call with the same primitives; if it can't be
+    reconstructed, neutralize it to a valid stub that preserves the original text under ``_unparsed``
+    (the call already happened — this is context, not a re-execution — so a faithful stub is enough).
+    Valid arguments are left untouched, so the common path is a no-op."""
+    repaired = 0
+    out = []
+    for m in messages:
+        tcs = m.get("tool_calls") if isinstance(m, dict) else None
+        if not isinstance(tcs, list) or not tcs:
+            out.append(m)
+            continue
+        new_tcs = []
+        for tc in tcs:
+            fn = tc.get("function") if isinstance(tc, dict) else None
+            raw = fn.get("arguments") if isinstance(fn, dict) else None
+            if isinstance(raw, str):
+                try:
+                    json.loads(raw)
+                except json.JSONDecodeError:
+                    obj = extract_json_object(raw) or _recover_write_args(raw)
+                    fixed = json.dumps(obj if obj is not None else {"_unparsed": raw}, ensure_ascii=False)
+                    tc = {**tc, "function": {**fn, "arguments": fixed}}
+                    repaired += 1
+            new_tcs.append(tc)
+        out.append({**m, "tool_calls": new_tcs})
+    if repaired:
+        _log(rlog, "massage.history_args_repaired", count=repaired)
+    return out
+
+
 _PATH_RE = re.compile(r'"(?:path|file_path|file|filename)"\s*:\s*"([^"\n]*)"')
 _CONTENT_RE = re.compile(r'"(?:content|contents|text|body)"\s*:\s*"')
 

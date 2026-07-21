@@ -12,6 +12,7 @@ from cria.massage import (
     normalize_apply_patch,
     normalize_tool_calls,
     recover_leaked_tool_calls,
+    repair_history_tool_args,
     repair_tool_args,
 )
 
@@ -96,6 +97,41 @@ class ArgRepairTests(unittest.TestCase):
         c = repair_tool_args(_completion(tool_calls=[_tc("shell", raw)]))
         out = _first(c)["message"]["tool_calls"][0]["function"]["arguments"]
         self.assertTrue(any(s in out for s in ("<|tool_call>", "<tool_call|>")))  # untouched → floor handles it
+
+
+class HistoryArgRepairTests(unittest.TestCase):
+    """One malformed tool_call in the REPLAYED history 500s a strict template on every turn (observed
+    on Fabliq: a `python3 -c` command with `{handle}\\'` — a valid shell/Python escape, forbidden JSON).
+    Sanitize the history args before forward so the poison can't brick the session."""
+
+    def _assistant_call(self, args):
+        return {"role": "assistant", "tool_calls": [_tc("shell", args)]}
+
+    def test_valid_history_args_untouched(self):
+        msgs = [{"role": "user", "content": "hi"}, self._assistant_call('{"cmd": "ls"}')]
+        out = repair_history_tool_args(msgs)
+        self.assertEqual(out[1]["tool_calls"][0]["function"]["arguments"], '{"cmd": "ls"}')
+
+    def test_malformed_history_call_is_made_valid_json(self):
+        # the exact shape from the live 500: an f-string ending in \' inside a python3 -c command.
+        bad = '{"cmd":"cd /repo && python3 -c \\"\\nhandle = \'goose\'\\nurl = f\'https://api.handle.me/{handle}\\\'"}'
+        with self.assertRaises(json.JSONDecodeError):  # precondition: it really is invalid JSON
+            json.loads(bad)
+        msgs = [self._assistant_call(bad)]
+        out = repair_history_tool_args(msgs)
+        fixed = out[0]["tool_calls"][0]["function"]["arguments"]
+        json.loads(fixed)  # MUST now parse — else the strict template still 500s
+
+    def test_unrecoverable_is_neutralized_but_preserves_text(self):
+        bad = '{"cmd":"\\x nonsense \\\' unterminated'
+        out = repair_history_tool_args([self._assistant_call(bad)])
+        fixed = out[0]["tool_calls"][0]["function"]["arguments"]
+        obj = json.loads(fixed)                       # valid JSON now
+        self.assertEqual(obj.get("_unparsed"), bad)   # original text preserved as context
+
+    def test_messages_without_tool_calls_pass_through(self):
+        msgs = [{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}]
+        self.assertEqual(repair_history_tool_args(msgs), msgs)
 
 
 class ApplyPatchTests(unittest.TestCase):

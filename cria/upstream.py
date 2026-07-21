@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Iterator
 
-from . import callcapture, contextfloor, failover, rumination, tokenratio
+from . import callcapture, contextfloor, failover, massage, rumination, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -166,6 +166,10 @@ class Upstream:
                     rlog.emit("context.floor", level=lvl, safety=round(safety, 2), **rep.as_event())
                 if rep.tools_compressed and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
+            # A malformed tool_call in the REPLAYED history (a weak model's over-escaped nested-quote
+            # shell command) makes a strict template's JSON re-parse 500 on EVERY turn — poisoning the
+            # whole session, not just the turn that produced it. Repair the history's args before send.
+            msgs = massage.repair_history_tool_args(msgs, rlog)
             out["messages"] = _merge_consecutive_assistant(msgs)
         out.pop("cria_output_reserve", None)  # cria-internal reserve hint — never goes on the wire
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
