@@ -30,17 +30,20 @@ Composing a judge prompt is *not* the coder's read — bounding it there breaks 
 
 ## Tier 1 — bug-class or cheap high-value, fix on sight
 
-- [ ] **`clean_gate_results` dedup is silently defeated by volatile ids** *(dim 2, HIGH — the standout)*.
-  It collapses duplicate `⟦ctx:checks⟧` gate output by **exact byte equality** (`probegate.py:244-255`),
-  but pytest output embeds a jittering `MagicMock` object id (`129967551263376` vs `128161485360976`)
-  and a volatile FAILURES ordering, so "same failure, next turn" never byte-matches. **Two harms:**
-  (a) the gate traceback renders **3× (~33%)** of the steer reasoner prompt (`loop.py:2375` serialize +
-  the `{{TRUTH}}` slot re-emitting the latest); (b) **worse — the coder** runs the same
-  `clean_gate_results` (`loop.py:1706`) so it **re-reads the same ~200-line traceback across turns** —
-  the exact fixation-reinforcement the dedup exists to prevent, bypassed (plausibly part of the live
-  oscillation we watched). **Fix:** normalize volatile tokens (object ids, tmp-run ids) before the
-  equality key so recurring failures collapse to a one-line back-reference **that preserves the count**
-  ("same failures, round N" is real convergence SIGNAL — collapse, don't delete). One fix, both paths.
+- [~] **`clean_gate_results` dedup silently defeated by volatile ids — MEASURED RARE, DROPPED 2026-07-20.**
+  Dim 2 flagged this HIGH (byte-equality dedup at `probegate.py:244-255` defeated by a jittering
+  `MagicMock` id / hex `_patch` address / pytest duration, so a recurring-unchanged failure never
+  byte-matches → the block rides un-deduped and the coder re-reads it). **Verified against all 9 real
+  session captures (521 bodies, 259 gate-finding blocks):** byte-identical dedup already works (56
+  repeat-notes, **0** byte-equal survivors); genuinely-DIFFERENT co-occurring pairs = **70** (the normal
+  case, must not merge); volatile-only misses = **6 pairs, all one session (the stuck ternary run), all
+  the same single pair replayed across 6 turns** — i.e. **one distinct event in 9 sessions; 8/9 sessions
+  had zero.** The normalization would have been correct there (purely `id=`/`0x…`/`N.NNs` diffs) but
+  fires ~once per 9 sessions while adding false-merge surface to the 70× more common genuinely-different
+  case. Even the safe structured-exact-key variant catches **0** extra cases (no byte-equal survivors).
+  **Decision: don't build it** — rarity doesn't justify the machinery or the false-merge risk. If the
+  stuck-session bloat ever needs addressing, the lever is the Tier-3 "feed the rollup, not the raw
+  growing body" item, not per-token normalization.
 - [ ] **`coder_system.txt` "# Finishing" contradicts the `task_complete` tool** *(dim 3, HIGH)*. It
   says *"a response with no tool call … is the ONLY way to end,"* yet cria advertises `task_complete`
   on coder turns (`loop.py:1791-1848`) and `tool_descs.txt` calls it *"the clean, explicit way to end."*
