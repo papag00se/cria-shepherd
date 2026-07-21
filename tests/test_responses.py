@@ -258,15 +258,27 @@ class ReasoningForwardingTests(unittest.TestCase):
         return None
 
     def test_reasoning_transcript_folds_into_persistent_message(self):
-        from cria.indicators import MARKER, strip_history
+        from cria.indicators import THINK_FENCE, strip_history
         text = self._reasoning_message_text(reasoning_transcript=True)
         self.assertIsNotNone(text)                       # a message item now exists (tool-call-only turn)
-        self.assertIn(f"{MARKER}💭", text)               # the reasoning rides as a ⟦cria⟧ 💭 block
+        self.assertIn(THINK_FENCE, text)                 # the reasoning rides in a ⟦cria⟧ 💭-fenced block
         self.assertIn("resolve_handle", text)            # the actual thinking is present
-        # every block line carries the MARKER, so it's stripped from inbound history like the banner
+        # the block is FENCED, not per-line-marked: at least one reasoning line is CLEAN (no MARKER),
+        # so a multi-line/code reasoning renders readably instead of a ⟦cria⟧-per-line wall
+        self.assertTrue(any("resolve_handle" in ln and not ln.startswith("⟦cria⟧") for ln in text.split("\n")))
+        # …yet strip_history still removes the WHOLE fenced block from inbound history
         cleaned, n = strip_history([{"role": "assistant", "content": text}])
         self.assertTrue(n > 0)
         self.assertNotIn("resolve_handle", cleaned[0]["content"])
+
+    def test_reasoning_fold_renders_code_clean_and_round_trips(self):
+        from cria.indicators import strip_history
+        from cria.responses import _reasoning_transcript_block
+        block = _reasoning_transcript_block("plan:\n```python\nimport os\nx = 1\n```\ndone")
+        self.assertIn("import os", block)                                   # code kept verbatim
+        self.assertNotIn("⟦cria⟧ import os", block)                         # NOT walled per-line
+        cleaned, n = strip_history([{"role": "assistant", "content": block + "\nreal answer"}])
+        self.assertEqual(cleaned[0]["content"], "real answer")              # block gone, real content kept
 
     def test_reasoning_transcript_not_folded_when_flag_absent(self):
         text = self._reasoning_message_text()  # neither flag passed → no fold

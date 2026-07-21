@@ -20,7 +20,7 @@ import json
 import uuid
 from collections.abc import Iterator
 
-from .indicators import MARKER
+from .indicators import MARKER, THINK_FENCE
 
 
 def _new_id(prefix: str) -> str:
@@ -268,11 +268,12 @@ def _function_item(tc: dict, idx: int) -> tuple[list[bytes], dict]:
 
 
 def _reasoning_transcript_block(reasoning: str) -> str:
-    """The model's reasoning rendered as ``⟦cria⟧ 💭 …`` lines — folded into the persistent message
-    content so it rides in the scrollback like the banner (and is stripped from inbound history the
-    same way: EVERY line carries the MARKER, so strip_history drops the whole block)."""
-    lines = reasoning.splitlines() or [""]
-    return "\n".join(f"{MARKER}{'💭 ' if i == 0 else ''}{ln}" for i, ln in enumerate(lines))
+    """The model's reasoning, folded into the persistent message content so it rides in the SCROLLBACK
+    — the only reliable persistence, since Codex renders the native reasoning channel only transiently
+    (even with show_raw_agent_reasoning). BRACKETED by a ``⟦cria⟧ 💭`` fence so the body renders CLEAN
+    (no per-line marker walling every code line a model like fabliq drafts in its reasoning);
+    strip_history drops the whole fenced block from inbound history so the model never re-ingests it."""
+    return f"{THINK_FENCE}\n{reasoning.strip(chr(10))}\n{THINK_FENCE}"
 
 
 def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,

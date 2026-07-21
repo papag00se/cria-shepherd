@@ -28,6 +28,12 @@ from typing import Iterator
 SENTINEL = "⟦cria⟧"
 MARKER = SENTINEL + " "
 
+# A reasoning-transcript block is BRACKETED by this fence line (opening and closing) so its body can
+# render CLEAN — no per-line marker walling every code line a model drafts in its reasoning — while
+# strip_history still removes the WHOLE block from inbound history. The fence lines carry the MARKER,
+# so a legacy per-line stripper still drops them; the body between them is dropped by the fence toggle.
+THINK_FENCE = MARKER + "💭"
+
 # Below this many streamed content deltas, a tok/s figure is noise (e.g. the Claude
 # provider fake-streams one big chunk) — so the metrics line is suppressed.
 _MIN_DELTAS_FOR_RATE = 3
@@ -76,9 +82,26 @@ def strip_history(messages: list[dict]) -> tuple[list[dict], int]:
 
 
 def _strip_marker_lines(text: str) -> tuple[str, int]:
+    """Drop cria's own lines: every ``MARKER`` line, PLUS the clean (unmarked) body between a pair of
+    ``THINK_FENCE`` lines (the reasoning-transcript block). The fence toggles: an unmatched open fence
+    drops to the end of the content — fail-safe, so a model never re-ingests its own reasoning."""
     lines = text.split("\n")
-    kept = [ln for ln in lines if not ln.lstrip().startswith(MARKER)]
-    return "\n".join(kept).strip("\n"), len(lines) - len(kept)
+    kept: list[str] = []
+    dropped = 0
+    inside = False
+    for ln in lines:
+        if ln.strip() == THINK_FENCE:      # a fence line → toggle in/out, drop it
+            inside = not inside
+            dropped += 1
+            continue
+        if inside:                          # reasoning body between fences → drop (clean, unmarked)
+            dropped += 1
+            continue
+        if ln.lstrip().startswith(MARKER):  # a normal cria line (banner / assist / old per-line fold) → drop
+            dropped += 1
+            continue
+        kept.append(ln)
+    return "\n".join(kept).strip("\n"), dropped
 
 
 def strip_note_lines(completion: dict) -> None:
