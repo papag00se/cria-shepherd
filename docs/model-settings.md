@@ -28,6 +28,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
 | **fabliq-reasoning** | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
+| **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | `temp 0.6, top_p 0.95, top_k 20, repeat_penalty 1.1` *(Qwen3-family defaults)* | PrismML (Qwen3.6-derived) | needs the **PrismML llama.cpp fork** (§Server launch); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
@@ -58,6 +59,7 @@ bytes** for the models that work and the ones that don't — the divergence is t
 |-------|----|--------------------------------|-----|
 | **mellum2** | ✅ | ✅ clean direct answer | trained for it (embedded template) |
 | **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
+| **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
 | **gemma4** | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` |
 | **fabliq-reasoning** | ✅ | ⚠ deliberation leaks into `content` (~1400 chars) | **LFM2 family** — never trained on the empty-think convention; the prefill is inert |
 | **lfm25** | ✅ | ⚠ same leak | LFM2.5 — same root cause (its toggle is byte-identical to fabliq's) |
@@ -105,11 +107,16 @@ All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device 
 `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) ·
 `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
-Per-model differ only by source + chat template (all templates in `~/shepherd-eval/templates/`):
+Per-model differ only by source + chat template (all templates in `~/shepherd-eval/templates/`) —
+**except `ternary-bonsai`**, which also overrides `binary` + `lib_dir` to the **PrismML llama.cpp fork**
+(its `libggml-cuda.so` carries the `Q2_0_g128` kernels the stock CUDA build lacks; `lib_dir` must LEAD
+with the prism dir, then `cuda-12.8-local/lib64` + `/usr/lib/wsl/lib`). Fork binary:
+`/home/jesse/src/llama.cpp-prism/llama-prism-b9596-9fcaed7/llama-server`.
 
 | Model | Source | Template |
 |-------|--------|----------|
 | fabliq-reasoning | `-hf mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF --hf-file …Q6_K.gguf` | `fabliq-toggle.jinja` |
+| ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
 | mellum2 | `-hf yuxinlu1/Mellum2-12B-A2.5B-…-GGUF --hf-file mellum2-claude-Q4_K_M.gguf` | *(embedded)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
 | lfm25 | `-hf unsloth/LFM2.5-8B-A1B-GGUF --hf-file …UD-Q6_K_XL.gguf` | `lfm25-toggle.jinja` |
