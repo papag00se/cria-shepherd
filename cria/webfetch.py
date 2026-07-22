@@ -28,6 +28,7 @@ from __future__ import annotations
 import difflib
 import ipaddress
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -182,6 +183,53 @@ def clear_cache() -> None:
     _SEARCH_SEEN.clear()
 
 
+# --- OVERSIZED docs: spill to a file the model can grep, instead of a low-signal page-1 -------------
+# A big doc paged in document order leads with its FRONT MATTER (an OpenAPI spec's info/license/contact
+# block), NOT the endpoints/schemas the model needs — and a weak model, seeing only that, re-fetches or
+# writes the fragment to disk (the live Ada-handle incident: it saved the 473-byte info block as its
+# "openapi.json"). So a doc larger than one page is written IN FULL to ./tmp and the model is handed a
+# short pointer + two lossless ways in: grep the file, or a filtered `find=` fetch (served from cache).
+OVERSIZE_CHARS = CONTENT_CAP_TOKENS * 4  # bigger than one page → spill to a file rather than inline
+
+
+def _spill_name(url: str) -> str:
+    """A stable, filesystem-safe ``./tmp`` filename for a URL's spilled doc — stable so a re-fetch of the
+    same url points the model at the same file (no duplicate spills)."""
+    import urllib.parse
+    p = urllib.parse.urlparse(url)
+    stem = (p.netloc + p.path).strip("/") or "page"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "page"
+    if "." not in stem.rsplit("_", 1)[-1]:
+        stem += ".txt"
+    return f"./tmp/{stem}"
+
+
+def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
+    """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
+    content, model message); else None. The content is pretty-printed when JSON/YAML so ``grep -n`` is
+    line-oriented; otherwise the reduced text. Reads the cache populated by a prior fetch — so the caller
+    must have fetched first (``fetch_nav``)."""
+    cached = _DOC_CACHE.get(url)
+    if not cached or len(cached[2]) <= OVERSIZE_CHARS:
+        return None
+    status, _ct, reduced, parsed, _trunc = cached
+    if parsed is not None:
+        try:
+            content = json.dumps(parsed, indent=2, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            content = reduced
+    else:
+        content = reduced
+    target = _spill_name(url)
+    msg = (f"{status_label(status)} · {url}\n"
+           f"This document is large ({len(content):,} chars) — I saved it IN FULL to {target} rather than "
+           f"inlining it (a big doc's first page is mostly front matter, not the part you need).\n"
+           f"Read it one of two ways — do NOT re-fetch the whole url:\n"
+           f'  • grep the file, e.g.  grep -n "resolved_addresses" {target}\n'
+           f'  • call web_fetch again with find="<keyword>" to get just the matching section.')
+    return status, target, content, msg
+
+
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     """Record what's CURRENTLY visible in the conversation, so the gate refuses a repeat only while
     the model still has that result. Called per request from the fetch/search results still in
@@ -285,6 +333,12 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
                 "result — try a different source or path."), status
     if find:
         slice_ = find_in(reduced, parsed, find, cap_tokens)
+        # A broad find (e.g. `paths` on a whole spec) can match a subtree far bigger than one page —
+        # window it and tell the model to narrow, so a "filtered" fetch never dumps an unusable wall.
+        if len(slice_) > OVERSIZE_CHARS:
+            body, nxt, total = page_from(slice_, 0, cap_tokens)
+            slice_ = (body + f'\n\n⚠ This find="{find}" match is large ({total:,} chars) — narrow it (a '
+                      'more specific keyword) or grep the saved ./tmp file for exact lines.')
         # A find MISS on a truncated doc is the Ada-handle lie: the target may lie beyond the cut,
         # not be absent. Disclose so a miss isn't mistaken for "doesn't exist" (final-page parity).
         if truncated and ": no match" in slice_:

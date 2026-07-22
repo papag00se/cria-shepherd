@@ -385,13 +385,25 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     if not url:
         return None
     cursor = args.get("cursor")
-    result = webfetch.fetch_nav(
-        str(url),
-        find=(str(args["find"]) if args.get("find") else None),
-        cursor=(str(cursor) if cursor not in (None, "") else None),
-        session=session,
-    )
+    find = str(args["find"]) if args.get("find") else None
+    cursor = str(cursor) if cursor not in (None, "") else None
+    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session)
+    # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
+    # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
+    if find is None and cursor is None:
+        spill = webfetch.oversized_spill(str(url))
+        if spill:
+            _status, target, content, msg = spill
+            return _spill_command(target, content, msg)
     return f"printf %s {_qbash(result)}"
+
+
+def _spill_command(target: str, content: str, msg: str) -> str:
+    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, then print
+    the model-facing pointer message — the harness runs this and records the message as the tool result."""
+    tdir = os.path.dirname(target) or "."
+    return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(_b64(content))} | base64 -d > {_qbash(target)} && "
+            f"printf %s {_qbash(msg)}")
 
 
 def _search_command(args: dict, brave_key: str) -> str:

@@ -198,6 +198,54 @@ class FetchNavSeedTests(unittest.TestCase):
             wf.fetch = orig
         self.assertIn("EMPTY", out)
 
+    def _serve(self, body):
+        wf.clear_cache()
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", body, False)
+        return orig
+
+    def test_oversized_doc_spills_full_content_and_pointer(self):
+        # A big doc: oversized_spill returns the FULL greppable content (not just page-1 front matter)
+        # + a ./tmp target + a grep/find pointer message. This is the fix for the model saving the
+        # 473-byte info block: it now gets the whole spec on disk, pointed at the fields it needs.
+        big = json.dumps({"openapi": "3.0.3", "info": {"title": "X", "license": {"name": "MPL"}},
+                          "paths": {f"/p{i}": {"get": {"summary": "s" * 60}} for i in range(400)},
+                          "components": {"schemas": {"Handle": {"resolved_addresses": {"type": "object"}}}}},
+                         separators=(",", ":"))
+        orig = self._serve(big)
+        try:
+            wf.fetch_nav("https://api.x/openapi.json")            # populate the cache
+            spill = wf.oversized_spill("https://api.x/openapi.json")
+            self.assertIsNotNone(spill)
+            status, target, content, msg = spill
+            self.assertTrue(target.startswith("./tmp/"))
+            self.assertIn("resolved_addresses", content)         # the FULL doc, not the info block
+            self.assertGreater(content.count("\n"), 100)         # pretty-printed → greppable
+            self.assertIn("grep", msg)
+            self.assertIn(target, msg)
+            self.assertIn('find="', msg)
+        finally:
+            wf.fetch = orig
+
+    def test_small_doc_does_not_spill(self):
+        orig = self._serve(json.dumps({"status": "ok"}))
+        try:
+            wf.fetch_nav("https://api.x/health")
+            self.assertIsNone(wf.oversized_spill("https://api.x/health"))
+        finally:
+            wf.fetch = orig
+
+    def test_broad_find_is_bounded_not_a_wall(self):
+        big = json.dumps({"paths": {f"/p{i}": {"get": {"summary": "y" * 80}} for i in range(500)}},
+                         separators=(",", ":"))
+        orig = self._serve(big)
+        try:
+            out = wf.fetch_nav("https://api.x/spec.json", find="paths")
+            self.assertLess(len(out), wf.OVERSIZE_CHARS + 3000)   # windowed, not the whole subtree
+            self.assertIn("narrow", out.lower())
+        finally:
+            wf.fetch = orig
+
 
 class UncappedNavHintsTests(unittest.TestCase):
     """Navigation hints on a MISS must be complete — a cap would hide the very key/section the

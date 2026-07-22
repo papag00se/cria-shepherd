@@ -193,6 +193,27 @@ class WebTests(unittest.TestCase):
         finally:
             webfetch.fetch = orig
 
+    def test_large_fetch_spills_to_a_tmp_file_with_a_pointer(self):
+        # A plain fetch of an oversized doc lowers to: write the FULL doc to ./tmp, then print a short
+        # grep/find pointer — instead of a low-signal page-1 the weak model can't navigate.
+        from cria import webfetch
+        webfetch.clear_cache()
+        body = json.dumps({"openapi": "3.0.3", "info": {"title": "X"},
+                           "paths": {f"/p{i}": {"get": {"summary": "s" * 80}} for i in range(500)}},
+                          separators=(",", ":"))
+        orig = webfetch.fetch
+        webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
+        try:
+            comp = _call("web_fetch", {"url": "https://x/openapi.json"})
+            translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+            cmd = _lowered_cmd(comp)
+            self.assertIn("mkdir -p", cmd)
+            self.assertIn("base64 -d > ", cmd)      # full doc written to disk
+            self.assertIn("./tmp/", cmd)
+            self.assertIn("grep", cmd)              # pointer message tells the model how to read it
+        finally:
+            webfetch.fetch = orig
+
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
         translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
