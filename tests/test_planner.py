@@ -421,6 +421,28 @@ class ScrubInventedPathsTests(unittest.TestCase):
     def test_never_blanks_a_whole_step(self):
         self.assertEqual(self._scrub("/resolve/{handle}", "api.handle.me"), "/resolve/{handle}")
 
+    def test_bare_example_paths_in_a_clause_are_stripped(self):
+        # runM: step 2 said "note the path (e.g., `/resolve`, `/holder`)" — both BARE guesses (no
+        # {param}), which the coder then hunted for 20+ turns. In an e.g. clause they're clearly guesses.
+        task = "resolve an Ada Handle using api.handle.me"
+        out = self._scrub("Inspect the spec; note the path (e.g., `/resolve`, `/holder`) that returns the address.", task)
+        self.assertNotIn("/resolve", out)
+        self.assertNotIn("/holder", out)
+        self.assertNotIn("e.g.", out)
+        self.assertEqual(out, "Inspect the spec; note the path that returns the address.")
+
+    def test_bare_path_outside_an_example_clause_is_kept(self):
+        # A standalone bare path is too ambiguous to scrub (could be a real /health) — only e.g. clauses.
+        task = "build the service"
+        step = "Add a `/health` endpoint that returns 200"
+        self.assertEqual(self._scrub(step, task), step)
+
+    def test_example_clause_with_discovery_url_is_kept(self):
+        # The spec-discovery URL in an e.g. clause is a REAL hint (fix #5) — must survive.
+        task = "resolve via api.handle.me"
+        step = "Fetch the spec (e.g., from https://api.handle.me/openapi.json)"
+        self.assertEqual(self._scrub(step, task), step)
+
     def test_plan_for_scrubs_and_logs(self):
         prov = _ScriptedProvider([_content_resp(
             '1. Fetch https://api.handle.me/openapi.json with web_fetch.\n'
