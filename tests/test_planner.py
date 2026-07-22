@@ -332,6 +332,33 @@ class AllStepsExecutedTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 15)
 
 
+class SalvageMalformedPlanTests(unittest.TestCase):
+    """runH: fabliq emitted a clean 6-step {"plan":[...]} but one item — `like `"goose"`` — had
+    unescaped inner quotes, so json.loads rejected the WHOLE object → plan.unparsed → the task fell to
+    the UNGUARDED proxy path and freewheeled 60 turns. parse_steps must recover the array items."""
+
+    def test_unescaped_inner_quotes_are_salvaged(self):
+        from cria.planner import parse_steps
+        text = ('{\n  "plan": [\n'
+                '    "Fetch the spec with web_fetch.",\n'
+                '    "Write tests for handles like `"goose"` and `"papagoose`.",\n'
+                '    "Add a README."\n  ]\n}')
+        steps = parse_steps(text)
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(steps[0], "Fetch the spec with web_fetch.")
+        self.assertIn("goose", steps[1])          # the whole item survived despite the inner quotes
+        self.assertEqual(steps[2], "Add a README.")
+
+    def test_salvage_does_not_fire_without_an_array_key(self):
+        # A bare quoted sentence must NOT be mined as a step (only a steps/plan/items array is salvaged).
+        from cria.planner import parse_steps
+        self.assertIsNone(parse_steps('I think the answer is "probably yes" but I am not sure.'))
+
+    def test_valid_json_still_takes_the_fast_path(self):
+        from cria.planner import parse_steps
+        self.assertEqual(parse_steps('{"plan": ["a", "b"]}'), ["a", "b"])
+
+
 class ScrubInventedPathsTests(unittest.TestCase):
     """The planner drafts before fetching the spec, so a concrete `/path/{param}` it names is a guess
     the coder obeys verbatim (observed live: a baked `/resolve/{handle}` → a 404ing resolver + a

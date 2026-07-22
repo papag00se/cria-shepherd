@@ -101,11 +101,37 @@ def _clean_step(text: str) -> str:
 # silently fell back to the plan-OFF path (no step-gating → the coder coded freely and hallucinated).
 _STEP_KEYS = ("steps", "plan", "items")
 
+# A ``"steps"|"plan"|"items": [`` array opener, and a single JSON string element on its own line. The
+# item pattern is GREEDY to the last quote so an element with UNESCAPED inner quotes — ``like `"goose"```
+# — is still captured whole; that malformed inner quote is exactly what makes ``json.loads`` reject the
+# whole object, dropping an otherwise-good plan to plan.unparsed → the UNGUARDED proxy path (runH: a
+# clean 6-step plan lost to one `"goose"`, then 60 freewheeling turns with no guard/gate/steer).
+_ARR_KEY = re.compile(r'"(?:steps|plan|items)"\s*:\s*\[', re.I)
+_ARR_ITEM = re.compile(r'^\s*"(.*)"\s*,?\s*$')
+
+
+def _salvage_array_steps(body: str) -> list[str] | None:
+    """Recover the step strings from a step-array whose JSON won't parse (a local model's unescaped
+    inner quotes). Only engages when a ``steps``/``plan``/``items`` array opener is present, and reads
+    the quoted line-items up to the closing ``]`` — so it can't fire on arbitrary quoted prose."""
+    m = _ARR_KEY.search(body)
+    if not m:
+        return None
+    steps = []
+    for line in body[m.end():].splitlines():
+        if line.lstrip().startswith("]"):
+            break
+        im = _ARR_ITEM.match(line)
+        if im and (c := _clean_step(im.group(1))):
+            steps.append(c)
+    return steps or None
+
 
 def parse_steps(text: str) -> list[str] | None:
-    """Extract plan steps, accepting EITHER a numbered/bulleted list (the prompt's ask, and what small
-    models emit best) OR a JSON object whose step array is under ``steps``/``plan``/``items`` (models
-    vary the key). Returns None when neither yields steps."""
+    """Extract plan steps, accepting a numbered/bulleted list (the prompt's ask, and what small models
+    emit best), a JSON object whose step array is under ``steps``/``plan``/``items`` (models vary the
+    key), OR — when that JSON is malformed by unescaped inner quotes — the salvaged array items. Returns
+    None when none yield steps."""
     body = strip_think(text)
     obj = extract_json_object(body)
     if obj:
@@ -114,6 +140,9 @@ def parse_steps(text: str) -> list[str] | None:
             steps = [c for s in arr if (c := _clean_step(s))]
             if steps:
                 return steps
+    salvaged = _salvage_array_steps(body)  # malformed JSON array (unescaped inner quotes) → recover items
+    if salvaged:
+        return salvaged
     lines = body.splitlines()
     numbered = [c for line in lines if (m := _NUM_LINE.match(line)) and (c := _clean_step(m.group(1)))]
     if numbered:
