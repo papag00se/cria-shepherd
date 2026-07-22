@@ -95,6 +95,26 @@ def recover(content: str, prior_msgs: list) -> str:
     return compose(fail, _prior_edit_steers(prior_msgs, fail.get("path") or ""))
 
 
+def summarize(content: str) -> str:
+    """Collapse a raw ``⟦ctx:editfail⟧<base64>`` report to a ONE-LINE fact — for a REASONER session only.
+    The base64 embeds the file's FULL current bytes: useless noise a reasoner can't decode (three such
+    blobs were ~96K tokens of poison in a single verify prompt). The MODEL keeps the raw marker —
+    :func:`recover` turns it into the recovery directive it actually needs. Unchanged if no marker."""
+    i = content.find(EDITFAIL)
+    if i < 0:
+        return content
+    rest = content[i + len(EDITFAIL):]
+    b64 = rest.split(None, 1)[0] if rest.strip() else ""   # the report is one whitespace-free token
+    tail = rest[len(b64):]
+    try:
+        fail = json.loads(base64.b64decode(b64).decode("utf-8"))
+        path = os.path.basename(fail.get("path") or "a file")
+        note = f"[edit_file on {path} did not apply (mode={fail.get('mode') or 'miss'}); cria gave the coder the exact fix]"
+    except (ValueError, json.JSONDecodeError):
+        note = "[edit_file did not apply; cria gave the coder the fix]"
+    return content[:i] + note + tail
+
+
 def rewrite_sanctioned(msgs: list, path: str) -> bool:
     """True when this module has ESCALATED ``path`` to a whole-file rewrite in the recent conversation —
     i.e. cria itself just told the model to rewrite this file. The wheel-spin guard checks this so it

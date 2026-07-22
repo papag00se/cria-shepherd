@@ -1458,7 +1458,7 @@ def _work_log(messages: list[dict]) -> str:
     the one window-aware place any physical truncation happens — a per-site clip here would just be a
     dumber, undetectable slice of what the model reads."""
     lines: list[str] = []
-    for m in _strip_cria_file_ops(messages):
+    for m in _reasoner_session(messages):
         role = m.get("role")
         if role == "assistant":
             for tc in m.get("tool_calls") or []:
@@ -1543,6 +1543,27 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
         else:
             out.append(m)
     return out
+
+
+def _collapse_editfails(messages: list[dict]) -> list[dict]:
+    """REASONER-only: one-line each raw ``⟦ctx:editfail⟧<base64>`` tool result. The base64 embeds the
+    file's whole current bytes — noise the reasoner can't use (it can't decode it, and repeated blobs
+    poisoned a verify prompt with ~96K tokens). The coder path deliberately does NOT call this: its
+    represent_inbound decodes the marker into the recovery directive (with the bytes) the model needs."""
+    out: list[dict] = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str) and editrecovery.EDITFAIL in c:
+            m = {**m, "content": editrecovery.summarize(c)}
+        out.append(m)
+    return out
+
+
+def _reasoner_session(messages: list[dict]) -> list[dict]:
+    """Shared scrub for a session about to be serialized for a reasoner: hide cria's own file-ops/banners
+    and collapse edit-fail base64 blobs to one line. (Harness-frame drop is applied separately since one
+    caller reframes gate results between.)"""
+    return _collapse_editfails(_strip_cria_file_ops(messages))
 
 
 def _drop_harness_frame(messages: list[dict]) -> list[dict]:
@@ -2451,7 +2472,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
     session = selfcompact.serialize(
-        _drop_harness_frame(probegate.clean_gate_results(_strip_cria_file_ops(body.get("messages", [])))))
+        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", [])))))
     disk = _fresh_disk_facts(workspace_root, getattr(gs, "recent_writes", None), getattr(gs, "spin_path", "")) \
         if gs is not None else ""
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
@@ -2593,7 +2614,7 @@ def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
     """Stuck-search escalation: the coder keeps web_searching without ever web_fetch-ing. Hand the reasoner
     the WHOLE conversation (scrubbed of the harness frame) — so a domain the USER named is in reach — and
     ask for the ONE url it should read to move forward. Returns a bare URL, or "" (reasoner declined)."""
-    session = selfcompact.serialize(_drop_harness_frame(_strip_cria_file_ops(body.get("messages", []))))
+    session = selfcompact.serialize(_drop_harness_frame(_reasoner_session(body.get("messages", []))))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("search_fetch"),
                       prompts.render("search_fetch_user", session=session), rlog, phase="reasoner") or "").strip()
     if "NONE" in text[:12].upper():
