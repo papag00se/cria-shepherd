@@ -52,7 +52,20 @@ Runner = Callable[[list[str], Optional[str], Optional[float]], RunResult]
 # Directories that are vendored/generated/tooling output — their files are not the
 # coder's work product and their syntax is not our problem.
 SKIP_DIRS = [".git", ".codex-multi", "node_modules", "__pycache__", ".pytest_cache",
-             ".venv", "venv", "env", "dist", "build", ".mypy_cache", ".ruff_cache", "target"]
+             ".venv", "venv", "env", "dist", "build", ".mypy_cache", ".ruff_cache", "target",
+             "site-packages"]
+
+
+def _is_venv_dir(path: str) -> bool:
+    """A virtualenv root, by its definitive marker (``pyvenv.cfg``, written by ``python -m venv``)
+    rather than its NAME — so a venv the model created under any name is pruned like ``.venv``. Without
+    this, a model that ran ``python -m venv handle_resolver`` floods the lint target with the whole
+    site-packages tree (1000+ files); the api.handle.me run ballooned the context to ~62K and the next
+    compaction request 400'd on n_ctx overflow."""
+    try:
+        return os.path.isfile(os.path.join(path, "pyvenv.cfg"))
+    except OSError:
+        return False
 
 
 @dataclass
@@ -128,9 +141,10 @@ def _walk(dirpath: str, exts: list[str], out: list[str]) -> None:
         except OSError:
             continue
         if is_dir:
-            if name.startswith(".") or name in SKIP_DIRS:
+            full = os.path.join(dirpath, name)
+            if name.startswith(".") or name in SKIP_DIRS or _is_venv_dir(full):
                 continue
-            _walk(os.path.join(dirpath, name), exts, out)
+            _walk(full, exts, out)
         elif is_file:
             if "." in name and name.rsplit(".", 1)[1] in exts:
                 out.append(os.path.join(dirpath, name))

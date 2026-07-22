@@ -72,8 +72,19 @@ SKIP_DIRS = (
     ".git", "node_modules", "target", "dist", "build", ".venv", "venv",
     "__pycache__", "vendor", ".gradle", "bin", "obj", ".next", ".nuxt",
     ".svelte-kit", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox",
-    ".idea", ".vscode", "coverage",
+    ".idea", ".vscode", "coverage", "site-packages",
 )
+
+
+def _is_venv_dir(path) -> bool:
+    """A virtualenv root, detected by its definitive ``pyvenv.cfg`` marker rather than its NAME, so a
+    venv a model created under any name (e.g. ``handle_resolver/``) is pruned like ``.venv`` — else its
+    whole site-packages tree floods discovery and the lint target (the 62K-context / n_ctx-overflow
+    crash). Mirrors linterprobe._is_venv_dir; kept local (that module imports nothing from here)."""
+    try:
+        return (Path(path) / "pyvenv.cfg").is_file()
+    except OSError:
+        return False
 
 # Exact-name evidence files, grouped as upstream. upstream quirk, preserved:
 # Makefile, Justfile/justfile, Taskfile.yml/.yaml, Dockerfile, Rakefile,
@@ -287,7 +298,7 @@ def walk(root: Path, dir: Path, depth: int, dirs: dict[Path, set[str]]) -> None:
         path = Path(e.path)
         name = e.name
         if is_dir_on_disk(path):  # follows symlinks; the depth bound prevents runaway
-            if depth >= MAX_DEPTH or name.startswith(".") or name in SKIP_DIRS:
+            if depth >= MAX_DEPTH or name.startswith(".") or name in SKIP_DIRS or _is_venv_dir(path):
                 # "still record .github one level for workflow detection".
                 # Port deviation (spec FLAG-1, recommended): upstream exempted
                 # `.github` from the dot-dir skip (`name != ".github"`), so it
@@ -800,7 +811,7 @@ def build_glue(p: ProjectDir, out: list[ProbeCandidate]) -> None:
 # clip: any repo a coder actually works in gets full coverage.
 MAX_FLOOR_FILES_PER_LANG = 100_000
 # The same skip list the linter floor used, as a compileall -x regex.
-_COMPILEALL_SKIP_RE = r"(^|/)(\.git|\.cria|__pycache__|venv|\.venv|node_modules|dist|build)(/|$)"
+_COMPILEALL_SKIP_RE = r"(^|/)(\.git|\.cria|__pycache__|venv|\.venv|node_modules|dist|build|site-packages)(/|$)"
 
 # Config-file syntax floor (NOT in the Rust — a cria congruence add): a broken pyproject.toml /
 # Cargo.toml / *.toml has no compiler to catch it, so the model rewrites it blind. Parse each with
