@@ -143,6 +143,15 @@ class GuardState:
     ``GuardState`` per session. The module-level ``guard_*`` functions operate on this state."""
     awaiting_probe: bool = False  # cria emitted a ground-truth probe; next request is its result
     probe_call_id: str = ""  # the id of the probe tool call, to find its result
+    # Per-search reasoned assist (guard_search_judge): cria emits its OWN read of a spilled search-result
+    # file, then the reasoner judges whether the query/results were on-target. Off-target results are
+    # stripped from the model's view from that point on, and the recommended query is steered.
+    awaiting_search_read: bool = False  # cria emitted a read of a search-result file; next req is its result
+    search_read_call_id: str = ""       # id of that read tool call
+    search_read_query: str = ""         # the query whose results are being judged
+    judged_search_files: set = None     # spill files already judged (don't re-read/re-judge)
+    poisoned_search_files: set = None   # spill files judged off-target → strip their reads going forward
+    search_recommend: str = ""          # the last recommended query to steer (cleared once delivered)
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
@@ -296,6 +305,25 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
         return None
+
+
+def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog) -> tuple[bool, bool, str]:
+    """Reasoned per-search assist: given the task, the QUERY the coder used, and the RESULTS it got back,
+    judge whether the query is on-target and whether the results are on-target, and recommend a better
+    query. Returns (query_on_target, results_on_target, recommended_query). Fails OPEN (both True, no
+    recommendation) on a parse miss — a judge that can't judge must never STRIP real results (a footgun:
+    losing correct search results is worse than tolerating some noise). Only a definite ``false`` strips."""
+    if reasoner_role is None or not (task.strip() and results.strip()):
+        return True, True, ""
+    vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_judge"),
+                      prompts.render("search_judge_user", task=task, query=query or "(none)",
+                                     results=results), rlog, phase="reasoner") or ""
+    obj = extract_json_object(strip_think(vtext))
+    if not isinstance(obj, dict):
+        return True, True, ""
+    return (obj.get("query_on_target") is not False,
+            obj.get("results_on_target") is not False,
+            str(obj.get("recommended_query") or "").strip())
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> tuple[bool, str]:

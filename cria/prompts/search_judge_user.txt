@@ -1,0 +1,10 @@
+THE TASK:
+{{TASK}}
+
+THE SEARCH QUERY THE AGENT USED:
+{{QUERY}}
+
+THE RESULTS IT GOT BACK:
+{{RESULTS}}
+
+Judge query_on_target and results_on_target (independently), and give the recommended_query. Reply with ONE JSON object only.
