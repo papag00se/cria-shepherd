@@ -1,4 +1,4 @@
 THE SESSION SO FAR (the task, any URLs/domains the user or the agent mentioned, and its repeated searches):
 {{SESSION}}
 
-Which ONE url should it web_fetch next to move forward? Reply with the bare URL, or NONE. DO NOT GUESS URLs!
+Which ONE url should it web_fetch next to move forward? If a domain is named anywhere above (e.g. `api.handle.me`), return its discovery root — `.../openapi.json`, `.../swagger`, or `.../`. Reply with the bare URL, or `NONE` ONLY if no domain or URL is named anywhere.
