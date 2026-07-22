@@ -2738,7 +2738,18 @@ def _extend_summary(summary: str, idx: int, item: str) -> str:
 # Shell wrapper boilerplate carries no intent: without stripping it, `bash -lc cat a.py` and
 # `bash -lc cat b.py` share {bash, -lc, cat} and false-match as "the same hunt" — three reads
 # of three DIFFERENT files would fire the redirect.
-_BOILERPLATE_WORDS = frozenset({"bash", "sh", "zsh", "dash", "-lc", "-c", "-l", "-e", "env"})
+# Shell boilerplate stripped from an action's word-set before repetition matching: the interpreter
+# invocation, PLUS output-plumbing that shapes a command's OUTPUT without changing what it
+# investigates — the `cd` prefix, output pagers/formatters (head/tail/cat/less/more/wc/nl), and the
+# `/dev/null` redirect noise. Incident (api.handle.me, 2026-07-21): the coder ran `git log --oneline
+# -5`, then `… 2>&1`, then `… 2>&1 | head -n 5` — same failing command, but the pipe/redirect added
+# ~5 jitter tokens, dropping Jaccard to 0.64 (jitter>2 AND <0.7), so the variants scattered into
+# separate signatures and the redirect fired ~16 calls late instead of at the 3rd. Stripping the
+# plumbing collapses the variants to their shared core (`git log --oneline`) so the spin trips on time,
+# while distinct commands (git log vs ls vs git rev-parse; cat a.py vs cat b.py) still don't match.
+_BOILERPLATE_WORDS = frozenset({
+    "bash", "sh", "zsh", "dash", "-lc", "-c", "-l", "-e", "env",
+    "cd", "head", "tail", "cat", "less", "more", "wc", "nl", "-n", "dev", "null"})
 
 # Navigation/read tools whose repeated use is usually PROGRESS, not a spiral: paging through a doc
 # (web_fetch cursor), drilling by key (find), reading further into a file (start_line), listing a new

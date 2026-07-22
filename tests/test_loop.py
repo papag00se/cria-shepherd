@@ -2311,6 +2311,31 @@ class SharedRepetitionGuardTests(unittest.TestCase):
         self.assertTrue(gs.redirect_due)
         self.assertIn("exec_command", gs.repeat_action)
 
+    def test_track_repetition_matches_through_pipe_and_redirect_jitter(self):
+        # The api.handle.me incident: the SAME failing command re-run with output-plumbing jitter
+        # (`2>&1`, `| head -n 5`) must still trip at the 3rd call, not scatter into separate
+        # signatures and fire ~16 calls late. Plumbing (cd/head/redirects) is boilerplate now.
+        from cria.loop import GuardState, guard_track_repetition
+        gs = GuardState()
+        D = "/home/jesse/src/codex.test.site"
+        variants = [
+            f"cd {D} && git log --oneline -5",
+            f"cd {D} && git log --oneline -5 2>&1",
+            f"cd {D} && git log --oneline -5 2>&1 | head -n 5",
+        ]
+        for cmd in variants:
+            guard_track_repetition(gs, self._tc("exec_command", json.dumps({"cmd": cmd})), _Rlog())
+        self.assertTrue(gs.redirect_due)  # tripped by the 3rd variant, despite the pipe/redirect jitter
+
+    def test_track_repetition_does_not_merge_distinct_shell_commands(self):
+        # Stripping plumbing must not over-merge genuinely different commands into one hunt.
+        from cria.loop import GuardState, guard_track_repetition
+        gs = GuardState()
+        D = "/home/jesse/src/codex.test.site"
+        for cmd in [f"cd {D} && git log --oneline -5", f"cd {D} && ls -la", f"cd {D} && git rev-parse --show-toplevel"]:
+            guard_track_repetition(gs, self._tc("exec_command", json.dumps({"cmd": cmd})), _Rlog())
+        self.assertFalse(gs.redirect_due)  # three DIFFERENT commands → not a spin
+
     def test_track_write_streak_trips_spin(self):
         from cria.loop import GuardState, guard_track_write_streak, WHEEL_SPIN_WRITES
         gs = GuardState()
