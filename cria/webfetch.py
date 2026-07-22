@@ -204,29 +204,75 @@ def _spill_name(url: str) -> str:
     return f"./tmp/{stem}"
 
 
+def _looks_like_code(text: str) -> bool:
+    """A minified body whose brace/semicolon density reads as CSS/JS (when the content-type is absent
+    or lying) — worth breaking at structural points for grep. Conservative sample so plain text is safe."""
+    sample = text[:4000]
+    return sample.count("{") + sample.count("}") + sample.count(";") >= 8
+
+
+def _is_minified(text: str) -> bool:
+    """A body dominated by one very long line — ``grep`` would return that whole line, so break it up."""
+    return len(text) > 2000 and max((len(ln) for ln in text.split("\n")[:400]), default=0) > 2000
+
+
+def _break_tags(html: str) -> str:
+    """Each tag boundary on its own line — whitespace inserted between ``>`` and ``<`` is insignificant
+    in HTML/XML, so this only aids grepping and never changes meaning."""
+    return re.sub(r">\s*<", ">\n<", html)
+
+
+def _break_code(code: str) -> str:
+    """Newline after each ``{ } ;`` — STRING-AWARE (never inside a ' " ` literal), so a URL or text with
+    braces isn't split. Whitespace is insignificant in CSS/JS outside strings, so this is a grep aid, not
+    a reformat that could change behaviour. Best-effort: regex/comment edge cases are rare and harmless."""
+    out: list[str] = []
+    quote = None
+    prev = ""
+    for ch in code:
+        out.append(ch)
+        if quote:
+            if ch == quote and prev != "\\":
+                quote = None
+        elif ch in "\"'`":
+            quote = ch
+        elif ch in "{};":
+            out.append("\n")
+        prev = ch
+    return "".join(out)
+
+
+def _greppable(reduced: str, parsed: Optional[Any], ct: Optional[str]) -> str:
+    """The spilled file's content, formatted so ``grep -n`` is line-oriented. JSON/YAML → pretty JSON;
+    a MINIFIED single-mega-line HTML/CSS/JS body → broken at safe structural points (whitespace is
+    insignificant there); anything else (already multi-line, or unknown) → as-is. Always lossless."""
+    if parsed is not None:
+        try:
+            return json.dumps(parsed, indent=2, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            pass
+    if not _is_minified(reduced):
+        return reduced
+    ct = (ct or "").lower()
+    if "html" in ct or "xml" in ct or reduced.lstrip()[:1] == "<":
+        return _break_tags(reduced)
+    if any(t in ct for t in ("css", "javascript", "ecmascript", "typescript")) or _looks_like_code(reduced):
+        return _break_code(reduced)
+    return reduced
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
-    content, model message); else None. The content is pretty-printed when JSON/YAML so ``grep -n`` is
-    line-oriented; otherwise the reduced text. Reads the cache populated by a prior fetch — so the caller
-    must have fetched first (``fetch_nav``)."""
+    content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a
+    minified HTML/CSS/JS body broken at safe structural points). Reads the cache a prior fetch populated."""
     cached = _DOC_CACHE.get(url)
     if not cached or len(cached[2]) <= OVERSIZE_CHARS:
         return None
-    status, _ct, reduced, parsed, _trunc = cached
-    if parsed is not None:
-        try:
-            content = json.dumps(parsed, indent=2, ensure_ascii=False)
-        except Exception:  # noqa: BLE001
-            content = reduced
-    else:
-        content = reduced
+    status, ct, reduced, parsed, _trunc = cached
+    content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
-    msg = (f"{status_label(status)} · {url}\n"
-           f"This document is large ({len(content):,} chars) — I saved it IN FULL to {target} rather than "
-           f"inlining it (a big doc's first page is mostly front matter, not the part you need).\n"
-           f"Read it one of two ways — do NOT re-fetch the whole url:\n"
-           f'  • grep the file, e.g.  grep -n "resolved_addresses" {target}\n'
-           f'  • call web_fetch again with find="<keyword>" to get just the matching section.')
+    msg = _guard_msg("spill", status_label=status_label(status), url=url,
+                     chars=f"{len(content):,}", target=target)
     return status, target, content, msg
 
 
@@ -337,8 +383,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
         # window it and tell the model to narrow, so a "filtered" fetch never dumps an unusable wall.
         if len(slice_) > OVERSIZE_CHARS:
             body, nxt, total = page_from(slice_, 0, cap_tokens)
-            slice_ = (body + f'\n\n⚠ This find="{find}" match is large ({total:,} chars) — narrow it (a '
-                      'more specific keyword) or grep the saved ./tmp file for exact lines.')
+            slice_ = body + _guard_msg("find_large", find=find, chars=f"{total:,}")
         # A find MISS on a truncated doc is the Ada-handle lie: the target may lie beyond the cut,
         # not be absent. Disclose so a miss isn't mistaken for "doesn't exist" (final-page parity).
         if truncated and ": no match" in slice_:

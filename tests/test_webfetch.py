@@ -198,11 +198,31 @@ class FetchNavSeedTests(unittest.TestCase):
             wf.fetch = orig
         self.assertIn("EMPTY", out)
 
-    def _serve(self, body):
+    def _serve(self, body, ct="application/json"):
         wf.clear_cache()
         orig = wf.fetch
-        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", body, False)
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, ct, body, False)
         return orig
+
+    def test_minified_css_is_broken_for_grep(self):
+        orig = self._serve("a{margin:0}b{color:red;font-size:2em}" * 800, ct="text/css")
+        try:
+            wf.fetch_nav("https://x/s.css")
+            content = wf.oversized_spill("https://x/s.css")[2]
+            self.assertGreater(content.count("\n"), 500)   # line-oriented, not one mega-line
+        finally:
+            wf.fetch = orig
+
+    def test_minified_js_break_is_string_aware(self):
+        # a `{` INSIDE a string literal must NOT trigger a break — that would corrupt the greppable view.
+        orig = self._serve("const u='https://a.com/{id}';function f(){return u}" * 800, ct="application/javascript")
+        try:
+            wf.fetch_nav("https://x/app.js")
+            content = wf.oversized_spill("https://x/app.js")[2]
+            self.assertGreater(content.count("\n"), 500)
+            self.assertIn("'https://a.com/{id}'", content)   # brace-in-string intact
+        finally:
+            wf.fetch = orig
 
     def test_oversized_doc_spills_full_content_and_pointer(self):
         # A big doc: oversized_spill returns the FULL greppable content (not just page-1 front matter)
