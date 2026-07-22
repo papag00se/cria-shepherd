@@ -110,6 +110,21 @@ _ARR_KEY = re.compile(r'"(?:steps|plan|items)"\s*:\s*\[', re.I)
 _ARR_ITEM = re.compile(r'^\s*"(.*)"\s*,?\s*$')
 
 
+# Inline ordinal boundary — "1. ", "2) " — used to split a numbered plan packed into ONE string
+# value (``{"plan": "1. Search… 2. Fetch… 6. README…"}``, runI): the JSON parses, but ``plan`` is a
+# str not a list, and every step sits on one line so the line-based fallback can't see them either.
+_INLINE_NUM = re.compile(r"(?:^|\s)\d{1,3}[.)]\s+")
+
+
+def _split_inline_numbered(s: str) -> list[str] | None:
+    """Split a single string of numbered steps ("1. a 2. b 3. c") into its items. Requires ≥2 ordinals
+    so a lone "1." sentence isn't mistaken for a plan; returns None otherwise."""
+    if len(_INLINE_NUM.findall(s)) < 2:
+        return None
+    parts = [p for chunk in _INLINE_NUM.split(s) if (p := _clean_step(chunk))]
+    return parts or None
+
+
 def _salvage_array_steps(body: str) -> list[str] | None:
     """Recover the step strings from a step-array whose JSON won't parse (a local model's unescaped
     inner quotes). Only engages when a ``steps``/``plan``/``items`` array opener is present, and reads
@@ -135,11 +150,16 @@ def parse_steps(text: str) -> list[str] | None:
     body = strip_think(text)
     obj = extract_json_object(body)
     if obj:
-        arr = next((obj[k] for k in _STEP_KEYS if isinstance(obj.get(k), list)), None)
-        if arr is not None:
-            steps = [c for s in arr if (c := _clean_step(s))]
-            if steps:
-                return steps
+        for k in _STEP_KEYS:
+            v = obj.get(k)
+            if isinstance(v, list):
+                steps = [c for s in v if (c := _clean_step(s))]
+                if steps:
+                    return steps
+            elif isinstance(v, str) and v.strip():  # a numbered plan packed into one string value
+                steps = _split_inline_numbered(v)
+                if steps:
+                    return steps
     salvaged = _salvage_array_steps(body)  # malformed JSON array (unescaped inner quotes) → recover items
     if salvaged:
         return salvaged

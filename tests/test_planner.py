@@ -358,6 +358,18 @@ class SalvageMalformedPlanTests(unittest.TestCase):
         from cria.planner import parse_steps
         self.assertEqual(parse_steps('{"plan": ["a", "b"]}'), ["a", "b"])
 
+    def test_stringified_numbered_plan_is_split(self):
+        # runI: {"plan": "1. Search... 2. Fetch... 3. Write..."} — plan is a STRING, steps inline.
+        from cria.planner import parse_steps
+        text = '{"plan": "1. Search the web. 2. Fetch the spec. 3. Write the script.", "output": ""}'
+        steps = parse_steps(text)
+        self.assertEqual(steps, ["Search the web.", "Fetch the spec.", "Write the script."])
+
+    def test_single_ordinal_string_is_not_a_plan(self):
+        # One "1." sentence must not be mistaken for a plan (needs >=2 ordinals).
+        from cria.planner import parse_steps
+        self.assertIsNone(parse_steps('{"plan": "1. just do the whole thing in one go"}'))
+
 
 class ScrubInventedPathsTests(unittest.TestCase):
     """The planner drafts before fetching the spec, so a concrete `/path/{param}` it names is a guess
