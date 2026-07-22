@@ -183,6 +183,7 @@ class GuardState:
     # model won't take itself).
     search_words: list = None  # the last web_search's normalized word-set (searchloop)
     search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
+    tried_spec_convention: bool = False  # spent the one deterministic <task-domain>/openapi.json escape
 
 
 @dataclass
@@ -2488,6 +2489,29 @@ def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: di
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>)\]}]+")
 
+# A bare host/domain token — used to recover the API domain the USER named in the task. The negative
+# lookahead drops file-name lookalikes (``resolve_handle.py``, ``config.json``): a trailing label that
+# is a common code/data extension is a filename, not a host.
+_DOMAIN_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b(?<!\.py)(?<!\.js)(?<!\.ts)", re.I)
+_FILE_EXTS = {"py", "js", "ts", "json", "yaml", "yml", "toml", "ini", "cfg", "md", "txt", "sh",
+              "go", "rs", "rb", "java", "c", "cpp", "h", "html", "css", "lock", "csv", "xml"}
+
+
+def _task_api_domain(messages: list[dict]) -> str:
+    """The single API host the user named in the task (latest user turn) — e.g. ``api.handle.me`` from
+    "the Ada Handles API (api.handle.me)". Returns "" when zero or several distinct hosts are named (no
+    unambiguous domain to canonicalize onto). Drops filename lookalikes by their extension label."""
+    task = latest_user_text(messages)
+    hosts = []
+    for m in _DOMAIN_RE.finditer(task):
+        h = m.group(0).lower().rstrip(".")
+        if h.rsplit(".", 1)[-1] in _FILE_EXTS:
+            continue
+        if h not in hosts:
+            hosts.append(h)
+    return hosts[0] if len(hosts) == 1 else ""
+
 
 def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
     """Stuck-search escalation: the coder keeps web_searching without ever web_fetch-ing. Hand the reasoner
@@ -2520,7 +2544,20 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
     sess.search_words = words
     if sess.search_streak < SEARCH_STREAK_ESCALATE or reasoner_role is None:
         return coder
-    url = author_search_fetch(reasoner_chat, reasoner_role, body, rlog)
+    # Convention-first: when the task NAMED an API domain, spend one deterministic escape on the
+    # OpenAPI standard path <domain>/openapi.json before delegating the URL to the reasoner. Observed
+    # (runE): the reasoner, handed the whole session, kept guessing vaguer roots (/swagger, /) and
+    # NEVER /openapi.json — so the coder web_searched 33× and never fetched the spec that was 200 all
+    # along. Grounded in the user's own domain; self-limited to once (a 404 then falls to the reasoner,
+    # which may know a non-standard path) so an API without /openapi.json can't trap the escape here.
+    domain = _task_api_domain(body.get("messages", []))
+    if domain and not sess.tried_spec_convention:
+        sess.tried_spec_convention = True
+        url = f"https://{domain}/openapi.json"
+        via = "convention"
+    else:
+        url = author_search_fetch(reasoner_chat, reasoner_role, body, rlog)
+        via = "reasoner"
     sess.search_streak, sess.search_words = 0, None       # cooldown whether or not a url came back
     if not url:
         rlog.emit("loop.search_escalation", url=None)     # reasoner had nothing → let the search go (gate refuses a repeat)
@@ -2528,7 +2565,7 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
     msg["tool_calls"] = [{"id": search_tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
                           "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]
     _add_note(coder, f"searched {SEARCH_STREAK_ESCALATE}× without fetching — fetching {url} for you")
-    rlog.emit("loop.search_escalation", url=url)
+    rlog.emit("loop.search_escalation", url=url, via=via)
     return coder
 
 

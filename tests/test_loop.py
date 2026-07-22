@@ -2744,30 +2744,62 @@ class SearchEscalationTests(unittest.TestCase):
     def _fn(self, coder):
         return coder["choices"][0]["message"]["tool_calls"][0]["function"]
 
-    def _run(self, gs, coder, reasoner):
+    def _run(self, gs, coder, reasoner, task="use api.handle.me"):
         from cria.loop import guard_search_escalation
-        return guard_search_escalation(gs, coder, {"messages": [{"role": "user", "content": "use api.handle.me"}]},
+        return guard_search_escalation(gs, coder, {"messages": [{"role": "user", "content": task}]},
                                        reasoner, self._role(), _Rlog())
 
-    def test_fifth_similar_search_becomes_a_cria_web_fetch(self):
-        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
+    def _escalate(self, gs, reasoner, task="use api.handle.me"):
+        from cria.loop import SEARCH_STREAK_ESCALATE
+        out = None
+        for _ in range(SEARCH_STREAK_ESCALATE):
+            out = self._run(gs, self._search("ADA Handle API resolve handle to address"), reasoner, task)
+        return out
+
+    def test_named_domain_escalates_to_the_openapi_convention(self):
+        # The task named api.handle.me → the FIRST escape is the deterministic OpenAPI standard path,
+        # NOT the reasoner's guess (runE: the reasoner kept picking /swagger and / and never openapi.json).
+        from cria.loop import GuardState
         gs = GuardState()
-        reasoner = self._reasoner("Fetch https://api.handle.me/swagger.json for the endpoints.")
-        for i in range(SEARCH_STREAK_ESCALATE - 1):
-            out = self._run(gs, self._search("ADA Handle API resolve handle to address"), reasoner)
-            self.assertEqual(self._fn(out)["name"], "web_search")   # still forwarded as the search
-        out = self._run(gs, self._search("ADA Handle API resolve handle to address"), reasoner)
-        self.assertEqual(self._fn(out)["name"], "web_fetch")        # the Nth is SWAPPED for a fetch
+        out = self._escalate(gs, self._reasoner("Fetch https://api.handle.me/swagger.json"))
+        self.assertEqual(self._fn(out)["name"], "web_fetch")
+        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
+        self.assertNotIn("swagger.json", self._fn(out)["arguments"])   # reasoner NOT consulted first
+        self.assertTrue(gs.tried_spec_convention)
+        self.assertEqual(gs.search_streak, 0)
+
+    def test_second_escalation_falls_to_the_reasoner(self):
+        # The convention is spent once; a recurring streak then defers to the reasoner (which may know a
+        # non-standard path), so an API without /openapi.json can't trap the escape on the convention.
+        from cria.loop import GuardState
+        gs = GuardState()
+        self._escalate(gs, self._reasoner("Fetch https://api.handle.me/swagger.json"))   # convention
+        out = self._escalate(gs, self._reasoner("Fetch https://api.handle.me/swagger.json"))  # reasoner
         self.assertIn("api.handle.me/swagger.json", self._fn(out)["arguments"])
-        self.assertEqual(gs.search_streak, 0)                        # reset after escalating
+
+    def test_no_named_domain_uses_the_reasoner(self):
+        from cria.loop import GuardState
+        gs = GuardState()
+        out = self._escalate(gs, self._reasoner("Fetch https://example.org/openapi.json"),
+                             task="build a thing, good luck")   # no domain in the task
+        self.assertFalse(gs.tried_spec_convention)
+        self.assertIn("example.org/openapi.json", self._fn(out)["arguments"])
 
     def test_reasoner_declines_leaves_the_search(self):
-        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
-        gs = GuardState()
-        reasoner = self._reasoner("NONE")
-        for _ in range(SEARCH_STREAK_ESCALATE):
-            out = self._run(gs, self._search("ADA Handle API resolve handle"), reasoner)
+        from cria.loop import GuardState
+        gs = GuardState(); gs.tried_spec_convention = True   # convention already spent → reasoner path
+        out = self._escalate(gs, self._reasoner("NONE"), task="find the ADA Handle docs")
         self.assertEqual(self._fn(out)["name"], "web_search")       # no url → not substituted
+
+    def test_task_api_domain_extraction(self):
+        from cria.loop import _task_api_domain
+        msg = lambda t: [{"role": "user", "content": t}]
+        # the real task: one host named, filenames ignored
+        self.assertEqual(_task_api_domain(msg(
+            "resolve via the Ada Handles API (api.handle.me); write resolve_handle.py and a README.md")),
+            "api.handle.me")
+        self.assertEqual(_task_api_domain(msg("no domain here, just write config.json")), "")   # only a filename
+        self.assertEqual(_task_api_domain(msg("compare api.foo.com and api.bar.com")), "")       # ambiguous → none
 
     def test_a_write_resets_the_streak(self):
         from cria.loop import GuardState
