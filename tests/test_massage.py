@@ -366,12 +366,21 @@ class IncompleteWriteTests(unittest.TestCase):
         self.assertEqual(got, {"path": "a.py", "content": 'print("hi")\nx = "q"here'})
 
     def test_recover_refuses_truncation_ending_in_internal_quote_comma(self):
-        # The narrow false-accept window: a cut-off whose last bytes are `",` from INSIDE the
-        # content would pass the char-after-quote check — but a complete object ends in `}`, and
-        # this one ends in `,`, so the object-terminator condition rejects it.
         from cria.massage import _recover_write_args
         cut = r'{"path":"a.py","content":"d = {\"k\": \"v\"},'  # truncated mid-dict-literal
         self.assertIsNone(_recover_write_args(cut))
+
+    def test_structural_scan_rejects_object_ending_in_a_nested_close(self):
+        # Ends in `}` but the OUTER object is still open — endswith("}") would be fooled; the
+        # brace-depth scan is not. (The reported hole.)
+        from cria.massage import _json_structurally_complete
+        self.assertFalse(_json_structurally_complete('{"this":{"is": "invalid json"}'))
+        self.assertTrue(_json_structurally_complete('{"this":{"is": "valid json"}}'))
+
+    def test_structural_scan_follows_backslash_escapes(self):
+        from cria.massage import _json_structurally_complete
+        self.assertTrue(_json_structurally_complete(r'{"c":"a \" b \' c"}'))   # escaped quotes stay in-string
+        self.assertFalse(_json_structurally_complete(r'{"c":"open \" never closed'))  # cut mid-string
 
     def test_flags_incomplete_after_repair(self):
         from cria.massage import repair_tool_args, has_incomplete_write_args

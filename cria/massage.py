@@ -853,6 +853,39 @@ _PATH_RE = re.compile(r'"(?:path|file_path|file|filename)"\s*:\s*"([^"\n]*)"')
 _CONTENT_RE = re.compile(r'"(?:content|contents|text|body)"\s*:\s*"')
 
 
+def _json_structurally_complete(s: str) -> bool:
+    """True iff ``s`` is a structurally closed JSON value: every `{`/`[` balanced by its `}`/`]`
+    and no string left open. Tolerant scan — a backslash escapes the next char regardless of JSON
+    validity, so an invalid `\\'` (the real cut-off write) is followed correctly and only an actual
+    truncation ends inside a string or at depth > 0. NOT a validator: it decides completeness, not
+    well-formedness, and can't resolve a genuinely unescaped `"` in a string value (unresolvable by
+    any scan — the caller refuses on that ambiguity)."""
+    depth = 0
+    in_str = False
+    esc = False
+    saw = False
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+            saw = True
+        elif ch in "}]":
+            depth -= 1
+            if depth < 0:  # a stray closer → not a well-nested value
+                return False
+    return saw and depth == 0 and not in_str
+
+
 def _recover_write_args(raw: str) -> dict | None:
     """Last-resort recovery of a write_file-style call whose `content` value has
     raw newlines / unescaped quotes that break JSON: pull the path, then take the
@@ -867,23 +900,20 @@ def _recover_write_args(raw: str) -> dict | None:
     pm = _PATH_RE.search(raw)
     if not pm:
         return None
-    # A complete JSON object ends with `}`. A cut-off call doesn't — this rejects a truncation
-    # whose last bytes are anything but the object terminator (our real case ended in `\'`, a
-    # `",`-truncation ends in `,`), and no well-formed call fails it. Necessary, not sufficient —
-    # the per-value check below is the second condition.
-    if raw.rstrip()[-1:] != "}":
+    # Structural completeness, not a string heuristic: `endswith("}")` proves nothing (a `}` can
+    # close a NESTED object, or be literal content, while the outer object is still open). Scan the
+    # raw as JSON — string state + backslash-escapes-next-char (so an invalid `\'` is handled) +
+    # brace/bracket depth. A cut-off call ends inside a string or at depth > 0. The one case this
+    # can't decide is a GENUINELY unescaped `"` in content (the same ambiguity that broke json.loads);
+    # there the scan may read the wrong boundary, and refusing on the safe side is the right default.
+    if not _json_structurally_complete(raw):
         return None
     args: dict[str, str] = {"path": pm.group(1)}
     cm = _CONTENT_RE.search(raw)
     if cm:
         tail = raw[cm.end():]
-        end = tail.rfind('"')  # closing quote of the content value
+        end = tail.rfind('"')  # closing quote of the content value (object is known-complete)
         if end < 0:
-            return None  # content value never closed → truncated mid-content
-        # The char after the closing quote must terminate the object (`}`) or start the
-        # next key (`,`). Anything else means `rfind` picked a quote INSIDE the content
-        # because the real closing quote was never emitted — a cut-off / truncated write.
-        if tail[end + 1:].lstrip()[:1] not in ("}", ","):
             return None
         body = tail[:end]
         # undo the escapes that WERE applied; raw newlines/quotes pass through as-is
