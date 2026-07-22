@@ -121,15 +121,20 @@ def _is_yaml(ct: Optional[str], url: str) -> bool:
 
 def reduce_for_cache(body: str, content_type: Optional[str], url: str) -> tuple[str, Optional[Any]]:
     """Lossless, content-aware reduction + the parsed structure (for structural find).
-    Returns ``(reduced_text, parsed_or_None)``. HTML→text; JSON/YAML→minified canonical text
-    plus the parsed dict/list (so find/outline can walk it); anything else passes through."""
+    Returns ``(reduced_text, parsed_or_None)``. HTML→text; JSON/YAML→pretty, LINE-BASED canonical
+    text plus the parsed dict/list (so find/outline can walk it); anything else passes through."""
     ct = (content_type or "").lower()
     if "html" in ct or "xml" in ct:
         return html_to_text(body), None
     if "json" in ct:
         try:
             obj = json.loads(body)
-            return json.dumps(obj, separators=(",", ":"), ensure_ascii=False), obj
+            # Pretty-print (indent=2), like YAML and like find already do. A minified blob has no
+            # newlines, so page_from can't snap to a line and the model reads one unbroken wall —
+            # the Ada-handle openapi.json was fetched in full but the /handles/{handle} endpoint
+            # was invisible in the minified soup, so the coder guessed the URL. Line-based paging is
+            # bigger (more pages) but never truncates, and every page is scannable.
+            return json.dumps(obj, indent=2, ensure_ascii=False), obj
         except (ValueError, TypeError):
             return body, None
     if _is_yaml(content_type, url) and _yaml is not None:
