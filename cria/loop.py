@@ -39,7 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
-from .searchloop import normalize_search, searches_match
+from .searchloop import normalize_search, same_search_hunt, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
@@ -2664,7 +2664,7 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
         return coder
     query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", ""))
     words = normalize_search(query)
-    sess.search_streak = sess.search_streak + 1 if (sess.search_words and searches_match(words, sess.search_words)) else 1
+    sess.search_streak = sess.search_streak + 1 if (sess.search_words and same_search_hunt(words, sess.search_words)) else 1
     sess.search_words = words
     if sess.search_streak < SEARCH_STREAK_ESCALATE or reasoner_role is None:
         return coder

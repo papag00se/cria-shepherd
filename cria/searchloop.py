@@ -57,6 +57,21 @@ def searches_match(new_q: list[str], prior: list[str]) -> bool:
     return overlap >= 2 and union > 0 and (overlap / union) >= 0.5
 
 
+def same_search_hunt(new_q: list[str], prior: list[str]) -> bool:
+    """STREAK variant of :func:`searches_match`, for loop detection only (never the gates). Is this the
+    same hunt as the immediately-prior search, tolerant of suffix JITTER — a stable core with a swapped
+    trailing word? Unlike ``searches_match`` it does NOT excuse "longer, keeps all prior words" as an
+    innocent refinement: for the escalation streak, re-searching the same core while swapping one word
+    IS the loop (runG/runK: "ADA handle resolver" → "…resolver github" → "…resolver endpoint", 25-40×,
+    each pair scored a fresh refinement so the streak never reached the cap). The gates still allow a
+    refinement (a genuine narrowing isn't a repeat to refuse); only the streak treats it as looping."""
+    sn, sp = set(new_q), set(prior)
+    if len(sn) < 2 or len(sp) < 2:
+        return sn == sp and bool(sn)   # too small to judge by core — exact only
+    overlap = len(sn & sp)
+    return overlap >= 2 and overlap / min(len(sn), len(sp)) >= 0.6
+
+
 _FILE_EXTS = {
     "py", "rs", "js", "ts", "jsx", "tsx", "json", "md", "txt", "toml", "yaml", "yml", "go",
     "java", "cpp", "hpp", "sh", "rb", "php", "html", "css", "xml", "csv", "lock", "cfg", "ini",

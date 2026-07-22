@@ -2895,6 +2895,24 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertIn("wikipedia.org/wiki/Cardano", self._fn(out)["arguments"])  # not a spec URL → untouched
         self.assertFalse(gs.tried_spec_convention)
 
+    def test_suffix_jittered_searches_now_reach_escalation(self):
+        # runG/runK: "ADA handle resolver" + a swapped trailing word, 25-40x. searches_match scored each
+        # pair a fresh refinement so the streak never hit the cap; same_search_hunt counts the stable core.
+        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
+        gs = GuardState(); gs.tried_spec_convention = True  # exercise the reasoner branch cleanly
+        jitter = ["ADA handle resolver", "ADA handle resolver github", "ADA handle resolver endpoint",
+                  "ADA Handle resolver", "ADA handle resolver url", "ADA handle resolver api"]
+        reasoner = self._reasoner("Fetch https://api.handle.me/openapi.json")
+        out = None
+        for q in jitter[:SEARCH_STREAK_ESCALATE]:
+            out = self._run(gs, self._search(q), reasoner, task="use api.handle.me")
+        self.assertEqual(self._fn(out)["name"], "web_fetch")   # the streak DID reach the cap → escaped
+
+    def test_same_search_hunt_ignores_a_genuine_new_direction(self):
+        from cria.searchloop import normalize_search as N, same_search_hunt as H
+        self.assertTrue(H(N("ADA handle resolver github"), N("ADA handle resolver")))
+        self.assertFalse(H(N("cardano staking rewards calculator"), N("ADA handle resolver")))
+
     def test_task_api_domain_extraction(self):
         from cria.loop import _task_api_domain
         msg = lambda t: [{"role": "user", "content": t}]
