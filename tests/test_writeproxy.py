@@ -225,14 +225,23 @@ class WebTests(unittest.TestCase):
         self.assertIn("grep", whole)           # big-file path steers to grep
         self.assertEqual(_read_command({"path": "f.py", "start_line": 2, "end_line": 9}), "sed -n '2,9p' f.py")
 
-    def test_web_search_spills_results_to_read_only(self):
-        comp = _call("web_search", {"query": "ada handle resolve endpoint"})
-        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
-        cmd = _lowered_cmd(comp)
-        self.assertIn("curl -sL", cmd)                    # still the Brave curl
-        self.assertIn("./tmp/read-only/search-", cmd)     # saved to the read-only spill dir
-        self.assertIn("chmod 444", cmd)                   # read-only
-        self.assertIn("grep", cmd)                        # pointer tells the model to grep/line-read
+    def test_web_search_runs_in_process_and_spills_no_curl(self):
+        # The search is done IN-PROCESS (no curl → the harness doesn't halt for approval on an
+        # unsandboxable network command); results spill to the read-only dir with a grep/line-read pointer.
+        from cria import planner_tools
+        orig = planner_tools.brave_search
+        planner_tools.brave_search = lambda key, q, *a, **k: [{"title": "T", "url": "https://x", "description": "d"}]
+        try:
+            comp = _call("web_search", {"query": "ada handle resolve endpoint"})
+            translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
+            cmd = _lowered_cmd(comp)
+            self.assertNotIn("curl", cmd)                     # NO network command in the harness
+            self.assertIn("https://x", cmd)                   # results embedded (fetched in-process)
+            self.assertIn("./tmp/read-only/search-", cmd)     # saved to the read-only spill dir
+            self.assertIn("chmod 444", cmd)                   # read-only
+            self.assertIn("grep", cmd)                        # pointer tells the model to grep/line-read
+        finally:
+            planner_tools.brave_search = orig
 
     def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
         # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the
@@ -258,12 +267,18 @@ class WebTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
         self.assertEqual(comp["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "local_web_search")
 
-    def test_web_search_lowers_to_brave_when_synthesized(self):
-        comp = _call("web_search", {"query": "ada handle"})
-        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="sk-brave")
-        cmd = _lowered_cmd(comp)
-        self.assertIn("brave", cmd)
-        self.assertIn("curl", cmd)
+    def test_web_search_lowers_in_process_not_a_curl(self):
+        from cria import planner_tools
+        orig = planner_tools.brave_search
+        planner_tools.brave_search = lambda key, q, *a, **k: [{"title": "Ada", "url": "https://h", "description": "x"}]
+        try:
+            comp = _call("web_search", {"query": "ada handle"})
+            translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="sk-brave")
+            cmd = _lowered_cmd(comp)
+            self.assertNotIn("curl", cmd)          # in-process, no network command for the harness to gate
+            self.assertIn("Ada", cmd)              # the in-process results are embedded
+        finally:
+            planner_tools.brave_search = orig
 
     def test_local_web_search_history_represented_as_web_search(self):
         hist = [{"role": "assistant", "tool_calls": [
