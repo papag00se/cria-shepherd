@@ -2791,6 +2791,38 @@ class SearchEscalationTests(unittest.TestCase):
         out = self._escalate(gs, self._reasoner("NONE"), task="find the ADA Handle docs")
         self.assertEqual(self._fn(out)["name"], "web_search")       # no url → not substituted
 
+    def _fetch(self, url):
+        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "f1", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]}}]}
+
+    def test_wrong_domain_spec_fetch_is_redirected_to_the_named_api(self):
+        # runF: task named api.handle.me but the coder fetched the WRONG "Ada" spec (docs.ada.cx). One
+        # fetch is enough — no streak needed — because the registrable domains differ.
+        from cria.loop import GuardState
+        gs = GuardState()
+        out = self._run(gs, self._fetch("https://docs.ada.cx/reference/openapi.json"),
+                        self._reasoner("NONE"), task="resolve via the Ada Handles API (api.handle.me)")
+        self.assertEqual(self._fn(out)["name"], "web_fetch")
+        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
+        self.assertNotIn("ada.cx", self._fn(out)["arguments"])
+        self.assertTrue(gs.tried_spec_convention)
+
+    def test_spec_fetch_on_the_named_domain_is_left_alone(self):
+        from cria.loop import GuardState
+        gs = GuardState()
+        out = self._run(gs, self._fetch("https://api.handle.me/swagger/openapi.json"),
+                        self._reasoner("NONE"), task="use api.handle.me")
+        self.assertIn("api.handle.me/swagger/openapi.json", self._fn(out)["arguments"])  # same site → untouched
+        self.assertFalse(gs.tried_spec_convention)
+
+    def test_nonspec_fetch_on_other_domain_is_not_redirected(self):
+        from cria.loop import GuardState
+        gs = GuardState()
+        out = self._run(gs, self._fetch("https://en.wikipedia.org/wiki/Cardano"),
+                        self._reasoner("NONE"), task="use api.handle.me")
+        self.assertIn("wikipedia.org/wiki/Cardano", self._fn(out)["arguments"])  # not a spec URL → untouched
+        self.assertFalse(gs.tried_spec_convention)
+
     def test_task_api_domain_extraction(self):
         from cria.loop import _task_api_domain
         msg = lambda t: [{"role": "user", "content": t}]
