@@ -69,8 +69,13 @@ def _steps_from_submit(msg: dict) -> list[str] | None:
 # that structurally omitted work and could declare done with work missing. The reasoner's
 # max_tokens already bounds how long a plan it can emit; the context floor bounds the window.
 
-# A numbered ("1." / "1)") or bulleted ("-" / "*" / "•") list line → its text.
-_LIST_LINE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.+\S)")
+# A numbered ("1." / "1)") vs a bulleted ("-" / "*" / "•") list line → its text. Kept separate: when a
+# plan is numbered, indented `-` sub-bullets are DETAILS of a step (e.g. "7. Add a README containing:"
+# then "   - install …" / "   - run the CLI …"), NOT steps — flattening them exploded a 7-step plan
+# into 11 and ground the loop through phantom "steps". Prefer numbered; fall back to bullets only when
+# there are no numbers (a model that emits a pure bullet-list plan).
+_NUM_LINE = re.compile(r"^\s*\d+[.)]\s+(.+\S)")
+_BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+\S)")
 
 # A leaked dialect marker (gemma-fable / harmony): a step is ONE action, so anything from the
 # first marker on is the model failing to stop after the plan (a thought channel, another tool
@@ -109,8 +114,12 @@ def parse_steps(text: str) -> list[str] | None:
             steps = [c for s in arr if (c := _clean_step(s))]
             if steps:
                 return steps
-    steps = [c for line in body.splitlines() if (m := _LIST_LINE.match(line)) and (c := _clean_step(m.group(1)))]
-    return steps or None
+    lines = body.splitlines()
+    numbered = [c for line in lines if (m := _NUM_LINE.match(line)) and (c := _clean_step(m.group(1)))]
+    if numbered:
+        return numbered  # numbered plan → sub-bullets under a step are its DETAILS, not steps
+    bullets = [c for line in lines if (m := _BULLET_LINE.match(line)) and (c := _clean_step(m.group(1)))]
+    return bullets or None
 
 
 class Planner:

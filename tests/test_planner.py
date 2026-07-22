@@ -82,6 +82,16 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual([i.text for i in plan.items],
                          ["Fetch the OpenAPI spec via web_fetch.", "Write the resolver.", "Add tests."])
 
+    def test_numbered_plan_ignores_sub_bullets(self):
+        # A numbered plan whose last step has indented `-` sub-bullets (README contents) must NOT
+        # flatten those into extra steps — that exploded a 7-step plan into 11 and ground the loop
+        # through phantom README "steps". Numbered items win; bullets are details.
+        content = ("1. Fetch the spec.\n2. Write the resolver.\n3. Add a README containing:\n"
+                   "   - install instructions\n   - how to run the CLI\n   - how to run tests")
+        plan = _planner(content).plan_for(_msgs("build it"), _Rlog())
+        self.assertEqual([i.text for i in plan.items],
+                         ["Fetch the spec.", "Write the resolver.", "Add a README containing:"])
+
     def test_numbered_list_parses(self):
         # The prompt asks for a numbered list; small models (e.g. Gemma) emit that
         # rather than JSON. Must parse into steps just the same.
