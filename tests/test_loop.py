@@ -2942,6 +2942,51 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertEqual(gs.search_streak, 1)
 
 
+class UrlGroundingTests(unittest.TestCase):
+    """HARD SLAP grounded in fetched bytes: a written URL whose resource isn't in the fetched spec is a
+    guess (runD /resolve, runH /handle singular). cria names the REAL routes so the next turn corrects."""
+
+    def _gs(self):
+        from cria.loop import GuardState
+        gs = GuardState()
+        gs.fetched_pages = {"https://api.handle.me/openapi.json":
+                            ("HTTP 200", "/handles/{handle}, /holders/{address}, /stats")}
+        return gs
+
+    def _body(self):
+        return {"messages": [{"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"}]}
+
+    def _write(self, content):
+        import json
+        return {"choices": [{"message": {"tool_calls": [{"id": "c", "type": "function", "function":
+                {"name": "write_file", "arguments": json.dumps({"path": "r.py", "content": content})}}]}}]}
+
+    def test_wrong_resource_is_flagged_with_real_routes(self):
+        from cria.loop import guard_url_grounding
+        out = guard_url_grounding(self._gs(), self._write('url="https://api.handle.me/handle/{h}"'), self._body(), _Rlog())
+        note = " ".join(out.get("cria_notes") or [])
+        self.assertIn("/handle", note)
+        self.assertIn("/handles/{handle}", note)   # the real route is named
+
+    def test_correct_resource_is_silent(self):
+        from cria.loop import guard_url_grounding
+        out = guard_url_grounding(self._gs(), self._write('url="https://api.handle.me/handles/goose"'), self._body(), _Rlog())
+        self.assertFalse(out.get("cria_notes"))
+
+    def test_no_fetched_routes_means_no_slap(self):
+        from cria.loop import guard_url_grounding, GuardState
+        gs = GuardState()  # nothing fetched yet → can't ground → stay silent
+        out = guard_url_grounding(gs, self._write('url="https://api.handle.me/whatever/x"'), self._body(), _Rlog())
+        self.assertFalse(out.get("cria_notes"))
+
+    def test_non_write_turn_is_ignored(self):
+        from cria.loop import guard_url_grounding
+        search = {"choices": [{"message": {"tool_calls": [{"id": "s", "type": "function", "function":
+                 {"name": "web_search", "arguments": '{"query": "api.handle.me/handle docs"}'}}]}}]}
+        out = guard_url_grounding(self._gs(), search, self._body(), _Rlog())
+        self.assertFalse(out.get("cria_notes"))
+
+
 class ReasonedRedirectTests(unittest.TestCase):
     """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner
     authors the steer from ground truth; an empty reasoner reply falls back to canned — a stuck coder
