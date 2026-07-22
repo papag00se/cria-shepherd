@@ -215,6 +215,25 @@ class WebTests(unittest.TestCase):
         finally:
             webfetch.fetch = orig
 
+    def test_whole_read_of_a_big_file_is_size_guarded(self):
+        # A whole read_file lowers to a size-check: cat a small file, but hand a grep/range pointer for a
+        # big one (a raw cat is truncated head+tail by the harness). A ranged read is a plain sed.
+        from cria.writeproxy import _read_command
+        whole = _read_command({"path": "big.json"})
+        self.assertIn("wc -c", whole)          # size-checked
+        self.assertIn("cat big.json", whole)   # small-file path still cats
+        self.assertIn("grep", whole)           # big-file path steers to grep
+        self.assertEqual(_read_command({"path": "f.py", "start_line": 2, "end_line": 9}), "sed -n '2,9p' f.py")
+
+    def test_web_search_spills_results_to_read_only(self):
+        comp = _call("web_search", {"query": "ada handle resolve endpoint"})
+        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
+        cmd = _lowered_cmd(comp)
+        self.assertIn("curl -sL", cmd)                    # still the Brave curl
+        self.assertIn("./tmp/read-only/search-", cmd)     # saved to the read-only spill dir
+        self.assertIn("chmod 444", cmd)                   # read-only
+        self.assertIn("grep", cmd)                        # pointer tells the model to grep/line-read
+
     def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
         # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the
         # reasoner) and a whole read is steered to grep (a raw cat of a big file gets truncated).

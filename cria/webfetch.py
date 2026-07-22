@@ -266,6 +266,19 @@ def _greppable(reduced: str, parsed: Optional[Any], ct: Optional[str]) -> str:
     return reduced
 
 
+def search_spill_name(query: str) -> str:
+    """A stable ``SPILL_DIR`` filename for a query's saved search results (same query → same file)."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", (query or "").strip().lower()).strip("_")[:60] or "query"
+    return f"{SPILL_DIR}/search-{stem}.txt"
+
+
+def search_spill(query: str) -> tuple[str, str]:
+    """(``SPILL_DIR`` target, model pointer) for a search whose noisy results are saved to a read-only
+    file instead of inlined — search snippets are mostly irrelevant, so they don't belong in context."""
+    target = search_spill_name(query)
+    return target, _guard_msg("search_spill", query=query, target=target)
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
     content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a

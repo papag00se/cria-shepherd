@@ -356,6 +356,14 @@ def _edit_command(path: str, old: str, new: str) -> str:
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
+# A whole read bigger than this many bytes is steered to grep / a line range instead of cat'd — a raw
+# cat of a big file is truncated HEAD+TAIL by the harness's exec-output cap (Codex kept only a few KB of
+# a 96 KB spec, eating the middle where the endpoints were), a silent lie the model then acts on. Chosen
+# below common harness caps; the whole size-check is lowered INSIDE the read_file call, so the sentinel
+# swap re-presents it as a plain read_file — the model never sees the `wc`/`if` plumbing.
+READ_INLINE_MAX = 12000
+
+
 def _read_command(args: dict) -> str | None:
     path = _tool_path(args)
     if not path:
@@ -366,7 +374,11 @@ def _read_command(args: dict) -> str | None:
         return f"sed -n '{start},{end}p' {q}"
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
         return f"sed -n '{start},$p' {q}"
-    return f"cat {q}"
+    # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
+    # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
+    steer = prompts.render("large_read_steer", path=str(path))
+    return (f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
+            f"then printf %s {_qbash(steer)}; else cat {q}; fi")
 
 
 def _list_command(args: dict) -> str:
@@ -421,13 +433,21 @@ def _search_command(args: dict, brave_key: str) -> str:
     compact "title / url / description" lines the model can pair with web_fetch. Requests Brave's
     per-request maximum and prints EVERY returned result (no display slice) with a total-count header
     so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
-    url = brave.query_url(args.get("query") or "", count=_SEARCH_MAX_RESULTS)
+    query = str(args.get("query") or "")
+    url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     parse = (r"""python3 -c 'import sys,json"""
              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
              r""";body="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
              r""";print(("%d results:\n"%len(r))+body if r else "no results")'""")
-    return f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse}"
+    # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
+    # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
+    # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
+    target, msg = webfetch.search_spill(query)
+    tdir = os.path.dirname(target) or "."
+    return (f"mkdir -p {_qbash(tdir)} && rm -f {_qbash(target)} 2>/dev/null; "
+            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} && "
+            f"chmod 444 {_qbash(target)} && printf %s {_qbash(msg)}")
 
 
 def _external_refusal(name, args, fn, injected, level: str, workspace: str | None) -> str | None:
