@@ -128,19 +128,22 @@ def parse_steps(text: str) -> list[str] | None:
 # thrashes re-fetching the spec hunting a route that isn't there — the correct route it already fetched
 # gets ignored in favour of the plan's word. Requiring a ``{param}`` keeps the match tight: it hits
 # endpoint templates, never file paths (``resolve_handle.py``) or single-segment discovery URLs
-# (``/openapi.json``). See [[project_goal_fabliq_ada_handles]] — the recurring wrong-endpoint variance.
-_ENDPOINT_TEMPLATE = re.compile(r"/[A-Za-z][\w-]*(?:/(?:\{[^{}\s/]+\}|[A-Za-z][\w-]*)){1,8}/?")
+# (``/openapi.json``). The two guess FORMS observed live: a ``{param}`` path template (runD:
+# ``/resolve/{handle}``) and a query-string endpoint (runE: ``/resolve?handle=...``) — both are
+# obeyed verbatim by the coder. See [[project_goal_fabliq_ada_handles]] — the wrong-endpoint variance.
+_ENDPOINT_TEMPLATE = re.compile(
+    r"/[A-Za-z][\w-]*(?:/(?:\{[^{}\s/]+\}|[A-Za-z][\w-]*))*(?:\?[\w=&{}%.-]+)?")
 _HOLE = "\x00"  # transient marker for a scrubbed path, cleaned up (with its example scaffolding) below
 
 
 def _scrub_invented_paths(step: str, task: str) -> str:
-    """Strip endpoint-template paths the task never named from one plan step — pre-research guesses the
+    """Strip endpoint-guess paths the task never named from one plan step — pre-research guesses the
     coder would otherwise take as gospel. Keeps any path the task text itself contains (there the user
     gave it, so it's the spec, not a guess) and never blanks a whole step. Prose steering to the same
     end ("don't bake a guessed path") failed twice — small models ignore it; this is deterministic."""
     def repl(m: "re.Match[str]") -> str:
         path = m.group(0)
-        if "{" not in path:  # only templated paths are unambiguously pre-research guesses
+        if "{" not in path and "?" not in path:  # a plain /segment path isn't unambiguously a guess
             return path
         return path if path.rstrip("/") in task else _HOLE
     out = _ENDPOINT_TEMPLATE.sub(repl, step)

@@ -371,6 +371,14 @@ class ScrubInventedPathsTests(unittest.TestCase):
         self.assertNotIn("/resolve/{handle}", out)
         self.assertTrue(out.startswith("Call") and out.endswith("address"))
 
+    def test_scrubs_query_string_endpoint_guess(self):
+        # runE's form: the planner baked a query-string endpoint "(e.g., `/resolve?handle=...`)".
+        task = "resolve an Ada Handle using api.handle.me"
+        out = self._scrub("Identify the resolve endpoint (e.g., `/resolve?handle=...`) in the spec.", task)
+        self.assertNotIn("/resolve?handle", out)
+        self.assertNotIn("e.g.", out)
+        self.assertEqual(out, "Identify the resolve endpoint in the spec.")
+
     def test_never_blanks_a_whole_step(self):
         self.assertEqual(self._scrub("/resolve/{handle}", "api.handle.me"), "/resolve/{handle}")
 
