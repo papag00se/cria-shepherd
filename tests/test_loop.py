@@ -1415,6 +1415,19 @@ class FetchGroundTruthTests(unittest.TestCase):
         self.assertIn("HTTP 200", out)
         self.assertNotIn("HTTP 500", out)
 
+    def test_a_later_find_fetch_does_not_clobber_the_endpoint_list(self):
+        # runK: the outline (endpoints) is captured once; a later web_fetch(find="paths") returns a
+        # sub-section with NO outline. The endpoints must survive (they name /handles/{handle}).
+        from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
+        gs = GuardState()
+        _track_fetched_pages(gs, [{"role": "tool", "content":
+            "HTTP 200 OK · https://api.handle.me/openapi.json [API endpoints (2): /handles/{handle}, /holders/{address}]"}])
+        # a subsequent find-fetch of the same URL, no outline this time
+        _track_fetched_pages(gs, [{"role": "tool", "content": "HTTP 200 OK · https://api.handle.me/openapi.json (paths section)"}])
+        out = _fetch_ground_truth([], gs)
+        self.assertIn("/handles/{handle}", out)   # endpoints preserved, not clobbered
+        self.assertIn("/holders/{address}", out)
+
 
 class RepetitionRedirectTests(unittest.TestCase):
     """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →

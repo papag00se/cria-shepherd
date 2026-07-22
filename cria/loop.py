@@ -2390,6 +2390,18 @@ def _extract_fetches(messages: list[dict]) -> dict:
     return latest
 
 
+def _merge_fetches(dst: dict, src: dict) -> dict:
+    """Merge fetch facts, keeping the RICHER routes per URL: a later ``web_fetch(url, find=…)`` returns
+    a sub-section WITHOUT the ``[API endpoints]`` outline, so its routes are empty — that must not clobber
+    an earlier full endpoint list (the endpoints are the whole point of the fact — they name /handles/{handle})."""
+    for url, (status, routes) in src.items():
+        prev = dst.get(url)
+        if prev and not routes:
+            routes = prev[1]   # preserve the earlier outline when this occurrence had none
+        dst[url] = (status, routes)
+    return dst
+
+
 def _format_fetches(latest: dict) -> str:
     if not latest:
         return ""
@@ -2408,7 +2420,7 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
         return
     if getattr(sess, "fetched_pages", None) is None:
         sess.fetched_pages = {}
-    sess.fetched_pages.update(_extract_fetches(messages))
+    _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
 def _fetch_ground_truth(messages: list[dict], sess=None) -> str:
@@ -2418,8 +2430,7 @@ def _fetch_ground_truth(messages: list[dict], sess=None) -> str:
     a 400; it returned HTTP 200 with 33 endpoints incl. /handles/{handle}, and the steer PARROTED the
     400 — 40 wasted turns). Merges the session's DURABLE facts (kept past the window) with the current
     window, so the correction survives even after the result scrolls out; in-window status wins."""
-    latest = dict(getattr(sess, "fetched_pages", None) or {})
-    latest.update(_extract_fetches(messages))  # current window is freshest → wins on any url
+    latest = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(messages))
     return _format_fetches(latest)
 
 
