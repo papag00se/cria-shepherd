@@ -1331,6 +1331,32 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(items[0]["step"], 2)                        # picked up at step 2, not step 1
 
 
+class SteerVerdictTests(unittest.TestCase):
+    """A verbose reasoner (Fabliq) HEDGES: it writes NOT_STUCK and then a real grounded directive.
+    The old `"NOT_STUCK" in text[:60]` check discarded the whole reply, silently dropping good steers
+    so the coder kept spinning (observed: 7 redirects delivered NOTHING). _steer_or_none must strip the
+    verdict token + scaffolding and deliver the directive, treating NOT_STUCK as the verdict only when
+    essentially nothing else follows."""
+
+    def test_hedged_directive_is_delivered_not_discarded(self):
+        from cria.loop import _steer_or_none
+        t = "NOT_STUCK You are stuck fetching the spec; the endpoint is GET /handles/{handle} — stop fetching, write the resolver now."
+        out = _steer_or_none(t)
+        self.assertIsNotNone(out)
+        self.assertIn("/handles/{handle}", out)
+        self.assertNotIn("NOT_STUCK", out)
+
+    def test_bare_not_stuck_stays_none(self):
+        from cria.loop import _steer_or_none
+        self.assertIsNone(_steer_or_none("NOT_STUCK"))
+        self.assertIsNone(_steer_or_none("NOT_STUCK </think> NOT_STUCK"))
+        self.assertIsNone(_steer_or_none(""))
+
+    def test_clean_directive_without_prefix_still_delivers(self):
+        from cria.loop import _steer_or_none
+        self.assertIn("write", _steer_or_none("You keep repeating; read the file then write the fix.") or "")
+
+
 class RepetitionRedirectTests(unittest.TestCase):
     """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →
     the REASONER authors the redirect → delivered as the coder's next nudge."""

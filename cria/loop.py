@@ -36,7 +36,7 @@ from pathlib import Path
 
 from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
 from .classify import _task_key, latest_user_text
-from .jsontext import extract_json_object
+from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
 from .searchloop import normalize_search, searches_match
@@ -2391,9 +2391,22 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           reasoning=(reasoning or "(not captured for this trigger)"))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner") or "").strip()
-    if not text or "NOT_STUCK" in text[:60].upper():
+    return _steer_or_none(text)
+
+
+def _steer_or_none(text: str) -> str | None:
+    """A steer_diagnose reply → the directive to inject, or None for a genuine NOT_STUCK. A verbose
+    reasoner (Fabliq) HEDGES — it writes "NOT_STUCK" and THEN a real, grounded directive ("the endpoint
+    is GET /handles/{handle}, stop fetching, write it"). The old check (`"NOT_STUCK" in text[:60]`)
+    discarded the whole reply on that prefix, silently dropping good steers so the coder kept spinning.
+    Strip the NOT_STUCK verdict token(s) + think/markdown scaffolding; deliver whatever substantive
+    directive remains, and treat it as NOT_STUCK only when essentially nothing else is there."""
+    if not text:
         return None
-    return text
+    body = strip_think(text)
+    body = re.sub(r"(?i)\bnot[_ ]stuck\b", " ", body)          # drop the verdict token(s)
+    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body).strip(" \n>-*:")
+    return body if len(body) >= 25 else None                    # a real directive, not just the verdict
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
