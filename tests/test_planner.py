@@ -73,6 +73,15 @@ class PlannerTests(unittest.TestCase):
         plan = _planner('```json\n{"steps": ["a", "b"]}\n```').plan_for(_msgs("task"), _Rlog())
         self.assertEqual([i.text for i in plan.items], ["a", "b"])
 
+    def test_plan_key_and_embedded_ordinals_parse(self):
+        # Fabliq emits {"plan":[...]} about as often as {"steps":[...]}, with the ordinal embedded in
+        # each string. Accepting only "steps" dropped it to plan.unparsed → plan-OFF fallback (no
+        # step-gating → the coder hallucinated). Must parse, and strip the leading "1. ".
+        content = '{"plan": ["1. Fetch the OpenAPI spec via web_fetch.", "2. Write the resolver.", "3. Add tests."]}'
+        plan = _planner(content).plan_for(_msgs("build a resolver"), _Rlog())
+        self.assertEqual([i.text for i in plan.items],
+                         ["Fetch the OpenAPI spec via web_fetch.", "Write the resolver.", "Add tests."])
+
     def test_numbered_list_parses(self):
         # The prompt asks for a numbered list; small models (e.g. Gemma) emit that
         # rather than JSON. Must parse into steps just the same.

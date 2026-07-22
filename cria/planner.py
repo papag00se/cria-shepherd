@@ -79,26 +79,36 @@ _DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|
 
 
 def _clean_step(text: str) -> str:
-    """Trim a plan step to its action: cut at the first leaked dialect marker and drop the JSON /
+    """Trim a plan step to its action: cut at the first leaked dialect marker, strip a leading
+    ordinal (``1.`` / ``2)`` — JSON-array items often embed their own number), and drop the JSON /
     array junk (``',]}`` etc.) that bleeds in when the model runs past the plan."""
     s = str(text)
     m = _DIALECT_MARKER.search(s)
     if m:
         s = s[:m.start()]
+    s = re.sub(r"^\s*\d+[.)]\s*", "", s)  # leading "1. " / "2) " embedded in a JSON list item
     s = re.sub(r"[\s'\"\],}]+$", "", s)  # trailing quote/comma/bracket/brace junk
     return s.strip()
 
 
+# Keys a model may wrap its step array under. `steps` is the prompt's ask; `plan` is what Fabliq
+# emits about as often — accepting only `steps` dropped a valid {"plan":[…]} to plan.unparsed, which
+# silently fell back to the plan-OFF path (no step-gating → the coder coded freely and hallucinated).
+_STEP_KEYS = ("steps", "plan", "items")
+
+
 def parse_steps(text: str) -> list[str] | None:
-    """Extract plan steps, accepting EITHER a numbered/bulleted list (the prompt's ask,
-    and what small models emit best) OR a JSON ``{"steps": [...]}`` object (still valid
-    if a model chooses it). Returns None when neither yields steps."""
+    """Extract plan steps, accepting EITHER a numbered/bulleted list (the prompt's ask, and what small
+    models emit best) OR a JSON object whose step array is under ``steps``/``plan``/``items`` (models
+    vary the key). Returns None when neither yields steps."""
     body = strip_think(text)
     obj = extract_json_object(body)
-    if obj and isinstance(obj.get("steps"), list):
-        steps = [c for s in obj["steps"] if (c := _clean_step(s))]
-        if steps:
-            return steps
+    if obj:
+        arr = next((obj[k] for k in _STEP_KEYS if isinstance(obj.get(k), list)), None)
+        if arr is not None:
+            steps = [c for s in arr if (c := _clean_step(s))]
+            if steps:
+                return steps
     steps = [c for line in body.splitlines() if (m := _LIST_LINE.match(line)) and (c := _clean_step(m.group(1)))]
     return steps or None
 
