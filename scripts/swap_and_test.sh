@@ -7,7 +7,7 @@
 set -uo pipefail
 
 SVC="$1"; LABEL="$2"; TURNS="${3:-4}"
-ALL="llama-fabliq-q6 llama-fabliq-reasoning-q6 llama-gemma4-q4km llama-lfm25-q6 \
+ALL="llama-fabliq-q6 llama-fabliq-reasoning-q6 llama-gemma4-q4km \
      llama-mellum2-q4 llama-ornith-q6 llama-qwopus-q6 llama-qwythos-q6"
 
 echo "════════════════════════════════════════════════════════════════════════"

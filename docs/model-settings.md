@@ -34,10 +34,13 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
 | **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
-| **lfm25** (8B A1B MoE) | Q6_K | ⚠ **no published recommendation** | — | LiquidAI LFM2.5; test before relying |
 
-> ⚠ **`qwopus` and `lfm25` are unverified** — the values are inferred / absent. Confirm from
-> the model card or empirically before treating them as recommended.
+> ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
+> empirically before treating them as recommended.
+
+> **LFM2.5-8B-A1B (`lfm25`) was tried live 2026-07-21 and dropped** — the base instruct MoE is not
+> agentic: dropped into the harness it monologues the plan in `content` and never emits a tool call.
+> (fabliq is the *Agent-Reasoning* fine-tune of the same family, which is why it's the live model.)
 
 ---
 
@@ -62,10 +65,9 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
 | **gemma4** | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` |
 | **fabliq-reasoning** | ✅ | ⚠ deliberation leaks into `content` (~1400 chars) | **LFM2 family** — never trained on the empty-think convention; the prefill is inert |
-| **lfm25** | ✅ | ⚠ same leak | LFM2.5 — same root cause (its toggle is byte-identical to fabliq's) |
 
-So **5 of 8 do OFF cleanly** (mellum2, qwopus, ornith, qwythos, gemma4). On the 3 LFM2-family models
-(fabliq-reasoning, lfm25), `enable_thinking=false` empties `reasoning_content` but the model
+So **5 of 7 do OFF cleanly** (mellum2, qwopus, ornith, qwythos, gemma4). On the LFM2-family model
+fabliq-reasoning, `enable_thinking=false` empties `reasoning_content` but the model
 still deliberates in prose in `content` — which cria's parsers can't strip (no `<think>` tags). This
 is a **model limitation**, not a missing manipulation.
 
@@ -81,9 +83,9 @@ Per request cria applies THREE things so OFF works on any loaded model without p
    reasoning. Respond directly.") — makes the LFM2 models answer directly instead of deliberating.
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
-**Honest result (verified end-to-end on BOTH fabliq and lfm25, 2026-07-08):**
+**Honest result (verified end-to-end on fabliq, 2026-07-08):**
 - **Native-off models** (mellum2, qwopus, ornith, qwythos, gemma4) → OFF is **clean**.
-- **fabliq / lfm25** → OFF *engages* (thinking block suppressed, directive applied) and is **clean on
+- **fabliq** → OFF *engages* (thinking block suppressed, directive applied) and is **clean on
   direct tasks** (a code one-liner came back tidy), but on **reasoning-heavy prompts they stay verbose**:
   the model explains at length with *no* `</think>` marker, so the strip can't catch it (~700–900 chars
   remained). It's **correct and never breaks cria** (parsers/`parse_steps`/`extract_json_object` still
@@ -96,7 +98,7 @@ Per request cria applies THREE things so OFF works on any loaded model without p
   per request, no model reload, no per-model wiring needed.
 - `cria.toml` ships every role `reasoning = "on"` (clean fleet-wide; also what coding wants).
 - If a role needs **terse** OFF output, point it at a **native-off model** (mellum2 or a Qwen-derived
-  one). OFF on fabliq/lfm25 works but stays verbose on reasoning-heavy turns — a model trait, not a bug.
+  one). OFF on fabliq works but stays verbose on reasoning-heavy turns — a model trait, not a bug.
 
 ---
 
@@ -119,7 +121,6 @@ with the prism dir, then `cuda-12.8-local/lib64` + `/usr/lib/wsl/lib`). Fork bin
 | ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
 | mellum2 | `-hf yuxinlu1/Mellum2-12B-A2.5B-…-GGUF --hf-file mellum2-claude-Q4_K_M.gguf` | *(embedded)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
-| lfm25 | `-hf unsloth/LFM2.5-8B-A1B-GGUF --hf-file …UD-Q6_K_XL.gguf` | `lfm25-toggle.jinja` |
 | ornith | `-hf deepreinforce-ai/Ornith-1.0-9B-GGUF:Q6_K` | `ornith-toggle.jinja` |
 | qwopus | `-hf Jackrong/Qwopus3.5-9B-v3-GGUF:Q6_K` | `qwopus-toggle.jinja` |
 | qwythos | `-m …/Qwythos-…-Q6_K.gguf` | *(embedded)* |
