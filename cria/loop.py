@@ -2363,6 +2363,38 @@ _STEER_TRIGGER = {
 }
 
 
+# cria's own web_fetch render header — `HTTP 200 OK · https://…` — and the endpoints outline it adds
+# for a spec. The ` · <url>` shape appears ONLY in a real rendered result, never in the coder's prose,
+# so matching it cleanly separates the ground-truth outcome from a hallucinated "the fetch 400'd".
+_FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
+_FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): ([^\]]+)\]")
+
+
+def _fetch_ground_truth(messages: list[dict]) -> str:
+    """Deterministic FACTS about the web_fetches already made — final status per URL + any endpoint
+    routes — read from the REAL rendered tool results. Handed to the steer author so a weak reasoner
+    can't echo the coder's hallucination that a fetch failed when it actually returned 200 (runG: the
+    coder insisted api.handle.me/openapi.json gave a 400; it returned HTTP 200 with 33 endpoints incl.
+    /handles/{handle}, and the steer PARROTED the 400 — keeping the coder searching for 40 turns)."""
+    latest: dict[str, tuple[str, str]] = {}  # url -> (status, routes); last occurrence wins
+    for m in messages:
+        c = m.get("content") or ""
+        if isinstance(c, list):
+            c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+        if not isinstance(c, str) or "·" not in c:
+            continue
+        for sm in _FETCH_STATUS_RE.finditer(c):
+            url = sm.group(2).rstrip(".,);")
+            rm = _FETCH_ROUTES_RE.search(c, sm.end())
+            latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "")
+    if not latest:
+        return ""
+    lines = [f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
+             for url, (status, routes) in latest.items()]
+    return ("PAGES YOU HAVE ALREADY FETCHED (from the real tool results — trust these over any earlier "
+            "note or reasoning claiming a fetch failed):\n" + "\n".join(lines))
+
+
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
                  condition: str, outcome=None, truth_text: str = "", step_text: str = "",
                  reasoning_window=None) -> str | None:
@@ -2384,6 +2416,10 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     disk = _fresh_disk_facts(workspace_root, getattr(gs, "recent_writes", None), getattr(gs, "spin_path", "")) \
         if gs is not None else ""
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
+    # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
+    # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
+    fetch_truth = _fetch_ground_truth(body.get("messages", []))
+    truth = "\n\n".join(t for t in (fetch_truth, truth) if t)
     reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,

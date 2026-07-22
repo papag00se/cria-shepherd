@@ -1357,6 +1357,42 @@ class SteerVerdictTests(unittest.TestCase):
         self.assertIn("write", _steer_or_none("You keep repeating; read the file then write the fix.") or "")
 
 
+class FetchGroundTruthTests(unittest.TestCase):
+    """runG: the coder fetched api.handle.me/openapi.json (HTTP 200, 33 endpoints) but hallucinated a
+    400 and searched 40x; the steer PARROTED the 400. _fetch_ground_truth extracts the real outcomes so
+    the steer author can't miss that the fetch succeeded — separating result from narration."""
+
+    def _fgt(self, messages):
+        from cria.loop import _fetch_ground_truth
+        return _fetch_ground_truth(messages)
+
+    def test_extracts_status_and_endpoints_from_the_real_result(self):
+        result = ("HTTP 200 OK · https://api.handle.me/openapi.json\nContent-Type: application/json\n"
+                  "[structured doc] [API endpoints (3): /handles/{handle}, /holders/{address}, /stats]\n...")
+        out = self._fgt([{"role": "user", "content": "resolve a handle"},
+                         {"role": "tool", "content": result}])
+        self.assertIn("https://api.handle.me/openapi.json", out)
+        self.assertIn("HTTP 200", out)
+        self.assertIn("/handles/{handle}", out)
+        self.assertIn("trust these", out.lower())
+
+    def test_ignores_a_hallucinated_status_in_prose(self):
+        # The coder's narration ("returned HTTP 400 Bad Request") has no ` · <url>` → not a real result.
+        out = self._fgt([{"role": "assistant",
+                          "content": "The fetch returned an HTTP 400 Bad Request, so I could not read it."}])
+        self.assertEqual(out, "")
+
+    def test_last_status_per_url_wins(self):
+        msgs = [{"role": "tool", "content": "HTTP 500 err · https://x.test/openapi.json"},
+                {"role": "tool", "content": "HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]"}]
+        out = self._fgt(msgs)
+        self.assertIn("HTTP 200", out)
+        self.assertNotIn("HTTP 500", out)
+
+    def test_no_fetches_yields_empty(self):
+        self.assertEqual(self._fgt([{"role": "user", "content": "just do the task"}]), "")
+
+
 class RepetitionRedirectTests(unittest.TestCase):
     """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →
     the REASONER authors the redirect → delivered as the coder's next nudge."""
