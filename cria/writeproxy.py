@@ -399,11 +399,20 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
 
 
 def _spill_command(target: str, content: str, msg: str) -> str:
-    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, then print
-    the model-facing pointer message — the harness runs this and records the message as the tool result."""
+    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, mark it
+    READ-ONLY (it's cria reference material, not a deliverable to edit), then print the model-facing
+    pointer message — the harness runs this and records the message as the tool result."""
     tdir = os.path.dirname(target) or "."
     return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(_b64(content))} | base64 -d > {_qbash(target)} && "
-            f"printf %s {_qbash(msg)}")
+            f"chmod 444 {_qbash(target)} && printf %s {_qbash(msg)}")
+
+
+def _under_spill_dir(path: str) -> bool:
+    """True when ``path`` lands in cria's read-only spill scratch (:data:`webfetch.SPILL_DIR`) — a
+    reference doc cria saved, which the model must GREP, not read-whole or edit."""
+    norm = os.path.normpath(path or "")
+    tail = webfetch.SPILL_DIR.lstrip("./")   # "tmp/cria"
+    return norm == tail or norm.startswith(tail + os.sep) or (os.sep + tail + os.sep) in (os.sep + norm)
 
 
 def _search_command(args: dict, brave_key: str) -> str:
@@ -481,6 +490,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 cmd = f"printf %s {_qbash(prompts.load('cria_home_refusal'))}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
+            # cria's read-only SPILL scratch (./tmp/cria): a big doc cria saved as REFERENCE. Refuse an
+            # edit/write (observed: identical no-op edits on the spilled spec that poisoned the reasoner);
+            # steer a WHOLE read to grep (a raw cat of a big file is truncated by the harness). A ranged
+            # read is fine (falls through to the normal read handler).
+            elif (name in (_WRITE_NAMES | _EDIT_NAMES | _READ_NAMES) and name in injected
+                  and (sp := _tool_path(args)) and _under_spill_dir(str(sp))
+                  and not (name in _READ_NAMES and (args.get("start_line") or args.get("end_line")))):
+                key = "spill_read_steer" if name in _READ_NAMES else "spill_edit_refusal"
+                cmd = f"printf %s {_qbash(prompts.render(key, path=str(sp)))}"
+                if rlog is not None:
+                    rlog.emit("writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:
                 path = _tool_path(args)
                 if path:

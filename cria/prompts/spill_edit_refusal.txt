@@ -1,0 +1,1 @@
+{{PATH}} is a READ-ONLY reference document (a large page saved so it wouldn't flood the context) — it is not yours to edit or overwrite. To use it: grep it (e.g. grep -n "<keyword>" {{PATH}}), or read a line range with read_file start_line/end_line. Write your OWN deliverable files elsewhere in the workspace.

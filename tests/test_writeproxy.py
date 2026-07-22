@@ -209,10 +209,30 @@ class WebTests(unittest.TestCase):
             cmd = _lowered_cmd(comp)
             self.assertIn("mkdir -p", cmd)
             self.assertIn("base64 -d > ", cmd)      # full doc written to disk
-            self.assertIn("./tmp/", cmd)
+            self.assertIn("./tmp/read-only/", cmd)  # dedicated read-only scratch dir
+            self.assertIn("chmod 444", cmd)         # marked read-only
             self.assertIn("grep", cmd)              # pointer message tells the model how to read it
         finally:
             webfetch.fetch = orig
+
+    def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
+        # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the
+        # reasoner) and a whole read is steered to grep (a raw cat of a big file gets truncated).
+        p = "./tmp/read-only/api.handle.me_openapi.json"
+        edit = _call("edit_file", {"path": p, "old_string": "a", "new_string": "b"})
+        translate_outbound(edit, _CMD_SHELL, injected={"edit_file"})
+        self.assertIn("READ-ONLY reference", _lowered_cmd(edit))
+        wholeread = _call("read_file", {"path": p})
+        translate_outbound(wholeread, _CMD_SHELL, injected={"read_file"})
+        self.assertIn("grep", _lowered_cmd(wholeread))
+        # a RANGED read is legitimate → normal sed handler, not the steer
+        ranged = _call("read_file", {"path": p, "start_line": 1, "end_line": 40})
+        translate_outbound(ranged, _CMD_SHELL, injected={"read_file"})
+        self.assertIn("sed -n", _lowered_cmd(ranged))
+        # a NORMAL workspace file is untouched by the guard
+        normal = _call("edit_file", {"path": "resolver.py", "old_string": "a", "new_string": "b"})
+        translate_outbound(normal, _CMD_SHELL, injected={"edit_file"})
+        self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
@@ -493,6 +513,20 @@ class EditRecoveryTests(unittest.TestCase):
         late = editrecovery.compose(fail, prior=editrecovery.ESCALATE_AFTER - 1)
         self.assertIn("produce the corrected FULL file", late)        # committed rewrite
         self.assertIn("a = 1\nb = 2", late)                           # grounded in the real current bytes
+
+    def test_summarize_collapses_the_base64_report_for_a_reasoner(self):
+        # The raw ⟦ctx:editfail⟧<base64> embeds the file's WHOLE current bytes — 96K-token poison in a
+        # reasoner prompt. summarize() collapses it to a one-line fact (the model still gets recover()).
+        import base64, json
+        from cria import editrecovery
+        report = {"mode": "identical", "path": "api.handle.me_openapi.json", "current": "{" + "x" * 90000 + "}"}
+        raw = "  -> " + editrecovery.EDITFAIL + base64.b64encode(json.dumps(report).encode()).decode()
+        out = editrecovery.summarize(raw)
+        self.assertLess(len(out), 200)                       # the base64 wall is gone
+        self.assertIn("api.handle.me_openapi.json", out)
+        self.assertIn("identical", out)
+        self.assertNotIn("xxxx", out)                        # the file bytes are NOT in it
+        self.assertEqual(editrecovery.summarize("a normal tool result"), "a normal tool result")
 
     def test_phantom_and_would_break_are_history_independent(self):
         from cria import editrecovery

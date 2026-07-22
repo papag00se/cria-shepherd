@@ -1,0 +1,1 @@
+{{PATH}} is a large reference document — reading it whole gets truncated, so you would miss the middle. Instead grep it for what you need (e.g. grep -n "<keyword>" {{PATH}}), or read a specific line range with read_file start_line/end_line.

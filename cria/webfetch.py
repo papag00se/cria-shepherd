@@ -190,18 +190,23 @@ def clear_cache() -> None:
 # "openapi.json"). So a doc larger than one page is written IN FULL to ./tmp and the model is handed a
 # short pointer + two lossless ways in: grep the file, or a filtered `find=` fetch (served from cache).
 OVERSIZE_CHARS = CONTENT_CAP_TOKENS * 4  # bigger than one page → spill to a file rather than inline
+# Spills land in a DEDICATED, read-only scratch dir — reference material, NOT a deliverable the model
+# should read-whole (the harness truncates a big cat) or EDIT (observed: it tried identical no-op edits
+# on the spilled spec, poisoning the reasoner with base64). writeproxy refuses mutations here. The dir
+# name is model-facing, so it says what it is (read-only) and never leaks the "cria" marker.
+SPILL_DIR = "./tmp/read-only"
 
 
 def _spill_name(url: str) -> str:
-    """A stable, filesystem-safe ``./tmp`` filename for a URL's spilled doc — stable so a re-fetch of the
-    same url points the model at the same file (no duplicate spills)."""
+    """A stable, filesystem-safe name under :data:`SPILL_DIR` for a URL's spilled doc — stable so a
+    re-fetch of the same url points the model at the same file (no duplicate spills)."""
     import urllib.parse
     p = urllib.parse.urlparse(url)
     stem = (p.netloc + p.path).strip("/") or "page"
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "page"
     if "." not in stem.rsplit("_", 1)[-1]:
         stem += ".txt"
-    return f"./tmp/{stem}"
+    return f"{SPILL_DIR}/{stem}"
 
 
 def _looks_like_code(text: str) -> bool:
