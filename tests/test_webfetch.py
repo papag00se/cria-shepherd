@@ -165,6 +165,30 @@ class FetchNavSeedTests(unittest.TestCase):
         finally:
             wf.fetch = orig
 
+    def test_api_spec_surfaces_endpoint_routes_in_outline(self):
+        # An API spec's outline must advertise the actual ENDPOINT ROUTES up front, so a model
+        # reaching for "the endpoint" sees /handles/{handle} instead of drilling into schemas and
+        # guessing the URL. Detected by SHAPE (top-level object of /-paths), not the key name.
+        big = json.dumps({
+            "openapi": "3.0.3", "info": {"title": "X"},
+            "routes": {f"/p{i}": {"get": {}} for i in range(200)} | {"/handles/{handle}": {"get": {}}},
+            "components": {"schemas": {"Handle": {"type": "object"}}},
+        }, separators=(",", ":"))
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", big, False)
+        try:
+            page1 = wf.fetch_nav("https://api.x/openapi.json", cap_tokens=200)
+            self.assertIn("API endpoints", page1)                 # routes surfaced (key was "routes", not "paths")
+            self.assertIn("/handles/{handle}", page1.split("--- (chars", 1)[0])  # in the HEADER, up front
+        finally:
+            wf.fetch = orig
+
+    def test_non_spec_doc_gets_no_routes_line(self):
+        # A structured doc that isn't route-shaped must NOT invent an endpoints line.
+        from cria.webfetch import _endpoint_routes
+        self.assertEqual(_endpoint_routes({"name": "x", "config": {"a": 1, "b": 2}}), [])
+        self.assertEqual(_endpoint_routes({"paths": {"/a": {}, "/b": {}}}), ["/a", "/b"])
+
     def test_empty_body_is_explicit(self):
         orig = wf.fetch
         wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "text/plain", "", False)

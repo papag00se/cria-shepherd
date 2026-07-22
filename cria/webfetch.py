@@ -336,6 +336,14 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
         if keys:
             head += (f"[structured doc — top-level keys: {', '.join(keys)}]\n"
                      f'[use find="<key>" to jump to a section]\n')
+        # For an API spec, surface the actual ENDPOINT ROUTES up front — the single most useful thing
+        # and the one a model reaching for "the endpoint" keeps missing (it drills into component
+        # schemas and guesses the URL instead). Detected by SHAPE (a top-level object whose keys are
+        # mostly `/`-paths), so it works for OpenAPI and any spec dialect, keyed off real bytes.
+        routes = _endpoint_routes(parsed)
+        if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
+            head += (f"[API endpoints ({len(routes)}): {', '.join(routes)}]\n"
+                     f'[web_fetch find="<path>" for one endpoint\'s request/response detail]\n')
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '
@@ -470,6 +478,21 @@ def _resolve_ref_path(root: Any, ref: str) -> Any:
         except (KeyError, IndexError, TypeError):
             return None
     return cur
+
+
+def _endpoint_routes(parsed: Any) -> list[str]:
+    """The API's endpoint routes when the doc is a spec: the keys of a top-level object that are mostly
+    URL paths (start with ``/``) — OpenAPI's ``paths``, but detected by SHAPE not by the key name, so it
+    surfaces for any dialect. Empty when the doc isn't route-shaped (so nothing is invented)."""
+    if not isinstance(parsed, dict):
+        return []
+    for v in parsed.values():
+        if isinstance(v, dict) and len(v) >= 2:
+            ks = [str(k) for k in v.keys()]
+            slashed = [k for k in ks if k.startswith("/")]
+            if len(slashed) >= max(2, int(len(ks) * 0.6)):  # mostly route-like → these are endpoints
+                return slashed
+    return []
 
 
 def top_level_keys(root: Any) -> list[str]:
