@@ -93,12 +93,12 @@ def main() -> int:
     cfg = Config.load()
     _cap = os.environ.get("LIVE_EXEC_CAP")  # set to capture every per-call body for debugging
     cfg = replace(cfg, server=replace(cfg.server, port=port),
-                  logging=replace(cfg.logging, level="warn", console=False, dir=str(logdir),
+                  logging=replace(cfg.logging, level="info", console=False, dir=str(logdir),
                                   capture_calls=bool(_cap), capture_dir=(_cap or str(logdir))))
     if cfg.env_file:  # load the Brave key so web_search works
         allow = {brave.API_KEY_ENV} | {b.api_key_env for b in cfg.routing.backends.values() if b.api_key_env}
         load_env_file(cfg.env_file, allow)
-    log = EventLog(level="warn", dir=str(logdir), console=False, jsonl=True)
+    log = EventLog(level="info", dir=str(logdir), console=False, jsonl=True)
     upstream = Upstream(cfg.upstream.base_url, cfg.upstream.timeout_seconds,
                         capture_dir=Path(_cap) if _cap else None)
     cria = CriaServer(cfg, log, upstream)
