@@ -353,6 +353,36 @@ class CleanGateOutputTests(unittest.TestCase):
         twice = probegate.clean_gate_results(once)
         self.assertEqual(once, twice)
 
+    def _gate_cmd(self):
+        import json
+        cmd = ("cd /ws || exit 97\necho " + probegate.SECTION_PREFIX + "probe-0___\npytest -q\necho "
+               + probegate.SECTION_PREFIX + "git___\ngit status --porcelain 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1")
+        return {"role": "assistant", "tool_calls": [{"id": "g1", "type": "function",
+                "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}
+
+    def test_strips_gate_command_plumbing_keeps_probe(self):
+        # The model never authored the gate scaffolding — strip the markers/git-sha/cd-guard from the
+        # command, leaving only the real probe (pytest). The result is still cleaned to ⟦ctx:checks⟧.
+        import json
+        msgs = [self._gate_cmd(),
+                {"role": "tool", "tool_call_id": "g1", "content": self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")}]
+        out = probegate.clean_gate_results(msgs)
+        cmd = json.loads(out[0]["tool_calls"][0]["function"]["arguments"])["cmd"]
+        self.assertEqual(cmd, "pytest -q")                        # scaffolding gone
+        self.assertNotIn("sha1sum", cmd)
+        self.assertNotIn(probegate.SECTION_PREFIX, cmd)
+        self.assertIn("⟦ctx:checks⟧", out[1]["content"])          # the finding survives
+
+    def test_no_signal_gate_turn_is_dropped_whole(self):
+        # A "no usable result this turn" check is pure noise → drop the result AND its command call, so
+        # nothing orphans and the model isn't told a check ran that said nothing.
+        import json
+        no_probe = "Chunk ID: 1\n" + probegate.SECTION_PREFIX + "git___\ndeadbeef\n"  # git only → no signal
+        msgs = [{"role": "user", "content": "go"}, self._gate_cmd(),
+                {"role": "tool", "tool_call_id": "g1", "content": no_probe}]
+        out = probegate.clean_gate_results(msgs)
+        self.assertEqual([m.get("role") for m in out], ["user"])   # both the call and result are gone
+
 
 class CleanGateResultsDedupTests(unittest.TestCase):
     """Repeated identical ⟦ctx:checks⟧ results (a finding that recurs unchanged across turns) pile up

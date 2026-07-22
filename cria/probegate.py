@@ -26,6 +26,7 @@ the pre-existing don't-wedge semantics instead of inventing a verdict.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -220,16 +221,69 @@ def _checks_payload(m) -> tuple[str, str] | None:
     return (key, c) if isinstance(c, str) and c.startswith(CHECKS_MARKER) else None
 
 
+_NO_SIGNAL_CHECK = "no usable result this turn"   # the ⟦ctx:checks⟧ non-signal — nothing to act on
+
+# Gate SCAFFOLDING lines (from plan_gate): the section-marker echoes, the git-status|sha1sum changed-files
+# fingerprint, and the ``cd <ws> || exit 97`` guard. Pure plumbing the model never authored and can't act
+# on — stripped from the COMMAND side so the coder's view isn't flooded with the gate's own machinery.
+_GATE_MARKER_ECHO = re.compile(r"^\s*echo\s+.*" + re.escape(SECTION_PREFIX))
+_GATE_GIT_FP = re.compile(r"^\s*git status --porcelain.*sha1sum")
+_GATE_CD_GUARD = re.compile(r"^\s*cd\s+.*\|\|\s*exit\s+97\s*$")
+
+
+def _strip_gate_plumbing(cmd: str) -> str:
+    """Drop cria's gate scaffolding from a composed gate command, keeping only the real probe commands
+    (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains."""
+    kept = [ln for ln in cmd.splitlines()
+            if not (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln) or _GATE_CD_GUARD.match(ln))]
+    return "\n".join(ln for ln in kept if ln.strip()).strip()
+
+
+def _strip_command_plumbing(m: dict) -> dict:
+    """If an assistant tool call carries a gate-scaffolded command, rewrite the command in place to drop
+    the plumbing (markers/git-sha/cd-guard). Shape-preserving: str ``cmd`` or list ``command``."""
+    tcs = m.get("tool_calls")
+    if not tcs:
+        return m
+    changed = False
+    new_tcs = []
+    for tc in tcs:
+        fn = tc.get("function") or {}
+        raw = fn.get("arguments")
+        if isinstance(raw, str) and SECTION_PREFIX in raw:
+            try:
+                a = json.loads(raw)
+            except (ValueError, TypeError):
+                a = None
+            if isinstance(a, dict):
+                for field in ("cmd", "command"):
+                    v = a.get(field)
+                    if isinstance(v, str) and SECTION_PREFIX in v:
+                        a[field] = _strip_gate_plumbing(v)
+                    elif isinstance(v, list):
+                        joined = "\n".join(str(x) for x in v)
+                        if SECTION_PREFIX in joined:
+                            a[field] = [_strip_gate_plumbing(joined)]
+                tc = {**tc, "function": {**fn, "arguments": json.dumps(a)}}
+                changed = True
+        new_tcs.append(tc)
+    return {**m, "tool_calls": new_tcs} if changed else m
+
+
 def clean_gate_results(messages: list) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
-    Then COLLAPSE repeats: when the same cleaned ⟦ctx:checks⟧ payload appears more than once (a gate
-    finding that recurs unchanged across turns — e.g. the identical ImportError the model kept hitting),
-    keep only the most recent full copy and shorten the earlier identical ones to a one-line back-
-    reference. The model stops re-reading the same error N times (which reinforced its fixation), and
-    message count is preserved so no tool result is orphaned from its tool call."""
+    Also STRIPS the gate's command-side plumbing (the ``echo ___CRIA_GATE_…``/``git status|sha1sum``/
+    ``cd||exit 97`` scaffolding the coder never authored), DROPS non-signal ⟦ctx:checks⟧ turns entirely
+    (with their command call, so nothing orphans — a "no usable result this turn" is pure noise), and
+
+    COLLAPSES repeats: when the same cleaned ⟦ctx:checks⟧ payload appears more than once (a gate finding
+    that recurs unchanged across turns — e.g. the identical ImportError the model kept hitting), keep only
+    the most recent full copy and shorten the earlier identical ones to a one-line back-reference. The
+    model stops re-reading the same error N times (which reinforced its fixation)."""
     out = []
+    drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
     for m in messages:
         if isinstance(m, dict):
             is_tool = m.get("role") == "tool" or m.get("type") == "function_call_output"
@@ -238,9 +292,20 @@ def clean_gate_results(messages: list) -> list:
             if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
                 cleaned = clean_gate_output(c)
                 if cleaned is not None:
+                    if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
+                        tid = m.get("tool_call_id") or m.get("call_id")
+                        if tid:
+                            drop_ids.add(tid)
+                        continue
                     out.append({**m, key: cleaned})
                     continue
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                m = _strip_command_plumbing(m)
         out.append(m)
+    if drop_ids:  # remove the assistant call(s) whose only result was a dropped no-signal gate probe
+        out = [m for m in out if not (isinstance(m, dict) and m.get("role") == "assistant"
+               and m.get("tool_calls") and len(m["tool_calls"]) == 1
+               and (m["tool_calls"][0].get("id") in drop_ids))]
     last_of: dict[str, int] = {}
     for i, m in enumerate(out):
         p = _checks_payload(m)

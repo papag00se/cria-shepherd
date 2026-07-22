@@ -817,7 +817,8 @@ class Loop:
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
             lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
-                                 prompts.load("selfcompact_summary"), selfcompact.serialize(mm), rlog,
+                                 prompts.load("selfcompact_summary"),
+                                 selfcompact.serialize(probegate.clean_gate_results(mm)), rlog,
                                  phase="self-compact") + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction)
         if applied:
@@ -1334,7 +1335,8 @@ class Loop:
         endpoint), same mechanism the loop's completion compaction uses, so the two can't diverge."""
         text = summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
                          self._ctx.compactor_role or self._ctx.reasoner_role,
-                         prompts.load("selfcompact_summary"), selfcompact.serialize(messages), rlog,
+                         prompts.load("selfcompact_summary"),
+                         selfcompact.serialize(probegate.clean_gate_results(messages)), rlog,
                          phase="self-compact")
         return text or "(earlier work this session)"
 
