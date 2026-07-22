@@ -604,6 +604,11 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 # composes the single monotonic directive keyed on this file's failure history so far
                 # (``out``). A non-edit-fail failure (write refusal, real error) passes through unchanged.
                 out.append({**m, "content": editrecovery.recover(_strip_exec_envelope(content), out)})
+            elif "externally-managed-environment" in content:
+                # PEP 668: `pip install` fails by design on this box. A weak model retries it forever
+                # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /
+                # --break-system-packages / venv) ONCE — grounded in the real error, not invented.
+                out.append({**m, "content": content + "\n\n" + prompts.load("pep668_remedy")})
             else:
                 out.append(m)
         else:
