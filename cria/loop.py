@@ -2404,9 +2404,13 @@ def _steer_or_none(text: str) -> str | None:
     if not text:
         return None
     body = strip_think(text)
-    body = re.sub(r"(?i)\bnot[_ ]stuck\b", " ", body)          # drop the verdict token(s)
-    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body).strip(" \n>-*:")
-    return body if len(body) >= 25 else None                    # a real directive, not just the verdict
+    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)   # markdown/channel scaffolding
+    directive = re.sub(r"(?i)\bnot[_ ]stuck\b", " ", body)            # remove the verdict token(s)
+    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:").strip()  # trim scaffolding; KEEP end punctuation
+    # A directive remains once the verdict is stripped → deliver it (Fabliq hedges NOT_STUCK + advice);
+    # essentially nothing left → a genuine NOT_STUCK, inject nothing. The small floor skips a bare
+    # "ok"/"yes" residue without discarding a real short steer.
+    return directive if len(directive) >= 8 else None
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
