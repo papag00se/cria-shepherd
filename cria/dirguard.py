@@ -21,6 +21,8 @@ from __future__ import annotations
 import os
 import re
 
+from . import prompts
+
 LEVELS = ("none", "read", "write")
 
 # Absolute or ~-anchored FILE path tokens in a shell command. The lookbehind rejects a `/` that
@@ -91,9 +93,8 @@ def _exempt(path: str) -> bool:
 
 
 def _refusal(verb: str, path: str) -> str:
-    return (f"{verb} outside the working directory is not permitted here — keep every file you read or "
-            f"write inside the project directory. The path {path!r} is outside it; use a path within the "
-            f"project instead.")
+    # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
+    return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path))
 
 
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:

@@ -1,0 +1,8 @@
+# web_search / web_fetch loop guards — the messages the model READS when a near-identical repeat is
+# refused (its prior result is still in the conversation) or when it is guessing URLs. One fragment
+# per key (parsed by prompts.load_map). Placeholders: {{QUERY}} {{URL}} {{DOMAIN}} {{STREAK}} and
+# {{DOMAIN_STEER}} (the domain_steer fragment, or empty when the query names no domain).
+search_repeat = HTTP 400 Bad Request · web_search "{{QUERY}}"\nYou already ran this (or a near-identical) search and its results are still above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
+domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH it directly: web_fetch https://{{DOMAIN}} , then read the response for what you need.
+fetch_repeat = HTTP 400 Bad Request · web_fetch {{URL}}\nYou already fetched this exact request and its result is still above — use what you have, or fetch something different.
+guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.

@@ -33,7 +33,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import brave
+from . import brave, prompts
 from .content_reduce import est_tokens, html_to_text
 from .searchloop import first_domain_in, normalize_search, searches_match
 
@@ -210,6 +210,12 @@ def _note_streak(session: str, status: int) -> int:
     return n
 
 
+def _guard_msg(key: str, **tokens: object) -> str:
+    """One loop-guard message from prompts/webfetch_guards.txt (re-read per call so it's tunable
+    without a restart), with its {{TOKEN}}s filled."""
+    return prompts.fill(prompts.load_map("webfetch_guards")[key], **tokens)
+
+
 def gate_search(session: Optional[str], query: str) -> Optional[str]:
     """Refuse a repeat web_search ONLY while its results are still in the conversation
     (`set_visible`); else the model may re-run it. None → proceed.
@@ -227,12 +233,8 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
         return None
     if any(searches_match(words, normalize_search(prev)) for prev in _SEARCH_SEEN.get(session, ())):
         domain = first_domain_in(query)
-        steer = (f"\nThis query names a domain — stop searching ABOUT it and FETCH it directly: "
-                 f"web_fetch https://{domain} , then read the response for what you need."
-                 if domain else "")
-        return (f'HTTP 400 Bad Request · web_search "{query}"\n'
-                "You already ran this (or a near-identical) search and its results are still above — "
-                f"use them, make a MAJOR change to the query, or web_fetch a specific URL.{steer}")
+        steer = _guard_msg("domain_steer", domain=domain) if domain else ""
+        return _guard_msg("search_repeat", query=query, domain_steer=steer)
     return None
 
 
@@ -252,9 +254,7 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
-        return (f"HTTP 400 Bad Request · web_fetch {url}\n"
-                "You already fetched this exact request and its result is still above — use what you "
-                "have, or fetch something different.")
+        return _guard_msg("fetch_repeat", url=url)
     out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent)
     if session and external and status is not None:
         out += guess_hint(status, _note_streak(session, status))
@@ -565,6 +565,5 @@ def guess_hint(status: int, streak: int) -> str:
     """After GUESS_STREAK_THRESHOLD consecutive non-2xx external fetches, tell the model to stop
     guessing URLs. Below that, a single bad URL stands on its own."""
     if not (200 <= status < 300) and streak >= GUESS_STREAK_THRESHOLD:
-        return (f"\n\n⚠ {streak} fetches in a row failed (non-2xx). If you're guessing URLs, "
-                "stop — find the right one via search, or take a different step.")
+        return _guard_msg("guess_hint", streak=streak)
     return ""

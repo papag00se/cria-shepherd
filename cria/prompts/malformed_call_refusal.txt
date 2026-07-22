@@ -1,0 +1,1 @@
+Your last tool call was malformed: tool-call marker tokens leaked into the command text, so it is not a runnable command — this usually means two calls got fused into one turn (or broken quoting). Nothing was run. Send ONE clean tool call this turn: a single shell command as a plain JSON array of strings, and stop after it.

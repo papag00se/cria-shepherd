@@ -24,6 +24,8 @@ import base64
 import json
 import os
 
+from . import prompts
+
 # Heredoc → cria: a structured edit-FAILURE fact-report (base64 JSON follows the marker).
 EDITFAIL = "⟦ctx:editfail⟧"
 # cria → model: the composed directive. Carries the file's basename so this module can COUNT how many
@@ -53,35 +55,31 @@ def compose(fail: dict, prior: int) -> str:
     anchor = (fail.get("anchor") or "").strip("\n")
     head = _tag(path)
 
+    def report(key: str, **tokens: object) -> str:
+        # bodies live in prompts/editfail_reports.txt; content tokens (anchor/cur) fill LAST so a
+        # value that happens to contain a {{TOKEN}} pattern can't be re-substituted.
+        return head + prompts.fill(prompts.load_map("editfail_reports")[key], **tokens)
+
     mode = fail.get("mode")
     # Self-resolving modes — answered the same way regardless of history (no escalation clock).
     if mode == "phantom":
-        return (head + "that line already reads:\n---\n" + anchor + "\n---\nwhich is ALREADY what your "
-                "new_string makes it. This change is DONE — do not edit that line again; your old_string "
-                "just misremembers the current text. Move on: run the failing check and read the actual error.")
+        return report("phantom", anchor=anchor)
     if mode == "would_break":
-        return (head + f"your edit would break {path} — {fail.get('err', 'it no longer parses')}. "
-                "Fix new_string so the file stays valid, then edit again.")
+        return report("would_break", path=path, err=fail.get("err", "it no longer parses"))
     if mode in ("multi", "multi_flex"):
-        return (head + f"old_string matches {fail.get('n', 'several')} places in {path} — add surrounding "
-                "lines so it is unique, then edit again.")
+        return report("multi", n=fail.get("n", "several"), path=path)
 
     # The "can't pin the exact current text" family: identical / anchor / close / no_anchor.
     if prior + 1 >= ESCALATE_AFTER:
         # COMMITTED escalation: stop editing this file, rewrite it whole from the exact bytes shown. One
         # directive from here on — no "copy the exact text" that the model keeps failing to do.
-        return (head + f"you have failed to edit this file {prior + 1} times — you cannot pin its exact "
-                "current text. STOP editing it. Here is its EXACT current content on disk; produce the "
-                "corrected FULL file in a single write_file call:\n---\n" + cur + "\n---")
+        return report("escalate", prior=prior + 1, cur=cur)
     # Surgical (early failures): hand over the exact text to copy, or point at the current file.
     if anchor:
-        return (head + "your old_string is not an exact match. The file actually reads:\n---\n" + anchor +
-                "\n---\nCopy that text VERBATIM into old_string and edit again.")
+        return report("anchor", anchor=anchor)
     if mode == "identical":
-        return (head + "old_string and new_string are identical — this edit changes nothing, and you "
-                "cannot pin the exact current text. Read the file, then make one targeted edit.")
-    return (head + "your old_string is not in the file (likely a stale copy). Read the file to get its "
-            "exact current text, then make one targeted edit.")
+        return report("identical")
+    return report("no_anchor")
 
 
 def recover(content: str, prior_msgs: list) -> str:

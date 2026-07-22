@@ -1,0 +1,1 @@
+that path is inside a protected internal directory and is off-limits — config, credentials, and state live there. Use the project workspace for any file you read or write. If you meant to tell the user something, just say it in your reply — do not write a file.

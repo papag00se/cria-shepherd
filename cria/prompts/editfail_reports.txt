@@ -1,0 +1,11 @@
+# Edit-failure directives (bodies only — cria prepends the ⟦ctx:edit⟧ <file> — tag). One fragment per
+# failure mode, parsed by prompts.load_map. Placeholders filled at call time:
+#   {{PATH}} basename · {{ERR}} parse error · {{N}} match count · {{PRIOR}} prior failures ·
+#   {{ANCHOR}} the file's real text near the target · {{CUR}} the file's full current contents.
+phantom = that line already reads:\n---\n{{ANCHOR}}\n---\nwhich is ALREADY what your new_string makes it. This change is DONE — do not edit that line again; your old_string just misremembers the current text. Move on: run the failing check and read the actual error.
+would_break = your edit would break {{PATH}} — {{ERR}}. Fix new_string so the file stays valid, then edit again.
+multi = old_string matches {{N}} places in {{PATH}} — add surrounding lines so it is unique, then edit again.
+escalate = you have failed to edit this file {{PRIOR}} times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n{{CUR}}\n---
+anchor = your old_string is not an exact match. The file actually reads:\n---\n{{ANCHOR}}\n---\nCopy that text VERBATIM into old_string and edit again.
+identical = old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text. Read the file, then make one targeted edit.
+no_anchor = your old_string is not in the file (likely a stale copy). Read the file to get its exact current text, then make one targeted edit.

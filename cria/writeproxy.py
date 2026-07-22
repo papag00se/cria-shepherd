@@ -44,11 +44,8 @@ _LIST_NAMES = {"list_dir"}
 # loopstate, corrupts cria). A confused small model has done both: it invented a `~/.cria/chat-<id>.txt`
 # path and wrote a "message to the user" into it, having no other channel to speak. This is the dual of
 # the no-workspace-pollution rule, enforced at the same chokepoint that lowers the synthetic tools.
-_CRIA_HOME_REFUSAL = (
-    "that path is inside a protected internal directory and is off-limits — config, credentials, and "
-    "state live there. Use the project workspace for any file you read or write. If you meant to tell "
-    "the user something, just say it in your reply — do not write a file."
-)
+# The cria-home refusal (prompts/cria_home_refusal.txt) and the malformed-fused-call refusal
+# (prompts/malformed_call_refusal.txt) are loaded per call at their use sites in translate_outbound.
 
 # Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
 # calls into one turn (gemma live: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:write_file{…`).
@@ -59,12 +56,6 @@ _CRIA_HOME_REFUSAL = (
 # can act on — the "replace the bad call with a model-read refusal" pattern used for the dir guards.
 # (Mirrors massage.py's dialect sentinels; kept local because massage imports writeproxy, not vice versa.)
 _TC_DEBRIS = ("<|tool_call>", "<tool_call|>", '<|"|>', "<|tool_call_start|>", "<|tool_call_end|>")
-_MALFORMED_TC_REFUSAL = (
-    "Your last tool call was malformed: tool-call marker tokens leaked into the command text, so it is "
-    "not a runnable command — this usually means two calls got fused into one turn (or broken quoting). "
-    "Nothing was run. Send ONE clean tool call this turn: a single shell command as a plain JSON array of "
-    "strings, and stop after it."
-)
 
 
 def _has_tc_debris(arguments) -> bool:
@@ -279,8 +270,7 @@ p=pathlib.Path(base64.b64decode('{path}').decode())
 raw=base64.b64decode('{content}')
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
-    sys.exit('write_file REFUSED (not written): this would replace a currently-valid '+p.name+
-             ' with content that does not parse — '+_after+'. Fix the content so the file is valid, then write again.')
+    sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after))
 p.parent.mkdir(parents=True,exist_ok=True)
 tmp=str(p)+'{suffix}'
 pathlib.Path(tmp).write_bytes(raw)
@@ -294,7 +284,8 @@ def _write_command(path: str, content: str) -> str:
     file is refused), then write to a temp and os.replace over the target so a partial write never
     leaves a half-written file. No arg-size limit / no chunking — the content rides in the heredoc."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
-                                           suffix=_TMP_SUFFIX, wrote=_WROTE)
+                                           suffix=_TMP_SUFFIX, wrote=_WROTE,
+                                           refused=_b64(prompts.load("write_refused")))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -461,7 +452,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
             # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
             if name == "shell" and _has_tc_debris(fn.get("arguments")):
-                cmd = f"printf %s {_qbash(_MALFORMED_TC_REFUSAL)}"
+                cmd = f"printf %s {_qbash(prompts.load('malformed_call_refusal'))}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_malformed_call", tool=name)
             # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
@@ -475,7 +466,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
             # stray write corrupt its state. The refusal is a normal tool result the model reads.
             elif name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
-                cmd = f"printf %s {_qbash(_CRIA_HOME_REFUSAL)}"
+                cmd = f"printf %s {_qbash(prompts.load('cria_home_refusal'))}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
             elif name in _WRITE_NAMES and name in injected:
