@@ -1392,6 +1392,29 @@ class FetchGroundTruthTests(unittest.TestCase):
     def test_no_fetches_yields_empty(self):
         self.assertEqual(self._fgt([{"role": "user", "content": "just do the task"}]), "")
 
+    def test_durable_facts_survive_after_the_result_is_floored_out(self):
+        # runJ: the openapi.json result scrolls out of the window before the late spiral-steer fires.
+        # _track_fetched_pages persists it on the session so _fetch_ground_truth still cites it.
+        from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
+        gs = GuardState()
+        early = [{"role": "tool", "content": "HTTP 200 OK · https://api.handle.me/openapi.json "
+                                             "[API endpoints (2): /handles/{handle}, /holders/{address}]"}]
+        _track_fetched_pages(gs, early)
+        # a LATER body no longer contains that result (floored out) — only a Windows-handle search
+        later = [{"role": "assistant", "content": "searching GetHandleInformation hObject flags"}]
+        out = _fetch_ground_truth(later, gs)
+        self.assertIn("api.handle.me/openapi.json", out)   # still cited from the durable store
+        self.assertIn("/handles/{handle}", out)
+
+    def test_in_window_status_wins_over_stale_durable(self):
+        from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
+        gs = GuardState()
+        _track_fetched_pages(gs, [{"role": "tool", "content": "HTTP 500 err · https://x.test/openapi.json"}])
+        fresh = [{"role": "tool", "content": "HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]"}]
+        out = _fetch_ground_truth(fresh, gs)
+        self.assertIn("HTTP 200", out)
+        self.assertNotIn("HTTP 500", out)
+
 
 class RepetitionRedirectTests(unittest.TestCase):
     """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →

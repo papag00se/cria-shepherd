@@ -184,6 +184,8 @@ class GuardState:
     search_words: list = None  # the last web_search's normalized word-set (searchloop)
     search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
     tried_spec_convention: bool = False  # spent the one deterministic <task-domain>/openapi.json escape
+    fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
+    # real result has been floored out of the window (else a steer can't counter a late spiral)
 
 
 @dataclass
@@ -706,6 +708,7 @@ class Loop:
         # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
         # tracking, so the repetition/write-streak see what's actually FORWARDED.
         coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+        _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
         if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
             guard_track_repetition(sess, coder, rlog, step=step)
             guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
@@ -2370,13 +2373,10 @@ _FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
 _FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): ([^\]]+)\]")
 
 
-def _fetch_ground_truth(messages: list[dict]) -> str:
-    """Deterministic FACTS about the web_fetches already made — final status per URL + any endpoint
-    routes — read from the REAL rendered tool results. Handed to the steer author so a weak reasoner
-    can't echo the coder's hallucination that a fetch failed when it actually returned 200 (runG: the
-    coder insisted api.handle.me/openapi.json gave a 400; it returned HTTP 200 with 33 endpoints incl.
-    /handles/{handle}, and the steer PARROTED the 400 — keeping the coder searching for 40 turns)."""
-    latest: dict[str, tuple[str, str]] = {}  # url -> (status, routes); last occurrence wins
+def _extract_fetches(messages: list[dict]) -> dict:
+    """url -> (status, routes) for every web_fetch result in ``messages`` (last occurrence wins), read
+    from the REAL rendered tool headers. The ` · <url>` shape is cria's render, absent from coder prose."""
+    latest: dict[str, tuple[str, str]] = {}
     for m in messages:
         c = m.get("content") or ""
         if isinstance(c, list):
@@ -2387,12 +2387,40 @@ def _fetch_ground_truth(messages: list[dict]) -> str:
             url = sm.group(2).rstrip(".,);")
             rm = _FETCH_ROUTES_RE.search(c, sm.end())
             latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "")
+    return latest
+
+
+def _format_fetches(latest: dict) -> str:
     if not latest:
         return ""
     lines = [f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
              for url, (status, routes) in latest.items()]
     return ("PAGES YOU HAVE ALREADY FETCHED (from the real tool results — trust these over any earlier "
             "note or reasoning claiming a fetch failed):\n" + "\n".join(lines))
+
+
+def _track_fetched_pages(sess, messages: list[dict]) -> None:
+    """Accumulate the session's fetch facts DURABLY on the GuardState, so a steer can still cite that
+    api.handle.me/openapi.json returned 200 (with /handles/{handle}) after that result has been floored
+    out of the live window — the point when a late wrong-entity spiral (runJ: Windows GetHandleInformation)
+    most needs the correction. In-window results still win at read time (see :func:`_fetch_ground_truth`)."""
+    if sess is None:
+        return
+    if getattr(sess, "fetched_pages", None) is None:
+        sess.fetched_pages = {}
+    sess.fetched_pages.update(_extract_fetches(messages))
+
+
+def _fetch_ground_truth(messages: list[dict], sess=None) -> str:
+    """Deterministic FACTS about the web_fetches already made — final status per URL + any endpoint
+    routes. Handed to the steer author so a weak reasoner can't echo the coder's hallucination that a
+    fetch failed when it actually returned 200 (runG: the coder insisted api.handle.me/openapi.json gave
+    a 400; it returned HTTP 200 with 33 endpoints incl. /handles/{handle}, and the steer PARROTED the
+    400 — 40 wasted turns). Merges the session's DURABLE facts (kept past the window) with the current
+    window, so the correction survives even after the result scrolls out; in-window status wins."""
+    latest = dict(getattr(sess, "fetched_pages", None) or {})
+    latest.update(_extract_fetches(messages))  # current window is freshest → wins on any url
+    return _format_fetches(latest)
 
 
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
@@ -2418,7 +2446,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
-    fetch_truth = _fetch_ground_truth(body.get("messages", []))
+    # Pass gs so DURABLE facts (a spec fetched long ago, now floored out) still reach the steer.
+    fetch_truth = _fetch_ground_truth(body.get("messages", []), gs)
     truth = "\n\n".join(t for t in (fetch_truth, truth) if t)
     reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
