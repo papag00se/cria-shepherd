@@ -365,6 +365,14 @@ class IncompleteWriteTests(unittest.TestCase):
         got = _recover_write_args(messy)
         self.assertEqual(got, {"path": "a.py", "content": 'print("hi")\nx = "q"here'})
 
+    def test_recover_refuses_truncation_ending_in_internal_quote_comma(self):
+        # The narrow false-accept window: a cut-off whose last bytes are `",` from INSIDE the
+        # content would pass the char-after-quote check — but a complete object ends in `}`, and
+        # this one ends in `,`, so the object-terminator condition rejects it.
+        from cria.massage import _recover_write_args
+        cut = r'{"path":"a.py","content":"d = {\"k\": \"v\"},'  # truncated mid-dict-literal
+        self.assertIsNone(_recover_write_args(cut))
+
     def test_flags_incomplete_after_repair(self):
         from cria.massage import repair_tool_args, has_incomplete_write_args
         cut = r'{"path":"r.py","content":"print(f\"a: {r[\'k'

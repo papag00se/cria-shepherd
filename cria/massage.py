@@ -867,6 +867,12 @@ def _recover_write_args(raw: str) -> dict | None:
     pm = _PATH_RE.search(raw)
     if not pm:
         return None
+    # A complete JSON object ends with `}`. A cut-off call doesn't — this rejects a truncation
+    # whose last bytes are anything but the object terminator (our real case ended in `\'`, a
+    # `",`-truncation ends in `,`), and no well-formed call fails it. Necessary, not sufficient —
+    # the per-value check below is the second condition.
+    if raw.rstrip()[-1:] != "}":
+        return None
     args: dict[str, str] = {"path": pm.group(1)}
     cm = _CONTENT_RE.search(raw)
     if cm:
