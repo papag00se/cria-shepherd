@@ -122,6 +122,41 @@ def parse_steps(text: str) -> list[str] | None:
     return bullets or None
 
 
+# A REST endpoint TEMPLATE embedded in a plan step — e.g. ``/resolve/{handle}``. A plan is drafted
+# BEFORE the spec is fetched, so a concrete templated path it names is a pre-research GUESS. The coder
+# takes the plan as authoritative and BOTH ships the guessed path (a ``/resolve/`` call that 404s) AND
+# thrashes re-fetching the spec hunting a route that isn't there — the correct route it already fetched
+# gets ignored in favour of the plan's word. Requiring a ``{param}`` keeps the match tight: it hits
+# endpoint templates, never file paths (``resolve_handle.py``) or single-segment discovery URLs
+# (``/openapi.json``). See [[project_goal_fabliq_ada_handles]] — the recurring wrong-endpoint variance.
+_ENDPOINT_TEMPLATE = re.compile(r"/[A-Za-z][\w-]*(?:/(?:\{[^{}\s/]+\}|[A-Za-z][\w-]*)){1,8}/?")
+_HOLE = "\x00"  # transient marker for a scrubbed path, cleaned up (with its example scaffolding) below
+
+
+def _scrub_invented_paths(step: str, task: str) -> str:
+    """Strip endpoint-template paths the task never named from one plan step — pre-research guesses the
+    coder would otherwise take as gospel. Keeps any path the task text itself contains (there the user
+    gave it, so it's the spec, not a guess) and never blanks a whole step. Prose steering to the same
+    end ("don't bake a guessed path") failed twice — small models ignore it; this is deterministic."""
+    def repl(m: "re.Match[str]") -> str:
+        path = m.group(0)
+        if "{" not in path:  # only templated paths are unambiguously pre-research guesses
+            return path
+        return path if path.rstrip("/") in task else _HOLE
+    out = _ENDPOINT_TEMPLATE.sub(repl, step)
+    if _HOLE not in out:
+        return step
+    out = re.sub(rf"[`'\"]\s*{_HOLE}\s*[`'\"]", _HOLE, out)                              # `<hole>` → <hole>
+    out = re.sub(rf"\(\s*(?:e\.g\.?,?|such as|i\.e\.?,?)?\s*{_HOLE}\s*\)", "", out, flags=re.I)  # (e.g., <hole>)
+    out = re.sub(rf"\b(?:e\.g\.?|i\.e\.?|such as)[,:]?\s*{_HOLE}", "", out, flags=re.I)  # e.g., <hole>
+    out = out.replace(_HOLE, "")                                                         # any bare holes
+    out = re.sub(r"\(\s*\)", "", out)                                                    # emptied parens
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([.,;:)])", r"\1", out)
+    out = out.strip(" \t,;:-")
+    return out or step
+
+
 class Planner:
     def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
@@ -186,13 +221,19 @@ class Planner:
         # actually does the work instead of reusing a prior run's plan. Within ONE session the loop's
         # own session store holds the live plan; plan_for is called only on that session's first turn,
         # so this doesn't re-plan mid-session.
+        # Scrub pre-research endpoint guesses the reasoner baked into steps (a plan is drafted before
+        # the spec is fetched; a concrete `/path/{param}` it names is a guess the coder would obey).
+        scrubbed = [_scrub_invented_paths(s, task) for s in steps]
+        n_scrubbed = sum(1 for a, b in zip(steps, scrubbed) if a != b)
+        if n_scrubbed:
+            rlog.emit("plan.paths_scrubbed", count=n_scrubbed, level="info")
         plan = Plan(
             id=self._new_id(key),
             task=task,
             created=self._clock().isoformat(timespec="seconds"),
-            items=[PlanItem(text=s) for s in steps],
+            items=[PlanItem(text=s) for s in scrubbed],
         )
-        rlog.emit("plan.drafted", id=plan.id, steps=len(steps))
+        rlog.emit("plan.drafted", id=plan.id, steps=len(scrubbed))
         return plan
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",

@@ -331,3 +331,57 @@ class AllStepsExecutedTests(unittest.TestCase):
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), _Rlog())
         self.assertEqual(len(plan.items), 15)
 
+
+class ScrubInventedPathsTests(unittest.TestCase):
+    """The planner drafts before fetching the spec, so a concrete `/path/{param}` it names is a guess
+    the coder obeys verbatim (observed live: a baked `/resolve/{handle}` → a 404ing resolver + a
+    re-fetch thrash hunting a route that isn't there). Scrub such guesses unless the task named them."""
+
+    def _scrub(self, step, task):
+        from cria.planner import _scrub_invented_paths
+        return _scrub_invented_paths(step, task)
+
+    def test_drops_baked_endpoint_example_clause(self):
+        # The exact runD failure: an "(e.g., `/resolve/{handle}`)" hint the task never mentioned.
+        task = "resolve an Ada Handle using the Ada Handles API (api.handle.me)"
+        step = ("Parse the spec to locate the handle-resolution endpoint "
+                "(e.g., `/resolve/{handle}`) and note any required auth headers.")
+        out = self._scrub(step, task)
+        self.assertNotIn("/resolve/{handle}", out)
+        self.assertNotIn("e.g.", out)
+        self.assertEqual(out, "Parse the spec to locate the handle-resolution endpoint and "
+                              "note any required auth headers.")
+
+    def test_keeps_path_the_task_named(self):
+        # The user gave the path — it's the spec, not a guess. Must survive untouched.
+        task = "Add a route POST /users/{id}/ban to the Flask app"
+        step = "Register the /users/{id}/ban handler in the blueprint"
+        self.assertEqual(self._scrub(step, task), step)
+
+    def test_leaves_filenames_and_discovery_urls_alone(self):
+        task = "write resolve_handle.py against api.handle.me"
+        for step in ("Write resolve_handle.py with a resolve function",
+                     "Fetch the spec from https://api.handle.me/openapi.json",
+                     "Run pytest test_resolve_handle.py"):
+            self.assertEqual(self._scrub(step, task), step)
+
+    def test_scrubs_bare_inline_template(self):
+        task = "resolve via api.handle.me"
+        out = self._scrub("Call /resolve/{handle} and return the address", task)
+        self.assertNotIn("/resolve/{handle}", out)
+        self.assertTrue(out.startswith("Call") and out.endswith("address"))
+
+    def test_never_blanks_a_whole_step(self):
+        self.assertEqual(self._scrub("/resolve/{handle}", "api.handle.me"), "/resolve/{handle}")
+
+    def test_plan_for_scrubs_and_logs(self):
+        prov = _ScriptedProvider([_content_resp(
+            '1. Fetch https://api.handle.me/openapi.json with web_fetch.\n'
+            '2. Locate the endpoint (e.g., `/resolve/{handle}`) in the spec.\n'
+            '3. Write resolve_handle.py.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
+        self.assertFalse(any("/resolve/{handle}" in it.text for it in plan.items))
+        self.assertTrue(any(k == "plan.paths_scrubbed" for k, _ in rlog.events))
+
