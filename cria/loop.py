@@ -39,7 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _extract_cwd
-from .searchloop import normalize_search, same_search_hunt, searches_match
+from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
@@ -709,7 +709,6 @@ class Loop:
         # tracking, so the repetition/write-streak see what's actually FORWARDED.
         coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
-        coder = guard_url_grounding(sess, coder, body, rlog)  # write a URL not in the fetched spec → steer
         if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
             guard_track_repetition(sess, coder, rlog, step=step)
             guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
@@ -2575,23 +2574,6 @@ _FILE_EXTS = {"py", "js", "ts", "json", "yaml", "yml", "toml", "ini", "cfg", "md
               "go", "rs", "rb", "java", "c", "cpp", "h", "html", "css", "lock", "csv", "xml"}
 
 
-_HOST_OF_RE = re.compile(r"https?://([^/\s:?#]+)", re.I)
-_SPEC_URL_RE = re.compile(r"openapi|swagger", re.I)
-
-
-def _host_of(url: str) -> str:
-    m = _HOST_OF_RE.match(url.strip())
-    return m.group(1).lower() if m else ""
-
-
-def _registrable(host: str) -> str:
-    """The registrable domain — last two labels (``handle.me``, ``ada.cx``). A coarse eTLD heuristic
-    (doesn't special-case ``.co.uk`` &c.), which is all the "is the coder on a DIFFERENT site than the
-    task named" comparison needs — a false merge there just declines a redirect, never forces a wrong one."""
-    labels = host.lower().strip(".").split(".")
-    return ".".join(labels[-2:]) if len(labels) >= 2 else host.lower()
-
-
 def _task_api_domain(messages: list[dict]) -> str:
     """The single API host the user named in the task (latest user turn) — e.g. ``api.handle.me`` from
     "the Ada Handles API (api.handle.me)". Returns "" when zero or several distinct hosts are named (no
@@ -2620,55 +2602,6 @@ def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
     return m.group(0).rstrip(".,);") if m else ""
 
 
-def _route_segments(fetched_pages: dict, domain: str) -> tuple[set, str]:
-    """(first path segments, full route list) of the routes cria FETCHED from <domain>'s spec — the
-    resources that actually exist. First segments drive a robust mismatch check (``/resolve`` vs the
-    real ``/handles``); the full list grounds the steer so the model sees the real templates."""
-    segs: set = set()
-    routes_all: list = []
-    for url, val in (fetched_pages or {}).items():
-        if domain not in url:
-            continue
-        routes = val[1] if isinstance(val, tuple) and len(val) > 1 else ""
-        for r in (routes or "").split(","):
-            r = r.strip()
-            if not r.startswith("/"):
-                continue
-            routes_all.append(r)
-            seg = r.lstrip("/").split("/")[0].split("?")[0]
-            if seg and "{" not in seg:
-                segs.add(seg.lower())
-    return segs, ", ".join(dict.fromkeys(routes_all))
-
-
-def guard_url_grounding(sess, coder: dict, body: dict, rlog) -> dict:
-    """HARD SLAP grounded in fetched bytes (the goal's 'block a write whose URL is in no fetched doc'):
-    when the coder WRITES a URL to the task's API domain whose resource segment is NOT among the routes
-    cria actually fetched from that domain's spec, the URL is a guess (runD: ``/resolve/`` 404s; runH:
-    ``/handle/{handle}`` singular, the real route is ``/handles/``). Attach a note naming the REAL routes
-    so the next turn corrects it — grounded (routes come from the fetched spec, never cria's guess), and
-    fires only when the written resource plainly isn't in the spec (first-segment mismatch — robust)."""
-    domain = _task_api_domain(body.get("messages", []))
-    if not domain:
-        return coder
-    known, routes_all = _route_segments(getattr(sess, "fetched_pages", None), domain)
-    if not known:
-        return coder   # no fetched routes yet → nothing to ground against
-    msg = (coder.get("choices") or [{}])[0].get("message") or {}
-    tcs = msg.get("tool_calls") or []
-    if not any(_tool_name(tc) in massage._MUTATION_TOOLS or _tool_name(tc) in SHELL_TOOL_NAMES for tc in tcs):
-        return coder   # only judge turns that WRITE code
-    blob = json.dumps([tc.get("function", {}) for tc in tcs], default=str)
-    written = {m.group(1).lower() for m in re.finditer(re.escape(domain) + r"/([A-Za-z][\w-]*)", blob)}
-    guessed = sorted(s for s in written if s not in known)
-    if not guessed:
-        return coder
-    _add_note(coder, f"the path /{guessed[0]} you wrote for {domain} is NOT in the API spec you fetched. "
-                     f"Its real routes are: {routes_all}. Fix the URL to use one of those.")
-    rlog.emit("loop.url_grounding", domain=domain, guessed=guessed, known=sorted(known))
-    return coder
-
-
 def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> dict:
     """Swap one tool call for a web_fetch of ``url`` and attach ``note`` telling the coder cria did it."""
     msg["tool_calls"] = [{"id": tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
@@ -2679,42 +2612,21 @@ def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> 
 
 def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
                             reasoner_chat, reasoner_role, rlog) -> dict:
-    """Get a coder that's flailing on doc-discovery onto the API the task NAMED. Two triggers, both
-    spending one deterministic ``<task-domain>/openapi.json`` escape (``tried_spec_convention``):
-
-    * WRONG-DOMAIN spec fetch (immediate) — it's fetching an openapi/swagger spec on a registrable
-      domain UNRELATED to the one the task named (runF: task ``api.handle.me`` but it fetched
-      ``docs.ada.cx/openapi.json`` — the wrong "Ada"). Its intent is right, the host is wrong; redirect.
-    * SEARCH STREAK — ``SEARCH_STREAK_ESCALATE`` near-identical web_searches with no fetch (runE): the
-      coder won't fetch on its own, so substitute a fetch. Convention-first, else a reasoner-picked URL.
-
-    Any other action (a write, an on-track fetch, a genuinely-new search) resets the search streak."""
+    """Get a coder that's flailing on doc-discovery onto the API the task NAMED. At
+    ``SEARCH_STREAK_ESCALATE`` near-identical web_searches with no fetch (runE) the coder won't fetch on
+    its own, so cria SUBSTITUTES a fetch for the search — convention-first (``<task-domain>/openapi.json``,
+    spent once via ``tried_spec_convention``), else a reasoner-picked URL. Any other action (a fetch, a
+    write, a genuinely-new search) resets the streak. Returns the coder, search→fetch swapped."""
     msg = (coder.get("choices") or [{}])[0].get("message") or {}
     tcs = msg.get("tool_calls") or []
     domain = _task_api_domain(body.get("messages", []))
-
-    # Immediate: a spec fetch to an unrelated domain. The search streak misses this — runF interleaved
-    # searches with these off-domain fetches, so no pure-search streak ever reached the cap.
-    if domain and not sess.tried_spec_convention:
-        fetch_tc = next((tc for tc in tcs if _tool_name(tc) == "web_fetch"), None)
-        if fetch_tc is not None:
-            furl = str(massage._args((fetch_tc.get("function") or {}).get("arguments")).get("url", ""))
-            host = _host_of(furl)
-            if host and _SPEC_URL_RE.search(furl) and _registrable(host) != _registrable(domain):
-                sess.tried_spec_convention = True
-                sess.search_streak, sess.search_words = 0, None
-                url = f"https://{domain}/openapi.json"
-                rlog.emit("loop.search_escalation", url=url, via="wrong_domain")
-                return _substitute_fetch(coder, msg, fetch_tc, url,
-                                         f"the task's API is {domain}, not {host} — fetching {url} for you")
-
     search_tc = next((tc for tc in tcs if _tool_name(tc) == "web_search"), None)
     if search_tc is None:
         sess.search_streak, sess.search_words = 0, None   # a different action → not looping on search
         return coder
     query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", ""))
     words = normalize_search(query)
-    sess.search_streak = sess.search_streak + 1 if (sess.search_words and same_search_hunt(words, sess.search_words)) else 1
+    sess.search_streak = sess.search_streak + 1 if (sess.search_words and searches_match(words, sess.search_words)) else 1
     sess.search_words = words
     if sess.search_streak < SEARCH_STREAK_ESCALATE or reasoner_role is None:
         return coder

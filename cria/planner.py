@@ -184,24 +184,6 @@ _ENDPOINT_TEMPLATE = re.compile(
     r"/[A-Za-z][\w-]*(?:/(?:\{[^{}\s/]+\}|[A-Za-z][\w-]*))*(?:\?[\w=&{}%.-]+)?")
 _HOLE = "\x00"  # transient marker for a scrubbed path, cleaned up (with its example scaffolding) below
 
-# An "e.g."/"such as" EXAMPLE clause, and a BACKTICKED path inside it. A bare single-segment path
-# (``/resolve``) is normally too ambiguous to scrub (it could be a real ``/health``), but when the
-# PLANNER backticks it as an endpoint EXAMPLE it is unmistakably a pre-research guess — and the coder
-# then hunts that non-existent route (runM: step 2 said "note the path (e.g., ``/resolve``, ``/holder``)";
-# the real routes are /handles/{handle} + /holders/{address}, so the coder searched 20+× for a /resolve
-# that does not exist). Scoped to backtick + example-context so a standalone "/health endpoint" is safe.
-_EG_CLAUSE = re.compile(r"\(\s*(?:e\.?g\.?|i\.?e\.?|such as|for example|like)\b[^)]*\)", re.I)
-_BACKTICK_PATH = re.compile(r"`(/[A-Za-z][\w/{}?=&.-]*)`")
-
-
-def _mark_example_bare_paths(step: str, task: str) -> str:
-    """Inside each example clause, mark a backticked path the task never named as a hole (the template
-    pass misses a bare ``/resolve`` — no ``{param}``/``?query`` — but in an e.g. clause it is a guess)."""
-    def in_clause(m: "re.Match[str]") -> str:
-        return _BACKTICK_PATH.sub(
-            lambda pm: pm.group(0) if pm.group(1).rstrip("/") in task else f"`{_HOLE}`", m.group(0))
-    return _EG_CLAUSE.sub(in_clause, step)
-
 
 def _scrub_invented_paths(step: str, task: str) -> str:
     """Strip endpoint-guess paths the task never named from one plan step — pre-research guesses the
@@ -213,11 +195,11 @@ def _scrub_invented_paths(step: str, task: str) -> str:
         if "{" not in path and "?" not in path:  # a plain /segment path isn't unambiguously a guess
             return path
         return path if path.rstrip("/") in task else _HOLE
-    out = _mark_example_bare_paths(_ENDPOINT_TEMPLATE.sub(repl, step), task)
+    out = _ENDPOINT_TEMPLATE.sub(repl, step)
     if _HOLE not in out:
         return step
-    out = re.sub(rf"\([^()]*{_HOLE}[^()]*\)", "", out)                                   # (e.g., <hole>, <hole>) whole
     out = re.sub(rf"[`'\"]\s*{_HOLE}\s*[`'\"]", _HOLE, out)                              # `<hole>` → <hole>
+    out = re.sub(rf"\(\s*(?:e\.g\.?,?|such as|i\.e\.?,?)?\s*{_HOLE}\s*\)", "", out, flags=re.I)  # (e.g., <hole>)
     out = re.sub(rf"\b(?:e\.g\.?|i\.e\.?|such as)[,:]?\s*{_HOLE}", "", out, flags=re.I)  # e.g., <hole>
     out = out.replace(_HOLE, "")                                                         # any bare holes
     out = re.sub(r"\(\s*\)", "", out)                                                    # emptied parens

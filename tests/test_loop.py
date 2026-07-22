@@ -2863,56 +2863,6 @@ class SearchEscalationTests(unittest.TestCase):
         out = self._escalate(gs, self._reasoner("NONE"), task="find the ADA Handle docs")
         self.assertEqual(self._fn(out)["name"], "web_search")       # no url → not substituted
 
-    def _fetch(self, url):
-        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
-            {"id": "f1", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]}}]}
-
-    def test_wrong_domain_spec_fetch_is_redirected_to_the_named_api(self):
-        # runF: task named api.handle.me but the coder fetched the WRONG "Ada" spec (docs.ada.cx). One
-        # fetch is enough — no streak needed — because the registrable domains differ.
-        from cria.loop import GuardState
-        gs = GuardState()
-        out = self._run(gs, self._fetch("https://docs.ada.cx/reference/openapi.json"),
-                        self._reasoner("NONE"), task="resolve via the Ada Handles API (api.handle.me)")
-        self.assertEqual(self._fn(out)["name"], "web_fetch")
-        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
-        self.assertNotIn("ada.cx", self._fn(out)["arguments"])
-        self.assertTrue(gs.tried_spec_convention)
-
-    def test_spec_fetch_on_the_named_domain_is_left_alone(self):
-        from cria.loop import GuardState
-        gs = GuardState()
-        out = self._run(gs, self._fetch("https://api.handle.me/swagger/openapi.json"),
-                        self._reasoner("NONE"), task="use api.handle.me")
-        self.assertIn("api.handle.me/swagger/openapi.json", self._fn(out)["arguments"])  # same site → untouched
-        self.assertFalse(gs.tried_spec_convention)
-
-    def test_nonspec_fetch_on_other_domain_is_not_redirected(self):
-        from cria.loop import GuardState
-        gs = GuardState()
-        out = self._run(gs, self._fetch("https://en.wikipedia.org/wiki/Cardano"),
-                        self._reasoner("NONE"), task="use api.handle.me")
-        self.assertIn("wikipedia.org/wiki/Cardano", self._fn(out)["arguments"])  # not a spec URL → untouched
-        self.assertFalse(gs.tried_spec_convention)
-
-    def test_suffix_jittered_searches_now_reach_escalation(self):
-        # runG/runK: "ADA handle resolver" + a swapped trailing word, 25-40x. searches_match scored each
-        # pair a fresh refinement so the streak never hit the cap; same_search_hunt counts the stable core.
-        from cria.loop import GuardState, SEARCH_STREAK_ESCALATE
-        gs = GuardState(); gs.tried_spec_convention = True  # exercise the reasoner branch cleanly
-        jitter = ["ADA handle resolver", "ADA handle resolver github", "ADA handle resolver endpoint",
-                  "ADA Handle resolver", "ADA handle resolver url", "ADA handle resolver api"]
-        reasoner = self._reasoner("Fetch https://api.handle.me/openapi.json")
-        out = None
-        for q in jitter[:SEARCH_STREAK_ESCALATE]:
-            out = self._run(gs, self._search(q), reasoner, task="use api.handle.me")
-        self.assertEqual(self._fn(out)["name"], "web_fetch")   # the streak DID reach the cap → escaped
-
-    def test_same_search_hunt_ignores_a_genuine_new_direction(self):
-        from cria.searchloop import normalize_search as N, same_search_hunt as H
-        self.assertTrue(H(N("ADA handle resolver github"), N("ADA handle resolver")))
-        self.assertFalse(H(N("cardano staking rewards calculator"), N("ADA handle resolver")))
-
     def test_task_api_domain_extraction(self):
         from cria.loop import _task_api_domain
         msg = lambda t: [{"role": "user", "content": t}]
@@ -2940,51 +2890,6 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertEqual(gs.search_streak, 2)
         self._run(gs, self._search("cardano staking rewards calculator python"), r)  # unrelated
         self.assertEqual(gs.search_streak, 1)
-
-
-class UrlGroundingTests(unittest.TestCase):
-    """HARD SLAP grounded in fetched bytes: a written URL whose resource isn't in the fetched spec is a
-    guess (runD /resolve, runH /handle singular). cria names the REAL routes so the next turn corrects."""
-
-    def _gs(self):
-        from cria.loop import GuardState
-        gs = GuardState()
-        gs.fetched_pages = {"https://api.handle.me/openapi.json":
-                            ("HTTP 200", "/handles/{handle}, /holders/{address}, /stats")}
-        return gs
-
-    def _body(self):
-        return {"messages": [{"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"}]}
-
-    def _write(self, content):
-        import json
-        return {"choices": [{"message": {"tool_calls": [{"id": "c", "type": "function", "function":
-                {"name": "write_file", "arguments": json.dumps({"path": "r.py", "content": content})}}]}}]}
-
-    def test_wrong_resource_is_flagged_with_real_routes(self):
-        from cria.loop import guard_url_grounding
-        out = guard_url_grounding(self._gs(), self._write('url="https://api.handle.me/handle/{h}"'), self._body(), _Rlog())
-        note = " ".join(out.get("cria_notes") or [])
-        self.assertIn("/handle", note)
-        self.assertIn("/handles/{handle}", note)   # the real route is named
-
-    def test_correct_resource_is_silent(self):
-        from cria.loop import guard_url_grounding
-        out = guard_url_grounding(self._gs(), self._write('url="https://api.handle.me/handles/goose"'), self._body(), _Rlog())
-        self.assertFalse(out.get("cria_notes"))
-
-    def test_no_fetched_routes_means_no_slap(self):
-        from cria.loop import guard_url_grounding, GuardState
-        gs = GuardState()  # nothing fetched yet → can't ground → stay silent
-        out = guard_url_grounding(gs, self._write('url="https://api.handle.me/whatever/x"'), self._body(), _Rlog())
-        self.assertFalse(out.get("cria_notes"))
-
-    def test_non_write_turn_is_ignored(self):
-        from cria.loop import guard_url_grounding
-        search = {"choices": [{"message": {"tool_calls": [{"id": "s", "type": "function", "function":
-                 {"name": "web_search", "arguments": '{"query": "api.handle.me/handle docs"}'}}]}}]}
-        out = guard_url_grounding(self._gs(), search, self._body(), _Rlog())
-        self.assertFalse(out.get("cria_notes"))
 
 
 class ReasonedRedirectTests(unittest.TestCase):
