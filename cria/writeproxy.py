@@ -434,19 +434,19 @@ def _search_command(args: dict, brave_key: str) -> str:
     per-request maximum and prints EVERY returned result (no display slice) with a total-count header
     so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
     query = str(args.get("query") or "")
-    # Do the Brave search IN-PROCESS (like web_fetch), NOT a lowered curl. A curl to an external host is
-    # a network command the harness can't sandbox on this box (landlock), so it HALTS for approval every
-    # time — fatal to an unattended run. Reusing the planner's in-process search makes the harness run a
-    # plain file-write + printf (no network), which it does not gate. Then spill the (noisy) results to
-    # the read-only dir and hand back a grep/line-read pointer instead of inlining snippet poison.
-    from . import planner_tools  # local import: planner_tools imports brave/prompts, never writeproxy
-    try:
-        results = planner_tools.format_results(query, planner_tools.brave_search(brave_key, query))
-    except Exception as e:  # noqa: BLE001 - a search failure is content, not a crash
-        results = f"[web_search error: {e}]"
+    url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
+    header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
+    parse = (r"""python3 -c 'import sys,json"""
+             r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
+             r""";body="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
+             r""";print(("%d results:\n"%len(r))+body if r else "no results")'""")
+    # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
+    # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
+    # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
     target, msg = webfetch.search_spill(query)
     tdir = os.path.dirname(target) or "."
-    return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(results)} > {_qbash(target)} && "
+    return (f"mkdir -p {_qbash(tdir)} && rm -f {_qbash(target)} 2>/dev/null; "
+            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} && "
             f"chmod 444 {_qbash(target)} && printf %s {_qbash(msg)}")
 
 
