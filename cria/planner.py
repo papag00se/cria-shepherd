@@ -83,10 +83,21 @@ _BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+\S)")
 _DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|think)[|/]*>|<\|\"\|>")
 
 
-def _clean_step(text: str) -> str:
+_STEP_TEXT_KEYS = ("step", "text", "description", "action", "title", "task", "name", "content")
+
+
+def _clean_step(text) -> str:
     """Trim a plan step to its action: cut at the first leaked dialect marker, strip a leading
     ordinal (``1.`` / ``2)`` — JSON-array items often embed their own number), and drop the JSON /
-    array junk (``',]}`` etc.) that bleeds in when the model runs past the plan."""
+    array junk (``',]}`` etc.) that bleeds in when the model runs past the plan. Accepts a str OR a
+    dict item — a model that wraps each array element in an object (``{"step": "…"}``) instead of a
+    bare string; the field is extracted first, so the step text is never the dict repr ``{'step': …}``."""
+    if isinstance(text, dict):
+        for k in _STEP_TEXT_KEYS:
+            v = text.get(k)
+            if isinstance(v, str) and v.strip():
+                return _clean_step(v)
+        return ""
     s = str(text)
     m = _DIALECT_MARKER.search(s)
     if m:

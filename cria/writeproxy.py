@@ -364,6 +364,17 @@ def _edit_command(path: str, old: str, new: str) -> str:
 READ_INLINE_MAX = 12000
 
 
+def _past_eof_note(q: str, start: int) -> str:
+    """A shell tail that APPENDS a signal when the requested first line is past the end of the file, so
+    an out-of-range read isn't a SILENT EMPTY. Observed: a model asked for line 20707 of a 2872-line
+    file, got nothing, and crawled +1/line forever with no idea it was past EOF. Runs after the sed, so
+    an in-range read is unchanged (just its content); a past-EOF read gets 'file has N lines'."""
+    return (f'__n=$(wc -l < {q} 2>/dev/null || echo 0); '
+            f'if [ {start} -gt "$__n" ]; then '
+            f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" '
+            f'{q} "$__n" {start}; fi')
+
+
 def _read_command(args: dict) -> str | None:
     path = _tool_path(args)
     if not path:
@@ -371,9 +382,9 @@ def _read_command(args: dict) -> str | None:
     q = _qbash(path)
     start, end = args.get("start_line"), args.get("end_line")
     if isinstance(start, int) and start > 0 and isinstance(end, int) and end >= start:
-        return f"sed -n '{start},{end}p' {q}"
+        return f"sed -n '{start},{end}p' {q}; " + _past_eof_note(q, start)
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
-        return f"sed -n '{start},$p' {q}"
+        return f"sed -n '{start},$p' {q}; " + _past_eof_note(q, start)
     # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
     steer = prompts.render("large_read_steer", path=str(path))

@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _extract_cwd
+from .planner import _clean_step, _extract_cwd
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
@@ -358,7 +358,9 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     obj = extract_json_object(strip_think(text))
     if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list):
         return None  # unparseable / wrong shape → keep the plan exactly as it was
-    return [s for s in (str(x).strip() for x in obj["steps"]) if s]
+    # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare
+    # string) to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
+    return [t for x in obj["steps"] if (t := _clean_step(x))]
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:

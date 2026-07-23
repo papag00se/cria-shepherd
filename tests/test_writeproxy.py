@@ -223,7 +223,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("wc -c", whole)          # size-checked
         self.assertIn("cat big.json", whole)   # small-file path still cats
         self.assertIn("grep", whole)           # big-file path steers to grep
-        self.assertEqual(_read_command({"path": "f.py", "start_line": 2, "end_line": 9}), "sed -n '2,9p' f.py")
+        ranged = _read_command({"path": "f.py", "start_line": 2, "end_line": 9})
+        self.assertIn("sed -n '2,9p' f.py", ranged)
+        self.assertIn("past the end of the file", ranged)   # a past-EOF read isn't a silent empty
+        self.assertIn("wc -l", ranged)
 
     def test_web_search_spills_results_to_read_only(self):
         comp = _call("web_search", {"query": "ada handle resolve endpoint"})

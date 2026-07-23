@@ -212,6 +212,17 @@ class LivingPlanTests(unittest.TestCase):
         self.assertIsNone(reassess_remaining(_Scripted([_replan(["a"])]), None,
                                              "t", "(none)", "- s", "ev", _Rlog()))
 
+    def test_reassess_remaining_coerces_dict_wrapped_steps(self):
+        # a small model wraps each step in {"step": "..."} instead of a bare string — the step text must
+        # be the field, NOT the dict repr "{'step': ...}" (the observed JSON-in-the-plan leak).
+        from cria.loop import reassess_remaining
+        steps = reassess_remaining(
+            _Scripted([_replan([{"step": "Design the CLI skeleton"}, {"step": "Write unit tests"}])]),
+            self._role(), "build it", "- step 1", "- step 2\n- step 3", "evidence", _Rlog())
+        self.assertEqual(steps, ["Design the CLI skeleton", "Write unit tests"])
+        for s in steps:
+            self.assertNotIn("{", s)     # no dict repr leaked into the step text
+
 
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
