@@ -143,15 +143,14 @@ class GuardState:
     ``GuardState`` per session. The module-level ``guard_*`` functions operate on this state."""
     awaiting_probe: bool = False  # cria emitted a ground-truth probe; next request is its result
     probe_call_id: str = ""  # the id of the probe tool call, to find its result
-    # Per-search reasoned assist (guard_search_judge): cria emits its OWN read of a spilled search-result
-    # file, then the reasoner judges whether the query/results were on-target. Off-target results are
-    # stripped from the model's view from that point on, and the recommended query is steered.
-    awaiting_search_read: bool = False  # cria emitted a read of a search-result file; next req is its result
-    search_read_call_id: str = ""       # id of that read tool call
-    search_read_query: str = ""         # the query whose results are being judged
-    judged_search_files: set = None     # spill files already judged (don't re-read/re-judge)
+    # Per-search reasoned assist. OUTGOING: judge the query before it runs (guard_search_query) — cached
+    # per query in ``query_verdicts``. INCOMING: when the model READS a spilled search file, judge its
+    # relevance (_judge_search_reads); an off-target file goes in ``poisoned_search_files`` so its reads
+    # are stripped going forward, and ``search_recommend`` steers the better query.
+    judged_search_files: set = None     # spill files already read-judged (don't re-judge)
     poisoned_search_files: set = None   # spill files judged off-target → strip their reads going forward
-    search_recommend: str = ""          # the last recommended query to steer (cleared once delivered)
+    search_recommend: str = ""          # the last recommended query to steer
+    query_verdicts: dict = None         # outgoing query -> (on_target, recommendation); cached per query
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
@@ -305,6 +304,22 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
         return None
+
+
+def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog) -> tuple[bool, str]:
+    """Judge an OUTGOING web_search query BEFORE it runs: is it searching for what the task needs? Returns
+    (on_target, recommendation) — recommendation is the better search string OR a concrete URL to fetch
+    instead (the caller substitutes a web_fetch when it's a URL). Fails OPEN (on_target True, no
+    recommendation) on a parse miss or no reasoner — never derail a search we couldn't judge."""
+    if reasoner_role is None or not (task.strip() and query.strip()):
+        return True, ""
+    vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_query_judge"),
+                      prompts.render("search_query_judge_user", task=task, query=query), rlog,
+                      phase="reasoner") or ""
+    obj = extract_json_object(strip_think(vtext))
+    if not isinstance(obj, dict):
+        return True, ""
+    return obj.get("on_target") is not False, str(obj.get("recommendation") or "").strip()
 
 
 def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog) -> tuple[bool, bool, str]:
@@ -735,6 +750,9 @@ class Loop:
         # SEARCH-LOOP escape: a run of near-identical web_searches with no fetch → cria fetches FOR it
         # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
         # tracking, so the repetition/write-streak see what's actually FORWARDED.
+        # Judge an outgoing web_search's query FIRST (off-target → substitute a fetch/better query), then
+        # the streak escape. Both operate on the SAME forwarded search, query-judge before escalation.
+        coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
         if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
@@ -743,6 +761,7 @@ class Loop:
         return coder
 
     def _work(self, sess: PlanSession, key: str, body: dict, rlog) -> dict:
+        body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
         if item is None:  # every step done
             sess.phase = Phase.DONE
@@ -835,6 +854,50 @@ class Loop:
         sess.verify_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge(sess, key, body, reason, rlog)
+
+    def _judge_search_reads(self, sess: PlanSession, body: dict, rlog) -> list[dict]:
+        """When the model READS a spilled search-results file, judge whether what it's reading is relevant
+        to the task. Off-target → strip that read result from the model's view (replace it with a short
+        denial note that also steers the recommended query) and mark the file so any re-read is likewise
+        stripped/denied. Judged once per file (cached). Returns the messages (rewritten where poisoned)."""
+        msgs = body.get("messages", [])
+        if sess.judged_search_files is None:
+            sess.judged_search_files = set()
+        if sess.poisoned_search_files is None:
+            sess.poisoned_search_files = set()
+        read_file_of: dict = {}       # tool_call_id -> search file it read
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "assistant":
+                for tc in (m.get("tool_calls") or []):
+                    f = _toolcall_reads_search_file(tc)
+                    if f:
+                        read_file_of[tc.get("id")] = f
+        if not read_file_of:
+            return msgs
+        q_of: dict = {}               # search file -> the query that produced it (from the pointer)
+        for m in msgs:
+            for mm in _SEARCH_POINTER_RE.finditer(_content_text(m.get("content")) if isinstance(m, dict) else ""):
+                q_of[mm.group(2)] = mm.group(1)
+        out: list[dict] = []
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "tool" and read_file_of.get(m.get("tool_call_id")):
+                f = read_file_of[m.get("tool_call_id")]
+                key = "content" if m.get("content") is not None else "output"
+                if f not in sess.judged_search_files:
+                    sess.judged_search_files.add(f)
+                    _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                 latest_user_text(msgs), q_of.get(f, ""), _content_text(m.get(key)), rlog)
+                    if not r_ok:
+                        sess.poisoned_search_files.add(f)
+                        sess.search_recommend = rec
+                        rlog.emit("loop.search_read_poison", file=f, rec=rec)
+                if f in sess.poisoned_search_files:
+                    steer = f" Search instead for: {sess.search_recommend}." if sess.search_recommend else ""
+                    out.append({**m, key: f"[Those search results were off-target for this task, so they were "
+                                f"removed.{steer} Re-reading {f} is denied — it will keep returning this.]"})
+                    continue
+            out.append(m)
+        return out
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog) -> list[dict]:
         """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
@@ -1141,6 +1204,7 @@ class Loop:
         satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
         stable keys, ephemeral for ``task:`` keys). Returns the completion to send, or None on decode fail."""
         sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
+        body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         # A probe whose result a harness compaction erased is re-issued (parity with the loop), rather
         # than fail-open / downgrade to a canned steer with no ground truth.
         reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=self._ctx.workspace_root)
@@ -2658,6 +2722,59 @@ def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> 
     msg["tool_calls"] = [{"id": tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
                           "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]
     _add_note(coder, note)
+    return coder
+
+
+_URL_LIKE = re.compile(r"^(https?://\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*)$", re.I)
+# A read (read_file path / cat|grep command) that targets a spilled search-results file, and the search
+# POINTER that names (query, file) — cria controls this filename, so a read of it is unambiguously the
+# model consuming a search's results, which the read-judge then checks for relevance.
+_SEARCH_FILE_RE = re.compile(r"\.?/?tmp/read-only/search-[\w.\-]+\.txt")
+_SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?tmp/read-only/search-[\w.\-]+\.txt)')
+
+
+def _toolcall_reads_search_file(tc) -> str | None:
+    """The ./tmp/read-only search file a tool call reads (read_file path / a cat|grep command), else None."""
+    raw = (tc.get("function") or {}).get("arguments")
+    s = raw if isinstance(raw, str) else json.dumps(raw or {})
+    m = _SEARCH_FILE_RE.search(s or "")
+    return m.group(0) if m else None
+
+
+def _looks_like_url(s: str) -> bool:
+    """A recommendation that is a concrete URL / domain+path to fetch, not a search phrase."""
+    return bool(_URL_LIKE.match((s or "").strip()))
+
+
+def guard_search_query(sess: GuardState, coder: dict, body: dict,
+                       reasoner_chat, reasoner_role, rlog) -> dict:
+    """Judge an OUTGOING web_search query before it runs (reduce flailing at the source). Off-target →
+    substitute a web_fetch when the recommendation is a URL, else re-issue the recommended query. The
+    verdict is cached per query, so a repeated off-target query is re-substituted without a fresh call."""
+    msg = (coder.get("choices") or [{}])[0].get("message") or {}
+    search_tc = next((tc for tc in (msg.get("tool_calls") or []) if _tool_name(tc) == "web_search"), None)
+    if search_tc is None:
+        return coder
+    query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", "")).strip()
+    if not query:
+        return coder
+    if sess.query_verdicts is None:
+        sess.query_verdicts = {}
+    if query in sess.query_verdicts:
+        on_target, rec = sess.query_verdicts[query]
+    else:
+        on_target, rec = judge_query(reasoner_chat, reasoner_role, latest_user_text(body.get("messages", [])), query, rlog)
+        sess.query_verdicts[query] = (on_target, rec)
+    if on_target or not rec:
+        return coder
+    if _looks_like_url(rec):
+        url = rec if rec.lower().startswith("http") else "https://" + rec
+        rlog.emit("loop.search_query_judged", action="fetch", query=query, rec=url)
+        return _substitute_fetch(coder, msg, search_tc, url,
+                                 f"'{query}' looked off-target for this task — fetching {url} instead")
+    search_tc["function"] = {**(search_tc.get("function") or {}), "arguments": json.dumps({"query": rec})}
+    _add_note(coder, f"'{query}' looked off-target for this task — searching '{rec}' instead")
+    rlog.emit("loop.search_query_judged", action="requery", query=query, rec=rec)
     return coder
 
 

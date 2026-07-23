@@ -2892,6 +2892,69 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertEqual(gs.search_streak, 1)
 
 
+class SearchJudgeTests(unittest.TestCase):
+    """Per-search reasoned assist: judge the OUTGOING query (off-target → fetch a URL / re-query), and
+    judge the model's READ of a spilled search file (off-target → strip it + steer). Fails OPEN."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _reasoner(self, verdict):
+        return lambda b, r: json.dumps({"choices": [{"message": {"content": json.dumps(verdict)}}]}).encode()
+
+    def _search(self, q):
+        return {"choices": [{"message": {"tool_calls": [{"id": "s", "type": "function", "function":
+                {"name": "web_search", "arguments": json.dumps({"query": q})}}]}}]}
+
+    def _fn(self, out):
+        return out["choices"][0]["message"]["tool_calls"][0]["function"]
+
+    def _body(self):
+        return {"messages": [{"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"}]}
+
+    def test_off_target_query_with_url_rec_becomes_a_fetch(self):
+        from cria.loop import guard_search_query, GuardState
+        out = guard_search_query(GuardState(), self._search("Cardano Wallet Backend API"), self._body(),
+                                 self._reasoner({"on_target": False, "recommendation": "https://api.handle.me/openapi.json"}),
+                                 self._role(), _Rlog())
+        self.assertEqual(self._fn(out)["name"], "web_fetch")
+        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
+
+    def test_off_target_query_with_terms_rec_is_requeried(self):
+        from cria.loop import guard_search_query, GuardState
+        out = guard_search_query(GuardState(), self._search("random cardano stuff"), self._body(),
+                                 self._reasoner({"on_target": False, "recommendation": "api.handle.me handles endpoint"}),
+                                 self._role(), _Rlog())
+        self.assertEqual(self._fn(out)["name"], "web_search")
+        self.assertEqual(json.loads(self._fn(out)["arguments"])["query"], "api.handle.me handles endpoint")
+
+    def test_on_target_query_untouched_and_verdict_cached(self):
+        from cria.loop import guard_search_query, GuardState
+        gs = GuardState()
+        calls = {"n": 0}
+        def reasoner(b, r):
+            calls["n"] += 1
+            return json.dumps({"choices": [{"message": {"content": json.dumps({"on_target": True})}}]}).encode()
+        for _ in range(3):  # same query 3x → judged once (cached)
+            out = guard_search_query(gs, self._search("api.handle.me openapi.json"), self._body(), reasoner, self._role(), _Rlog())
+        self.assertEqual(self._fn(out)["name"], "web_search")   # unchanged
+        self.assertEqual(calls["n"], 1)                          # cached after the first
+
+    def test_judge_query_fails_open(self):
+        from cria.loop import judge_query
+        ok, rec = judge_query(lambda b, r: json.dumps({"choices": [{"message": {"content": "not json"}}]}).encode(),
+                              self._role(), "task", "query", _Rlog())
+        self.assertTrue(ok)          # parse miss → on-target (never derail)
+        self.assertEqual(rec, "")
+
+    def test_looks_like_url(self):
+        from cria.loop import _looks_like_url
+        self.assertTrue(_looks_like_url("https://api.handle.me/openapi.json"))
+        self.assertTrue(_looks_like_url("api.handle.me/openapi.json"))
+        self.assertFalse(_looks_like_url("api.handle.me handles endpoint"))   # a search phrase, not a URL
+
+
 class ReasonedRedirectTests(unittest.TestCase):
     """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner
     authors the steer from ground truth; an empty reasoner reply falls back to canned — a stuck coder
