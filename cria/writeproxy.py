@@ -608,6 +608,50 @@ def _strip_exec_envelope(content: str) -> str:
     return "\n".join(lines).rstrip("\n")
 
 
+def _scrub(v, secrets: list[str]):
+    """Replace every secret value in a string (or the strings inside a content-block list) with ***."""
+    if isinstance(v, str):
+        for s in secrets:
+            if s in v:
+                v = v.replace(s, "***")
+        return v
+    if isinstance(v, list):
+        return [_scrub(x, secrets) if isinstance(x, str)
+                else ({**x, "text": _scrub(x.get("text"), secrets)} if isinstance(x, dict) and isinstance(x.get("text"), str) else x)
+                for x in v]
+    return v
+
+
+def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
+    """SECURITY backstop: strip cria's own credentials out of everything the model sees, on EVERY path.
+    A lowered web_search curl carries the Brave API key (X-Subscription-Token); the harness echoes that
+    command back into the tool RESULT, and on the passthrough path it reaches the model — which then
+    reused the key as a fake api-key for the target API. Redaction is unconditional and last-resort: it
+    doesn't matter HOW a secret leaks into the history (result echo, envelope, a stray write), it never
+    goes out to the model. The real curl already ran with the real key; this only touches model-facing
+    text, so search still works."""
+    reds = [s for s in secrets if isinstance(s, str) and len(s) >= 8]
+    if not reds:
+        return messages
+    out: list[dict] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        m2 = dict(m)
+        for key in ("content", "output"):
+            if key in m2:
+                m2[key] = _scrub(m2[key], reds)
+        if m2.get("tool_calls"):
+            m2["tool_calls"] = [
+                {**tc, "function": {**(tc.get("function") or {}),
+                                    "arguments": _scrub((tc.get("function") or {}).get("arguments"), reds)}}
+                if tc.get("function") else tc
+                for tc in m2["tool_calls"]]
+        out.append(m2)
+    return out
+
+
 def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered

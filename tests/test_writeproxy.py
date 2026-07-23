@@ -368,6 +368,23 @@ class MiscTests(unittest.TestCase):
             {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": '{"cmd":"ls"}'}}]}]
         self.assertEqual(represent_inbound(hist), hist)   # no sentinel → untouched
 
+    def test_redact_secrets_strips_the_key_from_every_leak_shape(self):
+        # The Brave key leaked via a tool RESULT (the harness echoes the curl command), assistant content,
+        # and tool-call args. Redaction scrubs all of them so cria's credential never reaches the model.
+        from cria.writeproxy import redact_secrets
+        KEY = "BSAnwLmCmt454A0U3WnT7fzIVFRAKM2"
+        msgs = [
+            {"role": "tool", "content": f"curl -H 'X-Subscription-Token: {KEY}' …\n5 results"},          # result echo
+            {"role": "assistant", "content": f"I'll pass api-key {KEY}",
+             "tool_calls": [{"id": "c", "type": "function",
+                             "function": {"name": "exec_command", "arguments": f'{{"cmd":"curl -H api-key:{KEY}"}}'}}]},
+            {"role": "user", "content": [{"type": "text", "text": f"token {KEY}"}]},                       # Codex blocks
+        ]
+        out = redact_secrets(msgs, [KEY])
+        self.assertNotIn(KEY, json.dumps(out))
+        self.assertIn("***", out[0]["content"])
+        self.assertEqual(redact_secrets(msgs, [""]), msgs)      # no secret → untouched (len<8 ignored)
+
     def test_native_search_name(self):
         self.assertEqual(native_search_name([_t("local_web_search")]), "local_web_search")
         self.assertEqual(native_search_name([_t("web_search")]), "web_search")

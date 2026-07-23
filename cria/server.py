@@ -40,7 +40,7 @@ from .routing import Router
 from .toolmenu import add_cheatsheet, focus_tools
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
-from .writeproxy import advertise, native_search_name, needs_translation, represent_inbound, translate_outbound
+from .writeproxy import advertise, native_search_name, needs_translation, redact_secrets, represent_inbound, translate_outbound
 
 
 def _error_sse(message: str) -> bytes:
@@ -458,7 +458,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # edit_file/read_file calls; without this the model summarizes ~28 raw `python3 - <<HEREDOC`
         # blobs instead of its own tool calls, and that degraded summary becomes the next ⟦ctx:
         # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
-        body["messages"] = represent_inbound(body.get("messages", []), rlog)
+        body["messages"] = redact_secrets(represent_inbound(body.get("messages", []), rlog),
+                                           [self._brave_key])
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
