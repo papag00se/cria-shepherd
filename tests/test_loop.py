@@ -1371,6 +1371,26 @@ class CoderToolsSummaryTests(unittest.TestCase):
         self.assertIn("grep", out.lower())              # the shell tool is flagged as running grep/…
         self.assertIn("none advertised", _coder_tools_summary([]))
 
+    def test_summarize_prepends_coder_tools_when_given(self):
+        """Every reasoner that reasons about the coder's session opts in via summarize(coder_tools=…);
+        the fragment must land IN the user message the reasoner sees (not silently dropped)."""
+        import json
+        from cria.loop import summarize
+        seen = {}
+
+        def fake_chat(call, rlog):
+            seen["user"] = call["messages"][1]["content"]
+            return json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        summarize(fake_chat, None, "sys", "THE-TASK", _Rlog(), retry_off=False,
+                  coder_tools="  - exec_command(cmd) — runs ANY shell command")
+        self.assertIn("TOOLS THE CODER HAS", seen["user"])
+        self.assertIn("exec_command(cmd)", seen["user"])
+        self.assertIn("THE-TASK", seen["user"])          # the real prompt still follows
+        # ...and omitted by default (compaction/summarization callers must not get it)
+        summarize(fake_chat, None, "sys", "THE-TASK", _Rlog(), retry_off=False)
+        self.assertNotIn("TOOLS THE CODER HAS", seen["user"])
+
 
 class FetchGroundTruthTests(unittest.TestCase):
     """runG: the coder fetched api.handle.me/openapi.json (HTTP 200, 33 endpoints) but hallucinated a

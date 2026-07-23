@@ -306,7 +306,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         return None
 
 
-def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog) -> tuple[bool, str]:
+def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder_tools: str = "") -> tuple[bool, str]:
     """Judge an OUTGOING web_search query BEFORE it runs: is it searching for what the task needs? Returns
     (on_target, recommendation) — recommendation is the better search string OR a concrete URL to fetch
     instead (the caller substitutes a web_fetch when it's a URL). Fails OPEN (on_target True, no
@@ -315,14 +315,14 @@ def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog) -> tu
         return True, ""
     vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_query_judge"),
                       prompts.render("search_query_judge_user", task=task, query=query), rlog,
-                      phase="reasoner") or ""
+                      phase="reasoner", coder_tools=coder_tools) or ""
     obj = extract_json_object(strip_think(vtext))
     if not isinstance(obj, dict):
         return True, ""
     return obj.get("on_target") is not False, str(obj.get("recommendation") or "").strip()
 
 
-def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog) -> tuple[bool, bool, str]:
+def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog, coder_tools: str = "") -> tuple[bool, bool, str]:
     """Reasoned per-search assist: given the task, the QUERY the coder used, and the RESULTS it got back,
     judge whether the query is on-target and whether the results are on-target, and recommend a better
     query. Returns (query_on_target, results_on_target, recommended_query). Fails OPEN (both True, no
@@ -332,7 +332,7 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
         return True, True, ""
     vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_judge"),
                       prompts.render("search_judge_user", task=task, query=query or "(none)",
-                                     results=results), rlog, phase="reasoner") or ""
+                                     results=results), rlog, phase="reasoner", coder_tools=coder_tools) or ""
     obj = extract_json_object(strip_think(vtext))
     if not isinstance(obj, dict):
         return True, True, ""
@@ -341,7 +341,7 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
             str(obj.get("recommended_query") or "").strip())
 
 
-def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> tuple[bool, str]:
+def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -352,6 +352,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
+    if coder_tools:  # reasoning about the coder's work → give it the coder's tools (see _verify)
+        user = user + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
     obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
@@ -859,7 +861,8 @@ class Loop:
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
         evidence = _work_log(body.get("messages", []))
-        ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key)
+        ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
+                                  coder_tools=_coder_tools_summary(body.get("tools")))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -897,7 +900,8 @@ class Loop:
                 if f not in sess.judged_search_files:
                     sess.judged_search_files.add(f)
                     _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                 latest_user_text(msgs), q_of.get(f, ""), _content_text(m.get(key)), rlog)
+                                                 latest_user_text(msgs), q_of.get(f, ""), _content_text(m.get(key)), rlog,
+                                                 coder_tools=_coder_tools_summary(body.get("tools")))
                     if not r_ok:
                         sess.poisoned_search_files.add(f)
                         sess.search_recommend = rec
@@ -967,7 +971,8 @@ class Loop:
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
             evidence = _work_log(body.get("messages", []))
-            ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)
+            ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+                                      coder_tools=_coder_tools_summary(body.get("tools")))
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -997,7 +1002,8 @@ class Loop:
 
         digest = proberun.completion_probe_digest(outcome.report)
         evidence = _work_log(body.get("messages", []))
-        ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key)  # grounded in the coder's own runs
+        ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+                                  coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1057,7 +1063,7 @@ class Loop:
     # ------------------------------------------------------------------ helpers
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
-                *, idx: int = 0, total: int = 0, key: str = "") -> tuple[bool, str]:
+                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "") -> tuple[bool, str]:
         # System instruction: cria/prompts/verify.txt. User message (the step + real
         # ground truth): assembled from the labels in cria/prompts/verify_user.txt.
         system = prompts.load("verify")
@@ -1068,6 +1074,10 @@ class Loop:
         if probe:
             parts.append(prompts.fill(labels["probe"], probe=probe))
         parts.append(prompts.fill(labels["summary"], coder_summary=coder_text))
+        # The critic is reasoning about the coder's work — give it the coder's tools too, so a NOT-done
+        # reason it writes back names an action the coder can actually take (blind to them, it can't).
+        if coder_tools:
+            parts.append(prompts.render("reasoner_coder_tools", tools=coder_tools))
         user = "\n\n".join(parts)
 
         # First pass uses the reasoner role AS CONFIGURED (reasoning may be ON → a considered
@@ -1307,7 +1317,8 @@ class Loop:
                              "actually executed (0 collected / no test probe ran). If this task required "
                              "tests, a green result does NOT verify them; judge accordingly.")
             satisfied, reason = judge_satisfaction(
-                task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+                task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
+                coder_tools=_coder_tools_summary(body.get("tools")))
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
             if satisfied:
                 probe_tc = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)
@@ -1399,7 +1410,8 @@ class Loop:
             ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
                    "If this task required tests, green does NOT verify them; judge accordingly.")
         satisfied, reason = judge_satisfaction(
-            task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+            task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
+            coder_tools=_coder_tools_summary(body.get("tools")))
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
 
@@ -2304,14 +2316,20 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
-              max_tokens: int = 8192, retry_off: bool = True) -> str:
+              max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "") -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
     content); recovers a leaked tool-call 'answer' back to text. Shared by the loop's completion
     compaction (_compact_done), the reasoned redirect (_author_redirect, single-pass), the plan-off
     self-compaction, and the loop's mid-session rollup — one place, so the mechanism can't diverge.
-    ``chat_fn(body, rlog) -> bytes`` + ``role`` (Role|None) are the caller's provider + sampling."""
+    ``chat_fn(body, rlog) -> bytes`` + ``role`` (Role|None) are the caller's provider + sampling.
+    ``coder_tools`` (opt-in): a rendered coder-tool summary. When set, the reasoner is reasoning ABOUT
+    the coder's session, so it is prepended as context — the reasoner is otherwise blind to the coder's
+    tools and can name an action the coder can't do (it wavered 'we don't have a grep tool' with
+    exec_command right there). Compaction/summarization callers leave it empty (not reasoning about acts)."""
+    if coder_tools:
+        user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
     def _one(reasoning_off: bool) -> str:
         call = {"stream": False, "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
@@ -2613,10 +2631,9 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
-                          reasoning=(reasoning or "(not captured for this trigger)"),
-                          coder_tools=_coder_tools_summary(body.get("tools")))
+                          reasoning=(reasoning or "(not captured for this trigger)"))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
-                      phase="reasoner") or "").strip()
+                      phase="reasoner", coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
     return _steer_or_none(text)
 
 
@@ -2744,7 +2761,8 @@ def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
     ask for the ONE url it should read to move forward. Returns a bare URL, or "" (reasoner declined)."""
     session = selfcompact.serialize(_drop_harness_frame(_reasoner_session(body.get("messages", []))))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("search_fetch"),
-                      prompts.render("search_fetch_user", session=session), rlog, phase="reasoner") or "").strip()
+                      prompts.render("search_fetch_user", session=session), rlog, phase="reasoner",
+                      coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
     if "NONE" in text[:12].upper():
         return ""
     m = _URL_RE.search(text)
@@ -2797,7 +2815,8 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     if query in sess.query_verdicts:
         on_target, rec = sess.query_verdicts[query]
     else:
-        on_target, rec = judge_query(reasoner_chat, reasoner_role, latest_user_text(body.get("messages", [])), query, rlog)
+        on_target, rec = judge_query(reasoner_chat, reasoner_role, latest_user_text(body.get("messages", [])), query, rlog,
+                                     coder_tools=_coder_tools_summary(body.get("tools")))
         sess.query_verdicts[query] = (on_target, rec)
     if on_target or not rec:
         return coder
