@@ -290,8 +290,28 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
-                     chars=f"{len(content):,}", target=target)
+                     chars=f"{len(content):,}", target=target,
+                     outline=_spill_outline(parsed, target))
     return status, target, content, msg
+
+
+def _spill_outline(parsed: Any, target: str) -> str:
+    """A navigation outline for a SPILLED structured doc (JSON or YAML — both parse to ``parsed``): the
+    API routes when it's spec-shaped, else the top-level keys — so the model greps straight to what it
+    needs instead of paging a huge file top-to-bottom. This is the exact gap that sank the Ada-handle
+    run: the 2872-line spec spilled with no outline, so the coder read 800 lines linearly, never reached
+    /holders or resolved_addresses, and gave up. Same shape-branch as render_page's inline outline,
+    keyed off real bytes; the grep example uses a REAL route/key (no ``<placeholder>`` to echo). Ends
+    with a newline when non-empty; "" when the doc has no walkable structure (an HTML/text spill)."""
+    routes = _endpoint_routes(parsed)
+    if routes:
+        return (f'[API endpoints ({len(routes)}): {", ".join(routes)}]\n'
+                f'[grep the file for the one you need — e.g.  grep -n "{routes[0]}" {target}]\n')
+    keys = [k for k in top_level_keys(parsed) if k != "[array]"]
+    if keys:
+        return (f'[top-level keys ({len(keys)}): {", ".join(keys)}]\n'
+                f'[grep the file for the key you need — e.g.  grep -n "{keys[0]}" {target}]\n')
+    return ""
 
 
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:

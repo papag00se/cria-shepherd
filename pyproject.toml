@@ -3,7 +3,11 @@ name = "cria-shepherd"
 version = "0.0.1"
 description = "A harness-agnostic service that makes a small local model do real agentic coding."
 requires-python = ">=3.11"          # tomllib
-dependencies = []                    # standard library only — by design
+# Standard-library-first by design. The ONE exception: PyYAML, so a spilled OpenAPI/spec served as
+# YAML parses into a structure (routes/keys outline, structural find) exactly like the JSON case —
+# stdlib has no YAML parser. PyYAML is pure-Python with an OPTIONAL libyaml C accel and ZERO runtime
+# dependencies (Requires-Dist: none). Still soft-imported in webfetch (degrades to plain text if absent).
+dependencies = ["PyYAML>=6"]
 
 [project.scripts]
 cria = "cria.__main__:main"

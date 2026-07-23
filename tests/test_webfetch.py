@@ -243,7 +243,12 @@ class FetchNavSeedTests(unittest.TestCase):
             self.assertGreater(content.count("\n"), 100)         # pretty-printed → greppable
             self.assertIn("grep", msg)
             self.assertIn(target, msg)
-            self.assertIn('find="', msg)
+            self.assertIn("find=", msg)
+            # the spill message leads with the ROUTE OUTLINE (this spec is route-shaped) so the model
+            # greps straight to an endpoint instead of paging the whole file — and no <keyword> to echo
+            self.assertIn("API endpoints (400)", msg)
+            self.assertIn("/p0", msg)
+            self.assertNotIn("<keyword>", msg)
         finally:
             wf.fetch = orig
 
@@ -254,6 +259,47 @@ class FetchNavSeedTests(unittest.TestCase):
             self.assertIsNone(wf.oversized_spill("https://api.x/health"))
         finally:
             wf.fetch = orig
+
+    def _spill_msg(self, url, body, content_type):
+        wf._cache_put(url, 200, content_type,
+                      *wf.reduce_for_cache(body, content_type, url), False)
+        return wf.oversized_spill(url)[3]
+
+    def test_spill_outline_surfaces_routes_for_spec_shaped_json(self):
+        pad = "x" * (wf.OVERSIZE_CHARS + 500)
+        body = json.dumps({"openapi": "3.0.0", "info": {"description": pad},
+                           "paths": {"/handles/{handle}": {}, "/holders/{address}": {}, "/health": {}}})
+        msg = self._spill_msg("https://api.handle.me/openapi.json", body, "application/json")
+        self.assertIn("API endpoints (3)", msg)
+        self.assertIn("/handles/{handle}", msg)
+        self.assertIn("/holders/{address}", msg)
+        self.assertIn('grep -n "/handles/{handle}"', msg)   # concrete example, drawn from a REAL route
+        self.assertNotIn("<keyword>", msg)
+
+    def test_spill_outline_surfaces_routes_for_spec_shaped_YAML(self):
+        # OpenAPI served as YAML parses through the SAME shape-branch (PyYAML) → same route outline.
+        self.assertIsNotNone(wf._yaml, "PyYAML must be installed (declared dependency)")
+        pad = "x" * (wf.OVERSIZE_CHARS + 500)
+        body = ("openapi: 3.0.0\ninfo:\n  description: " + pad +
+                "\npaths:\n  /handles/{handle}:\n    get: {}\n  /holders/{address}:\n    get: {}\n")
+        msg = self._spill_msg("https://ex.com/openapi.yaml", body, "application/yaml")
+        self.assertIn("API endpoints (2)", msg)
+        self.assertIn("/handles/{handle}", msg)
+        self.assertIn("/holders/{address}", msg)
+
+    def test_spill_outline_falls_back_to_top_level_keys_for_plain_json(self):
+        pad = "x" * (wf.OVERSIZE_CHARS + 500)
+        body = json.dumps({"name": "x", "holder": "y", "total": 3, "blob": pad})
+        msg = self._spill_msg("https://ex.com/data.json", body, "application/json")
+        self.assertIn("top-level keys (4)", msg)
+        self.assertIn("holder", msg)
+        self.assertNotIn("API endpoints", msg)   # not route-shaped → no invented routes
+
+    def test_spill_outline_absent_for_unstructured_html(self):
+        pad = "x" * (wf.OVERSIZE_CHARS + 500)
+        msg = self._spill_msg("https://ex.com/big.html", "<html><body>" + pad + "</body></html>", "text/html")
+        self.assertNotIn("API endpoints", msg)   # nothing walkable → nothing invented
+        self.assertNotIn("top-level keys", msg)
 
     def test_broad_find_is_bounded_not_a_wall(self):
         big = json.dumps({"paths": {f"/p{i}": {"get": {"summary": "y" * 80}} for i in range(500)}},
