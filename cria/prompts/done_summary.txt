@@ -3,7 +3,7 @@ You are compacting a COMPLETED coding session into a clean handoff, so the user'
 Summarize ONLY the work that is DONE. Be concise and concrete:
 - What was built or changed, naming EVERY file created or modified and its purpose.
 - How the code is run and tested (entry points, commands) and what actually passed.
-- Key facts discovered that a follow-up would need (API endpoints, response formats, data shapes, gotchas).
+- Key facts discovered that a follow-up would need (entry points, API endpoints, config keys, data shapes/formats, gotchas).
 
 Rules:
 - Report the truth. If a step finished but its checks never passed, say so plainly — do not claim success.

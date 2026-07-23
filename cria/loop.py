@@ -2755,10 +2755,14 @@ _STRUGGLE_RE = re.compile(
 
 
 def _reasoning_of(comp: dict) -> str:
-    """The coder's private reasoning from a completion (upstream assembles message.reasoning_content)."""
+    """The coder's private reasoning from a completion — the split-out ``reasoning_content`` when the
+    server provides it, ELSE the message ``content`` (a model that inlines its thinking with no separate
+    channel). Mirrors the rumination watcher's ``reasoning or content`` fallback (upstream.py) so the
+    quiet-flail detector isn't silently INERT for any model that doesn't split reasoning out — the
+    `_reasoning_of` used to read only reasoning_content, disabling the whole flail assist for such a model."""
     for ch in comp.get("choices", []):
         msg = ch.get("message") or {}
-        r = msg.get("reasoning_content") or msg.get("reasoning")
+        r = msg.get("reasoning_content") or msg.get("reasoning") or msg.get("content")
         if isinstance(r, str) and r.strip():
             return r.strip()
     return ""

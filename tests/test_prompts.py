@@ -3,6 +3,38 @@ import unittest
 from cria import prompts
 
 
+class PromptAgnosticismTests(unittest.TestCase):
+    """The core coding prompts were overfit to the ONE dev task (a Python script that browses the
+    api.handle.me REST API). They must describe investigation/research/deliverables GENERICALLY, with
+    the API/spec case as ONE example — else a non-API, non-Python task (Rust CLI, SQL, a data script)
+    gets mis-planned, mis-verified, or steered toward an API that doesn't exist."""
+
+    def test_planner_research_rule_is_not_api_only(self):
+        p = prompts.load("plan")
+        self.assertIn("external", p.lower())                 # generalized beyond "the API"
+        self.assertIn("no external dependency", p)           # explicit opt-out for non-external tasks
+        # it must NOT command an unconditional API-spec first step as the sole framing
+        self.assertNotIn("DON'T GUESS THE API's ENDPOINTS", p)
+
+    def test_verifier_investigative_step_accepts_non_web_sources(self):
+        v = prompts.load("verify")
+        # a file read / --help / schema must be able to satisfy an investigative step, not only a web_fetch
+        self.assertTrue(any(w in v for w in ("a file's actual contents", "--help", "schema's columns")),
+                        "verify.txt still defines a research step only in API/web terms")
+        self.assertNotIn("resolved_addresses", v)            # the Ada-specific proposed_fix example is gone
+
+    def test_coder_system_research_rule_is_language_neutral(self):
+        c = prompts.load("coder_system")
+        self.assertNotIn("Python/requests/curl", c)          # the Python-only callout is generalized
+        self.assertIn("library", c.lower())                  # covers more than "an API"
+
+    def test_no_ada_handle_example_leaks_into_core_prompts(self):
+        # the compaction/critic examples must not anchor a small model on the one dev task
+        for name in ("done_summary", "satisfaction"):
+            self.assertNotIn("no-resolved-address", prompts.load(name))
+            self.assertNotIn("goose", prompts.load(name))
+
+
 class PromptLoaderTests(unittest.TestCase):
     def test_load_trims_trailing_newline_only(self):
         text = prompts.load("classify")

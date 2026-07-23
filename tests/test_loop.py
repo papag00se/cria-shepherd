@@ -207,6 +207,15 @@ class LivingPlanTests(unittest.TestCase):
         loop._replan_tail(sess, _body(), 1, _Rlog())
         self.assertEqual(reasoner.calls, 0)                        # no tail on a 1-item synthetic plan
 
+    def test_reasoning_of_falls_back_to_content_for_a_non_splitting_model(self):
+        # The quiet-flail detector was inert for any model that inlines its thinking in `content`
+        # (no reasoning_content channel); mirror the rumination watcher's reasoning-or-content fallback.
+        from cria.loop import _reasoning_of
+        self.assertEqual(_reasoning_of({"choices": [{"message": {"content": "hmm, wait, let me reconsider"}}]}),
+                         "hmm, wait, let me reconsider")
+        # a splitting model still uses its dedicated reasoning channel (content is the answer, not thinking)
+        self.assertEqual(_reasoning_of({"choices": [{"message": {"reasoning_content": "R", "content": "C"}}]}), "R")
+
     def test_reassess_remaining_returns_none_on_no_reasoner(self):
         from cria.loop import reassess_remaining
         self.assertIsNone(reassess_remaining(_Scripted([_replan(["a"])]), None,

@@ -251,6 +251,15 @@ class StreamMassageTests(unittest.TestCase):
         self.assertEqual(calls[0]["function"]["name"], "read_file")
         self.assertNotIn("<tool_call>", text)
 
+    def test_gemma_channel_debris_not_streamed_verbatim(self):
+        # Gemma's <|channel>thought… leaked into the CONTENT stream must be held back (captured), not
+        # streamed raw to the client — the buffered path already strips it; the stream path must too.
+        stream = [_sse({"role": "assistant"}), _sse({"content": "answer <|channel>thinking out loud"}),
+                  _sse({}), b"data: [DONE]\n\n"]
+        text, _calls = self._assemble(massage_stream(iter(stream), "m", tools=None))
+        self.assertNotIn("<|channel", text)          # channel debris never reaches the client
+        self.assertIn("answer", text)                 # the real content before it still streams
+
     def test_multiple_leaked_calls_get_distinct_indices(self):
         # two Hermes calls leaked as content: each streamed tool_call delta must carry a
         # DISTINCT index. OpenAI clients reassemble tool_calls BY index — two at index 0

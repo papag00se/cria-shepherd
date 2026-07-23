@@ -324,6 +324,15 @@ class StepCleaningTests(unittest.TestCase):
                                    "Do another\n']}<tool_call|><|channel>thought\nnoise"]})}}]}
         self.assertEqual(_steps_from_submit(msg), ["Do a clean thing", "Do another"])
 
+    def test_live_model_lfm2_tool_call_tokens_are_cut_from_a_step(self):
+        # The live model (LFM2/fabliq) leaks <|tool_call_start|>/<|tool_call_end|> — the _start/_end
+        # suffix used to defeat _DIALECT_MARKER, so its debris survived into the step (writeproxy._TC_DEBRIS
+        # lists these; the two cleaners must agree).
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Write the resolver module <|tool_call_start|>[read_file(x)]"),
+                         "Write the resolver module")
+        self.assertEqual(_clean_step("Add tests <|tool_call_end|> stray"), "Add tests")
+
     def test_clean_step_leaves_normal_text_alone(self):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step("Write the README with usage."), "Write the README with usage.")

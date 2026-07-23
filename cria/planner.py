@@ -80,7 +80,10 @@ _BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+\S)")
 # A leaked dialect marker (gemma-fable / harmony): a step is ONE action, so anything from the
 # first marker on is the model failing to stop after the plan (a thought channel, another tool
 # call) — observed live bleeding into a submit_plan step, dirtying the whole plan mirror.
-_DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|think)[|/]*>|<\|\"\|>")
+# The ``(?:_start|_end)?`` covers the LFM2/fabliq native pair ``<|tool_call_start|>`` / ``<|tool_call_end|>``
+# (the LIVE model) — without it the plain regex matched gemma/qwen/hermes but MISSED the live model's own
+# tokens, so its debris survived into a step (writeproxy._TC_DEBRIS already lists the full set; keep them in sync).
+_DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|think)(?:_start|_end)?[|/]*>|<\|\"\|>")
 
 
 _STEP_TEXT_KEYS = ("step", "text", "description", "action", "title", "task", "name", "content")

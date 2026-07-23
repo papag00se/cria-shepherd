@@ -49,7 +49,11 @@ class ReasoningCaptureTests(unittest.TestCase):
     def test_reasoning_of_reads_reasoning_content(self):
         self.assertEqual(_reasoning_of({"choices": [{"message": {"reasoning_content": "hi"}}]}), "hi")
         self.assertEqual(_reasoning_of({"choices": [{"message": {"reasoning": "fallback"}}]}), "fallback")
-        self.assertEqual(_reasoning_of({"choices": [{"message": {"content": "no reasoning"}}]}), "")
+        # a model with a reasoning channel: content is the ANSWER, reasoning_content wins
+        self.assertEqual(_reasoning_of({"choices": [{"message": {"reasoning_content": "R", "content": "C"}}]}), "R")
+        # a model that does NOT split reasoning out: fall back to content so the flail detector still sees
+        # its thinking (the model-agnosticism fix — reading only reasoning_content disabled it for such models)
+        self.assertEqual(_reasoning_of({"choices": [{"message": {"content": "inlined thinking"}}]}), "inlined thinking")
 
     def test_record_keeps_last_window(self):
         sess = types.SimpleNamespace(recent_reasoning=[])
@@ -58,10 +62,18 @@ class ReasoningCaptureTests(unittest.TestCase):
         self.assertEqual(len(sess.recent_reasoning), FLAIL_WINDOW)          # bounded
         self.assertEqual(sess.recent_reasoning[-1], f"turn {FLAIL_WINDOW + 2}")  # newest kept
 
-    def test_empty_reasoning_not_recorded(self):
+    def test_truly_empty_completion_records_nothing(self):
+        sess = types.SimpleNamespace(recent_reasoning=[])
+        _record_reasoning(sess, {"choices": [{"message": {"content": ""}}]})   # no reasoning AND no content
+        self.assertEqual(sess.recent_reasoning, [])
+        _record_reasoning(sess, {"choices": [{"message": {}}]})
+        self.assertEqual(sess.recent_reasoning, [])
+
+    def test_content_recorded_when_no_reasoning_channel(self):
+        # a non-splitting model's inlined thinking IS captured (fallback), so the flail window can fill
         sess = types.SimpleNamespace(recent_reasoning=[])
         _record_reasoning(sess, {"choices": [{"message": {"content": "x"}}]})
-        self.assertEqual(sess.recent_reasoning, [])
+        self.assertEqual(sess.recent_reasoning, ["x"])
 
 
 class ReasonerJudgeTests(unittest.TestCase):

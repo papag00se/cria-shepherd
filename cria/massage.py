@@ -669,7 +669,7 @@ def _alias(name: str) -> str:
 # ------------------------------------------------------------------ streaming
 
 
-_LEAK_MARKERS = ("<tool_call", "<function=", "<|tool_call")
+_LEAK_MARKERS = ("<tool_call", "<function=", "<|tool_call", "<|channel")  # <|channel: Gemma's thought channel (buffered path strips it; the stream path must hold it back too)
 _HOLDBACK = 32  # keep this many trailing chars unemitted, so a leak marker start isn't leaked
 
 
