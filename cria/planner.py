@@ -451,19 +451,21 @@ class Planner:
         return f"{self._clock().strftime('%Y%m%dT%H%M%S')}-{key[:8]}"
 
 
-def _extract_cwd(messages: list[dict]) -> str:
+def _extract_cwd(messages: list[dict]) -> str | None:
     """The workspace path a harness advertises in its environment preamble (e.g. Codex's
-    ``<environment_context><cwd>…</cwd>``) so the planner's read-only shell / read_file run
-    where the harness is, not where cria is. Falls back to ``.`` when no cwd is advertised —
-    a harness that doesn't send one just runs relative to the invocation dir."""
+    ``<environment_context><cwd>…</cwd>``) — the harness's OWN repo, where the coding work happens.
+    Returns ``None`` when no cwd is advertised: the workspace root is then UNKNOWN, and callers must
+    NOT fall back to ``.`` — ``.`` is cria's own invocation dir, never the harness's repo, so a probe
+    or a disk read against it would target cria's source tree. The caller persists the last-known cwd
+    across turns (a harness compaction turn drops the <cwd> block) instead of re-defaulting to cria's dir."""
     for m in messages:
         c = m.get("content")
         if isinstance(c, list):
             c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
         mt = _CWD_RE.search(c or "")
-        if mt:
+        if mt and mt.group(1).strip():
             return mt.group(1).strip()
-    return "."
+    return None
 
 
 def _assistant_message_obj(obj) -> dict:

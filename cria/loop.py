@@ -143,6 +143,10 @@ class GuardState:
     ``GuardState`` per session. The module-level ``guard_*`` functions operate on this state."""
     awaiting_probe: bool = False  # cria emitted a ground-truth probe; next request is its result
     probe_call_id: str = ""  # the id of the probe tool call, to find its result
+    # The harness's workspace cwd (its OWN repo), persisted across turns: set from the env-context <cwd>
+    # when present, KEPT when a later turn (harness compaction) drops it — so the gate/steer/disk-facts
+    # always target the harness's repo, NEVER cria's own dir. None = still unknown (callers skip, never ".").
+    workspace_root: str | None = None
     # Per-search reasoned assist. OUTGOING: judge the query before it runs (guard_search_query) — cached
     # per query in ``query_verdicts``. INCOMING: when the model READS a spilled search file, judge its
     # relevance (_judge_search_reads); an off-target file goes in ``poisoned_search_files`` so its reads
@@ -797,6 +801,11 @@ class Loop:
         return coder
 
     def _work(self, sess: PlanSession, key: str, body: dict, rlog) -> dict:
+        # Persist the harness's workspace cwd on the SESSION: a fresh <cwd> updates it, a turn without one
+        # (harness compaction) keeps the last-known, and an operator-configured LoopContext root is the
+        # final fallback — so the gate/steer target the harness's repo, never cria's own dir. (_ctx.
+        # workspace_root is shared across sessions/None in prod; the per-session copy is the live source.)
+        sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
         if item is None:  # every step done
@@ -818,7 +827,7 @@ class Loop:
         total = len(sess.plan.items)
         # Repetition/wheel-spin intervention (shared with the plan-off path): emit a ground-truth
         # probe now, or park a canned steer in sess.nudge_reason for the framing below.
-        intervention = guard_intervene(sess, body, rlog, step=idx, workspace_root=self._ctx.workspace_root)
+        intervention = guard_intervene(sess, body, rlog, step=idx, workspace_root=sess.workspace_root)
         if intervention is not None:
             return intervention
         sess.drive_count += 1  # session-wide drive counter (feeds the flail cooldown; read only here + single-item)
@@ -1106,7 +1115,7 @@ class Loop:
         (NOT_STUCK / nothing → inject nothing)."""
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
-        root = self._ctx.workspace_root
+        root = sess.workspace_root
         if condition == "repetition":
             return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                    root, step_text, sess, outcome, body, rlog)
@@ -1116,7 +1125,7 @@ class Loop:
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
         configured workspace root."""
-        return guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+        return guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
 
     # ------------------------------------------------------------------ helpers
 
@@ -1286,10 +1295,11 @@ class Loop:
         satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
         stable keys, ephemeral for ``task:`` keys). Returns the completion to send, or None on decode fail."""
         sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
+        sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root  # harness cwd, persisted (see _work)
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         # A probe whose result a harness compaction erased is re-issued (parity with the loop), rather
         # than fail-open / downgrade to a canned steer with no ground truth.
-        reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=self._ctx.workspace_root)
+        reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=sess.workspace_root)
         if reissue is not None:
             return reissue
         # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
@@ -1323,7 +1333,7 @@ class Loop:
                 if self._ctx.reasoner_role is not None and sess.gate_stall >= THRASH_STALL_CYCLES:
                     truth = author_thrash_steer(
                         self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                        self._ctx.workspace_root or _extract_cwd(body.get("messages", [])), sess, truth, body, rlog)
+                        sess.workspace_root or _extract_cwd(body.get("messages", [])), sess, truth, body, rlog)
                     rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=sess.gate_stall)
                 sess.nudge_reason = truth
                 sess.steer_source = "periodic check-in"
@@ -1338,7 +1348,7 @@ class Loop:
             # PARITY: the single-item path gets the SAME reasoner-authored steers as the loop (via the
             # shared authors on the routed reasoner endpoint). CANNED only if there's no reasoner.
             def _author(condition, g, outcome, b, r):
-                root = self._ctx.workspace_root or _extract_cwd(b.get("messages", []))
+                root = sess.workspace_root or _extract_cwd(b.get("messages", []))
                 if condition == "repetition":
                     task = _history_root(b.get("messages", []))[0] or "the user's task"
                     return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
@@ -1348,7 +1358,7 @@ class Loop:
             author = _author if self._ctx.reasoner_role is not None else CANNED
             steer = guard_probe_steer(sess, body, rlog, author=author)
         elif not sess.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
-            intervention = guard_intervene(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+            intervention = guard_intervene(sess, body, rlog, workspace_root=sess.workspace_root)
         if intervention is not None:
             return intervention
         if steer is None and sess.nudge_reason:
@@ -1382,7 +1392,7 @@ class Loop:
                 coder_tools=_coder_tools_summary(body.get("tools")))
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
             if satisfied:
-                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
                     sess.done_probe = True
                     sess.probe_call_id = probe_tc["id"]
@@ -1395,7 +1405,7 @@ class Loop:
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
         if steer is None and not rewritten:
-            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=self._ctx.workspace_root)
+            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
         framed = {**body, "messages": _frame_for_item(
@@ -1443,7 +1453,7 @@ class Loop:
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
                 return comp  # it acted after the nudge
-        probe = guard_gate_op(sess, body, rlog, workspace_root=self._ctx.workspace_root)  # body, NOT framed
+        probe = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)  # body, NOT framed
         if probe is not None:
             sess.done_probe = True
             sess.probe_call_id = probe["id"]
@@ -1799,7 +1809,7 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
     that already exist, do NOT recreate" is false and harmful — it overrides the model's own correct
     "the dir is empty, start fresh" and sends it hunting elsewhere. In that case emit the INVERTED
     reframe ("none of that work is present here; start fresh in this workspace, don't look elsewhere")."""
-    cwd = _extract_cwd(messages)
+    cwd = _extract_cwd(messages) or ""   # unknown → "" (never "." / "None"); _workspace_is_empty treats it as unknown
     template = "compaction_reframe_empty" if _workspace_is_empty(cwd) else "compaction_reframe"
     out: list[dict] = []
     reframed = False
@@ -2151,8 +2161,8 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
     # NEVER fall back to "." — that is cria's OWN cwd, not the workspace (it once composed a
     # probe over cria's repo). Unknown root → a minimal git-only gate; the harness's shell
     # still runs in the workspace, so the change-signal lands and the floor/probes abstain.
-    root = workspace_root or _extract_cwd(body.get("messages", []))
-    if root == ".":  # _extract_cwd's no-cwd fallback IS cria's own cwd — refuse it here
+    root = workspace_root or _extract_cwd(body.get("messages", [])) or ""
+    if root == ".":  # a stray "." from any caller IS cria's own cwd — refuse it (never probe cria's tree)
         root = ""
     try:
         plan = probegate.plan_gate(root)
@@ -3116,7 +3126,7 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
     transcript's stale 'what the model said it wrote' view. This is the grounding the reasoned
     redirect was missing (groundtruth.py was ported but never wired). Empty when the workspace root
     is unknown or nothing has been written yet, so the redirect degrades to its prior behavior."""
-    if not root:
+    if not root or root == ".":   # "." is cria's OWN dir, never the coder's workspace — never read it
         return ""
     paths: list[str] = []
     for p in list(recent_writes or []) + [spin_path]:

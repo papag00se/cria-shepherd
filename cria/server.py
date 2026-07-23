@@ -141,6 +141,27 @@ def _is_compaction_request(messages: list) -> bool:
     return False
 
 
+# Last-known harness cwd per session. A harness advertises its workspace (Codex's <cwd>) in the
+# environment preamble, but a COMPACTION/summarize turn arrives without it — re-extracting would then
+# yield None and the workspace would go "unknown" mid-session. Remember it per session so the dirguard
+# keeps bounding to the RIGHT repo (never cria's own dir) across the whole session. Bounded like the
+# webfetch gate stores. The loop persists its own copy on the session (sess.workspace_root).
+_CWD_BY_SESSION: dict[str, str] = {}
+
+
+def _session_cwd(sess_key: str, messages: list) -> str | None:
+    """The harness's workspace cwd for this session: the freshly-advertised <cwd>, else the last one
+    remembered for the session. NEVER '.' (cria's own dir) — an unknown cwd stays None so callers skip
+    disk work rather than target cria's source tree."""
+    cwd = _extract_cwd(messages)
+    if cwd:
+        if len(_CWD_BY_SESSION) > 512:
+            _CWD_BY_SESSION.clear()
+        _CWD_BY_SESSION[sess_key] = cwd
+        return cwd
+    return _CWD_BY_SESSION.get(sess_key)
+
+
 def _proxy_body(body: dict) -> dict:
     """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
     harness call the loop declined, e.g. Codex's UI title-generation) — still DROPS the
@@ -451,7 +472,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._brave_key = brave.api_key()
         # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
         # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
-        self._workspace_root = _extract_cwd(body.get("messages", [])) or None
+        self._workspace_root = _session_cwd(sess_key, body.get("messages", []))
         # Re-present prior lowered shell calls as the synthetic tool the model actually called —
         # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
         # tools:[] (no shell tool), yet its history still holds cria's ⟦ctx:tool⟧-lowered write_file/

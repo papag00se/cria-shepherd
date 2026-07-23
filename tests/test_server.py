@@ -546,6 +546,30 @@ class RewriteDetectionTests(unittest.TestCase):
         self.assertFalse(_stable_session("task:xyz"))  # the loop gates observe_shape on this → no detection
 
 
+class SessionCwdTests(unittest.TestCase):
+    """The workspace cwd is the HARNESS's own repo — never cria's dir — and it must persist across a
+    turn that drops the <cwd> block (a harness compaction), so the gate/steer never lose the repo."""
+
+    def _env(self, cwd):
+        return [{"role": "user", "content": f"<environment_context>\n<cwd>{cwd}</cwd>\n</environment_context>"}]
+
+    def test_persists_across_a_turn_that_drops_cwd_and_never_uses_cria_dir(self):
+        from cria.server import _session_cwd, _CWD_BY_SESSION
+        _CWD_BY_SESSION.clear()
+        # turn 1: harness advertises its repo
+        self.assertEqual(_session_cwd("sk1", self._env("/home/u/project")), "/home/u/project")
+        # turn 2: harness compaction dropped the <cwd> block → the last-known repo is kept, NOT "."/None
+        self.assertEqual(_session_cwd("sk1", [{"role": "user", "content": "continue"}]), "/home/u/project")
+        # a session that NEVER advertised a cwd stays unknown (None) — callers skip; never cria's dir
+        self.assertIsNone(_session_cwd("sk_unknown", [{"role": "user", "content": "hi"}]))
+
+    def test_a_fresh_cwd_updates_the_remembered_one(self):
+        from cria.server import _session_cwd, _CWD_BY_SESSION
+        _CWD_BY_SESSION.clear()
+        _session_cwd("sk2", self._env("/a"))
+        self.assertEqual(_session_cwd("sk2", self._env("/b")), "/b")   # newest advertised wins
+
+
 class VisibleWebCallsTests(unittest.TestCase):
     """_visible_web_calls extracts the full (url, find, cursor) key + queries from the calls still
     present, so the exact-repeat gate only refuses a repeat while its result is in context."""

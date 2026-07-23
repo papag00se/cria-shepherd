@@ -259,7 +259,8 @@ class GatherLoopTests(unittest.TestCase):
         msgs = [{"role": "user", "content": "<environment_context>\n<cwd>/home/jesse/src/codex.test.site</cwd>\n</environment_context>"},
                 {"role": "user", "content": "the task"}]
         self.assertEqual(_extract_cwd(msgs), "/home/jesse/src/codex.test.site")
-        self.assertEqual(_extract_cwd([{"role": "user", "content": "no cwd here"}]), ".")
+        # no <cwd> advertised → None (UNKNOWN), never "." (cria's own dir) — callers must not target cria's tree
+        self.assertIsNone(_extract_cwd([{"role": "user", "content": "no cwd here"}]))
 
 
 if __name__ == "__main__":

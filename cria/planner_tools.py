@@ -83,10 +83,12 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
         env["TMPDIR"] = scratch
     # A workspace that doesn't exist (a fresh build — no repo dir yet) is not a valid cwd, so
     # subprocess can't even launch and EVERY command dies with "failed to launch". Fall back to
-    # the scratchpad (or ".") and tell the planner the workspace is empty — so it plans to CREATE
-    # files rather than inspect a repo that isn't there.
-    fresh = bool(cwd) and not os.path.isdir(cwd)
-    run_cwd = (scratch or ".") if fresh else (cwd or ".")
+    # the scratchpad and tell the planner the workspace is empty — so it plans to CREATE files
+    # rather than inspect a repo that isn't there. An UNKNOWN cwd (harness advertised none) falls back
+    # the SAME way — NEVER to "." (cria's OWN source tree): a gather ls/grep against cria's repo would
+    # feed the planner cria's files as if they were the user's project.
+    fresh = not cwd or not os.path.isdir(cwd)
+    run_cwd = (scratch or ".") if fresh else cwd
     try:
         out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, timeout=20, env=env)
