@@ -1141,13 +1141,13 @@ class Loop:
         # verdict is a one-line classification, and a reasoning model under the max_tokens cap
         # can burn its whole budget THINKING and never emit the closing JSON — which used to
         # fall through to a silent DONE. Reasoning-off makes it answer the JSON directly.
-        obj = self._verdict(system, user, rlog, reasoning_off=False)
+        obj, raw = self._verdict(system, user, rlog, reasoning_off=False)
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
             reason = _verdict_nudge(obj, done)
-            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason)
+            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
         # reasoning-off, but a reasoning-off judge is a rubber stamp (competent to REJECT, not APPROVE):
@@ -1155,22 +1155,24 @@ class Loop:
         # FAILED CLOSED — a wrongly-passed step is never re-checked, so a shallow retry must never
         # advance the plan (the plan-off satisfaction judge fails closed the same way).
         rlog.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
-        retry = self._verdict(system, user, rlog, reasoning_off=True)
+        retry, raw = self._verdict(system, user, rlog, reasoning_off=True)  # raw now = the retry's response
         if retry is not None and retry.get("done"):
             rlog.emit("loop.verify_failclosed", level="info")
             retry = None
         if retry is None:
             reason = "unverified (no parseable verdict)"
-            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
+            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
         reason = _verdict_nudge(retry, False)   # a reasoning-off NOT-done is trustworthy
-        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
+        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
-    def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool) -> dict | None:
-        """One critic call → the parsed verdict dict, or None if the model produced no
-        parseable JSON (or the call failed). `reasoning_off` forces enable_thinking=false so a
-        reasoning model can't exhaust its token budget before emitting the verdict."""
+    def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool) -> tuple[dict | None, str]:
+        """One critic call → (parsed verdict dict OR None if the model produced no parseable JSON /
+        the call failed, RAW response text). The raw text is dumped alongside the verdict so a human
+        can see the verifier's ACTUAL output — the parrot (an echoed instruction) or an empty/rambling
+        non-verdict is invisible in the parsed reason alone. `reasoning_off` forces enable_thinking=false
+        so a reasoning model can't exhaust its token budget before emitting the verdict."""
         body = {
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
@@ -1195,10 +1197,10 @@ class Loop:
             vtext = _completion_text(_parse_completion(self._ctx.reasoner_chat(body, rlog)))
             if role is not None:
                 vtext = role.clean_content(vtext)  # drop leaked reasoning when off
-            return extract_json_object(vtext) or None
+            return extract_json_object(vtext) or None, vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
-            return None
+            return None, ""
 
     def _persist_plan(self, plan: Plan, rlog) -> None:
         """Mirror the plan markdown to cria's OWN state dir (`~/.cria/plans/<id>.md`) for human
@@ -3327,11 +3329,13 @@ def _verdict_nudge(obj: dict, done: bool) -> str:
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
 
 
-def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str, done: bool, reason: str) -> None:
-    """Write the EXACT context the critic saw (its system + user message) and its verdict into
-    THE RUN FOLDER (same folder as the call captures + plan mirror). This is the WHOLE basis on
-    which a step was judged done — so a human can see precisely what the model had to work with,
-    and what it was missing. Best-effort; never breaks the loop."""
+def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str,
+                 done: bool, reason: str, response: str = "") -> None:
+    """Write the EXACT context the critic saw (its system + user message), its RAW response, and the
+    parsed verdict into THE RUN FOLDER (same folder as the call captures + plan mirror). This is the
+    WHOLE basis on which a step was judged — so a human can see precisely what the model had to work
+    with, what it actually emitted (the raw response exposes a parrot / empty / rambling non-verdict
+    that the parsed reason alone hides), and what it was missing. Best-effort; never breaks the loop."""
     if run_dir is None:
         return
     try:
@@ -3343,7 +3347,8 @@ def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str
             f"- session: `{key}`\n"
             f"- step: {step}\n"
             f"- reason: {reason}\n\n"
-            "This is the COMPLETE context the reasoner saw when it decided this step — it judged "
+            f"## VERIFIER RESPONSE (the reasoner's raw output)\n\n```\n{response or '(empty / call failed)'}\n```\n\n"
+            "Below is the COMPLETE context the reasoner saw when it decided this step — it judged "
             "on nothing else (no file listing, no workspace state, only what is below).\n\n"
             f"## SYSTEM message (cria/prompts/verify.txt)\n\n```\n{system}\n```\n\n"
             f"## USER message (the step + the ground truth it was handed)\n\n```\n{user}\n```\n"

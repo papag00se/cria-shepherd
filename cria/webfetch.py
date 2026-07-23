@@ -306,11 +306,11 @@ def _spill_outline(parsed: Any, target: str) -> str:
     routes = _endpoint_routes(parsed)
     if routes:
         return (f'[API endpoints ({len(routes)}): {", ".join(routes)}]\n'
-                f'[grep the file for the one you need — e.g.  grep -n "{routes[0]}" {target}]\n')
+                f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
     keys = [k for k in top_level_keys(parsed) if k != "[array]"]
     if keys:
         return (f'[top-level keys ({len(keys)}): {", ".join(keys)}]\n'
-                f'[grep the file for the key you need — e.g.  grep -n "{keys[0]}" {target}]\n')
+                f'[grep {target} for the key you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
     return ""
 
 

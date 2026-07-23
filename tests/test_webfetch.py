@@ -273,7 +273,11 @@ class FetchNavSeedTests(unittest.TestCase):
         self.assertIn("API endpoints (3)", msg)
         self.assertIn("/handles/{handle}", msg)
         self.assertIn("/holders/{address}", msg)
-        self.assertIn('grep -n "/handles/{handle}"', msg)   # concrete example, drawn from a REAL route
+        # points the model at the endpoint LIST, not a single seeded route: a seeded routes[0] can be a
+        # useless meta-path (real spec: routes[0]=="/" → the degenerate `grep -n "/"`), which sent the
+        # coder crawling the /openapi.json//swagger.json aliases at the top of the list.
+        self.assertIn("FROM THAT LIST", msg)
+        self.assertNotIn('grep -n "/"', msg)                 # no degenerate example
         self.assertNotIn("<keyword>", msg)
 
     def test_spill_outline_surfaces_routes_for_spec_shaped_YAML(self):
