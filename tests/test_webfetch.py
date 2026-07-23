@@ -351,7 +351,8 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))     # nothing visible → proceed
         wf.set_visible("s1", [], ["ada handle api"])                  # result now in context
         r = wf.gate_search("s1", "ada handle api")
-        self.assertIn("HTTP 400", r)
+        self.assertIn("already ran", r)          # gentle re-point, not a fake HTTP-400 error
+        self.assertNotIn("HTTP 400", r)
         self.assertIn("still above", r)
         wf.set_visible("s1", [], [])                                  # compacted away → allowed again
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))
@@ -365,15 +366,15 @@ class GateTests(unittest.TestCase):
         A = "ADA Handle API resolve handle to address holder address total handles"
         B = "ADA Handle API endpoint resolve handle to address holder address total handles"
         wf.set_visible("s1", [], [A, B])
-        self.assertIn("HTTP 400", wf.gate_search("s1", A))                    # exact repeat of a visible
-        self.assertIn("HTTP 400", wf.gate_search("s1", B))
-        self.assertIn("HTTP 400", wf.gate_search("s1", "ADA Handle API resolve handle holder"))  # word-swap re-hunt
+        self.assertIn("already ran", wf.gate_search("s1", A))                    # exact repeat of a visible
+        self.assertIn("already ran", wf.gate_search("s1", B))
+        self.assertIn("already ran", wf.gate_search("s1", "ADA Handle API resolve handle holder"))  # word-swap re-hunt
         self.assertIsNone(wf.gate_search("s1", "python requests connection timeout retry"))       # new direction → proceed
 
     def test_search_gate_steers_to_fetch_a_named_domain(self):
         wf.set_visible("s1", [], ["resolve handle address holder api.handle.me"])
         r = wf.gate_search("s1", "resolve handle address total api.handle.me")  # swaps holder→total; re-hunt naming a domain
-        self.assertIn("HTTP 400", r)
+        self.assertIn("already ran", r)
         self.assertIn("web_fetch https://api.handle.me", r)
 
     def test_fetch_repeat_refused_only_while_visible(self):

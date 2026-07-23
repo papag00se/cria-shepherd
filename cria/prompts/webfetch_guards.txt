@@ -3,9 +3,9 @@
 # per key (parsed by prompts.load_map). Placeholders: {{QUERY}} {{URL}} {{DOMAIN}} {{STREAK}} and
 # {{DOMAIN_STEER}} (the domain_steer fragment, or empty when the query names no domain); the spill
 # fragments add {{STATUS_LABEL}} {{CHARS}} {{TARGET}} {{FIND}}.
-search_repeat = HTTP 400 Bad Request · web_search "{{QUERY}}"\nYou already ran this (or a near-identical) search and its results are still above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
+search_repeat = You already ran web_search "{{QUERY}}" (or a near-identical one), and its results are still above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
 domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH it directly: web_fetch https://{{DOMAIN}} , then read the response for what you need.
-fetch_repeat = HTTP 400 Bad Request · web_fetch {{URL}}\nYou already fetched this exact request and its result is still above — use what you have, or fetch something different.
+fetch_repeat = You already fetched web_fetch {{URL}} with these exact params — this is the SAME result you got before, still above; use it (or narrow it with a different find=). If it was a large doc, it's saved in ./tmp/read-only — grep that file instead of re-fetching.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.
 spill = {{STATUS_LABEL}} · {{URL}}\nThis document is too large for the context ({{CHARS}} chars) — I saved it IN FULL to {{TARGET}}.\nRead it one of two ways — do NOT re-fetch the whole url:\n  • grep the file, e.g.  grep -n "<keyword>" {{TARGET}}\n  • call web_fetch again with find="<keyword>" to get just the matching section.
 find_large = \n\n⚠ This find="{{FIND}}" match is large ({{CHARS}} chars) — narrow it (a more specific keyword) or grep the saved ./tmp file for exact lines.
