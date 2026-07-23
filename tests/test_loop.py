@@ -1357,6 +1357,21 @@ class SteerVerdictTests(unittest.TestCase):
         self.assertIn("write", _steer_or_none("You keep repeating; read the file then write the fix.") or "")
 
 
+class CoderToolsSummaryTests(unittest.TestCase):
+    """The steer reasoner is blind to the coder's tools, so it can't say 'run grep via exec_command' —
+    the coder wavered on whether it could grep with exec_command right there. Give the reasoner the list."""
+
+    def test_lists_tools_and_flags_the_shell(self):
+        from cria.loop import _coder_tools_summary
+        tools = [{"function": {"name": "read_file", "parameters": {"properties": {"path": {}, "start_line": {}}}}},
+                 {"function": {"name": "exec_command", "parameters": {"properties": {"cmd": {}}}}}]
+        out = _coder_tools_summary(tools)
+        self.assertIn("read_file(path, start_line)", out)
+        self.assertIn("exec_command(cmd)", out)
+        self.assertIn("grep", out.lower())              # the shell tool is flagged as running grep/…
+        self.assertIn("none advertised", _coder_tools_summary([]))
+
+
 class FetchGroundTruthTests(unittest.TestCase):
     """runG: the coder fetched api.handle.me/openapi.json (HTTP 200, 33 endpoints) but hallucinated a
     400 and searched 40x; the steer PARROTED the 400. _fetch_ground_truth extracts the real outcomes so

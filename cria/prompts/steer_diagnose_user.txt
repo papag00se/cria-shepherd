@@ -13,4 +13,7 @@ GROUND TRUTH FROM THE REPO'S CHECKS:
 ITS RECENT PRIVATE REASONING (oldest first, most recent last — present only when the trigger was its own thinking):
 {{REASONING}}
 
+TOOLS THE CODER HAS (the CODER's tools — NOT yours; you only diagnose. Any action you tell it to take must be doable with one of these — e.g. to search a saved file, tell it to run `grep -n "<term>" <file>` via exec_command; to see part of a file, read_file with start_line/end_line):
+{{CODER_TOOLS}}
+
 Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder — grounded ONLY in what you see above.

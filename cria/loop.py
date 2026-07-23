@@ -2560,6 +2560,28 @@ def _fetch_ground_truth(messages: list[dict], sess=None) -> str:
     return _format_fetches(latest)
 
 
+_SHELL_TOOLNAMES = {"exec_command", "shell", "bash", "container.exec", "run_terminal_cmd", "local_shell"}
+
+
+def _coder_tools_summary(tools) -> str:
+    """One line per tool the CODER has (name + its params) — so a reasoner authoring a steer grounds any
+    action it suggests in what the coder can ACTUALLY do. Observed: the coder wavered on whether it could
+    grep, with exec_command right there; a reasoner that can't see the coder's tools can't say 'run
+    grep via exec_command'. The shell tool is flagged explicitly — it runs grep/cat/sed/python/pytest/…."""
+    lines = []
+    for t in (tools or []):
+        fn = t.get("function") or t
+        name = fn.get("name")
+        if not name:
+            continue
+        params = list(((fn.get("parameters") or {}).get("properties") or {}).keys())
+        sig = f"{name}({', '.join(params)})"
+        if name in _SHELL_TOOLNAMES:
+            sig += " — runs ANY shell command (grep, cat, sed, ls, find, python, pytest …)"
+        lines.append("  - " + sig)
+    return "\n".join(lines) or "  (none advertised this turn)"
+
+
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
                  condition: str, outcome=None, truth_text: str = "", step_text: str = "",
                  reasoning_window=None) -> str | None:
@@ -2591,7 +2613,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
-                          reasoning=(reasoning or "(not captured for this trigger)"))
+                          reasoning=(reasoning or "(not captured for this trigger)"),
+                          coder_tools=_coder_tools_summary(body.get("tools")))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner") or "").strip()
     return _steer_or_none(text)
