@@ -341,6 +341,26 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
             str(obj.get("recommended_query") or "").strip())
 
 
+def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
+                       evidence: str, rlog, coder_tools: str = "") -> list[str] | None:
+    """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
+    ACTUALLY done (real tool evidence), so the plan adjusts to reality at each verification instead of
+    marching a stale guess. Returns the refined remaining step-text list (may be shorter/reworded/
+    reordered, or [] when the evidence shows nothing is left), or ``None`` to leave the plan UNCHANGED —
+    the fail-safe on a parse miss / decline / no reasoner, because silently blowing away a plan on a bad
+    parse is far worse than carrying a stale step (the step critic still guards every step)."""
+    if reasoner_role is None or not remaining.strip():
+        return None
+    text = summarize(reasoner_chat, reasoner_role, prompts.load("replan"),
+                     prompts.render("replan_user", task=task, completed=completed or "(none)",
+                                    remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
+                     rlog, phase="reasoner", coder_tools=coder_tools) or ""
+    obj = extract_json_object(strip_think(text))
+    if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list):
+        return None  # unparseable / wrong shape → keep the plan exactly as it was
+    return [s for s in (str(x).strip() for x in obj["steps"]) if s]
+
+
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
@@ -1030,8 +1050,43 @@ class Loop:
         sess.redirect_due = False
         sess.last_gate_flag = ""   # convergence tracking is per step
         rlog.emit("loop.step_done", step=idx, verified=True)
+        self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
+
+    def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog) -> None:
+        """LIVING PLAN. A step just verified — hand a dedicated reasoner the real work done and let it
+        re-derive the REMAINING (not-done) steps, replacing that tail. Completed steps are immutable
+        history; only the not-yet-done steps are rewritten. This is what prunes a step the coder already
+        satisfied while doing an earlier one (or that the work made moot) BEFORE it can make the coder
+        redo/undo good work. Fail-safe: a parse miss / decline leaves the plan exactly as it was, and an
+        'all done' verdict is confirmed by the task critic before it is allowed to empty the plan (the
+        pruned steps skip the per-step gate, so completion must clear the same backstop the plan-off
+        path uses). Skipped for a synthetic 1-item plan (no tail) and when no reasoner is configured."""
+        if self._ctx.reasoner_role is None or sess.synthetic:
+            return
+        done_items = [it for it in sess.plan.items if it.done]
+        remaining = [it for it in sess.plan.items if not it.done]
+        if not remaining:
+            return
+        evidence = _work_log(body.get("messages", []))
+        tools = _coder_tools_summary(body.get("tools"))
+        steps = reassess_remaining(
+            self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
+            "\n".join(f"- {it.text}" for it in done_items),
+            "\n".join(f"- {it.text}" for it in remaining), evidence, rlog, coder_tools=tools)
+        if steps is None:  # declined / unparseable → keep the plan untouched
+            return
+        if not steps:  # claims everything remaining is done — confirm before completing the plan
+            satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
+                                              self._ctx.reasoner_role, rlog, coder_tools=tools)
+            if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
+                rlog.emit("loop.replan_empty_declined", step=idx)
+                return
+        if [it.text for it in remaining] == steps:  # unchanged → no churn, no log
+            return
+        sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
+        rlog.emit("loop.replan", step=idx, before=len(remaining), after=len(steps))
 
     def _renudge(self, sess: PlanSession, key: str, body: dict, reason: str, rlog) -> dict:
         """A step failed its check → re-drive the coder on THIS step with the concrete

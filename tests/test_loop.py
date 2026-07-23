@@ -146,6 +146,73 @@ def _toolcall():
     return {"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}}]}
 
 
+def _replan(steps):
+    return {"choices": [{"message": {"content": json.dumps({"steps": steps})}}]}
+
+
+def _sat(satisfied, reason="r"):
+    return {"choices": [{"message": {"content": json.dumps({"satisfied": satisfied, "reason": reason})}}]}
+
+
+class LivingPlanTests(unittest.TestCase):
+    """At each verified advance a dedicated reasoner re-derives the NOT-done steps from the real work
+    done (the living plan) — pruning a step the coder already satisfied before it makes them redo it."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _sess(self):
+        plan = Plan(id="x", task="build it", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified"),
+                           PlanItem("step 2"), PlanItem("step 3")])
+        return PlanSession(plan=plan)
+
+    def _loop(self, reasoner):
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = self._role()
+        return Loop(ctx)
+
+    def test_refines_not_done_tail_and_keeps_completed(self):
+        loop = self._loop(_Scripted([_replan(["step 3"])]))       # reasoner drops the superfluous step 2
+        sess = self._sess()
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertEqual([(it.text, it.done) for it in sess.plan.items],
+                         [("step 1", True), ("step 3", False)])   # step 1 kept verified; step 2 pruned
+
+    def test_unparseable_leaves_plan_untouched(self):
+        loop = self._loop(_Scripted([_unparseable()]))
+        sess = self._sess()
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "step 2", "step 3"])  # fail-safe
+
+    def test_empty_tail_declined_when_task_not_satisfied(self):
+        # reasoner says nothing remains, but the task critic disagrees → keep the remaining steps
+        loop = self._loop(_Scripted([_replan([]), _sat(False)]))
+        sess = self._sess()
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "step 2", "step 3"])
+
+    def test_empty_tail_allowed_when_task_satisfied(self):
+        loop = self._loop(_Scripted([_replan([]), _sat(True)]))
+        sess = self._sess()
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1"])   # tail emptied → plan complete
+        self.assertIsNone(sess.plan.current())
+
+    def test_skipped_for_synthetic_plan(self):
+        reasoner = _Scripted([_replan(["x"])])
+        loop = self._loop(reasoner)
+        sess = PlanSession(plan=_plan(1), synthetic=True)
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertEqual(reasoner.calls, 0)                        # no tail on a 1-item synthetic plan
+
+    def test_reassess_remaining_returns_none_on_no_reasoner(self):
+        from cria.loop import reassess_remaining
+        self.assertIsNone(reassess_remaining(_Scripted([_replan(["a"])]), None,
+                                             "t", "(none)", "- s", "ev", _Rlog()))
+
+
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 

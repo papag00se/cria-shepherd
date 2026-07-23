@@ -1,0 +1,11 @@
+TASK:
+{{TASK}}
+
+STEPS ALREADY COMPLETED (verified — do not repeat or re-add these):
+{{COMPLETED}}
+
+THE CODER'S REAL TOOL ACTIONS AND THEIR OUTPUT SO FAR (ground truth — trust this over any claim):
+{{EVIDENCE}}
+
+CURRENT REMAINING STEPS (refine THESE — the ones not yet done):
+{{REMAINING}}
