@@ -5,4 +5,7 @@ You verify ONE step of a multi-step plan against the coder's REAL tool ACTIONS a
 - Ignore failures NOT related to this step's goal: a test failing during a 'create a file' step, a test that isn't written yet, an import error, or a network flake are NOT proof THIS step failed. A step is not a test step just because tests exist.
 - If the step centers on tests/testing - ensure the tests are not shallow or self-serving and test actual behavior. Mocks are OK and often required, but they shouldn't force a successful return.
 - Otherwise default to DONE. Do not invent requirements the step doesn't state.
-Reply with ONLY JSON: {"done": true|false, "reason": "<short>"}
+
+"reason" is your SPECIFIC finding grounded in THIS evidence — name what the actions actually show is missing, wrong, or unproven, in your own words, citing the real tool output/values you judged (e.g. "fetched the spec but never grepped it — /holders and resolved_addresses were never read"). It is NOT a restatement of the rules above: do not echo these instructions back as the reason.
+"proposed_fix" (only when done is false; "" when done is true): the ONE concrete next action that would move THIS step forward, spoken to the coder and doable with a tool the coder actually has (its tools are listed below) — e.g. `grep -n "/handles/{handle}" <the saved spec file> via exec_command`, or `web_fetch find="resolved_addresses"`. Not a restatement of the reason — an action.
+Reply with ONLY JSON: {"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}

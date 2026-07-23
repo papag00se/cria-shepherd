@@ -150,8 +150,11 @@ def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 
 
-def _verdict(done=True, reason="ok"):
-    return {"choices": [{"message": {"content": json.dumps({"done": done, "reason": reason})}}]}
+def _verdict(done=True, reason="ok", fix=None):
+    v = {"done": done, "reason": reason}
+    if fix is not None:
+        v["proposed_fix"] = fix
+    return {"choices": [{"message": {"content": json.dumps(v)}}]}
 
 
 def _unparseable():
@@ -1370,6 +1373,29 @@ class CoderToolsSummaryTests(unittest.TestCase):
         self.assertIn("exec_command(cmd)", out)
         self.assertIn("grep", out.lower())              # the shell tool is flagged as running grep/…
         self.assertIn("none advertised", _coder_tools_summary([]))
+
+    def test_verdict_nudge_appends_proposed_fix_only_when_not_done(self):
+        """A NOT-done verdict hands the coder the concrete proposed_fix (an action), not just a
+        diagnosis; a DONE verdict drops it (nothing to fix). Empty fields degrade cleanly."""
+        from cria.loop import _verdict_nudge
+        not_done = {"done": False, "reason": "never grepped the spec", "proposed_fix": 'grep -n "/holders" spec.json'}
+        out = _verdict_nudge(not_done, False)
+        self.assertIn("never grepped the spec", out)
+        self.assertIn('Proposed fix: grep -n "/holders" spec.json', out)
+        # DONE → the fix is meaningless, dropped
+        self.assertEqual(_verdict_nudge({"done": True, "reason": "ok", "proposed_fix": "x"}, True), "ok")
+        # missing/empty proposed_fix → just the reason, no dangling label
+        self.assertEqual(_verdict_nudge({"reason": "r"}, False), "r")
+        self.assertEqual(_verdict_nudge({"reason": "r", "proposed_fix": ""}, False), "r")
+        # only a fix, no reason → still surfaced
+        self.assertEqual(_verdict_nudge({"proposed_fix": "do X"}, False), "Proposed fix: do X")
+
+    def test_verify_prompt_declares_reason_and_proposed_fix(self):
+        from cria import prompts
+        p = prompts.load("verify")
+        self.assertIn('"proposed_fix"', p)                      # the field is asked for
+        self.assertIn('"reason" is your SPECIFIC finding', p)   # reason is now DEFINED (anti-parrot)
+        self.assertIn("proposed_fix", prompts.load("verify").splitlines()[-1])  # in the reply schema
 
     def test_summarize_prepends_coder_tools_when_given(self):
         """Every reasoner that reasons about the coder's session opts in via summarize(coder_tools=…);

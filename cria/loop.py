@@ -1089,7 +1089,8 @@ class Loop:
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
-            done, reason = bool(obj.get("done")), str(obj.get("reason", ""))
+            done = bool(obj.get("done"))
+            reason = _verdict_nudge(obj, done)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -1106,7 +1107,7 @@ class Loop:
             reason = "unverified (no parseable verdict)"
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
             return False, reason
-        reason = str(retry.get("reason", ""))   # a reasoning-off NOT-done is trustworthy
+        reason = _verdict_nudge(retry, False)   # a reasoning-off NOT-done is trustworthy
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason)
         return False, reason
 
@@ -3256,6 +3257,18 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
 def _clip(s: str, n: int) -> str:
     s = s.strip()
     return s if len(s) <= n else s[:n] + "…"
+
+
+def _verdict_nudge(obj: dict, done: bool) -> str:
+    """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
+    concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
+    not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
+    when ``done``. Either field may be absent/empty; the fix is appended on its own line when present."""
+    reason = str(obj.get("reason", "")).strip()
+    fix = str(obj.get("proposed_fix", "")).strip()
+    if done or not fix:
+        return reason
+    return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
 
 
 def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str, done: bool, reason: str) -> None:

@@ -29,7 +29,8 @@ class PromptLoaderTests(unittest.TestCase):
     def test_render_leaves_literal_single_braces_untouched(self):
         # the critic must be told to emit `{"done": true}` — a single-brace literal that
         # must survive rendering (only {{TOKEN}} is substituted).
-        self.assertIn('{"done": true|false, "reason": "<short>"}', prompts.render("verify"))
+        self.assertIn('{"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}',
+                      prompts.render("verify"))
 
     def test_unknown_token_is_left_in_place(self):
         self.assertIn("{{STEP}}", prompts.render("step_framing", idx=1, total=3, completed=""))
