@@ -32,7 +32,7 @@ from . import brave, editrecovery, prompts, webfetch
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
-from .toolargs import parse_args as _parse, tool_path as _tool_path
+from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
 
 _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
@@ -427,6 +427,23 @@ def _under_spill_dir(path: str) -> bool:
     return norm == tail or norm.startswith(tail + os.sep) or (os.sep + tail + os.sep) in (os.sep + norm)
 
 
+def _spill_relpath(path: str) -> str | None:
+    """The workspace-relative spill path when ``path`` names a SPILL_DIR file via a ROOT-ABSOLUTE
+    ``/tmp/read-only/x`` form — the model dropped the leading ``./`` (wrote ``/tmp/read-only/x`` for
+    ``./tmp/read-only/x``), which the dirguard then blocks as external, so the model can never re-read
+    the doc cria saved (the live footgun: a fetched spec sitting unreadable on disk). Return
+    ``./tmp/read-only/x``; ``None`` otherwise. Only the root-absolute spill form is redirected — a path
+    that merely CONTAINS ``tmp/read-only`` deeper in some other tree is left alone."""
+    if not path:
+        return None
+    p = os.path.normpath(os.path.expanduser(str(path)))
+    if not os.path.isabs(p):
+        return None                                   # already workspace-relative → nothing to fix
+    tail = webfetch.SPILL_DIR.lstrip("./")            # "tmp/read-only"
+    rel = p.lstrip(os.sep)
+    return "./" + rel if (rel == tail or rel.startswith(tail + os.sep)) else None
+
+
 def _search_command(args: dict, brave_key: str) -> str:
     """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
     shared `brave` module (same request the planner's in-process search builds), then parsed to
@@ -488,6 +505,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             fn = tc.get("function") or {}
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
+            # DROPPED-'./' SPILL READ: the model wrote a root-absolute '/tmp/read-only/x' for the
+            # workspace-relative './tmp/read-only/x' file cria saved; the dirguard would (correctly)
+            # block that as external and the model could never re-read the doc. Rewrite it to the real
+            # workspace path BEFORE the guard chain, so the read (or the grep steer) reaches the file.
+            if name in injected and (_rp := _tool_path(args)) and (_rel := _spill_relpath(str(_rp))):
+                for _k in _PATH_KEYS:
+                    if args.get(_k):
+                        args = {**args, _k: _rel}
+                        break
+                if rlog is not None:
+                    rlog.emit("writeproxy.spill_path_redirect", tool=name, to=_rel)
             cmd = None
             # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —

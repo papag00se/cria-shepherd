@@ -253,6 +253,36 @@ class WebTests(unittest.TestCase):
         translate_outbound(normal, _CMD_SHELL, injected={"edit_file"})
         self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
+    def test_spill_relpath_redirects_only_the_root_absolute_form(self):
+        from cria.writeproxy import _spill_relpath
+        self.assertEqual(_spill_relpath("/tmp/read-only/api.json"), "./tmp/read-only/api.json")
+        self.assertEqual(_spill_relpath("/tmp/read-only"), "./tmp/read-only")
+        self.assertIsNone(_spill_relpath("./tmp/read-only/api.json"))       # already relative — fine
+        self.assertIsNone(_spill_relpath("tmp/read-only/api.json"))         # relative — fine
+        self.assertIsNone(_spill_relpath("/home/u/proj/tmp/read-only/x"))   # nested elsewhere — leave alone
+        self.assertIsNone(_spill_relpath("/etc/passwd"))
+
+    def test_dropped_dot_slash_spill_read_is_redirected_not_dirguard_blocked(self):
+        # The live footgun: the model reads the fetched spec via '/tmp/read-only/x' (dropped the './'),
+        # the dirguard blocks it as external, and the spec sits unreadable. A RANGED read must be
+        # redirected to the real workspace file, NOT refused.
+        ranged = _call("read_file", {"path": "/tmp/read-only/api.handle.me_openapi.json",
+                                     "start_line": 1, "end_line": 100})
+        translate_outbound(ranged, _CMD_SHELL, injected={"read_file"},
+                           workspace_root="/home/jesse/src/proj", external_dir_permission="none")
+        cmd = _lowered_cmd(ranged)
+        self.assertNotIn("outside the working directory", cmd)                   # NOT the dirguard refusal
+        self.assertIn("./tmp/read-only/api.handle.me_openapi.json", cmd)         # hits the real file
+        self.assertIn("sed -n '1,100p'", cmd)
+        # a WHOLE read of the dropped-'./' spill is still steered to grep (with the corrected path)
+        whole = _call("read_file", {"path": "/tmp/read-only/api.handle.me_openapi.json"})
+        translate_outbound(whole, _CMD_SHELL, injected={"read_file"},
+                           workspace_root="/home/jesse/src/proj", external_dir_permission="none")
+        wcmd = _lowered_cmd(whole)
+        self.assertNotIn("outside the working directory", wcmd)
+        self.assertIn("grep", wcmd)
+        self.assertIn("./tmp/read-only/api.handle.me_openapi.json", wcmd)
+
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
         translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
