@@ -292,6 +292,18 @@ class NormalizeToolCallsTests(unittest.TestCase):
         self.assertEqual(fn["name"], "shell")
         self.assertIn("sed -n '2,5p' h.py", " ".join(json.loads(fn["arguments"])["command"]))
 
+    def test_aliased_read_lowers_through_the_guarded_path(self):
+        # A read alias (read_file when the harness has no native one, or cat_file/view_file) must lower
+        # through the SAME guarded shell read as the synthetic read_file — never a bare cat/sed the
+        # harness can silently truncate (that duplicate was the second place the truncation bug lived).
+        whole = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps({"path": "big.json"}))]), [_SHELL])
+        wcmd = " ".join(json.loads(_first(whole)["message"]["tool_calls"][0]["function"]["arguments"])["command"])
+        self.assertIn("grep", wcmd)                          # big whole read → grep steer, not a raw cat
+        ranged = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps(
+            {"path": "f.json", "start_line": 9999, "end_line": 9999}))]), [_SHELL])
+        rcmd = " ".join(json.loads(_first(ranged)["message"]["tool_calls"][0]["function"]["arguments"])["command"])
+        self.assertIn("past the end of the file", rcmd)      # past-EOF signal, not a silent empty
+
     def test_reshapes_shell_string_to_array(self):
         c = normalize_tool_calls(_completion(tool_calls=[_tc("shell", json.dumps({"command": "ls -la"}))]), [_SHELL])
         self.assertEqual(json.loads(_first(c)["message"]["tool_calls"][0]["function"]["arguments"])["command"], ["bash", "-lc", "ls -la"])

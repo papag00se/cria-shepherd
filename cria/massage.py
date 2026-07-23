@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import uuid
 
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
 from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
-from .writeproxy import _decode_backslash_escapes
+from .writeproxy import _decode_backslash_escapes, _read_command as _wp_read_command
 
 # Aliases a model reaches for that really mean "run a shell command".
 # Command names a model may emit as a TOOL name (instead of calling the shell tool) —
@@ -342,16 +341,22 @@ def _alias_command(name: str, args: dict) -> str:
 
 
 def _read_command(args: dict) -> str:
-    q = shlex.quote(_tool_path(args) or "")
-    start, end = args.get("start_line") or args.get("start"), args.get("end_line") or args.get("end")
-    try:
-        if start and end:
-            return f"sed -n '{int(start)},{int(end)}p' {q}"
-        if start:  # start-only → to EOF (was silently ignored → whole file); matches the writeproxy
-            return f"sed -n '{int(start)},$p' {q}"
-    except (TypeError, ValueError):
-        pass
-    return f"cat {q}".strip()
+    """Lower a read ALIAS (cat_file/view_file, or read_file when the harness has no native one) to the
+    SAME guarded shell read the writeproxy synthetic-read path builds — size-guarded (never hands the
+    harness a truncatable blob) and past-EOF-signalled. ONE read-lowering, not two divergent ones (this
+    used to be a bare cat/sed with no guards — the exact truncation footgun the writeproxy path fixes).
+    Normalizes the ``start``/``end`` aliases to ``start_line``/``end_line`` and int-coerces them first."""
+    a = dict(args) if isinstance(args, dict) else {}
+    for src, dst in (("start", "start_line"), ("end", "end_line")):
+        if a.get(dst) is None and a.get(src) is not None:
+            a[dst] = a[src]
+    for k in ("start_line", "end_line"):   # writeproxy guards on int; coerce a stringy line number
+        if a.get(k) is not None:
+            try:
+                a[k] = int(a[k])
+            except (TypeError, ValueError):
+                a.pop(k, None)
+    return _wp_read_command(a) or ""
 
 
 # ---------------------------------------------------- truncation + Add→write_file

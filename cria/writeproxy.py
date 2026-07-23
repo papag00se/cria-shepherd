@@ -404,7 +404,16 @@ def _read_command(args: dict) -> str | None:
 
 def _list_command(args: dict) -> str:
     path = args.get("path") or args.get("dir") or args.get("directory") or "."
-    return f"ls -la {_qbash(path)}"
+    q = _qbash(path)
+    # Same principle as the read guard: a huge directory (node_modules, a data dir) would be SILENTLY
+    # truncated by the harness's output cap. Cap the listing at READ_INLINE_MAX bytes and DISCLOSE the
+    # total entry count so a cut isn't mistaken for the whole directory.
+    return (f'__o=$(ls -la {q} 2>&1); '
+            f'if [ "$(printf %s "$__o" | wc -c)" -gt {READ_INLINE_MAX} ]; then '
+            f'printf %s "$__o" | head -c {READ_INLINE_MAX}; '
+            f'printf "\\n...[listing capped — %s entries in this directory; narrow to a subpath, or grep for a name]...\\n" '
+            f'"$(ls -1A {q} 2>/dev/null | wc -l | tr -cd 0-9)"; '
+            f"else printf '%s\\n' \"$__o\"; fi")
 
 
 def _fetch_command(args: dict, session: str | None = None) -> str | None:

@@ -258,6 +258,15 @@ class WebTests(unittest.TestCase):
         translate_outbound(normal, _CMD_SHELL, injected={"edit_file"})
         self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
+    def test_list_dir_is_size_guarded(self):
+        # A huge directory (node_modules, a data dir) would be silently truncated by the harness output
+        # cap; cap + disclose the entry count instead (same principle as the read guard).
+        from cria.writeproxy import _list_command, READ_INLINE_MAX
+        cmd = _list_command({"path": "somedir"})
+        self.assertIn("ls -la", cmd)
+        self.assertIn("listing capped", cmd)
+        self.assertIn(str(READ_INLINE_MAX), cmd)
+
     def test_spill_relpath_redirects_only_the_root_absolute_form(self):
         from cria.writeproxy import _spill_relpath
         self.assertEqual(_spill_relpath("/tmp/read-only/api.json"), "./tmp/read-only/api.json")
