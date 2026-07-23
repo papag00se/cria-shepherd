@@ -46,6 +46,17 @@ class FocusToolsTests(unittest.TestCase):
             focus_tools(body)
             self.assertEqual([m["function"]["name"] for m in body["tools"]], [shell_name], shell_name)
 
+    def test_file_op_aliases_survive_focus_harness_agnostic(self):
+        # a harness whose native write/edit tools are named create_file / str_replace (not write_file/
+        # edit_file) must NOT have them dropped — the keep-set is derived from writeproxy's file-op
+        # families, not a hand-maintained Codex-shaped list.
+        body = {"tools": [_t("create_file"), _t("str_replace"), _t("exec_command"), _t("create_goal")]}
+        focus_tools(body)
+        kept = {m["function"]["name"] for m in body["tools"]}
+        self.assertIn("create_file", kept)          # write alias kept
+        self.assertIn("str_replace", kept)           # edit alias kept
+        self.assertNotIn("create_goal", kept)        # non-essential still dropped
+
     def test_keeps_web_and_read_and_edit_tools(self):
         body = {"tools": [_t(n) for n in [
             "read_file", "edit_file", "apply_patch", "list_dir",

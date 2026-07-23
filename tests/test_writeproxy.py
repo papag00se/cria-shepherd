@@ -258,6 +258,16 @@ class WebTests(unittest.TestCase):
         translate_outbound(normal, _CMD_SHELL, injected={"edit_file"})
         self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
+    def test_malformed_fused_call_caught_on_any_shell_name(self):
+        # the debris guard keyed on the literal name "shell" — inert for the LIVE Codex shell
+        # (exec_command) and any harness whose shell is named differently. Now it's SHELL_TOOL_NAMES.
+        for shell_name in ("exec_command", "run_terminal_cmd", "local_shell"):
+            comp = _call(shell_name, {"cmd": "ls"})
+            # inject tool-call sentinel debris into the raw arguments (a fused/corrupt call)
+            comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"cmd":"ls"}<|tool_call_start|>'
+            translate_outbound(comp, {"name": shell_name, "schema": {"properties": {"cmd": {}}}}, injected=set())
+            self.assertIn("ONE clean", _lowered_cmd(comp), shell_name)   # the malformed_call_refusal fired
+
     def test_list_dir_is_size_guarded(self):
         # A huge directory (node_modules, a data dir) would be silently truncated by the harness output
         # cap; cap + disclose the entry count instead (same principle as the read guard).

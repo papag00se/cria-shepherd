@@ -550,7 +550,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
             # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
-            if name == "shell" and _has_tc_debris(fn.get("arguments")):
+            if name in SHELL_TOOL_NAMES and _has_tc_debris(fn.get("arguments")):
                 cmd = f"printf %s {_qbash(prompts.load('malformed_call_refusal'))}"
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_malformed_call", tool=name)

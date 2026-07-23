@@ -34,6 +34,17 @@ class PromptAgnosticismTests(unittest.TestCase):
             self.assertNotIn("no-resolved-address", prompts.load(name))
             self.assertNotIn("goose", prompts.load(name))
 
+    def test_reasoner_prompts_do_not_hardcode_a_harness_tool_name(self):
+        # the critic proposed_fix + steer coder-tools examples named Codex's `exec_command` — a tool the
+        # coder may not have under a different harness (its real shell name is in the rendered {{TOOLS}}).
+        self.assertNotIn("exec_command", prompts.load("verify"))
+        self.assertNotIn("exec_command", prompts.load("reasoner_coder_tools"))
+
+    def test_coder_cwd_guidance_stands_alone(self):
+        # the cwd rule must not depend on Codex's "working-environment line" being present
+        c = prompts.load("coder_system")
+        self.assertIn("current working directory", c)
+
 
 class PromptLoaderTests(unittest.TestCase):
     def test_load_trims_trailing_newline_only(self):

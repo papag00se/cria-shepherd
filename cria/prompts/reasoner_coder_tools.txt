@@ -1,2 +1,2 @@
-TOOLS THE CODER HAS (the CODER's tools — NOT yours; you only reason. Any action you name for the coder must be doable with one of these — e.g. to search a saved file tell it to run `grep -n "<term>" <file>` via exec_command; to see part of a file, read_file with start_line/end_line):
+TOOLS THE CODER HAS (the CODER's tools — NOT yours; you only reason. Any action you name for the coder must be doable with one of these, BY THE NAME LISTED — e.g. to search a saved file tell it to run `grep -n "<term>" <file>` via its shell/exec tool; to see part of a file, read_file with start_line/end_line):
 {{TOOLS}}

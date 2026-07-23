@@ -18,6 +18,12 @@ from __future__ import annotations
 
 from . import prompts
 from .shelltool import SHELL_TOOL_NAMES, find_shell_tool
+from .writeproxy import _EDIT_NAMES, _LIST_NAMES, _READ_NAMES, _WRITE_NAMES
+
+# The file-op tool FAMILIES cria recognizes (write/edit/read/list, incl. aliases like create_file /
+# str_replace), sourced from writeproxy so the focus menu never DROPS a differently-named essential a
+# harness advertises natively — the keep-set must match what needs_translation treats as first-class.
+_FILE_OP_NAMES = _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES | _LIST_NAMES
 
 # The curated coder menu — the coding essentials a small local model actually needs
 # (ports codex-local LIGHT_CODER_TOOL_NAMES + its synthetic read/write/edit tools). The
@@ -80,7 +86,7 @@ def focus_tools(body: dict, rlog=None) -> None:
     kept, dropped = [], []
     for t in tools:
         nm = _tool_name(t)
-        if nm in FOCUS_TOOL_NAMES or nm in SHELL_TOOL_NAMES:
+        if nm in FOCUS_TOOL_NAMES or nm in SHELL_TOOL_NAMES or nm in _FILE_OP_NAMES:
             kept.append(t)
         else:
             dropped.append(nm)
