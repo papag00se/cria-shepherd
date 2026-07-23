@@ -101,6 +101,10 @@ def _clean_step(text: str) -> str:
 # silently fell back to the plan-OFF path (no step-gating → the coder coded freely and hallucinated).
 _STEP_KEYS = ("steps", "plan", "items")
 
+# Re-draft an EMPTY/unparseable plan this many times before giving up (a weak model is non-deterministic,
+# so a re-draft usually lands; the drive's synthetic-plan fallback catches the case where it never does).
+PLAN_RETRIES = 2
+
 # A ``"steps"|"plan"|"items": [`` array opener, and a single JSON string element on its own line. The
 # item pattern is GREEDY to the last quote so an element with UNESCAPED inner quotes — ``like `"goose"```
 # — is still captured whole; that malformed inner quote is exactly what makes ``json.loads`` reject the
@@ -252,9 +256,20 @@ class Planner:
         with self._lock:
             if key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
                 return None
+        cwd = _extract_cwd(messages)
         self._retriable_failure = False
-        steps = self._gather_and_plan(task, _extract_cwd(messages), rlog,
-                                      prior_work=prior_work, rewrite_summary=rewrite_summary)
+        steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work, rewrite_summary=rewrite_summary)
+        # A weak model sometimes drafts an EMPTY / unparseable plan (observed: the reasoner returned just
+        # "\n" → no plan → the whole coding session fell to the UNGUARDED proxy and stopped silently). It's
+        # non-deterministic, so re-draft a couple times before giving up — one bad draft shouldn't cost the
+        # session its guarded loop. Only for the unparseable case (a retriable gather-overrun is not re-tried
+        # here — the drive re-plans next turn).
+        attempts = 0
+        while not steps and not self._retriable_failure and attempts < PLAN_RETRIES:
+            attempts += 1
+            rlog.emit("plan.retry", attempt=attempts, level="info")
+            self._retriable_failure = False
+            steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work, rewrite_summary=rewrite_summary)
         if not steps:
             if self._retriable_failure:
                 # The model WANTED to keep working (its last response was a tool call, recovered or

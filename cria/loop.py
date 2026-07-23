@@ -704,12 +704,23 @@ class Loop:
                     # it plans the new ask ON TOP of the done work, not from the latest sentence.
                     plan = self._ctx.planner.plan_for(messages, rlog, prior_work=briefing)
                     if plan is None:
-                        return None
-                    sess = PlanSession(plan=plan, prior_work=briefing)
-                    self._store.put(session_key, sess)
-                    rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
-                    self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
-                    # drive straight into the first item — cria's scratch stays out of the project
+                        # Planner gave nothing back even after its own re-draft retries. A gather-overrun
+                        # (retriable) will re-plan next turn — let it. But a genuine give-up on a CODING task
+                        # must NOT fall to the unguarded proxy (it freewheels and can stop with no reason):
+                        # drive the whole task as ONE synthetic guarded step, keeping the gate/guards/steers.
+                        if getattr(self._ctx.planner, "_retriable_failure", False) \
+                                or classification is None or classification.task_type != "coding":
+                            return None
+                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages)),
+                                           synthetic=True, prior_work=briefing)
+                        if _stable_session(session_key):
+                            self._store.put(session_key, sess)
+                        rlog.emit("loop.start", id=sess.plan.id, steps=1, synthetic=True, planner_fallback=True)
+                    else:
+                        sess = PlanSession(plan=plan, prior_work=briefing)
+                        self._store.put(session_key, sess)
+                        rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
+                        self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
         if sess.synthetic:  # degenerate 1-item plan → the single-item driver (raw-task framing +
             # the off-ramps a finite multi-step plan doesn't need). Placed BEFORE the multi-item

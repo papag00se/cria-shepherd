@@ -125,12 +125,35 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(all(not it.done for it in plan2.items), "fresh plan is all not-done")
 
     def test_unplannable_task_is_negatively_cached(self):
-        # An UNplannable task must not re-hit the reasoner every turn of a session.
+        # An UNplannable task re-drafts PLAN_RETRIES times (a weak model is non-deterministic), then is
+        # negatively cached so it doesn't re-hit the reasoner every turn of the session.
+        from cria.planner import PLAN_RETRIES
         p = _Provider("write some code, good luck")  # no parseable plan
         planner = Planner(p, clock=lambda: _FIXED)
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
+        self.assertEqual(p.calls, 1 + PLAN_RETRIES, "first plan_for retries the unparseable draft")
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
-        self.assertEqual(p.calls, 1, "negative cache prevents re-calling the reasoner")
+        self.assertEqual(p.calls, 1 + PLAN_RETRIES, "then negatively cached — no further reasoner calls")
+
+    def test_empty_draft_is_retried_then_lands(self):
+        # A weak model draws an empty/unparseable plan non-deterministically; re-draft within PLAN_RETRIES
+        # rather than dropping the coding session to the unguarded proxy (the silent-stop root).
+        from cria.planner import PLAN_RETRIES
+
+        class _Retry:  # empty for the first `fail_n` calls, then a valid plan
+            def __init__(self, fail_n):
+                self.fail_n, self.calls = fail_n, 0
+
+            def chat(self, body, rlog):
+                self.calls += 1
+                c = "" if self.calls <= self.fail_n else '{"plan":["a","b"]}'
+                return json.dumps({"choices": [{"message": {"content": c}}]}).encode()
+
+        p = _Retry(fail_n=PLAN_RETRIES)     # fails exactly PLAN_RETRIES times, lands on the last retry
+        plan = Planner(p, clock=lambda: _FIXED).plan_for(_msgs("do a coding task"), _Rlog())
+        self.assertIsNotNone(plan)
+        self.assertEqual([i.text for i in plan.items], ["a", "b"])
+        self.assertEqual(p.calls, 1 + PLAN_RETRIES)
 
     def test_unparseable_returns_none(self):
         self.assertIsNone(_planner("write some code, good luck").plan_for(_msgs("x"), _Rlog()))
