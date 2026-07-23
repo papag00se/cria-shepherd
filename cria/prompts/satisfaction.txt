@@ -6,4 +6,6 @@ Judge whether the USER'S ORIGINAL TASK is FULLY satisfied by the work already do
 - Do NOT invent requirements the user did not ask for. If everything the user asked for is visibly done and passing, it IS satisfied — say so.
 - If the task includes tests/testing - ensure the tests are not shallow or self-serving and test actual behavior. Mocks are OK and often required, but they shouldn't force a successful return.
 
-Output ONLY this JSON, nothing else: {"satisfied": true|false, "reason": "<short — what's missing, or why it's done>"}
+"reason" is your SPECIFIC finding grounded in the actual tool output — name the deliverable that is missing, failing, or faked, citing the real evidence (e.g. "resolver returns the fallback 'no-resolved-address'; the live goose/papagoose check never ran"), or, when satisfied, why it's complete. It is NOT a restatement of the rules above.
+"proposed_fix" (only when satisfied is false; "" when true): the ONE concrete next action that would complete the task, spoken to the CODER and doable with a tool the coder actually has (its tools are listed below) — you have no tools yourself, but you name the coder's next move. Not a restatement of the reason — an action.
+Output ONLY this JSON, nothing else: {"satisfied": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}

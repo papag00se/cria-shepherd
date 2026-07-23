@@ -1390,12 +1390,15 @@ class CoderToolsSummaryTests(unittest.TestCase):
         # only a fix, no reason → still surfaced
         self.assertEqual(_verdict_nudge({"proposed_fix": "do X"}, False), "Proposed fix: do X")
 
-    def test_verify_prompt_declares_reason_and_proposed_fix(self):
+    def test_critic_prompts_declare_reason_and_proposed_fix(self):
+        # BOTH the step critic (verify) and the task critic (satisfaction) must define "reason"
+        # (anti-parrot) and ask for "proposed_fix" in the reply schema.
         from cria import prompts
-        p = prompts.load("verify")
-        self.assertIn('"proposed_fix"', p)                      # the field is asked for
-        self.assertIn('"reason" is your SPECIFIC finding', p)   # reason is now DEFINED (anti-parrot)
-        self.assertIn("proposed_fix", prompts.load("verify").splitlines()[-1])  # in the reply schema
+        for name in ("verify", "satisfaction"):
+            p = prompts.load(name)
+            self.assertIn('"reason" is your SPECIFIC finding', p, name)   # reason DEFINED
+            self.assertIn('"proposed_fix"', p, name)                      # field asked for
+            self.assertIn("proposed_fix", p.splitlines()[-1], name)       # in the reply schema line
 
     def test_summarize_prepends_coder_tools_when_given(self):
         """Every reasoner that reasons about the coder's session opts in via summarize(coder_tools=…);

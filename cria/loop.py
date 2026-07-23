@@ -360,7 +360,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # ending the task, because approving requires the verification a reasoning-off judge can't do
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
-        return bool(obj.get("satisfied")), str(obj.get("reason", ""))
+        satisfied = bool(obj.get("satisfied"))
+        return satisfied, _verdict_nudge(obj, satisfied)  # fold in proposed_fix when NOT satisfied
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -372,7 +373,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, str(retry.get("reason", ""))
+    return False, _verdict_nudge(retry, False)   # a reasoning-off NOT-satisfied is trustworthy
 
 
 def satisfaction_done_note(reason: str) -> str:
