@@ -364,15 +364,25 @@ def _edit_command(path: str, old: str, new: str) -> str:
 READ_INLINE_MAX = 12000
 
 
-def _past_eof_note(q: str, start: int) -> str:
-    """A shell tail that APPENDS a signal when the requested first line is past the end of the file, so
-    an out-of-range read isn't a SILENT EMPTY. Observed: a model asked for line 20707 of a 2872-line
-    file, got nothing, and crawled +1/line forever with no idea it was past EOF. Runs after the sed, so
-    an in-range read is unchanged (just its content); a past-EOF read gets 'file has N lines'."""
-    return (f'__n=$(wc -l < {q} 2>/dev/null || echo 0); '
-            f'if [ {start} -gt "$__n" ]; then '
-            f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" '
-            f'{q} "$__n" {start}; fi')
+def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
+    """A ranged read (``sed -n 'start,END p'``) with the SAME two guards a whole read needs:
+    * SIZE — if the range's bytes exceed READ_INLINE_MAX the HARNESS truncates the output (cria's
+      'never hand back truncatable content' principle). Observed live: a big range was cut at ~20707
+      tokens and the model then read line '20707' — the truncation count mistaken for a line number.
+      Too big → steer to a narrower range / grep instead of returning a doomed-to-be-truncated blob.
+    * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
+    An in-range, in-size read returns exactly its content."""
+    steer = prompts.render("large_range_steer", path=str(path))
+    return (
+        # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
+        # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
+        f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
+        f'if [ {start} -gt "$__n" ]; then '
+        f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
+        f'else __s=$(sed -n \'{sed_end}p\' {q}); '
+        f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then printf %s {_qbash(steer)}; '
+        f'else printf \'%s\\n\' "$__s"; fi; fi'
+    )
 
 
 def _read_command(args: dict) -> str | None:
@@ -382,9 +392,9 @@ def _read_command(args: dict) -> str | None:
     q = _qbash(path)
     start, end = args.get("start_line"), args.get("end_line")
     if isinstance(start, int) and start > 0 and isinstance(end, int) and end >= start:
-        return f"sed -n '{start},{end}p' {q}; " + _past_eof_note(q, start)
+        return _ranged_read(q, str(path), f"{start},{end}", start)
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
-        return f"sed -n '{start},$p' {q}; " + _past_eof_note(q, start)
+        return _ranged_read(q, str(path), f"{start},$", start)
     # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
     steer = prompts.render("large_read_steer", path=str(path))

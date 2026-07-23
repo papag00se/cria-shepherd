@@ -1,0 +1,1 @@
+That line range of {{PATH}} is too large to return in one read — the harness would truncate it mid-way and you'd act on a partial view (and mistake the cut-off point for a line number). Narrow it to a smaller start_line/end_line window, or grep {{PATH}} for what you need (e.g. grep -n on it).

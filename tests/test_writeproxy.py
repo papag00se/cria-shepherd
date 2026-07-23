@@ -218,7 +218,7 @@ class WebTests(unittest.TestCase):
     def test_whole_read_of_a_big_file_is_size_guarded(self):
         # A whole read_file lowers to a size-check: cat a small file, but hand a grep/range pointer for a
         # big one (a raw cat is truncated head+tail by the harness). A ranged read is a plain sed.
-        from cria.writeproxy import _read_command
+        from cria.writeproxy import _read_command, READ_INLINE_MAX
         whole = _read_command({"path": "big.json"})
         self.assertIn("wc -c", whole)          # size-checked
         self.assertIn("cat big.json", whole)   # small-file path still cats
@@ -226,7 +226,9 @@ class WebTests(unittest.TestCase):
         ranged = _read_command({"path": "f.py", "start_line": 2, "end_line": 9})
         self.assertIn("sed -n '2,9p' f.py", ranged)
         self.assertIn("past the end of the file", ranged)   # a past-EOF read isn't a silent empty
-        self.assertIn("wc -l", ranged)
+        self.assertIn("END{print NR}", ranged)              # accurate line count (awk NR, not wc -l)
+        self.assertIn("too large to return", ranged)        # an over-cap RANGE steers, never truncates
+        self.assertIn(str(READ_INLINE_MAX), ranged)
 
     def test_web_search_spills_results_to_read_only(self):
         comp = _call("web_search", {"query": "ada handle resolve endpoint"})
