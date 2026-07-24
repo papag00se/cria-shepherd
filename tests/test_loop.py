@@ -154,6 +154,68 @@ def _sat(satisfied, reason="r"):
     return {"choices": [{"message": {"content": json.dumps({"satisfied": satisfied, "reason": reason})}}]}
 
 
+class CompletionCriticTests(unittest.TestCase):
+    """A plan-ON completion (all steps verified INDIVIDUALLY) runs the WHOLE-TASK satisfaction critic
+    before declaring done — the green-but-wrong backstop the plan-off path already had. On not-satisfied
+    it re-opens with ONE corrective step; bounded so an unfinishable task still exits."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _loop(self, reasoner):
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = self._role()
+        return Loop(ctx)
+
+    def _done_sess(self):
+        plan = Plan(id="x", task="build a resolver", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified"),
+                           PlanItem("step 2", done=True, note="verified")])
+        return PlanSession(plan=plan)
+
+    def test_reopens_with_a_corrective_step_when_not_satisfied(self):
+        from cria.loop import _COMPLETION_FIX_PREFIX
+        loop = self._loop(_Scripted([_sat(False, "the resolver 404s on the wrong endpoint")]))
+        sess = self._done_sess()
+        reason = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
+        self.assertIsNotNone(reason)                          # not None → caller re-drives, doesn't complete
+        self.assertIn("404", reason)
+        self.assertEqual(sess.plan.status, "in_progress")
+        self.assertTrue(sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX))
+        self.assertIsNotNone(sess.plan.current())             # a step to drive again
+        self.assertEqual(sess.completion_checks, 1)
+
+    def test_completes_when_satisfied(self):
+        loop = self._loop(_Scripted([_sat(True)]))
+        sess = self._done_sess()
+        self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))   # None → complete
+        self.assertIsNone(sess.plan.current())                # plan stays complete
+
+    def test_bound_lets_an_unfinishable_task_exit(self):
+        from cria.loop import MAX_COMPLETION_CHECKS
+        loop = self._loop(_Scripted([_sat(False, "still broken")]))
+        sess = self._done_sess()
+        sess.completion_checks = MAX_COMPLETION_CHECKS
+        self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))   # capped → exit, not forever
+        self.assertEqual(reasoner_calls := loop._ctx.reasoner_chat.calls, 0, "capped before calling the critic")
+
+    def test_corrective_step_is_reused_not_grown(self):
+        from cria.loop import _COMPLETION_FIX_PREFIX
+        loop = self._loop(_Scripted([_sat(False, "broken A"), _sat(False, "broken B")]))
+        sess = self._done_sess()
+        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # adds one corrective step
+        sess.plan.items[-1].done = True                       # simulate it got verified, then re-check
+        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # reuses the SAME corrective step
+        fixes = [it for it in sess.plan.items if it.text.startswith(_COMPLETION_FIX_PREFIX)]
+        self.assertEqual(len(fixes), 1)                       # exactly one, reused — no plan bloat
+
+    def test_no_reasoner_completes_without_a_check(self):
+        loop = Loop(_ctx(_Scripted([_toolcall()]), _Scripted([_sat(False)])))  # reasoner_role stays None
+        sess = self._done_sess()
+        self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))
+
+
 class LivingPlanTests(unittest.TestCase):
     """At each verified advance a dedicated reasoner re-derives the NOT-done steps from the real work
     done (the living plan) — pruning a step the coder already satisfied before it makes them redo it."""
@@ -3379,7 +3441,9 @@ class SingleItemMethodTests(unittest.TestCase):
         # coder-turn guard added to _coder_turn reaches BOTH halves. If a future edit re-inlines a coder
         # call in one half, a new guard could silently miss it again — this catches that.
         import inspect
-        for method in ("_work", "_drive_single_item", "_gate_single_done"):
+        # _work delegates the actual coder work to _work_item (the completion path splits off first to run
+        # the whole-task satisfaction critic); the coder call lives in _work_item.
+        for method in ("_work_item", "_drive_single_item", "_gate_single_done"):
             src = inspect.getsource(getattr(Loop, method))
             self.assertIn("_coder_turn", src, f"{method} must route its coder call through _coder_turn")
 

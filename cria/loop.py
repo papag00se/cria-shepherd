@@ -147,6 +147,10 @@ class GuardState:
     # when present, KEPT when a later turn (harness compaction) drops it — so the gate/steer/disk-facts
     # always target the harness's repo, NEVER cria's own dir. None = still unknown (callers skip, never ".").
     workspace_root: str | None = None
+    # Whole-task satisfaction re-checks on a plan-ON completion (all steps verified INDIVIDUALLY, but is
+    # the user's task actually done end-to-end?). Bounds the re-open-and-fix loop so a task the coder
+    # genuinely can't finish still completes instead of looping forever. Parity with the plan-off critic.
+    completion_checks: int = 0
     # Per-search reasoned assist. OUTGOING: judge the query before it runs (guard_search_query) — cached
     # per query in ``query_verdicts``. INCOMING: when the model READS a spilled search file, judge its
     # relevance (_judge_search_reads); an off-target file goes in ``poisoned_search_files`` so its reads
@@ -236,6 +240,15 @@ _MAX_SHAPES = 256
 # the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
 # syntax/lint/test state early, not only when it thinks it's finished.
 GATE_EVERY_CODER_TURNS = 15
+
+# On a plan-ON completion (all steps verified individually), run the WHOLE-TASK satisfaction critic
+# before declaring done — a multi-step plan can pass every step yet not actually work (the milestone
+# run: each step green, but the resolver 404'd on the wrong endpoint and nothing checked end-to-end).
+# When it says not-done, re-open with ONE corrective step and re-drive. Bounded so a task the coder
+# genuinely can't finish still completes rather than looping forever (the plan-off path relies on the
+# harness stopping; cria DRIVES the plan loop, so it must bound the retries itself).
+MAX_COMPLETION_CHECKS = 4
+_COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this before finishing: "
 
 # Periodic SATISFACTION check (plan-off): a long session can finish the work but never STOP — the coder
 # keeps inventing completion actions (a .task_complete marker, a hallucinated checkpoint tool) so cria's
@@ -808,7 +821,11 @@ class Loop:
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
-        if item is None:  # every step done
+        if item is None:  # every step verified INDIVIDUALLY — but is the WHOLE task actually done?
+            reason = self._reopen_if_unsatisfied(sess, body, rlog)
+            if reason is not None:
+                # not satisfied → a corrective step is now current; re-drive it (don't complete green-but-wrong)
+                return self._work(sess, key, body, rlog)
             sess.phase = Phase.DONE
             sess.plan.status = "done"
             # Completion compaction: summarize the FINISHED work into a briefing and embed it in
@@ -824,6 +841,44 @@ class Loop:
             return _completion_final(self._closing(sess, briefing))
 
         idx = sess.plan.items.index(item) + 1
+        return self._work_item(sess, key, body, rlog, item, idx)
+
+    def _reopen_if_unsatisfied(self, sess: PlanSession, body: dict, rlog) -> str | None:
+        """Plan-ON completion critic (parity with the plan-off :func:`_done_critic_reason`). All steps
+        verified individually, but is the USER'S TASK actually satisfied end-to-end? Grounds on the REAL
+        tool output (the 404s, the failing run) — NOT the coder's own possibly-poisoned code — so it
+        catches a green-but-wrong finish. When NOT satisfied, RE-OPEN the plan with ONE corrective step
+        (reused across re-checks, so the plan doesn't grow) carrying the critic's concrete reason, and
+        return that reason so the caller re-drives instead of completing. Returns None to COMPLETE:
+        satisfied, no reasoner, or the ``MAX_COMPLETION_CHECKS`` bound hit (a task the coder can't finish
+        still exits rather than looping forever). Fail-CLOSED on an undecidable verdict (judge_satisfaction
+        only ever CONFIRMS not-done), so the bound — not a shaky 'satisfied' — is what lets it out."""
+        if self._ctx.reasoner_role is None or sess.completion_checks >= MAX_COMPLETION_CHECKS:
+            return None
+        task = _history_root(body.get("messages", []))[0]
+        ev = _satisfaction_evidence(body.get("messages", []))
+        if sess.last_gate_testless:  # C4 vacuous-green: a green with 0 tests collected doesn't verify behavior
+            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
+                   "If this task required tests, green does NOT verify them; judge accordingly.")
+        satisfied, reason = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                               rlog, coder_tools=_coder_tools_summary(body.get("tools")))
+        rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
+        if satisfied:
+            return None
+        sess.completion_checks += 1
+        reason = reason or "a deliverable the task named is missing, stubbed, or does not actually work"
+        fix = PlanItem(text=_COMPLETION_FIX_PREFIX + reason)
+        if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
+            sess.plan.items[-1] = fix          # reuse the one corrective step across re-checks (no plan bloat)
+        else:
+            sess.plan.items.append(fix)
+        sess.plan.status = "in_progress"
+        sess.nudge_reason = prompts.render("done_incomplete", reason=reason)
+        sess.steer_source = "completion critic (task not fully done)"
+        self._persist_plan(sess.plan, rlog)
+        return reason
+
+    def _work_item(self, sess: PlanSession, key: str, body: dict, rlog, item, idx: int) -> dict:
         total = len(sess.plan.items)
         # Repetition/wheel-spin intervention (shared with the plan-off path): emit a ground-truth
         # probe now, or park a canned steer in sess.nudge_reason for the framing below.
