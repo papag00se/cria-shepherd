@@ -210,7 +210,8 @@ class WebTests(unittest.TestCase):
             self.assertIn("mkdir -p", cmd)
             self.assertIn("base64 -d > ", cmd)      # full doc written to disk
             self.assertIn("./tmp/read-only/", cmd)  # dedicated read-only scratch dir
-            self.assertIn("chmod 444", cmd)         # marked read-only
+            self.assertNotIn("chmod 444", cmd)      # NOT FS-read-only: `>` must be able to re-spill; dirguard protects
+            self.assertNotIn("rm -f", cmd)          # the Codex sandbox rejects `rm -f`
             self.assertIn("grep", cmd)              # pointer message tells the model how to read it
         finally:
             webfetch.fetch = orig
@@ -236,7 +237,10 @@ class WebTests(unittest.TestCase):
         cmd = _lowered_cmd(comp)
         self.assertIn("curl -sL", cmd)                    # still the Brave curl
         self.assertIn("./tmp/read-only/search-", cmd)     # saved to the read-only spill dir
-        self.assertIn("chmod 444", cmd)                   # read-only
+        # NO rm -f (the Codex sandbox HARD-rejects it → every web_search failed → model hallucinated an
+        # endpoint) and NO chmod 444 (so `>` can overwrite on the next search); the dirguard protects the dir
+        self.assertNotIn("rm -f", cmd)
+        self.assertNotIn("chmod 444", cmd)
         self.assertIn("grep", cmd)                        # pointer tells the model to grep/line-read
 
     def test_spill_dir_is_read_only_no_edit_or_whole_read(self):

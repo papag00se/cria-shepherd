@@ -441,12 +441,14 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
 
 
 def _spill_command(target: str, content: str, msg: str) -> str:
-    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, mark it
-    READ-ONLY (it's cria reference material, not a deliverable to edit), then print the model-facing
-    pointer message — the harness runs this and records the message as the tool result."""
+    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, then print
+    the model-facing pointer message — the harness runs this and records the message as the tool result.
+    NOT ``chmod 444``: a read-only file can't be overwritten by ``>`` (a post-compaction re-fetch would
+    fail to re-spill), and clearing it would need the ``rm -f`` the Codex sandbox rejects — so the spill
+    dir is kept edit-protected by the dirguard (_under_spill_dir / spill_edit_refusal), not the FS bit."""
     tdir = os.path.dirname(target) or "."
     return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(_b64(content))} | base64 -d > {_qbash(target)} && "
-            f"chmod 444 {_qbash(target)} && printf %s {_qbash(msg)}")
+            f"printf %s {_qbash(msg)}")
 
 
 def _under_spill_dir(path: str) -> bool:
@@ -492,9 +494,15 @@ def _search_command(args: dict, brave_key: str) -> str:
     # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
     target, msg = webfetch.search_spill(query)
     tdir = os.path.dirname(target) or "."
-    return (f"mkdir -p {_qbash(tdir)} && rm -f {_qbash(target)} 2>/dev/null; "
+    # NO `rm -f` and NO `chmod 444`: the harness sandbox (Codex) HARD-REJECTS `rm -f` ("rm -f style
+    # commands are not permitted"), which broke EVERY web_search — the model read the refusal as "the
+    # API has permission issues" and hallucinated an endpoint instead. The `rm -f` only existed to clear
+    # a prior read-only spill file so the rewrite could land; `>` already truncates a WRITABLE file, so
+    # dropping the 444 removes the need for it. The spill dir stays protected from edits by the dirguard
+    # (_under_spill_dir / spill_edit_refusal), not the FS bit.
+    return (f"mkdir -p {_qbash(tdir)} && "
             f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} && "
-            f"chmod 444 {_qbash(target)} && printf %s {_qbash(msg)}")
+            f"printf %s {_qbash(msg)}")
 
 
 def _external_refusal(name, args, fn, injected, level: str, workspace: str | None) -> str | None:
