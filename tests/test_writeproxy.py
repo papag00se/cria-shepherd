@@ -281,6 +281,22 @@ class WebTests(unittest.TestCase):
         self.assertIn("listing capped", cmd)
         self.assertIn(str(READ_INLINE_MAX), cmd)
 
+    def test_lowered_commands_avoid_sandbox_rejected_primitives(self):
+        # cria's OWN lowered commands must never use a destructive primitive a harness sandbox rejects
+        # (Codex hard-rejects `rm -f`), else EVERY use of that tool fails in the real harness while
+        # live_exec — which has NO sandbox — masks it. Regression guard for the web_search rm -f outage:
+        # a lowered command a harness runs must be built from safe primitives, harness-agnostically.
+        from cria.writeproxy import _search_command, _spill_command, _list_command
+        HOSTILE = ("rm -f", "rm -rf", "chmod ", " dd ", "mkfs", " mv ")
+        cmds = {
+            "web_search": _search_command({"query": "x"}, "KEY"),
+            "web_fetch spill": _spill_command("./tmp/read-only/x.json", "content", "msg"),
+            "list_dir": _list_command({"path": "some/dir"}),
+        }
+        for name, cmd in cmds.items():
+            for tok in HOSTILE:
+                self.assertNotIn(tok, cmd, f"{name}'s lowered command must not contain {tok!r} (sandbox-rejected)")
+
     def test_spill_relpath_redirects_only_the_root_absolute_form(self):
         from cria.writeproxy import _spill_relpath
         self.assertEqual(_spill_relpath("/tmp/read-only/api.json"), "./tmp/read-only/api.json")
