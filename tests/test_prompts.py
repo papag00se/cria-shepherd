@@ -53,6 +53,16 @@ class PromptAgnosticismTests(unittest.TestCase):
         # model-facing prompt: never leak the literal project name (only ⟦ctx:…⟧ markers are model-facing)
         self.assertNotIn("cria", p.lower())
 
+    def test_critics_do_not_treat_exit0_as_proof_it_works(self):
+        # Green-but-wrong (observed live): a resolver that 404s but CATCHES the error and exits 0 passed
+        # the gate (compile+lint exit 0) and the step critic marked it "runs successfully". Both critics
+        # must know exit-0/clean-compile is NOT proof the deliverable works; a printed runtime failure is.
+        for name in ("verify", "satisfaction"):
+            p = prompts.load(name)
+            self.assertIn("EXIT 0", p, name)          # the explicit guidance is present
+            low = p.lower()
+            self.assertTrue("parses" in low and ("4xx" in low or "runtime failure" in p.lower()), name)
+
     def test_stuck_detector_veto_sentinel_is_positive_not_a_negation(self):
         # A weak reasoner reasoning "the coder is NOT progressing / IS stuck" collapses a NEGATION
         # sentinel ("NOT_STUCK") into the trigger word and emits it for the WRONG reason, vetoing its
