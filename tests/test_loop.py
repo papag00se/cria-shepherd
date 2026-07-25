@@ -370,6 +370,17 @@ class StuckStepReplanTests(unittest.TestCase):
         self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # forward the tool call
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
 
+    def test_thrash_replan_fires_at_most_once_per_step_no_churn(self):
+        # ANTI-CHURN: re-deriving repeatedly on one step position churned the plan (a weak reasoner
+        # returns a different tail each call: 11→5→6→9). The one-shot flag stops it after ONE attempt.
+        from cria.loop import STEP_THRASH_REPLAN
+        loop = self._loop(_Scripted([_replan(["A", "B"])]))
+        sess = self._sess()
+        sess.thrash_replanned = True                      # already spent this step
+        sess.step_tool_calls = STEP_THRASH_REPLAN * 3     # well past the threshold
+        self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # no second re-derive
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
+
 
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}

@@ -220,6 +220,7 @@ class PlanSession(GuardState):
     compact_state: selfcompact.CompactState = field(default_factory=selfcompact.CompactState)  # mid-session rollup
     verify_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
+    thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -1133,6 +1134,7 @@ class Loop:
         sess.verify_fails = 0
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
+        sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
@@ -1210,14 +1212,16 @@ class Loop:
     def _replan_if_thrashing(self, sess: PlanSession, key: str, body: dict, idx: int, rlog) -> dict | None:
         """Tool-call-thrash sibling of the verify-fail re-derive: a coder can loop on tool calls for a
         whole step (write→exec→write…) WITHOUT ever signalling completion, so the verify-fail escape
-        never accrues. After STEP_THRASH_REPLAN acting turns on one step, ask the living-plan reasoner to
-        re-derive the not-done tail from ground truth — it may simplify an over-engineered step and
-        dissolve the loop. Returns a fresh re-drive when the plan MOVED, else None (forward normally, no
-        churn). Periodic so a productive-but-long step whose plan is unchanged isn't re-derived every turn."""
-        if (self._ctx.reasoner_role is None or sess.synthetic
-                or sess.step_tool_calls < STEP_THRASH_REPLAN
-                or sess.step_tool_calls % STEP_THRASH_REPLAN != 0):
+        never accrues. After STEP_THRASH_REPLAN acting turns on one step, ask the living-plan reasoner
+        ONCE to re-derive the not-done tail from ground truth — it may simplify an over-engineered step
+        and dissolve the loop. Fired at most ONCE per step-position (``thrash_replanned``, reset only on
+        ADVANCE): re-deriving REPEATEDLY churned the plan — a weak reasoner returns a different tail each
+        call (observed: step count oscillated 11→5→6→9), destabilising the coder. One grounded attempt,
+        then the normal guards/gate carry it. Returns a fresh re-drive when the plan MOVED, else None."""
+        if (self._ctx.reasoner_role is None or sess.synthetic or sess.thrash_replanned
+                or sess.step_tool_calls < STEP_THRASH_REPLAN):
             return None
+        sess.thrash_replanned = True   # spend the one-shot regardless of outcome — no re-derive churn
         before = [it.text for it in sess.plan.items if not it.done]
         self._replan_tail(sess, body, idx, rlog)   # same grounded re-derivation + fail-safes
         after = [it.text for it in sess.plan.items if not it.done]
