@@ -295,6 +295,25 @@ class LivingPlanTests(unittest.TestCase):
         self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # guess stripped, not hardened
         self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
 
+    def test_reassess_remaining_drops_a_shell_command_step(self):
+        # observed live: the re-derivation codified the coder's grep as step 1 — "grep -n 'resolve'
+        # ./tmp/.../openapi.json" — which the coder could not "complete", trapping the plan. Drop it.
+        from cria.loop import reassess_remaining
+        steps = reassess_remaining(
+            _Scripted([_replan(["grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json",
+                                "Write the resolver using the endpoint the spec names"])]),
+            self._role(), "resolve via api.handle.me", "- researched", "- old", "ev", _Rlog())
+        self.assertFalse(any(s.startswith("grep") for s in steps))
+        self.assertTrue(any("resolver" in s for s in steps))
+
+    def test_reassess_remaining_all_shell_noise_keeps_prior_plan(self):
+        from cria.loop import reassess_remaining
+        # a re-derivation that is ENTIRELY shell commands is malformed → None (keep the plan we had)
+        out = reassess_remaining(
+            _Scripted([_replan(["grep -n x f.json", "cat ./f.py"])]),
+            self._role(), "task", "- done", "- old", "ev", _Rlog())
+        self.assertIsNone(out)
+
     def test_reassess_remaining_coerces_dict_wrapped_steps(self):
         # a small model wraps each step in {"step": "..."} instead of a bare string — the step text must
         # be the field, NOT the dict repr "{'step': ...}" (the observed JSON-in-the-plan leak).

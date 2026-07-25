@@ -504,7 +504,7 @@ class PlumbingStepDropTests(unittest.TestCase):
         self.assertFalse(any("development environment" in t for t in texts))  # plumbing gone
         self.assertTrue(any("fib.py" in t for t in texts))                    # real work kept
         self.assertEqual(len(texts), 2)
-        self.assertTrue(any(k == "plan.plumbing_dropped" for k, _ in rlog.events))
+        self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
     def test_an_all_plumbing_plan_is_not_emptied(self):
         prov = _ScriptedProvider([_content_resp(
@@ -513,7 +513,24 @@ class PlumbingStepDropTests(unittest.TestCase):
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
             _msgs("do a thing"), rlog)
         self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
-        self.assertTrue(any(k == "plan.plumbing_all_kept" for k, _ in rlog.events))
+        self.assertTrue(any(k == "plan.noise_all_kept" for k, _ in rlog.events))
+
+    def test_bare_shell_command_step_is_dropped(self):
+        # a plan step that is a raw shell command ("grep -n 'resolve' spec.json") is a coder ACTION the
+        # re-derivation codified, not an outcome — the coder can't "complete" it. Drop it; keep outcomes.
+        from cria.planner import _is_shell_command_step
+        self.assertTrue(_is_shell_command_step("grep -n 'resolve' ./tmp/read-only/openapi.json"))
+        self.assertFalse(_is_shell_command_step("find the resolve endpoint in the fetched spec"))
+        prov = _ScriptedProvider([_content_resp(
+            "1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
+            "2. Write resolver.py that calls the endpoint the spec names\n"
+            "3. Add unit tests")])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("build a resolver"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertFalse(any(t.startswith("grep") for t in texts))   # the command-step is gone
+        self.assertTrue(any("resolver.py" in t for t in texts))      # real outcomes kept
 
 
 class ResearchFirstEnforcementTests(unittest.TestCase):

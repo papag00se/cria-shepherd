@@ -7,6 +7,6 @@ You are given: the task, the steps already COMPLETED, the coder's REAL tool acti
 - REMOVE a remaining step when the evidence shows its work is ALREADY DONE — the coder did it while doing an earlier step. A superfluous step left in place makes the coder redo or UNDO real work; that is the whole point of this pass.
 - Reword, reorder, split, or merge the remaining steps to match how the work actually went. Add a step only when the real work has surfaced a genuinely necessary one the plan is missing.
 - Do NOT invent requirements the task didn't ask for, and do NOT re-add already-completed work. When unsure whether a step is still needed, KEEP it.
-- Steps are concrete coder actions, short, in the order they should happen.
+- Steps are concrete, short OUTCOMES in the order they should happen — what to ACHIEVE, NOT the raw shell command that pursues it. Write "find the resolve endpoint in the fetched spec", never "grep -n 'resolve' spec.json"; a literal command is not a step (the coder chooses its own commands).
 
 Return ONLY JSON: {"steps": ["<next step>", "<the step after>", ...]} — the full refined remaining list, in order. Return [] ONLY when the evidence shows every remaining deliverable is already done.

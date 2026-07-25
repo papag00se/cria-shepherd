@@ -265,6 +265,25 @@ _RESEARCH_SIGNAL = re.compile(
     r"fetch (?:the |its )?(?:api|spec|docs|page|documentation))\b", re.I)
 
 
+# A plan step that is a bare SHELL COMMAND ("grep -n 'resolve' spec.json", "cat file", "sed -i ...")
+# rather than a task OUTCOME — the re-derivation codified a coder's low-level tool ACTION verbatim
+# instead of describing a goal (observed live: step 1 = "grep -n 'resolve' ./tmp/.../openapi.json", the
+# coder's own failed grep for a term the spec doesn't contain). The coder can't "complete" a grep-as-a-
+# step, so it traps the plan. Matched tight: a shell-utility name followed by a FLAG / quote / path /
+# pipe — so a prose step that merely STARTS with such a word ("find the resolve endpoint", "list the
+# fields") is NOT hit (the next token is a prose word, not a flag/path).
+_SHELL_STEP = re.compile(
+    r"^\s*(?:\$\s*)?(grep|sed|awk|cat|head|tail|find|ls|rm|rmdir|mkdir|cp|mv|chmod|chown|touch|xargs|"
+    r"wc|cut|tr|sort|uniq|diff|nl|tee|pwd|cd)\s+(-{1,2}\w|['\"]|[./~]|\|)", re.I)
+
+
+def _is_shell_command_step(step: str) -> bool:
+    """True when a step IS a bare shell command rather than a task outcome — a coder tool action the
+    re-derivation codified literally. Steps must be goals ("find the endpoint in the spec"), not the
+    command that pursues one ("grep -n ... spec.json"); a command-as-a-step can't be verified/completed."""
+    return bool(_SHELL_STEP.match(step))
+
+
 def _plan_has_research(steps: list[str]) -> bool:
     """True when some step already READS the external source (fetches the spec/docs) — so the coder
     learns the real endpoint before coding, per plan.txt's RESEARCH-FIRST rule."""
@@ -355,13 +374,13 @@ class Planner:
         # Drop pure environment-plumbing steps (setup/venv/install) the weak planner emits despite the
         # prompt forbidding them — they can't verify (the env is fixed / sandbox blocks apt-get+pip), so
         # they stall the plan on step 1. Never empty the plan: an all-plumbing plan is kept as-is.
-        kept = [s for s in scrubbed if not _is_plumbing_step(s)]
-        n_plumbing = len(scrubbed) - len(kept)
-        if n_plumbing and kept:
-            rlog.emit("plan.plumbing_dropped", count=n_plumbing, level="info")
+        kept = [s for s in scrubbed if not _is_plumbing_step(s) and not _is_shell_command_step(s)]
+        n_dropped = len(scrubbed) - len(kept)
+        if n_dropped and kept:
+            rlog.emit("plan.noise_dropped", count=n_dropped, level="info")  # plumbing / shell-command steps
             scrubbed = kept
-        elif n_plumbing:
-            rlog.emit("plan.plumbing_all_kept", count=n_plumbing, level="info")  # dropping would empty it
+        elif n_dropped:
+            rlog.emit("plan.noise_all_kept", count=n_dropped, level="info")  # dropping would empty it
         # RESEARCH-FIRST enforcement (ADDITIVE): the task names one API domain but NO step reads its real
         # source before code depends on it — plan.txt requires an early "fetch the spec" step, and a weak
         # planner that skips it bakes a guessed endpoint (a made-up path or the bare domain root) into a

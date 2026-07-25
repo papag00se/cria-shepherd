@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _clean_step, _extract_cwd, _scrub_invented_paths
+from .planner import _clean_step, _extract_cwd, _is_shell_command_step, _scrub_invented_paths
 from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
@@ -403,7 +403,14 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # gets in plan_for: a re-derivation grounded in the coder's FAILED work would otherwise codify its
     # guessed endpoint into an authoritative step (observed: a research step re-derived into "call
     # requests.get('<root>')" — the coder's guessed root — which the coder then shipped as a 404/403).
-    return [_scrub_invented_paths(c, task) for x in obj["steps"] if (c := _clean_step(x))]
+    # _is_shell_command_step drops a step the re-derivation codified as a bare coder COMMAND ("grep -n
+    # 'resolve' spec.json") rather than an outcome — a command-as-a-step can't be verified and traps the
+    # plan. An all-noise re-derivation → None (keep the prior plan), never an empty plan.
+    steps = [s for x in obj["steps"] if (c := _clean_step(x)) and not _is_shell_command_step(c)
+             and (s := _scrub_invented_paths(c, task))]
+    if not steps and obj["steps"]:
+        return None  # the re-derivation was all shell-command noise → keep the plan we had
+    return steps
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
