@@ -197,11 +197,19 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     drive deletions (plumbing, shell-command, baked-content, endpoint-guess). ``ask(system, user) -> str``
     is the caller's one-shot reasoner call. Reasoner-only, no fuzzy fallback: an answer with no step
     numbers (NONE, or anything unparseable) drops NOTHING — cria never deletes a step on a guess. Shared
-    by the initial plan (Planner.plan_for) and the living re-derivation (loop.reassess_remaining)."""
+    by the initial plan (Planner.plan_for) and the living re-derivation (loop.reassess_remaining).
+
+    STRICT parse — the answer must be a CLEAN verdict, never a digit scraped out of prose. A weak model
+    that wraps its verdict in reasoning ("steps 1 and 2 look fine; step 3 is plumbing") would otherwise
+    have EVERY number it mentions — including the ones it ENDORSES — read as a deletion, silently
+    dropping correct steps (principle #2: never delete correct content). So we honor only a bare number
+    list; a NONE / prose / mixed answer takes the safe null (drop nothing)."""
     if not steps:
         return set()
     plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-    ans = ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}")
+    ans = strip_think(ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "").strip()
+    if not re.fullmatch(r"[0-9][0-9,\s]*\.?", ans):   # not a pure number list → NONE/prose → drop nothing
+        return set()
     return {int(n) - 1 for n in re.findall(r"\d+", ans) if 0 <= int(n) - 1 < len(steps)}
 
 

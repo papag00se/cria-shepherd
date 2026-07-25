@@ -472,6 +472,20 @@ class NoiseStepDropTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
         self.assertTrue(any(k == "plan.noise_all_kept" for k, _ in rlog.events))
 
+    def test_prose_answer_never_over_deletes(self):
+        # H1: a weak model that wraps its verdict in prose ("steps 1 and 2 look fine; step 3 is
+        # plumbing") must NOT have every number it MENTIONS scraped as a deletion — that dropped the
+        # endorsed steps 1 and 2. Strict parse → a non-numeric answer drops NOTHING (safe null).
+        from cria.planner import reasoned_noise_indices
+        steps = ["Fetch the spec", "Write resolver", "Set up the venv", "Add tests"]
+        self.assertEqual(reasoned_noise_indices(
+            lambda s, u: "Steps 1 and 2 look fine; step 3 is plumbing.", "t", steps), set())  # prose → nothing
+        self.assertEqual(reasoned_noise_indices(lambda s, u: "The steps to remove are 3.", "t", steps), set())
+        # a CLEAN number list still acts, and NONE still drops nothing
+        self.assertEqual(reasoned_noise_indices(lambda s, u: "3", "t", steps), {2})
+        self.assertEqual(reasoned_noise_indices(lambda s, u: "1, 3", "t", steps), {0, 2})
+        self.assertEqual(reasoned_noise_indices(lambda s, u: "NONE", "t", steps), set())
+
     def test_NONE_answer_drops_nothing(self):
         prov = _ScriptedProvider([
             _content_resp('1. Write fib.py.\n2. Add tests.'),
