@@ -1,0 +1,1 @@
+the search backend returned an unparseable or empty response (it was likely rate-limited or a transient error, not a permissions problem). Do not treat this as an API contract detail — wait and retry the search, or take a different step.

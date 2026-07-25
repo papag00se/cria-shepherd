@@ -36,6 +36,14 @@ _PATH_TOKEN = re.compile(r"(?<![\w.:/])(?:~/|/(?!/))[^\s'\";|&><()`$*]*")
 _WRITE_VERB = re.compile(
     r"(?:^|[\s;&|(])(?:rm|mv|cp|dd|tee|mkdir|rmdir|touch|truncate|ln|chmod|chown|install|rsync)\b"
     r"|\bsed\s+-i\b|>>?(?![&\s]*&)", re.IGNORECASE)
+# A MUTATING command verb (write via the verb's operands) — _WRITE_VERB WITHOUT the `>>?` redirect. A
+# redirect writes to ITS target, checked per-token by _is_write_target; only the verb form needs a
+# whole-command scan (a `rm /external` mutates the external path). Splitting them stops a plain
+# `grep /etc/hosts > local.txt` — whose only write verb is the redirect to a LOCAL file — from being
+# false-refused as an external "write" (the redirect target is local; the external path is only read).
+_MUTATING_VERB = re.compile(
+    r"(?:^|[\s;&|(])(?:rm|mv|cp|dd|tee|mkdir|rmdir|touch|truncate|ln|chmod|chown|install|rsync)\b"
+    r"|\bsed\s+-i\b", re.IGNORECASE)
 
 # A command that makes a NETWORK request — a network URL scheme (even one built across a variable, the
 # literal scheme still appears in the command text) or a known HTTP client. In such a command the
@@ -115,18 +123,25 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
         return None
     network = bool(_NETWORK_CMD.search(command))
     external = None
+    ext_is_write = False
     for m in _PATH_TOKEN.finditer(command):
         tok = m.group(0)
         if not is_external(tok, workspace) or _exempt(tok):
             continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
-        if network and not _is_write_target(command, m.start()):
+        is_write = _is_write_target(command, m.start())
+        if network and not is_write:
             continue
         external = tok
+        ext_is_write = is_write
         break
     if external is None:
         return None
-    if level == "read" and not _WRITE_VERB.search(command):
+    # Under `read` level an external READ is allowed; refuse only when the EXTERNAL TOKEN ITSELF is a
+    # write target — NOT when any write verb appears elsewhere (`grep /etc/hosts > local.txt` reads the
+    # external file but writes LOCALLY, and must pass; the old whole-command _WRITE_VERB scan false-refused
+    # it as "Writing", also misnaming the action).
+    if level == "read" and not (ext_is_write or _MUTATING_VERB.search(command)):
         return None
     return _refusal("Writing/reading" if level == "none" else "Writing", external)

@@ -55,6 +55,13 @@ class CommandRefusalTests(unittest.TestCase):
         self.assertIsNone(dirguard.command_refusal("cat /etc/passwd", "read", WS))       # read OK
         self.assertTrue(dirguard.command_refusal("rm -rf /home/jesse/other", "read", WS))  # write refused
 
+    def test_read_allows_external_read_with_local_redirect(self):
+        # L12: an external READ piped to a LOCAL write (`grep /etc/hosts > local.txt`) must PASS under
+        # `read` — the old whole-command write-verb scan saw the `>` and false-refused it as "Writing"
+        # the external file, which it never touched. Only the external token being a write TARGET refuses.
+        self.assertIsNone(dirguard.command_refusal("grep pat /etc/hosts > local_results.txt", "read", WS))
+        self.assertTrue(dirguard.command_refusal("grep pat local.txt > /etc/config", "read", WS))  # external WRITE refused
+
     def test_workspace_and_relative_paths_pass(self):
         # the venv command: cd into the workspace + relative .venv + a flag (no EXPLICIT external path)
         cmd = f"cd {WS} && rm -rf .venv && python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e ."

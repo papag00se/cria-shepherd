@@ -229,7 +229,9 @@ class Upstream:
                     safety_override = refit  # re-prep tighter against the server's real count, retry
                     continue
                 rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-                raise UpstreamError(str(e)) from e
+                err = UpstreamError(str(e))
+                err.code = getattr(e, "code", None)  # carry the real HTTP status for classify_failure
+                raise err from e
 
     def _render_prompt(self, body: dict) -> str | None:
         """Ask the server to render the chat body into the flat prompt string the model actually
@@ -326,7 +328,8 @@ class Upstream:
                 break
             except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
                 action = failover.decide_action(
-                    failover.classify_failure(None, str(e)), "upstream", "upstream", ("upstream",), attempt)
+                    failover.classify_failure(getattr(e, "code", None), str(e)),  # real 429/408 status, not None
+                    "upstream", "upstream", ("upstream",), attempt)
                 if not isinstance(action, failover.RetrySame):
                     raise
                 attempt = action.attempt

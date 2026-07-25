@@ -38,6 +38,9 @@ class ClaudeResult:
     output_tokens: int
 
 
+_MAX_CLI_SESSIONS = 256  # bound the session->resume-id map on a long-lived server (evict oldest)
+
+
 class ClaudeCliProvider:
     def __init__(
         self,
@@ -64,8 +67,11 @@ class ClaudeCliProvider:
 
     def _invoke(self, body: dict, model: str, rlog) -> ClaudeResult:
         prompt = latest_user_text(body.get("messages", []))
-        session_key = getattr(rlog, "session", None) or "main"
-        resume = self._sessions.get(session_key)
+        # Session-scoped (#23): --resume ONLY with a REAL per-conversation id. Without one, a shared
+        # "main" key would fold unrelated sessionless conversations onto ONE Claude session and bleed
+        # context between them — so a None id starts a FRESH session, never a resume.
+        session_key = getattr(rlog, "session", None)
+        resume = self._sessions.get(session_key) if session_key else None
 
         args = [self._binary, "-p", prompt, "--model", model, "--output-format", "json"]
         if resume:
@@ -94,7 +100,9 @@ class ClaudeCliProvider:
             raise UpstreamError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()}")
 
         result = _parse_claude_json(proc.stdout, fallback_model=model)
-        if result.session_id:
+        if result.session_id and session_key:  # only a REAL id is remembered for a later --resume
+            if len(self._sessions) >= _MAX_CLI_SESSIONS:
+                self._sessions.pop(next(iter(self._sessions)), None)  # evict oldest — bound on a long-lived server
             self._sessions[session_key] = result.session_id
         rlog.emit(
             "claude.done",

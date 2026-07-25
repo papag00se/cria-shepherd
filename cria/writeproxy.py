@@ -531,9 +531,15 @@ def _search_command(args: dict, brave_key: str) -> str:
     # a prior read-only spill file so the rewrite could land; `>` already truncates a WRITABLE file, so
     # dropping the 444 removes the need for it. The spill dir stays protected from edits by the dirguard
     # (_under_spill_dir / spill_edit_refusal), not the FS bit.
+    # `|| printf <fallback>`: a rate-limited/HTML/empty body makes the parse (json.load) raise → the
+    # pipeline exits non-zero → without this the harness would record the raw PYTHON TRACEBACK as the
+    # model's web_search result (which it then reads as an API-permissions problem and hallucinates an
+    # endpoint). The `||` hands it a clean, model-facing "unparseable/transient — retry" line instead.
+    fallback = prompts.load("search_unparsable")
     return (f"mkdir -p {_qbash(tdir)} && "
-            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} && "
-            f"printf %s {_qbash(msg)}")
+            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} "
+            f"&& printf %s {_qbash(msg)} "
+            f"|| printf %s {_qbash(fallback)}")
 
 
 def _external_refusal(name, args, fn, injected, level: str, workspace: str | None) -> str | None:
@@ -790,7 +796,7 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
             content = str(m.get("content") or "")
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content)})
-            elif tid in write_paths and _WROTE in content:  # write/edit SUCCESS → clean confirmation
+            elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
                 out.append({**m, "content": prompts.render("write_confirm", path=write_paths[tid])})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which

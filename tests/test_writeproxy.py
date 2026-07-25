@@ -113,6 +113,12 @@ class TranslateWriteTests(unittest.TestCase):
         for failed in ("permission denied", "  ", ""):
             hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": failed}]
             self.assertEqual(represent_inbound(hist)[-1]["content"], failed)   # never fabricated success
+        # M11: a harness that ECHOES the command carries the token only INSIDE print('…'), NOT as a
+        # standalone stdout line — a FAILED write must not be reframed as "Wrote" just because the echoed
+        # heredoc source contains the token. Line-anchoring (== the token) distinguishes them.
+        echoed = f"os.replace failed\nprint('{_WROTE}')\nPermissionError: denied"
+        hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": echoed}]
+        self.assertEqual(represent_inbound(hist)[-1]["content"], echoed)   # untouched — the failure is shown
 
 
 class MalformedFusedCallTests(unittest.TestCase):
@@ -246,6 +252,11 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("rm -f", cmd)
         self.assertNotIn("chmod 444", cmd)
         self.assertIn("grep", cmd)                        # pointer tells the model to grep/line-read
+        # M12: on a rate-limited/HTML/empty body the parse (json.load) raises → without a fallback the raw
+        # Python TRACEBACK becomes the model's web_search result. The `|| printf <clean message>` hands it
+        # a model-facing "unparseable/transient — retry" line instead of the traceback.
+        self.assertIn("|| printf", cmd)
+        self.assertNotIn("Traceback", cmd)
 
     def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
         # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the

@@ -80,6 +80,17 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("--resume", lines[0])  # first call has no session yet
         self.assertIn("--resume S1", lines[1])  # second call resumes what the first returned
 
+    def test_sessionless_calls_never_resume_across_conversations(self):
+        # M15: without a real session id (rlog.session is None), the provider must NOT --resume — else
+        # two UNRELATED sessionless conversations would fold onto a shared "main" key and bleed context (#23).
+        p = ClaudeCliProvider(binary=self.binary)
+        p.chat({"model": "m", "messages": [{"role": "user", "content": "task A"}]}, _Rlog(session=None))
+        p.chat({"model": "m", "messages": [{"role": "user", "content": "task B"}]}, _Rlog(session=None))
+        lines = self._args_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertNotIn("--resume", lines[0])
+        self.assertNotIn("--resume", lines[1])  # the 2nd sessionless call must NOT resume the 1st's session
+
     def test_streaming_fake_streams_the_result(self):
         p = ClaudeCliProvider(binary=self.binary)
         chunks = list(p.stream_chat({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog()))
