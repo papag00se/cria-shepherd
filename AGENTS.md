@@ -21,6 +21,8 @@ derails on its own.
 - **Ground truth over judgment** — deterministic code GATHERS facts; a reasoner JUDGES. Verify by
   *doing* (cria runs its own read-only probes), not by reading the model's claim. Files alone are
   never signal. Surface every metric from the authoritative event, never a re-count or text-match.
+  Don't fear an extra reasoner call that grounds the next action — a purposeful call is cheap next to
+  the coder churn (re-fetches, failed edits, gate loops) it prevents.
 - **Never destroy information the model reads** — truncation is a footgun (any clip is an
   undetectable lie); the context floor is the ONE lossless window-fit point. Never cap output for
   latency. Never pollute the user's workspace.

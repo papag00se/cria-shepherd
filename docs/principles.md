@@ -113,7 +113,22 @@ can't. Every steer detector is a deterministic TRIGGER feeding one reasoned auth
 [`project_goal_fabliq_ada_handles`]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
 (pervasive "reasoner judges / code acts").
 
-### 9. Verify by doing, not by reading — cria makes its own read-only probes
+### 9. Don't fear an extra model call that prevents churn — a purposeful call is cheap next to a thrashing one
+**Rule.** When a deliberate reasoner call would ground the next action, make it — even mid-loop,
+even a second one in the same step. Optimize for fewer TOTAL model calls (purposeful + thrashing),
+not fewer *reasoner* calls. The cost of one purposeful call is tiny next to the coder churn it
+prevents: a re-fetched spec, a failed-edit cascade, a gate loop, a dozen wasted acting turns.
+**Why.** cria's entire reasoned-guidance posture spends cheap reasoner calls to spare expensive coder
+thrashing — a plan drafted up front, each step judged, a stuck loop authored from fresh ground truth,
+the re-derivation noise-judged with a second call. A weak model left to guess churns far more than the
+call would have cost. (Bounded by the anti-churn one-shot flags: a call that doesn't move the plan must
+not repeat — so "more calls" never means "the same call in a loop".)
+**Embodied.** the planner's up-front plan; per-step `_verify` + whole-task `judge_satisfaction`;
+`reasoned_noise_indices` (a deliberate 2nd reasoner call on every re-derivation); the reasoned steer
+author ([`project_unified_steer_author`] — one authored step per stuck detector); [`feedback_no_fallbacks`]
+(ask the reasoner a targeted question rather than guess with fuzzy code).
+
+### 10. Verify by doing, not by reading — cria makes its own read-only probes
 **Rule.** If cria can *act*, it gets ground truth on its own terms — it picks the command and
 the output format — rather than parsing the model's noisy claim. The syntax floor
 (`py_compile` / `node --check`) and the completion gate (run the tests on any "done" claim)
@@ -124,7 +139,7 @@ A probe cria runs is deterministic ground truth.
 [`heuristic-assists.md`](heuristic-assists.md), [`project_probe_gate_port`];
 `cria/loop.py`, `cria/proberun.py`, `cria/probegate.py`, `cria/groundtruth.py`.
 
-### 10. Files alone are NEVER signal — only a deterministic anomaly earns a reasoner call
+### 11. Files alone are NEVER signal — only a deterministic anomaly earns a reasoner call
 **Rule.** Read disk NOW (never the transcript's stale/truncated file view), and gate the
 reasoner call on a *repeated no-op or a dirty lint digest*. Invoking the reasoner merely
 because files exist makes it invent objections. A clean floor returns `None` — deliberately no
@@ -133,7 +148,7 @@ call.
 file view is exactly the truncated lie rule #5 exists to prevent.
 **Embodied.** `cria/groundtruth.py` (module docstring — "the load-bearing rule").
 
-### 11. Surface every metric from the authoritative EVENT — never a re-count or a text-match
+### 12. Surface every metric from the authoritative EVENT — never a re-count or a text-match
 **Rule.** Derive counts and signals from the structured event (`upstream.done`, the
 intervention emit sites, exit codes, tool-call args) — never by re-counting a finalized
 response or matching an English needle in prose.
@@ -147,7 +162,7 @@ number; keying on tool args instead of text also defeats plumbing jitter (`2>&1`
 
 ## D. Fail safe
 
-### 12. Fail closed on completion; fail open only toward "keep working"
+### 13. Fail closed on completion; fail open only toward "keep working"
 **Rule.** An undecidable judge means NOT done. A judge that can't judge must never strip real
 results. cria only ever fails *open* in the safe direction — regaining the ability to work, or
 continuing to drive — never toward a false "done."
@@ -157,7 +172,7 @@ missing ground truth** — an unparseable verdict treated as success.
 `docs/audits/2026-07-20-early-exit-anomaly-audit.md`; `cria/loop.py`, `cria/writeproxy.py`
 ("still fail-CLOSED").
 
-### 13. cria must NEVER end a session by handing back to a human
+### 14. cria must NEVER end a session by handing back to a human
 **Rule.** No human surfacing, no cloud/stronger-model escalation, no "it hit its ceiling."
 Any cria turn-end with no tool call reads as "done" to the harness — so cria must not end a
 red session at all. Churn-while-trying beats bailing. Re-add any terminator only with explicit
@@ -167,7 +182,7 @@ escalation the operator never authorized. The stall-terminator was deleted for e
 **Embodied.** [`project_9b_agentic_research_goal`], [`project_stall_terminator_removed_2026_07_19`],
 [`feedback_keep_going`]; `cria/loop.py` (the accept-and-advance cap was removed).
 
-### 14. Measure prevalence before building a heuristic
+### 15. Measure prevalence before building a heuristic
 **Rule.** Base-rate the signal across real `~/.cria/calls` captures before building a
 normalizer or detector for it. The "silently defeated 33%" often proves to be one replayed
 pathological event.
@@ -176,7 +191,7 @@ pathological event.
 **Embodied.** [`project_useless_prompting_sweep`], [`feedback_no_footgunning`],
 [`project_convergence_fixes_2026_07_18`].
 
-### 15. Assume cria caused it until proven otherwise — read what the model ACTUALLY received
+### 16. Assume cria caused it until proven otherwise — read what the model ACTUALLY received
 **Rule.** Before building machinery to fix a model's apparent mistake, correlate what was
 *sent* against what's *on disk*, and run the real tool. When a steer "doesn't work," inspect
 the delivered bytes — the loop can end up "fixing" a footgun cria itself introduced.
@@ -189,7 +204,7 @@ repeatedly).
 
 ## E. Stay invisible & stay agnostic
 
-### 16. The model never sees the literal token "cria"
+### 17. The model never sees the literal token "cria"
 **Rule.** Model-facing markers use the `⟦ctx:…⟧` namespace, never the proper noun "cria".
 `⟦cria⟧` (no colon) human-indicator notes are allowed but stripped before the model re-reads.
 Refusal text and every injected string obey this.
@@ -198,7 +213,7 @@ mechanism" instead of coding.
 **Embodied.** [`feedback_model_never_sees_cria`]; `cria/contextfloor.py`, `cria/indicators.py`
 (the strip contract), `cria/dirguard.py`.
 
-### 17. Harness-agnostic — manage context on cria's own side, for any harness
+### 18. Harness-agnostic — manage context on cria's own side, for any harness
 **Rule.** cria never depends on or prunes the harness's config, never shapes output for one
 harness's renderer, and matches tools by FAMILY (`SHELL_TOOL_NAMES`), not a literal name.
 Fixes land on cria's side and apply to every harness; the retired codex-local fork is a
@@ -208,7 +223,7 @@ harness; a harness-specific fix breaks that contract.
 **Embodied.** [`feedback_harness_agnostic`], [`project_agnostic_audit_2026_07_23`] (HARNESS
 lens), [`feedback_fixes_both_paths`]; `cria/toolmenu.py` (match by family), `cria/contextfloor.py`.
 
-### 18. Cross-model resilience is the mission — a model that breaks is a requirement
+### 19. Cross-model resilience is the mission — a model that breaks is a requirement
 **Rule.** Don't recommend the "best" model or bake behavior to how one model surfaces output.
 A model that breaks the harness is a resilience *requirement*, not grounds to drop it. Read a
 model's reasoning from either the dedicated channel *or* inlined content; match dialect tokens
@@ -219,7 +234,7 @@ finding one that happens to work.
 (MODEL lens — `_reasoning_of` content fallback; dialect-marker drift); `cria/reasoning.py`,
 `cria/massage.py`.
 
-### 19. De-overfit assists from the single dev task (the LANG / MODEL / HARNESS audit)
+### 20. De-overfit assists from the single dev task (the LANG / MODEL / HARNESS audit)
 **Rule.** cria was tuned for weeks against one prompt and one model; prompts and detectors
 must be generalized off "browse an API spec" and off one model's token dialect. Run the
 three-lens agnostic audit as a repeatable practice.
@@ -228,7 +243,7 @@ changes — the failure mode agnosticism exists to prevent.
 **Embodied.** [`project_agnostic_audit_2026_07_23`]; `tests/test_prompts.py`
 (`PromptAgnosticismTests`, dialect-marker sync invariants).
 
-### 20. A weak-model sentinel must be a POSITIVE token, never the negation of its trigger
+### 21. A weak-model sentinel must be a POSITIVE token, never the negation of its trigger
 **Rule.** A magic word the model must emit to veto its own rescue must not be reachable by
 negating its own reasoning. Use a positive state-judgment (`ON_TRACK`), never `NOT_STUCK`.
 **Why.** A reasoner that concluded "stuck" then emitted the negation sentinel `NOT_STUCK`,
@@ -241,12 +256,12 @@ lexical negation of the trigger.
 
 ## F. Conventions that hardened into rules
 
-### 21. Model-facing strings live in prompt files, never inline f-strings
+### 22. Model-facing strings live in prompt files, never inline f-strings
 Every string the model reads goes in `cria/prompts/*.txt` (via `prompts.load` / `render` /
 `load_map`) so it's tunable without a code change. Flagged by the operator repeatedly.
 [`feedback_prompts_in_files`].
 
-### 22. Architectural boundaries (stated as `## Principle:` in [`shephard.md`](shephard.md))
+### 23. Architectural boundaries (stated as `## Principle:` in [`shephard.md`](shephard.md))
 - **Owns no executors** — cria is a bidirectional transform on the tool-call stream; it never
   touches the workspace, and lowers rich tools (`write_file`, `web_fetch`) to the one primitive
   every harness runs (`shell`), re-presenting the result inbound.
