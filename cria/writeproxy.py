@@ -22,6 +22,7 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -440,13 +441,39 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     return f"printf %s {_qbash(result)}"
 
 
+_SPILL_STAGE = CRIA_HOME / "spill"  # cria's OWN dir — a large doc is staged here, then cp'd into the workspace
+
+
+def _stage_spill(content: str, target: str) -> str | None:
+    """Stage ``content`` in cria's OWN spill dir and return its absolute path, so the lowered command can
+    ``cp`` it into the workspace instead of EMBEDDING the whole doc as a shell argument. A big doc's
+    base64 in the argv overflows the harness's exec arg-length cap — Codex rejects it with "Argument
+    list too long (os error 7)", so the spec never lands on disk and the coder thrashes on research. The
+    cp command carries only paths. Returns None on any write failure -> caller falls back to the inline
+    printf (fine for a small doc). Bounded scratch; the workspace copy is what the model actually reads."""
+    try:
+        _SPILL_STAGE.mkdir(parents=True, exist_ok=True)
+        for old in sorted(_SPILL_STAGE.glob("*.dat"), key=lambda p: p.stat().st_mtime)[:-64]:
+            old.unlink(missing_ok=True)  # keep the dir bounded; these are pure staging copies
+        p = _SPILL_STAGE / (hashlib.sha1(target.encode("utf-8")).hexdigest()[:16] + ".dat")
+        p.write_text(content, encoding="utf-8")
+        return str(p)
+    except OSError:
+        return None
+
+
 def _spill_command(target: str, content: str, msg: str) -> str:
-    """Write ``content`` to ``target`` (base64-fed so any bytes survive), mkdir its parent, then print
-    the model-facing pointer message — the harness runs this and records the message as the tool result.
-    NOT ``chmod 444``: a read-only file can't be overwritten by ``>`` (a post-compaction re-fetch would
-    fail to re-spill), and clearing it would need the ``rm -f`` the Codex sandbox rejects — so the spill
-    dir is kept edit-protected by the dirguard (_under_spill_dir / spill_edit_refusal), not the FS bit."""
+    """Land ``content`` at ``target`` (in the workspace spill dir), then print the model-facing pointer
+    message — the harness runs this and records the message as the tool result. cria STAGES the doc in
+    its own dir and lowers a small ``cp`` (the doc is NOT in the argv, so a large spec can't overflow the
+    harness exec arg cap); the sentinel re-presents the whole command as web_fetch, so the model never
+    sees the cp or cria's path. Falls back to an inline base64 printf if staging fails. NOT ``chmod 444``:
+    a read-only file can't be overwritten by a re-spill, and clearing it would need the ``rm -f`` the
+    sandbox rejects — the spill dir is edit-protected by the dirguard, not the FS bit."""
     tdir = os.path.dirname(target) or "."
+    staged = _stage_spill(content, target)
+    if staged:
+        return f"mkdir -p {_qbash(tdir)} && cp {_qbash(staged)} {_qbash(target)} && printf %s {_qbash(msg)}"
     return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(_b64(content))} | base64 -d > {_qbash(target)} && "
             f"printf %s {_qbash(msg)}")
 

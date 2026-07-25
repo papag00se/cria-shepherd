@@ -208,9 +208,13 @@ class WebTests(unittest.TestCase):
             translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
             cmd = _lowered_cmd(comp)
             self.assertIn("mkdir -p", cmd)
-            self.assertIn("base64 -d > ", cmd)      # full doc written to disk
-            self.assertIn("./tmp/read-only/", cmd)  # dedicated read-only scratch dir
-            self.assertNotIn("chmod 444", cmd)      # NOT FS-read-only: `>` must be able to re-spill; dirguard protects
+            # the doc is STAGED in cria's dir + cp'd in — NOT embedded as base64 in the argv (a big spec's
+            # base64 overflows the harness exec arg cap: "Argument list too long"). The command stays tiny.
+            self.assertIn("cp ", cmd)
+            self.assertNotIn("base64 -d", cmd)
+            self.assertLess(len(cmd), len(body), "lowered spill command must not carry the doc bytes")
+            self.assertIn("./tmp/read-only/", cmd)  # dedicated read-only scratch dir (the target)
+            self.assertNotIn("chmod 444", cmd)      # NOT FS-read-only: a re-spill must overwrite; dirguard protects
             self.assertNotIn("rm -f", cmd)          # the Codex sandbox rejects `rm -f`
             self.assertIn("grep", cmd)              # pointer message tells the model how to read it
         finally:
