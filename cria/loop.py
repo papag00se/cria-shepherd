@@ -279,6 +279,16 @@ THRASH_STALL_CYCLES = 2
 # is in reach) which URL to read, then SUBSTITUTES a web_fetch for the search. The escape, done for it.
 SEARCH_STREAK_ESCALATE = 5
 
+# STUCK-STEP re-plan threshold. A step advances ONLY on a genuine pass — there is deliberately no
+# advance-on-unverified cap (real failing checks must be fixed, never skipped). But a MISCONCEIVED step
+# — a category-error or confused step the weak planner wrote whose CHECKS pass yet whose critic keeps
+# judging its INTENT unmet — can never be satisfied, so the coder re-nudges forever (observed live: a
+# "extract the JSON schema to obtain field VALUES" step looped 16 min). After this many consecutive
+# CRITIC verify-fails on one step (NOT gate/real-error fails), hand the living-plan reasoner the real
+# work done so it can RE-DERIVE that step from ground truth (or confirm the work already satisfies it).
+# Re-attempted every STUCK_STEP_REPLAN fails so a declining reasoner doesn't burn a call each turn.
+STUCK_STEP_REPLAN = 4
+
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
@@ -955,7 +965,7 @@ class Loop:
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
-        return self._renudge(sess, key, body, reason, rlog)
+        return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
     def _judge_search_reads(self, sess: PlanSession, body: dict, rlog) -> list[dict]:
         """When the model READS a spilled search-results file, judge whether what it's reading is relevant
@@ -1065,7 +1075,7 @@ class Loop:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
             rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
-            return self._renudge(sess, key, body, reason, rlog)
+            return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
         # TRUTH CAPTURE (ported): every gate run is auditable — a silent pass is not a pass.
         nudge = proberun.completion_block_nudge(outcome.report)
@@ -1096,7 +1106,7 @@ class Loop:
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
-        return self._renudge(sess, key, body, reason, rlog)
+        return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
         """Mark the current step VERIFIED (a step advances ONLY on a genuine pass — there is no
@@ -1163,6 +1173,26 @@ class Loop:
         harness turn (stopping the session) and render as an empty ⟦cria⟧ line."""
         sess.nudge_reason = reason
         return self._work(sess, key, body, rlog)
+
+    def _renudge_or_replan(self, sess: PlanSession, key: str, body: dict, reason: str,
+                           idx: int, rlog) -> dict:
+        """A CRITIC verify-fail (the step's checks are clean but its INTENT is judged unmet) — same as
+        _renudge, EXCEPT: when the SAME step has failed the critic STUCK_STEP_REPLAN times, the step may
+        be MISCONCEIVED (a confused/category-error step the planner wrote that no coder work can satisfy),
+        so re-nudging with the same reason loops forever. Give the living-plan reasoner one grounded shot
+        at re-deriving the not-done tail from the REAL work done: if it rewrites/drops the stuck step, we
+        re-drive fresh on the new current step; otherwise (declined/unchanged) we fall through to a normal
+        re-nudge. NEVER used on a gate/real-error fail — those must be FIXED, not re-derived away."""
+        if (self._ctx.reasoner_role is not None and not sess.synthetic
+                and sess.verify_fails >= STUCK_STEP_REPLAN and sess.verify_fails % STUCK_STEP_REPLAN == 0):
+            before = [it.text for it in sess.plan.items if not it.done]
+            self._replan_tail(sess, body, idx, rlog)   # grounded re-derivation; its own fail-safes apply
+            after = [it.text for it in sess.plan.items if not it.done]
+            if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
+                sess.verify_fails, sess.nudge_reason = 0, ""
+                rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after))
+                return self._work(sess, key, body, rlog)
+        return self._renudge(sess, key, body, reason, rlog)
 
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``

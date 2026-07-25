@@ -295,6 +295,64 @@ class LivingPlanTests(unittest.TestCase):
             self.assertNotIn("{", s)     # no dict repr leaked into the step text
 
 
+class StuckStepReplanTests(unittest.TestCase):
+    """A step advances ONLY on a genuine pass — no advance-on-unverified cap — so a MISCONCEIVED step (a
+    confused/category-error step the planner wrote whose checks pass but whose intent the critic keeps
+    judging unmet) re-nudges FOREVER (observed live: a step looped 16 min). After STUCK_STEP_REPLAN critic
+    fails, _renudge_or_replan hands the living-plan reasoner the real work done to RE-DERIVE the stuck tail.
+    Before the fix (plain _renudge), a stuck step's plan NEVER changed; after, it can."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _sess(self):
+        plan = Plan(id="x", task="build it", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified"),
+                           PlanItem("confused step 2"), PlanItem("step 3")])
+        return PlanSession(plan=plan)
+
+    def _loop(self, reasoner):
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)  # coder acts → _work forwards it, no verify churn
+        ctx.reasoner_role = self._role()
+        return Loop(ctx)
+
+    def test_below_threshold_does_not_replan(self):
+        from cria.loop import STUCK_STEP_REPLAN
+        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
+        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN - 1
+        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items],
+                         ["step 1", "confused step 2", "step 3"])   # untouched — just a re-nudge
+
+    def test_at_threshold_rederives_the_stuck_tail_and_resets(self):
+        from cria.loop import STUCK_STEP_REPLAN
+        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
+        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items],
+                         ["step 1", "rewritten step 2", "step 3"])  # stuck step re-derived from ground truth
+        self.assertEqual(sess.verify_fails, 0)                       # clean restart on the new step
+
+    def test_at_threshold_unchanged_plan_falls_through_to_renudge(self):
+        from cria.loop import STUCK_STEP_REPLAN
+        # reasoner re-derives the SAME remaining tail → no change → normal re-nudge (streak NOT reset)
+        loop = self._loop(_Scripted([_replan(["confused step 2", "step 3"])]))
+        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
+        self.assertEqual(sess.verify_fails, STUCK_STEP_REPLAN)       # not reset — the plan didn't move
+
+    def test_gate_real_error_fails_never_replan(self):
+        # the gate-fail path (real syntax/lint/test errors) uses plain _renudge, NOT _renudge_or_replan —
+        # a real failing check must be FIXED, never re-derived away. Prove the plain path leaves the plan.
+        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
+        sess = self._sess(); sess.verify_fails = 9
+        loop._renudge(sess, "k", _body(), "SyntaxError line 5", _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items],
+                         ["step 1", "confused step 2", "step 3"])   # gate errors never trigger a re-derive
+
+
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 
