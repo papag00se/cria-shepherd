@@ -321,34 +321,44 @@ class LivingPlanTests(unittest.TestCase):
         self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # speculative step dropped, not hardened
         self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
 
-    def test_reassess_reprepends_research_when_api_code_remains_unresearched(self):
-        # DURABILITY (shared enforce_research_first): the living plan must NOT silently DROP "read the real
-        # source" while a re-derived step still targets the API un-researched — this run guessed
-        # /resolve?handle= after re-derivation dropped the research step. Calls: re-derive, noise,
-        # api-host, research-satisfied(NO) → re-prepend.
+    def test_reassess_never_reprepends_a_research_step(self):
+        # The living re-derivation must NOT re-add a research step. Research-first is enforced ONCE at plan
+        # time and that step is PINNED so the re-derivation can't drop it (test_pending_pinned_research_step_
+        # survives_re_derivation). Re-prepending HERE instead relied on a reasoner judging "is research
+        # satisfied?" from a long evidence log on EVERY advance — a compound judgment a small model can't
+        # make reliably, so one wrong "not satisfied" re-added it over and over (observed: 3× → ~275 churning
+        # turns). Even though a re-derived step still targets the API and (were it asked) research would read
+        # "unsatisfied", reassess leaves the tail alone. The api-host/research-satisfied scripts below are the
+        # answers the OLD re-prepend path consumed — kept so this test FAILS on that path and PASSES now.
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
             _Scripted([_replan(["Call the api.handle.me endpoint and return the resolved address",
                                 "Add unit tests"]),
                        _text("NONE"),           # noise? none
-                       _text("api.handle.me"),  # which API host?
-                       _text("NO")]),           # research satisfied? NO → re-prepend
+                       _text("api.handle.me"),  # (old path) which API host?
+                       _text("NO")]),           # (old path) research satisfied? NO → would re-prepend
             self._role(), "resolve an Ada Handle via api.handle.me", "- some coder work", "- old", "ev", _Rlog())
-        self.assertIn("api.handle.me/openapi.json", steps[0])           # research step re-prepended FIRST
-        self.assertTrue(any("unit tests" in s for s in steps))         # real steps survive after it
-
-    def test_reassess_does_not_reprepend_once_research_is_satisfied(self):
-        # The EVIDENCE shows the coder already read the spec (research SATISFIED → YES), so the living plan
-        # must NOT re-prepend a research step on every advance — no churn.
-        from cria.loop import reassess_remaining
-        steps = reassess_remaining(
-            _Scripted([_replan(["Add unit tests", "Write the README"]),
-                       _text("NONE"),           # noise? none
-                       _text("api.handle.me"),  # which API host?
-                       _text("YES")]),          # research satisfied → NO re-prepend
-            self._role(), "resolve via api.handle.me", "- fetched the openapi spec", "- old", "ev", _Rlog())
-        self.assertNotIn("openapi.json", steps[0])   # no research step re-prepended
+        self.assertFalse(any("openapi.json" in s for s in steps))       # no research step re-prepended
+        self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive unchanged
         self.assertEqual(len(steps), 2)
+
+    def test_pending_pinned_research_step_survives_re_derivation(self):
+        # The cria-injected research-first step is PINNED. While it's still the pending current step, the
+        # stuck/thrash replan paths can fire and re-derive the not-done tail — but a pinned step is held OUT
+        # of the re-derivation and kept verbatim at the head, so the coder never loses "read the real source
+        # first" (dropping it is exactly how the shipped code guesses an endpoint). The scripted reasoner
+        # re-derives a tail that does NOT include research; the pin keeps it. Calls: re-derive, noise-judge.
+        loop = self._loop(_Scripted([_replan(["Write the resolver using the real endpoint", "Add unit tests"]),
+                                     _text("NONE")]))
+        plan = Plan(id="x", task="resolve via api.handle.me", created="c",
+                    items=[PlanItem("web_fetch api.handle.me/openapi.json and read the real endpoint", pinned=True),
+                           PlanItem("Write the resolver"), PlanItem("Add unit tests")])
+        sess = PlanSession(plan=plan)
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        texts = [it.text for it in sess.plan.items]
+        self.assertTrue(texts[0].startswith("web_fetch api.handle.me"))   # pinned research survives at head
+        self.assertTrue(sess.plan.items[0].pinned)                        # still pinned for future re-derivations
+        self.assertEqual(texts[1:], ["Write the resolver using the real endpoint", "Add unit tests"])
 
     def test_reassess_remaining_drops_a_shell_command_step(self):
         # observed live: the re-derivation codified the coder's grep as step 1 — "grep -n 'resolve'

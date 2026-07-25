@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _clean_step, _extract_cwd, enforce_research_first, reasoned_noise_indices
+from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
 from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
@@ -416,13 +416,14 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
     if not kept:
         return None
-    # DURABLE research-first (shared enforce_research_first, same as the initial plan): the living plan must
-    # NOT silently drop "read the real source" while a re-derived step still targets a guessed endpoint. The
-    # EVIDENCE lets it see the coder ALREADY read the spec, so it re-prepends only when research is genuinely
-    # still owed — never on every advance.
-    kept, domain = enforce_research_first(_ask, task, kept, evidence=evidence)
-    if domain:
-        rlog.emit("plan.research_reprepended", domain=domain, level="info")
+    # NO research-first re-prepend here. Research-first is enforced ONCE, at initial plan time
+    # (Planner.plan_for), and that step is PINNED so the living re-derivation can't drop or reword it while
+    # it's still pending (see _replan_tail's pinned hold-out). Re-prepending HERE instead relied on a
+    # reasoner judging "is research already satisfied?" from a long evidence log on EVERY advance — a
+    # compound, negatively-framed judgment a small model can't make reliably, so a single wrong "not
+    # satisfied" re-added research over and over (observed: the same step re-added 3× → ~275 churning turns
+    # re-doing research it already had). Pinning is ground truth (cria knows the step it injected); a
+    # per-advance re-prepend keyed on an unreliable judgment was just churn.
     return kept
 
 
@@ -1215,24 +1216,34 @@ class Loop:
         remaining = [it for it in sess.plan.items if not it.done]
         if not remaining:
             return
+        # A PINNED step (the cria-injected research-first step) that is still pending is held OUT of the
+        # re-derivation entirely and kept verbatim at the head of the not-done tail. This path also fires
+        # from the STUCK and THRASH replans, which can run while research is the current step — and letting
+        # the reasoner reword or drop it is exactly how the shipped code loses "read the real source first"
+        # and ships a guessed endpoint. This is ground truth (cria pinned the step it injected), not a
+        # per-advance reasoner judgment. Once research VERIFIES it becomes an immutable done_item anyway.
+        pinned = [it for it in remaining if it.pinned]
+        rederivable = [it for it in remaining if not it.pinned]
+        if not rederivable:  # nothing but the pinned research step remains — leave it to verify normally
+            return
         evidence = self._grounded_evidence(sess, body)
         tools = _coder_tools_summary(body.get("tools"))
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
             "\n".join(f"- {it.text}" for it in done_items),
-            "\n".join(f"- {it.text}" for it in remaining), evidence, rlog, coder_tools=tools)
+            "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools)
         if steps is None:  # declined / unparseable → keep the plan untouched
             return
-        if not steps:  # claims everything remaining is done — confirm before completing the plan
+        if not steps:  # claims the re-derivable tail is done — confirm before dropping it
             satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
                                               self._ctx.reasoner_role, rlog, coder_tools=tools)
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
                 rlog.emit("loop.replan_empty_declined", step=idx)
                 return
-        if [it.text for it in remaining] == steps:  # unchanged → no churn, no log
+        if [it.text for it in rederivable] == steps:  # unchanged → no churn, no log
             return
-        sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
-        rlog.emit("loop.replan", step=idx, before=len(remaining), after=len(steps))
+        sess.plan.items = done_items + pinned + [PlanItem(text=s) for s in steps]
+        rlog.emit("loop.replan", step=idx, before=len(rederivable), after=len(steps))
 
     def _renudge(self, sess: PlanSession, key: str, body: dict, reason: str, rlog) -> dict:
         """A step failed its check → re-drive the coder on THIS step with the concrete
@@ -1777,7 +1788,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "plan": {
             "id": sess.plan.id, "task": sess.plan.task, "created": sess.plan.created,
             "status": sess.plan.status,
-            "items": [{"text": it.text, "done": it.done, "note": it.note} for it in sess.plan.items],
+            "items": [{"text": it.text, "done": it.done, "note": it.note, "pinned": it.pinned}
+                      for it in sess.plan.items],
         },
         "summary": sess.summary,
         "prior_work": sess.prior_work,
@@ -1793,7 +1805,8 @@ def _session_from_dict(d) -> PlanSession | None:
         p = d["plan"]
         plan = Plan(id=str(p["id"]), task=str(p["task"]), created=str(p["created"]),
                     status=str(p.get("status", "in_progress")),
-                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"))
+                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"),
+                                    pinned=bool(it.get("pinned")))
                            for it in p["items"]])
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),

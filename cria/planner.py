@@ -353,20 +353,25 @@ class Planner:
             steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
-        # RESEARCH-FIRST enforcement (ADDITIVE + DURABLE): the task names an external API host but NO step
-        # reads its real source before code depends on it → prepend ONE grounded research step so the coder
-        # learns the real endpoint + fields first (never deletes/rewrites one; the URL is the NAMED host's
-        # standard discovery path). The SAME enforce_research_first also runs in loop.reassess_remaining, so
-        # the living plan can't silently drop it while the code still targets a guessed endpoint.
+        # RESEARCH-FIRST enforcement (ADDITIVE): the task names an external API host but NO step reads its
+        # real source before code depends on it → prepend ONE grounded research step so the coder learns the
+        # real endpoint + fields first (never deletes/rewrites one; the URL is the NAMED host's standard
+        # discovery path). Enforced ONCE, here — the prepended step is PINNED (below) so the living plan's
+        # re-derivation (loop.reassess_remaining / _replan_tail) can't drop or reword it while it's still
+        # pending, which is durability WITHOUT the per-advance re-prepend that churned.
+        domain = ""
         if self._role is not None:
             steps, domain = enforce_research_first(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
             if domain:
                 rlog.emit("plan.research_prepended", domain=domain, level="info")
+        items = [PlanItem(text=s) for s in steps]
+        if domain and items:  # enforce_research_first prepends the research step at index 0 → PIN it
+            items[0].pinned = True
         plan = Plan(
             id=self._new_id(key),
             task=task,
             created=self._clock().isoformat(timespec="seconds"),
-            items=[PlanItem(text=s) for s in steps],
+            items=items,
         )
         rlog.emit("plan.drafted", id=plan.id, steps=len(steps))
         return plan
