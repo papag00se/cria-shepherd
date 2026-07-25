@@ -296,8 +296,16 @@ execution-based writeproxy/heredoc tests, the prompt-agnosticism invariants).
 2. ✅ **H1** — strict-parse the noise judge (my digit-scrape regression). *Done `d4d993d`.*
 3. ✅ **L6, L7, L8, L9, L2, L4, L11, L15** — trivial safe wins. *Done `dad04da`.*
 4. ✅ **H2 + M1 + M2** — the plan-ON parity sweep. *Done `e39426d`.*
-5. **H4** — route gate rendering through the parser (removes a model-facing footgun). *Needs the `gate_plan`
-   threaded through `clean_gate_results` + its 4 call sites — a moderate refactor.*
+5. **H4** — route gate rendering through the parser. **DEFERRED** (attempted + reverted 2026-07-25): the
+   simple in-place fix (`parse_output(family='')` per section) regresses pytest rendering — `family=''`
+   misses pytest `FAILED …` short-summary lines, and `family='pytest'` is only an accidental superset that
+   mishandles non-Python ecosystems. Done right it needs the `gate_plan` threaded through
+   `clean_gate_results` + its 4 loop.py call sites so each section gets its EXACT family (with a
+   content-sniff / generic fallback for historical sections whose plan is no longer in hand). Lowest
+   real-world impact of the HIGHs — the model ALSO receives the *distilled* rendering via
+   `completion_block_nudge`; `clean_gate_output` is a noisier duplicate. The existing `clean_gate_output`
+   tests also use a non-real pyflakes fixture (no `:` after the column) and want realignment as part of
+   this. *Do as a focused, separately-tested change.*
 6. ~~**H3** — failover~~ **RETRACTED** (see H3 above): the failover mechanism is live; the cross-role
    runtime-walk is a documented deferral, not a bug. No action.
 7. **M-tier** by cluster (M6/M7 fuzzy fixes and M18 anchor-protection next).
