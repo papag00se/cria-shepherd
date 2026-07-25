@@ -54,11 +54,17 @@ _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_edit
                      "create_file", "text_editor")
 
 # Anchors the floor must NOT silently trim: the completion-briefing envelope a follow-up re-reads
-# FROM history, cria's ground-truth gate output the coder must read to fix a step, and the
-# synthesized-state note that stands in for dropped turns. Literals mirror loop.BRIEFING_OPEN /
-# probegate.SECTION_PREFIX — contextfloor is low-level and imports neither (avoids a cycle); a test
-# asserts they stay in sync.
-_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK)
+# FROM history, cria's ground-truth gate output the coder must read to fix a step, the synthesized-state
+# note that stands in for dropped turns, and — crucially — self-compaction's OWN preservation anchors:
+# the pinned north-star task (⟦ctx:task⟧) and the rolling summary (⟦ctx:rollup⟧) it emits are role:"user"
+# turns OUTSIDE the last-user active span, so without this they read as the oldest droppable turns and
+# the floor deletes the very things selfcompact ran to preserve (re-digesting the rollup into a
+# summary-of-a-summary — the task-inversion selfcompact exists to prevent). Plus the ⟦ctx:continuation⟧
+# reframe lead. Literals mirror loop.BRIEFING_OPEN / probegate.SECTION_PREFIX / selfcompact.SUMMARY_MARKER
+# / selfcompact.TASK_MARKER / loop.CONTINUATION_MARKER — contextfloor is low-level and imports none (avoids
+# a cycle); a test asserts they stay in sync.
+_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK,
+                    "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:continuation⟧")
 
 
 def _has_protect_marker(m: dict) -> bool:

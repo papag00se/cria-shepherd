@@ -32,10 +32,16 @@ def _fat_tools(n, desc_len):
 
 class TestAnchorProtection(unittest.TestCase):
     def test_markers_stay_in_sync_with_their_sources(self):
-        from cria.loop import BRIEFING_OPEN
+        from cria.loop import BRIEFING_OPEN, CONTINUATION_MARKER
         from cria.probegate import SECTION_PREFIX
+        from cria.selfcompact import SUMMARY_MARKER, TASK_MARKER
         self.assertIn(BRIEFING_OPEN, contextfloor._PROTECT_MARKERS)
         self.assertIn(SECTION_PREFIX, contextfloor._PROTECT_MARKERS)
+        # selfcompact's OWN preservation anchors must be floor-protected too — else the floor drops the
+        # pinned task + rolling summary selfcompact ran to preserve (the confirmed north-star loss).
+        self.assertIn(SUMMARY_MARKER, contextfloor._PROTECT_MARKERS)
+        self.assertIn(TASK_MARKER, contextfloor._PROTECT_MARKERS)
+        self.assertIn(CONTINUATION_MARKER, contextfloor._PROTECT_MARKERS)
 
     def test_briefing_survives_drop_oldest(self):
         # a huge history over budget: the ⟦ctx:briefing⟧ anchor must NOT be dropped, so a follow-up

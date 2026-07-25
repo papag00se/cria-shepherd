@@ -344,4 +344,18 @@ def _looks_like_code(s: str) -> bool:
     if not non_space:
         return False
     symbols = sum(1 for c in non_space if c in "{}()[]<>=;+*/\\|&%$#@`~")
-    return symbols * 100 // len(non_space) >= 12
+    if symbols * 100 // len(non_space) >= 12:
+        return True
+    # PER-LINE fallback: the AGGREGATE ratios above are fooled by a comment/docstring-DOMINANT source
+    # file — a few code lines drowned in prose comments scores as prose, and the stripper then eats its
+    # keywords (the confirmed corruption of a model-read file). A single line that structurally reads as
+    # code protects the whole blob. Biased to protect: over-detecting code only skips a lossy reduction;
+    # under-detecting corrupts the model's authoritative read (never-truncate).
+    for ln in lines:
+        t = ln.rstrip()
+        if t.endswith(("{", "}", ";")):        # block terminators are ~never line-final in prose
+            return True
+        ns = [c for c in t if not c.isspace()]  # a symbol-dense single line, e.g. "def go(items):"
+        if ns and sum(1 for c in ns if c in "{}()[]<>=;+*/\\|&%$#@`~") * 100 // len(ns) >= 12:
+            return True
+    return False

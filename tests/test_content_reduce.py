@@ -31,6 +31,24 @@ class ContentReduceTests(unittest.TestCase):
         self.assertIn("for item in items", out)
         self.assertIn("is not None", out)
 
+    def test_comment_dominant_source_is_not_keyword_stripped(self):
+        # H6: a source file DOMINATED by docstrings/comments (few code lines) scores as prose on the
+        # AGGREGATE ratios, so the old gate ran the stripper and destroyed `for item in items` /
+        # `is not None` in the model's authoritative read. A single structurally-code line must protect
+        # the whole blob. Fails before the per-line fallback in _looks_like_code; passes after.
+        src = ("# This module resolves handles.\n"
+               "# It calls the API and returns the address for the caller.\n"
+               "# The following helper iterates the items and checks each one carefully as it goes.\n"
+               '"""Resolve an Ada Handle to its Cardano address using the public API endpoint here."""\n'
+               "def go(items):\n"
+               "    for item in items:\n"
+               "        if item is not None:\n"
+               "            yield item\n")
+        out = content_reduce(src, None, cap_tokens=10)  # cap far below size → reduction attempted
+        self.assertEqual(out, src)                 # comment-dominant code left byte-intact
+        self.assertIn("for item in items", out)
+        self.assertIn("is not None", out)
+
     def test_prose_over_cap_is_still_stripped(self):
         # Genuine prose must STILL compress — the gate mustn't over-refuse.
         prose = ("The service resolves an incoming request to the correct handler and returns "
