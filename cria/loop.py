@@ -39,7 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
-from . import searchloop
+from . import searchloop, webfetch
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
@@ -379,6 +379,20 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
     return (obj.get("query_on_target") is not False,
             obj.get("results_on_target") is not False,
             str(obj.get("recommended_query") or "").strip())
+
+
+def _research_facts_obtained(evidence: str, domain: str) -> bool:
+    """GROUND TRUTH that a named-source research step is satisfied: the coder web_fetched the source AND
+    cria itself surfaced its real endpoint routes / response fields (cria's OWN spec-surface markers,
+    emitted only when it parsed a real spec-shaped doc) for that host. Those facts are then in a `->`
+    result — which IS the research step's whole goal — so completion must NOT hinge on the weak critic
+    re-judging a fetch-churn-polluted evidence log (observed live: 189 step-1 re-drives on a spec whose
+    endpoint + fields sat in the evidence the entire time). Deterministic: cria authored the markers, so
+    this reads a real fact it produced, not a judgment. Only the SPEC case (one example) — non-spec
+    research (a docs page, a --help) has no such marker and still goes to the critic."""
+    if not (domain and evidence) or domain not in evidence:
+        return False
+    return webfetch.ROUTES_MARKER in evidence or webfetch.SHAPE_MARKER in evidence
 
 
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
@@ -1012,7 +1026,8 @@ class Loop:
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")))
+                                  coder_tools=_coder_tools_summary(body.get("tools")),
+                                  research_domain=self._research_domain_for(sess, item))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1128,7 +1143,8 @@ class Loop:
             digest = prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                      coder_tools=_coder_tools_summary(body.get("tools")))
+                                      coder_tools=_coder_tools_summary(body.get("tools")),
+                                      research_domain=self._research_domain_for(sess, item))
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -1168,7 +1184,8 @@ class Loop:
         digest = proberun.completion_probe_digest(outcome.report)
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs
+                                  coder_tools=_coder_tools_summary(body.get("tools")),  # grounded in the coder's own runs
+                                  research_domain=self._research_domain_for(sess, item))
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1332,8 +1349,30 @@ class Loop:
             return log
         return (log + "\n\n" + facts) if log else facts
 
+    def _research_domain_for(self, sess: "PlanSession", item) -> str:
+        """The task's literal API host WHEN ``item`` is the pinned research step, else "" — the gate for
+        _verify's ground-truth research fast-path. Deterministic (searchloop.task_api_domain, the same
+        literal-host extractor that pinned the step); only the pinned research-first step can shortcut the
+        critic, never an ordinary step that merely happens to run after a spec was fetched."""
+        return searchloop.task_api_domain(sess.plan.task) if getattr(item, "pinned", False) else ""
+
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
-                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "") -> tuple[bool, str]:
+                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
+                research_domain: str = "") -> tuple[bool, str]:
+        # GROUND-TRUTH fast-path for the PINNED named-source research step (caller passes research_domain
+        # only then): if cria itself surfaced the source's real endpoint routes / response fields from the
+        # coder's web_fetch, the facts ARE obtained — that IS this step's whole goal — so don't route it to
+        # the weak critic, which false-negatives a research step buried in fetch-churn and traps the coder
+        # re-researching a spec it already has (observed live: 189 step-1 re-drives). Deterministic: keyed
+        # off cria's own markers in the real evidence, per "if the model extracted the info with a tool
+        # call, that fulfills the research task."
+        if research_domain and _research_facts_obtained(evidence, research_domain):
+            rlog.emit("loop.research_satisfied_groundtruth", domain=research_domain, level="info")
+            _dump_verify(self._run_dir(rlog), key, idx, total, item,
+                         "(ground-truth research fast-path — source fetched; cria surfaced its real "
+                         "endpoint routes/response fields, which ARE the step's goal)", evidence, True, "",
+                         response="")
+            return True, ""
         # System instruction: cria/prompts/verify.txt. User message (the step + real
         # ground truth): assembled from the labels in cria/prompts/verify_user.txt.
         system = prompts.load("verify")

@@ -396,6 +396,61 @@ class LivingPlanTests(unittest.TestCase):
             self.assertNotIn("{", s)     # no dict repr leaked into the step text
 
 
+class ResearchGroundTruthTests(unittest.TestCase):
+    """A pinned named-source research step is satisfied by GROUND TRUTH — cria's own surfaced spec routes/
+    fields in the evidence — not by the weak critic, which false-negatived such a step 189× in a row while
+    the endpoint + fields sat in its own input (a spec fetched, spilled, and outlined turn one)."""
+
+    def _evidence_with_markers(self):
+        from cria import webfetch
+        return ('$ web_fetch {"url":"https://api.handle.me/openapi.json"}\n'
+                '  -> HTTP 200 OK · https://api.handle.me/openapi.json\n'
+                f'     {webfetch.ROUTES_MARKER}33): /handles/{{handle}}, /holders/{{address}}]\n'
+                f'     {webfetch.SHAPE_MARKER} GET /handles/{{handle}} → holder, resolved_addresses{{ada, eth, btc}}]')
+
+    def test_research_facts_obtained_reads_crias_own_markers(self):
+        from cria.loop import _research_facts_obtained
+        ev = self._evidence_with_markers()
+        self.assertTrue(_research_facts_obtained(ev, "api.handle.me"))       # marker + host present → obtained
+        self.assertFalse(_research_facts_obtained(ev, "other.example.com"))  # marker but not THIS host → no
+        self.assertFalse(_research_facts_obtained("only web_search titles, no fetch", "api.handle.me"))  # no marker
+        self.assertFalse(_research_facts_obtained(ev, ""))                   # no domain → no
+
+    def test_verify_research_step_fast_path_skips_the_weak_critic(self):
+        # fails-before: research_domain param + fast-path don't exist → the scripted NOT-done critic is
+        # consulted and _verify returns False. passes-after: the ground-truth fast-path returns True and the
+        # critic is never called.
+        critic = _Scripted([_verdict(False, "hasn't extracted the fields from the spec")])
+        loop = Loop(_ctx(_Scripted([]), critic))
+        ok, reason = loop._verify("web_fetch api.handle.me and read its real endpoint/fields",
+                                  "fetched the spec", "", self._evidence_with_markers(), _Rlog(),
+                                  research_domain="api.handle.me")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+        self.assertEqual(critic.calls, 0)     # the weak critic was NOT consulted — ground truth decided it
+
+    def test_verify_research_fast_path_requires_the_surfaced_markers(self):
+        # No over-firing: the same pinned step WITHOUT cria's surfaced markers (only a web_search, no real
+        # spec parsed) does NOT shortcut — it goes to the critic like any other step.
+        critic = _Scripted([_verdict(False, "only searched; never read the real source")])
+        loop = Loop(_ctx(_Scripted([]), critic))
+        ev = '$ web_search {"query":"ada handles api"}\n  -> result titles, no spec fetched'
+        ok, _ = loop._verify("web_fetch api.handle.me and read its real endpoint/fields",
+                             "searched", "", ev, _Rlog(), research_domain="api.handle.me")
+        self.assertFalse(ok)
+        self.assertEqual(critic.calls, 1)     # markers absent → the critic judged it, as before
+
+    def test_verify_non_research_step_never_shortcuts(self):
+        # A NON-pinned step (research_domain "") is never shortcut even if a spec marker is in the evidence —
+        # only the pinned research-first step can bypass the critic.
+        critic = _Scripted([_verdict(False, "resolver not written yet")])
+        loop = Loop(_ctx(_Scripted([]), critic))
+        ok, _ = loop._verify("write the resolver", "wrote it", "", self._evidence_with_markers(), _Rlog(),
+                             research_domain="")
+        self.assertFalse(ok)
+        self.assertEqual(critic.calls, 1)     # ordinary step → critic judged it
+
+
 class GroundedEvidenceTests(unittest.TestCase):
     """The step critic (and the re-derivation) must judge on the DURABLE fetched-page facts, not just the
     recent compaction-shrunk work log — else a research step ("examine the spec") is judged NOT-done

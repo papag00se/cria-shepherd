@@ -52,6 +52,14 @@ DOC_CACHE_CAP = 32                   # per-URL reduced-doc cache bound (DOC_CACH
 FIND_TOP_K = 3                       # best-N find matches returned (FIND_TOP_K)
 GUESS_STREAK_THRESHOLD = 3           # consecutive non-2xx before the stop-guessing nudge
 
+# cria-authored markers that lead a surfaced spec's real ROUTES / RESPONSE FIELDS. Emitted ONLY when a
+# fetched doc parsed as a spec-shaped object (real endpoint paths found) — so their presence in an
+# evidence log is GROUND TRUTH that the coder web_fetched a real API source and its actual endpoints +
+# field names are now in a `->` result. loop._research_facts_obtained keys the research-step fast-path
+# off these (a named constant, shared, so the two are never a magic string that drifts out of sync).
+ROUTES_MARKER = "[API endpoints ("   # ...N): /a, /b, ...]
+SHAPE_MARKER = "[response shape —"   # ...the fields each endpoint RETURNS: GET /x → f1, f2{a,b}, ...]
+
 # Human-readable form of the body cap, for the truncation disclosure (so the model knows the
 # fetched doc was cut at a real boundary and content remains beyond it — not a silent slice).
 _BODY_CAP_LABEL = (f"{MAX_BODY_BYTES // (1024 * 1024)} MB" if MAX_BODY_BYTES >= 1024 * 1024
@@ -377,9 +385,9 @@ def _spill_outline(parsed: Any, target: str) -> str:
     routes = _endpoint_routes(parsed)
     if routes:
         shapes = _endpoint_response_fields(parsed)
-        shape_block = ("[response shape — the fields each endpoint RETURNS (extract these; don't guess "
+        shape_block = (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
                        "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
-        return (f'[API endpoints ({len(routes)}): {", ".join(routes)}]\n'
+        return (f'{ROUTES_MARKER}{len(routes)}): {", ".join(routes)}]\n'
                 f'{shape_block}'
                 f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
     keys = [k for k in top_level_keys(parsed) if k != "[array]"]
@@ -571,10 +579,10 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
         # mostly `/`-paths), so it works for OpenAPI and any spec dialect, keyed off real bytes.
         routes = _endpoint_routes(parsed)
         if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
-            head += f"[API endpoints ({len(routes)}): {', '.join(routes)}]\n"
+            head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
             shapes = _endpoint_response_fields(parsed)
             if shapes:  # the response FIELDS (dereferenced) — so the model extracts real names, not guesses
-                head += ("[response shape — the fields each endpoint RETURNS (extract these; don't guess "
+                head += (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
                          "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
             head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
