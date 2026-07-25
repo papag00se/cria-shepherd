@@ -300,6 +300,72 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     return status, target, content, msg
 
 
+def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> list[str]:
+    """Top-level property names of an OpenAPI object schema, dereferencing a ``$ref`` into
+    ``components/schemas``. A nested object is expanded ONE level (``resolved_addresses{ada, eth, btc}``)
+    so the model sees the real nesting it otherwise guesses; an array field is marked ``[]``."""
+    if isinstance(sch, dict) and "$ref" in sch:
+        sch = schemas.get(str(sch["$ref"]).rsplit("/", 1)[-1], {})
+    if not isinstance(sch, dict):
+        return []
+    props = sch.get("properties")
+    if not isinstance(props, dict):
+        return []
+    out = []
+    for k, v in list(props.items())[:max_fields]:
+        v = v if isinstance(v, dict) else {}
+        if _depth == 0 and (v.get("type") == "object" or "properties" in v or "$ref" in v):
+            sub = _schema_field_summary(v, schemas, 8, _depth + 1)
+            out.append(f"{k}{{{', '.join(sub[:8])}}}" if sub else f"{k}(object)")
+        elif v.get("type") == "array":
+            out.append(f"{k}[]")
+        else:
+            out.append(str(k))
+    return out
+
+
+def _endpoint_response_fields(parsed: Any, max_endpoints: int = 10, max_fields: int = 30) -> list[str]:
+    """For an OpenAPI-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through the
+    response schema's ``$ref`` into ``components/schemas`` — so a coder knows WHAT an endpoint returns
+    (the exact field names to extract, plus one level of nesting), not just WHERE to call. The recurring
+    last-mile bug is a coder that has the right endpoint but GUESSES the response shape (a ``{"handles":[…]}``
+    wrapper, a singular ``resolved_address``, a ``holder.address`` that's really a bare ``holder``) because
+    the response schema is a ``$ref`` it never followed. Shape-detected (needs ``paths``), bounded, and
+    empty for a non-spec doc so nothing is invented. Lines like ``GET /handles/{handle} → holder,
+    resolved_addresses{ada, eth, btc}, …``."""
+    if not isinstance(parsed, dict):
+        return []
+    paths = parsed.get("paths")
+    if not isinstance(paths, dict):
+        return []
+    schemas = (parsed.get("components") or {}).get("schemas") or {}
+    if not isinstance(schemas, dict):
+        schemas = {}
+    lines: list[str] = []
+    for path, ops in paths.items():
+        if len(lines) >= max_endpoints:
+            break
+        if not isinstance(ops, dict):
+            continue
+        for method, op in ops.items():
+            if not isinstance(op, dict):
+                continue
+            resp = op.get("responses") if isinstance(op.get("responses"), dict) else {}
+            r = resp.get("200") or resp.get("201") or resp.get("default")
+            content = r.get("content") if isinstance(r, dict) else None
+            schema = None
+            if isinstance(content, dict):
+                for v in content.values():
+                    if isinstance(v, dict):
+                        schema = v.get("schema")
+                        break
+            fields = _schema_field_summary(schema, schemas, max_fields)
+            if fields:
+                lines.append(f"{str(method).upper()} {path} → {', '.join(fields)}")
+                break  # one method per path is enough for the shape hint
+    return lines
+
+
 def _spill_outline(parsed: Any, target: str) -> str:
     """A navigation outline for a SPILLED structured doc (JSON or YAML — both parse to ``parsed``): the
     API routes when it's spec-shaped, else the top-level keys — so the model greps straight to what it
@@ -310,7 +376,11 @@ def _spill_outline(parsed: Any, target: str) -> str:
     with a newline when non-empty; "" when the doc has no walkable structure (an HTML/text spill)."""
     routes = _endpoint_routes(parsed)
     if routes:
+        shapes = _endpoint_response_fields(parsed)
+        shape_block = ("[response shape — the fields each endpoint RETURNS (extract these; don't guess "
+                       "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
         return (f'[API endpoints ({len(routes)}): {", ".join(routes)}]\n'
+                f'{shape_block}'
                 f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
     keys = [k for k in top_level_keys(parsed) if k != "[array]"]
     if keys:
@@ -501,8 +571,12 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
         # mostly `/`-paths), so it works for OpenAPI and any spec dialect, keyed off real bytes.
         routes = _endpoint_routes(parsed)
         if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
-            head += (f"[API endpoints ({len(routes)}): {', '.join(routes)}]\n"
-                     f'[web_fetch find="<path>" for one endpoint\'s request/response detail]\n')
+            head += f"[API endpoints ({len(routes)}): {', '.join(routes)}]\n"
+            shapes = _endpoint_response_fields(parsed)
+            if shapes:  # the response FIELDS (dereferenced) — so the model extracts real names, not guesses
+                head += ("[response shape — the fields each endpoint RETURNS (extract these; don't guess "
+                         "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
+            head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '

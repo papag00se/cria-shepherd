@@ -323,6 +323,37 @@ class FetchNavSeedTests(unittest.TestCase):
         self.assertNotIn('grep -n "/"', msg)                 # no degenerate example
         self.assertNotIn("<keyword>", msg)
 
+    def test_spill_outline_surfaces_dereferenced_response_fields(self):
+        # The recurring last-mile bug: the coder has the right endpoint but GUESSES the response shape
+        # (a wrapper, a singular field, wrong nesting) because the response schema is a $ref it never
+        # follows. cria now dereferences the $ref and surfaces the REAL fields incl. one level of nesting.
+        pad = "x" * (wf.OVERSIZE_CHARS + 500)
+        spec = {
+            "openapi": "3.0.0", "info": {"description": pad},
+            "paths": {
+                "/handles/{handle}": {"get": {"responses": {"200": {"content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/Handle"}}}}}}},
+                "/holders/{address}": {"get": {"responses": {"200": {"content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/Holder"}}}}}}},
+            },
+            "components": {"schemas": {
+                "Handle": {"type": "object", "properties": {
+                    "holder": {"type": "string"},
+                    "resolved_addresses": {"type": "object", "properties": {
+                        "ada": {"type": "string"}, "eth": {"type": "string"}}},
+                    "total_handles": {"type": "integer"}}},
+                "Holder": {"type": "object", "properties": {"total_handles": {"type": "integer"}}}}},
+        }
+        msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
+        self.assertIn("response shape", msg)
+        self.assertIn("holder", msg)
+        self.assertIn("resolved_addresses{ada, eth}", msg)   # $ref dereferenced + nesting expanded
+        self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
+
+    def test_response_fields_empty_for_non_spec_doc(self):
+        # no paths → not a spec → surface nothing (never invent a shape)
+        self.assertEqual(wf._endpoint_response_fields({"name": "x", "items": [1, 2]}), [])
+
     def test_spill_outline_surfaces_routes_for_spec_shaped_YAML(self):
         # OpenAPI served as YAML parses through the SAME shape-branch (PyYAML) → same route outline.
         self.assertIsNotNone(wf._yaml, "PyYAML must be installed (declared dependency)")
