@@ -218,6 +218,7 @@ class PlanSession(GuardState):
     summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
     compact_state: selfcompact.CompactState = field(default_factory=selfcompact.CompactState)  # mid-session rollup
+    compact_pending: bool = False  # a step just verified → force a rollup next turn (clean prior-step signals)
     verify_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
@@ -965,7 +966,8 @@ class Loop:
             steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
         framed["messages"] = msgs
         if self._ctx.self_compact:  # roll the old WORK-HISTORY middle into a rollup (the step framing
-            msgs = self._self_compact(msgs, sess, idx, rlog)  # lives in the protected system msg, untouched)
+            msgs = self._self_compact(msgs, sess, idx, rlog, force=sess.compact_pending)  # lives in the protected system msg
+            sess.compact_pending = False   # consumed the step-boundary force (a step just verified)
             framed["messages"] = msgs
         if self._ctx.focus_trim:  # focus the OUTBOUND coder view (never the history the guards read)
             trimmed, rep = focustrim.trim(msgs)
@@ -1061,10 +1063,11 @@ class Loop:
             out.append(m)
         return out
 
-    def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog) -> list[dict]:
+    def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog, *, force: bool = False) -> list[dict]:
         """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
         into a ⟦ctx:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
-        sess.summary (that's the cheap completed-STEP axis in the protected system message)."""
+        sess.summary (that's the cheap completed-STEP axis in the protected system message). ``force``
+        (set at a step boundary) compacts now even below the size trigger, to clear the prior step's signals."""
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
@@ -1073,9 +1076,9 @@ class Loop:
                                  prompts.load("selfcompact_summary"),
                                  selfcompact.serialize(probegate.clean_gate_results(mm)), rlog,
                                  phase="self-compact") + _briefing_gate_ground_truth(sess),
-            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction)
+            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force)
         if applied:
-            rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out))
+            rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
             return out
         return msgs
 
@@ -1190,6 +1193,8 @@ class Loop:
         sess.recent_actions = []
         sess.redirect_due = False
         sess.last_gate_flag = ""   # convergence tracking is per step
+        sess.compact_pending = True  # a step just VERIFIED → force a rollup next turn so the completed
+        #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
         self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory

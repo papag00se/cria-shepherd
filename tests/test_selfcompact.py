@@ -30,6 +30,25 @@ class SelfCompactTests(unittest.TestCase):
         self.assertIs(out, m)
         self.assertEqual(calls, [])
 
+    def test_force_compacts_below_trigger_when_there_is_a_middle(self):
+        # STEP BOUNDARY: force compacts the accumulated middle even BELOW the size trigger, so a just-
+        # verified step's raw signals are rolled up now instead of lingering until the view crosses trigger.
+        m = _msgs(10)                          # ~60 tokens: below trigger(100), but a middle beyond tail(30)
+        calls = []
+        out, st, applied = compact(m, lambda mm: (calls.append(mm), "ROLLUP")[1], CompactState(), force=True, **_KW)
+        self.assertTrue(applied)                                    # forced despite being below trigger
+        self.assertEqual(len(calls), 1)                             # summarized once
+        self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(x.get("content")) for x in out))
+        self.assertEqual(out[0], m[0]); self.assertEqual(out[-1], m[-1])  # system + most-recent kept
+
+    def test_force_is_noop_for_a_trivial_view(self):
+        # a LIGHT step whose whole view fits within the tail is NOT force-compacted — folding a couple of
+        # messages into a summary would only add length. force lowers the bar to keep_tail, not to zero.
+        m = _msgs(3)   # ~18 tokens < keep_tail (30)
+        out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(), force=True, **_KW)
+        self.assertFalse(applied)
+        self.assertIs(out, m)   # unchanged, no rollup added
+
     def test_triggers_on_tokens_not_message_count(self):
         # a FEW big messages (over the token trigger) compact even though the count is small
         big = [_m("system", "sys")] + [_m("assistant", "y" * 800) for _ in range(6)]  # ~1200 tokens

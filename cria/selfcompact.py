@@ -125,10 +125,16 @@ def _task_msg(task: str) -> dict:
 
 def compact(messages: list[dict], summarize, state: CompactState, *,
             trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
-            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "") -> tuple[list[dict], CompactState, bool]:
+            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
+
+    ``force`` (the plan loop passes it at a STEP BOUNDARY) LOWERS the trigger to ``keep_tail_tokens`` —
+    so a just-verified step's accumulated work-signals are rolled into the ⟦ctx:rollup⟧ as soon as there's
+    real work BEYOND the preserved tail, keeping each new step's context clean, instead of lingering until
+    the view crosses the full trigger. It does NOT compact a trivial view (a light step whose whole view
+    fits in the tail stays verbatim — folding a couple of messages into a summary would only add length).
 
     ``pinned_task`` (the conversation's ROOT task, supplied by the caller — it alone can detect the
     task past the harness env-context/reframe) is re-emitted verbatim as a ⟦ctx:task⟧ header on every
@@ -136,7 +142,8 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     summarizable middle and ERODES across rounds (round 2's rollup summarizes round 1's rollup), which
     is how a plan-off session lost its goal and drifted onto tangential build/deploy work. Pinning it
     keeps the north star authoritative and immune to summary degradation."""
-    if sum(_msg_tokens(m) for m in messages) <= trigger_tokens:
+    threshold = keep_tail_tokens if force else trigger_tokens  # a step boundary compacts at the lower bar
+    if sum(_msg_tokens(m) for m in messages) <= threshold:
         return messages, state, False
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
     tail_start = _tail_start(messages, head_end, keep_tail_tokens)
