@@ -131,7 +131,7 @@ def reduce_for_cache(body: str, content_type: Optional[str], url: str) -> tuple[
     subtree it returns, so a section the model asks for is still legible."""
     ct = (content_type or "").lower()
     if "html" in ct or "xml" in ct:
-        return html_to_text(body), None
+        return html_to_text(body, url), None
     if "json" in ct:
         try:
             obj = json.loads(body)

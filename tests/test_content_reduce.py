@@ -96,6 +96,31 @@ class ContentReduceTests(unittest.TestCase):
         self.assertIn("tail", out)
         self.assertNotIn("drop me", out)
 
+    def test_anchor_href_is_kept_with_its_text(self):
+        # A landing page linking to its spec: the model must SEE where the link goes,
+        # not just its label — otherwise it can't follow it and resorts to guessing URLs.
+        html = '<ul><li><a href="/openapi.json">OpenAPI spec (JSON)</a></li></ul>'
+        out = html_to_text(html)
+        self.assertIn("OpenAPI spec (JSON)", out)
+        self.assertIn("/openapi.json", out)  # the target survives, not only the label
+
+    def test_relative_href_is_resolved_against_the_page_url(self):
+        # A bare /path is not directly fetchable without the host; resolve it so the
+        # model gets an absolute URL it can hand straight back to web_fetch.
+        html = '<a href="/openapi.json">spec</a>'
+        out = html_to_text(html, "https://api.handle.me")
+        self.assertIn("https://api.handle.me/openapi.json", out)
+
+    def test_non_navigational_hrefs_are_dropped_and_bare_anchors_stay_clean(self):
+        html = ('<a href="#top">frag</a> <a href="javascript:void(0)">js</a> '
+                '<a>plain</a> <a href="https://x.io/y">abs</a>')
+        out = html_to_text(html, "https://api.handle.me/p")
+        self.assertNotIn("#top", out)
+        self.assertNotIn("javascript:", out)
+        self.assertIn("https://x.io/y", out)   # absolute href passes through
+        self.assertIn("plain", out)
+        self.assertNotIn("()", out)            # hrefless anchor adds no empty parens
+
     def test_protected_and_identifier_tokens_never_stripped(self):
         # 'and'/'or'/'if' are protected; UPPER/underscored/digit tokens are not function words
         s = "do the thing if it is A_CONST or 42 and not the other"

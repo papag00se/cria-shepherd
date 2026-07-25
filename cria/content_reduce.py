@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from html.parser import HTMLParser
+from urllib.parse import urljoin
 
 
 def est_tokens(s: str) -> int:
@@ -101,22 +102,49 @@ def _strip_prose_nodes(v, key: str | None):
 # HTML tier: strip script/style/template/noscript + comments + tags, decode entities, ws
 # ---------------------------------------------------------------------------
 
+def _clean_href(href: str | None, base: str | None) -> str:
+    """A followable link target, or "" to drop. Resolves relative hrefs against `base`
+    (the page URL) so the model gets a directly-fetchable absolute URL, not a bare `/path`
+    it has to guess the host for. Drops in-page fragments and non-navigational schemes."""
+    if not href:
+        return ""
+    h = href.strip()
+    if not h or h[0] == "#":
+        return ""
+    if h.lower().startswith(("javascript:", "data:", "vbscript:")):
+        return ""
+    if base:
+        try:
+            h = urljoin(base, h)  # already-absolute h passes through unchanged
+        except ValueError:
+            pass
+    return h
+
+
 class _HTMLTextExtractor(HTMLParser):
     _SKIP = {"script", "style", "template", "noscript"}
 
-    def __init__(self) -> None:
+    def __init__(self, base_url: str | None = None) -> None:
         super().__init__(convert_charrefs=True)  # entities decoded into data automatically
         self._parts: list[str] = []
         self._skip = 0  # depth of open skip-tags; data suppressed while > 0
+        self._base = base_url
+        self._hrefs: list[str] = []  # open-<a> href stack (balanced with </a>)
 
     def handle_starttag(self, tag, attrs):
         if tag in self._SKIP:
             self._skip += 1
+        if tag == "a":
+            self._hrefs.append(_clean_href(dict(attrs).get("href"), self._base))
         self._parts.append(" ")  # tag boundary -> a space so words don't fuse
 
     def handle_endtag(self, tag):
         if tag in self._SKIP and self._skip > 0:
             self._skip -= 1
+        if tag == "a" and self._hrefs:
+            href = self._hrefs.pop()
+            if href and self._skip == 0:
+                self._parts.append(f" ({href})")  # keep the link's target with its text
         self._parts.append(" ")
 
     def handle_startendtag(self, tag, attrs):
@@ -133,8 +161,8 @@ class _HTMLTextExtractor(HTMLParser):
         return "".join(self._parts)
 
 
-def html_to_text(html: str) -> str:
-    p = _HTMLTextExtractor()
+def html_to_text(html: str, base_url: str | None = None) -> str:
+    p = _HTMLTextExtractor(base_url)
     p.feed(html)
     p.close()
     return _collapse_ws(p.text())
