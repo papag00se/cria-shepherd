@@ -220,6 +220,25 @@ class CompletionCriticTests(unittest.TestCase):
         sess = self._done_sess()
         self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))
 
+    def test_critic_judges_the_PLAN_task_not_the_compaction_summary(self):
+        # M1: after a harness compaction, _history_root(messages)[0] is the SUMMARY (which may have
+        # dropped a requirement); the critic must judge the AUTHORITATIVE sess.plan.task, else a
+        # green-but-incomplete finish passes. Fails before the swap (task was the history root).
+        seen = {}
+
+        def reasoner(bd, rl):
+            seen["prompt"] = bd["messages"][-1]["content"]   # the satisfaction_user prompt carries the task
+            return json.dumps(_sat(True)).encode()
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = self._role()
+        plan = Plan(id="x", task="build a resolver AND ship a README", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified")])
+        sess = PlanSession(plan=plan)
+        body = {"messages": [{"role": "user", "content": "compacted note omitting the readme requirement"}]}
+        Loop(ctx)._reopen_if_unsatisfied(sess, body, _Rlog())
+        # the plan task is NOT in the body messages, so it can only appear if plan.task was used (M1)
+        self.assertIn("build a resolver AND ship a README", seen["prompt"])
+
 
 class LivingPlanTests(unittest.TestCase):
     """At each verified advance a dedicated reasoner re-derives the NOT-done steps from the real work
@@ -1057,6 +1076,39 @@ class GateFlowTests(unittest.TestCase):
         self.assertEqual(reasoner.calls, 0, "a failing floor short-circuits — no critic")
         # the coder's nudge carries the EXACT error
         self.assertIn("SyntaxError", coder.last_user())
+
+    def test_plan_on_red_gate_records_last_gate_red(self):
+        # H2: a RED step-gate on the MULTI-STEP (plan-ON) path must record sess.last_gate_red — the field
+        # the anti-laundering rollup override + vacuous-green evidence read. It was permanently False on
+        # plan-ON (set only by the plan-off readers), leaving those ground-truth guards dead.
+        ws = self._ws()
+        coder = _Recorder([_toolcall(), _done(), _toolcall()])
+        loop = Loop(_ctx(coder, _Scripted([_verdict(True)]), _plan(2), workspace_root=ws))  # 2 items → plan-ON
+        rlog = _Rlog()
+        loop.drive(_body(), "k", _Classification(), rlog)                     # act on step 1
+        c2 = loop.drive(_body(), "k", _Classification(), rlog)                # claim done → step gate probe
+        loop.drive(_body_with_probe(_tc_id(c2), self._gate_result(floor_exit=1)),
+                   "k", _Classification(), rlog)                             # RED (SyntaxError)
+        self.assertTrue(loop._store.get("k").last_gate_red)                   # recorded (was permanently False)
+
+    def test_plan_on_periodic_gate_fires_in_a_long_step(self):
+        # M2: a plan-ON step where the coder keeps ACTING with DISTINCT edits (never repeating, never
+        # claiming done) must get a periodic check-in after GATE_EVERY_CODER_TURNS acting turns — this
+        # was plan-off-only, so a long step editing many different things got no proactive ground truth.
+        # (Distinct actions on purpose: identical ones would trip the repetition guard instead.)
+        from cria.loop import GATE_EVERY_CODER_TURNS
+
+        def _distinct(i):  # a unique shell action each turn → no repetition/wheel-spin, just steady work
+            return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": "shell",
+                 "arguments": json.dumps({"command": ["sh", "-c", f"echo edit-{i} >> note{i}.txt"]})}}]}}]}
+        ws = self._ws()
+        coder = _Recorder([_distinct(i) for i in range(GATE_EVERY_CODER_TURNS + 2)])
+        loop = Loop(_ctx(coder, _Scripted([_verdict(True)]), _plan(2), workspace_root=ws))
+        rlog = _Rlog()
+        for _ in range(GATE_EVERY_CODER_TURNS + 1):
+            loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.periodic_gate", rlog.kinds())
 
     def test_failing_test_probe_blocks_without_critic(self):
         ws = self._ws()

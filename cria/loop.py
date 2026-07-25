@@ -892,7 +892,10 @@ class Loop:
         only ever CONFIRMS not-done), so the bound — not a shaky 'satisfied' — is what lets it out."""
         if self._ctx.reasoner_role is None or sess.completion_checks >= MAX_COMPLETION_CHECKS:
             return None
-        task = _history_root(body.get("messages", []))[0]
+        # The AUTHORITATIVE task is the plan's own — NOT _history_root, which after a harness compaction
+        # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
+        # (Parity with _replan_tail, which already judges against sess.plan.task.)
+        task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         if sess.last_gate_testless:  # C4 vacuous-green: a green with 0 tests collected doesn't verify behavior
             ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
@@ -934,6 +937,14 @@ class Loop:
             if diag:
                 sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
                 rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
+        # PERIODIC ground-truth check-in WITHIN a long step (M2 parity with the plan-off driver): every
+        # GATE_EVERY_CODER_TURNS acting turns, run the repo's checks so a step that edits many DIFFERENT
+        # things for dozens of turns (never spiraling, never claiming done) still gets ground truth — the
+        # exact case the per-step gate + wheel-spin detectors miss. Only when nothing else steers this turn.
+        if not sess.nudge_reason:
+            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
+            if periodic is not None:
+                return periodic
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
@@ -963,6 +974,7 @@ class Loop:
             _add_note(coder, f"steered the coder — {steered}")
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
+            sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
@@ -1073,6 +1085,11 @@ class Loop:
             return self._work(sess, key, body, rlog)
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
+        if sess.periodic_probe:  # M2 parity: a mid-step PERIODIC check-in, NOT a completion gate. Inject any
+            # ground-truth error and keep working; NEVER advance the step (the coder didn't claim done). A
+            # CLEAN check-in stays silent (guard_periodic_result returns None), so this can't complete a step.
+            truth = guard_periodic_result(sess, body, rlog)
+            return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
         if not probe.strip() and rewritten and sess.probe_reissues < MAX_PROBE_REISSUES:
             probe_tc = self._gate_op(body, sess, rlog)
@@ -1120,6 +1137,15 @@ class Loop:
             rlog.emit("loop.gate_stalled", level="warning", step=idx)
         sess.last_gate_flag = nudge or ""
         sess.gate_git = outcome.git_state
+        # Mirror guard_gate_verdict's gate-state onto the plan-ON path — WITHOUT this, last_gate_red /
+        # last_gate_testless are only ever set by the plan-off readers, so the anti-laundering rollup
+        # override (_briefing_gate_ground_truth) and the C4 vacuous-green evidence (_reopen_if_unsatisfied)
+        # were dead on every real multi-step plan — exactly where "ground truth over judgment" needs them.
+        if nudge is not None:
+            sess.last_gate_red = True
+        else:
+            sess.last_gate_red = False   # ran and genuinely clean → GREEN
+            sess.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
         if nudge is not None:  # GROUND TRUTH: floor or probes failed → the exact file:line errors
