@@ -2534,10 +2534,6 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(blob.endswith(b"data: [DONE]\n\n"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class StripCriaFileOpsTests(unittest.TestCase):
     def test_cria_plan_write_hidden_from_coder(self):
         from cria.loop import _frame_for_item
@@ -3206,6 +3202,17 @@ class SearchEscalationTests(unittest.TestCase):
     def _role(self):
         from cria.config import Role
         return Role(name="reasoner", backend="local")
+
+    def test_verbose_recommendation_is_not_misread_as_a_NONE_decline(self):
+        # L7: the decline was `"NONE" in text[:12]` — a real url recommendation that merely STARTS with
+        # "Nonetheless, …" was discarded, leaving the coder in its search loop. Must be WORD-anchored
+        # (and "Nonetheless" is NOT the decline token "NONE").
+        from cria.loop import author_search_fetch
+        body = {"messages": [{"role": "user", "content": "use api.handle.me"}]}
+        r = self._reasoner("Nonetheless, fetch https://api.handle.me/openapi.json to get the schema.")
+        self.assertEqual(author_search_fetch(r, self._role(), body, _Rlog()),
+                         "https://api.handle.me/openapi.json")
+        self.assertEqual(author_search_fetch(self._reasoner("NONE"), self._role(), body, _Rlog()), "")
 
     def _search(self, q):
         return {"choices": [{"message": {"role": "assistant", "tool_calls": [

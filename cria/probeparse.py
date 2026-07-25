@@ -447,7 +447,7 @@ def parse_pycompile(text: str) -> list:
                                         message="compile error"))
             pending = (m.group(1), int(m.group(2)))
             continue
-        if pending is not None and ("Error" in t or "error" in t.split(":")[0:1] == ["error"]):
+        if pending is not None and ("Error" in t or t.split(":", 1)[0].strip().lower().endswith("error")):
             findings.append(Finding(file=pending[0], line=pending[1], col=None, message=t))
             pending = None
     if pending is not None:

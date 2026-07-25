@@ -344,7 +344,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
-        path = self.path.rstrip("/")
+        path = self.path.split("?", 1)[0].rstrip("/")   # strip any query string (parity with do_GET)
         if path == "/v1/chat/completions":
             self._handle_chat()
         elif path == "/v1/responses":

@@ -297,13 +297,6 @@ _PROSE_FIELDS = frozenset({
     "text", "body", "longdescription",
 })
 
-_PROSE_FIELDS_EXCLUDE = frozenset({
-    "pattern", "format", "enum", "example", "default", "const", "$ref", "ref",
-    "url", "uri", "href", "path", "cmd", "command", "code", "id", "name", "key",
-    "type", "value", "version", "operationid",
-})
-
-
 def _is_function_word(w: str) -> bool:
     return w in _FUNCTION_WORDS
 
@@ -313,8 +306,7 @@ def _is_protected(w: str) -> bool:
 
 
 def _is_prose_field(key: str) -> bool:
-    k = key.lower()
-    return k in _PROSE_FIELDS and k not in _PROSE_FIELDS_EXCLUDE
+    return key.lower() in _PROSE_FIELDS
 
 
 def _looks_like_prose(s: str) -> bool:

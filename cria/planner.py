@@ -524,14 +524,6 @@ def _assistant_message_obj(obj) -> dict:
     return ((obj.get("choices") or [{}])[0].get("message")) or {} if isinstance(obj, dict) else {}
 
 
-def _assistant_message(raw: bytes) -> dict:
-    try:
-        obj = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    return ((obj.get("choices") or [{}])[0].get("message")) or {} if isinstance(obj, dict) else {}
-
-
 def _tool_calls(msg: dict) -> list[tuple[str, str, dict]]:
     """`(call_id, name, args-dict)` for each tool call in an assistant message. Arguments
     that arrive as a JSON string are parsed leniently (control chars tolerated)."""

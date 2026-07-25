@@ -987,9 +987,6 @@ def has_incomplete_tool_args(completion: dict) -> bool:
     return False
 
 
-# Back-compat alias — the guard used to be write-only; the check is now tool-agnostic.
-has_incomplete_write_args = has_incomplete_tool_args
-
 
 # ------------------------------------------------------------------ apply_patch
 

@@ -2807,7 +2807,11 @@ def _fetch_ground_truth(messages: list[dict], sess=None,
     return _format_fetches(latest, header)
 
 
-_SHELL_TOOLNAMES = {"exec_command", "shell", "bash", "container.exec", "run_terminal_cmd", "local_shell"}
+# Derived from the ONE canonical shell-tool family (shelltool.SHELL_TOOL_NAMES) so it can't drift — a
+# hand-kept second copy had already lost `shell_command` and would leave a `shell_command` harness
+# unflagged to the steer reasoner (match-by-family, principle #18). `container.exec` is added for the
+# summary's broader "does the coder have ANY shell?" question (it's not a write-lowering target).
+_SHELL_TOOLNAMES = SHELL_TOOL_NAMES | {"container.exec"}
 
 
 def _coder_tools_summary(tools) -> str:
@@ -2985,7 +2989,7 @@ def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("search_fetch"),
                       prompts.render("search_fetch_user", session=session), rlog, phase="reasoner",
                       coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
-    if "NONE" in text[:12].upper():
+    if re.match(r"\s*NONE\b", text, re.I):   # a WORD-anchored decline — not a substring, and not "Nonetheless…"
         return ""
     m = _URL_RE.search(text)
     return m.group(0).rstrip(".,);") if m else ""

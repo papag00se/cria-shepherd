@@ -452,7 +452,7 @@ class IncompleteWriteTests(unittest.TestCase):
         self.assertFalse(_json_structurally_complete(r'{"c":"open \" never closed'))  # cut mid-string
 
     def test_flags_incomplete_after_repair(self):
-        from cria.massage import repair_tool_args, has_incomplete_write_args
+        from cria.massage import repair_tool_args, has_incomplete_tool_args
         cut = r'{"path":"r.py","content":"print(f\"a: {r[\'k'
         comp = {"choices": [{"message": {"tool_calls": [
             {"function": {"name": "write_file", "arguments": cut}}]}}]}
@@ -460,7 +460,7 @@ class IncompleteWriteTests(unittest.TestCase):
         self.assertTrue(has_incomplete_tool_args(comp))
 
     def test_complete_write_not_flagged(self):
-        from cria.massage import has_incomplete_write_args
+        from cria.massage import has_incomplete_tool_args
         comp = {"choices": [{"message": {"tool_calls": [
             {"function": {"name": "write_file", "arguments": '{"path":"a.py","content":"print(1)"}'}}]}}]}
         self.assertFalse(has_incomplete_tool_args(comp))

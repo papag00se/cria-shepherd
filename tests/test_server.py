@@ -214,6 +214,15 @@ class PassthroughTests(unittest.TestCase):
         out = self._post({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(json.loads(out)["choices"][0]["message"]["content"], "Hi")
 
+    def test_post_with_query_string_still_routes(self):
+        # L9: do_POST didn't strip the query string (do_GET did), so a client appending ?param 404'd.
+        req = urllib.request.Request(
+            self.base + "/v1/chat/completions?debug=1",
+            data=json.dumps({"model": "m", "messages": [{"role": "user", "content": "hi"}]}).encode(),
+            method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:   # 404 would raise HTTPError
+            self.assertEqual(json.loads(r.read())["choices"][0]["message"]["content"], "Hi")
+
     def test_events_capture_the_turn_with_metrics(self):
         self._post({"model": "m", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
         kinds = [e["kind"] for e in self._events()]
