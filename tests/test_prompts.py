@@ -45,6 +45,14 @@ class PromptAgnosticismTests(unittest.TestCase):
         c = prompts.load("coder_system")
         self.assertIn("current working directory", c)
 
+    def test_planner_plans_the_deliverable_not_the_plumbing(self):
+        # the plan must not include steps for what the harness does automatically (run tests/lint) or the
+        # environment already provides (install X) — those padded the plan and made the coder fumble pytest.
+        p = prompts.load("plan")
+        self.assertIn("PLAN THE DELIVERABLE", p)
+        # model-facing prompt: never leak the literal project name (only ⟦ctx:…⟧ markers are model-facing)
+        self.assertNotIn("cria", p.lower())
+
 
 class PromptLoaderTests(unittest.TestCase):
     def test_load_trims_trailing_newline_only(self):
