@@ -465,3 +465,52 @@ class ScrubInventedPathsTests(unittest.TestCase):
         self.assertFalse(any("/resolve/{handle}" in it.text for it in plan.items))
         self.assertTrue(any(k == "plan.paths_scrubbed" for k, _ in rlog.events))
 
+
+class PlumbingStepDropTests(unittest.TestCase):
+    """A weak planner emits an environment-setup step 1 despite the prompt forbidding it (observed live
+    across runs: 'Set up the development environment' → apt-get/pip FAIL on sandbox perms → the step
+    never verifies → the whole plan stalls on step 1). plan.txt already declares these illegal; cria
+    enforces that deterministically (prose steering is ignored by small models — same as path-scrubbing)."""
+
+    def _drop(self, step):
+        from cria.planner import _is_plumbing_step
+        return _is_plumbing_step(step)
+
+    def test_setup_and_install_steps_are_flagged(self):
+        for step in ("Set up the development environment",
+                     "Install dependencies (requests, aiohttp, pytest)",
+                     "Create a virtualenv and install the requirements",
+                     "Configure the project environment"):
+            self.assertTrue(self._drop(step), step)
+
+    def test_real_deliverable_steps_are_kept(self):
+        for step in ("Implement resolve_handle.py that calls /handles/{handle}",
+                     "Write unit tests in test_resolve_handle.py",
+                     "Create the README.md explaining how to run it",
+                     "Fetch the api.handle.me OpenAPI spec to find the endpoint",
+                     "Set up the project structure with resolver.py and tests"):  # names files → real work
+            self.assertFalse(self._drop(step), step)
+
+    def test_plan_for_drops_the_setup_step_and_logs(self):
+        prov = _ScriptedProvider([_content_resp(
+            '1. Set up the development environment and install dependencies.\n'
+            '2. Write resolve_handle.py against api.handle.me.\n'
+            '3. Add unit tests in test_resolve_handle.py.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertFalse(any("development environment" in t for t in texts))  # plumbing gone
+        self.assertTrue(any("resolve_handle.py" in t for t in texts))         # real work kept
+        self.assertEqual(len(texts), 2)
+        self.assertTrue(any(k == "plan.plumbing_dropped" for k, _ in rlog.events))
+
+    def test_an_all_plumbing_plan_is_not_emptied(self):
+        prov = _ScriptedProvider([_content_resp(
+            '1. Set up the development environment.\n2. Install the dependencies.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("do a thing"), rlog)
+        self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
+        self.assertTrue(any(k == "plan.plumbing_all_kept" for k, _ in rlog.events))
+

@@ -227,6 +227,33 @@ def _scrub_invented_paths(step: str, task: str) -> str:
     return out or step
 
 
+# A plan step whose ONLY action is environment plumbing — setting up a dev environment, creating a
+# virtualenv, or installing dependencies/tooling. plan.txt already forbids these ("the environment is
+# already set up, so 'ensure Python/pip/<tool> is installed' is never a step"), but a weak planner
+# emits one anyway (observed across live runs: step 1 = "Set up the development environment" → the coder
+# runs apt-get/pip, which FAIL on sandbox permissions → the step can never verify → the whole plan
+# stalls on step 1 forever). Same class as _scrub_invented_paths: prose steering is ignored by small
+# models, so cria enforces its own stated rule deterministically. Kept tight — a setup VERB plus an
+# environment/dependency NOUN, and only when the step names no deliverable artifact to produce.
+_PLUMBING_INTENT = re.compile(
+    r"\b(set\s?up|setup|configure|prepare|bootstrap|initiali[sz]e|install|create|make)\b[\s\S]*?"
+    r"\b(dev(elopment)?\s+environment|virtual\s?environment|virtualenv|venv|dependenc(y|ies)|"
+    r"requirements?|pip|apt(-get)?|npm|poetry|conda|environment|"
+    r"project\s+(structure|skeleton|scaffold|environment))\b", re.I)
+# A step that ALSO names real deliverable work (a file to write, the resolver/tests/README, a function)
+# is not PURE plumbing — keep it. Erring toward keeping avoids dropping a step that carries real work.
+_DELIVERABLE_SIGNAL = re.compile(
+    r"\b(write|implement|add|code|define|resolv\w*|handle|readme|\btest\b|script|function|class|"
+    r"endpoint|parse|fetch|docstring)\b|\.[A-Za-z]{1,4}\b", re.I)
+
+
+def _is_plumbing_step(step: str) -> bool:
+    """True when a step's only action is environment plumbing (setup/venv/dependency-install) the
+    environment already provides — the class plan.txt forbids. A step that also names real deliverable
+    work is not pure plumbing and is kept."""
+    return bool(_PLUMBING_INTENT.search(step)) and not _DELIVERABLE_SIGNAL.search(step)
+
+
 class Planner:
     def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
@@ -308,6 +335,16 @@ class Planner:
         n_scrubbed = sum(1 for a, b in zip(steps, scrubbed) if a != b)
         if n_scrubbed:
             rlog.emit("plan.paths_scrubbed", count=n_scrubbed, level="info")
+        # Drop pure environment-plumbing steps (setup/venv/install) the weak planner emits despite the
+        # prompt forbidding them — they can't verify (the env is fixed / sandbox blocks apt-get+pip), so
+        # they stall the plan on step 1. Never empty the plan: an all-plumbing plan is kept as-is.
+        kept = [s for s in scrubbed if not _is_plumbing_step(s)]
+        n_plumbing = len(scrubbed) - len(kept)
+        if n_plumbing and kept:
+            rlog.emit("plan.plumbing_dropped", count=n_plumbing, level="info")
+            scrubbed = kept
+        elif n_plumbing:
+            rlog.emit("plan.plumbing_all_kept", count=n_plumbing, level="info")  # dropping would empty it
         plan = Plan(
             id=self._new_id(key),
             task=task,
