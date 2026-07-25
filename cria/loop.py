@@ -200,6 +200,7 @@ class GuardState:
     search_words: list = None  # the last web_search's normalized word-set (searchloop)
     search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
     tried_spec_convention: bool = False  # spent the one deterministic <task-domain>/openapi.json escape
+    tried_domain_root: bool = False      # spent the deterministic <task-domain>/ root escape (reasoner-punt floor)
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
     # real result has been floored out of the window (else a steer can't counter a late spiral)
 
@@ -2972,8 +2973,10 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
     """Get a coder that's flailing on doc-discovery onto the API the task NAMED. At
     ``SEARCH_STREAK_ESCALATE`` near-identical web_searches with no fetch (runE) the coder won't fetch on
     its own, so cria SUBSTITUTES a fetch for the search — convention-first (``<task-domain>/openapi.json``,
-    spent once via ``tried_spec_convention``), else a reasoner-picked URL. Any other action (a fetch, a
-    write, a genuinely-new search) resets the streak. Returns the coder, search→fetch swapped."""
+    spent once via ``tried_spec_convention``), else a reasoner-picked URL, and when the reasoner declines
+    (NONE) it falls to the ``<task-domain>/`` root (``tried_domain_root``) — two ground-truth escapes so a
+    weak reasoner's NONE can't strand the coder. Any other action (a fetch, a write, a genuinely-new
+    search) resets the streak. Returns the coder, search→fetch swapped."""
     msg = (coder.get("choices") or [{}])[0].get("message") or {}
     tcs = msg.get("tool_calls") or []
     domain = _task_api_domain(body.get("messages", []))
@@ -3000,6 +3003,16 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
     else:
         url = author_search_fetch(reasoner_chat, reasoner_role, body, rlog)
         via = "reasoner"
+        if not url and domain and not sess.tried_domain_root:
+            # Reasoner-punt floor: a weak reasoner keeps replying NONE (observed: 5 of 6 escapes) even
+            # though the task NAMED a domain, leaving the coder to loop searches forever. When it declines,
+            # fetch the named domain's ROOT — the docs landing page the user pointed to (and, since anchor
+            # hrefs are now preserved, the page that links straight to the spec). Ground truth, not a guess;
+            # spent once so it can't itself loop. This is exactly what the repeat-search steer already tells
+            # the coder to do ("stop searching, FETCH <domain>") — cria just does it when the coder won't.
+            sess.tried_domain_root = True
+            url = f"https://{domain}/"
+            via = "domain-root"
     sess.search_streak, sess.search_words = 0, None       # cooldown whether or not a url came back
     if not url:
         rlog.emit("loop.search_escalation", url=None)     # reasoner had nothing → let the search go (gate refuses a repeat)

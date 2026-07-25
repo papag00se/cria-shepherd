@@ -3089,11 +3089,30 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertFalse(gs.tried_spec_convention)
         self.assertIn("example.org/openapi.json", self._fn(out)["arguments"])
 
-    def test_reasoner_declines_leaves_the_search(self):
+    def test_reasoner_declines_with_no_named_domain_leaves_the_search(self):
         from cria.loop import GuardState
         gs = GuardState(); gs.tried_spec_convention = True   # convention already spent → reasoner path
-        out = self._escalate(gs, self._reasoner("NONE"), task="find the ADA Handle docs")
-        self.assertEqual(self._fn(out)["name"], "web_search")       # no url → not substituted
+        out = self._escalate(gs, self._reasoner("NONE"), task="find the ADA Handle docs")  # no domain named
+        self.assertEqual(self._fn(out)["name"], "web_search")       # nothing to fall back to → not substituted
+
+    def test_reasoner_none_falls_to_the_named_domain_root(self):
+        # Reasoner-punt floor: convention spent + reasoner says NONE, but the task NAMED a domain (observed
+        # live: fabliq replied NONE on 5 of 6 escapes, stranding the coder in a 900+ steer search loop).
+        # cria fetches the domain ROOT — the docs page the user pointed to — not another dead search.
+        from cria.loop import GuardState
+        gs = GuardState(); gs.tried_spec_convention = True
+        out = self._escalate(gs, self._reasoner("NONE"))            # default task names api.handle.me
+        self.assertEqual(self._fn(out)["name"], "web_fetch")
+        self.assertIn('"https://api.handle.me/"', self._fn(out)["arguments"])
+        self.assertNotIn("openapi", self._fn(out)["arguments"])     # the ROOT, not the (spent) spec path
+        self.assertTrue(gs.tried_domain_root)
+
+    def test_domain_root_floor_is_spent_once(self):
+        # spent once → a later NONE can't re-loop on the root; the search is then left for the gate to refuse
+        from cria.loop import GuardState
+        gs = GuardState(); gs.tried_spec_convention = True; gs.tried_domain_root = True
+        out = self._escalate(gs, self._reasoner("NONE"))
+        self.assertEqual(self._fn(out)["name"], "web_search")
 
     def test_task_api_domain_extraction(self):
         from cria.loop import _task_api_domain
