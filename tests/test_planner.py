@@ -571,6 +571,23 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)
         self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
+    def test_task_host_overrides_a_reasoner_subdomain_paraphrase(self):
+        # LIVE footgun: the reasoner paraphrased the task's `api.handle.me` down to the registrable
+        # `handle.me`, so cria's research step steered the coder at the WEBSITE (HTML) not the API, and it
+        # spiralled. The host the task LITERALLY names is ground truth and must win over the paraphrase.
+        prov = _ScriptedProvider([
+            _content_resp('1. Write resolver.py.\n2. Add tests.'),   # plan
+            _content_resp('NONE'),                                   # noise? none
+            _content_resp('handle.me'),                              # reasoner PARAPHRASE (dropped api.)
+            _content_resp('NO'),                                     # has research? no → inject
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada Handle via the Ada Handles API (api.handle.me)"), rlog)
+        self.assertIn("api.handle.me/openapi.json", plan.items[0].text)   # the EXACT host the task named
+        self.assertNotIn("://handle.me/", plan.items[0].text)            # NOT the bare website
+
     def test_reasoner_answer_with_reasoning_preamble_still_parses(self):
         # fabliq wraps the answer in <think>…</think> / prose — strip_think + the YES/NO word-search recover it
         prov = _ScriptedProvider([

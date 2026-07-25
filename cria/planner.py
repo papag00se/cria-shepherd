@@ -345,17 +345,28 @@ class Planner:
         return content.strip()
 
     def _reasoned_api_domain(self, task: str, rlog) -> str:
-        """The single external API domain the task requires, JUDGED by the reasoner (it catches "the
-        GitHub API" with no dotted host a shape-matcher can't) — or "" for none. Reasoner-only: no reasoner
-        configured, or an answer that is neither a domain nor NONE, yields "" (→ no research injection).
-        cria never guesses a domain the reasoner didn't name — no keyword/shape fallback."""
+        """The single external API domain the task requires. The reasoner decides IF the task needs an
+        external API and, for a product-only mention ("the GitHub API"), which domain — a shape-matcher
+        can't. But when the task LITERALLY names a host, that host is GROUND TRUTH and WINS: the reasoner
+        was observed to paraphrase `api.handle.me` down to its registrable domain `handle.me`, and cria's
+        research step then steered the coder at the WEBSITE (HTML) instead of the API — a redirection on a
+        guess. Reasoner-only otherwise (no role / neither-domain-nor-NONE → "" → no injection)."""
         if self._role is None:
             return ""
         ans = self._ask(prompts.load("plan_names_api"), "TASK:\n" + task, rlog)
         tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
-        if tok and searchloop._looks_like_domain(tok):
-            return tok.lower()
-        return ""  # NONE or unparseable → no domain
+        if not (tok and searchloop._looks_like_domain(tok)):
+            return ""  # NONE or unparseable → no domain
+        tok = tok.lower()
+        # GROUND TRUTH over judgment: if the task names a host that IS the reasoner's answer or a MORE
+        # SPECIFIC subdomain of it (task `api.handle.me` vs reasoner `handle.me`), use the task's EXACT
+        # host — never let a registrable-domain paraphrase override the domain the user actually gave.
+        # A DIFFERENT registrable domain means the reasoner mapped a product name the task didn't spell
+        # out (trust it there).
+        literal = searchloop.task_api_domain(task)
+        if literal and (literal == tok or literal.endswith("." + tok)):
+            return literal
+        return tok
 
     def _reasoned_has_research(self, task: str, steps: list[str], rlog) -> bool:
         """Whether the plan already reads the API's real spec/docs before coding, JUDGED by the reasoner.
