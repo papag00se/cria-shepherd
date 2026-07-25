@@ -249,6 +249,7 @@ def run_candidate(runner: Runner, c: ProbeCandidate, timeout_s: float) -> ProbeR
         # timeout reads "TIMEOUT after 0s". The summary is OVERWRITTEN but any
         # findings parsed from the partial pre-kill output are KEPT.
         result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
+        result.timed_out = True   # ran and did NOT finish → the completion gate fails CLOSED (M3)
     return result
 
 
@@ -361,8 +362,9 @@ def gate_ran_tests(report: ProbeReport) -> bool:
     kinds = _kind_by_command(report)
     for r in report.results:
         if kinds.get(r.command) is probediscovery.ProbeKind.Test \
+                and not r.timed_out \
                 and not is_no_tests_collected(r.exit_code, r.command, r.summary):
-            return True
+            return True                # M3: a TIMED-OUT test probe did NOT execute a full run → not "ran tests"
     return False
 
 
@@ -374,10 +376,13 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     exact line — the single most repairable signal). The floor now lives IN the
     candidate list (kind=SyntaxCheck, congruent across ecosystems); the legacy
     LinterReport parameter is honored when a caller still passes one. A probe
-    that couldn't launch (tool absent) or merely timed out never blocks — we
-    only block on a real diagnosis — with ONE congruent exception: a tier-0
+    that couldn't LAUNCH (tool absent = cria's own setup gap) never blocks — we
+    only block on a real diagnosis — with TWO congruent exceptions: (a) a tier-0
     SyntaxCheck that RAN and exited non-zero is itself the diagnosis ("the code
-    does not parse/compile"), even when its output defeated the parsers.
+    does not parse/compile"), even when its output defeated the parsers; and (b) a
+    hard-failure-kind probe (Test/Typecheck/BuildCheck) that TIMED OUT — the command
+    RAN and did NOT finish, so it did NOT verify; a timeout is an undecidable result,
+    not an absent tool, so completion fails CLOSED on it (principle #13, M3).
     """
     if floor is not None and not floor.is_clean():
         # nudge_text() may itself be None per the LinterReport contract;
@@ -389,9 +394,13 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     for r in report.results:
         is_syntax = kinds.get(r.command) is probediscovery.ProbeKind.SyntaxCheck
         if not r.findings:
-            # launch-failures/timeouts never block — EXCEPT a syntax check that ran red.
+            # A LAUNCH failure (absent tool) never blocks. EXCEPT: a syntax check that ran red, OR a
+            # hard-failure-kind probe that TIMED OUT (ran and did not verify — M3) — both are real
+            # not-clean signals with no file:line, so they block coarsely (command + summary).
             if is_syntax and r.exit_code not in (0, None):
                 syntax_lines.append(f"$ {r.command} — {r.summary}")
+            elif r.timed_out and kinds.get(r.command) in _HARD_FAILURE_KINDS:
+                lines.append(f"$ {r.command} — {r.summary or 'timed out and did not verify'}")
             continue
         bucket = syntax_lines if is_syntax else lines
         bucket.append(f"$ {r.command} — {r.summary}")
@@ -547,6 +556,7 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
         result = parse_output(joined, family_of(c.command), None, output, "")
         # Same as_secs() truncation as run_candidate; findings kept.
         result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
+        result.timed_out = True   # ran and did NOT finish → the completion gate fails CLOSED (M3)
         return result
     # A launch failure by exit code (125/126/127); OR, only when NO sentinel survived (exit_code is
     # None), the text fallback. The `exit_code is None` guard matters: a probe that exited 0 whose

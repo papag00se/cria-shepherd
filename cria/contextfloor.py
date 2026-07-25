@@ -327,6 +327,30 @@ def _protected_mask(messages: list[dict]) -> list[bool]:
             prot[i] = True
         if _has_protect_marker(m):  # the briefing / gate anchor — don't drop it from under a reference
             prot[i] = True
+    # PAIR protection (M18): a MARKER-protected tool RESULT and its issuing assistant tool_call are a
+    # UNIT. A gate result whose shell command carries the marker, but whose assistant call does not, would
+    # else have its call dropped by _drop_oldest and then be discarded by _strip_orphan_tools as an orphan
+    # (defeating the protection; a dangling call is also rejected by strict templates). Propagate MARKER
+    # protection across the pair — but ONLY marker protection: an active-turn/system result whose call is
+    # an old, huge message must still be droppable (its orphan is then cleaned up), so those aren't linked.
+    call_at: dict = {}     # tool_call_id -> index of the assistant msg that issued it
+    result_at: dict = {}   # tool_call_id -> index of the tool msg that answered it
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if tc.get("id"):
+                call_at[tc["id"]] = i
+        if m.get("tool_call_id"):
+            result_at[m["tool_call_id"]] = i
+    for cid, ai in call_at.items():
+        ri = result_at.get(cid)
+        if ri is None:
+            continue
+        if _has_protect_marker(messages[ri]):
+            prot[ai] = True   # a marker-protected RESULT → keep its issuing call (else the result orphans)
+        if _has_protect_marker(messages[ai]):
+            prot[ri] = True   # a marker-protected CALL → keep its result (else the call dangles)
     return prot
 
 
@@ -459,20 +483,36 @@ def _insert_after_leading_system(msgs: list[dict], note: dict) -> list[dict]:
 
 
 def _strip_orphan_tools(messages: list[dict]) -> tuple[list[dict], int]:
-    """Remove any ``tool`` message whose ``tool_call_id`` is not produced by a surviving
-    ``assistant`` tool-call — dropping an old assistant turn would otherwise leave its
-    results orphaned, which strict chat templates reject."""
-    live: set = set()
+    """Remove orphans a drop left behind, in BOTH directions — strict chat templates reject either. (1) a
+    ``tool`` result whose issuing ``assistant`` tool-call was dropped; and (M18) (2) an ``assistant``
+    tool-call whose ``tool`` result was dropped — a DANGLING call is just as invalid. Pruning is by
+    tool_call id, so a multi-call assistant keeps the calls whose results survived."""
+    live_calls: set = set()
     for m in messages:
         if m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
                 if tc.get("id"):
-                    live.add(tc["id"])
-    out, removed = [], 0
-    for m in messages:
-        if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live:
+                    live_calls.add(tc["id"])
+    kept, removed = [], 0
+    for m in messages:  # (1) drop results whose call didn't survive
+        if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls:
             removed += 1
             continue
+        kept.append(m)
+    live_results = {m["tool_call_id"] for m in kept
+                    if m.get("role") == "tool" and m.get("tool_call_id")}
+    out = []
+    for m in kept:  # (2) prune assistant tool_call entries whose result didn't survive
+        tcs = m.get("tool_calls") if m.get("role") == "assistant" else None
+        if tcs:
+            surviving = [tc for tc in tcs if not tc.get("id") or tc["id"] in live_results]
+            if len(surviving) != len(tcs):
+                removed += len(tcs) - len(surviving)
+                if not surviving and not (m.get("content") or "").strip():
+                    continue  # the assistant turn was ONLY dead tool_calls → drop the whole message
+                m = {k: v for k, v in m.items() if k != "tool_calls"}
+                if surviving:
+                    m["tool_calls"] = surviving
         out.append(m)
     return out, removed
 

@@ -179,6 +179,35 @@ class TestFits(unittest.TestCase):
         self.assertFalse(any(m.get("role") == "tool" for m in out))
         self.assertEqual(out[-1]["content"], "current")
 
+    def test_marker_protected_result_protects_its_issuing_call(self):
+        # M18: a gate RESULT carries the protect marker but its assistant CALL does not, and the pair is
+        # OLD (a newer user turn follows). Without pair-protection the call is dropped and the "protected"
+        # result then orphaned. Its issuing call must be protected too.
+        from cria.contextfloor import _protected_mask
+        msgs = [
+            {"role": "assistant", "content": "x",
+             "tool_calls": [{"id": "g1", "function": {"name": "shell", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "g1", "content": "___CRIA_GATE_probe-0___\nEXIT:0"},  # marker result
+            {"role": "user", "content": "a newer turn"},   # makes the pair OLD (not the active turn)
+            {"role": "assistant", "content": "done"},
+        ]
+        prot = _protected_mask(msgs)
+        self.assertTrue(prot[1])   # the marker-protected result
+        self.assertTrue(prot[0])   # M18: its issuing call is now protected too (pair kept intact)
+
+    def test_strip_orphan_tools_prunes_a_dangling_call(self):
+        # M18 (reverse): an assistant tool_call whose RESULT was dropped is a DANGLING call — strict
+        # templates reject it just as they reject an orphan result. It must be pruned.
+        from cria.contextfloor import _strip_orphan_tools
+        msgs = [
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "function": {"name": "n", "arguments": "{}"}}]},  # result was dropped
+            {"role": "user", "content": "hi"},
+        ]
+        out, removed = _strip_orphan_tools(msgs)
+        self.assertEqual(removed, 1)
+        self.assertFalse(any(m.get("tool_calls") for m in out))   # no dangling call survives
+
     def test_over_budget_when_protected_turn_alone_exceeds_window(self):
         # A single giant active turn that can't be dropped and can't be tool-compressed away.
         msgs = [_u("Z" * 40000)]  # ~10K est, protected, only message

@@ -284,6 +284,23 @@ class TestCompletionBlockNudge(unittest.TestCase):
         report = ProbeReport(["python"], [], [ProbeResult("pytest -q", 0, "clean", [])])
         self.assertIsNone(completion_block_nudge(report, LinterReport()))
 
+    def test_timed_out_test_blocks_but_launch_failure_does_not(self):
+        # M3: a hard-failure-kind probe (Test) that actually TIMED OUT ran and did NOT verify → completion
+        # must fail CLOSED (block, principle #13). A LAUNCH failure (absent tool = cria's OWN setup gap)
+        # still fails OPEN (must not wedge). exit_code is None for BOTH; the timed_out FLAG distinguishes them.
+        from cria.proberun import gate_ran_tests
+        cand = synth(["pytest", "-q"], kind=ProbeKind.Test)
+        timed = ProbeReport(["python"], [cand], [
+            ProbeResult("pytest -q", None, "TIMEOUT after 120s — did not finish", [], timed_out=True)])
+        nudge = completion_block_nudge(timed, LinterReport())
+        self.assertIsNotNone(nudge)                        # timed-out test → fail closed
+        self.assertIn("pytest -q", nudge)                  # the timed-out check is surfaced to the coder
+        self.assertFalse(gate_ran_tests(timed))            # a timed-out test did NOT execute a full run
+        tc = synth(["mypy", "."], kind=ProbeKind.Typecheck)
+        launch = ProbeReport(["python"], [tc], [
+            ProbeResult("mypy .", None, "failed to launch — tool not installed?", [], timed_out=False)])
+        self.assertIsNone(completion_block_nudge(launch, LinterReport()))  # absent tool → fail open
+
 
 class TestUnranProbes(unittest.TestCase):
     """A probe that failed to launch / timed out (exit_code is None) is MISSING SIGNAL, not a pass —

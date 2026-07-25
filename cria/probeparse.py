@@ -90,6 +90,9 @@ class ProbeResult:
     exit_code: Optional[int] = None    # None = unavailable (timeout / signal / wait error)
     summary: str = ""
     findings: list[Finding] = field(default_factory=list)
+    timed_out: bool = False            # the command RAN and did NOT finish (timeout) — distinct from a
+    #                                    launch failure (exit_code is None for BOTH, but a timeout is a
+    #                                    positive did-not-verify signal → the completion gate fails CLOSED)
 
 
 # ---------------------------------------------------------------------------
