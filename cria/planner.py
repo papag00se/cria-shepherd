@@ -305,8 +305,10 @@ def _strip_baked_content(step: str) -> str:
 
 
 def _plan_has_research(steps: list[str]) -> bool:
-    """True when some step already READS the external source (fetches the spec/docs) — so the coder
-    learns the real endpoint before coding, per plan.txt's RESEARCH-FIRST rule."""
+    """Deterministic FALLBACK for _reasoned_has_research (used only when no reasoner is configured or its
+    answer is unparseable): a keyword guess at whether some step already reads the external source. The
+    reasoner JUDGES this far more reliably than this regex over prose — this is the safety net, not the
+    primary path."""
     return any(_RESEARCH_SIGNAL.search(s) for s in steps)
 
 
@@ -394,7 +396,8 @@ class Planner:
         # Drop pure environment-plumbing steps (setup/venv/install) the weak planner emits despite the
         # prompt forbidding them — they can't verify (the env is fixed / sandbox blocks apt-get+pip), so
         # they stall the plan on step 1. Never empty the plan: an all-plumbing plan is kept as-is.
-        kept = [s for s in scrubbed if not _is_plumbing_step(s) and not _is_shell_command_step(s)]
+        plumbing = self._reasoned_plumbing_indices(task, scrubbed, rlog)   # reasoner-judged (regex fallback)
+        kept = [s for i, s in enumerate(scrubbed) if i not in plumbing and not _is_shell_command_step(s)]
         n_dropped = len(scrubbed) - len(kept)
         if n_dropped and kept:
             rlog.emit("plan.noise_dropped", count=n_dropped, level="info")  # plumbing / shell-command steps
@@ -407,8 +410,8 @@ class Planner:
         # coding step, which the coder obeys and 404s/mis-parses. Prepend ONE grounded research step so
         # the coder learns the real endpoint + fields first. Never deletes/rewrites a step; the URL is the
         # NAMED domain's standard discovery path, not a guess. Skipped once research is already planned.
-        domain = searchloop.task_api_domain(task)
-        if domain and scrubbed and not _plan_has_research(scrubbed):
+        domain = self._reasoned_api_domain(task, rlog)
+        if domain and scrubbed and not self._reasoned_has_research(task, scrubbed, rlog):
             scrubbed = [prompts.render("research_step", domain=domain)] + scrubbed
             rlog.emit("plan.research_prepended", domain=domain, level="info")
         plan = Plan(
@@ -419,6 +422,68 @@ class Planner:
         )
         rlog.emit("plan.drafted", id=plan.id, steps=len(scrubbed))
         return plan
+
+    def _ask(self, system_prompt: str, user: str, rlog) -> str:
+        """One targeted, single-shot reasoner question → its cleaned text answer ("" on any failure).
+        A weak model judges a narrow binary ("does the task name an API?", "does the plan research?")
+        far more reliably than a keyword regex reads it out of prose — this is the "reasoner JUDGES,
+        code ACTS" path. Toolless, low max_tokens; the caller parses YES/NO or a bare token."""
+        body = {"temperature": 0, "stream": False, "max_tokens": 2000,
+                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user}]}
+        if self._role is not None:
+            self._role.apply(body)
+        try:
+            msg = _assistant_message_obj(json.loads(self._provider.chat(body, rlog)))
+        except Exception:  # noqa: BLE001 - any upstream/parse failure → let the caller fall back
+            return ""
+        content = strip_think(msg.get("content") or "")
+        if self._role is not None:
+            content = self._role.clean_content(content)
+        return content.strip()
+
+    def _reasoned_api_domain(self, task: str, rlog) -> str:
+        """The single external API domain the task requires, JUDGED by the reasoner (it catches "the
+        GitHub API" with no dotted host, which the structural extractor can't) — or "" for none. Falls
+        back to the structural ``searchloop.task_api_domain`` when no reasoner is configured or the answer
+        isn't a clean domain, so behaviour is never worse than the deterministic path."""
+        if self._role is None:
+            return searchloop.task_api_domain(task)
+        ans = self._ask(prompts.load("plan_names_api"), "TASK:\n" + task, rlog)
+        tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
+        if tok and searchloop._looks_like_domain(tok):
+            return tok.lower()
+        if ans.strip().upper().startswith("NONE"):
+            return ""
+        return searchloop.task_api_domain(task)  # unparseable answer → structural fallback
+
+    def _reasoned_has_research(self, task: str, steps: list[str], rlog) -> bool:
+        """Whether the plan already reads the API's real spec/docs before coding, JUDGED by the reasoner
+        (replaces the ``_RESEARCH_SIGNAL`` keyword guess). Falls back to that regex when no reasoner is
+        configured or the answer isn't a clean YES/NO."""
+        if self._role is None:
+            return _plan_has_research(steps)
+        plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+        ans = self._ask(prompts.load("plan_has_research"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}", rlog)
+        m = re.search(r"\b(YES|NO)\b", ans, re.I)
+        return (m.group(1).upper() == "YES") if m else _plan_has_research(steps)
+
+    def _reasoned_plumbing_indices(self, task: str, steps: list[str], rlog) -> set:
+        """The indices of PURE environment-plumbing steps (setup/venv/dependency-install with no
+        deliverable), JUDGED by the reasoner — replaces the ``_is_plumbing_step`` keyword regex, which is
+        a fuzzy prose classifier driving a DELETION. Falls back to that regex when no reasoner is
+        configured or the answer has neither step numbers nor an explicit NONE, so it's never worse than
+        the deterministic path."""
+        regex_hits = {i for i, s in enumerate(steps) if _is_plumbing_step(s)}
+        if self._role is None:
+            return regex_hits
+        plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+        ans = self._ask(prompts.load("plan_plumbing_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}", rlog)
+        nums = re.findall(r"\d+", ans)
+        if nums:
+            return {int(n) - 1 for n in nums if 0 <= int(n) - 1 < len(steps)}   # 1-based → 0-based
+        if re.search(r"\bNONE\b", ans, re.I):
+            return set()                                                        # reasoner: none to drop
+        return regex_hits                                                       # unparseable → regex fallback
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",
                          rewrite_summary: str = "") -> list[str] | None:

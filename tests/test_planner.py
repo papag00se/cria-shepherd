@@ -581,3 +581,61 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)                    # no external API → nothing to research
         self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_reasoner_JUDGES_domain_and_missing_research_then_injects(self):
+        # With a reasoner configured, cria ASKS it (not a regex): what API domain? does the plan research?
+        # scripted answers: plan draft, then "api.handle.me", then "NO" (no research) → prepend.
+        prov = _ScriptedProvider([
+            _content_resp('1. Write resolver.py that returns the address.\n2. Add unit tests.'),  # plan
+            _content_resp('NONE'),                                                                # plumbing? none
+            _content_resp('api.handle.me'),                                                       # which API?
+            _content_resp('NO'),                                                                  # has research?
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("build a resolver for the handles API"), rlog)
+        self.assertIn("api.handle.me/openapi.json", plan.items[0].text)   # injected from the reasoner's domain
+        self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
+
+    def test_reasoner_says_research_present_no_injection(self):
+        prov = _ScriptedProvider([
+            _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan
+            _content_resp('NONE'),                                           # plumbing? none
+            _content_resp('api.handle.me'),                                  # which API?
+            _content_resp('YES'),                                            # has research? → skip
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("build a resolver for the handles API"), rlog)
+        self.assertEqual(len(plan.items), 2)                                 # reasoner said research present
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
+
+    def test_reasoner_says_NONE_api_no_injection(self):
+        prov = _ScriptedProvider([
+            _content_resp('1. Write fib.py.\n2. Add tests.'),   # plan
+            _content_resp('NONE'),                              # plumbing? none
+            _content_resp('NONE'),                              # which API? → none, short-circuits
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("write a fibonacci module"), rlog)
+        self.assertEqual(len(plan.items), 2)
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
+
+    def test_reasoner_answer_with_reasoning_preamble_still_parses(self):
+        # fabliq wraps the answer in <think>…</think> / prose — strip_think + the YES/NO word-search recover it
+        prov = _ScriptedProvider([
+            _content_resp('1. Write resolver.py.\n2. Tests.'),
+            _content_resp('NONE'),  # plumbing? none
+            _content_resp('<think>the task says the Ada Handles API at api.handle.me</think>\napi.handle.me'),
+            _content_resp('<think>no step fetches the spec</think>\nNO'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("resolve via the Ada Handles API"), rlog)
+        self.assertIn("api.handle.me/openapi.json", plan.items[0].text)
+        self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
+

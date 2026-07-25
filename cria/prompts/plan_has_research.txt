@@ -1,0 +1,5 @@
+You are given a coding TASK and a numbered PLAN of steps for it. Answer ONE question: does the plan ALREADY include a step whose job is to READ the external API's real source of truth — fetch its machine-readable spec (OpenAPI/Swagger) or read its documentation — BEFORE the code that calls the API is written?
+
+A step that only WRITES code, runs tests, or writes docs is NOT a research step. A step that fetches/reads the API's spec or docs IS.
+
+Reply with EXACTLY one word: YES or NO. Nothing else.
