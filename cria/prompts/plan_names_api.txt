@@ -1,6 +1,6 @@
 You are given a coding TASK. Answer ONE question: does the code the task asks for need to call a SPECIFIC external HTTP API or web service that the task NAMES (by product name or by domain)?
 
-- If YES, reply with EXACTLY the host the task names and nothing else — e.g. `api.example.com`. Copy it VERBATIM, INCLUDING any subdomain like `api.` — do NOT shorten `api.handle.me` to `handle.me` (the bare site is usually a different server that returns a web page, not the API). If the task names the API by product only, give that product's well-known API host. Never invent a domain you are unsure of.
+- If YES, reply with EXACTLY the host the task names and nothing else — e.g. `api.example.com`. Copy it VERBATIM, INCLUDING any subdomain like `api.` — do NOT shorten by dropping the subdomain (the bare site is usually a different server that returns a web page, not the API). If the task names the API by product only, web_search for that product's API host. Never invent a domain you are unsure of.
 - If the task names no specific external API (it's self-contained, or purely local), reply with EXACTLY `NONE`.
 
-Reply with ONLY the bare domain or the word NONE — no punctuation, no explanation, no other text.
+Reply with ONLY the named domain or the word NONE — no punctuation, no explanation, no other text.

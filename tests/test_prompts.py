@@ -16,6 +16,15 @@ class PromptAgnosticismTests(unittest.TestCase):
         # it must NOT command an unconditional API-spec first step as the sole framing
         self.assertNotIn("DON'T GUESS THE API's ENDPOINTS", p)
 
+    def test_research_step_is_not_api_spec_only(self):
+        # The INJECTED research step (fired when a task names a domain) assumed the domain was an API with
+        # an openapi.json — so for a docs/library/service domain it steered the coder at a phantom
+        # openapi.json. It must also name docs/reference sources, not only an API spec.
+        r = prompts.render("research_step", domain="example.com")
+        self.assertTrue(any(w in r.lower() for w in ("docs", "reference", "documented library")),
+                        "research_step still frames research as API-spec only")
+        self.assertIn("don't assume a spec file exists", r.lower())
+
     def test_verifier_investigative_step_accepts_non_web_sources(self):
         v = prompts.load("verify")
         # a file read / --help / schema must be able to satisfy an investigative step, not only a web_fetch
