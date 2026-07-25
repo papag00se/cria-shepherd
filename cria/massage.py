@@ -932,11 +932,44 @@ def _recover_write_args(raw: str) -> dict | None:
 _MUTATION_TOOLS = ("write_file", "create_file", "edit_file", "str_replace", "apply_patch")
 
 
+def _content_truncated(fn: dict) -> bool:
+    """A ``write_file`` whose ARGS parse (valid JSON, normal `tool_calls` finish) but whose CONTENT is a
+    provably-truncated source file — the model cut its own file off mid-string, so the JSON-level guard
+    above misses it (observed live: a .py written as an opening ``\"\"\"`` docstring + 517 chars, then it
+    STOPS — no closing ``\"\"\"``, no code; the syntax floor then flagged "unterminated triple-quoted
+    string" 565× while the coder edit-thrashed a file it could never make parse). Signal = an ODD count of
+    a triple-quote delimiter, CONFIRMED by the language's own parser failing, so a legit ``\"\"\"`` inside a
+    string can't false-positive. Confirmable today for Python (`compile`); other languages fall through to
+    the gate. Only a full-file ``write_file`` is checked — an ``edit_file`` new_string may be a partial."""
+    if fn.get("name") not in ("write_file", "create_file"):
+        return False
+    try:
+        args = json.loads(fn.get("arguments") or "", strict=False)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(args, dict):
+        return False
+    content, path = args.get("content"), args.get("path") or ""
+    if not isinstance(content, str) or not content.strip():
+        return False
+    if content.count('"""') % 2 == 0 and content.count("'''") % 2 == 0:
+        return False  # balanced triple-quotes → no unterminated-docstring signal
+    if str(path).endswith(".py"):
+        try:
+            compile(content, "<write>", "exec")
+            return False  # odd count but it PARSES (a \"\"\" lived inside a string) → not truncated
+        except SyntaxError:
+            return True   # odd triple-quote AND won't parse → a cut-off write; refuse it
+    return False
+
+
 def has_incomplete_write_args(completion: dict) -> bool:
-    """A content-bearing file-mutation call whose `arguments` are STILL unparseable after repair —
-    the model cut the call off mid-content (a normal `tool_calls` finish, not `length`), so
-    :func:`_recover_write_args` refused to salvage a partial. Shipping it would lower a broken,
-    half-written file to disk and report success. The loop refuses it like a length-truncation."""
+    """A content-bearing file-mutation call the model cut off mid-content, so lowering it would write a
+    broken half-file to disk and report success. Two cut-off shapes: (1) the `arguments` are STILL
+    unparseable after repair (a mid-JSON cut — a normal `tool_calls` finish, not `length`, so
+    :func:`_recover_write_args` refused to salvage a partial); (2) the args PARSE but the CONTENT is a
+    provably-truncated source file (:func:`_content_truncated`). The loop refuses either like a
+    length-truncation."""
     for ch in completion.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             fn = tc.get("function") or {}
@@ -949,6 +982,8 @@ def has_incomplete_write_args(completion: dict) -> bool:
                 json.loads(raw, strict=False)
             except (json.JSONDecodeError, ValueError):
                 return True  # repair could not close it → incomplete/malformed mutation
+            if _content_truncated(fn):
+                return True  # args parse but the file content is cut off mid-string → refuse
     return False
 
 

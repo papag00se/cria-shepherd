@@ -5,6 +5,7 @@ from cria.massage import (
     coerce_text_answer,
     add_file_to_write_file,
     apply,
+    has_incomplete_write_args,
     has_tool_call_leak,
     is_truncated,
     lower_edit_file,
@@ -64,6 +65,41 @@ class LeakedRecoveryTests(unittest.TestCase):
         original = _completion(content="<tool_call>{}</tool_call>", tool_calls=[_tc("x", "{}")])
         c = recover_leaked_tool_calls(original)
         self.assertEqual(len(_first(c)["message"]["tool_calls"]), 1)  # unchanged
+
+
+class IncompleteWriteTests(unittest.TestCase):
+    """A write_file with VALID JSON but a self-truncated CONTENT (docstring opened, never closed, no
+    code) is a broken file the model cut off mid-string (finish=tool_calls, not length) — the JSON guard
+    misses it. It must be refused like a length-truncation, but a legit \"\"\" inside a string must NOT
+    false-positive (compile confirms) and non-Python content must fall through (no fragile refusal)."""
+
+    def _c(self, name, content, path="resolve.py"):
+        return _completion(tool_calls=[_tc(name, json.dumps({"path": path, "content": content}))])
+
+    def test_truncated_python_docstring_is_refused(self):
+        trunc = '#!/usr/bin/env python3\n"""\nResolver\n\nUsage:\n    resolve goose --total-handles'
+        self.assertTrue(has_incomplete_write_args(self._c("write_file", trunc)))
+
+    def test_complete_file_is_allowed(self):
+        ok = '"""Resolver."""\nimport sys\n\ndef main():\n    print("hi")\n'
+        self.assertFalse(has_incomplete_write_args(self._c("write_file", ok)))
+
+    def test_legit_triple_quote_inside_a_string_not_false_flagged(self):
+        # odd \"\"\" count, but it COMPILES → not a truncation; must be allowed
+        self.assertFalse(has_incomplete_write_args(self._c("write_file", 'sep = \'"""\'\nx = 1\n')))
+
+    def test_non_python_odd_triple_quote_falls_through(self):
+        # no in-process confirmer for .md → don't refuse on the count alone (no fragile heuristic)
+        self.assertFalse(has_incomplete_write_args(self._c("write_file", '"""x', path="README.md")))
+
+    def test_edit_file_partial_new_string_not_checked(self):
+        c = _completion(tool_calls=[_tc("edit_file",
+            json.dumps({"path": "a.py", "old_string": "x", "new_string": '"""partial'}))])
+        self.assertFalse(has_incomplete_write_args(c))  # a partial edit may legitimately be mid-string
+
+    def test_malformed_json_still_refused(self):
+        c = _completion(tool_calls=[_tc("write_file", '{"path":"a.py","content":"def f(')])  # cut mid-JSON
+        self.assertTrue(has_incomplete_write_args(c))
 
 
 class ArgRepairTests(unittest.TestCase):
