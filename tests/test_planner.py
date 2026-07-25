@@ -515,6 +515,17 @@ class PlumbingStepDropTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
         self.assertTrue(any(k == "plan.noise_all_kept" for k, _ in rlog.events))
 
+    def test_baked_file_content_is_stripped_from_a_step(self):
+        # the planner/re-derivation dumped literal code (with a wrong "import mock, requests") into the
+        # step; the coder ships it verbatim. Strip the baked-content clause — the coder writes its own.
+        from cria.planner import _strip_baked_content
+        s = _strip_baked_content("Write unit tests: create tests/test_x.py with content "
+                                 "'import sys, json, mock, requests; def test(): ...'")
+        self.assertEqual(s, "Write unit tests: create tests/test_x.py")
+        # a prose "with content explaining ..." (no quoted blob) is untouched
+        self.assertEqual(_strip_baked_content("Add a README with content explaining install"),
+                         "Add a README with content explaining install")
+
     def test_bare_shell_command_step_is_dropped(self):
         # a plan step that is a raw shell command ("grep -n 'resolve' spec.json") is a coder ACTION the
         # re-derivation codified, not an outcome — the coder can't "complete" it. Drop it; keep outcomes.

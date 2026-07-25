@@ -284,6 +284,26 @@ def _is_shell_command_step(step: str) -> bool:
     return bool(_SHELL_STEP.match(step))
 
 
+# A step that BAKES the literal file CONTENT ("create X with content 'import sys, json, mock, ...'") —
+# the planner/re-derivation dumped the implementation into the step instead of describing the outcome,
+# so the coder ships the snippet verbatim, bugs and all (observed: baked "import mock, requests" — a
+# wrong import + an external dep) and thrashes writing the exact bytes. Strip the baked-content clause;
+# the coder writes its own content. Only a QUOTED blob is stripped, so a prose "README with content
+# explaining install" (no quote) is untouched.
+_BAKED_CONTENT = re.compile(
+    r"\s*[:,]?\s*\b(?:with(?: the)? content|containing|whose content is|with body|as follows)\b\s*"
+    r"[:=]?\s*['\"].*", re.I | re.S)
+
+
+def _strip_baked_content(step: str) -> str:
+    """Remove a baked literal-file-content clause ("... with content '<code>'") from a step — the coder
+    decides a file's content; a baked snippet is just a guess it ships verbatim. Never blanks a step."""
+    out = _BAKED_CONTENT.sub("", step)
+    if out == step:
+        return step                       # nothing baked → leave legit trailing punctuation alone
+    return out.rstrip(" :,-\t") or step
+
+
 def _plan_has_research(steps: list[str]) -> bool:
     """True when some step already READS the external source (fetches the spec/docs) — so the coder
     learns the real endpoint before coding, per plan.txt's RESEARCH-FIRST rule."""
@@ -367,7 +387,7 @@ class Planner:
         # so this doesn't re-plan mid-session.
         # Scrub pre-research endpoint guesses the reasoner baked into steps (a plan is drafted before
         # the spec is fetched; a concrete `/path/{param}` it names is a guess the coder would obey).
-        scrubbed = [_scrub_invented_paths(s, task) for s in steps]
+        scrubbed = [_strip_baked_content(_scrub_invented_paths(s, task)) for s in steps]
         n_scrubbed = sum(1 for a, b in zip(steps, scrubbed) if a != b)
         if n_scrubbed:
             rlog.emit("plan.paths_scrubbed", count=n_scrubbed, level="info")
