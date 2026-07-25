@@ -74,6 +74,18 @@ class PromptAgnosticismTests(unittest.TestCase):
         # model-facing prompt: never leak the literal project name (only ⟦ctx:…⟧ markers are model-facing)
         self.assertNotIn("cria", p.lower())
 
+    def test_noise_judge_catches_compound_env_setup_steps(self):
+        # LIVE footgun: the noise judge answered NONE on "Create a virtual environment and install requests
+        # and pytest" across every plan revision — the compound / "create a project skeleton" phrasing slid
+        # past the old "its ONLY action is …" wording, and the venv/install step (requests was already
+        # installed) trapped the run for the full timeout. The criterion must judge by the REAL action, not
+        # a tidy leading verb, and name the scaffold/add-dependency forms.
+        n = prompts.load("plan_noise_steps")
+        low = n.lower()
+        self.assertIn("skeleton", low)                 # scaffolding a "project skeleton" is setup
+        self.assertIn("real action", low)              # judge the action, not the leading verb
+        self.assertTrue("add" in low and "dependen" in low)   # "add requests" counts as installing a dependency
+
     def test_critics_do_not_treat_exit0_as_proof_it_works(self):
         # Green-but-wrong (observed live): a resolver that 404s but CATCHES the error and exits 0 passed
         # the gate (compile+lint exit 0) and the step critic marked it "runs successfully". Both critics
