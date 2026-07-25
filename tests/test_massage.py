@@ -5,7 +5,7 @@ from cria.massage import (
     coerce_text_answer,
     add_file_to_write_file,
     apply,
-    has_incomplete_write_args,
+    has_incomplete_tool_args,
     has_tool_call_leak,
     is_truncated,
     lower_edit_file,
@@ -78,28 +78,40 @@ class IncompleteWriteTests(unittest.TestCase):
 
     def test_truncated_python_docstring_is_refused(self):
         trunc = '#!/usr/bin/env python3\n"""\nResolver\n\nUsage:\n    resolve goose --total-handles'
-        self.assertTrue(has_incomplete_write_args(self._c("write_file", trunc)))
+        self.assertTrue(has_incomplete_tool_args(self._c("write_file", trunc)))
 
     def test_complete_file_is_allowed(self):
         ok = '"""Resolver."""\nimport sys\n\ndef main():\n    print("hi")\n'
-        self.assertFalse(has_incomplete_write_args(self._c("write_file", ok)))
+        self.assertFalse(has_incomplete_tool_args(self._c("write_file", ok)))
 
     def test_legit_triple_quote_inside_a_string_not_false_flagged(self):
         # odd \"\"\" count, but it COMPILES → not a truncation; must be allowed
-        self.assertFalse(has_incomplete_write_args(self._c("write_file", 'sep = \'"""\'\nx = 1\n')))
+        self.assertFalse(has_incomplete_tool_args(self._c("write_file", 'sep = \'"""\'\nx = 1\n')))
 
     def test_non_python_odd_triple_quote_falls_through(self):
         # no in-process confirmer for .md → don't refuse on the count alone (no fragile heuristic)
-        self.assertFalse(has_incomplete_write_args(self._c("write_file", '"""x', path="README.md")))
+        self.assertFalse(has_incomplete_tool_args(self._c("write_file", '"""x', path="README.md")))
 
     def test_edit_file_partial_new_string_not_checked(self):
         c = _completion(tool_calls=[_tc("edit_file",
             json.dumps({"path": "a.py", "old_string": "x", "new_string": '"""partial'}))])
-        self.assertFalse(has_incomplete_write_args(c))  # a partial edit may legitimately be mid-string
+        self.assertFalse(has_incomplete_tool_args(c))  # a partial edit may legitimately be mid-string
+
+    def test_self_truncated_exec_command_is_refused(self):
+        # the LIVE footgun: a self-truncated exec_command whose inline python leaked the model's
+        # <|tool_call_end|> dialect token mid-string → unparseable args → Codex "failed to parse
+        # function arguments" 564x. The guard is now tool-AGNOSTIC, not write-only.
+        raw = '{"cmd": "python3 -c \\"import json; data=json.load(open(\'<|tool_call_end|>'
+        c = _completion(tool_calls=[_tc("exec_command", raw)])
+        self.assertTrue(has_incomplete_tool_args(c))
+
+    def test_valid_exec_command_is_allowed(self):
+        c = _completion(tool_calls=[_tc("exec_command", json.dumps({"cmd": "grep -n x f.json"}))])
+        self.assertFalse(has_incomplete_tool_args(c))
 
     def test_malformed_json_still_refused(self):
         c = _completion(tool_calls=[_tc("write_file", '{"path":"a.py","content":"def f(')])  # cut mid-JSON
-        self.assertTrue(has_incomplete_write_args(c))
+        self.assertTrue(has_incomplete_tool_args(c))
 
 
 class ArgRepairTests(unittest.TestCase):
@@ -445,13 +457,13 @@ class IncompleteWriteTests(unittest.TestCase):
         comp = {"choices": [{"message": {"tool_calls": [
             {"function": {"name": "write_file", "arguments": cut}}]}}]}
         repair_tool_args(comp)                       # recovery refuses → args stay malformed
-        self.assertTrue(has_incomplete_write_args(comp))
+        self.assertTrue(has_incomplete_tool_args(comp))
 
     def test_complete_write_not_flagged(self):
         from cria.massage import has_incomplete_write_args
         comp = {"choices": [{"message": {"tool_calls": [
             {"function": {"name": "write_file", "arguments": '{"path":"a.py","content":"print(1)"}'}}]}}]}
-        self.assertFalse(has_incomplete_write_args(comp))
+        self.assertFalse(has_incomplete_tool_args(comp))
 
 
 class AddFileTests(unittest.TestCase):

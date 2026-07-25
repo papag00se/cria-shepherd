@@ -2733,7 +2733,18 @@ class SharedGuardTests(unittest.TestCase):
         out = guard_truncation(dict(trunc), {"messages": [], "tools": None}, coder_chat, rlog)
         self.assertEqual(calls, [])                                             # no incremental-write retry
         self.assertFalse(out["choices"][0]["message"].get("tool_calls"))       # partial write refused
-        self.assertIn("loop.incomplete_write_dropped", rlog.kinds())
+        self.assertIn("loop.incomplete_tool_call_dropped", rlog.kinds())
+
+    def test_guard_truncation_refuses_a_self_truncated_exec_command(self):
+        # NOT write-only: a self-truncated exec_command (inline python leaked the model's
+        # <|tool_call_end|> dialect token mid-string → unparseable args) must be refused too, else it
+        # reaches the harness as "failed to parse function arguments" every turn (observed: 564×).
+        from cria.loop import guard_truncation
+        raw = '{"cmd": "python3 -c \\"import json; data=json.load(open(\'<|tool_call_end|>'
+        trunc = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "e1", "function": {"name": "exec_command", "arguments": raw}}]}, "finish_reason": "tool_calls"}]}
+        out = guard_truncation(dict(trunc), {"messages": [], "tools": None}, lambda b, r: None, _Rlog())
+        self.assertFalse(out["choices"][0]["message"].get("tool_calls"))       # partial exec refused
 
 
 class ReframePreambleTests(unittest.TestCase):

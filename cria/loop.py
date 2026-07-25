@@ -3194,10 +3194,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     # massage's arg-recovery refuses to salvage a partial, so the arguments are still malformed here.
     # Refuse it the SAME way as a length-truncation: never lower a half-written file to disk. The turn
     # then reads as non-acting and the caller gates on ground truth rather than a broken file.
-    if not massage.is_truncated(coder) and massage.has_incomplete_write_args(coder):
-        rlog.emit("loop.incomplete_write_dropped", step=step)
+    if not massage.is_truncated(coder) and massage.has_incomplete_tool_args(coder):
+        rlog.emit("loop.incomplete_tool_call_dropped", step=step)
         _drop_tool_calls(coder)
-        _add_note(coder, "write call was cut off mid-content — partial write refused (re-send the complete file)")
+        _add_note(coder, "tool call was cut off mid-arguments — partial call refused (re-send the complete "
+                         "call; if it's a shell command with inline code, keep it short and quote it simply)")
         return coder
     attempt = 0
     conv = list(body.get("messages") or [])

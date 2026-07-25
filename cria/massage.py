@@ -901,7 +901,7 @@ def _recover_write_args(raw: str) -> dict | None:
     finish, not `length`, so `is_truncated` never sees it) must NOT be salvaged: the
     recovered body would be a partial file, and lowering it to disk writes a broken file
     that reports success. Refuse (→ None) when the content value isn't properly closed;
-    :func:`has_incomplete_write_args` then flags it so the loop drops the partial write."""
+    :func:`has_incomplete_tool_args` then flags it so the loop drops the partial write."""
     pm = _PATH_RE.search(raw)
     if not pm:
         return None
@@ -963,28 +963,32 @@ def _content_truncated(fn: dict) -> bool:
     return False
 
 
-def has_incomplete_write_args(completion: dict) -> bool:
-    """A content-bearing file-mutation call the model cut off mid-content, so lowering it would write a
-    broken half-file to disk and report success. Two cut-off shapes: (1) the `arguments` are STILL
-    unparseable after repair (a mid-JSON cut — a normal `tool_calls` finish, not `length`, so
-    :func:`_recover_write_args` refused to salvage a partial); (2) the args PARSE but the CONTENT is a
-    provably-truncated source file (:func:`_content_truncated`). The loop refuses either like a
-    length-truncation."""
+def has_incomplete_tool_args(completion: dict) -> bool:
+    """ANY tool call the model cut off mid-arguments — so forwarding it lowers a broken call. Two cut-off
+    shapes: (1) the `arguments` are STILL unparseable after repair (a mid-JSON cut — a normal `tool_calls`
+    finish, not `length`; observed live: a self-truncated ``exec_command`` whose inline ``python3 -c "…``
+    leaked the model's ``<|tool_call_end|>`` dialect token mid-string, so Codex rejected it with "failed
+    to parse function arguments: EOF while parsing a string" 564× in one run); (2) for a content-bearing
+    WRITE, the args PARSE but the CONTENT is a provably-truncated source file (:func:`_content_truncated`).
+    The parse check is tool-AGNOSTIC (a write, an exec_command, anything) — a broken call must never reach
+    the harness. The content check is write-only. The loop refuses either like a length-truncation."""
     for ch in completion.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             fn = tc.get("function") or {}
-            if fn.get("name") not in _MUTATION_TOOLS:
-                continue
             raw = fn.get("arguments")
             if not isinstance(raw, str):
                 continue
             try:
                 json.loads(raw, strict=False)
             except (json.JSONDecodeError, ValueError):
-                return True  # repair could not close it → incomplete/malformed mutation
-            if _content_truncated(fn):
-                return True  # args parse but the file content is cut off mid-string → refuse
+                return True  # repair could not close it → the call was cut off mid-arguments
+            if fn.get("name") in _MUTATION_TOOLS and _content_truncated(fn):
+                return True  # write args parse but the file content is cut off mid-string → refuse
     return False
+
+
+# Back-compat alias — the guard used to be write-only; the check is now tool-agnostic.
+has_incomplete_write_args = has_incomplete_tool_args
 
 
 # ------------------------------------------------------------------ apply_patch
