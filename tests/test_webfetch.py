@@ -68,6 +68,49 @@ class YamlStructuralTests(unittest.TestCase):
         self.assertIn("Resolve a handle", wf.find_in(reduced, parsed, "resolve", 4000))
 
 
+class XmlAndRawSourceTests(unittest.TestCase):
+    """XML is STRUCTURED data — it must not be prose-flattened like HTML (that destroys an RSS/Atom/SVG/
+    SOAP feed). And a caller can ask for the LITERAL source with raw=True (front-end debugging)."""
+
+    def test_xml_is_preserved_not_flattened(self):
+        xml = '<rss><channel><item><title>Post</title><link>http://a/b</link></item></channel></rss>'
+        reduced, parsed = wf.reduce_for_cache(xml, "application/rss+xml", "http://h/feed")
+        self.assertIn("<item>", reduced)                   # tags survive — structure intact
+        self.assertIn("<title>Post</title>", reduced)      # before the fix this flattened to "Post http://a/b"
+
+    def test_svg_xml_keeps_its_markup(self):
+        svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+        reduced, _ = wf.reduce_for_cache(svg, "image/svg+xml", "http://h/i.svg")
+        self.assertIn("<rect", reduced)
+
+    def test_html_default_flattens_but_raw_returns_source(self):
+        html = '<html><body><h1>Hi</h1><a href="/x">link</a><script>var z=1</script></body></html>'
+        flat, _ = wf.reduce_for_cache(html, "text/html", "http://h")
+        self.assertNotIn("<h1>", flat)                     # default: readable text, tags stripped
+        self.assertIn("Hi", flat)
+        raw, _ = wf.reduce_for_cache(html, "text/html", "http://h", raw=True)
+        self.assertIn("<h1>Hi</h1>", raw)                  # raw: literal markup, incl. script
+        self.assertIn("<script>", raw)
+
+    def test_raw_fetch_not_refused_after_a_reduced_fetch_of_the_same_url(self):
+        # raw source and the reduced view are distinct fetch identities — asking for the source after
+        # reading the text must NOT be refused as an "already fetched" repeat.
+        wf.clear_cache()
+        orig = wf.fetch
+        wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "text/html", "<b>hi</b>", False)
+        try:
+            url = "https://site.x/page"
+            self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))          # reduced view
+            wf.set_visible("s1", [(url, "", "")], [])                           # its result is in context
+            self.assertIn("still above", wf.fetch_nav(url, session="s1"))       # reduced repeat → refused
+            out = wf.fetch_nav(url, session="s1", raw=True)                     # raw is a DIFFERENT identity
+            self.assertIn("<b>hi</b>", out)                                     # → served, not refused
+            self.assertNotIn("still above", out)
+        finally:
+            wf.fetch = orig
+            wf.clear_cache()
+
+
 class StatusAndHostTests(unittest.TestCase):
     def test_status_label(self):
         self.assertEqual(wf.status_label(404), "HTTP 404 Not Found")

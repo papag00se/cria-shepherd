@@ -137,7 +137,8 @@ def _synthetic_tools() -> dict[str, dict]:
                         {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, ["path"]),
         "list_dir": fn("list_dir", d["list_dir"], {"path": {"type": "string"}}, []),
         "web_fetch": fn("web_fetch", d["web_fetch"],
-                        {"url": {"type": "string"}, "find": {"type": "string"}, "cursor": {"type": "string"}}, ["url"]),
+                        {"url": {"type": "string"}, "find": {"type": "string"}, "cursor": {"type": "string"},
+                         "raw": {"type": "boolean"}}, ["url"]),
         "web_search": fn("web_search", d["web_search"], {"query": {"type": "string"}}, ["query"]),
     }
 
@@ -428,9 +429,12 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     if not url:
         return None
     cursor = args.get("cursor")
+    raw = bool(args.get("raw"))
     find = str(args["find"]) if args.get("find") else None
     cursor = str(cursor) if cursor not in (None, "") else None
-    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session)
+    if raw:                       # raw source: the whole markup, not a filtered/paged reduced view
+        find = cursor = None
+    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw)
     # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
     # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
     if find is None and cursor is None:

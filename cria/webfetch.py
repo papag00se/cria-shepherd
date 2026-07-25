@@ -120,18 +120,23 @@ def _is_yaml(ct: Optional[str], url: str) -> bool:
     return "yaml" in c or url.lower().rsplit("?", 1)[0].endswith((".yaml", ".yml"))
 
 
-def reduce_for_cache(body: str, content_type: Optional[str], url: str) -> tuple[str, Optional[Any]]:
+def reduce_for_cache(body: str, content_type: Optional[str], url: str,
+                     raw: bool = False) -> tuple[str, Optional[Any]]:
     """Lossless, content-aware reduction + the parsed structure (for structural find).
-    Returns ``(reduced_text, parsed_or_None)``. HTML→text; JSON→minified canonical text, YAML→pretty
-    line-based; both keep the parsed dict/list (so find/outline can walk it); else passes through.
+    Returns ``(reduced_text, parsed_or_None)``. HTML→text; XML/JSON/YAML kept structural; else passes
+    through. ``raw=True`` returns the literal source untouched (the model asked to see the markup).
 
     JSON stays minified on purpose: it's valid as-is, page_from cuts cleanly at the char cap when
     there are no newlines (no data loss — the next page continues, and "More remains" discloses it),
     and minified fits MORE of the doc per page than indented would. `find=` pretty-prints the
     subtree it returns, so a section the model asks for is still legible."""
     ct = (content_type or "").lower()
-    if "html" in ct or "xml" in ct:
+    if raw:  # caller wants the literal source (front-end debugging, markup inspection) — reduce nothing
+        return body, None
+    if "html" in ct:  # incl. application/xhtml+xml — a rendered web page: flatten to readable text
         return html_to_text(body, url), None
+    if "xml" in ct:   # RSS/Atom/SVG/SOAP/sitemap — STRUCTURED data; keep the tags, never prose-flatten it
+        return body, None
     if "json" in ct:
         try:
             obj = json.loads(body)
@@ -314,13 +319,23 @@ def _spill_outline(parsed: Any, target: str) -> str:
     return ""
 
 
+def _pad4(k):
+    """A fetch key as a 4-tuple (url, find, cursor, raw). Accepts a legacy 3-tuple (raw→False) so a
+    caller that hasn't learned about ``raw`` still records a valid key."""
+    return tuple(k) + (False,) if len(k) == 3 else tuple(k)
+
+
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     """Record what's CURRENTLY visible in the conversation, so the gate refuses a repeat only while
     the model still has that result. Called per request from the fetch/search results still in
-    history. ``fetch_keys`` = iterable of (url, find, cursor); ``search_queries`` = iterable of query."""
+    history. ``fetch_keys`` = iterable of (url, find, cursor[, raw]); ``search_queries`` = queries."""
     if not session:
         return
-    _FETCH_SEEN[session] = {(u, f or "", c or "") for (u, f, c) in fetch_keys}
+    # 4-tuple identity (…, raw): a raw-source fetch is distinct from the reduced view of the same URL,
+    # so requesting the source after a reduced fetch (or vice versa) is never falsely refused as a repeat.
+    # History web_fetch calls are the reduced view unless they carried raw=true.
+    _FETCH_SEEN[session] = {(u, f or "", c or "", bool(rw))
+                            for (u, f, c, rw) in (_pad4(k) for k in fetch_keys)}
     _SEARCH_SEEN[session] = {(q or "").strip().lower() for q in search_queries if (q or "").strip()}
     _bound(_FETCH_SEEN)
     _bound(_SEARCH_SEEN)
@@ -374,28 +389,35 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
 
 def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = None,
               cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None,
-              session: Optional[str] = None) -> str:
+              session: Optional[str] = None, raw: bool = False) -> str:
     """Plain fetch, ``find=`` selection, or ``cursor=`` pagination, backed by the URL cache.
     Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx).
+
+    ``raw=True`` returns the literal source (the model wants the markup — front-end debugging, checking
+    tags/attributes/selectors) instead of HTML→text; it ignores find/cursor (raw is the whole source,
+    still bounded/spilled) and is a distinct fetch identity from the reduced view of the same URL.
 
     ``session`` enables the coder-loop gates: an exact repeat of an EXTERNAL fetch already made this
     session is refused (it can only return what the model has), and after GUESS_STREAK_THRESHOLD
     consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate."""
+    if raw:
+        find = cursor = None  # raw is the whole source; navigation is a reduced-view concern
     external = not is_internal_url(url)
-    seen_key = (url, find or "", cursor or "")
+    seen_key = (url, find or "", cursor or "", bool(raw))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
         return _guard_msg("fetch_repeat", url=url)
-    out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent)
+    out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
     if session and external and status is not None:
         out += guess_hint(status, _note_streak(session, status))
     return out
 
 
-def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, Optional[int]]:
+def _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw=False) -> tuple[str, Optional[int]]:
     """Fetch (or serve from cache) → reduce → render to the model-facing text. Returns
-    ``(text, status)``; ``status`` is None on a transport error (no HTTP response)."""
+    ``(text, status)``; ``status`` is None on a transport error (no HTTP response). ``raw`` fetches
+    always re-fetch (never navigate) so a stale reduced-cache entry is never served as source."""
     navigating = bool(find) or bool(cursor)
     cached = _DOC_CACHE.get(url) if navigating else None
     if cached is not None:
@@ -407,7 +429,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent) -> tuple[str, O
             return str(e), None
         except (urllib.error.URLError, OSError) as e:
             return f"web_fetch error fetching {url}: {e}", None
-        reduced, parsed = reduce_for_cache(r.body, r.content_type, url)
+        reduced, parsed = reduce_for_cache(r.body, r.content_type, url, raw)
         status, ct, truncated = r.status, r.content_type, r.truncated
         _cache_put(url, status, ct, reduced, parsed, truncated)
 
