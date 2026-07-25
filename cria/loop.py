@@ -1961,9 +1961,11 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       conflict: it fights cria's step-by-step driving and buries cria's instruction. cria leads
       with its OWN concise coder system prompt instead (`prompts/coder_system.txt`). Harness-
       agnostic: whatever agent prompt any harness puts in `system`/`developer` is replaced.
-    * REPLACE the user's actual task with the step framing, so the coder can't see — and race
-      ahead to — later steps. The task is the first user message that ISN'T a harness env-context
-      block (Codex prepends one).
+    * KEEP the user's real task as HISTORY (the whole goal — every requirement, so the coder works
+      from the full ask, not just the terse step text), followed by an acknowledgement that it has been
+      decomposed into a plan — so it reads as BACKGROUND, not a standing "do the whole thing now" ask.
+      The ACTIVE directive is the CURRENT step, appended last and carried in the authoritative system
+      message. The plan's LATER steps are never shown, so the coder still cannot race ahead to one.
     * KEEP everything else: the user's own instructions (AGENTS.md), env context, and the work
       history — those are user/assistant/tool messages, not the harness agent prompt.
     * On a FOLLOW-UP (prior_work set), fold the completion-compaction of the earlier plan into the
@@ -1999,17 +2001,18 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
                         "content": prompts.load("coder_system") + "\n\n" + hint_block + done_block + prompt}]
-    replaced = False
+    acked = False
     for m in messages:
         if m.get("role") in ("system", "developer"):
             continue  # harness agent boilerplate → replaced by cria's coder_system above
-        if not replaced and m.get("role") == "user" and not _is_env_context(m):
-            out.append({"role": "user", "content": prompt})  # the TASK → the step (env context kept)
-            replaced = True
-        else:
-            out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice, not raw
-    if not replaced:
-        out.append({"role": "user", "content": prompt})  # no task message found → the step is the ask
+        out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice; the real TASK is KEPT
+        if not acked and m.get("role") == "user" and not _is_env_context(m):
+            # The user's real task just went in as history — acknowledge it's been decomposed, so it
+            # reads as the overall GOAL (background), not a fresh "do it all now" ask. Consecutive
+            # assistant turns (this ack + the first work turn) are merged upstream (_merge_consecutive_assistant).
+            out.append({"role": "assistant", "content": prompts.load("plan_ack")})
+            acked = True
+    out.append({"role": "user", "content": prompt})  # the CURRENT step = the active ask (last turn; also in system)
     return out
 
 

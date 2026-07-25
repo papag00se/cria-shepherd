@@ -2430,7 +2430,7 @@ class BannerStripTests(unittest.TestCase):
 
 
 class FrameForItemTests(unittest.TestCase):
-    def test_replaces_task_not_env_context(self):
+    def test_keeps_task_as_history_step_is_active_directive(self):
         from cria.loop import _frame_for_item
         msgs = [
             {"role": "system", "content": "generic coding-agent prompt"},
@@ -2441,10 +2441,18 @@ class FrameForItemTests(unittest.TestCase):
         blob = json.dumps(framed)
         self.assertIn("cwd: /repo", blob)                   # env context KEPT — reframed to cria's clean voice
         self.assertNotIn("<environment_context>", blob)     # …no longer the raw harness tags
-        self.assertIn("Do ONLY this step", blob)            # step framing present
-        self.assertIn("Create handler.py", blob)            # the step is the task
-        self.assertNotIn("README", blob)                    # full task (later steps) GONE
-        self.assertNotIn("unit tests", blob)
+        self.assertIn("Do ONLY this step", blob)            # step framing = the ACTIVE directive
+        self.assertIn("Create handler.py", blob)
+        # the WHOLE task is kept as HISTORY (background context — every requirement), NOT replaced
+        self.assertIn("unit tests", blob)
+        self.assertIn("README", blob)
+        # …and acknowledged as decomposed, so it reads as the goal, not a fresh do-it-all ask
+        from cria import prompts
+        self.assertIn(prompts.load("plan_ack")[:30], blob)
+        # the ACTIVE ask (last user turn) is the step, not the whole task
+        self.assertEqual(framed[-1]["role"], "user")
+        self.assertIn("Create handler.py", framed[-1]["content"])
+        self.assertNotIn("README", framed[-1]["content"])
 
     def test_drops_harness_system_prompt_and_leads_with_crias(self):
         # cria owns the system slot when orchestrating: the harness's agent prompt is dropped
@@ -2470,7 +2478,7 @@ class FrameForItemTests(unittest.TestCase):
         self.assertIn("Project instructions", blob)         # the USER's own instructions KEPT — cria's voice
         self.assertIn("my project rules", blob)             # (kept in full)
         self.assertIn("Create handler.py", blob)            # the step
-        self.assertNotIn("Build the whole feature", blob)   # the raw task was replaced by the step
+        self.assertIn("Build the whole feature", blob)      # the raw task is KEPT as history (the overall goal)
         self.assertEqual(sum(1 for m in framed if m["role"] == "system"), 1)  # exactly one system msg
 
 
