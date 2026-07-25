@@ -22,7 +22,8 @@ cluster into **five themes**:
    worst is in code added this session).
 3. **Fail-open pockets** — a few places return empty/benign on an undecidable result instead of
    failing closed.
-4. **Dead / half-written code** — a whole failover executor, plus unused funcs/params/aliases.
+4. **Dead / half-written code** — unused funcs/params/aliases. (An earlier "dead failover executor"
+   claim was RETRACTED — see H3; it's a documented deferral, not dead code.)
 5. **Duplication & de-overfit debt** — duplicate tool-name / shell-set / code-sniff helpers; several
    English-phrase-overfit detectors.
 
@@ -56,16 +57,22 @@ signal never reaches the completion critic. `tests/test_loop.py:1276` hand-sets 
 **Fix:** set `last_gate_red`/`last_gate_testless` in `_verify_after_probe` from the interpreted
 outcome (mirror `guard_gate_verdict`); add a test whose gate state comes from a driven gate.
 
-### H3 · The runtime failover chain-walk is dead code, tested as if live
-`cria/routing.py:80` (`route_chain`), `cria/failover.py:130-165` (`Attempt`/`run`) · *half-written / weak spot*
-Verified zero production callers — the live server uses `router.route()` (first *resolvable* role) at
-`server.py:553`; `route_chain`/`failover.run` are referenced only by their tests. So a role whose key
-is present but whose provider returns 429/503/500 **never falls back to the local role** — the
-cross-role resilience `failover.py` was ported to provide doesn't exist at runtime. `test_failover.py`
-+ `test_routing.py` pass in isolation and give false confidence. (`Upstream.chat`'s inline
-retry-same-once *is* live; only the cross-role walk is absent.)
-**Fix (decision needed):** either wire `route_chain()`→`failover.run()` into `server.py`/`loop.py`, or
-delete the executor + `route_chain` and drop the chain-walk claims. Don't leave it dead-but-tested.
+### H3 · ~~The runtime failover chain-walk is dead code, tested as if live~~ — RETRACTED (2026-07-25)
+**This finding was wrong and is withdrawn.** The failover *mechanism* IS used and was deliberately built:
+`router.route()` (`routing.py:58`, live at `server.py:553`) walks the failover chain for RESOLVABILITY —
+a role with a missing key/binary is skipped and the chain collapses to whatever resolves — and
+`upstream.chat` retries the same endpoint once on a transient timeout, which `failover.py:8-11` calls
+"**the load-bearing behavior**" under the single-local-model posture. Both landed in commit `90b2a0d`
+("feat(failover): runtime failover executor + retry-same-on-timeout + per-role endpoints").
+
+What is *not* wired — `route_chain()` + `failover.run()`, the **cross-role walk on a runtime call
+failure** (a resolvable role that then 429s/503s) — is a **deliberate, documented deferral**, not dead
+code: `failover.py:10-11` states "Chain-walk matters once distinct endpoints exist (per-role `base_url`)
+or cloud roles are enabled", and `docs/port-fidelity-audit.md` files it under "Deferred — cloud routing"
+(trigger: "first `local_only = false` with a real key"). Unit-testing a built-ahead executor is correct
+practice, not "false confidence." **No action** — it activates when a multi-endpoint / cloud-role config
+is used. Lesson for this audit: a "dead code / tested as if live" call must be checked against the
+module's own docstring and the deferrals ledger before it ships as a HIGH finding.
 
 ### H4 · `clean_gate_output` raw-scrapes failing-check output → re-buries the real error it exists to surface
 `cria/probegate.py:166-195` · *weak spot / fuzzy* · model-facing on every multi-line failing check
@@ -200,7 +207,8 @@ sync test (`test_contextfloor.py:34`) to assert all three.
 
 ## LOW — dead code, cosmetics, very-low-prevalence
 
-- **L1 · Dead `route_chain`/`failover.run`** — see H3 (the executor half). Delete-or-wire.
+- ~~**L1 · Dead `route_chain`/`failover.run`**~~ — VOID (see the H3 retraction): a documented deferral,
+  not dead code.
 - **L2 · Dead `_assistant_message(raw: bytes)`** `planner.py:519` — no callers (near-dup of
   `_assistant_message_obj`). Delete.
 - **L3 · Dead `reduce_lossless`** `content_reduce.py:48` — zero callers; `webfetch.reduce_for_cache`
@@ -284,17 +292,17 @@ execution-based writeproxy/heredoc tests, the prompt-agnosticism invariants).
 
 ## Recommended fix order
 
-1. **H5 + H6** — the never-truncate holes (silent code corruption + dropped north-star task). Most
-   doctrine-critical; both are small, contained fixes to `content_reduce`/`_PROTECT_MARKERS` with a
-   sync test. **Fix these first.**
-2. **H1** (I introduced it this session — strict parse, small, self-contained).
-3. **L6, L7, L8, L9, L2, L4, L11, L15** — trivial safe wins (misplaced test main, substring sentinels,
-   drifted shell set, query strip, dead code/clauses) — one batch.
-4. **H2 + M1 + M2** — the plan-ON parity sweep (focused change to `_verify_after_probe`/`_work_item`).
-5. **H4** — route gate rendering through the parser (removes a model-facing footgun).
-6. **H3** — decide: wire or delete the failover executor.
+1. ✅ **H5 + H6** — the never-truncate holes (silent code corruption + dropped north-star task). *Done `85abe97`.*
+2. ✅ **H1** — strict-parse the noise judge (my digit-scrape regression). *Done `d4d993d`.*
+3. ✅ **L6, L7, L8, L9, L2, L4, L11, L15** — trivial safe wins. *Done `dad04da`.*
+4. ✅ **H2 + M1 + M2** — the plan-ON parity sweep. *Done `e39426d`.*
+5. **H4** — route gate rendering through the parser (removes a model-facing footgun). *Needs the `gate_plan`
+   threaded through `clean_gate_results` + its 4 call sites — a moderate refactor.*
+6. ~~**H3** — failover~~ **RETRACTED** (see H3 above): the failover mechanism is live; the cross-role
+   runtime-walk is a documented deferral, not a bug. No action.
 7. **M-tier** by cluster (M6/M7 fuzzy fixes and M18 anchor-protection next).
 
-**Tally:** 6 HIGH · 18 MED · 16 LOW, across all 7 clusters. Every finding verified against real code.
-The never-truncate subsystem (H5, H6) and the plan-ON parity gaps (H2, M1, M2) are the two structural
-themes most worth a follow-up sweep beyond the individual fixes.
+**Tally (corrected):** 5 HIGH · 18 MED · 16 LOW — **H3 retracted** (it was not a defect). Every remaining
+finding re-verified against real code. The never-truncate subsystem (H5, H6) and the plan-ON parity gaps
+(H2, M1, M2) are the two structural themes; both are now fixed. Note L1 (LOW) also referenced H3 and is
+void.
