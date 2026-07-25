@@ -404,144 +404,96 @@ class SalvageMalformedPlanTests(unittest.TestCase):
         self.assertIsNone(parse_steps('{"plan": "1. just do the whole thing in one go"}'))
 
 
-class ScrubInventedPathsTests(unittest.TestCase):
-    """The planner drafts before fetching the spec, so a concrete `/path/{param}` it names is a guess
-    the coder obeys verbatim (observed live: a baked `/resolve/{handle}` → a 404ing resolver + a
-    re-fetch thrash hunting a route that isn't there). Scrub such guesses unless the task named them."""
+class NoiseStepDropTests(unittest.TestCase):
+    """ONE reasoner judgment (plan_noise_steps.txt) replaces the old pile of keyword/shape regexes
+    (_is_plumbing_step, _is_shell_command_step, _strip_baked_content, _scrub_invented_paths). It drops a
+    step that is pure env-plumbing, a bare shell command, dictated literal code, or a fabricated/
+    speculative guess. Reasoner-only — no keyword fallback: without a reasoner, or on an answer with no
+    step numbers, NOTHING is dropped (cria never deletes a step on a guess). Call order in plan_for after
+    the draft: NOISE judge, then the api-domain question, then (if a domain) the has-research question."""
 
-    def _scrub(self, step, task):
-        from cria.planner import _scrub_invented_paths
-        return _scrub_invented_paths(step, task)
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
 
-    def test_drops_baked_endpoint_example_clause(self):
-        # The exact runD failure: an "(e.g., `/resolve/{handle}`)" hint the task never mentioned.
-        task = "resolve an Ada Handle using the Ada Handles API (api.handle.me)"
-        step = ("Parse the spec to locate the handle-resolution endpoint "
-                "(e.g., `/resolve/{handle}`) and note any required auth headers.")
-        out = self._scrub(step, task)
-        self.assertNotIn("/resolve/{handle}", out)
-        self.assertNotIn("e.g.", out)
-        self.assertEqual(out, "Parse the spec to locate the handle-resolution endpoint and "
-                              "note any required auth headers.")
-
-    def test_keeps_path_the_task_named(self):
-        # The user gave the path — it's the spec, not a guess. Must survive untouched.
-        task = "Add a route POST /users/{id}/ban to the Flask app"
-        step = "Register the /users/{id}/ban handler in the blueprint"
-        self.assertEqual(self._scrub(step, task), step)
-
-    def test_leaves_filenames_and_discovery_urls_alone(self):
-        task = "write resolve_handle.py against api.handle.me"
-        for step in ("Write resolve_handle.py with a resolve function",
-                     "Fetch the spec from https://api.handle.me/openapi.json",
-                     "Run pytest test_resolve_handle.py"):
-            self.assertEqual(self._scrub(step, task), step)
-
-    def test_scrubs_bare_inline_template(self):
-        task = "resolve via api.handle.me"
-        out = self._scrub("Call /resolve/{handle} and return the address", task)
-        self.assertNotIn("/resolve/{handle}", out)
-        self.assertTrue(out.startswith("Call") and out.endswith("address"))
-
-    def test_scrubs_query_string_endpoint_guess(self):
-        # runE's form: the planner baked a query-string endpoint "(e.g., `/resolve?handle=...`)".
-        task = "resolve an Ada Handle using api.handle.me"
-        out = self._scrub("Identify the resolve endpoint (e.g., `/resolve?handle=...`) in the spec.", task)
-        self.assertNotIn("/resolve?handle", out)
-        self.assertNotIn("e.g.", out)
-        self.assertEqual(out, "Identify the resolve endpoint in the spec.")
-
-    def test_never_blanks_a_whole_step(self):
-        self.assertEqual(self._scrub("/resolve/{handle}", "api.handle.me"), "/resolve/{handle}")
-
-    def test_plan_for_scrubs_and_logs(self):
-        prov = _ScriptedProvider([_content_resp(
-            '1. Fetch https://api.handle.me/openapi.json with web_fetch.\n'
-            '2. Locate the endpoint (e.g., `/resolve/{handle}`) in the spec.\n'
-            '3. Write resolve_handle.py.')])
+    def test_reasoner_drops_a_plumbing_step_and_keeps_real_work(self):
+        prov = _ScriptedProvider([
+            _content_resp('1. Set up the development environment and install dependencies.\n'
+                          '2. Write the fibonacci module fib.py.\n3. Add unit tests in test_fib.py.'),  # plan
+            _content_resp('1'),        # NOISE? drop step 1 (pure plumbing)
+            _content_resp('NONE'),     # which API? none → no research question
+        ])
         rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
-        self.assertFalse(any("/resolve/{handle}" in it.text for it in plan.items))
-        self.assertTrue(any(k == "plan.paths_scrubbed" for k, _ in rlog.events))
-
-
-class PlumbingStepDropTests(unittest.TestCase):
-    """A weak planner emits an environment-setup step 1 despite the prompt forbidding it (observed live
-    across runs: 'Set up the development environment' → apt-get/pip FAIL on sandbox perms → the step
-    never verifies → the whole plan stalls on step 1). plan.txt already declares these illegal; cria
-    enforces that deterministically (prose steering is ignored by small models — same as path-scrubbing)."""
-
-    def _drop(self, step):
-        from cria.planner import _is_plumbing_step
-        return _is_plumbing_step(step)
-
-    def test_setup_and_install_steps_are_flagged(self):
-        for step in ("Set up the development environment",
-                     "Install dependencies (requests, aiohttp, pytest)",
-                     "Create a virtualenv and install the requirements",
-                     "Configure the project environment"):
-            self.assertTrue(self._drop(step), step)
-
-    def test_real_deliverable_steps_are_kept(self):
-        for step in ("Implement resolve_handle.py that calls /handles/{handle}",
-                     "Write unit tests in test_resolve_handle.py",
-                     "Create the README.md explaining how to run it",
-                     "Fetch the api.handle.me OpenAPI spec to find the endpoint",
-                     "Set up the project structure with resolver.py and tests"):  # names files → real work
-            self.assertFalse(self._drop(step), step)
-
-    def test_plan_for_drops_the_setup_step_and_logs(self):
-        # domain-less task → isolates the plumbing drop from the research-first injection
-        prov = _ScriptedProvider([_content_resp(
-            '1. Set up the development environment and install dependencies.\n'
-            '2. Write the fibonacci module fib.py.\n'
-            '3. Add unit tests in test_fib.py.')])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("write a fibonacci module with unit tests"), rlog)
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("write a fibonacci module with unit tests"), rlog)
         texts = [it.text for it in plan.items]
         self.assertFalse(any("development environment" in t for t in texts))  # plumbing gone
         self.assertTrue(any("fib.py" in t for t in texts))                    # real work kept
         self.assertEqual(len(texts), 2)
         self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
-    def test_an_all_plumbing_plan_is_not_emptied(self):
-        prov = _ScriptedProvider([_content_resp(
-            '1. Set up the development environment.\n2. Install the dependencies.')])
+    def test_reasoner_drops_a_bare_shell_command_step(self):
+        prov = _ScriptedProvider([
+            _content_resp("1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
+                          "2. Write resolver.py that calls the endpoint the spec names\n3. Add unit tests"),
+            _content_resp('1'),        # NOISE? drop the bare grep command
+            _content_resp('NONE'),     # which API? none
+        ])
         rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("do a thing"), rlog)
-        self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
-        self.assertTrue(any(k == "plan.noise_all_kept" for k, _ in rlog.events))
-
-    def test_baked_file_content_is_stripped_from_a_step(self):
-        # the planner/re-derivation dumped literal code (with a wrong "import mock, requests") into the
-        # step; the coder ships it verbatim. Strip the baked-content clause — the coder writes its own.
-        from cria.planner import _strip_baked_content
-        s = _strip_baked_content("Write unit tests: create tests/test_x.py with content "
-                                 "'import sys, json, mock, requests; def test(): ...'")
-        self.assertEqual(s, "Write unit tests: create tests/test_x.py")
-        # a prose "with content explaining ..." (no quoted blob) is untouched
-        self.assertEqual(_strip_baked_content("Add a README with content explaining install"),
-                         "Add a README with content explaining install")
-
-    def test_bare_shell_command_step_is_dropped(self):
-        # a plan step that is a raw shell command ("grep -n 'resolve' spec.json") is a coder ACTION the
-        # re-derivation codified, not an outcome — the coder can't "complete" it. Drop it; keep outcomes.
-        from cria.planner import _is_shell_command_step
-        self.assertTrue(_is_shell_command_step("grep -n 'resolve' ./tmp/read-only/openapi.json"))
-        self.assertFalse(_is_shell_command_step("find the resolve endpoint in the fetched spec"))
-        prov = _ScriptedProvider([_content_resp(
-            "1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
-            "2. Write resolver.py that calls the endpoint the spec names\n"
-            "3. Add unit tests")])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("build a resolver"), rlog)
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("build a resolver"), rlog)
         texts = [it.text for it in plan.items]
         self.assertFalse(any(t.startswith("grep") for t in texts))   # the command-step is gone
         self.assertTrue(any("resolver.py" in t for t in texts))      # real outcomes kept
+
+    def test_reasoner_drops_a_baked_code_step(self):
+        prov = _ScriptedProvider([
+            _content_resp("1. Create tests/test_x.py with content 'import sys, json, mock, requests; def test(): ...'\n"
+                          "2. Write resolver.py"),
+            _content_resp('1'),        # NOISE? drop the step that dictates literal code
+            _content_resp('NONE'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("build a resolver with tests"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertFalse(any("import sys" in t for t in texts))      # baked code gone
+        self.assertTrue(any("resolver.py" in t for t in texts))
+
+    def test_all_noise_plan_is_never_emptied(self):
+        prov = _ScriptedProvider([
+            _content_resp('1. Set up the development environment.\n2. Install the dependencies.'),
+            _content_resp('1, 2'),     # NOISE? both — but cria never empties the plan
+            _content_resp('NONE'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("do a thing"), rlog)
+        self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
+        self.assertTrue(any(k == "plan.noise_all_kept" for k, _ in rlog.events))
+
+    def test_NONE_answer_drops_nothing(self):
+        prov = _ScriptedProvider([
+            _content_resp('1. Write fib.py.\n2. Add tests.'),
+            _content_resp('NONE'),     # NOISE? none
+            _content_resp('NONE'),     # which API? none
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("write a fibonacci module"), rlog)
+        self.assertEqual(len(plan.items), 2)
+        self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
+    def test_no_reasoner_drops_nothing(self):
+        # reasoner-only: without a role cria does NOT classify steps — the plan is used exactly as drafted
+        # (no keyword-regex fallback). The basic no-role plan_for path is covered here.
+        prov = _ScriptedProvider([_content_resp(
+            '1. Set up the development environment.\n2. Write fib.py.\n3. Add tests.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("write a fibonacci module"), rlog)
+        self.assertEqual(len(plan.items), 3)  # nothing dropped without a reasoner
+        self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
 
 class ResearchFirstEnforcementTests(unittest.TestCase):
@@ -549,37 +501,6 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
     (observed live: "GET https://api.handle.me" — the bare ROOT — which the coder obeyed and got HTML
     not JSON, gate-looping 365 rewrites). plan.txt requires an early "fetch the spec" step; cria enforces
     it ADDITIVELY — prepend a grounded research step, never delete/rewrite one."""
-
-    def test_prepends_research_when_a_named_domain_has_no_research_step(self):
-        prov = _ScriptedProvider([_content_resp(
-            '1. Create handle_resolver.py that GETs https://api.handle.me and extracts the address.\n'
-            '2. Create a pytest test suite.\n3. Add a README.md.')])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("resolve an Ada Handle via the Ada Handles API (api.handle.me); write resolve_handle.py"), rlog)
-        texts = [it.text for it in plan.items]
-        self.assertIn("api.handle.me/openapi.json", texts[0])   # research prepended FIRST
-        self.assertIn("web_fetch", texts[0])
-        self.assertTrue(any("handle_resolver.py" in t for t in texts))  # the real steps kept, after it
-        self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
-
-    def test_no_injection_when_the_plan_already_researches(self):
-        prov = _ScriptedProvider([_content_resp(
-            '1. Fetch the openapi spec at api.handle.me to find the resolve endpoint.\n'
-            '2. Write resolve_handle.py.\n3. Add tests.')])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
-        self.assertEqual(len(plan.items), 3)                    # untouched — research already present
-        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
-
-    def test_no_injection_when_no_domain_is_named(self):
-        prov = _ScriptedProvider([_content_resp('1. Write a fibonacci function.\n2. Add tests.')])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("write a fibonacci function with tests"), rlog)
-        self.assertEqual(len(plan.items), 2)                    # no external API → nothing to research
-        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
     def _role(self):
         from cria.config import Role
@@ -590,7 +511,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         # scripted answers: plan draft, then "api.handle.me", then "NO" (no research) → prepend.
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py that returns the address.\n2. Add unit tests.'),  # plan
-            _content_resp('NONE'),                                                                # plumbing? none
+            _content_resp('NONE'),                                                                # NOISE? none
             _content_resp('api.handle.me'),                                                       # which API?
             _content_resp('NO'),                                                                  # has research?
         ])
@@ -603,7 +524,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
     def test_reasoner_says_research_present_no_injection(self):
         prov = _ScriptedProvider([
             _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan
-            _content_resp('NONE'),                                           # plumbing? none
+            _content_resp('NONE'),                                           # NOISE? none
             _content_resp('api.handle.me'),                                  # which API?
             _content_resp('YES'),                                            # has research? → skip
         ])
@@ -616,7 +537,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
     def test_reasoner_says_NONE_api_no_injection(self):
         prov = _ScriptedProvider([
             _content_resp('1. Write fib.py.\n2. Add tests.'),   # plan
-            _content_resp('NONE'),                              # plumbing? none
+            _content_resp('NONE'),                              # NOISE? none
             _content_resp('NONE'),                              # which API? → none, short-circuits
         ])
         rlog = _Rlog()
@@ -629,7 +550,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         # fabliq wraps the answer in <think>…</think> / prose — strip_think + the YES/NO word-search recover it
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py.\n2. Tests.'),
-            _content_resp('NONE'),  # plumbing? none
+            _content_resp('NONE'),  # NOISE? none
             _content_resp('<think>the task says the Ada Handles API at api.handle.me</think>\napi.handle.me'),
             _content_resp('<think>no step fetches the spec</think>\nNO'),
         ])

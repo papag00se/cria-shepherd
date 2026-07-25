@@ -189,127 +189,20 @@ def parse_steps(text: str) -> list[str] | None:
     return bullets or None
 
 
-# A REST endpoint TEMPLATE embedded in a plan step — e.g. ``/resolve/{handle}``. A plan is drafted
-# BEFORE the spec is fetched, so a concrete templated path it names is a pre-research GUESS. The coder
-# takes the plan as authoritative and BOTH ships the guessed path (a ``/resolve/`` call that 404s) AND
-# thrashes re-fetching the spec hunting a route that isn't there — the correct route it already fetched
-# gets ignored in favour of the plan's word. Requiring a ``{param}`` keeps the match tight: it hits
-# endpoint templates, never file paths (``resolve_handle.py``) or single-segment discovery URLs
-# (``/openapi.json``). The two guess FORMS observed live: a ``{param}`` path template (runD:
-# ``/resolve/{handle}``) and a query-string endpoint (runE: ``/resolve?handle=...``) — both are
-# obeyed verbatim by the coder. See [[project_goal_fabliq_ada_handles]] — the wrong-endpoint variance.
-_ENDPOINT_TEMPLATE = re.compile(
-    r"/[A-Za-z][\w-]*(?:/(?:\{[^{}\s/]+\}|[A-Za-z][\w-]*))*(?:\?[\w=&{}%.-]+)?")
-_HOLE = "\x00"  # transient marker for a scrubbed path, cleaned up (with its example scaffolding) below
-
-
-def _scrub_invented_paths(step: str, task: str) -> str:
-    """Strip endpoint-guess paths the task never named from one plan step — pre-research guesses the
-    coder would otherwise take as gospel. Keeps any path the task text itself contains (there the user
-    gave it, so it's the spec, not a guess) and never blanks a whole step. Prose steering to the same
-    end ("don't bake a guessed path") failed twice — small models ignore it; this is deterministic."""
-    def repl(m: "re.Match[str]") -> str:
-        path = m.group(0)
-        if "{" not in path and "?" not in path:  # a plain /segment path isn't unambiguously a guess
-            return path
-        return path if path.rstrip("/") in task else _HOLE
-    out = _ENDPOINT_TEMPLATE.sub(repl, step)
-    if _HOLE not in out:
-        return step
-    out = re.sub(rf"[`'\"]\s*{_HOLE}\s*[`'\"]", _HOLE, out)                              # `<hole>` → <hole>
-    out = re.sub(rf"\(\s*(?:e\.g\.?,?|such as|i\.e\.?,?)?\s*{_HOLE}\s*\)", "", out, flags=re.I)  # (e.g., <hole>)
-    out = re.sub(rf"\b(?:e\.g\.?|i\.e\.?|such as)[,:]?\s*{_HOLE}", "", out, flags=re.I)  # e.g., <hole>
-    out = out.replace(_HOLE, "")                                                         # any bare holes
-    out = re.sub(r"\(\s*\)", "", out)                                                    # emptied parens
-    out = re.sub(r"\s{2,}", " ", out)
-    out = re.sub(r"\s+([.,;:)])", r"\1", out)
-    out = out.strip(" \t,;:-")
-    return out or step
-
-
-# A plan step whose ONLY action is environment plumbing — setting up a dev environment, creating a
-# virtualenv, or installing dependencies/tooling. plan.txt already forbids these ("the environment is
-# already set up, so 'ensure Python/pip/<tool> is installed' is never a step"), but a weak planner
-# emits one anyway (observed across live runs: step 1 = "Set up the development environment" → the coder
-# runs apt-get/pip, which FAIL on sandbox permissions → the step can never verify → the whole plan
-# stalls on step 1 forever). Same class as _scrub_invented_paths: prose steering is ignored by small
-# models, so cria enforces its own stated rule deterministically. Kept tight — a setup VERB plus an
-# environment/dependency NOUN, and only when the step names no deliverable artifact to produce.
-_PLUMBING_INTENT = re.compile(
-    r"\b(set\s?up|setup|configure|prepare|bootstrap|initiali[sz]e|install|create|make)\b[\s\S]*?"
-    r"\b(dev(elopment)?\s+environment|virtual\s?environment|virtualenv|venv|dependenc(y|ies)|"
-    r"requirements?|pip|apt(-get)?|npm|poetry|conda|environment|"
-    r"project\s+(structure|skeleton|scaffold|environment))\b", re.I)
-# A step that ALSO names real deliverable work (a file to write, the resolver/tests/README, a function)
-# is not PURE plumbing — keep it. Erring toward keeping avoids dropping a step that carries real work.
-_DELIVERABLE_SIGNAL = re.compile(
-    r"\b(write|implement|add|code|define|resolv\w*|handle|readme|\btest\b|script|function|class|"
-    r"endpoint|parse|fetch|docstring)\b|\.[A-Za-z]{1,4}\b", re.I)
-
-
-def _is_plumbing_step(step: str) -> bool:
-    """True when a step's only action is environment plumbing (setup/venv/dependency-install) the
-    environment already provides — the class plan.txt forbids. A step that also names real deliverable
-    work is not pure plumbing and is kept."""
-    return bool(_PLUMBING_INTENT.search(step)) and not _DELIVERABLE_SIGNAL.search(step)
-
-
-# A step that READS the external source before code depends on it — the "research first" step plan.txt
-# requires when the task names an API/domain. Detected by a spec/docs-discovery signal (NOT the bare
-# domain, which appears in a code step too). If the plan has NONE, a weak planner skipped research and
-# baked a guessed endpoint (observed live: "GET https://api.handle.me" — the bare ROOT — as the runtime
-# target, which the coder obeyed and got HTML instead of JSON), so cria PREPENDS a grounded research step.
-_RESEARCH_SIGNAL = re.compile(
-    r"\b(openapi|swagger|web[ _]?fetch|the spec|api spec|its spec|the docs|api docs|api reference|"
-    r"documentation|read the (?:real )?(?:api|source|spec|docs|endpoint)|"
-    r"fetch (?:the |its )?(?:api|spec|docs|page|documentation))\b", re.I)
-
-
-# A plan step that is a bare SHELL COMMAND ("grep -n 'resolve' spec.json", "cat file", "sed -i ...")
-# rather than a task OUTCOME — the re-derivation codified a coder's low-level tool ACTION verbatim
-# instead of describing a goal (observed live: step 1 = "grep -n 'resolve' ./tmp/.../openapi.json", the
-# coder's own failed grep for a term the spec doesn't contain). The coder can't "complete" a grep-as-a-
-# step, so it traps the plan. Matched tight: a shell-utility name followed by a FLAG / quote / path /
-# pipe — so a prose step that merely STARTS with such a word ("find the resolve endpoint", "list the
-# fields") is NOT hit (the next token is a prose word, not a flag/path).
-_SHELL_STEP = re.compile(
-    r"^\s*(?:\$\s*)?(grep|sed|awk|cat|head|tail|find|ls|rm|rmdir|mkdir|cp|mv|chmod|chown|touch|xargs|"
-    r"wc|cut|tr|sort|uniq|diff|nl|tee|pwd|cd)\s+(-{1,2}\w|['\"]|[./~]|\|)", re.I)
-
-
-def _is_shell_command_step(step: str) -> bool:
-    """True when a step IS a bare shell command rather than a task outcome — a coder tool action the
-    re-derivation codified literally. Steps must be goals ("find the endpoint in the spec"), not the
-    command that pursues one ("grep -n ... spec.json"); a command-as-a-step can't be verified/completed."""
-    return bool(_SHELL_STEP.match(step))
-
-
-# A step that BAKES the literal file CONTENT ("create X with content 'import sys, json, mock, ...'") —
-# the planner/re-derivation dumped the implementation into the step instead of describing the outcome,
-# so the coder ships the snippet verbatim, bugs and all (observed: baked "import mock, requests" — a
-# wrong import + an external dep) and thrashes writing the exact bytes. Strip the baked-content clause;
-# the coder writes its own content. Only a QUOTED blob is stripped, so a prose "README with content
-# explaining install" (no quote) is untouched.
-_BAKED_CONTENT = re.compile(
-    r"\s*[:,]?\s*\b(?:with(?: the)? content|containing|whose content is|with body|as follows)\b\s*"
-    r"[:=]?\s*['\"].*", re.I | re.S)
-
-
-def _strip_baked_content(step: str) -> str:
-    """Remove a baked literal-file-content clause ("... with content '<code>'") from a step — the coder
-    decides a file's content; a baked snippet is just a guess it ships verbatim. Never blanks a step."""
-    out = _BAKED_CONTENT.sub("", step)
-    if out == step:
-        return step                       # nothing baked → leave legit trailing punctuation alone
-    return out.rstrip(" :,-\t") or step
-
-
-def _plan_has_research(steps: list[str]) -> bool:
-    """Deterministic FALLBACK for _reasoned_has_research (used only when no reasoner is configured or its
-    answer is unparseable): a keyword guess at whether some step already reads the external source. The
-    reasoner JUDGES this far more reliably than this regex over prose — this is the safety net, not the
-    primary path."""
-    return any(_RESEARCH_SIGNAL.search(s) for s in steps)
+def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
+    """Indices of NOISE steps to DROP from a plan — pure environment-plumbing, a bare shell command,
+    dictated literal code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder
+    should learn from the real source) — JUDGED by the reasoner (plan_noise_steps.txt). ONE reasoner
+    question replaces the whole pile of keyword/shape regexes that used to read intent out of prose and
+    drive deletions (plumbing, shell-command, baked-content, endpoint-guess). ``ask(system, user) -> str``
+    is the caller's one-shot reasoner call. Reasoner-only, no fuzzy fallback: an answer with no step
+    numbers (NONE, or anything unparseable) drops NOTHING — cria never deletes a step on a guess. Shared
+    by the initial plan (Planner.plan_for) and the living re-derivation (loop.reassess_remaining)."""
+    if not steps:
+        return set()
+    plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+    ans = ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}")
+    return {int(n) - 1 for n in re.findall(r"\d+", ans) if 0 <= int(n) - 1 < len(steps)}
 
 
 class Planner:
@@ -387,40 +280,35 @@ class Planner:
         # actually does the work instead of reusing a prior run's plan. Within ONE session the loop's
         # own session store holds the live plan; plan_for is called only on that session's first turn,
         # so this doesn't re-plan mid-session.
-        # Scrub pre-research endpoint guesses the reasoner baked into steps (a plan is drafted before
-        # the spec is fetched; a concrete `/path/{param}` it names is a guess the coder would obey).
-        scrubbed = [_strip_baked_content(_scrub_invented_paths(s, task)) for s in steps]
-        n_scrubbed = sum(1 for a, b in zip(steps, scrubbed) if a != b)
-        if n_scrubbed:
-            rlog.emit("plan.paths_scrubbed", count=n_scrubbed, level="info")
-        # Drop pure environment-plumbing steps (setup/venv/install) the weak planner emits despite the
-        # prompt forbidding them — they can't verify (the env is fixed / sandbox blocks apt-get+pip), so
-        # they stall the plan on step 1. Never empty the plan: an all-plumbing plan is kept as-is.
-        plumbing = self._reasoned_plumbing_indices(task, scrubbed, rlog)   # reasoner-judged (regex fallback)
-        kept = [s for i, s in enumerate(scrubbed) if i not in plumbing and not _is_shell_command_step(s)]
-        n_dropped = len(scrubbed) - len(kept)
-        if n_dropped and kept:
-            rlog.emit("plan.noise_dropped", count=n_dropped, level="info")  # plumbing / shell-command steps
-            scrubbed = kept
-        elif n_dropped:
-            rlog.emit("plan.noise_all_kept", count=n_dropped, level="info")  # dropping would empty it
+        # Sanitize the drafted plan with ONE reasoner judgment (no keyword/shape regex reads intent out of
+        # prose): which steps are NOISE — pure env-plumbing (unverifiable; the env is fixed / sandbox
+        # blocks apt-get+pip), a bare shell command (a coder action, not an outcome), dictated literal
+        # code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder should learn
+        # from the real source). plan.txt already tells the drafter to avoid all of these; this is the
+        # focused safety judgment for what slips through. Never empties the plan (an all-noise verdict is
+        # kept as-is — the step critic still guards every step).
+        drop = self._reasoned_noise_indices(task, steps, rlog)
+        kept = [s for i, s in enumerate(steps) if i not in drop]
+        if drop and kept:
+            rlog.emit("plan.noise_dropped", count=len(drop), level="info")
+            steps = kept
+        elif drop:
+            rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
         # RESEARCH-FIRST enforcement (ADDITIVE): the task names one API domain but NO step reads its real
-        # source before code depends on it — plan.txt requires an early "fetch the spec" step, and a weak
-        # planner that skips it bakes a guessed endpoint (a made-up path or the bare domain root) into a
-        # coding step, which the coder obeys and 404s/mis-parses. Prepend ONE grounded research step so
-        # the coder learns the real endpoint + fields first. Never deletes/rewrites a step; the URL is the
-        # NAMED domain's standard discovery path, not a guess. Skipped once research is already planned.
+        # source before code depends on it. Prepend ONE grounded research step so the coder learns the real
+        # endpoint + fields first. Never deletes/rewrites a step; the URL is the NAMED domain's standard
+        # discovery path, not a guess. Both conditions are reasoner-judged; skipped once research is planned.
         domain = self._reasoned_api_domain(task, rlog)
-        if domain and scrubbed and not self._reasoned_has_research(task, scrubbed, rlog):
-            scrubbed = [prompts.render("research_step", domain=domain)] + scrubbed
+        if domain and steps and not self._reasoned_has_research(task, steps, rlog):
+            steps = [prompts.render("research_step", domain=domain)] + steps
             rlog.emit("plan.research_prepended", domain=domain, level="info")
         plan = Plan(
             id=self._new_id(key),
             task=task,
             created=self._clock().isoformat(timespec="seconds"),
-            items=[PlanItem(text=s) for s in scrubbed],
+            items=[PlanItem(text=s) for s in steps],
         )
-        rlog.emit("plan.drafted", id=plan.id, steps=len(scrubbed))
+        rlog.emit("plan.drafted", id=plan.id, steps=len(steps))
         return plan
 
     def _ask(self, system_prompt: str, user: str, rlog) -> str:
@@ -443,47 +331,35 @@ class Planner:
 
     def _reasoned_api_domain(self, task: str, rlog) -> str:
         """The single external API domain the task requires, JUDGED by the reasoner (it catches "the
-        GitHub API" with no dotted host, which the structural extractor can't) — or "" for none. Falls
-        back to the structural ``searchloop.task_api_domain`` when no reasoner is configured or the answer
-        isn't a clean domain, so behaviour is never worse than the deterministic path."""
+        GitHub API" with no dotted host a shape-matcher can't) — or "" for none. Reasoner-only: no reasoner
+        configured, or an answer that is neither a domain nor NONE, yields "" (→ no research injection).
+        cria never guesses a domain the reasoner didn't name — no keyword/shape fallback."""
         if self._role is None:
-            return searchloop.task_api_domain(task)
+            return ""
         ans = self._ask(prompts.load("plan_names_api"), "TASK:\n" + task, rlog)
         tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
         if tok and searchloop._looks_like_domain(tok):
             return tok.lower()
-        if ans.strip().upper().startswith("NONE"):
-            return ""
-        return searchloop.task_api_domain(task)  # unparseable answer → structural fallback
+        return ""  # NONE or unparseable → no domain
 
     def _reasoned_has_research(self, task: str, steps: list[str], rlog) -> bool:
-        """Whether the plan already reads the API's real spec/docs before coding, JUDGED by the reasoner
-        (replaces the ``_RESEARCH_SIGNAL`` keyword guess). Falls back to that regex when no reasoner is
-        configured or the answer isn't a clean YES/NO."""
+        """Whether the plan already reads the API's real spec/docs before coding, JUDGED by the reasoner.
+        Reasoner-only. An unclear answer returns True (assume research IS present → do NOT inject) so cria
+        never prepends a redundant step on a guess — silence over noise. No keyword-regex fallback."""
         if self._role is None:
-            return _plan_has_research(steps)
+            return True
         plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
         ans = self._ask(prompts.load("plan_has_research"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}", rlog)
         m = re.search(r"\b(YES|NO)\b", ans, re.I)
-        return (m.group(1).upper() == "YES") if m else _plan_has_research(steps)
+        return m.group(1).upper() == "YES" if m else True
 
-    def _reasoned_plumbing_indices(self, task: str, steps: list[str], rlog) -> set:
-        """The indices of PURE environment-plumbing steps (setup/venv/dependency-install with no
-        deliverable), JUDGED by the reasoner — replaces the ``_is_plumbing_step`` keyword regex, which is
-        a fuzzy prose classifier driving a DELETION. Falls back to that regex when no reasoner is
-        configured or the answer has neither step numbers nor an explicit NONE, so it's never worse than
-        the deterministic path."""
-        regex_hits = {i for i, s in enumerate(steps) if _is_plumbing_step(s)}
+    def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
+        """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
+        reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
+        without a reasoner to judge them."""
         if self._role is None:
-            return regex_hits
-        plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-        ans = self._ask(prompts.load("plan_plumbing_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}", rlog)
-        nums = re.findall(r"\d+", ans)
-        if nums:
-            return {int(n) - 1 for n in nums if 0 <= int(n) - 1 < len(steps)}   # 1-based → 0-based
-        if re.search(r"\bNONE\b", ans, re.I):
-            return set()                                                        # reasoner: none to drop
-        return regex_hits                                                       # unparseable → regex fallback
+            return set()
+        return reasoned_noise_indices(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",
                          rewrite_summary: str = "") -> list[str] | None:

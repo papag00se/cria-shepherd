@@ -150,6 +150,11 @@ def _replan(steps):
     return {"choices": [{"message": {"content": json.dumps({"steps": steps})}}]}
 
 
+def _text(s):
+    # a bare content answer — e.g. the reasoner's NOISE-step judgment ("1, 2" / "NONE")
+    return {"choices": [{"message": {"content": s}}]}
+
+
 def _sat(satisfied, reason="r"):
     return {"choices": [{"message": {"content": json.dumps({"satisfied": satisfied, "reason": reason})}}]}
 
@@ -236,7 +241,7 @@ class LivingPlanTests(unittest.TestCase):
         return Loop(ctx)
 
     def test_refines_not_done_tail_and_keeps_completed(self):
-        loop = self._loop(_Scripted([_replan(["step 3"])]))       # reasoner drops the superfluous step 2
+        loop = self._loop(_Scripted([_replan(["step 3"]), _text("NONE")]))  # re-derive drops step 2; noise: NONE
         sess = self._sess()
         loop._replan_tail(sess, _body(), 1, _Rlog())
         self.assertEqual([(it.text, it.done) for it in sess.plan.items],
@@ -283,43 +288,50 @@ class LivingPlanTests(unittest.TestCase):
         self.assertIsNone(reassess_remaining(_Scripted([_replan(["a"])]), None,
                                              "t", "(none)", "- s", "ev", _Rlog()))
 
-    def test_reassess_remaining_scrubs_a_baked_endpoint_guess(self):
-        # PARITY with the initial plan (_scrub_invented_paths): a re-derivation grounded in the coder's
-        # FAILED work would otherwise CODIFY its guessed endpoint into an authoritative step (observed
-        # live: a research step re-derived into "call requests.get('<root>')" — the guessed root — which
-        # the coder then shipped as a 404/403). The templated-path guess must be scrubbed here too.
+    def test_reassess_remaining_drops_a_speculative_endpoint_step(self):
+        # PARITY with the initial plan (the shared reasoned_noise_indices): a re-derivation grounded in the
+        # coder's FAILED work would otherwise CODIFY its guessed endpoint into an authoritative step
+        # (observed live: a research step re-derived into "call requests.get('<root>')" — the guessed root
+        # — which the coder then shipped as a 404/403). The reasoner JUDGES the /resolve guess speculative
+        # (script "1") and drops it; the real work survives. 2 reasoner calls: re-derive, then noise-judge.
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
-            _Scripted([_replan(["Call /resolve/{handle} and return the address", "Write unit tests"])]),
+            _Scripted([_replan(["Call /resolve/{handle} and return the address", "Write unit tests"]),
+                       _text("1")]),
             self._role(), "resolve an Ada Handle via api.handle.me", "- researched", "- old", "ev", _Rlog())
-        self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # guess stripped, not hardened
+        self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # speculative step dropped, not hardened
         self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
 
     def test_reassess_remaining_drops_a_shell_command_step(self):
         # observed live: the re-derivation codified the coder's grep as step 1 — "grep -n 'resolve'
-        # ./tmp/.../openapi.json" — which the coder could not "complete", trapping the plan. Drop it.
+        # ./tmp/.../openapi.json" — which the coder could not "complete", trapping the plan. The reasoner
+        # judges it a bare command (script "1") and drops it.
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
             _Scripted([_replan(["grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json",
-                                "Write the resolver using the endpoint the spec names"])]),
+                                "Write the resolver using the endpoint the spec names"]),
+                       _text("1")]),
             self._role(), "resolve via api.handle.me", "- researched", "- old", "ev", _Rlog())
         self.assertFalse(any(s.startswith("grep") for s in steps))
         self.assertTrue(any("resolver" in s for s in steps))
 
-    def test_reassess_remaining_all_shell_noise_keeps_prior_plan(self):
+    def test_reassess_remaining_all_noise_keeps_prior_plan(self):
         from cria.loop import reassess_remaining
-        # a re-derivation that is ENTIRELY shell commands is malformed → None (keep the plan we had)
+        # a re-derivation the reasoner judges ENTIRELY noise (script "1, 2") → None (keep the plan we had),
+        # never an empty plan
         out = reassess_remaining(
-            _Scripted([_replan(["grep -n x f.json", "cat ./f.py"])]),
+            _Scripted([_replan(["grep -n x f.json", "cat ./f.py"]), _text("1, 2")]),
             self._role(), "task", "- done", "- old", "ev", _Rlog())
         self.assertIsNone(out)
 
     def test_reassess_remaining_coerces_dict_wrapped_steps(self):
         # a small model wraps each step in {"step": "..."} instead of a bare string — the step text must
-        # be the field, NOT the dict repr "{'step': ...}" (the observed JSON-in-the-plan leak).
+        # be the field, NOT the dict repr "{'step': ...}" (the observed JSON-in-the-plan leak). The noise
+        # judge (script "NONE") drops nothing.
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
-            _Scripted([_replan([{"step": "Design the CLI skeleton"}, {"step": "Write unit tests"}])]),
+            _Scripted([_replan([{"step": "Design the CLI skeleton"}, {"step": "Write unit tests"}]),
+                       _text("NONE")]),
             self._role(), "build it", "- step 1", "- step 2\n- step 3", "evidence", _Rlog())
         self.assertEqual(steps, ["Design the CLI skeleton", "Write unit tests"])
         for s in steps:
@@ -383,7 +395,7 @@ class StuckStepReplanTests(unittest.TestCase):
 
     def test_at_threshold_rederives_the_stuck_tail_and_resets(self):
         from cria.loop import STUCK_STEP_REPLAN
-        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
+        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"]), _text("NONE")]))
         sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
@@ -393,7 +405,7 @@ class StuckStepReplanTests(unittest.TestCase):
     def test_at_threshold_unchanged_plan_falls_through_to_renudge(self):
         from cria.loop import STUCK_STEP_REPLAN
         # reasoner re-derives the SAME remaining tail → no change → normal re-nudge (streak NOT reset)
-        loop = self._loop(_Scripted([_replan(["confused step 2", "step 3"])]))
+        loop = self._loop(_Scripted([_replan(["confused step 2", "step 3"]), _text("NONE")]))
         sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
@@ -412,7 +424,7 @@ class StuckStepReplanTests(unittest.TestCase):
         from cria.loop import STEP_THRASH_REPLAN
         # a coder looping on tool calls (never signalling completion) accrues NO verify-fails, so the
         # verify escape can't fire — the acting-turn count is the signal instead.
-        loop = self._loop(_Scripted([_replan(["write a flat resolver.py", "step 3"])]))
+        loop = self._loop(_Scripted([_replan(["write a flat resolver.py", "step 3"]), _text("NONE")]))
         sess = self._sess(); sess.step_tool_calls = STEP_THRASH_REPLAN
         out = loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog())
         self.assertIsNotNone(out)                                   # re-derived → fresh drive, not None

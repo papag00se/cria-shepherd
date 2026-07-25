@@ -1,7 +1,0 @@
-You are given a coding TASK and a numbered PLAN. The environment is ALREADY set up and ready: the language runtime and its standard library are installed and the test runner is configured, and there is NO package-manager access.
-
-Answer ONE question: which steps (if any) are PURE environment plumbing — their ONLY action is to install dependencies/requirements, create a virtualenv, or set up/configure the environment — and produce NO real deliverable (no code, no tests, no docs)?
-
-Such a step is dead weight (it cannot even run here) and should be removed. A step that writes code, tests, or docs is NOT plumbing, even if it also mentions setup.
-
-Reply with ONLY the step numbers to remove, comma-separated (like `1, 3`), or the word NONE if there are none. No other text.

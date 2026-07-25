@@ -1,0 +1,9 @@
+You are given a coding TASK and a numbered PLAN. Judge each step. A GOOD step is a real, doable piece of the deliverable stated as an OUTCOME: write code, write tests, write docs, or research the real external source (fetch the API's spec/docs).
+
+Mark a step for REMOVAL when it is NOT that — i.e. it is any of:
+- FABRICATED or SPECULATIVE: it bakes in a concrete external detail the task never gave and the coder can't know yet — a guessed API endpoint/path, a guessed field name, a made-up value — that the coder should instead learn from the real source; or it's a vague, non-actionable note.
+- a RAW SHELL COMMAND or tool invocation rather than a goal (e.g. "grep -n x file.json", "run pytest") — the coder chooses its own commands; a step states the OUTCOME, not the command.
+- DICTATING LITERAL CODE: it spells out the literal file content / code the coder should write (e.g. "create test.py with content 'import ...'") instead of describing what the file should DO — the coder writes its own code.
+- pure ENVIRONMENT PLUMBING: its only action is installing dependencies, creating a virtualenv, or configuring the environment — which is already set up here and has no package access.
+
+Reply with ONLY the numbers of the steps to REMOVE, comma-separated (e.g. `1, 3`), or the single word NONE. No other text.

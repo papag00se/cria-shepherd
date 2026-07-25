@@ -38,8 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import (_clean_step, _extract_cwd, _is_shell_command_step,
-                      _scrub_invented_paths, _strip_baked_content)
+from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
 from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
@@ -398,20 +397,24 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     obj = extract_json_object(strip_think(text))
     if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list):
         return None  # unparseable / wrong shape → keep the plan exactly as it was
-    # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare
-    # string) to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
-    # _scrub_invented_paths gives the RE-DERIVED steps the SAME anti-guess protection the INITIAL plan
-    # gets in plan_for: a re-derivation grounded in the coder's FAILED work would otherwise codify its
-    # guessed endpoint into an authoritative step (observed: a research step re-derived into "call
-    # requests.get('<root>')" — the coder's guessed root — which the coder then shipped as a 404/403).
-    # _is_shell_command_step drops a step the re-derivation codified as a bare coder COMMAND ("grep -n
-    # 'resolve' spec.json") rather than an outcome — a command-as-a-step can't be verified and traps the
-    # plan. An all-noise re-derivation → None (keep the prior plan), never an empty plan.
-    steps = [s for x in obj["steps"] if (c := _clean_step(x)) and not _is_shell_command_step(c)
-             and (s := _strip_baked_content(_scrub_invented_paths(c, task)))]
-    if not steps and obj["steps"]:
-        return None  # the re-derivation was all shell-command noise → keep the plan we had
-    return steps
+    if not obj["steps"]:
+        return []  # the reasoner says nothing remains → the plan is complete
+    # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare string)
+    # to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
+    cleaned = [c for x in obj["steps"] if (c := _clean_step(x))]
+    if not cleaned:
+        return None  # no usable step text → keep the plan we had
+    # Same reasoner NOISE judgment the INITIAL plan gets (reasoned_noise_indices): drop a re-derived step
+    # that codified a bare command, dictated literal code, or a speculative guess — a re-derivation
+    # grounded in the coder's FAILED work otherwise codifies its guessed endpoint into an authoritative
+    # step (observed: a research step re-derived into "call requests.get('<root>')", shipped as a 404/403).
+    # replan.txt already tells the reasoner to avoid these; this is the focused safety judgment. An
+    # all-noise re-derivation → None (keep the prior plan), never an empty plan.
+    drop = reasoned_noise_indices(
+        lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner"),
+        task, cleaned)
+    kept = [s for i, s in enumerate(cleaned) if i not in drop]
+    return kept or None
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
