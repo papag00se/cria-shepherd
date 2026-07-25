@@ -283,6 +283,18 @@ class LivingPlanTests(unittest.TestCase):
         self.assertIsNone(reassess_remaining(_Scripted([_replan(["a"])]), None,
                                              "t", "(none)", "- s", "ev", _Rlog()))
 
+    def test_reassess_remaining_scrubs_a_baked_endpoint_guess(self):
+        # PARITY with the initial plan (_scrub_invented_paths): a re-derivation grounded in the coder's
+        # FAILED work would otherwise CODIFY its guessed endpoint into an authoritative step (observed
+        # live: a research step re-derived into "call requests.get('<root>')" — the guessed root — which
+        # the coder then shipped as a 404/403). The templated-path guess must be scrubbed here too.
+        from cria.loop import reassess_remaining
+        steps = reassess_remaining(
+            _Scripted([_replan(["Call /resolve/{handle} and return the address", "Write unit tests"])]),
+            self._role(), "resolve an Ada Handle via api.handle.me", "- researched", "- old", "ev", _Rlog())
+        self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # guess stripped, not hardened
+        self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
+
     def test_reassess_remaining_coerces_dict_wrapped_steps(self):
         # a small model wraps each step in {"step": "..."} instead of a bare string — the step text must
         # be the field, NOT the dict repr "{'step': ...}" (the observed JSON-in-the-plan leak).

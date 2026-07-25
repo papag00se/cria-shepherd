@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _clean_step, _extract_cwd
+from .planner import _clean_step, _extract_cwd, _scrub_invented_paths
 from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
@@ -399,7 +399,11 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
         return None  # unparseable / wrong shape → keep the plan exactly as it was
     # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare
     # string) to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
-    return [t for x in obj["steps"] if (t := _clean_step(x))]
+    # _scrub_invented_paths gives the RE-DERIVED steps the SAME anti-guess protection the INITIAL plan
+    # gets in plan_for: a re-derivation grounded in the coder's FAILED work would otherwise codify its
+    # guessed endpoint into an authoritative step (observed: a research step re-derived into "call
+    # requests.get('<root>')" — the coder's guessed root — which the coder then shipped as a 404/403).
+    return [_scrub_invented_paths(c, task) for x in obj["steps"] if (c := _clean_step(x))]
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
