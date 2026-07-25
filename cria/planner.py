@@ -20,7 +20,7 @@ import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from . import massage, planner_tools, prompts
+from . import massage, planner_tools, prompts, searchloop
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -254,6 +254,23 @@ def _is_plumbing_step(step: str) -> bool:
     return bool(_PLUMBING_INTENT.search(step)) and not _DELIVERABLE_SIGNAL.search(step)
 
 
+# A step that READS the external source before code depends on it — the "research first" step plan.txt
+# requires when the task names an API/domain. Detected by a spec/docs-discovery signal (NOT the bare
+# domain, which appears in a code step too). If the plan has NONE, a weak planner skipped research and
+# baked a guessed endpoint (observed live: "GET https://api.handle.me" — the bare ROOT — as the runtime
+# target, which the coder obeyed and got HTML instead of JSON), so cria PREPENDS a grounded research step.
+_RESEARCH_SIGNAL = re.compile(
+    r"\b(openapi|swagger|web[ _]?fetch|the spec|api spec|its spec|the docs|api docs|api reference|"
+    r"documentation|read the (?:real )?(?:api|source|spec|docs|endpoint)|"
+    r"fetch (?:the |its )?(?:api|spec|docs|page|documentation))\b", re.I)
+
+
+def _plan_has_research(steps: list[str]) -> bool:
+    """True when some step already READS the external source (fetches the spec/docs) — so the coder
+    learns the real endpoint before coding, per plan.txt's RESEARCH-FIRST rule."""
+    return any(_RESEARCH_SIGNAL.search(s) for s in steps)
+
+
 class Planner:
     def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
@@ -345,6 +362,16 @@ class Planner:
             scrubbed = kept
         elif n_plumbing:
             rlog.emit("plan.plumbing_all_kept", count=n_plumbing, level="info")  # dropping would empty it
+        # RESEARCH-FIRST enforcement (ADDITIVE): the task names one API domain but NO step reads its real
+        # source before code depends on it — plan.txt requires an early "fetch the spec" step, and a weak
+        # planner that skips it bakes a guessed endpoint (a made-up path or the bare domain root) into a
+        # coding step, which the coder obeys and 404s/mis-parses. Prepend ONE grounded research step so
+        # the coder learns the real endpoint + fields first. Never deletes/rewrites a step; the URL is the
+        # NAMED domain's standard discovery path, not a guess. Skipped once research is already planned.
+        domain = searchloop.task_api_domain(task)
+        if domain and scrubbed and not _plan_has_research(scrubbed):
+            scrubbed = [prompts.render("research_step", domain=domain)] + scrubbed
+            rlog.emit("plan.research_prepended", domain=domain, level="info")
         plan = Plan(
             id=self._new_id(key),
             task=task,

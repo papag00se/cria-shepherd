@@ -492,16 +492,17 @@ class PlumbingStepDropTests(unittest.TestCase):
             self.assertFalse(self._drop(step), step)
 
     def test_plan_for_drops_the_setup_step_and_logs(self):
+        # domain-less task → isolates the plumbing drop from the research-first injection
         prov = _ScriptedProvider([_content_resp(
             '1. Set up the development environment and install dependencies.\n'
-            '2. Write resolve_handle.py against api.handle.me.\n'
-            '3. Add unit tests in test_resolve_handle.py.')])
+            '2. Write the fibonacci module fib.py.\n'
+            '3. Add unit tests in test_fib.py.')])
         rlog = _Rlog()
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
+            _msgs("write a fibonacci module with unit tests"), rlog)
         texts = [it.text for it in plan.items]
         self.assertFalse(any("development environment" in t for t in texts))  # plumbing gone
-        self.assertTrue(any("resolve_handle.py" in t for t in texts))         # real work kept
+        self.assertTrue(any("fib.py" in t for t in texts))                    # real work kept
         self.assertEqual(len(texts), 2)
         self.assertTrue(any(k == "plan.plumbing_dropped" for k, _ in rlog.events))
 
@@ -513,4 +514,42 @@ class PlumbingStepDropTests(unittest.TestCase):
             _msgs("do a thing"), rlog)
         self.assertEqual(len(plan.items), 2)  # kept as-is — never leave an empty plan
         self.assertTrue(any(k == "plan.plumbing_all_kept" for k, _ in rlog.events))
+
+
+class ResearchFirstEnforcementTests(unittest.TestCase):
+    """The task names an API domain but the weak planner skipped research and baked a guessed endpoint
+    (observed live: "GET https://api.handle.me" — the bare ROOT — which the coder obeyed and got HTML
+    not JSON, gate-looping 365 rewrites). plan.txt requires an early "fetch the spec" step; cria enforces
+    it ADDITIVELY — prepend a grounded research step, never delete/rewrite one."""
+
+    def test_prepends_research_when_a_named_domain_has_no_research_step(self):
+        prov = _ScriptedProvider([_content_resp(
+            '1. Create handle_resolver.py that GETs https://api.handle.me and extracts the address.\n'
+            '2. Create a pytest test suite.\n3. Add a README.md.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada Handle via the Ada Handles API (api.handle.me); write resolve_handle.py"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertIn("api.handle.me/openapi.json", texts[0])   # research prepended FIRST
+        self.assertIn("web_fetch", texts[0])
+        self.assertTrue(any("handle_resolver.py" in t for t in texts))  # the real steps kept, after it
+        self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
+
+    def test_no_injection_when_the_plan_already_researches(self):
+        prov = _ScriptedProvider([_content_resp(
+            '1. Fetch the openapi spec at api.handle.me to find the resolve endpoint.\n'
+            '2. Write resolve_handle.py.\n3. Add tests.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada Handle via api.handle.me"), rlog)
+        self.assertEqual(len(plan.items), 3)                    # untouched — research already present
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
+
+    def test_no_injection_when_no_domain_is_named(self):
+        prov = _ScriptedProvider([_content_resp('1. Write a fibonacci function.\n2. Add tests.')])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("write a fibonacci function with tests"), rlog)
+        self.assertEqual(len(plan.items), 2)                    # no external API → nothing to research
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 

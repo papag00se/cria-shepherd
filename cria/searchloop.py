@@ -83,3 +83,16 @@ def _looks_like_domain(tok: str) -> bool:
     if len(tld) < 2 or not tld.isalpha() or tld in _FILE_EXTS:
         return False
     return all(lbl and all(c.isalnum() or c == "-" for c in lbl) for lbl in labels)
+
+
+def task_api_domain(task: str) -> str:
+    """The single external API host the task NAMES (e.g. ``api.handle.me`` from "the Ada Handles API
+    (api.handle.me)"). Returns "" when zero or several DISTINCT hosts are named — no unambiguous domain
+    to anchor on. Filename lookalikes (``config.json``) are dropped by their extension label. Shared by
+    the search-escape (loop) and the planner's research-first enforcement."""
+    hosts = []
+    for tok in re.split(r"[^A-Za-z0-9._\-]+", task):
+        tok = tok.strip("._-").lower()
+        if _looks_like_domain(tok) and tok not in hosts:
+            hosts.append(tok)
+    return hosts[0] if len(hosts) == 1 else ""

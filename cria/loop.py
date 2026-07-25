@@ -39,6 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _clean_step, _extract_cwd
+from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
@@ -2901,25 +2902,11 @@ _URL_RE = re.compile(r"https?://[^\s\"'<>)\]}]+")
 # A bare host/domain token — used to recover the API domain the USER named in the task. The negative
 # lookahead drops file-name lookalikes (``resolve_handle.py``, ``config.json``): a trailing label that
 # is a common code/data extension is a filename, not a host.
-_DOMAIN_RE = re.compile(
-    r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b(?<!\.py)(?<!\.js)(?<!\.ts)", re.I)
-_FILE_EXTS = {"py", "js", "ts", "json", "yaml", "yml", "toml", "ini", "cfg", "md", "txt", "sh",
-              "go", "rs", "rb", "java", "c", "cpp", "h", "html", "css", "lock", "csv", "xml"}
-
-
 def _task_api_domain(messages: list[dict]) -> str:
-    """The single API host the user named in the task (latest user turn) — e.g. ``api.handle.me`` from
-    "the Ada Handles API (api.handle.me)". Returns "" when zero or several distinct hosts are named (no
-    unambiguous domain to canonicalize onto). Drops filename lookalikes by their extension label."""
-    task = latest_user_text(messages)
-    hosts = []
-    for m in _DOMAIN_RE.finditer(task):
-        h = m.group(0).lower().rstrip(".")
-        if h.rsplit(".", 1)[-1] in _FILE_EXTS:
-            continue
-        if h not in hosts:
-            hosts.append(h)
-    return hosts[0] if len(hosts) == 1 else ""
+    """The single API host the user named in the task's latest user turn — e.g. ``api.handle.me``.
+    Thin wrapper over the shared ``searchloop.task_api_domain`` (the planner uses the same extractor for
+    its research-first enforcement, so the escape and the plan agree on what domain the task names)."""
+    return searchloop.task_api_domain(latest_user_text(messages))
 
 
 def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
