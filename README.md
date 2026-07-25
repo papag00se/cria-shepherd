@@ -41,6 +41,14 @@ The reason cria exists — five families, [full catalog in `docs/heuristic-assis
 - **Reasoned guidance** — a cheap local reasoner drafts a plan up front, and on a stuck
   loop authors the next step from fresh ground truth instead of a canned nudge.
 
+## Design doctrine
+
+The *why* behind those mechanisms is a set of hard-won rules — truncation is a footgun,
+deterministic code gathers facts while a reasoner judges, assists are footguns, fail closed,
+cria never ends a session to a human. They are collected in
+**[`docs/principles.md`](docs/principles.md)**, with [`AGENTS.md`](AGENTS.md) as the entry
+point for anyone (human or agent) about to change cria's behavior.
+
 ## Install
 
 Requires Python ≥ 3.11 and an OpenAI-compatible model server (llama.cpp is the reference)
