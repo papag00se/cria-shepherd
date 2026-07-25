@@ -61,7 +61,7 @@ class TurnStats:
         self.tokens = 0
         self.events: Counter = Counter()   # every event kind fired this turn (from each request's rlog)
 
-    def observe(self, completion: dict, tok_per_s: float | None,
+    def observe(self, tok_per_s: float | None,
                 gen_tokens: int = 0, model_calls: int = 0, events: Counter | None = None) -> None:
         if self.t0 is None:
             self.t0 = time.monotonic()

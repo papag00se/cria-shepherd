@@ -443,7 +443,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         — append the terse end-of-turn summary and reset the turn."""
         ic = self.server.cfg.indicators
         stats = self.server.stats_store.get(sess_key)
-        stats.observe(completion, getattr(rlog, "last_tok_per_s", None),
+        stats.observe(getattr(rlog, "last_tok_per_s", None),
                       getattr(rlog, "gen_tokens", 0), getattr(rlog, "model_calls", 0),
                       getattr(rlog, "events", None))
         completion = self._decorate(completion)
@@ -676,8 +676,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
-        except (json.JSONDecodeError, TypeError):
-            return {}, indic
+        except (json.JSONDecodeError, TypeError) as e:
+            # A chat completion MUST be JSON; a non-JSON 200 (an intermediary's HTML 502 page, a
+            # truncated body) is an upstream error — NOT a successful empty turn. Fail closed so the
+            # caller surfaces a clean 502/failed and the client retries, instead of recording "done".
+            raise UpstreamError(f"upstream returned a non-JSON 200 body: {raw[:200]!r}") from e
         if not body.get("tools"):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty

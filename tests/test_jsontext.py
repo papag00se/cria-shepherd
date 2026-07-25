@@ -11,6 +11,13 @@ class JsonTextTests(unittest.TestCase):
         raw = 'Here you go:\n```json\n{"engagement": "task"}\n```\n'
         self.assertEqual(extract_json_object(raw), {"engagement": "task"})
 
+    def test_thinking_tag_variant_stripped(self):
+        # M7: some models use <thinking>…</thinking> (not <think>). The strip regex required <think\b, so
+        # a <thinking> block was NOT stripped and _scan_object returned the FIRST brace object — the
+        # reasoning's, not the answer's — under-engaging a real coding task. Must strip both forms.
+        raw = '<thinking>maybe {"engagement":"question"} but no</thinking>\n{"engagement":"task","task_type":"coding"}'
+        self.assertEqual(extract_json_object(raw), {"engagement": "task", "task_type": "coding"})
+
     def test_think_preamble_stripped(self):
         raw = "<think>let me consider…</think>\n{\"task_type\": \"coding\"}"
         self.assertEqual(extract_json_object(raw), {"task_type": "coding"})

@@ -87,6 +87,17 @@ class DomainDetectTests(unittest.TestCase):
         self.assertIsNone(pt.first_domain_in("read handler.py and config.json"))
         self.assertIsNone(pt.first_domain_in("cardano staking rewards"))
 
+    def test_code_identifiers_are_not_domains(self):
+        # M6: a dotted CODE identifier is NOT an API domain — the old shape check accepted ANY alphabetic
+        # final label, so urllib.request / os.path passed and burned the live search-escape fetching
+        # https://urllib.request/openapi.json. The TLD allowlist rejects a code attr like `.request`.
+        from cria.searchloop import _looks_like_domain, task_api_domain
+        for tok in ("urllib.request", "requests.get", "os.path", "asyncio.run", "self.config"):
+            self.assertFalse(_looks_like_domain(tok), tok)
+        for tok in ("api.handle.me", "example.com", "api.stripe.com", "example.co.uk"):
+            self.assertTrue(_looks_like_domain(tok), tok)
+        self.assertFalse(task_api_domain("use urllib.request to call the Stripe API"))  # no real domain
+
 
 class SearchFormatTests(unittest.TestCase):
     def test_format_results(self):

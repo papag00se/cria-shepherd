@@ -656,10 +656,12 @@ def _gemma_scalar(raw: str):
         return True
     if raw == "false":
         return False
-    try:
-        return int(raw)  # upstream parses i64 only — floats stay strings, quirk preserved
-    except ValueError:
-        return raw
+    # i64 fidelity: Rust's i64::parse accepts only optional '-' + digits — NOT Python int()'s '1_000'
+    # underscores or '+5' leading plus. Gate on the strict shape so a bare token stays a string exactly
+    # where the ported dialect would keep it one.
+    if re.fullmatch(r"-?[0-9]+", raw):
+        return int(raw)  # floats/underscored/plus-prefixed stay strings, quirk preserved
+    return raw
 
 
 def _alias(name: str) -> str:
@@ -1103,7 +1105,10 @@ def _fix_hunk_lines(body: str) -> str:
             if line.startswith("+"):
                 out.append(line)  # already an addition
             elif line.startswith("-"):
-                continue  # a removal in a new file is nonsense — drop it
+                # A "removal" is impossible in a NEW file, so a bare '-' line is CONTENT the model forgot
+                # to '+'-prefix (a YAML list item, a markdown bullet, CLI-help '-v') — keep it as an
+                # addition, don't silently drop it (that destroyed the created file's content).
+                out.append("+" + line)
             elif line.startswith(" "):
                 out.append("+" + line[1:])  # context → addition
             else:

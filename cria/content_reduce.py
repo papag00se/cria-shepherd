@@ -45,19 +45,6 @@ def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> s
     return content
 
 
-def reduce_lossless(content: str, content_type: str | None) -> str:
-    """Lossless-only reduction (HTML->text, JSON minify) — no prose stripping, no size gate."""
-    ct = (content_type or "").lower()
-    if "html" in ct or "xml" in ct:
-        return html_to_text(content)
-    if "json" in ct:
-        try:
-            return json.dumps(json.loads(content), separators=(",", ":"), ensure_ascii=False)
-        except (ValueError, TypeError):
-            return content
-    return content
-
-
 # ---------------------------------------------------------------------------
 # JSON tier: parse -> minify (lossless) -> strip prose nodes (lossy) -> re-serialize
 # ---------------------------------------------------------------------------

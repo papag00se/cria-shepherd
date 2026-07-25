@@ -11,8 +11,8 @@ lowering ``web_fetch`` to a harness ``curl`` — which the harness truncates to 
 prefix *before* cria can reduce it (the Ada-handle openapi.json incident: a real HTTP 200,
 57 KB single-line JSON, cut mid-line, the model rationalised a "404" and looped).
 
-The flow, per the Rust: fetch → ``reduce_lossless`` (HTML→text, JSON minify, YAML→structural)
-→ cache by URL → then either PAGE (``cursor`` char-offset, "more remains" footer) or FIND
+The flow (cria's ``reduce_for_cache``, mirroring the Rust): fetch → lossless reduce (HTML→text, JSON
+minify, YAML→structural) → cache by URL → then either PAGE (``cursor`` char-offset, "more remains" footer) or FIND
 (``find_json``: subtree + ancestor spine + one-hop ``$ref`` inline; no-match → top-level keys).
 A large single-line spec becomes navigable instead of truncated garbage.
 

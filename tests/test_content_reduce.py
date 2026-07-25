@@ -6,7 +6,6 @@ from cria.content_reduce import (
     est_tokens,
     html_to_text,
     reduce_json,
-    reduce_lossless,
     strip_prose_text,
 )
 
@@ -91,15 +90,6 @@ class ContentReduceTests(unittest.TestCase):
         self.assertNotIn("alert", out)
         self.assertNotIn("color:red", out)
         self.assertNotIn("<", out)
-
-    def test_reduce_lossless_minifies_json_without_touching_prose(self):
-        src = '{"description": "a b c d e f g h", "n": 1}'
-        out = reduce_lossless(src, "application/json")
-        self.assertEqual(json.loads(out), {"description": "a b c d e f g h", "n": 1})
-        self.assertNotIn(", ", out)  # minified: no spaces after separators
-
-    def test_reduce_lossless_bad_json_returned_unchanged(self):
-        self.assertEqual(reduce_lossless("{not json", "application/json"), "{not json")
 
     def test_content_reduce_json_dispatch_reduces_over_cap(self):
         big = json.dumps({"description": "word " * 400, "id": "keep-me"})

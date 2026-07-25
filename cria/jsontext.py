@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 
-_THINK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.DOTALL | re.IGNORECASE)
+_THINK = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>", re.DOTALL | re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 

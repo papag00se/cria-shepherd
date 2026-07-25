@@ -19,7 +19,9 @@ from __future__ import annotations
 import threading
 
 DEFAULT_RATIO = 1.8   # real÷(chars/4) before any measurement (codex-local's DEFAULT_SAFETY_FACTOR)
-MAX_RATIO = 3.5       # cap so one outlier response can't starve the budget
+MAX_RATIO = 4.0       # cap so one outlier can't starve the budget — but 4.0 = the true 1-token/char
+                      # ceiling (dense CJK/base64), so real ~4x density budgets right on the FIRST try
+                      # instead of overflowing and paying a wasted _overflow_refit round-trip every turn
 _NOTABLE = 0.15       # only report a shift at least this large (so "learned X" logs once)
 
 _ratios: dict[str, float] = {}

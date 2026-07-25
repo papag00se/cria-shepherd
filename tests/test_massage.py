@@ -258,10 +258,12 @@ class DeepPatchTests(unittest.TestCase):
         self.assertIn("@@ def foo():", got)
 
     def test_add_file_block_forces_plus(self):
-        got = self._norm("*** Add File: new.py\n context line\n+kept\n-removed")
+        # L13c: in a NEW file a "removal" is impossible, so a bare '-' line is CONTENT the model forgot to
+        # '+'-prefix (a YAML list item, a markdown bullet) — it must be KEPT as an addition, not dropped.
+        got = self._norm("*** Add File: new.py\n context line\n+kept\n- item")
         lines = [l for l in got.splitlines() if l and not l.startswith("***")]
         self.assertTrue(all(l.startswith("+") for l in lines), got)
-        self.assertNotIn("-removed", got)
+        self.assertIn("+- item", got)   # the bare '-' line survives as content (was silently dropped)
 
     def test_collapses_multiple_wrappers(self):
         got = self._norm("*** Begin Patch\n*** Update File: a.py\n+x\n*** End Patch\n*** Begin Patch\n*** Update File: b.py\n+y\n*** End Patch")

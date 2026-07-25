@@ -338,6 +338,17 @@ class StepCleaningTests(unittest.TestCase):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step("Write the README with usage."), "Write the README with usage.")
 
+    def test_clean_step_keeps_bare_xml_tag_mentions(self):
+        # M13: the dialect marker required NO delimiter, so a bare <message>/<think>/<channel> mention —
+        # a legit plan step about XML/streaming — was truncated ("Handle the <message> element" ->
+        # "Handle the"). A real leaked control token ALWAYS carries a pipe/slash delimiter; bare tags stay.
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Handle the <message> XML element in the parser"),
+                         "Handle the <message> XML element in the parser")
+        self.assertEqual(_clean_step("Render <think> blocks as collapsible"), "Render <think> blocks as collapsible")
+        # a genuine leaked native call is STILL cut
+        self.assertEqual(_clean_step("Write the resolver <|tool_call|> leak"), "Write the resolver")
+
 
 class AllStepsExecutedTests(unittest.TestCase):
     """EVERY emitted step becomes a PlanItem — no 12-step cap. A longer decomposition previously

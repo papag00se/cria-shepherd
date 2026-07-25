@@ -63,6 +63,22 @@ _FILE_EXTS = {
     "env", "log", "sql",
 }
 
+# A curated public-suffix allowlist (a code CONSTANT, not an env var). The old shape check accepted ANY
+# dotted token with an alphabetic final label, so a dotted CODE identifier — `urllib.request`,
+# `requests.get`, `os.path` — passed as an "API domain" and burned the live search-escape fetching
+# `https://urllib.request/openapi.json`. Requiring the final label to be a real TLD rejects those.
+# Deliberately biased safe: an unlisted-TLD real domain just isn't auto-detected (no injection/fetch),
+# whereas the old miss actively wasted a ground-truth escape on a garbage host. Common gTLDs + major ccTLDs.
+_TLDS = {
+    "com", "org", "net", "io", "dev", "ai", "co", "app", "me", "gg", "sh", "xyz", "info", "biz",
+    "edu", "gov", "mil", "int", "tech", "cloud", "so", "to", "ly", "fm", "tv", "cc", "gl",
+    # NB: deliberately EXCLUDING real gTLDs that are common code attributes (`.run` -> asyncio.run,
+    # subprocess.run) — a code-attr false positive burns the search-escape on a garbage host, the exact
+    # bug this allowlist fixes. Erring toward missing a rare-TLD real domain (safe) over that.
+    "uk", "us", "de", "fr", "eu", "ca", "au", "jp", "cn", "in", "br", "ru", "nl", "it", "es", "se",
+    "no", "fi", "dk", "pl", "ch", "at", "be", "ie", "nz", "za", "kr", "sg", "hk", "mx", "ar", "cl",
+}
+
 
 def first_domain_in(query: str) -> str | None:
     """The first bare domain in a query (e.g. ``api.handle.me``), else None — used to
@@ -80,8 +96,8 @@ def _looks_like_domain(tok: str) -> bool:
     if len(labels) < 2:
         return False
     tld = labels[-1].lower()
-    if len(tld) < 2 or not tld.isalpha() or tld in _FILE_EXTS:
-        return False
+    if len(tld) < 2 or not tld.isalpha() or tld in _FILE_EXTS or tld not in _TLDS:
+        return False  # final label must be a REAL public suffix, not a code identifier's attr (`.request`)
     return all(lbl and all(c.isalnum() or c == "-" for c in lbl) for lbl in labels)
 
 

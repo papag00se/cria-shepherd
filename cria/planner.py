@@ -83,7 +83,14 @@ _BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+\S)")
 # The ``(?:_start|_end)?`` covers the LFM2/fabliq native pair ``<|tool_call_start|>`` / ``<|tool_call_end|>``
 # (the LIVE model) — without it the plain regex matched gemma/qwen/hermes but MISSED the live model's own
 # tokens, so its debris survived into a step (writeproxy._TC_DEBRIS already lists the full set; keep them in sync).
-_DIALECT_MARKER = re.compile(r"<[|/]*(?:tool_call|channel|message|tool_response|think)(?:_start|_end)?[|/]*>|<\|\"\|>")
+_DIALECT_MARKER = re.compile(
+    r"<[|/]+(?:tool_call|channel|message|tool_response|think)(?:_start|_end)?[|/]*>"  # delimiter BEFORE the name
+    r"|<(?:tool_call|channel|message|tool_response|think)(?:_start|_end)?[|/]+>"       # …or AFTER it
+    r"|<\|\"\|>")
+# NOTE the [|/]+ requirement: a real leaked control token ALWAYS carries a pipe/slash delimiter
+# (<|tool_call|>, <tool_call|>). Matching a BARE <message>/<channel>/<think> also cut a legitimate plan
+# step that merely NAMES that XML/HTML tag ("Handle the <message> element" → "Handle the"). Every
+# writeproxy._TC_DEBRIS fixture still matches (all carry a delimiter); a sync test guards the pair.
 
 
 _STEP_TEXT_KEYS = ("step", "text", "description", "action", "title", "task", "name", "content")

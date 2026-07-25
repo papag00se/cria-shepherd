@@ -122,10 +122,19 @@ class _FakeUpstream(BaseHTTPRequestHandler):
             self._json(_CLASSIFY_JSON)
         elif _has_system(body, "planner for a SMALL local coding model"):  # the planner call
             self._json(_PLAN_JSON)
+        elif any("__NONJSON__" in str((m or {}).get("content") or "") for m in body.get("messages") or []):
+            self._raw200(b"<html><body>502 Bad Gateway</body></html>")  # an intermediary's HTML error, 200
         elif body.get("stream"):
             self._sse()
         else:
             self._json(_JSON)
+
+    def _raw200(self, payload: bytes):  # a 200 whose body is NOT JSON (proxy/LB HTML error page)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_GET(self):
         # cria asks the server what model is loaded (/v1/models) — there are no config aliases, so
@@ -213,6 +222,13 @@ class PassthroughTests(unittest.TestCase):
     def test_buffered_passthrough(self):
         out = self._post({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(json.loads(out)["choices"][0]["message"]["content"], "Hi")
+
+    def test_non_json_200_fails_closed_not_empty(self):
+        # M4: a non-JSON 200 (an intermediary's HTML 502 page, a truncated body) must fail CLOSED — a
+        # clean 502 — NOT be recorded as a successful EMPTY completion (the old `return {}` fail-open).
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._post({"model": "m", "messages": [{"role": "user", "content": "__NONJSON__ please"}]})
+        self.assertEqual(cm.exception.code, 502)
 
     def test_post_with_query_string_still_routes(self):
         # L9: do_POST didn't strip the query string (do_GET did), so a client appending ?param 404'd.
