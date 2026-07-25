@@ -32,6 +32,18 @@ class PromptAgnosticismTests(unittest.TestCase):
                         "verify.txt still defines a research step only in API/web terms")
         self.assertNotIn("resolved_addresses", v)            # the Ada-specific proposed_fix example is gone
 
+    def test_research_step_done_when_facts_obtained_not_when_used_in_code(self):
+        # A research/investigative step is fulfilled the MOMENT the coder OBTAINS the real facts via a tool
+        # call (visible in a `->` result) — NOT when any code USES them (that is a later step's job). Judging
+        # it by code-usage made the critic keep failing an already-satisfied research step, trapping the coder
+        # re-fetching a spec it already had (churn). Both the injected step and the critic must say so.
+        r = prompts.render("research_named_source", domain="example.com").lower()
+        self.assertIn("not writing code in this step", r)
+        self.assertNotIn("so the code uses concrete values", r)   # the code-usage clause that misjudged it
+        v = prompts.load("verify").lower()
+        self.assertIn("obtained", v)                              # done = facts obtained/visible in evidence
+        self.assertIn("does not require", v)                      # ...NOT that any code used them
+
     def test_coder_system_research_rule_is_language_neutral(self):
         c = prompts.load("coder_system")
         self.assertNotIn("Python/requests/curl", c)          # the Python-only callout is generalized
