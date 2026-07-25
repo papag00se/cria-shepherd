@@ -1,2 +1,1 @@
 ⟦ctx:steer⟧ {{REASON}}
-Keep working on it, then stop.
