@@ -251,17 +251,42 @@ def reasoned_has_research(ask, task: str, steps: list[str], evidence: str = "") 
     return m.group(1).upper() == "YES" if m else True
 
 
-def enforce_research_first(ask, task: str, steps: list[str], evidence: str = "") -> tuple[list[str], str]:
-    """ADDITIVE + DURABLE research-first invariant — SHARED by the initial plan (Planner.plan_for) and the
-    LIVING re-derivation (loop.reassess_remaining) so the living plan can't silently DROP "read the real
-    source" while the code still targets a guessed endpoint. If the task names an external API host and a
-    step still codes against it un-researched, prepend ONE grounded research step (never delete/rewrite one).
-    Reasoner-gated; a no-op when no host is named or research is already satisfied (``evidence`` keeps the
-    re-derivation from re-prepending once the coder has read the source). Returns (steps, domain-or-'')."""
+def reasoned_research_step_index(ask, task: str, steps: list[str]) -> int:
+    """The 0-based index of the plan step that READS the API's real source (its spec/docs) to learn the real
+    endpoint + fields — the research step to PIN — or -1 if no step does. Lets enforce_research_first pin the
+    research step whether the PLANNER drafted it or cria injected it, so the verify ground-truth fast-path
+    recognizes the research step either way (a planner-drafted research step was left unpinned → the fast-path
+    never fired → the critic false-negatived it hundreds of times). Unclear / unparseable → -1 (pin nothing
+    on a guess)."""
+    if not steps:
+        return -1
+    plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+    ans = strip_think(ask(prompts.load("plan_research_step"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "")
+    m = re.search(r"\d+", ans)
+    if not m:
+        return -1
+    n = int(m.group())
+    return n - 1 if 1 <= n <= len(steps) else -1
+
+
+def enforce_research_first(ask, task: str, steps: list[str]) -> tuple[list[str], str, int]:
+    """ADDITIVE research-first invariant — Planner.plan_for only. When the task names an external API host,
+    ensure exactly ONE research step exists AND identify it for PINNING, whether the PLANNER drafted it or
+    cria must inject it. Returns (steps, domain-or-'', pin_index): pin_index is the index of the research step
+    to pin — so the living re-derivation can't drop it AND the verify ground-truth fast-path recognizes it
+    (a planner-drafted research step left unpinned meant the fast-path never fired and the critic
+    false-negatived it) — or -1 when no host is named or no research step is warranted. NEVER deletes or
+    rewrites a step."""
     domain = reasoned_api_domain(ask, task)
-    if not (domain and steps) or reasoned_has_research(ask, task, steps, evidence):
-        return steps, ""
-    return [prompts.render("research_named_source", domain=domain)] + steps, domain
+    if not (domain and steps):
+        return steps, "", -1
+    idx = reasoned_research_step_index(ask, task, steps)
+    if idx >= 0:  # the planner already drafted a research step — PIN it, never add a redundant second one
+        return steps, domain, idx
+    # no step reads the real source — prepend cria's ONLY when a step actually codes against the API
+    if reasoned_has_research(ask, task, steps):
+        return steps, domain, -1   # nothing calls the API un-researched → no research step is warranted
+    return [prompts.render("research_named_source", domain=domain)] + steps, domain, 0
 
 
 class Planner:
@@ -353,20 +378,24 @@ class Planner:
             steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
-        # RESEARCH-FIRST enforcement (ADDITIVE): the task names an external API host but NO step reads its
-        # real source before code depends on it → prepend ONE grounded research step so the coder learns the
-        # real endpoint + fields first (never deletes/rewrites one; the URL is the NAMED host's standard
-        # discovery path). Enforced ONCE, here — the prepended step is PINNED (below) so the living plan's
-        # re-derivation (loop.reassess_remaining / _replan_tail) can't drop or reword it while it's still
-        # pending, which is durability WITHOUT the per-advance re-prepend that churned.
-        domain = ""
+        # RESEARCH-FIRST enforcement (ADDITIVE): when the task names an external API host, ensure exactly ONE
+        # research step exists and PIN it — whether the PLANNER drafted its own "read the spec/docs" step or
+        # cria has to prepend one (the coder learns the real endpoint + fields before any code depends on
+        # them; the URL is the NAMED host's standard discovery path). The pin (below) is what lets the living
+        # re-derivation (_replan_tail) keep it from being dropped/reworded AND lets the verify ground-truth
+        # fast-path recognize it as the research step — so a planner-authored research step is no longer
+        # invisible to the fast-path (which left it churning against the weak critic). Never deletes/rewrites.
+        pin_idx, domain = -1, ""
         if self._role is not None:
-            steps, domain = enforce_research_first(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
-            if domain:
-                rlog.emit("plan.research_prepended", domain=domain, level="info")
+            before_n = len(steps)
+            steps, domain, pin_idx = enforce_research_first(
+                lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
+            if domain and pin_idx >= 0:  # a new cria step was prepended, OR the planner's own step is pinned
+                rlog.emit("plan.research_prepended" if len(steps) > before_n else "plan.research_pinned",
+                          domain=domain, index=pin_idx, level="info")
         items = [PlanItem(text=s) for s in steps]
-        if domain and items:  # enforce_research_first prepends the research step at index 0 → PIN it
-            items[0].pinned = True
+        if 0 <= pin_idx < len(items):  # PIN the research step (planner's own OR cria's)
+            items[pin_idx].pinned = True
         plan = Plan(
             id=self._new_id(key),
             task=task,

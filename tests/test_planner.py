@@ -532,32 +532,43 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         return Role(name="reasoner", backend="local")
 
     def test_reasoner_JUDGES_domain_and_missing_research_then_injects(self):
-        # With a reasoner configured, cria ASKS it (not a regex): what API domain? does the plan research?
-        # scripted answers: plan draft, then "api.handle.me", then "NO" (no research) → prepend.
+        # With a reasoner configured, cria ASKS it (not a regex): what API domain? which step researches?
+        # scripted: plan draft, NOISE(none), domain, research-step(NONE=no step reads the source), then
+        # has-research(NO=an API call is un-researched) → prepend cria's step AND pin it.
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py that returns the address.\n2. Add unit tests.'),  # plan
             _content_resp('NONE'),                                                                # NOISE? none
             _content_resp('api.handle.me'),                                                       # which API?
-            _content_resp('NO'),                                                                  # has research?
+            _content_resp('NONE'),                                                                # which step researches? none
+            _content_resp('NO'),                                                                  # API call un-researched → prepend
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("build a resolver for the handles API"), rlog)
         self.assertIn("api.handle.me/openapi.json", plan.items[0].text)   # injected from the reasoner's domain
+        self.assertTrue(plan.items[0].pinned)                            # and PINNED so the fast-path sees it
         self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
-    def test_reasoner_says_research_present_no_injection(self):
+    def test_reasoner_pins_the_planners_own_research_step(self):
+        # THE FOOTGUN: the PLANNER drafted its OWN research step, so cria adds none — but it must still PIN
+        # that step, else the verify ground-truth fast-path (gated on the pin) never recognizes it and the
+        # weak critic false-negatives it forever (observed live: 207 step-1 re-drives on an un-pinned
+        # planner research step whose spec was already fetched). scripted: plan, NOISE(none), domain,
+        # research-step("1" = step 1 reads the spec) → pin step 1, add nothing.
         prov = _ScriptedProvider([
-            _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan
+            _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan (step 1 IS research)
             _content_resp('NONE'),                                           # NOISE? none
             _content_resp('api.handle.me'),                                  # which API?
-            _content_resp('YES'),                                            # has research? → skip
+            _content_resp('1'),                                              # which step researches? step 1
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("build a resolver for the handles API"), rlog)
-        self.assertEqual(len(plan.items), 2)                                 # reasoner said research present
-        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
+        self.assertEqual(len(plan.items), 2)                                 # no redundant research step added
+        self.assertTrue(plan.items[0].pinned)                               # the PLANNER's research step is pinned
+        self.assertFalse(plan.items[1].pinned)
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))  # not prepended
+        self.assertTrue(any(k == "plan.research_pinned" for k, _ in rlog.events))      # pinned in place
 
     def test_reasoner_says_NONE_api_no_injection(self):
         prov = _ScriptedProvider([
@@ -569,6 +580,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("write a fibonacci module"), rlog)
         self.assertEqual(len(plan.items), 2)
+        self.assertFalse(any(it.pinned for it in plan.items))
         self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
     def test_task_host_overrides_a_reasoner_subdomain_paraphrase(self):
@@ -579,7 +591,8 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
             _content_resp('1. Write resolver.py.\n2. Add tests.'),   # plan
             _content_resp('NONE'),                                   # noise? none
             _content_resp('handle.me'),                              # reasoner PARAPHRASE (dropped api.)
-            _content_resp('NO'),                                     # has research? no → inject
+            _content_resp('NONE'),                                   # which step researches? none
+            _content_resp('NO'),                                     # API call un-researched → inject
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
@@ -587,6 +600,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
             _msgs("resolve an Ada Handle via the Ada Handles API (api.handle.me)"), rlog)
         self.assertIn("api.handle.me/openapi.json", plan.items[0].text)   # the EXACT host the task named
         self.assertNotIn("://handle.me/", plan.items[0].text)            # NOT the bare website
+        self.assertTrue(plan.items[0].pinned)
 
     def test_reasoner_answer_with_reasoning_preamble_still_parses(self):
         # fabliq wraps the answer in <think>…</think> / prose — strip_think + the YES/NO word-search recover it
