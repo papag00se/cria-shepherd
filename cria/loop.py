@@ -290,6 +290,15 @@ SEARCH_STREAK_ESCALATE = 5
 # Re-attempted every STUCK_STEP_REPLAN fails so a declining reasoner doesn't burn a call each turn.
 STUCK_STEP_REPLAN = 4
 
+# STUCK-STEP re-plan threshold for a TOOL-CALL thrash. The above triggers on CRITIC verify-fails, but a
+# coder can loop on tool calls for a whole step (write→exec→write…, ignoring the guards' steers) WITHOUT
+# ever signalling completion — so verify never runs and that escape never accrues (observed live: 30+
+# acting turns on a "create the package directory" step that write_file-vs-mkdir-conflicted, 39 steers
+# ignored). After this many ACTING turns on one step without advancing, re-derive the step from ground
+# truth too (it may simplify an over-engineered step — e.g. a package scaffold → a flat script). Fired
+# periodically (every N turns) so a productive-but-long step that yields an unchanged plan isn't churned.
+STEP_THRASH_REPLAN = 12
+
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
@@ -938,6 +947,9 @@ class Loop:
             _add_note(coder, f"steered the coder — {steered}")
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
+            thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
+            if thrash is not None:
+                return thrash
             return coder  # coder is acting → forward; the harness runs it, then loops back here
 
         # coder produced no tool call → it thinks the step is done.
@@ -1191,9 +1203,29 @@ class Loop:
             after = [it.text for it in sess.plan.items if not it.done]
             if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
                 sess.verify_fails, sess.nudge_reason = 0, ""
-                rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after))
+                rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="verify")
                 return self._work(sess, key, body, rlog)
         return self._renudge(sess, key, body, reason, rlog)
+
+    def _replan_if_thrashing(self, sess: PlanSession, key: str, body: dict, idx: int, rlog) -> dict | None:
+        """Tool-call-thrash sibling of the verify-fail re-derive: a coder can loop on tool calls for a
+        whole step (write→exec→write…) WITHOUT ever signalling completion, so the verify-fail escape
+        never accrues. After STEP_THRASH_REPLAN acting turns on one step, ask the living-plan reasoner to
+        re-derive the not-done tail from ground truth — it may simplify an over-engineered step and
+        dissolve the loop. Returns a fresh re-drive when the plan MOVED, else None (forward normally, no
+        churn). Periodic so a productive-but-long step whose plan is unchanged isn't re-derived every turn."""
+        if (self._ctx.reasoner_role is None or sess.synthetic
+                or sess.step_tool_calls < STEP_THRASH_REPLAN
+                or sess.step_tool_calls % STEP_THRASH_REPLAN != 0):
+            return None
+        before = [it.text for it in sess.plan.items if not it.done]
+        self._replan_tail(sess, body, idx, rlog)   # same grounded re-derivation + fail-safes
+        after = [it.text for it in sess.plan.items if not it.done]
+        if after != before:
+            sess.step_tool_calls, sess.verify_fails, sess.nudge_reason = 0, 0, ""
+            rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
+            return self._work(sess, key, body, rlog)
+        return None
 
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``

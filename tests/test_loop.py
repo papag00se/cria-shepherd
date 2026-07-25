@@ -352,6 +352,24 @@ class StuckStepReplanTests(unittest.TestCase):
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "confused step 2", "step 3"])   # gate errors never trigger a re-derive
 
+    def test_tool_call_thrash_rederives_the_step(self):
+        from cria.loop import STEP_THRASH_REPLAN
+        # a coder looping on tool calls (never signalling completion) accrues NO verify-fails, so the
+        # verify escape can't fire — the acting-turn count is the signal instead.
+        loop = self._loop(_Scripted([_replan(["write a flat resolver.py", "step 3"])]))
+        sess = self._sess(); sess.step_tool_calls = STEP_THRASH_REPLAN
+        out = loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog())
+        self.assertIsNotNone(out)                                   # re-derived → fresh drive, not None
+        self.assertEqual([it.text for it in sess.plan.items],
+                         ["step 1", "write a flat resolver.py", "step 3"])   # over-engineered step simplified
+
+    def test_thrash_below_threshold_forwards_normally(self):
+        from cria.loop import STEP_THRASH_REPLAN
+        loop = self._loop(_Scripted([_replan(["rewritten", "step 3"])]))
+        sess = self._sess(); sess.step_tool_calls = STEP_THRASH_REPLAN - 1
+        self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # forward the tool call
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
+
 
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
