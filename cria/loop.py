@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
+from .planner import _clean_step, _extract_cwd, enforce_research_first, reasoned_noise_indices
 from . import searchloop
 from .searchloop import normalize_search, searches_match
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
@@ -410,11 +410,19 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # step (observed: a research step re-derived into "call requests.get('<root>')", shipped as a 404/403).
     # replan.txt already tells the reasoner to avoid these; this is the focused safety judgment. An
     # all-noise re-derivation → None (keep the prior plan), never an empty plan.
-    drop = reasoned_noise_indices(
-        lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner"),
-        task, cleaned)
+    _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
+    drop = reasoned_noise_indices(_ask, task, cleaned)
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
-    return kept or None
+    if not kept:
+        return None
+    # DURABLE research-first (shared enforce_research_first, same as the initial plan): the living plan must
+    # NOT silently drop "read the real source" while a re-derived step still targets a guessed endpoint. The
+    # EVIDENCE lets it see the coder ALREADY read the spec, so it re-prepends only when research is genuinely
+    # still owed — never on every advance.
+    kept, domain = enforce_research_first(_ask, task, kept, evidence=evidence)
+    if domain:
+        rlog.emit("plan.research_reprepended", domain=domain, level="info")
+    return kept
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:

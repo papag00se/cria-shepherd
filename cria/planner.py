@@ -220,6 +220,50 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     return {int(n) - 1 for n in re.findall(r"\d+", ans) if 0 <= int(n) - 1 < len(steps)}
 
 
+def reasoned_api_domain(ask, task: str) -> str:
+    """The external API host the task requires — "" for none. The host the task LITERALLY names is GROUND
+    TRUTH and WINS over a reasoner paraphrase (the reasoner was seen to drop `api.` from `api.handle.me`,
+    steering the coder at the website); the reasoner supplies a domain only for a product-only mention the
+    task didn't spell out. ``ask(system, user) -> str`` is the caller's one-shot reasoner call."""
+    ans = ask(prompts.load("plan_names_api"), "TASK:\n" + task) or ""
+    tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
+    if not (tok and searchloop._looks_like_domain(tok)):
+        return ""  # NONE or unparseable → no domain
+    tok = tok.lower()
+    literal = searchloop.task_api_domain(task)
+    if literal and (literal == tok or literal.endswith("." + tok)):
+        return literal   # the exact host the task named beats a registrable-domain paraphrase
+    return tok
+
+
+def reasoned_has_research(ask, task: str, steps: list[str], evidence: str = "") -> bool:
+    """Whether the plan's API research is already SATISFIED — True unless a remaining step still CALLS the
+    API with no earlier step (and no prior work in ``evidence``) reading its real source first. ``evidence``
+    lets the LIVING re-derivation see that the coder already read the spec, so it doesn't re-prepend a
+    research step forever. Unclear → True (never prepend a redundant step on a guess — silence over noise)."""
+    if not steps:
+        return True
+    plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+    user = f"TASK:\n{task}\n\nPLAN:\n{plan_text}"
+    if evidence.strip():
+        user += f"\n\nEVIDENCE:\n{evidence}"
+    m = re.search(r"\b(YES|NO)\b", ask(prompts.load("plan_has_research"), user) or "", re.I)
+    return m.group(1).upper() == "YES" if m else True
+
+
+def enforce_research_first(ask, task: str, steps: list[str], evidence: str = "") -> tuple[list[str], str]:
+    """ADDITIVE + DURABLE research-first invariant — SHARED by the initial plan (Planner.plan_for) and the
+    LIVING re-derivation (loop.reassess_remaining) so the living plan can't silently DROP "read the real
+    source" while the code still targets a guessed endpoint. If the task names an external API host and a
+    step still codes against it un-researched, prepend ONE grounded research step (never delete/rewrite one).
+    Reasoner-gated; a no-op when no host is named or research is already satisfied (``evidence`` keeps the
+    re-derivation from re-prepending once the coder has read the source). Returns (steps, domain-or-'')."""
+    domain = reasoned_api_domain(ask, task)
+    if not (domain and steps) or reasoned_has_research(ask, task, steps, evidence):
+        return steps, ""
+    return [prompts.render("research_named_source", domain=domain)] + steps, domain
+
+
 class Planner:
     def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
@@ -309,14 +353,15 @@ class Planner:
             steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
-        # RESEARCH-FIRST enforcement (ADDITIVE): the task names one API domain but NO step reads its real
-        # source before code depends on it. Prepend ONE grounded research step so the coder learns the real
-        # endpoint + fields first. Never deletes/rewrites a step; the URL is the NAMED domain's standard
-        # discovery path, not a guess. Both conditions are reasoner-judged; skipped once research is planned.
-        domain = self._reasoned_api_domain(task, rlog)
-        if domain and steps and not self._reasoned_has_research(task, steps, rlog):
-            steps = [prompts.render("research_step", domain=domain)] + steps
-            rlog.emit("plan.research_prepended", domain=domain, level="info")
+        # RESEARCH-FIRST enforcement (ADDITIVE + DURABLE): the task names an external API host but NO step
+        # reads its real source before code depends on it → prepend ONE grounded research step so the coder
+        # learns the real endpoint + fields first (never deletes/rewrites one; the URL is the NAMED host's
+        # standard discovery path). The SAME enforce_research_first also runs in loop.reassess_remaining, so
+        # the living plan can't silently drop it while the code still targets a guessed endpoint.
+        if self._role is not None:
+            steps, domain = enforce_research_first(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
+            if domain:
+                rlog.emit("plan.research_prepended", domain=domain, level="info")
         plan = Plan(
             id=self._new_id(key),
             task=task,
@@ -343,41 +388,6 @@ class Planner:
         if self._role is not None:
             content = self._role.clean_content(content)
         return content.strip()
-
-    def _reasoned_api_domain(self, task: str, rlog) -> str:
-        """The single external API domain the task requires. The reasoner decides IF the task needs an
-        external API and, for a product-only mention ("the GitHub API"), which domain — a shape-matcher
-        can't. But when the task LITERALLY names a host, that host is GROUND TRUTH and WINS: the reasoner
-        was observed to paraphrase `api.handle.me` down to its registrable domain `handle.me`, and cria's
-        research step then steered the coder at the WEBSITE (HTML) instead of the API — a redirection on a
-        guess. Reasoner-only otherwise (no role / neither-domain-nor-NONE → "" → no injection)."""
-        if self._role is None:
-            return ""
-        ans = self._ask(prompts.load("plan_names_api"), "TASK:\n" + task, rlog)
-        tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
-        if not (tok and searchloop._looks_like_domain(tok)):
-            return ""  # NONE or unparseable → no domain
-        tok = tok.lower()
-        # GROUND TRUTH over judgment: if the task names a host that IS the reasoner's answer or a MORE
-        # SPECIFIC subdomain of it (task `api.handle.me` vs reasoner `handle.me`), use the task's EXACT
-        # host — never let a registrable-domain paraphrase override the domain the user actually gave.
-        # A DIFFERENT registrable domain means the reasoner mapped a product name the task didn't spell
-        # out (trust it there).
-        literal = searchloop.task_api_domain(task)
-        if literal and (literal == tok or literal.endswith("." + tok)):
-            return literal
-        return tok
-
-    def _reasoned_has_research(self, task: str, steps: list[str], rlog) -> bool:
-        """Whether the plan already reads the API's real spec/docs before coding, JUDGED by the reasoner.
-        Reasoner-only. An unclear answer returns True (assume research IS present → do NOT inject) so cria
-        never prepends a redundant step on a guess — silence over noise. No keyword-regex fallback."""
-        if self._role is None:
-            return True
-        plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-        ans = self._ask(prompts.load("plan_has_research"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}", rlog)
-        m = re.search(r"\b(YES|NO)\b", ans, re.I)
-        return m.group(1).upper() == "YES" if m else True
 
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No

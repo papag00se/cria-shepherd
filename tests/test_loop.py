@@ -321,6 +321,35 @@ class LivingPlanTests(unittest.TestCase):
         self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # speculative step dropped, not hardened
         self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
 
+    def test_reassess_reprepends_research_when_api_code_remains_unresearched(self):
+        # DURABILITY (shared enforce_research_first): the living plan must NOT silently DROP "read the real
+        # source" while a re-derived step still targets the API un-researched — this run guessed
+        # /resolve?handle= after re-derivation dropped the research step. Calls: re-derive, noise,
+        # api-host, research-satisfied(NO) → re-prepend.
+        from cria.loop import reassess_remaining
+        steps = reassess_remaining(
+            _Scripted([_replan(["Call the api.handle.me endpoint and return the resolved address",
+                                "Add unit tests"]),
+                       _text("NONE"),           # noise? none
+                       _text("api.handle.me"),  # which API host?
+                       _text("NO")]),           # research satisfied? NO → re-prepend
+            self._role(), "resolve an Ada Handle via api.handle.me", "- some coder work", "- old", "ev", _Rlog())
+        self.assertIn("api.handle.me/openapi.json", steps[0])           # research step re-prepended FIRST
+        self.assertTrue(any("unit tests" in s for s in steps))         # real steps survive after it
+
+    def test_reassess_does_not_reprepend_once_research_is_satisfied(self):
+        # The EVIDENCE shows the coder already read the spec (research SATISFIED → YES), so the living plan
+        # must NOT re-prepend a research step on every advance — no churn.
+        from cria.loop import reassess_remaining
+        steps = reassess_remaining(
+            _Scripted([_replan(["Add unit tests", "Write the README"]),
+                       _text("NONE"),           # noise? none
+                       _text("api.handle.me"),  # which API host?
+                       _text("YES")]),          # research satisfied → NO re-prepend
+            self._role(), "resolve via api.handle.me", "- fetched the openapi spec", "- old", "ev", _Rlog())
+        self.assertNotIn("openapi.json", steps[0])   # no research step re-prepended
+        self.assertEqual(len(steps), 2)
+
     def test_reassess_remaining_drops_a_shell_command_step(self):
         # observed live: the re-derivation codified the coder's grep as step 1 — "grep -n 'resolve'
         # ./tmp/.../openapi.json" — which the coder could not "complete", trapping the plan. The reasoner
