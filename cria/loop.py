@@ -1167,7 +1167,7 @@ class Loop:
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
         to the SHARED authors (so the plan-off path runs the identical reasoning) on the routed reasoner
         endpoint. Repetition keeps a canned floor (via author_redirect); wheel-spin may return None
-        (NOT_STUCK / nothing → inject nothing)."""
+        (ON_TRACK / nothing → inject nothing)."""
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
         root = sess.workspace_root
@@ -2621,7 +2621,7 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
 # session + the churned files' real on-disk bytes + the repo's checks (+ the coder's private reasoning
 # when that was the trigger). It replaces the family of canned "stop rewriting / do something different"
 # templates that could prescribe a broken tool or be misread as "abandon the file". The reasoner may
-# reply NOT_STUCK (the detector was a false positive) → we inject nothing (silence over a bad steer).
+# reply ON_TRACK (the detector was a false positive) → we inject nothing (silence over a bad steer).
 # One-line description of WHAT tripped, per condition — the only condition-specific text. Grounded in gs
 # so the reasoner knows the concrete signal; the rest of the bundle (session/disk/truth) is uniform.
 _STEER_TRIGGER = {
@@ -2737,7 +2737,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     prompt), the churned files' real ON-DISK bytes, the repo's check output, and (for the flail trigger)
     the coder's recent private reasoning — and let it diagnose why the coder is stuck and give ONE
     concrete, grounded next step. Returns the directive, or ``None`` when the reasoner judges the coder is
-    actually progressing (``NOT_STUCK``) or yields nothing — the caller decides whether to fall back.
+    actually progressing (``ON_TRACK``) or yields nothing — the caller decides whether to fall back.
 
     We hand it the real session rather than a curated slice: a curated view is exactly what made an
     earlier steer invent a path. The one thing dropped is the harness's agent system prompt
@@ -2767,20 +2767,23 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
 
 
 def _steer_or_none(text: str) -> str | None:
-    """A steer_diagnose reply → the directive to inject, or None for a genuine NOT_STUCK. A verbose
-    reasoner (Fabliq) HEDGES — it writes "NOT_STUCK" and THEN a real, grounded directive ("the endpoint
-    is GET /handles/{handle}, stop fetching, write it"). The old check (`"NOT_STUCK" in text[:60]`)
-    discarded the whole reply on that prefix, silently dropping good steers so the coder kept spinning.
-    Strip the NOT_STUCK verdict token(s) + think/markdown scaffolding; deliver whatever substantive
-    directive remains, and treat it as NOT_STUCK only when essentially nothing else is there."""
+    """A steer_diagnose reply → the directive to inject, or None for a genuine "on track" verdict. The
+    "fine, no help" sentinel is ON_TRACK — a POSITIVE token on purpose: the old NOT_STUCK was a negation
+    trap a weak reasoner would emit for the WRONG reason ("the coder is NOT progressing → NOT_STUCK"),
+    vetoing its own rescue while looping. A verbose reasoner (Fabliq) also HEDGES — it writes the verdict
+    token and THEN a real, grounded directive ("the endpoint is GET /handles/{handle}, stop fetching,
+    write it"); a naive prefix check discarded the whole reply, silently dropping good steers. Strip the
+    verdict token(s) + think/markdown scaffolding; deliver whatever substantive directive remains, and
+    treat it as an on-track veto only when essentially nothing else is there. (Legacy NOT_STUCK still
+    stripped, in case a model reaches for the old word.)"""
     if not text:
         return None
     body = strip_think(text)
-    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)   # markdown/channel scaffolding
-    directive = re.sub(r"(?i)\bnot[_ ]stuck\b", " ", body)            # remove the verdict token(s)
-    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:").strip()  # trim scaffolding; KEEP end punctuation
-    # A directive remains once the verdict is stripped → deliver it (Fabliq hedges NOT_STUCK + advice);
-    # essentially nothing left → a genuine NOT_STUCK, inject nothing. The small floor skips a bare
+    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
+    directive = re.sub(r"(?i)\b(on[_ ]track|not[_ ]stuck)\b", " ", body)  # remove the verdict token(s)
+    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:").strip()    # trim scaffolding; KEEP end punctuation
+    # A directive remains once the verdict is stripped → deliver it (Fabliq hedges the verdict + advice);
+    # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
     # "ok"/"yes" residue without discarding a real short steer.
     return directive if len(directive) >= 8 else None
 
@@ -2798,7 +2801,7 @@ def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str
 def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardState,
                         truth: str, body: dict, rlog) -> str:
     """C5 — the reasoned thrash-assist (thrash trigger) — a thin wrapper over :func:`author_steer`. The
-    persistent-error string is the trigger's ground truth; on a NOT_STUCK / empty reasoner reply we fall
+    persistent-error string is the trigger's ground truth; on an ON_TRACK / empty reasoner reply we fall
     back to inserting that raw ground truth (the periodic check-in's baseline behaviour, valuable on its
     own — the reasoned diagnosis is an upgrade of it, not a replacement)."""
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
@@ -2855,7 +2858,7 @@ def _flail_candidate(window: list[str]) -> bool:
 def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog) -> str | None:
     """The reasoned FLAIL-assist (flail trigger) — a thin wrapper over :func:`author_steer`. The pre-filter
     fired on the coder's circling PRIVATE reasoning (which the transcript doesn't carry), so we pass that
-    reasoning window alongside the real session; the reasoner decides stuck-or-NOT_STUCK. There is no gate
+    reasoning window alongside the real session; the reasoner decides stuck-or-ON_TRACK. There is no gate
     outcome and no GuardState here (the trigger is reasoning, not a check/write count), so disk facts are
     empty — the reasoner grounds on the session's own tool results and reads on demand via the steer."""
     return author_steer(reasoner_chat, reasoner_role, None, None, body, rlog,

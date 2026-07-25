@@ -53,6 +53,16 @@ class PromptAgnosticismTests(unittest.TestCase):
         # model-facing prompt: never leak the literal project name (only ⟦ctx:…⟧ markers are model-facing)
         self.assertNotIn("cria", p.lower())
 
+    def test_stuck_detector_veto_sentinel_is_positive_not_a_negation(self):
+        # A weak reasoner reasoning "the coder is NOT progressing / IS stuck" collapses a NEGATION
+        # sentinel ("NOT_STUCK") into the trigger word and emits it for the WRONG reason, vetoing its
+        # own rescue while looping (observed live: reasoning "stuck in an infinite loop" → emitted
+        # NOT_STUCK). The "fine, no help" verdict must be a POSITIVE token the trigger can't produce.
+        for name in ("steer_diagnose", "steer_diagnose_user"):
+            p = prompts.load(name)
+            self.assertIn("ON_TRACK", p, name)
+            self.assertNotIn("NOT_STUCK", p, name)  # the negation-trap token must be gone from the prompt
+
 
 class PromptLoaderTests(unittest.TestCase):
     def test_load_trims_trailing_newline_only(self):

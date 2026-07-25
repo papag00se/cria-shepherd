@@ -13,4 +13,4 @@ GROUND TRUTH FROM THE REPO'S CHECKS:
 ITS RECENT PRIVATE REASONING (oldest first, most recent last — present only when the trigger was its own thinking):
 {{REASONING}}
 
-Reply with EXACTLY `NOT_STUCK`, or a short unstick directive spoken to the coder — grounded ONLY in what you see above.
+Reply with a short unstick directive spoken to the coder — grounded ONLY in what you see above — or EXACTLY the one word `ON_TRACK` if (and only if) the coder is clearly making progress and needs no help. A stuck or looping coder is NOT `ON_TRACK`.

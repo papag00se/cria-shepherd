@@ -77,7 +77,7 @@ class ReasoningCaptureTests(unittest.TestCase):
 
 
 class ReasonerJudgeTests(unittest.TestCase):
-    """The reasoner is the real judge: NOT_STUCK → no steer; a diagnosis → the steer verbatim."""
+    """The reasoner is the real judge: ON_TRACK → no steer; a diagnosis → the steer verbatim."""
 
     ROLE = Role(name="reasoner", backend="local", reasoning="on")
 
@@ -85,7 +85,11 @@ class ReasonerJudgeTests(unittest.TestCase):
         import json
         return lambda body, rlog: json.dumps({"choices": [{"message": {"content": content}}]}).encode()
 
-    def test_not_stuck_yields_no_steer(self):
+    def test_on_track_yields_no_steer(self):
+        self.assertIsNone(author_flail_steer(self._chat("ON_TRACK"), self.ROLE, CAPSYS, {"messages": []}, _Rlog()))
+
+    def test_legacy_not_stuck_sentinel_still_vetoes(self):
+        # back-compat: a model reaching for the old word is still honored as a veto
         self.assertIsNone(author_flail_steer(self._chat("NOT_STUCK"), self.ROLE, CAPSYS, {"messages": []}, _Rlog()))
 
     def test_diagnosis_becomes_the_steer(self):

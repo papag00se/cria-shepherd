@@ -1298,7 +1298,7 @@ class WheelSpinTests(unittest.TestCase):
         # Round-6 lives on: a content-blind streak can't tell a spiral from honest edits (applying review
         # findings one by one). So there's no canned "the problem is elsewhere" steer — the reasoner is
         # handed the CLEAN ground truth + the real session and DECIDES. Here it judges the coder fine
-        # (NOT_STUCK); we fall back to inserting the clean FACT, never an "elsewhere" editorialization.
+        # (ON_TRACK); we fall back to inserting the clean FACT, never an "elsewhere" editorialization.
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
@@ -1307,7 +1307,7 @@ class WheelSpinTests(unittest.TestCase):
         class _Reasoner:
             def __call__(self, body, rlog):
                 captured["user"] = body["messages"][-1]["content"]
-                return json.dumps({"choices": [{"message": {"content": "NOT_STUCK"}}]}).encode()
+                return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
 
         coder = _VaryingWriter()
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
@@ -1320,7 +1320,7 @@ class WheelSpinTests(unittest.TestCase):
         # the reasoner SAW the clean ground truth, free of any "elsewhere" premise it could parrot
         self.assertIn("no error-class", captured["user"].lower())
         self.assertNotIn("elsewhere", captured["user"].lower())
-        # NOT_STUCK → the canned FACT is inserted (states the clean result), never an editorializing steer
+        # ON_TRACK → the canned FACT is inserted (states the clean result), never an editorializing steer
         msg = coder.last_user()
         self.assertNotIn("all pass", msg.lower())         # no overclaimed verified/done state
         self.assertNotIn("elsewhere", msg.lower())        # no false "look elsewhere" steer
@@ -1484,23 +1484,32 @@ class ResumeTests(unittest.TestCase):
 
 
 class SteerVerdictTests(unittest.TestCase):
-    """A verbose reasoner (Fabliq) HEDGES: it writes NOT_STUCK and then a real grounded directive.
-    The old `"NOT_STUCK" in text[:60]` check discarded the whole reply, silently dropping good steers
-    so the coder kept spinning (observed: 7 redirects delivered NOTHING). _steer_or_none must strip the
-    verdict token + scaffolding and deliver the directive, treating NOT_STUCK as the verdict only when
-    essentially nothing else follows."""
+    """The "fine, no help" verdict is the POSITIVE sentinel ON_TRACK (the old NOT_STUCK was a negation
+    trap a weak reasoner emitted for the WRONG reason — "the coder is NOT progressing → NOT_STUCK" —
+    vetoing its own rescue while looping). A verbose reasoner (Fabliq) also HEDGES: it writes the verdict
+    token and then a real grounded directive; the old prefix check discarded the whole reply, silently
+    dropping good steers (observed: 7 redirects delivered NOTHING). _steer_or_none must strip the verdict
+    token + scaffolding and deliver the directive, treating the verdict as final only when essentially
+    nothing else follows."""
+
+    def test_on_track_veto_is_recognized(self):
+        # the new positive sentinel must be honored as a veto — before the consumer knew ON_TRACK it
+        # would have been delivered as an 8-char "directive", steering the coder with the veto word.
+        from cria.loop import _steer_or_none
+        self.assertIsNone(_steer_or_none("ON_TRACK"))
+        self.assertIsNone(_steer_or_none("ON_TRACK </think> ON_TRACK"))
 
     def test_hedged_directive_is_delivered_not_discarded(self):
         from cria.loop import _steer_or_none
-        t = "NOT_STUCK You are stuck fetching the spec; the endpoint is GET /handles/{handle} — stop fetching, write the resolver now."
+        t = "ON_TRACK You are stuck fetching the spec; the endpoint is GET /handles/{handle} — stop fetching, write the resolver now."
         out = _steer_or_none(t)
         self.assertIsNotNone(out)
         self.assertIn("/handles/{handle}", out)
-        self.assertNotIn("NOT_STUCK", out)
+        self.assertNotIn("ON_TRACK", out)
 
-    def test_bare_not_stuck_stays_none(self):
+    def test_legacy_not_stuck_verdict_still_vetoes(self):
         from cria.loop import _steer_or_none
-        self.assertIsNone(_steer_or_none("NOT_STUCK"))
+        self.assertIsNone(_steer_or_none("NOT_STUCK"))            # back-compat
         self.assertIsNone(_steer_or_none("NOT_STUCK </think> NOT_STUCK"))
         self.assertIsNone(_steer_or_none(""))
 
@@ -2919,7 +2928,7 @@ class GroundTruthSilenceTests(unittest.TestCase):
 class UnifiedSteerAuthorTests(unittest.TestCase):
     """ONE reasoned author (author_steer) behind EVERY detector: repetition / wheel-spin / thrash /
     flail all route through it, grounded in the real session + churned files + checks. It may reply
-    NOT_STUCK (a false-positive trigger) → the caller injects nothing."""
+    ON_TRACK (a false-positive trigger) → the caller injects nothing."""
 
     def _gs(self):
         from cria.loop import GuardState
@@ -2941,11 +2950,13 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
                                reasoning_window=["keep guessing at the attr"])
             self.assertIn("read the real file", out, cond)
 
-    def test_not_stuck_reply_suppresses_the_steer(self):
+    def test_on_track_reply_suppresses_the_steer(self):
         import tempfile
         from cria.loop import author_steer
         gs, ws = self._gs(), tempfile.mkdtemp()
-        self.assertIsNone(author_steer(self._chat("NOT_STUCK"), None, ws, gs,
+        self.assertIsNone(author_steer(self._chat("ON_TRACK"), None, ws, gs,
+                                       {"messages": []}, _Rlog(), condition="wheel_spin"))
+        self.assertIsNone(author_steer(self._chat("NOT_STUCK"), None, ws, gs,  # legacy still vetoes
                                        {"messages": []}, _Rlog(), condition="wheel_spin"))
 
     def test_empty_reasoner_reply_is_none(self):
