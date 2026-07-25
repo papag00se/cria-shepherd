@@ -1370,8 +1370,9 @@ class Loop:
             rlog.emit("loop.research_satisfied_groundtruth", domain=research_domain, level="info")
             _dump_verify(self._run_dir(rlog), key, idx, total, item,
                          "(ground-truth research fast-path — source fetched; cria surfaced its real "
-                         "endpoint routes/response fields, which ARE the step's goal)", evidence, True, "",
-                         response="")
+                         "endpoint routes/response fields, which ARE the step's goal)", evidence, True,
+                         f"research facts obtained for {research_domain} — no critic call needed",
+                         response="(no verifier call — decided by ground truth, not the critic)")
             return True, ""
         # System instruction: cria/prompts/verify.txt. User message (the step + real
         # ground truth): assembled from the labels in cria/prompts/verify_user.txt.

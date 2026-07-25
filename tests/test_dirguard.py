@@ -99,6 +99,28 @@ class CommandRefusalTests(unittest.TestCase):
         # the URL is fine, but writing the download to an external path is a real external write
         self.assertTrue(dirguard.command_refusal("curl https://x.com/a -o /etc/evil", "none", WS))
 
+    def test_grep_pattern_with_a_slash_is_not_a_path(self):
+        # A rooted path INSIDE a quoted grep/sed PATTERN is the SEARCH TERM, not a file — the guard must
+        # not refuse it. Observed live: the coder ran `grep -n "GET /handles" ./tmp/read-only/spec.json`
+        # (exactly what cria's spill outline told it to do) and the guard refused it, citing "/handles" —
+        # a path it never touched — trapping the coder on the research step.
+        for cmd in ('grep -n "GET /handles" ./tmp/read-only/api.handle.me_openapi.json',
+                    "grep -n 'GET /handles' ./tmp/read-only/spec.json",
+                    'grep -rn "/handles/{handle}" .',
+                    'sed -n "s#/api/v1/resolve#X#p" ./local.txt'):
+            for level in ("none", "read"):
+                self.assertIsNone(dirguard.command_refusal(cmd, level, WS), (cmd, level))
+
+    def test_external_file_still_caught_even_with_a_slash_pattern(self):
+        # the quoted pattern is skipped, but a genuinely external FILE argument in the same command is NOT —
+        # the fix narrows false positives, it doesn't blind the guard to real external access
+        self.assertTrue(dirguard.command_refusal('grep "a/b/c" /etc/passwd', "none", WS))          # external read
+        self.assertTrue(dirguard.command_refusal('grep "GET /x" /home/jesse/other/f > /etc/out', "none", WS))  # ext write
+
+    def test_a_quoted_path_that_opens_the_quote_is_still_a_path(self):
+        # a path the coder quoted because it has spaces is a REAL path (the quote opens with it) — caught
+        self.assertTrue(dirguard.command_refusal('cat "/home/jesse/other/my secret"', "none", WS))
+
     def test_device_files_and_plumbing_are_exempt(self):
         # /dev/null redirection & friends are I/O plumbing, NOT external data — must never be refused
         for cmd in ("grep -n x resolve.py 2>/dev/null",

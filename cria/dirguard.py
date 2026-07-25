@@ -59,11 +59,39 @@ _NETWORK_CMD = re.compile(
 # `curl … > /tmp/y` are still caught, but a URL path in the request is not).
 _WRITE_TARGET_BEFORE = re.compile(r"(?:>>?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\s)tee)\s*$")
 
+# A text-SEARCH / stream-edit tool whose QUOTED argument is a PATTERN or script, never a file path — so a
+# rooted-looking quoted term (`grep "/handles/{handle}"`, `sed "s#/api/v1#X#"`) is the search expression,
+# not an external file access. Files these tools touch are given as bare (unquoted) path args, which the
+# scan still catches. Keyed off the command verb (generic shell knowledge, not model/harness-specific).
+_TEXT_SEARCH_LEAD = re.compile(r"(?:^|[\s;&|(])(?:e?grep|fgrep|rg|ag|ack|sed|awk|gawk)\b", re.IGNORECASE)
+
 
 def _is_write_target(command: str, start: int) -> bool:
     """True when the path token at ``start`` is the target of a file WRITE (a redirect or an output
     flag) — the only external file access still refused inside a network command."""
     return bool(_WRITE_TARGET_BEFORE.search(command[:start]))
+
+
+def _quoted_spans(command: str) -> list[tuple[int, int]]:
+    """(start, end) CONTENT ranges of single/double-quoted strings in the command. Used to skip a rooted
+    path token that sits INSIDE a quote as a non-initial word — a search PATTERN, not a file: `grep -n
+    "GET /handles" file` names no `/handles` FILE; the `/handles` is the grep term. Without this the guard
+    refused the coder's own grep (the exact action cria's spill outline tells it to run), citing a path it
+    never touched. A quote that OPENS with the path (`cat "/etc/my file"`) is still a real path — only a
+    token that starts AFTER the quote's content-start is treated as a pattern. Best-effort: an unbalanced
+    quote runs its span to end-of-string (degrades safe — over-skips, never over-refuses)."""
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in "\"'":
+            j = command.find(c, i + 1)
+            if j == -1:
+                spans.append((i + 1, n)); break
+            spans.append((i + 1, j)); i = j + 1
+        else:
+            i += 1
+    return spans
 
 
 def normalize_level(value: str | None) -> str:
@@ -122,10 +150,20 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     if level == "write" or not command:
         return None
     network = bool(_NETWORK_CMD.search(command))
+    search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
+    spans = _quoted_spans(command)
     external = None
     ext_is_write = False
     for m in _PATH_TOKEN.finditer(command):
         tok = m.group(0)
+        # A rooted token INSIDE a quoted string is a search PATTERN / literal, not a filesystem path,
+        # when EITHER it does not open the quote (a mid-quote term like "GET /handles") OR the command is a
+        # text-search/stream-edit tool whose quoted args are patterns ("/handles/{handle}" to grep is the
+        # search term, not a file). A quoted path that opens the quote for a FILE command (`cat "/etc/x"`)
+        # is still checked. Files for grep/sed are bare path args, which the scan still catches.
+        inside = next((s for s, e in spans if s <= m.start() < e), None)
+        if inside is not None and (m.start() != inside or search_cmd):
+            continue
         if not is_external(tok, workspace) or _exempt(tok):
             continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
