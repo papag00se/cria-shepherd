@@ -983,7 +983,7 @@ class Loop:
             sess.pending_coder_text = _completion_text(coder)
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
-        evidence = _work_log(body.get("messages", []))
+        evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
@@ -1093,7 +1093,7 @@ class Loop:
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
-            evidence = _work_log(body.get("messages", []))
+            evidence = self._grounded_evidence(sess, body)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")))
             if ok:
@@ -1124,7 +1124,7 @@ class Loop:
             return self._renudge(sess, key, body, nudge, rlog)
 
         digest = proberun.completion_probe_digest(outcome.report)
-        evidence = _work_log(body.get("messages", []))
+        evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
@@ -1172,7 +1172,7 @@ class Loop:
         remaining = [it for it in sess.plan.items if not it.done]
         if not remaining:
             return
-        evidence = _work_log(body.get("messages", []))
+        evidence = self._grounded_evidence(sess, body)
         tools = _coder_tools_summary(body.get("tools"))
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
@@ -1262,6 +1262,21 @@ class Loop:
         return guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
 
     # ------------------------------------------------------------------ helpers
+
+    def _grounded_evidence(self, sess: PlanSession, body: dict) -> str:
+        """The critic's / re-derivation's ground truth: the coder's recent tool actions (the work log)
+        PLUS the DURABLE fetched-page facts (url→status→endpoints) cria accumulated. Without the durable
+        facts, a research step is judged NOT-done — or needlessly re-added — because the fetch that
+        satisfied it scrolled off after a compaction (observed: the step critic saw a 3-action window and
+        concluded "no OpenAPI spec reference" while the coder had fetched openapi.json 45× with the
+        /handles/{handle} outline right there). Additive: the facts only ever tell the critic MORE about
+        what the coder really obtained; they never claim work that wasn't done."""
+        messages = body.get("messages", [])
+        log = _work_log(messages)
+        facts = _fetch_ground_truth(messages, sess, header="PAGES THE CODER ALREADY FETCHED")
+        if not facts:
+            return log
+        return (log + "\n\n" + facts) if log else facts
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "") -> tuple[bool, str]:
@@ -2754,12 +2769,12 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
     return dst
 
 
-def _format_fetches(latest: dict) -> str:
+def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
     if not latest:
         return ""
     lines = [f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
              for url, (status, routes) in latest.items()]
-    return ("PAGES YOU HAVE ALREADY FETCHED (from the real tool results — trust these over any earlier "
+    return (f"{header} (from the real tool results — trust these over any earlier "
             "note or reasoning claiming a fetch failed):\n" + "\n".join(lines))
 
 
@@ -2775,15 +2790,17 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
-def _fetch_ground_truth(messages: list[dict], sess=None) -> str:
+def _fetch_ground_truth(messages: list[dict], sess=None,
+                        header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
     """Deterministic FACTS about the web_fetches already made — final status per URL + any endpoint
     routes. Handed to the steer author so a weak reasoner can't echo the coder's hallucination that a
     fetch failed when it actually returned 200 (runG: the coder insisted api.handle.me/openapi.json gave
     a 400; it returned HTTP 200 with 33 endpoints incl. /handles/{handle}, and the steer PARROTED the
     400 — 40 wasted turns). Merges the session's DURABLE facts (kept past the window) with the current
-    window, so the correction survives even after the result scrolls out; in-window status wins."""
+    window, so the correction survives even after the result scrolls out; in-window status wins. ``header``
+    re-frames the subject for a non-coder reader (the step critic)."""
     latest = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(messages))
-    return _format_fetches(latest)
+    return _format_fetches(latest, header)
 
 
 _SHELL_TOOLNAMES = {"exec_command", "shell", "bash", "container.exec", "run_terminal_cmd", "local_shell"}

@@ -326,6 +326,31 @@ class LivingPlanTests(unittest.TestCase):
             self.assertNotIn("{", s)     # no dict repr leaked into the step text
 
 
+class GroundedEvidenceTests(unittest.TestCase):
+    """The step critic (and the re-derivation) must judge on the DURABLE fetched-page facts, not just the
+    recent compaction-shrunk work log — else a research step ("examine the spec") is judged NOT-done
+    because the spec fetch scrolled off (observed live: the critic saw a 3-action window, concluded "no
+    OpenAPI spec reference", and kept the coder re-researching a spec it had fetched openapi.json 45×)."""
+
+    def _loop(self):
+        return Loop(_ctx(_Scripted([_toolcall()]), None))
+
+    def test_durable_fetch_facts_are_folded_into_evidence(self):
+        loop = self._loop()
+        sess = PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        ev = loop._grounded_evidence(sess, {"messages": []})   # empty window — the fetch was compacted away
+        self.assertIn("openapi.json", ev)
+        self.assertIn("/handles/{handle}", ev)                 # the critic now SEES the coder read the spec
+        self.assertIn("THE CODER ALREADY FETCHED", ev)         # verifier-framed, not the coder-facing "YOU HAVE"
+
+    def test_no_durable_facts_leaves_evidence_as_the_work_log(self):
+        loop = self._loop()
+        sess = PlanSession(plan=_plan(2))                      # fetched_pages is None → no facts appended
+        ev = loop._grounded_evidence(sess, {"messages": []})
+        self.assertNotIn("ALREADY FETCHED", ev)
+
+
 class StuckStepReplanTests(unittest.TestCase):
     """A step advances ONLY on a genuine pass — no advance-on-unverified cap — so a MISCONCEIVED step (a
     confused/category-error step the planner wrote whose checks pass but whose intent the critic keeps
