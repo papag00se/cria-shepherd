@@ -1,5 +1,3 @@
-You are given a coding TASK and its PLAN steps. Which step READS the external API's real source of truth — FETCHING its machine-readable spec (OpenAPI/Swagger) or its official documentation page, or reading a local file — to learn the real endpoint path and response field names, before any code calls the API?
+You are given a coding TASK and its PLAN steps. Which step READS the external API's real source of truth — its machine-readable spec (OpenAPI/Swagger) or its official documentation — to learn the real endpoint path and response field names, before any code calls the API?
 
-A web_SEARCH does NOT count. A step that searches the web for the API, or only "locates"/"finds"/"looks up" the documentation, returns LINKS — not the source itself — so it does not read the real source. Only a step that FETCHES or READS the actual spec/docs page (or a local file) counts.
-
-Reply with EXACTLY the step NUMBER of that step (the FIRST such step, if there are several), or NONE if no step reads the real source — INCLUDING when the only research-like step is a web search. Nothing else.
+Reply with EXACTLY the step NUMBER of that step (the FIRST such step, if there are several), or NONE if no step reads the real source. Nothing else.

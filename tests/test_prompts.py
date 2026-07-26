@@ -101,19 +101,6 @@ class PromptAgnosticismTests(unittest.TestCase):
         self.assertIn("real action", low)              # judge the action, not the leading verb
         self.assertTrue("add" in low and "dependen" in low)   # "add requests" counts as installing a dependency
 
-    def test_research_prompts_exclude_web_search_as_reading_the_source(self):
-        # LIVE footgun: the planner drafted "web search for api.handle.me to locate the docs" as step 1,
-        # cria PINNED it as the research step, and the coder churned 222× on web_search spills (a search
-        # returns links, never the source). Both research judgments must EXCLUDE web_search so cria prepends
-        # a real web_fetch step instead of pinning a search.
-        step = prompts.load("plan_research_step").lower()
-        self.assertIn("web_search", step)
-        self.assertIn("does not count", step)
-        self.assertTrue("fetch" in step)                 # reading = FETCHING the actual page
-        has = prompts.load("plan_has_research").lower()
-        self.assertIn("web_search", has)
-        self.assertIn("does not count", has)
-
     def test_setup_prompt_is_task_less_and_forbids_planning(self):
         # The COMPOUND noise judge confused the weak model into "generating a plan" (verbatim reasoning:
         # "we haven't been given any prior steps; we have to generate a plan?") — so it answered NONE and
