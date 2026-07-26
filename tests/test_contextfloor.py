@@ -208,6 +208,45 @@ class TestFits(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertFalse(any(m.get("tool_calls") for m in out))   # no dangling call survives
 
+    def test_ensure_tool_integrity_converts_orphan_to_user_unconditionally(self):
+        # LIVE 400: self-compaction folds an assistant tool_call into the ⟦ctx:rollup⟧ but KEEPS the
+        # anchored gate result (a `tool` message) — so a request that FITS the window still ships an orphan
+        # `tool` that a strict template rejects EVERY turn. The floor's orphan strip runs only inside the
+        # over-budget reduction, so a fitting request never gets it. The unconditional pass CONVERTS the
+        # orphan to `user` (ground-truth content preserved), never dropping it.
+        from cria.contextfloor import ensure_tool_integrity
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "⟦ctx:rollup⟧ earlier work summarized (the assistant call was folded)"},
+            {"role": "tool", "tool_call_id": "call_x", "content": "⟦ctx:checks⟧ the repo's checks: foo undefined"},
+            {"role": "user", "content": "do the next step"},
+        ]
+        out, n = ensure_tool_integrity(msgs)
+        self.assertEqual(n, 1)
+        self.assertEqual(out[2]["role"], "user")                      # converted — no orphan tool on the wire
+        self.assertIn("⟦ctx:checks⟧", out[2]["content"])              # the ground-truth content survives
+        self.assertFalse(any(m.get("role") == "tool" for m in out))
+
+    def test_ensure_tool_integrity_keeps_valid_pairs_and_prunes_dangling(self):
+        from cria.contextfloor import ensure_tool_integrity
+        valid = [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "r", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        ]
+        out, n = ensure_tool_integrity(valid)
+        self.assertEqual(n, 0)                                        # a valid pair is untouched
+        self.assertEqual(out[1]["role"], "tool")
+        dangling = [
+            {"role": "assistant", "content": "here",
+             "tool_calls": [{"id": "c2", "function": {"name": "r", "arguments": "{}"}}]},
+            {"role": "user", "content": "next"},                      # c2's result is absent
+        ]
+        out2, n2 = ensure_tool_integrity(dangling)
+        self.assertEqual(n2, 1)
+        self.assertNotIn("tool_calls", out2[0])                       # dangling call pruned, content kept
+        self.assertEqual(out2[0]["content"], "here")
+
     def test_over_budget_when_protected_turn_alone_exceeds_window(self):
         # A single giant active turn that can't be dropped and can't be tool-compressed away.
         msgs = [_u("Z" * 40000)]  # ~10K est, protected, only message

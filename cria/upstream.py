@@ -170,6 +170,13 @@ class Upstream:
             # shell command) makes a strict template's JSON re-parse 500 on EVERY turn — poisoning the
             # whole session, not just the turn that produced it. Repair the history's args before send.
             msgs = massage.repair_history_tool_args(msgs, rlog)
+            # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
+            # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
+            # the request is OVER budget, so a fitting request ships the orphan. Convert it to `user` here,
+            # on every request, so no orphan ever reaches the model.
+            msgs, deorphaned = contextfloor.ensure_tool_integrity(msgs)
+            if deorphaned:
+                rlog.emit("context.deorphaned", count=deorphaned, level="info")
             out["messages"] = _merge_consecutive_assistant(msgs)
         out.pop("cria_output_reserve", None)  # cria-internal reserve hint — never goes on the wire
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))

@@ -278,6 +278,44 @@ def _cap_descriptions(obj, cap: int):
     return obj
 
 
+def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
+    """UNCONDITIONAL last-mile guarantee that the message list is valid for a STRICT chat template — run
+    on EVERY request, not only when the floor REDUCES. A ``tool`` result whose issuing ``assistant``
+    tool-call is absent is an ORPHAN the template rejects (observed: HTTP 400 every turn, poisoning the
+    whole run). Self-compaction creates exactly this WITHOUT any reduction: it folds the assistant
+    tool-call into the ⟦ctx:rollup⟧ but keeps the anchored ground-truth gate result (a ``tool`` message)
+    — so a request that comfortably FITS the window still ships an orphan and _strip_orphan_tools (which
+    runs only inside the over-budget reduction) never sees it.
+
+    Rather than DROP the orphan (it may be cria's own gate/ground-truth result), CONVERT it to a ``user``
+    message: the content survives, the invalid tool↔assistant pairing does not. Also prune a DANGLING
+    assistant tool-call whose result is absent (the other direction). Returns (messages, n_repaired)."""
+    live_calls = {tc["id"] for m in messages if m.get("role") == "assistant"
+                  for tc in (m.get("tool_calls") or []) if tc.get("id")}
+    out, n = [], 0
+    for m in messages:
+        if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls:
+            out.append({"role": "user", "content": m.get("content") if m.get("content") is not None else ""})
+            n += 1
+            continue
+        out.append(m)
+    live_results = {m["tool_call_id"] for m in out if m.get("role") == "tool" and m.get("tool_call_id")}
+    final = []
+    for m in out:
+        tcs = m.get("tool_calls") if m.get("role") == "assistant" else None
+        if tcs:
+            surviving = [tc for tc in tcs if not tc.get("id") or tc["id"] in live_results]
+            if len(surviving) != len(tcs):
+                n += len(tcs) - len(surviving)
+                if not surviving and not (m.get("content") or "").strip():
+                    continue
+                m = {k: v for k, v in m.items() if k != "tool_calls"}
+                if surviving:
+                    m["tool_calls"] = surviving
+        final.append(m)
+    return final, n
+
+
 def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
     """Shrink bulky ``tool`` outputs via content_reduce until the transcript fits or nothing
     bulky remains. Only touches role==tool messages. OLDEST-first: the tool result the model is
