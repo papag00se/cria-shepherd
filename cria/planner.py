@@ -216,12 +216,17 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
     ans = strip_think(ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "").strip()
     drop = _parse_step_numbers(ans, len(steps))
-    # ENVIRONMENT/DEPENDENCY SETUP is asked as its OWN focused, TASK-LESS question. In the compound judge
-    # above the weak model read the TASK + 4-category framing as a request to GENERATE a plan and answered
-    # NONE, missing every "create a venv + pip install" step (its verbatim reasoning: "we haven't been
-    # given any prior steps; we have to generate a plan from scratch?"). That step then trapped the run on
-    # PEP-668. A single question about ONLY setup, over just the numbered steps with an explicit "do NOT
-    # write a plan", removes the ambiguity — same STRICT parse (a bare number list, else drop nothing).
+    # ENVIRONMENT/DEPENDENCY SETUP is asked as its OWN focused, TASK-LESS question. Walking the 4 removal
+    # categories in the compound judge above, the weak model AFFIRMATIVELY judges an "install deps / create a
+    # venv" step as legitimate, needed project work and keeps it — so it answers NONE and the setup step
+    # survives to trap the run on PEP-668. (Captured reasoning, verbatim, on a plan whose step was exactly
+    # that: "installing dependencies and initializing virtual environment is part of setting up the project,
+    # which is good"; and elsewhere "This is a good step (setting up environment)".) Stripping the task and
+    # the other categories and asking about ONLY setup — with the "the environment is ALREADY set up / no
+    # install access, so it can only stall" reasoning front-and-centre — reframes it from "is this a
+    # reasonable step?" to "is this pure setup?", and the numbered setup step gets caught (confirmed in the
+    # captures: genuine "set up a Python dev environment — create a virtualenv" steps the compound judge
+    # waved through are returned by this question). Same STRICT parse (a bare number list, else drop nothing).
     setup_ans = strip_think(ask(prompts.load("plan_setup_steps"), plan_text) or "").strip()
     return drop | _parse_step_numbers(setup_ans, len(steps))
 
