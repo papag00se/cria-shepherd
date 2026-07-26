@@ -222,6 +222,7 @@ class PlanSession(GuardState):
     verify_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
+    verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -1209,6 +1210,7 @@ class Loop:
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
+        sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
@@ -1285,7 +1287,14 @@ class Loop:
         re-drive fresh on the new current step; otherwise (declined/unchanged) we fall through to a normal
         re-nudge. NEVER used on a gate/real-error fail — those must be FIXED, not re-derived away."""
         if (self._ctx.reasoner_role is not None and not sess.synthetic
-                and sess.verify_fails >= STUCK_STEP_REPLAN and sess.verify_fails % STUCK_STEP_REPLAN == 0):
+                and not sess.verify_replanned and sess.verify_fails >= STUCK_STEP_REPLAN):
+            # ONE grounded re-derive per step. Firing every STUCK_STEP_REPLAN fails (the old
+            # `verify_fails % STUCK_STEP_REPLAN == 0`) re-derived the whole tail again and again and
+            # THRASHED the plan — observed live: 8 stuck_replans bouncing the size 3→4→5→7→3→2, burning
+            # the coder's turn budget so the deliverable never finished. This is the SAME churn
+            # _replan_if_thrashing was already bounded to one-shot to avoid; the verify path must match.
+            # Spend the one-shot up front (like the thrash path), so an unchanged re-derive can't re-fire.
+            sess.verify_replanned = True
             before = [it.text for it in sess.plan.items if not it.done]
             self._replan_tail(sess, body, idx, rlog)   # grounded re-derivation; its own fail-safes apply
             after = [it.text for it in sess.plan.items if not it.done]

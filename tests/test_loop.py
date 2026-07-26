@@ -562,6 +562,29 @@ class StuckStepReplanTests(unittest.TestCase):
         self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # no second re-derive
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
 
+    def test_verify_replan_fires_at_most_once_per_step_no_churn(self):
+        # ANTI-CHURN (the live footgun): _renudge_or_replan re-derived every STUCK_STEP_REPLAN fails
+        # (`verify_fails % STUCK_STEP_REPLAN == 0`), so a coder stuck on one step thrashed the plan over
+        # and over — observed: 8 stuck_replans bouncing the size 3→4→5→7→3→2, burning the whole turn
+        # budget so the deliverable never finished. Now one-shot per step, like the thrash path.
+        from cria.loop import STUCK_STEP_REPLAN
+        loop = self._loop(_Scripted([_replan(["A", "B"]), _text("NONE")]))
+        sess = self._sess()
+        sess.verify_replanned = True                       # already spent this step's one re-derive
+        sess.verify_fails = STUCK_STEP_REPLAN * 3          # a multiple → the OLD `% == 0` would re-fire here
+        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        self.assertEqual([it.text for it in sess.plan.items],
+                         ["step 1", "confused step 2", "step 3"])    # NOT re-derived again — plan untouched
+        self.assertEqual(sess.verify_fails, STUCK_STEP_REPLAN * 3)   # not reset — no re-derive happened
+
+    def test_first_verify_replan_spends_the_one_shot(self):
+        # the FIRST stuck re-derive marks the one-shot spent, so a later fail on the SAME step can't re-fire
+        from cria.loop import STUCK_STEP_REPLAN
+        loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"]), _text("NONE")]))
+        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        self.assertTrue(sess.verify_replanned)             # spent — reset only on ADVANCE to a new step
+
 
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
