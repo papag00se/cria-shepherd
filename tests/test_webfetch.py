@@ -318,6 +318,27 @@ class FetchNavSeedTests(unittest.TestCase):
         finally:
             wf.fetch = orig
 
+    def test_raw_HONORS_find_instead_of_silently_discarding_it(self):
+        # THE FOOTGUN (live run 0726-134700): `raw` nulled `find` alongside `cursor`, discarding the
+        # model's narrowing request with NO notice — it asked one question and was answered another,
+        # undetectably. The coder sent find="resolve" with raw=true FIFTEEN times and got the same
+        # "saved 96,199 chars, go grep it" spill every time. Honoring it would have ended the run:
+        # "resolve" matches `resolved_addresses`, the exact field the task needed.
+        big = json.dumps({"openapi": "3.0.3",
+                          "paths": {"/handles/{handle}": {"get": {"summary": "s" * 60}},
+                                    **{f"/pad{i}": {"get": {"summary": "s" * 80}} for i in range(400)}},
+                          "components": {"schemas": {"Handle": {"properties": {
+                              "resolved_addresses": {"type": "object", "properties": {"ada": {}}}}}}}},
+                         separators=(",", ":"))
+        orig = self._serve(big)
+        try:
+            out = wf.fetch_nav("https://api.x/openapi.json", find="resolve", raw=True)
+        finally:
+            wf.fetch = orig
+        self.assertIn('find="resolve"', out)              # the find was RUN, not dropped
+        self.assertIn("resolved_addresses", out)          # ...and it found the field that ends the hunt
+        self.assertNotIn("too large for the context", out)  # not the whole-doc spill it kept re-sending
+
     def test_raw_reduction_still_passes_the_body_through_untouched(self):
         # `raw` must keep its own contract: the REDUCED text is the literal source, byte for byte. Only
         # the structure is additionally learned — nothing about the model's bytes changes.

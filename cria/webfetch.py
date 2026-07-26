@@ -506,14 +506,21 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx).
 
     ``raw=True`` returns the literal source (the model wants the markup — front-end debugging, checking
-    tags/attributes/selectors) instead of HTML→text; it ignores find/cursor (raw is the whole source,
-    still bounded/spilled) and is a distinct fetch identity from the reduced view of the same URL.
+    tags/attributes/selectors) instead of HTML→text, and is a distinct fetch identity from the reduced
+    view of the same URL. It suppresses ``cursor`` (paging is a reduced-view concern) but HONORS
+    ``find``: "show me the literal source of the part matching X" is a coherent, and common, ask.
 
     ``session`` enables the coder-loop gates: an exact repeat of an EXTERNAL fetch already made this
     session is refused (it can only return what the model has), and after GUESS_STREAK_THRESHOLD
     consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate."""
     if raw:
-        find = cursor = None  # raw is the whole source; navigation is a reduced-view concern
+        # `find` used to be nulled here alongside `cursor`, discarding the model's narrowing request
+        # with NO notice — it asked one question and was answered another, undetectably. Observed live
+        # (run 0726-134700): the coder sent find="resolve" with raw=true FIFTEEN times and got back the
+        # same "saved 96,199 chars, go grep it" spill every time, never told its find was dropped, so it
+        # kept re-asking. Worse, honoring it would have ended the run: "resolve" matches
+        # `resolved_addresses` in that spec — the exact field the task needs.
+        cursor = None
     external = not is_internal_url(url)
     seen_key = (url, find or "", cursor or "", bool(raw))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
@@ -530,7 +537,10 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw=False) -> t
     """Fetch (or serve from cache) → reduce → render to the model-facing text. Returns
     ``(text, status)``; ``status`` is None on a transport error (no HTTP response). ``raw`` fetches
     always re-fetch (never navigate) so a stale reduced-cache entry is never served as source."""
-    navigating = bool(find) or bool(cursor)
+    # A raw fetch NEVER serves the cache: that entry may hold the REDUCED text of an earlier ordinary
+    # fetch, and handing that back as "source" is the stale-view lie this flag exists to avoid. It
+    # re-fetches, then `find` (now honored under raw) applies to the freshly-read raw body.
+    navigating = (bool(find) or bool(cursor)) and not raw
     cached = _DOC_CACHE.get(url) if navigating else None
     if cached is not None:
         status, ct, reduced, parsed, truncated = cached
