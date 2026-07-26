@@ -585,6 +585,48 @@ class StuckStepReplanTests(unittest.TestCase):
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertTrue(sess.verify_replanned)             # spent — reset only on ADVANCE to a new step
 
+    # A genuinely-circling reasoning window (passes the lexical flail pre-filter; drawn from test_flail).
+    _CIRCLING = [
+        "capsys does not have a .stdout attribute; let me check what it exposes",
+        "the fix is to assert capsys.out instead",
+        "I keep guessing the attribute name and failing — must be .captured_text",
+        "tried stdout and out on the fixture and both failed with AttributeError",
+    ]
+
+    def test_flail_steer_fires_and_spends_budget_when_under_cap(self):
+        # under the cap + circling + past the cooldown → exactly ONE steer, budget spent by one
+        loop = self._loop(_Scripted([_text("you keep re-reading the file; write the missing return")]))
+        sess = self._sess()
+        sess.flail_steers_this_step = 0
+        sess.drive_count, sess.last_flail_drive = 999, 0        # cooldown long elapsed
+        sess.recent_reasoning = list(self._CIRCLING)
+        loop._flail_steer_if_circling(sess, {"messages": []}, 2, _Rlog())
+        self.assertEqual(sess.flail_steers_this_step, 1)       # spent one
+        self.assertTrue(sess.nudge_reason)                     # a steer was authored and set
+
+    def test_flail_steer_capped_per_step_then_silent(self):
+        # ANTI-NOISE (the live footgun): the flail steer is only COOLDOWN-gated, so a step stuck for
+        # hundreds of drives drew ~25 steers — each redirecting the coder, cria's own steers thrashing an
+        # already-stuck coder. Capped per step: with the budget spent, NO further steer even while circling
+        # and long past the cooldown.
+        from cria.loop import MAX_FLAIL_STEERS_PER_STEP
+        loop = self._loop(_Scripted([_text("write the missing return")]))
+        sess = self._sess()
+        sess.flail_steers_this_step = MAX_FLAIL_STEERS_PER_STEP  # budget spent this step
+        sess.drive_count, sess.last_flail_drive = 999, 0
+        sess.recent_reasoning = list(self._CIRCLING)
+        loop._flail_steer_if_circling(sess, {"messages": []}, 2, _Rlog())
+        self.assertEqual(sess.nudge_reason, "")                  # capped → no steer authored
+        self.assertEqual(sess.flail_steers_this_step, MAX_FLAIL_STEERS_PER_STEP)
+
+    def test_advance_resets_the_flail_budget(self):
+        # the cap is per-STEP — advancing to a new step earns a fresh budget (else a later step inherits an
+        # exhausted budget and never gets an unstick nudge). _advance resets it alongside the replan flags.
+        loop = self._loop(_Scripted([_verdict(done=True)]))
+        sess = self._sess(); sess.flail_steers_this_step = 3
+        loop._advance(sess, "k", _body(), 1, 3, _Rlog())
+        self.assertEqual(sess.flail_steers_this_step, 0)
+
 
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}

@@ -223,6 +223,7 @@ class PlanSession(GuardState):
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
+    flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -951,17 +952,8 @@ class Loop:
         if intervention is not None:
             return intervention
         sess.drive_count += 1  # session-wide drive counter (feeds the flail cooldown; read only here + single-item)
-        # QUIET-FLAIL catcher (parity with the single-item driver): the coder's REASONING is circling and
-        # nothing else is nudging → a reasoner reads its recent thinking and, only if genuinely stuck,
-        # authors one unstick step. Cheap pre-filter + cooldown gate the reasoner call.
-        if not sess.nudge_reason and self._ctx.reasoner_role is not None \
-                and _flail_candidate(sess.recent_reasoning) \
-                and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
-            sess.last_flail_drive = sess.drive_count
-            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
-            if diag:
-                sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
-                rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
+        # QUIET-FLAIL catcher (parity with the single-item driver), CAPPED per step — see the method.
+        self._flail_steer_if_circling(sess, body, idx, rlog)
         # PERIODIC ground-truth check-in WITHIN a long step (M2 parity with the plan-off driver): every
         # GATE_EVERY_CODER_TURNS acting turns, run the repo's checks so a step that edits many DIFFERENT
         # things for dozens of turns (never spiraling, never claiming done) still gets ground truth — the
@@ -1211,6 +1203,7 @@ class Loop:
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
+        sess.flail_steers_this_step = 0  # ...and a fresh flail-steer budget
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
@@ -1325,6 +1318,26 @@ class Loop:
             rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
             return self._work(sess, key, body, rlog)
         return None
+
+    def _flail_steer_if_circling(self, sess: PlanSession, body: dict, idx: int, rlog) -> None:
+        """QUIET-FLAIL catcher (parity with the single-item driver): when the coder's recent REASONING is
+        circling and nothing else is nudging, a reasoner reads its thinking and — only if genuinely stuck —
+        authors ONE unstick steer. The cheap lexical pre-filter + the cooldown gate the reasoner call.
+        CAPPED at MAX_FLAIL_STEERS_PER_STEP per step (reset on ADVANCE): the cooldown SPACES steers but does
+        not BOUND their total, so a step stuck for hundreds of drives drew ~25 — each redirecting the coder,
+        so cria's own steers thrashed an already-stuck coder (assists are footguns; silence over noise). A
+        few grounded nudges, then SILENCE — the gate/satisfaction/advance carry it from there."""
+        if (sess.nudge_reason or self._ctx.reasoner_role is None
+                or sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
+                or not _flail_candidate(sess.recent_reasoning)
+                or sess.drive_count - sess.last_flail_drive < FLAIL_COOLDOWN):
+            return
+        sess.last_flail_drive = sess.drive_count
+        diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
+        if diag:
+            sess.flail_steers_this_step += 1  # spend one of the step's few unstick nudges (then SILENCE)
+            sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
+            rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
 
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
@@ -3026,6 +3039,11 @@ def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardS
 FLAIL_WINDOW = 4             # coder reasonings examined for circling
 FLAIL_MIN_STRUGGLING = 2     # of the window, how many must show struggle language to spend a reasoner call
 FLAIL_COOLDOWN = 5           # coder drives between flail diagnoses (a steer needs room to land)
+MAX_FLAIL_STEERS_PER_STEP = 3  # cap flail steers on ONE step. The cooldown SPACES them but does not BOUND
+#                                the total, so a step stuck for hundreds of drives drew ~25 steers — each
+#                                redirecting the coder, so cria's OWN steers thrashed an already-stuck coder
+#                                (assists are footguns; silence over noise). A few grounded unstick nudges,
+#                                then SILENCE and let the gate/satisfaction/advance carry it. Reset on advance.
 # BROAD struggle vocabulary — a PRE-FILTER, not a judge: its only job is to skip windows with no failure
 # language at all (obvious progress) so the reasoner isn't run on healthy work. The reasoner judges.
 _STRUGGLE_RE = re.compile(
