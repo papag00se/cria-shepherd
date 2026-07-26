@@ -3,8 +3,9 @@ import unittest
 from cria import selfcompact
 from cria.selfcompact import CompactState, compact
 
-# Small token budgets so tiny fixtures exercise the real token paths.
-_KW = dict(trigger_tokens=100, keep_tail_tokens=30, recompact_tokens=20)
+# Small token budgets so tiny fixtures exercise the real token paths. boundary_keep_tail_tokens matches
+# keep_tail here so the existing force tests behave as before; the boundary-vs-trigger test sets its own.
+_KW = dict(trigger_tokens=100, keep_tail_tokens=30, recompact_tokens=20, boundary_keep_tail_tokens=30)
 
 
 def _m(role, text):
@@ -49,6 +50,31 @@ class SelfCompactTests(unittest.TestCase):
         self.assertFalse(applied)
         self.assertIs(out, m)   # unchanged, no rollup added
 
+    def test_boundary_folds_the_completed_step_not_just_lowers_the_trigger(self):
+        # THE FIX: at a step boundary the finished step's work must FOLD, not linger in the working-set tail.
+        # A boundary keeps only boundary_keep_tail (small); a size-trigger compaction keeps the full tail. So
+        # the boundary view is LEANER — the ~14KB that grew between step 1 and step 2 rolls up instead.
+        m = _msgs(60)  # ~360 tokens
+        kw = dict(trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, boundary_keep_tail_tokens=24)
+        trig_out, _, a1 = compact(m, lambda mm: "R", CompactState(), **kw)             # size-trigger
+        bnd_out, _, a2 = compact(m, lambda mm: "R", CompactState(), force=True, **kw)  # step boundary
+        self.assertTrue(a1 and a2)
+        self.assertLess(len(bnd_out), len(trig_out))   # boundary keeps a SMALLER verbatim tail → folds more
+
+    def test_surfaced_spec_shape_is_anchored_not_folded(self):
+        # A web_fetch result carrying cria's [API endpoints …] / [response shape …] blocks holds the API's
+        # REAL endpoint + field names. It must survive folding VERBATIM — the summarizer drops identifier
+        # names, so folding it would erase the exact fields and the coder would guess. Kept verbatim; NOT
+        # fed to the summarizer.
+        spec = "[response shape — GET /handles/{handle} → holder, resolved_addresses{ada, eth, btc}]"
+        m = _msgs(40, anchor_at=3, anchor_text=spec)
+        captured = []
+        out, _, applied = compact(m, lambda mm: captured.append(mm) or "ROLLUP", CompactState(), force=True, **_KW)
+        self.assertTrue(applied)
+        self.assertTrue(any("resolved_addresses" in str(x.get("content")) for x in out))  # kept verbatim
+        fed = captured[0] if captured else []
+        self.assertFalse(any("resolved_addresses" in selfcompact._text(x) for x in fed))  # never summarized
+
     def test_triggers_on_tokens_not_message_count(self):
         # a FEW big messages (over the token trigger) compact even though the count is small
         big = [_m("system", "sys")] + [_m("assistant", "y" * 800) for _ in range(6)]  # ~1200 tokens
@@ -85,11 +111,18 @@ class SelfCompactTests(unittest.TestCase):
     def test_anchor_markers_stay_in_sync(self):
         from cria.loop import BRIEFING_OPEN, CONTINUATION_MARKER
         from cria.probegate import SECTION_PREFIX
+        from cria import webfetch
         self.assertIn(BRIEFING_OPEN, selfcompact._ANCHOR_MARKERS)
         self.assertIn(SECTION_PREFIX, selfcompact._ANCHOR_MARKERS)
         # cria's harness-compaction reframe is a cria-authored summary — it must be an anchor so the
         # next self-compaction never summarizes it (the rollup-of-rollup task-inversion footgun).
         self.assertIn(CONTINUATION_MARKER, selfcompact._ANCHOR_MARKERS)
+        # the surfaced-spec markers must mirror webfetch's real emitters, so anchoring never drifts out of
+        # sync with the block the coder actually receives (external field ground truth kept verbatim).
+        self.assertEqual(selfcompact._SPEC_ROUTES_MARKER, webfetch.ROUTES_MARKER)
+        self.assertEqual(selfcompact._SPEC_SHAPE_MARKER, webfetch.SHAPE_MARKER)
+        self.assertIn(webfetch.ROUTES_MARKER, selfcompact._ANCHOR_MARKERS)
+        self.assertIn(webfetch.SHAPE_MARKER, selfcompact._ANCHOR_MARKERS)
 
     def test_continuation_reframe_is_not_fed_to_the_summarizer(self):
         # A ⟦ctx:continuation⟧ message in the middle must be kept verbatim, never summarized — so

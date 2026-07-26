@@ -32,17 +32,31 @@ from .content_reduce import est_tokens
 # code constants (they don't vary by environment).
 TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exceeds this many tokens
 KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
+BOUNDARY_KEEP_TAIL_TOKENS = 1200  # at a verified STEP BOUNDARY keep only a SMALL verbatim tail, so the just-
+#                                   completed step's raw work-signals FOLD into the rollup instead of lingering
+#                                   in the 6000-token working-set tail. Without this, force only lowered the
+#                                   TRIGGER — the completed step stayed verbatim in the tail and the view GREW
+#                                   step over step (observed live: +14KB / ~350 lines between step 1 and 2).
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
+# cria-SURFACED spec-shape markers — the [API endpoints …] / [response shape …] blocks a web_fetch result
+# carries (mirror webfetch.ROUTES_MARKER / SHAPE_MARKER; a test asserts sync). They hold the API's REAL
+# endpoint paths + response field names — EXTERNAL ground truth the coder must code against, NOT its own
+# mutable identifiers. Anchored so compaction keeps them VERBATIM and the summarizer (which deliberately
+# drops identifier names) NEVER folds them — else the exact fields vanish and the coder guesses
+# (resolved_addresses → a made-up "cardano_address"), which is a live failure mode.
+_SPEC_ROUTES_MARKER = "[API endpoints ("
+_SPEC_SHAPE_MARKER = "[response shape —"
 # Anchor markers whose messages are ALWAYS kept verbatim — AND, critically, excluded from the
 # summarizer input, so cria's OWN prior briefings never become a rollup-of-a-rollup (each round
 # summarizing the last round's summary is how a transient hallucination hardened into authoritative
 # "Treat this as done" misdirection that inverted the task). ⟦ctx:continuation⟧ (loop's harness-
 # compaction reframe) is one such cria-authored summary and MUST be here for the same reason as
 # ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
-# (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER)
+# + webfetch.ROUTES_MARKER / SHAPE_MARKER (selfcompact is low-level; a test asserts sync).
+_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER,
+                   _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
 
 
 @dataclass
@@ -125,16 +139,18 @@ def _task_msg(task: str) -> dict:
 
 def compact(messages: list[dict], summarize, state: CompactState, *,
             trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
-            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False) -> tuple[list[dict], CompactState, bool]:
+            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
+            boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
 
-    ``force`` (the plan loop passes it at a STEP BOUNDARY) LOWERS the trigger to ``keep_tail_tokens`` —
-    so a just-verified step's accumulated work-signals are rolled into the ⟦ctx:rollup⟧ as soon as there's
-    real work BEYOND the preserved tail, keeping each new step's context clean, instead of lingering until
-    the view crosses the full trigger. It does NOT compact a trivial view (a light step whose whole view
-    fits in the tail stays verbatim — folding a couple of messages into a summary would only add length).
+    ``force`` (the plan loop passes it at a STEP BOUNDARY) both lowers the trigger AND shrinks the kept tail
+    to ``boundary_keep_tail_tokens`` — so the just-verified step's accumulated work-signals FOLD into the
+    ⟦ctx:rollup⟧ (they ARE the working-set tail, which a mere trigger drop left verbatim, so the view grew
+    step over step). Anchored messages — a surfaced spec's real endpoint/fields (_SPEC_*_MARKER) and cria's
+    own briefings — survive folding VERBATIM, so the coder keeps the exact fields it must code against. Still
+    a no-op on a trivial view whose whole content fits the boundary tail.
 
     ``pinned_task`` (the conversation's ROOT task, supplied by the caller — it alone can detect the
     task past the harness env-context/reframe) is re-emitted verbatim as a ⟦ctx:task⟧ header on every
@@ -142,11 +158,15 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     summarizable middle and ERODES across rounds (round 2's rollup summarizes round 1's rollup), which
     is how a plan-off session lost its goal and drifted onto tangential build/deploy work. Pinning it
     keeps the north star authoritative and immune to summary degradation."""
-    threshold = keep_tail_tokens if force else trigger_tokens  # a step boundary compacts at the lower bar
+    # At a STEP BOUNDARY keep only a SMALL verbatim tail (boundary_keep_tail_tokens) so the just-finished
+    # step's work FOLDS into the rollup; otherwise keep the full working-set tail. force also lowers the
+    # trigger so a boundary compacts even below the size trigger (but never a trivial view that fits the tail).
+    eff_keep_tail = boundary_keep_tail_tokens if force else keep_tail_tokens
+    threshold = eff_keep_tail if force else trigger_tokens
     if sum(_msg_tokens(m) for m in messages) <= threshold:
         return messages, state, False
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
-    tail_start = _tail_start(messages, head_end, keep_tail_tokens)
+    tail_start = _tail_start(messages, head_end, eff_keep_tail)
     if tail_start <= head_end:
         return messages, state, False
 
