@@ -350,6 +350,24 @@ class FetchNavSeedTests(unittest.TestCase):
         self.assertIn("resolved_addresses{ada, eth}", msg)   # $ref dereferenced + nesting expanded
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
+    def test_response_shape_collapses_subpaths_so_distinct_resources_survive(self):
+        # LIVE footgun: a spec front-loaded 8 /handles/{handle}/* sub-variants, filling the endpoint budget
+        # in spec order and CROWDING OUT /holders/{address} — so its response shape was never surfaced and
+        # the coder guessed the holder's total (invented a `holders` key). Sub-paths of a parameterized
+        # resource are now collapsed (the base is shaped; the routes list still shows the sub-paths), so a
+        # distinct resource that comes AFTER the variants keeps its shape.
+        def ep():
+            return {"get": {"responses": {"200": {"content": {"application/json": {
+                "schema": {"type": "object", "properties": {"x": {"type": "string"}}}}}}}}}
+        paths = {"/handles/{handle}": ep()}
+        for sub in ("utxo", "script", "datum", "personalized", "reference_token"):
+            paths[f"/handles/{{handle}}/{sub}"] = ep()
+        paths["/holders/{address}"] = ep()   # a DISTINCT resource, AFTER the sub-variants
+        shapes = " ".join(wf._endpoint_response_fields({"openapi": "3.0.0", "paths": paths}, max_endpoints=3))
+        self.assertIn("/handles/{handle} →", shapes)       # base resource shaped
+        self.assertIn("/holders/{address} →", shapes)      # the DISTINCT resource SURVIVES the cap
+        self.assertNotIn("/handles/{handle}/utxo", shapes)  # its sub-paths are collapsed, not shaped
+
     def test_response_fields_empty_for_non_spec_doc(self):
         # no paths → not a spec → surface nothing (never invent a shape)
         self.assertEqual(wf._endpoint_response_fields({"name": "x", "items": [1, 2]}), [])

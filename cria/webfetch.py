@@ -332,7 +332,7 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     return out
 
 
-def _endpoint_response_fields(parsed: Any, max_endpoints: int = 10, max_fields: int = 30) -> list[str]:
+def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = 30) -> list[str]:
     """For an OpenAPI-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through the
     response schema's ``$ref`` into ``components/schemas`` — so a coder knows WHAT an endpoint returns
     (the exact field names to extract, plus one level of nesting), not just WHERE to call. The recurring
@@ -350,10 +350,18 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 10, max_fields: 
     if not isinstance(schemas, dict):
         schemas = {}
     lines: list[str] = []
+    shaped: list[str] = []  # paths already given a shape — used to collapse a resource's own sub-paths
     for path, ops in paths.items():
         if len(lines) >= max_endpoints:
             break
         if not isinstance(ops, dict):
+            continue
+        # BREADTH over depth: a resource with a path PARAMETER (…/{id}) usually carries several sub-paths
+        # (…/{id}/utxo, …/{id}/script). Shape the base resource, then SKIP its sub-paths — else many such
+        # variants of ONE resource fill the endpoint budget in spec order and crowd out DISTINCT resources
+        # the coder needs (a real run cut /holders/{address} this way, so the coder guessed the holder's
+        # total). The routes list still shows every sub-path exists; only their shape is elided.
+        if any("{" in sp and path.startswith(sp + "/") for sp in shaped):
             continue
         for method, op in ops.items():
             if not isinstance(op, dict):
@@ -370,6 +378,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 10, max_fields: 
             fields = _schema_field_summary(schema, schemas, max_fields)
             if fields:
                 lines.append(f"{str(method).upper()} {path} → {', '.join(fields)}")
+                shaped.append(path)
                 break  # one method per path is enough for the shape hint
     return lines
 
