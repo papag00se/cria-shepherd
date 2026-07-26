@@ -82,15 +82,47 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual([i.text for i in plan.items],
                          ["Fetch the OpenAPI spec via web_fetch.", "Write the resolver.", "Add tests."])
 
-    def test_numbered_plan_ignores_sub_bullets(self):
-        # A numbered plan whose last step has indented `-` sub-bullets (README contents) must NOT
-        # flatten those into extra steps — that exploded a 7-step plan into 11 and ground the loop
-        # through phantom README "steps". Numbered items win; bullets are details.
+    def test_numbered_plan_folds_sub_bullets_into_their_step(self):
+        # Sub-bullets under a numbered step must NOT become extra steps — that exploded a 7-step plan
+        # into 11 and ground the loop through phantom README "steps". But they must not be DELETED
+        # either: they ARE the step's requirements. Step COUNT is unchanged (3); the detail rides with
+        # the step that owns it.
         content = ("1. Fetch the spec.\n2. Write the resolver.\n3. Add a README containing:\n"
                    "   - install instructions\n   - how to run the CLI\n   - how to run tests")
         plan = _planner(content).plan_for(_msgs("build it"), _Rlog())
-        self.assertEqual([i.text for i in plan.items],
-                         ["Fetch the spec.", "Write the resolver.", "Add a README containing:"])
+        texts = [i.text for i in plan.items]
+        self.assertEqual(len(texts), 3)                       # still 3 steps, no phantom README steps
+        self.assertEqual(texts[:2], ["Fetch the spec.", "Write the resolver."])
+        self.assertTrue(texts[2].startswith("Add a README containing:"))
+        for detail in ("install instructions", "how to run the CLI", "how to run tests"):
+            self.assertIn(detail, texts[2])                   # every requirement survived, on its step
+
+    def test_lettered_sub_items_survive_and_the_step_does_not_trail_off(self):
+        # THE FOOTGUN (live run 0726-132914): the planner wrote "3. Write a Python script (e.g.,
+        # `resolve_handle.py`) that:" with four indented lettered requirements under it, and cria handed
+        # the coder the header ALONE — a sentence trailing off at a colon with every requirement
+        # deleted. cria must never destroy content the model relies on.
+        content = ("1. Research the API.\n"
+                   "2. Write a Python script (e.g., `resolve_handle.py`) that:\n"
+                   "   a. Accepts an Ada handle as a command-line argument.\n"
+                   "   b. Sends a GET request to the identified endpoint.\n"
+                   "   c. Parses the JSON response, extracting the address and total handles.\n"
+                   "3. Add tests.")
+        plan = _planner(content).plan_for(_msgs("build it"), _Rlog())
+        texts = [i.text for i in plan.items]
+        self.assertEqual(len(texts), 3)                       # a., b., c. are DETAILS, not steps
+        self.assertFalse(texts[1].endswith("that:"))          # no dangling colon handed to the coder
+        for detail in ("Accepts an Ada handle", "Sends a GET request", "extracting the address"):
+            self.assertIn(detail, texts[1])
+
+    def test_unindented_prose_after_the_list_is_not_folded_into_a_step(self):
+        # Only indented lines and bullet/lettered items are a step's detail. The model's commentary
+        # around the list is not a requirement and must not be glued onto the last step.
+        content = ("1. Fetch the spec.\n2. Write the resolver.\n"
+                   "This plan covers the whole task and should be followed in order.")
+        plan = _planner(content).plan_for(_msgs("build it"), _Rlog())
+        texts = [i.text for i in plan.items]
+        self.assertEqual(texts, ["Fetch the spec.", "Write the resolver."])
 
     def test_numbered_list_parses(self):
         # The prompt asks for a numbered list; small models (e.g. Gemma) emit that

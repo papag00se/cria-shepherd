@@ -75,6 +75,9 @@ def _steps_from_submit(msg: dict) -> list[str] | None:
 # there are no numbers (a model that emits a pure bullet-list plan).
 _NUM_LINE = re.compile(r"^\s*\d+[.)]\s+(.+\S)")
 _BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+\S)")
+# A LETTERED sub-item ("a. Accepts a handle", "b) Sends a GET request") — a step's detail even when the
+# model didn't indent it. Single letter only, so a sentence starting "I. " or a word is never matched.
+_SUB_ITEM = re.compile(r"^[a-z][.)]\s+\S", re.I)
 
 # A leaked dialect marker (gemma-fable / harmony): a step is ONE action, so anything from the
 # first marker on is the model failing to stop after the plan (a thought channel, another tool
@@ -188,11 +191,46 @@ def parse_steps(text: str) -> list[str] | None:
     if salvaged:
         return salvaged
     lines = body.splitlines()
-    numbered = [c for line in lines if (m := _NUM_LINE.match(line)) and (c := _clean_step(m.group(1)))]
+    numbered = _numbered_with_details(lines)
     if numbered:
-        return numbered  # numbered plan → sub-bullets under a step are its DETAILS, not steps
+        return numbered  # numbered plan → sub-bullets under a step are its DETAILS, folded INTO it
     bullets = [c for line in lines if (m := _BULLET_LINE.match(line)) and (c := _clean_step(m.group(1)))]
     return bullets or None
+
+
+def _numbered_with_details(lines: list[str]) -> list[str]:
+    """A numbered plan's steps, each carrying its own sub-detail lines.
+
+    Sub-bullets under a numbered step are its DETAILS, not steps — folding them in as steps exploded a
+    7-step plan into 11 and marched the coder through phantom steps. But DROPPING them destroys the
+    step. Observed live (run 0726-132914): the planner wrote "3. Write a Python script (e.g.,
+    `resolve_handle.py`) that:" followed by four indented requirements (accept a handle, GET the
+    endpoint, parse the three fields, print them) and cria handed the coder the header alone — a
+    sentence trailing off at a colon with every requirement deleted. Same for the unit-test and README
+    steps. cria must never destroy content the model relies on; the detail belongs WITH its step.
+
+    Attached: any indented line, and any bullet/lettered item, that follows a numbered step. Plain
+    unindented prose is NOT attached (it is the model's commentary around the list, not a requirement).
+    Joined on ONE line so the plan mirror stays line-based."""
+    steps: list[str] = []
+    cur: list[str] | None = None
+    for line in lines:
+        m = _NUM_LINE.match(line)
+        if m:
+            if cur:
+                steps.append(" ".join(cur))
+            cur = [m.group(1).strip()]
+            continue
+        if cur is None:
+            continue
+        s = line.strip()
+        if not s:
+            continue
+        if line[:1].isspace() or _BULLET_LINE.match(line) or _SUB_ITEM.match(s):
+            cur.append(s)
+    if cur:
+        steps.append(" ".join(cur))
+    return [c for s in steps if (c := _clean_step(s))]
 
 
 def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
