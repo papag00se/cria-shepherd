@@ -553,16 +553,15 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         return Role(name="reasoner", backend="local")
 
     def test_reasoner_JUDGES_domain_and_missing_research_then_injects(self):
-        # With a reasoner configured, cria ASKS it (not a regex): what API domain? which step researches?
-        # scripted: plan draft, NOISE(none), domain, research-step(NONE=no step reads the source), then
-        # has-research(NO=an API call is un-researched) → prepend cria's step AND pin it.
+        # With a reasoner configured, cria ASKS it (not a regex): what API domain? is research already present?
+        # scripted: plan draft, NOISE(none), SETUP(none), domain, has-research(NO=no step reads the source and
+        # a step calls the API) → prepend cria's OWN grounded step AND pin it.
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py that returns the address.\n2. Add unit tests.'),  # plan
             _content_resp('NONE'),                                                                # NOISE? none
             _content_resp('NONE'),                                                                # SETUP steps? none
             _content_resp('api.handle.me'),                                                       # which API?
-            _content_resp('NONE'),                                                                # which step researches? none
-            _content_resp('NO'),                                                                  # API call un-researched → prepend
+            _content_resp('NO'),                                                                  # research present? no → prepend
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
@@ -571,27 +570,26 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         self.assertTrue(plan.items[0].pinned)                            # and PINNED so the fast-path sees it
         self.assertTrue(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
-    def test_reasoner_pins_the_planners_own_research_step(self):
-        # THE FOOTGUN: the PLANNER drafted its OWN research step, so cria adds none — but it must still PIN
-        # that step, else the verify ground-truth fast-path (gated on the pin) never recognizes it and the
-        # weak critic false-negatives it forever (observed live: 207 step-1 re-drives on an un-pinned
-        # planner research step whose spec was already fetched). scripted: plan, NOISE(none), domain,
-        # research-step("1" = step 1 reads the spec) → pin step 1, add nothing.
+    def test_planner_research_step_is_NOT_pinned(self):
+        # cria pins ONLY its OWN grounded research step, NEVER the PLANNER's — the planner's research steps
+        # proved unreliable ("locate the documentation" → a 94-search spin; "open the source repository" →
+        # the coder built an SDK for a one-file task), and PINNING one makes a flawed step AUTHORITATIVE and
+        # inescapable. When the plan already has a research step, cria adds none and pins none; the critic
+        # clears it (facts obtained) and re-derivation can reword it if it misleads. scripted: plan (step 1
+        # IS research), NOISE(none), SETUP(none), domain, has-research(YES=already present).
         prov = _ScriptedProvider([
             _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan (step 1 IS research)
             _content_resp('NONE'),                                           # NOISE? none
             _content_resp('NONE'),                                           # SETUP steps? none
             _content_resp('api.handle.me'),                                  # which API?
-            _content_resp('1'),                                              # which step researches? step 1
+            _content_resp('YES'),                                            # research already present → no inject
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("build a resolver for the handles API"), rlog)
-        self.assertEqual(len(plan.items), 2)                                 # no redundant research step added
-        self.assertTrue(plan.items[0].pinned)                               # the PLANNER's research step is pinned
-        self.assertFalse(plan.items[1].pinned)
-        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))  # not prepended
-        self.assertTrue(any(k == "plan.research_pinned" for k, _ in rlog.events))      # pinned in place
+        self.assertEqual(len(plan.items), 2)                                 # unchanged — no redundant step added
+        self.assertFalse(any(it.pinned for it in plan.items))               # the PLANNER's step is NOT pinned
+        self.assertFalse(any(k == "plan.research_prepended" for k, _ in rlog.events))
 
     def test_reasoner_says_NONE_api_no_injection(self):
         prov = _ScriptedProvider([
@@ -615,8 +613,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
             _content_resp('NONE'),                                   # noise? none
             _content_resp('NONE'),                                   # SETUP steps? none
             _content_resp('handle.me'),                              # reasoner PARAPHRASE (dropped api.)
-            _content_resp('NONE'),                                   # which step researches? none
-            _content_resp('NO'),                                     # API call un-researched → inject
+            _content_resp('NO'),                                     # research present? no → inject
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,

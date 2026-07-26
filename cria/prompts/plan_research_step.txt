@@ -1,3 +1,0 @@
-You are given a coding TASK and its PLAN steps. Which step READS the external API's real source of truth — its machine-readable spec (OpenAPI/Swagger) or its official documentation — to learn the real endpoint path and response field names, before any code calls the API?
-
-Reply with EXACTLY the step NUMBER of that step (the FIRST such step, if there are several), or NONE if no step reads the real source. Nothing else.

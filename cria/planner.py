@@ -266,24 +266,6 @@ def reasoned_has_research(ask, task: str, steps: list[str], evidence: str = "") 
     return m.group(1).upper() == "YES" if m else True
 
 
-def reasoned_research_step_index(ask, task: str, steps: list[str]) -> int:
-    """The 0-based index of the plan step that READS the API's real source (its spec/docs) to learn the real
-    endpoint + fields — the research step to PIN — or -1 if no step does. Lets enforce_research_first pin the
-    research step whether the PLANNER drafted it or cria injected it, so the verify ground-truth fast-path
-    recognizes the research step either way (a planner-drafted research step was left unpinned → the fast-path
-    never fired → the critic false-negatived it hundreds of times). Unclear / unparseable → -1 (pin nothing
-    on a guess)."""
-    if not steps:
-        return -1
-    plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-    ans = strip_think(ask(prompts.load("plan_research_step"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "")
-    m = re.search(r"\d+", ans)
-    if not m:
-        return -1
-    n = int(m.group())
-    return n - 1 if 1 <= n <= len(steps) else -1
-
-
 def enforce_research_first(ask, task: str, steps: list[str]) -> tuple[list[str], str, int]:
     """ADDITIVE research-first invariant — Planner.plan_for only. When the task names an external API host,
     ensure exactly ONE research step exists AND identify it for PINNING, whether the PLANNER drafted it or
@@ -295,12 +277,15 @@ def enforce_research_first(ask, task: str, steps: list[str]) -> tuple[list[str],
     domain = reasoned_api_domain(ask, task)
     if not (domain and steps):
         return steps, "", -1
-    idx = reasoned_research_step_index(ask, task, steps)
-    if idx >= 0:  # the planner already drafted a research step — PIN it, never add a redundant second one
-        return steps, domain, idx
-    # no step reads the real source — prepend cria's ONLY when a step actually codes against the API
+    # Inject cria's OWN clean research step (web_fetch the named source) and PIN it ONLY when the planner
+    # drafted NO research step. Do NOT pin the PLANNER's research step: its research steps proved unreliable
+    # across runs ("locate the documentation" → a 94-search spin then a guessed endpoint; "open the source
+    # repository" → the coder built an SDK for a one-file task), and PINNING one makes a flawed step
+    # AUTHORITATIVE and inescapable. An un-pinned planner research step is still cleared by the critic (facts
+    # obtained) and can be reworded/dropped by re-derivation if it leads the coder astray — the general
+    # mechanisms, not a pin. Only cria's own grounded step earns the pin (+ the ground-truth fast-path).
     if reasoned_has_research(ask, task, steps):
-        return steps, domain, -1   # nothing calls the API un-researched → no research step is warranted
+        return steps, domain, -1
     return [prompts.render("research_named_source", domain=domain)] + steps, domain, 0
 
 
