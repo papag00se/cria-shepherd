@@ -1,0 +1,4 @@
+[YOUR LAST WRITE WAS CUT OFF — THE FILE WAS NOT WRITTEN]
+Your previous response stopped partway through the arguments while writing `{{PATH}}`, so the call was incomplete and nothing was saved. The file does not exist on disk yet (or still holds its older content) — re-reading it will NOT show what you just tried to write.
+
+Do not re-send the same whole-file write: a response of that size is likely to cut off the same way. Instead build the file in SMALL pieces: write only the FIRST portion with write_file, then APPEND each remaining section with edit_file (one small edit at a time). Keep every single tool call well under the output limit.

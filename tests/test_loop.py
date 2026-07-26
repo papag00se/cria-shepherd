@@ -2948,26 +2948,48 @@ class SharedGuardTests(unittest.TestCase):
         self.assertEqual(calls, [])  # not truncated → no retry, no coder call
         self.assertEqual(out["choices"][0]["message"]["content"], "done")
 
-    def test_guard_truncation_refuses_self_truncated_write(self):
-        # The model cut its OWN write_file off mid-content: finish_reason is "tool_calls" (NOT
-        # "length", so is_truncated never sees it), and the `content` string is unclosed with an
-        # invalid `\'` escape — exactly the api.handle.me run that wrote a broken resolver.py.
-        # cria must NOT lower the partial to disk; it drops the call so the turn gates on truth.
-        from cria.loop import guard_truncation
-        raw = r'{"path":"/x/resolver.py","content":"print(f\"hi\")\n    print(f\"a: {r[\'k'  # cut off mid-f-string
-        trunc = {"choices": [{"message": {"role": "assistant", "tool_calls": [
-            {"id": "w1", "function": {"name": "write_file", "arguments": raw}}]}, "finish_reason": "tool_calls"}]}
-        calls = []
+    _SELFCUT_WRITE = r'{"path":"/x/resolver.py","content":"print(f\"hi\")\n    print(f\"a: {r[\'k'
 
-        def coder_chat(body, rlog):  # must NOT be called — this isn't a length-cap retry
-            calls.append(1)
-            return b"{}"
+    def _selfcut_completion(self):
+        # The model cut its OWN write_file off mid-content: finish_reason is "tool_calls" (NOT "length",
+        # so is_truncated never sees it) and the `content` string is unclosed.
+        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "w1", "function": {"name": "write_file", "arguments": self._SELFCUT_WRITE}}]},
+            "finish_reason": "tool_calls"}]}
+
+    def test_self_truncated_write_gets_the_incremental_remedy_the_model_can_actually_SEE(self):
+        # THE FOOTGUN (live run 0726-133755: 7 self-cut writes, 81 calls, empty workspace): a self-cut
+        # write was dropped with only a ⟦cria⟧ note — which is HUMAN-facing and stripped before the
+        # model. So the coder was told NOTHING: its write silently never landed and it re-sent the same
+        # oversized write. The cap-truncation path has always retried with a real, model-facing remedy
+        # ("build the file in SMALL pieces"); the self-cut shape has the same cause and the same cure.
+        from cria.loop import guard_truncation
+        seen = []
+
+        def coder_chat(body, rlog):
+            seen.append(body["messages"][-1]["content"])
+            return json.dumps({"choices": [{"message": {"role": "assistant", "tool_calls": [
+                {"id": "w2", "type": "function", "function": {"name": "write_file",
+                 "arguments": json.dumps({"path": "/x/resolver.py", "content": "print('hi')\n"})}}]},
+                "finish_reason": "tool_calls"}]}).encode()
 
         rlog = _Rlog()
-        out = guard_truncation(dict(trunc), {"messages": [], "tools": None}, coder_chat, rlog)
-        self.assertEqual(calls, [])                                             # no incremental-write retry
-        self.assertFalse(out["choices"][0]["message"].get("tool_calls"))       # partial write refused
-        self.assertIn("loop.incomplete_tool_call_dropped", rlog.kinds())
+        out = guard_truncation(self._selfcut_completion(), {"messages": [], "tools": None}, coder_chat, rlog)
+        self.assertEqual(len(seen), 1)                                  # the model was re-driven ONCE
+        self.assertIn("/x/resolver.py", seen[0])                        # ...told which file
+        self.assertIn("SMALL pieces", seen[0])                          # ...and the actual remedy
+        self.assertIn("NOT WRITTEN", seen[0])                           # truthful: nothing landed
+        self.assertNotIn("hit the output-token limit", seen[0])         # it stopped itself; don't misstate why
+        tcs = out["choices"][0]["message"].get("tool_calls") or []
+        self.assertEqual(json.loads(tcs[0]["function"]["arguments"])["content"], "print('hi')\n")  # complete write
+
+    def test_self_truncated_write_is_still_REFUSED_when_it_keeps_cutting_off(self):
+        # The load-bearing half: a partial write must never reach disk. If the coder self-cuts again
+        # through the retry budget, the call is dropped, exactly as before.
+        from cria.loop import guard_truncation
+        out = guard_truncation(self._selfcut_completion(), {"messages": [], "tools": None},
+                               lambda b, r: json.dumps(self._selfcut_completion()).encode(), _Rlog())
+        self.assertFalse(out["choices"][0]["message"].get("tool_calls"))   # partial write refused
 
     def test_guard_truncation_refuses_a_self_truncated_exec_command(self):
         # NOT write-only: a self-truncated exec_command (inline python leaked the model's

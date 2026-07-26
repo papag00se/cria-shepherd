@@ -3268,7 +3268,15 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     # massage's arg-recovery refuses to salvage a partial, so the arguments are still malformed here.
     # Refuse it the SAME way as a length-truncation: never lower a half-written file to disk. The turn
     # then reads as non-acting and the caller gates on ground truth rather than a broken file.
-    if not massage.is_truncated(coder) and massage.has_incomplete_tool_args(coder):
+    # A cut-off response comes in TWO shapes: it hit the output cap (`is_truncated`), or it cut its OWN
+    # tool arguments off mid-string on a normal `tool_calls` finish. Both leave a half-written file that
+    # must never reach disk, and both have the SAME remedy — build the file in small pieces.
+    def _cut_off(c: dict) -> bool:
+        return massage.is_truncated(c) or massage.has_incomplete_tool_args(c)
+
+    if not massage.is_truncated(coder) and massage.has_incomplete_tool_args(coder) \
+            and _truncated_write_path(coder) is None:
+        # Not a write (e.g. a shell command with inline code) — there is nothing to chunk, so refuse it.
         rlog.emit("loop.incomplete_tool_call_dropped", step=step)
         _drop_tool_calls(coder)
         _add_note(coder, "tool call was cut off mid-arguments — partial call refused (re-send the complete "
@@ -3276,19 +3284,28 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         return coder
     attempt = 0
     conv = list(body.get("messages") or [])
-    while massage.is_truncated(coder) and attempt < MAX_TRUNCATION_RETRIES:
+    while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
         path = _truncated_write_path(coder)
         out_tok = _output_tokens(coder)
-        rlog.emit("loop.truncated", step=step, attempt=attempt + 1, path=path, output_tokens=out_tok)
+        # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
+        # stripped before the model, so the coder was told nothing at all: its write silently never
+        # landed and it re-sent the same oversized write. Observed live (run 0726-133755): 7 self-cut
+        # writes, 81 calls, empty workspace. It gets the same real remedy the cap-truncation gets,
+        # worded truthfully for what actually happened (it stopped itself; it did not hit the cap).
+        selfcut = not massage.is_truncated(coder)
+        rlog.emit("loop.truncated", step=step, attempt=attempt + 1, path=path,
+                  output_tokens=out_tok, selfcut=selfcut)
         if path is None:
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below
         attempt += 1
-        limit = f"~{out_tok} tokens" if out_tok else "the output-token limit"
-        conv = conv + [{"role": "user", "content": prompts.render("truncation_guard", path=path, limit=limit)}]
         rlog.phase = f"{phase}-continue{attempt}"
+        remedy = (prompts.render("truncation_guard_selfcut", path=path) if selfcut else
+                  prompts.render("truncation_guard", path=path,
+                                 limit=f"~{out_tok} tokens" if out_tok else "the output-token limit"))
+        conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
-    dropped = massage.is_truncated(coder)
+    dropped = _cut_off(coder)
     if dropped:
         # Exhausted (or a non-write truncation): do NOT forward the partial write — a cut-off
         # write_file lowered to disk is exactly the corruption. Drop the tool call; the turn then
