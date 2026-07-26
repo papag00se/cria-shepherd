@@ -90,17 +90,13 @@ class PromptAgnosticismTests(unittest.TestCase):
         self.assertIn("real action", low)              # judge the action, not the leading verb
         self.assertTrue("add" in low and "dependen" in low)   # "add requests" counts as installing a dependency
 
-    def test_setup_prompt_is_task_less_and_forbids_planning(self):
-        # The COMPOUND noise judge confused the weak model into "generating a plan" (verbatim reasoning:
-        # "we haven't been given any prior steps; we have to generate a plan?") — so it answered NONE and
-        # missed the venv/install step that trapped the run on PEP-668. The focused env-setup question must
-        # be task-less and explicitly forbid planning so the model just judges the given steps.
-        p = prompts.load("plan_setup_steps")
-        low = p.lower()
-        self.assertIn("do not write", low)          # explicit "do NOT write or extend a plan"
-        self.assertIn("virtualenv/venv", low)
-        self.assertTrue("install" in low and "dependenc" in low)
-        self.assertNotIn("task:", low)              # task-less — no TASK section to drift into planning
+    def test_no_task_less_step_judge_prompt_exists(self):
+        # A judge that DELETES a plan step must see the task. The retired plan_setup_steps.txt deliberately
+        # withheld it, and measured over the captures deleted a research step ("Fetch the OpenAPI
+        # specification…") and a README twice as often as it caught a real venv step. No prompt that drives
+        # a step deletion may be task-less again.
+        import pathlib
+        self.assertFalse((pathlib.Path(prompts.__file__).parent / "prompts" / "plan_setup_steps.txt").exists())
 
     def test_critics_do_not_treat_exit0_as_proof_it_works(self):
         # Green-but-wrong (observed live): a resolver that 404s but CATCHES the error and exits 0 passed

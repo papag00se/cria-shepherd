@@ -184,7 +184,17 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     if not state.summary or band_tokens is None or band_tokens >= recompact_tokens:
         summarizable = [m for m in messages[head_end:tail_start] if not _has_anchor(m)]
         if summarizable:
-            state = CompactState(summary=summarize(summarizable), covered=tail_start)
+            fresh = summarize(summarizable)
+            # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
+            # call (it happens — a reasoning model can burn its budget thinking and emit no content), and
+            # taking it would advance ``covered`` to tail_start: every folded turn replaced by a rollup
+            # header with nothing under it. At a step BOUNDARY (keep NO tail) that is the whole session's
+            # work history destroyed by one bad model call — the exact undetectable lie never-truncate
+            # exists to prevent. Fail SAFE: fold nothing, keep every turn verbatim, and let the context
+            # floor (the one lossless window-fit point) size the request.
+            if not fresh.strip():
+                return messages, state, False
+            state = CompactState(summary=fresh, covered=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
     anchors = [m for m in messages[head_end:covered] if _has_anchor(m)]   # kept verbatim, never elided

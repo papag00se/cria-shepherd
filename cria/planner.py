@@ -213,21 +213,20 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     if not steps:
         return set()
     plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+    # ONE question, WITH the task. There used to be a second, deliberately TASK-LESS pass asking only "which
+    # steps are pure env/dependency setup?", unioned into the drop set — added because the compound judge
+    # above waves a "create a venv + pip install" step through as good project work. Measured across the
+    # captures, that blinded pass was wrong far more often than right: of 6 acted-on verdicts, 4 deleted a
+    # step the prompt explicitly EXCLUDES — twice the RESEARCH step ("fetch the OpenAPI specification…",
+    # "web_fetch the spec and store it locally") and twice a DOCS step (a README whose CONTENT mentions
+    # `pip install`). Deleting the research step is precisely how the coder ends up guessing an endpoint.
+    # Blinding the judge to the task is what did it: without the task it cannot tell a step whose OUTPUT is
+    # documentation from a step whose ACTION is installing. And the failure it was built for already has an
+    # upstream, ground-truth handler — writeproxy appends prompts/pep668_remedy on the REAL
+    # externally-managed-environment error — so this was a speculative pre-deletion in front of a fix that
+    # already exists. A setup step is still dropped when the task-aware judge agrees it is one.
     ans = strip_think(ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "").strip()
-    drop = _parse_step_numbers(ans, len(steps))
-    # ENVIRONMENT/DEPENDENCY SETUP is asked as its OWN focused, TASK-LESS question. Walking the 4 removal
-    # categories in the compound judge above, the weak model AFFIRMATIVELY judges an "install deps / create a
-    # venv" step as legitimate, needed project work and keeps it — so it answers NONE and the setup step
-    # survives to trap the run on PEP-668. (Captured reasoning, verbatim, on a plan whose step was exactly
-    # that: "installing dependencies and initializing virtual environment is part of setting up the project,
-    # which is good"; and elsewhere "This is a good step (setting up environment)".) Stripping the task and
-    # the other categories and asking about ONLY setup — with the "the environment is ALREADY set up / no
-    # install access, so it can only stall" reasoning front-and-centre — reframes it from "is this a
-    # reasonable step?" to "is this pure setup?", and the numbered setup step gets caught (confirmed in the
-    # captures: genuine "set up a Python dev environment — create a virtualenv" steps the compound judge
-    # waved through are returned by this question). Same STRICT parse (a bare number list, else drop nothing).
-    setup_ans = strip_think(ask(prompts.load("plan_setup_steps"), plan_text) or "").strip()
-    return drop | _parse_step_numbers(setup_ans, len(steps))
+    return _parse_step_numbers(ans, len(steps))
 
 
 def _parse_step_numbers(ans: str, n_steps: int) -> set:

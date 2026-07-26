@@ -509,26 +509,32 @@ class NoiseStepDropTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)
         self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
-    def test_focused_setup_call_drops_a_venv_step_the_compound_judge_misses(self):
-        # THE FOOTGUN: the compound whole-plan judge misread its question as "generate a plan" and answered
-        # NONE, leaving a "create a venv + pip install" step that trapped the run on PEP-668. The env-setup
-        # question is now asked on its OWN (task-less), so its clean number answer drops the venv step even
-        # when the compound judge misses it. Here compound = NONE, focused setup = "2".
+    def test_no_second_task_less_setup_pass_can_delete_a_research_or_docs_step(self):
+        # THE FOOTGUN THAT REPLACED IT: a second, TASK-LESS "which steps are pure env setup?" pass was
+        # unioned into the drop set to catch a venv step the task-aware judge waves through. Measured over
+        # the captures it was wrong 4 of 6 times, and what it deleted was a step the prompt EXCLUDES:
+        # "Fetch the OpenAPI specification…" (research — deleting it is how the coder ends up guessing an
+        # endpoint) and a README whose CONTENT mentions `pip install` (docs). Blinded to the task it can't
+        # tell a step whose OUTPUT is documentation from a step whose ACTION is installing. So there is
+        # exactly ONE noise judgment now, WITH the task: when it says NONE, nothing is dropped — even a
+        # step that lexically smells like setup. (A real PEP-668 wall is handled at the real error by
+        # writeproxy's pep668_remedy.) The script gives only ONE noise answer; a second scripted answer
+        # would be consumed by a re-introduced pass and the research step would vanish again.
         prov = _ScriptedProvider([
-            _content_resp('1. Fetch the API spec.\n'
-                          '2. Create a Python virtual environment and install requests and pytest.\n'
-                          '3. Write resolver.py.'),                  # plan
-            _content_resp('NONE'),     # compound NOISE? none (the miss this fixes)
-            _content_resp('2'),        # focused SETUP? step 2 is venv+install
-            _content_resp('NONE'),     # which API? none (short-circuit)
+            _content_resp('1. Fetch the OpenAPI specification from the API and read the real endpoint.\n'
+                          '2. Write resolver.py.\n'
+                          '3. Add README.md with installation instructions (pip install requests).'),  # plan
+            _content_resp('NONE'),     # the ONE task-aware NOISE judgment: drop nothing
+            _content_resp('1, 3'),     # would-be blinded SETUP verdict — must never be asked for/consumed
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("build a resolver"), rlog)
         texts = [it.text for it in plan.items]
-        self.assertFalse(any("virtual environment" in t for t in texts))  # the venv/install step is gone
-        self.assertEqual(len(texts), 2)
-        self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+        self.assertEqual(len(texts), 3)                                  # nothing deleted
+        self.assertTrue(any("OpenAPI specification" in t for t in texts))  # the RESEARCH step survives
+        self.assertTrue(any("README.md" in t for t in texts))              # the DOCS step survives
+        self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
     def test_no_reasoner_drops_nothing(self):
         # reasoner-only: without a role cria does NOT classify steps — the plan is used exactly as drafted

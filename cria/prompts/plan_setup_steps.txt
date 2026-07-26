@@ -1,7 +1,0 @@
-Below is a numbered list of steps from a plan for a coding task. Do NOT write or extend a plan — only judge the steps shown.
-
-Reply with the number of every step whose ONLY purpose is to set up the environment or tooling, rather than to produce the deliverable: creating or activating a virtualenv/venv, installing or adding dependencies (pip/npm/apt install, adding a package or a `requirements` entry), scaffolding an empty "project skeleton" or boilerplate, or configuring tooling. The environment is ALREADY set up — the standard library and the test runner are installed and there is NO package-install access — so such a step can only stall.
-
-Do NOT list a step that writes real code, tests, or documentation, or that researches the real external source (an API's spec/docs, a file, a tool's --help). Judge by the step's REAL action, not a tidy leading verb: "Create a virtual environment and install requests and pytest" is setup even though it starts with "Create".
-
-Reply with the numbers comma-separated (e.g. `2, 3`), or the single word NONE. Nothing else.

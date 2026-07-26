@@ -64,6 +64,20 @@ class SelfCompactTests(unittest.TestCase):
         self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(x.get("content")) for x in out))
         self.assertEqual(len(out), 2)                                              # system + rollup, no tail
 
+    def test_empty_summary_folds_NOTHING(self):
+        # FAIL SAFE: `summarize` returns "" on a failed/empty compactor call (a reasoning model can burn its
+        # budget thinking and emit no content — captured 6/6 on one run). Adopting it would advance `covered`
+        # to the tail and replace every folded turn with a rollup header that has NOTHING under it — at a
+        # BOUNDARY (no verbatim tail) that is the whole work history destroyed by one bad model call, the
+        # undetectable lie never-truncate exists to prevent. So an empty summary folds nothing at all.
+        m = _msgs(30)
+        for force in (True, False):
+            out, state, applied = compact(m, lambda mm: "   ", CompactState(), force=force,
+                                          trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20)
+            self.assertFalse(applied, f"force={force}")
+            self.assertEqual(out, m, f"force={force}")     # every turn kept VERBATIM — the floor sizes it
+            self.assertEqual(state.summary, "")            # and no empty summary is latched into the state
+
     def test_boundary_pins_the_task_so_the_fold_cannot_lose_it(self):
         # A boundary keeps no tail, so the task MUST be pinned or it folds away. With pinned_task set, the
         # ⟦ctx:task⟧ anchor survives verbatim even as all the work folds.
