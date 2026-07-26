@@ -134,7 +134,8 @@ def cheatsheet(tools) -> str | None:
         lines.append(prompts.fill(frag["list_dir"], arg=_path_arg(by_name["list_dir"])))
     if "view_image" in names:
         lines.append(frag["view_image"])
-    if "web_search" in names or "local_web_search" in names:
+    if "web_search" in names:  # advertise() renames a harness local_web_search → web_search BEFORE this,
+        # so keying on the callable name keeps the hint from ever naming an uncallable local_web_search.
         # The web_fetch cross-reference is included ONLY when web_fetch is actually callable.
         fetch_hint = frag["web_search_fetch_hint"] if "web_fetch" in names else ""
         lines.append(prompts.fill(frag["web_search"], fetch_hint=fetch_hint))

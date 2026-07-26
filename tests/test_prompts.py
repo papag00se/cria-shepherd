@@ -61,6 +61,21 @@ class PromptAgnosticismTests(unittest.TestCase):
         self.assertNotIn("exec_command", prompts.load("verify"))
         self.assertNotIn("exec_command", prompts.load("reasoner_coder_tools"))
 
+    def test_tool_descs_own_web_tool_behavior_without_drift(self):
+        # tool_descs.txt is the SINGLE behavior source for cria's synthetic web tools (the cheatsheet now
+        # carries only arg shapes). So the behavior it owns must be correct and complete: web_fetch names
+        # the REAL spill dir (./tmp/read-only, not ./tmp/), documents cursor paging (previously only the
+        # cheatsheet did) and raw; web_search must NOT claim results are always inline (the synthetic Brave
+        # path spills them to ./tmp/read-only).
+        d = prompts.load_map("tool_descs")
+        wf = d["web_fetch"]
+        self.assertIn("./tmp/read-only/", wf)   # the real spill dir
+        self.assertNotIn("./tmp/<file>", wf)    # the old shallow path is gone
+        self.assertIn("cursor=", wf)            # cursor paging documented here now
+        self.assertIn("raw=true", wf)
+        ws = d["web_search"].lower()
+        self.assertIn("tmp/read-only", ws)      # results may be saved to a file, not asserted inline-only
+
     def test_coder_cwd_guidance_stands_alone(self):
         # the cwd rule must not depend on Codex's "working-environment line" being present
         c = prompts.load("coder_system")

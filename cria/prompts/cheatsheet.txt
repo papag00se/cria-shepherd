@@ -1,21 +1,27 @@
-# The tool cheat-sheet cria folds into the model's system message (one per turn, on the
-# OUTBOUND request only) — the menu-derived tool hint (ports codex-local build_tool_hint).
-# One entry per tool cria may describe; ONLY tools actually in this turn's resolved menu are
-# included, in this order, so the prompt can never name a tool the model can't call.
-# {{SHELL}} = the harness's shell tool name (e.g. shell, exec_command, bash). Format is
-# `key = value`, one per line; `\n` in a value becomes a real newline.
+# The tool cheat-sheet cria folds into the model's system message (one per turn, on the OUTBOUND
+# request only) — the menu-derived tool hint (ports codex-local build_tool_hint). Its job is what the
+# tool SCHEMAS can't carry: the cross-tool PREFERENCE rules (header, lead_write, shell = last resort)
+# and, per tool, the concrete ARGUMENT SHAPE with example values (schema params are bare types). It does
+# NOT re-describe a tool's BEHAVIOR — that is owned ONCE, by the tool's schema description: cria's
+# synthetic tools in prompts/tool_descs.txt, harness-native tools in the harness's own description. So
+# the synthetic-tool entries below are terse arg shapes only; the fuller entries are for harness tools
+# cria doesn't schema-own (its sole voice) plus the cross-tool rules. ONLY tools in this turn's resolved
+# menu are emitted, in this order, so the hint can never name a tool the model can't call.
+# {{SHELL}} = the harness's shell tool name (e.g. shell, exec_command, bash); {{ARG}} = a read/list
+# tool's real path-arg name, read from the resolved schema. Format is `key = value`, one per line;
+# `\n` in a value becomes a real newline.
 header = Tools available this turn, listed in the order you should PREFER them — call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.
 lead_write = CRITICAL — to create or change a file you MUST use {{TOOLS}}. Do NOT write files by shelling out (echo/cat/heredoc/tee/sed): the file tools are more reliable and cannot be truncated mid-write.
-write_file = - write_file — create or OVERWRITE a file with its FULL content (you supply the whole file; nothing to escape). Args: {"path": "<file>", "content": "<full file text>"}. The default way to write a file.
-read_file = - read_file — read a file (read-only). Args: {"{{ARG}}": "<file>"}, or {"{{ARG}}": "<file>", "start_line": 40, "end_line": 80} for a 1-based inclusive range.
-list_dir = - list_dir — list a directory (read-only). Args: {"{{ARG}}": "<dir>"} (defaults to the current directory).
-edit_file = - edit_file — replace ONE exact snippet in an existing file. Args: {"path": "<file>", "old_string": "<exact text to replace>", "new_string": "<replacement>"}. Copy old_string VERBATIM from the file; if it won't apply, fall back to write_file with the whole file.
+write_file = - write_file — Args: {"path": "<file>", "content": "<full file text>"}
+edit_file = - edit_file — Args: {"path": "<file>", "old_string": "<exact snippet to replace>", "new_string": "<replacement>"}
+read_file = - read_file — Args: {"{{ARG}}": "<file>"}, or add "start_line"/"end_line" for a 1-based inclusive range
+list_dir = - list_dir — Args: {"{{ARG}}": "<dir>"}
 view_image = - view_image — attach a local image so you can see it. Args: {"path": "<path/to/image.png>"}.
 update_plan = - update_plan — record/refresh a multi-step task plan. Args: {"plan": [{"status": "in_progress", "step": "..."}]}.
-request_permissions = - request_permissions — ask to escalate the sandbox when a command would otherwise be blocked (network for npm/pip/apt installs, writing outside cwd). Call it BEFORE the command that would fail, with a short justification.
+request_permissions = - request_permissions — ask the harness to allow a command it would otherwise block (e.g. network access for an npm or apt install). Call it BEFORE that command, with a short justification.
 write_stdin = - write_stdin — send input to a shell session started by {{SHELL}} (e.g. answer an interactive prompt). Per the tool's own argument schema.
-web_search = - web_search — search the web for pages. Args: {"query": "<what to look up>"}. Returns result snippets + URLs.{{FETCH_HINT}}
+web_search = - web_search — Args: {"query": "<what to look up>"}{{FETCH_HINT}}
 web_search_fetch_hint =  Open a result in full with web_fetch.
-web_fetch = - web_fetch — read a web page (read-only). Args: {"url": "<url>"}. A LARGE page is saved IN FULL to a ./tmp/ file and you get the path — grep that file (grep -n "<text>" ./tmp/<file>) for exact lines. To NAVIGATE without re-fetching, add {"find": "<text>"} to jump to the section containing that text (or {"cursor": "<token>"} to page on). Do NOT re-fetch the same url to see more — it just wastes context.
+web_fetch = - web_fetch — Args: {"url": "<url>"} — optional: "find" a section, "cursor" to page on, "raw" for the literal source
 shell = - {{SHELL}} — LAST RESORT, for commands with no dedicated tool above (build, test, git, package installs, mkdir/rm). Per the tool's own argument schema. Do NOT use it to read, write, or list files when a focused tool exists.
 read_via_shell = - read a file with `{{SHELL}}` running `cat <path>` (there is no read_file tool this turn).

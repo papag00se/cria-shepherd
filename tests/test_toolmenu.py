@@ -181,6 +181,18 @@ class CheatsheetTests(unittest.TestCase):
         self.assertIn('"find"', note)
         self.assertIn('"cursor"', note)
 
+    def test_synthetic_tool_entries_are_arg_shapes_not_behavior(self):
+        # OWNERSHIP boundary: the cheatsheet gives cria's synthetic tools their ARG SHAPE only (the example
+        # values a type-only schema lacks); the BEHAVIOR is owned ONCE by tool_descs.txt, so the two no
+        # longer restate — and drift — the same prose. The behavioral one-liners are gone; the arg shapes stay.
+        note = cheatsheet([_WRITE, _t("edit_file"), _t("read_file"), _t("web_fetch"), _SHELL])
+        self.assertIn('"content"', note)          # write_file arg shape kept
+        self.assertIn('"old_string"', note)       # edit_file arg shape kept
+        self.assertIn('"find"', note)             # web_fetch nav args kept as shape
+        self.assertNotIn("OVERWRITE", note)       # write_file behavior now lives in tool_descs
+        self.assertNotIn("VERBATIM", note)        # edit_file behavior now lives in tool_descs
+        self.assertNotIn("saved IN FULL", note)   # web_fetch spill behavior now lives in tool_descs
+
     def test_web_tools_absent_are_not_mentioned(self):
         # No web tool in the menu → the hint must not name find/cursor/web_fetch (menu<->prompt parity)
         note = cheatsheet([_WRITE, _SHELL])
