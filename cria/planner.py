@@ -215,9 +215,24 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
         return set()
     plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
     ans = strip_think(ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "").strip()
-    if not re.fullmatch(r"[0-9][0-9,\s]*\.?", ans):   # not a pure number list → NONE/prose → drop nothing
+    drop = _parse_step_numbers(ans, len(steps))
+    # ENVIRONMENT/DEPENDENCY SETUP is asked as its OWN focused, TASK-LESS question. In the compound judge
+    # above the weak model read the TASK + 4-category framing as a request to GENERATE a plan and answered
+    # NONE, missing every "create a venv + pip install" step (its verbatim reasoning: "we haven't been
+    # given any prior steps; we have to generate a plan from scratch?"). That step then trapped the run on
+    # PEP-668. A single question about ONLY setup, over just the numbered steps with an explicit "do NOT
+    # write a plan", removes the ambiguity — same STRICT parse (a bare number list, else drop nothing).
+    setup_ans = strip_think(ask(prompts.load("plan_setup_steps"), plan_text) or "").strip()
+    return drop | _parse_step_numbers(setup_ans, len(steps))
+
+
+def _parse_step_numbers(ans: str, n_steps: int) -> set:
+    """A reasoner verdict that must be a CLEAN 1-based step-number list (else the safe null: empty). Never
+    scrape a digit out of prose — a model that wraps its answer in reasoning would have every number it
+    MENTIONS (including endorsed steps) read as a deletion (principle #2: never delete correct content)."""
+    if not re.fullmatch(r"[0-9][0-9,\s]*\.?", ans):   # NONE / prose / mixed → drop nothing
         return set()
-    return {int(n) - 1 for n in re.findall(r"\d+", ans) if 0 <= int(n) - 1 < len(steps)}
+    return {int(x) - 1 for x in re.findall(r"\d+", ans) if 0 <= int(x) - 1 < n_steps}
 
 
 def reasoned_api_domain(ask, task: str) -> str:

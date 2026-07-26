@@ -509,6 +509,27 @@ class NoiseStepDropTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 2)
         self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
+    def test_focused_setup_call_drops_a_venv_step_the_compound_judge_misses(self):
+        # THE FOOTGUN: the compound whole-plan judge misread its question as "generate a plan" and answered
+        # NONE, leaving a "create a venv + pip install" step that trapped the run on PEP-668. The env-setup
+        # question is now asked on its OWN (task-less), so its clean number answer drops the venv step even
+        # when the compound judge misses it. Here compound = NONE, focused setup = "2".
+        prov = _ScriptedProvider([
+            _content_resp('1. Fetch the API spec.\n'
+                          '2. Create a Python virtual environment and install requests and pytest.\n'
+                          '3. Write resolver.py.'),                  # plan
+            _content_resp('NONE'),     # compound NOISE? none (the miss this fixes)
+            _content_resp('2'),        # focused SETUP? step 2 is venv+install
+            _content_resp('NONE'),     # which API? none (short-circuit)
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("build a resolver"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertFalse(any("virtual environment" in t for t in texts))  # the venv/install step is gone
+        self.assertEqual(len(texts), 2)
+        self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
     def test_no_reasoner_drops_nothing(self):
         # reasoner-only: without a role cria does NOT classify steps — the plan is used exactly as drafted
         # (no keyword-regex fallback). The basic no-role plan_for path is covered here.
@@ -538,6 +559,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py that returns the address.\n2. Add unit tests.'),  # plan
             _content_resp('NONE'),                                                                # NOISE? none
+            _content_resp('NONE'),                                                                # SETUP steps? none
             _content_resp('api.handle.me'),                                                       # which API?
             _content_resp('NONE'),                                                                # which step researches? none
             _content_resp('NO'),                                                                  # API call un-researched → prepend
@@ -558,6 +580,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _content_resp('1. Fetch the API spec.\n2. Write resolver.py.'),  # plan (step 1 IS research)
             _content_resp('NONE'),                                           # NOISE? none
+            _content_resp('NONE'),                                           # SETUP steps? none
             _content_resp('api.handle.me'),                                  # which API?
             _content_resp('1'),                                              # which step researches? step 1
         ])
@@ -590,6 +613,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py.\n2. Add tests.'),   # plan
             _content_resp('NONE'),                                   # noise? none
+            _content_resp('NONE'),                                   # SETUP steps? none
             _content_resp('handle.me'),                              # reasoner PARAPHRASE (dropped api.)
             _content_resp('NONE'),                                   # which step researches? none
             _content_resp('NO'),                                     # API call un-researched → inject
@@ -607,6 +631,7 @@ class ResearchFirstEnforcementTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _content_resp('1. Write resolver.py.\n2. Tests.'),
             _content_resp('NONE'),  # NOISE? none
+            _content_resp('NONE'),  # SETUP steps? none
             _content_resp('<think>the task says the Ada Handles API at api.handle.me</think>\napi.handle.me'),
             _content_resp('<think>no step fetches the spec</think>\nNO'),
         ])
