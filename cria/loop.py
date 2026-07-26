@@ -200,6 +200,8 @@ class GuardState:
     # model won't take itself).
     search_words: list = None  # the last web_search's normalized word-set (searchloop)
     search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
+    search_volume: int = 0     # TOTAL web_searches since the last task-domain fetch (catches the VARIED-query
+    #                            spin the near-dup streak misses — the coder that never fetches the spec)
     tried_spec_convention: bool = False  # spent the one deterministic <task-domain>/openapi.json escape
     tried_domain_root: bool = False      # spent the deterministic <task-domain>/ root escape (reasoner-punt floor)
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
@@ -283,6 +285,11 @@ THRASH_STALL_CYCLES = 2
 # web_fetch on its own — cria asks the reasoner (given the WHOLE context, so a domain the USER mentioned
 # is in reach) which URL to read, then SUBSTITUTES a web_fetch for the search. The escape, done for it.
 SEARCH_STREAK_ESCALATE = 5
+SEARCH_VOLUME_ESCALATE = 8   # after this many web_searches with NO task-domain fetch, substitute the fetch
+#                              regardless of query wording. The near-dup streak resets on a reworded query, so
+#                              a coder that VARIES its search (observed: 94 distinct queries) never tripped the
+#                              streak, never fetched the spec, so cria's spec-surfacing never fired and it
+#                              GUESSED the endpoint (/resolve → 404). Volume catches the spin the streak can't.
 
 # STUCK-STEP re-plan threshold. A step advances ONLY on a genuine pass — there is deliberately no
 # advance-on-unverified cap (real failing checks must be fixed, never skipped). But a MISCONCEIVED step
@@ -3192,15 +3199,24 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
     msg = (coder.get("choices") or [{}])[0].get("message") or {}
     tcs = msg.get("tool_calls") or []
     domain = _task_api_domain(body.get("messages", []))
+    # A fetch of the task DOMAIN means the coder engaged the real source (cria's spec-surfacing fires on it)
+    # → clear the whole search-spin state, near-dup AND volume.
+    if domain and any(_tool_name(tc) == "web_fetch"
+                      and domain in str(massage._args((tc.get("function") or {}).get("arguments")).get("url", ""))
+                      for tc in tcs):
+        sess.search_streak, sess.search_words, sess.search_volume = 0, None, 0
+        return coder
     search_tc = next((tc for tc in tcs if _tool_name(tc) == "web_search"), None)
     if search_tc is None:
-        sess.search_streak, sess.search_words = 0, None   # a different action → not looping on search
-        return coder
+        sess.search_streak, sess.search_words = 0, None   # a different action → not looping on NEAR-DUP search
+        return coder                                       # (search_volume PERSISTS: still no task-domain fetch)
     query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", ""))
     words = normalize_search(query)
     sess.search_streak = sess.search_streak + 1 if (sess.search_words and searches_match(words, sess.search_words)) else 1
     sess.search_words = words
-    if sess.search_streak < SEARCH_STREAK_ESCALATE or reasoner_role is None:
+    sess.search_volume += 1   # every web_search adds to the spin count until a task-domain fetch clears it
+    if (sess.search_streak < SEARCH_STREAK_ESCALATE and sess.search_volume < SEARCH_VOLUME_ESCALATE) \
+            or reasoner_role is None:
         return coder
     # Convention-first: when the task NAMED an API domain, spend the one deterministic escape on the
     # OpenAPI standard path <domain>/openapi.json before delegating the URL to the reasoner. Observed
@@ -3225,7 +3241,7 @@ def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
             sess.tried_domain_root = True
             url = f"https://{domain}/"
             via = "domain-root"
-    sess.search_streak, sess.search_words = 0, None       # cooldown whether or not a url came back
+    sess.search_streak, sess.search_words, sess.search_volume = 0, None, 0   # cooldown whether or not a url came back
     if not url:
         rlog.emit("loop.search_escalation", url=None)     # reasoner had nothing → let the search go (gate refuses a repeat)
         return coder

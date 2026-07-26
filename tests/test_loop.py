@@ -3491,6 +3491,38 @@ class SearchEscalationTests(unittest.TestCase):
         self.assertNotIn("openapi", self._fn(out)["arguments"])     # the ROOT, not the (spent) spec path
         self.assertTrue(gs.tried_domain_root)
 
+    def test_varied_query_spin_escalates_on_volume_not_just_streak(self):
+        # THE FOOTGUN: the near-dup streak resets on any reworded query, so a coder that VARIES its search
+        # (observed: 94 DISTINCT queries) never trips the streak, never fetches the spec — so cria's spec-
+        # surfacing never fires and it GUESSES the endpoint (/resolve → 404). The VOLUME counter catches the
+        # varied-query spin the streak can't: after SEARCH_VOLUME_ESCALATE searches with no task-domain fetch,
+        # cria substitutes the fetch regardless of wording.
+        from cria.loop import GuardState, SEARCH_VOLUME_ESCALATE
+        gs = GuardState()
+        varied = ["ada handles api documentation", "cardano handle resolver endpoint",
+                  "resolve an ada handle tutorial", "handle openapi reference page",
+                  "ada handle address lookup guide", "cardano nft handle rest api",
+                  "resolving goose handle example", "ada handles endpoint listing"]
+        out = None
+        for q in varied[:SEARCH_VOLUME_ESCALATE]:
+            out = self._run(gs, self._search(q), self._reasoner("Fetch https://api.handle.me/swagger.json"))
+        self.assertEqual(self._fn(out)["name"], "web_fetch")            # varied spin escalated on VOLUME
+        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
+
+    def test_task_domain_fetch_clears_the_search_volume(self):
+        # a coder that actually FETCHES the task domain has engaged the real source (surfacing fires there)
+        # → the spin count clears, so it is not then needlessly force-fetched.
+        from cria.loop import GuardState
+        gs = GuardState()
+        for i in range(4):
+            self._run(gs, self._search(f"distinct handle query alpha{i} beta{i}"), self._reasoner("NONE"))
+        self.assertGreater(gs.search_volume, 0)
+        domain_fetch = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "web_fetch",
+             "arguments": json.dumps({"url": "https://api.handle.me/openapi.json"})}}]}}]}
+        self._run(gs, domain_fetch, self._reasoner("NONE"))
+        self.assertEqual(gs.search_volume, 0)   # cleared — the coder reached the source itself
+
     def test_domain_root_floor_is_spent_once(self):
         # spent once → a later NONE can't re-loop on the root; the search is then left for the gate to refuse
         from cria.loop import GuardState
