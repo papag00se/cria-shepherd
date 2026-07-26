@@ -551,6 +551,39 @@ class StuckStepReplanTests(unittest.TestCase):
         self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # forward the tool call
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
 
+    def test_pinned_research_step_advances_the_instant_facts_are_surfaced(self):
+        # GROUND TRUTH, PROACTIVE: the moment cria's surfaced routes appear in the evidence, the pinned
+        # research step is DONE — advance now, don't wait for a verify the looping coder never reaches
+        # (observed: 370 calls re-fetching a spec whose routes cria had already surfaced 120×).
+        from cria.webfetch import ROUTES_MARKER
+        loop = self._loop(_Scripted([_verdict(done=True)]))
+        sess = self._sess()
+        sess.plan.task = "resolve an Ada Handle via api.handle.me"    # names the host → research_domain
+        item = sess.plan.items[1]; item.pinned = True
+        body = {"messages": [
+            {"role": "user", "content": "resolve via api.handle.me"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "web_fetch",
+                 "arguments": json.dumps({"url": "https://api.handle.me/openapi.json"})}}]},
+            {"role": "tool", "tool_call_id": "c1",
+             "content": f"{ROUTES_MARKER}2): /handles/{{handle}}, /holders/{{address}}] for api.handle.me"},
+        ]}
+        loop._work_item(sess, "k", body, _Rlog(), item, 1)
+        self.assertTrue(sess.research_surfaced)                       # latched from cria's own surfaced routes
+        self.assertTrue(sess.plan.items[1].done)                     # research step advanced (done), no loop
+
+    def test_pinned_research_step_not_advanced_without_surfaced_facts(self):
+        # no cria markers in the evidence → NOT a ground-truth clear; the pinned step stays until the budget
+        # release / the critic. (A coder that only searched, never fetched the source, must not shortcut.)
+        loop = self._loop(_Scripted([_toolcall()]))
+        sess = self._sess()
+        sess.plan.task = "resolve an Ada Handle via api.handle.me"
+        item = sess.plan.items[1]; item.pinned = True
+        body = {"messages": [{"role": "user", "content": "resolve via api.handle.me"}]}  # no markers
+        loop._work_item(sess, "k", body, _Rlog(), item, 1)
+        self.assertFalse(sess.research_surfaced)
+        self.assertFalse(sess.plan.items[1].done)                    # still pending — no ground truth yet
+
     def test_pinned_step_releases_after_outsized_budget(self):
         # A PIN is a hint, not a life sentence: _replan_tail holds pinned steps OUT of re-derivation, so a
         # coder stuck on a pinned step it never clears can never be moved past it (observed live: 485 calls

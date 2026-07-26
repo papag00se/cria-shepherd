@@ -226,6 +226,8 @@ class PlanSession(GuardState):
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
+    research_surfaced: bool = False  # cria has surfaced the named source's real routes/fields (latched — the
+    #                                  research step is DONE the instant this is true, even mid-tool-call-loop)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -1006,11 +1008,24 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
-            # A PIN is a HINT, not a life sentence. _replan_tail holds pinned steps OUT of re-derivation, so a
-            # coder stuck on a pinned step it never clears can never be moved past it (observed: 485 calls
-            # trapped on one pinned step). After an outsized per-step budget the pin has clearly failed to
-            # help — RELEASE it and re-arm the thrash re-derive so the living plan can reword/drop the stuck
-            # step and advance. General: no pin is an inescapable trap.
+            # GROUND-TRUTH research completion, PROACTIVE (not only at verify). cria surfaces the source's real
+            # routes/fields the moment the coder fetches the spec — that IS the research step's whole goal — but
+            # the coder often keeps fetching/reading without ever signalling done, so the verify-time fast-path
+            # never fires and it LOOPS (observed: 370 calls re-fetching a spec whose routes cria had already
+            # surfaced 120×). Latch the surfaced-facts signal the instant it appears (before the HARNESS's own
+            # history compaction can drop the marker), then ADVANCE the pinned research step — don't wait for a
+            # verify the looping coder never reaches. Its facts are ground truth cria produced, not a judgment.
+            if item.pinned and not sess.research_surfaced:
+                _dom = self._research_domain_for(sess, item)
+                if _dom and _research_facts_obtained(self._grounded_evidence(sess, body), _dom):
+                    sess.research_surfaced = True
+                    rlog.emit("loop.research_facts_latched", domain=_dom, level="info")
+            if item.pinned and sess.research_surfaced:
+                return self._advance(sess, key, body, idx, len(sess.plan.items), rlog)
+            # No facts yet, and a PIN is a hint not a life sentence: _replan_tail holds pinned steps OUT of
+            # re-derivation, so a coder stuck on a pinned step it never satisfies can never be moved past it
+            # (observed: 485 calls trapped on one pinned step). After an outsized per-step budget the pin has
+            # clearly failed — RELEASE it and re-arm the thrash re-derive so the plan can move past it.
             if item.pinned and sess.step_tool_calls >= PINNED_STEP_RELEASE:
                 item.pinned = False
                 sess.thrash_replanned = False
