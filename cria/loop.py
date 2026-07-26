@@ -2883,9 +2883,12 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     for url, entry in latest.items():
         status, routes, shapes = _fetch_facts(entry)
         line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
-        if shapes:   # the REAL field names — the half the coder guesses once they scroll away
-            line += f"\n  {labels['fields']}\n" + \
-                    "\n".join(f"  {ln.strip()}" for ln in shapes.splitlines() if ln.strip())
+        # The REAL field names — the half the coder guesses once they scroll away. Keep only the
+        # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
+        # that under cria's label prints the same instruction twice.
+        entries = [ln.strip() for ln in shapes.splitlines() if "→" in ln]
+        if entries:
+            line += f"\n  {labels['fields']}\n" + "\n".join(f"  {e}" for e in entries)
         (ok if _fetch_succeeded(status) else failed).append(line)
     blocks = []
     if ok:

@@ -450,6 +450,10 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         self.assertIn("holder,", body)
         self.assertIn("total_handles", body)
         self.assertIn("do not guess", body.lower())
+        # ONE instruction header, not two: the captured block opens with webfetch's own wording, and
+        # emitting that under cria's label printed the same sentence twice (seen live, run 0726-141115).
+        self.assertEqual(body.lower().count("don't guess") + body.lower().count("do not guess"), 1)
+        self.assertNotIn("the fields each endpoint RETURNS (extract these", body)
 
     def test_ledger_keeps_the_shape_when_a_later_find_fetch_has_none(self):
         # A follow-up web_fetch(url, find=…) returns a sub-section with no routes/shape blocks. That
