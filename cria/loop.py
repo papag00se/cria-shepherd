@@ -2841,13 +2841,36 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
     return dst
 
 
+def _fetch_succeeded(status) -> bool:
+    """Did this ledger entry actually return something? ``status`` is the rendered "HTTP <code>" from
+    the window, or the bare int a session's durable ledger carries — accept either."""
+    m = re.search(r"\d{3}", str(status if status is not None else ""))
+    return bool(m) and 200 <= int(m.group(0)) < 300
+
+
 def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
+    """The durable fetch ledger, SPLIT by whether the fetch actually returned anything.
+
+    A failed fetch is not the same kind of fact as a successful one, and merging them into one list
+    made the anchor's "code directly against the endpoints and response fields listed above" apply to
+    entries that have neither. Observed live (run 0726-132211, 66 calls, empty workspace): the coder
+    invented the domain `ada-handles.github.io`, got two 404s, and cria handed it back every turn as
+    "your REAL fetch results this session ... you already have it" — restating the hallucination as
+    ground truth and telling it to code against a dead URL. Failures are worth keeping (don't re-fetch
+    a URL that 404'd) but they must be labelled as the dead ends they are."""
     if not latest:
         return ""
-    lines = [f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
-             for url, (status, routes) in latest.items()]
-    return (f"{header} (from the real tool results — trust these over any earlier "
-            "note or reasoning claiming a fetch failed):\n" + "\n".join(lines))
+    labels = prompts.load_map("fetched_facts_sections")
+    ok, failed = [], []
+    for url, (status, routes) in latest.items():
+        line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
+        (ok if _fetch_succeeded(status) else failed).append(line)
+    blocks = []
+    if ok:
+        blocks.append(prompts.fill(labels["ok"], header=header) + "\n" + "\n".join(ok))
+    if failed:
+        blocks.append(labels["failed"] + "\n" + "\n".join(failed))
+    return "\n\n".join(blocks)
 
 
 def _track_fetched_pages(sess, messages: list[dict]) -> None:

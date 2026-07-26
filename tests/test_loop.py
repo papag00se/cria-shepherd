@@ -428,6 +428,36 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         from cria.loop import _fetched_facts_anchor
         self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=_plan(2))))
 
+    def test_a_ledger_of_only_FAILED_fetches_is_not_presented_as_facts_to_code_against(self):
+        # THE FOOTGUN (live run 0726-132211: 66 calls, empty workspace): the coder INVENTED the domain
+        # ada-handles.github.io, got 404s, and the anchor handed them back every turn as "your REAL fetch
+        # results this session ... you already have it", under "Code directly against the endpoints and
+        # response fields listed above" — cria restating a hallucinated dead URL as ground truth and
+        # telling the coder to build on it. A failure is still worth remembering (don't re-fetch it), but
+        # it must be labelled a dead end, never merged into the list of things to code against.
+        from cria.loop import _fetched_facts_anchor
+        sess = PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://ada-handles.github.io/resolve-handle": (404, ""),
+                              "https://ada-handles.github.io/resolve-handle?handle=goose": (404, "")}
+        body = _fetched_facts_anchor(sess)["content"]
+        self.assertIn("DID NOT WORK", body)                       # labelled as the dead ends they are
+        self.assertIn("ada-handles.github.io", body)              # still remembered, so it isn't re-fetched
+        self.assertNotIn("SUCCEEDED", body)                       # no success section — nothing succeeded
+        low = body.lower()
+        self.assertNotIn("code directly against the endpoints and response fields listed above", low)
+
+    def test_ledger_splits_successes_from_failures(self):
+        # Both kinds present: the real endpoints stay actionable, the 404 is quarantined under its own label.
+        from cria.loop import _fetched_facts_anchor
+        sess = PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}"),
+                              "https://api.handle.me/resolve-handle": (404, "")}
+        body = _fetched_facts_anchor(sess)["content"]
+        ok_at, dead_at = body.index("SUCCEEDED"), body.index("DID NOT WORK")
+        self.assertLess(ok_at, dead_at)                                       # successes lead
+        self.assertLess(body.index("/handles/{handle}"), dead_at)             # the real route is in the OK block
+        self.assertGreater(body.index("resolve-handle → 404"), dead_at)       # the 404 is below the dead-end label
+
     def test_anchor_is_placed_after_the_leading_system_message(self):
         from cria.loop import _insert_after_system
         msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]

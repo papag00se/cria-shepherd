@@ -1,0 +1,8 @@
+# Section labels for the DURABLE fetch ledger (loop._format_fetches, parsed by prompts.load_map).
+# The ledger records every web_fetch this session, and a fetch that FAILED is not the same kind of
+# fact as one that succeeded. Presenting them in one undifferentiated list let the anchor tell the
+# coder to "code directly against the endpoints listed above" when the only entries were two 404s on
+# a domain it had hallucinated — cria restating a dead URL as a REAL result it already had.
+# {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
+ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
+failed = THESE URLS DID NOT WORK — the fetch returned an error status, so there is nothing behind them to use. Do not fetch them again, and do not write code against them:
