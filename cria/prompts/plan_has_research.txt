@@ -2,7 +2,7 @@ You are given a coding TASK, the PLAN steps still to do, and (optionally) EVIDEN
 
 Reply NO (not satisfied) ONLY if BOTH are true:
 - a remaining step writes or changes code that CALLS the external API, AND
-- neither an earlier remaining step NOR the EVIDENCE shows the API's real source of truth being read first — its machine-readable spec (OpenAPI/Swagger) or its documentation.
+- neither an earlier remaining step NOR the EVIDENCE shows the API's real source of truth being read first — its machine-readable spec (OpenAPI/Swagger) or its documentation. A web_SEARCH does NOT count as reading the real source (it only finds links); reading means FETCHING the actual spec/docs page or reading a local file.
 
 Otherwise reply YES. In particular reply YES when: a step (or the evidence) already reads the API's spec/docs before the API-calling code; OR no remaining step writes API-calling code at all (e.g. only tests or docs are left). A step that only writes non-API code, runs tests, or writes docs does not by itself COUNT as calling the API.
 
