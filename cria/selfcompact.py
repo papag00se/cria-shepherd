@@ -32,11 +32,15 @@ from .content_reduce import est_tokens
 # code constants (they don't vary by environment).
 TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exceeds this many tokens
 KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
-BOUNDARY_KEEP_TAIL_TOKENS = 1200  # at a verified STEP BOUNDARY keep only a SMALL verbatim tail, so the just-
-#                                   completed step's raw work-signals FOLD into the rollup instead of lingering
-#                                   in the 6000-token working-set tail. Without this, force only lowered the
-#                                   TRIGGER — the completed step stayed verbatim in the tail and the view GREW
-#                                   step over step (observed live: +14KB / ~350 lines between step 1 and 2).
+BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim tail — the completed step's raw
+#                                  turns fold ENTIRELY into the rollup. Nothing is lost: the NEXT step rides in
+#                                  the caller's authoritative system message, the original task is pinned
+#                                  (⟦ctx:task⟧), the API's real endpoint/fields are anchored, and the rollup
+#                                  carries the rest. A verbatim tail here would only re-introduce the finished
+#                                  step's distracting signals — the exact thing folding at a boundary clears.
+#                                  (Without this, force only lowered the TRIGGER; the completed step stayed
+#                                  verbatim in the 6000-tok tail and the view GREW step over step — observed
+#                                  live: +14KB / ~350 lines between step 1 and step 2.)
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
@@ -146,11 +150,12 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     trigger, or when there is no middle to compact (the recent tail already spans everything).
 
     ``force`` (the plan loop passes it at a STEP BOUNDARY) both lowers the trigger AND shrinks the kept tail
-    to ``boundary_keep_tail_tokens`` — so the just-verified step's accumulated work-signals FOLD into the
-    ⟦ctx:rollup⟧ (they ARE the working-set tail, which a mere trigger drop left verbatim, so the view grew
-    step over step). Anchored messages — a surfaced spec's real endpoint/fields (_SPEC_*_MARKER) and cria's
-    own briefings — survive folding VERBATIM, so the coder keeps the exact fields it must code against. Still
-    a no-op on a trivial view whose whole content fits the boundary tail.
+    to ``boundary_keep_tail_tokens`` (0 by default → NO verbatim tail) — so the just-verified step's work
+    folds ENTIRELY into the ⟦ctx:rollup⟧ (it IS the working-set tail, which a mere trigger drop left verbatim,
+    so the view grew step over step). Nothing is lost at a boundary: the next step rides in the caller's
+    system message, ``pinned_task`` re-anchors the original task, and anchored messages — a surfaced spec's
+    real endpoint/fields (_SPEC_*_MARKER) and cria's own briefings — survive folding VERBATIM. (A boundary
+    therefore REQUIRES the caller to pass ``pinned_task``, or the task would fold with the rest.)
 
     ``pinned_task`` (the conversation's ROOT task, supplied by the caller — it alone can detect the
     task past the harness env-context/reframe) is re-emitted verbatim as a ⟦ctx:task⟧ header on every

@@ -42,13 +42,37 @@ class SelfCompactTests(unittest.TestCase):
         self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(x.get("content")) for x in out))
         self.assertEqual(out[0], m[0]); self.assertEqual(out[-1], m[-1])  # system + most-recent kept
 
-    def test_force_is_noop_for_a_trivial_view(self):
-        # a LIGHT step whose whole view fits within the tail is NOT force-compacted — folding a couple of
-        # messages into a summary would only add length. force lowers the bar to keep_tail, not to zero.
-        m = _msgs(3)   # ~18 tokens < keep_tail (30)
+    def test_force_is_noop_when_view_fits_a_nonzero_boundary_tail(self):
+        # With a NON-ZERO boundary tail, a view that wholly fits it is NOT force-compacted (folding a couple
+        # of messages would only add length). _KW sets boundary_keep_tail_tokens=30 to exercise this; the
+        # PRODUCTION default is 0 — see test_boundary_default_folds_all_work_to_the_rollup.
+        m = _msgs(3)   # ~18 tokens < boundary tail (30)
         out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(), force=True, **_KW)
         self.assertFalse(applied)
         self.assertIs(out, m)   # unchanged, no rollup added
+
+    def test_boundary_default_folds_all_work_to_the_rollup(self):
+        # THE DEFAULT (BOUNDARY_KEEP_TAIL_TOKENS = 0): a step boundary keeps NO verbatim work tail — the
+        # finished step's turns fold ENTIRELY into the rollup. Nothing survives verbatim but the system
+        # message and the rollup (the caller supplies the next step in system, pins the task, and anchors
+        # the facts — none present in this minimal fixture). This is "why keep a tail?" answered: we don't.
+        m = _msgs(30)  # system + 29 work turns, no anchors, no pinned task
+        out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(),
+                                  trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
+        self.assertTrue(applied)
+        self.assertEqual(out[0], m[0])                                              # system kept
+        self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(x.get("content")) for x in out))
+        self.assertEqual(len(out), 2)                                              # system + rollup, no tail
+
+    def test_boundary_pins_the_task_so_the_fold_cannot_lose_it(self):
+        # A boundary keeps no tail, so the task MUST be pinned or it folds away. With pinned_task set, the
+        # ⟦ctx:task⟧ anchor survives verbatim even as all the work folds.
+        task = "Resolve an Ada Handle to its Cardano address via api.handle.me, with tests and a README"
+        m = _msgs(30)
+        out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(), pinned_task=task,
+                                  trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
+        self.assertTrue(applied)
+        self.assertTrue(any(task in str(x.get("content")) for x in out))           # task survives the fold
 
     def test_boundary_folds_the_completed_step_not_just_lowers_the_trigger(self):
         # THE FIX: at a step boundary the finished step's work must FOLD, not linger in the working-set tail.

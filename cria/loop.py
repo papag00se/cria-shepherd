@@ -1092,7 +1092,11 @@ class Loop:
                                  prompts.load("selfcompact_summary"),
                                  selfcompact.serialize(probegate.clean_gate_results(mm)), rlog,
                                  phase="self-compact") + _briefing_gate_ground_truth(sess),
-            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force)
+            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
+            # The task is a foldable history message in the plan frame (only the STEP is in the system
+            # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
+            # can't summarize the original requirements away.
+            pinned_task=(getattr(sess.plan, "task", "") or ""))
         if applied:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
             return out
