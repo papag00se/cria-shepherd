@@ -33,6 +33,22 @@ class PromptAgnosticismTests(unittest.TestCase):
         self.assertIn("obtained", v)                              # done = facts obtained/visible in evidence
         self.assertIn("does not require", v)                      # ...NOT that any code used them
 
+    def test_all_three_plan_prompts_agree_a_search_is_not_research(self):
+        # THE CONTRADICTION (live runs 0726-131603 / -132211): plan.txt tells the DRAFTER "a web_search
+        # does NOT satisfy this — read the thing the task actually points at", and verify.txt tells the
+        # CRITIC "merely SEARCHING is not obtaining". replan.txt — the ONLY prompt that rewrites the plan
+        # mid-run, and the one that fires precisely because the coder is stuck — said nothing. So a step
+        # worded "Perform an initial web search ... to obtain the base URL, request method, required
+        # parameters, and response schema" was drafted, survived every re-derivation verbatim, and was
+        # rejected by cria's own critic forever: the coder searched, was refused, searched again, for the
+        # whole run. Three prompts, one rule — they must not drift apart again.
+        for name in ("plan", "replan", "verify"):
+            p = prompts.load(name).lower()
+            self.assertIn("web_search", p, f"{name}.txt says nothing about searching-vs-reading")
+            self.assertTrue(any(w in p for w in ("not satisfy", "is not obtaining", "never search",
+                                                 "not the source")),
+                            f"{name}.txt does not say a search fails to satisfy a research step")
+
     def test_coder_system_research_rule_is_language_neutral(self):
         c = prompts.load("coder_system")
         self.assertNotIn("Python/requests/curl", c)          # the Python-only callout is generalized
