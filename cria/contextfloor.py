@@ -64,7 +64,7 @@ _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_edit
 # / selfcompact.TASK_MARKER / loop.CONTINUATION_MARKER — contextfloor is low-level and imports none (avoids
 # a cycle); a test asserts they stay in sync.
 _PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK,
-                    "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:continuation⟧")
+                    "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧")
 
 
 def _has_protect_marker(m: dict) -> bool:

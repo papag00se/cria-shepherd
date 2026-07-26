@@ -34,13 +34,16 @@ class TestAnchorProtection(unittest.TestCase):
     def test_markers_stay_in_sync_with_their_sources(self):
         from cria.loop import BRIEFING_OPEN, CONTINUATION_MARKER
         from cria.probegate import SECTION_PREFIX
-        from cria.selfcompact import SUMMARY_MARKER, TASK_MARKER
+        from cria.selfcompact import SUMMARY_MARKER, TASK_MARKER, FACTS_MARKER
         self.assertIn(BRIEFING_OPEN, contextfloor._PROTECT_MARKERS)
         self.assertIn(SECTION_PREFIX, contextfloor._PROTECT_MARKERS)
         # selfcompact's OWN preservation anchors must be floor-protected too — else the floor drops the
         # pinned task + rolling summary selfcompact ran to preserve (the confirmed north-star loss).
         self.assertIn(SUMMARY_MARKER, contextfloor._PROTECT_MARKERS)
         self.assertIn(TASK_MARKER, contextfloor._PROTECT_MARKERS)
+        # the durable fetch-ledger anchor the loop re-injects must survive the floor too, or the coder
+        # loses the real endpoints again exactly when the window is tightest.
+        self.assertIn(FACTS_MARKER, contextfloor._PROTECT_MARKERS)
         self.assertIn(CONTINUATION_MARKER, contextfloor._PROTECT_MARKERS)
 
     def test_briefing_survives_drop_oldest(self):

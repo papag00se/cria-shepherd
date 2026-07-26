@@ -476,6 +476,64 @@ class GroundedEvidenceTests(unittest.TestCase):
         self.assertNotIn("ALREADY FETCHED", ev)
 
 
+class FetchedFactsAnchorTests(unittest.TestCase):
+    """cria surfaces an API's REAL routes the moment the coder fetches its spec — but the HARNESS compacts
+    that tool result out of its OWN history, so the routes vanish from the coder's context and it re-fetches
+    to rediscover them (observed live: 370 calls re-reading openapi.json, its /handles/{handle} outline gone
+    from the last 20 coder prompts even though cria had surfaced it 16×). cria's anchoring can't protect what
+    the harness already dropped — but it re-injects its DURABLE fetch ledger as a ⟦ctx:facts⟧ anchor from its
+    own server-side memory into every OUTBOUND coder view, so the coder KEEPS the endpoints past a compaction."""
+
+    def test_anchor_carries_the_durable_endpoints_when_facts_exist(self):
+        from cria.loop import _fetched_facts_anchor
+        from cria import selfcompact
+        sess = PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        anchor = _fetched_facts_anchor(sess)
+        self.assertIsNotNone(anchor)
+        self.assertIn(selfcompact.FACTS_MARKER, anchor["content"])   # tagged so compaction/floor keep it verbatim
+        self.assertIn("/handles/{handle}", anchor["content"])        # the real endpoint the coder must code against
+        self.assertIn("openapi.json", anchor["content"])
+
+    def test_no_anchor_when_no_fetches(self):
+        # a task with no web_fetch (a bash/git chore) → empty ledger → nothing injected. GENERAL, not overfit
+        # to the API case: the anchor exists only because a real source was fetched.
+        from cria.loop import _fetched_facts_anchor
+        self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=_plan(2))))
+
+    def test_anchor_is_placed_after_the_leading_system_message(self):
+        from cria.loop import _insert_after_system
+        msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+        out = _insert_after_system(msgs, {"role": "user", "content": "FACTS"})
+        self.assertEqual(out[0]["role"], "system")                   # system stays first (protected head)
+        self.assertEqual(out[1]["content"], "FACTS")                 # anchor right after it — always visible
+
+    def test_work_item_injects_the_ledger_into_the_coder_view_past_a_compaction(self):
+        # END-TO-END: the coder's inbound window here is EMPTY of the fetch (the harness dropped it), yet the
+        # coder still RECEIVES /handles/{handle} because cria re-injects it from sess.fetched_pages.
+        from cria import selfcompact
+        rec = _Recorder([_toolcall()])
+        loop = Loop(_ctx(rec, None))
+        sess = PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        item = sess.plan.items[0]                                     # a plain step, not the pinned research step
+        loop._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve a handle"}],
+                                    "tools": [_SHELL]}, _Rlog(), item, 1)
+        blob = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("/handles/{handle}", blob)                     # coder sees the real endpoint...
+        self.assertIn(selfcompact.FACTS_MARKER, blob)                # ...as the durable facts anchor
+
+    def test_work_item_injects_nothing_when_there_are_no_fetches(self):
+        from cria import selfcompact
+        rec = _Recorder([_toolcall()])
+        loop = Loop(_ctx(rec, None))
+        sess = PlanSession(plan=_plan(2))                            # no fetched_pages
+        item = sess.plan.items[0]
+        loop._work_item(sess, "k", {"messages": [{"role": "user", "content": "list git repos"}],
+                                    "tools": [_SHELL]}, _Rlog(), item, 1)
+        self.assertNotIn(selfcompact.FACTS_MARKER, json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False))
+
+
 class StuckStepReplanTests(unittest.TestCase):
     """A step advances ONLY on a genuine pass — no advance-on-unverified cap — so a MISCONCEIVED step (a
     confused/category-error step the planner wrote whose checks pass but whose intent the critic keeps

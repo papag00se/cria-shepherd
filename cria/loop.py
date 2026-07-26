@@ -982,6 +982,9 @@ class Loop:
         framed["stream"] = False
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
                                prior_work=sess.prior_work, tools=body.get("tools"))
+        facts = _fetched_facts_anchor(sess)  # durable fetch ledger → the coder keeps the real endpoints it
+        if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
+            msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
         steered = ""
         if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
@@ -2947,6 +2950,33 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     if getattr(sess, "fetched_pages", None) is None:
         sess.fetched_pages = {}
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
+
+
+def _fetched_facts_anchor(sess) -> dict | None:
+    """A ⟦ctx:facts⟧ anchor carrying cria's DURABLE fetch ledger (url→status→endpoints), re-injected into
+    the coder's OUTBOUND view every turn there are facts — so the coder KEEPS the real endpoints/fields it
+    already fetched even after the HARNESS compacts the raw tool result out of its OWN history. cria's own
+    anchoring can't protect that: it only ever sees what the harness sends, and the harness compacts before
+    the request arrives. But cria controls the view it sends UPSTREAM to the model, so it re-injects the
+    ledger from its server-side memory. Without it the coder re-fetches a spec whose routes cria already
+    surfaced (observed live: 370 calls re-reading api.handle.me/openapi.json, its /handles/{handle} outline
+    scrolled off; 0 of the last 20 coder prompts still held it). GENERAL: fires only when real fetches exist
+    (sess.fetched_pages); a task with no web_fetch (a bash/git chore) has an empty ledger → nothing injected.
+    Additive ground truth — the real tool results, never a claim about work not done."""
+    ledger = _fetch_ground_truth([], sess, header="PAGES YOU HAVE ALREADY FETCHED")
+    if not ledger.strip():
+        return None
+    return {"role": "user", "content": prompts.render("fetched_facts_anchor",
+                                                       marker=selfcompact.FACTS_MARKER, ledger=ledger)}
+
+
+def _insert_after_system(msgs: list[dict], anchor: dict) -> list[dict]:
+    """Place ``anchor`` right after the leading system/developer message(s) — in the protected head, so it
+    is always visible to the model and never reads as the oldest droppable turn."""
+    i = 0
+    while i < len(msgs) and msgs[i].get("role") in ("system", "developer"):
+        i += 1
+    return msgs[:i] + [anchor] + msgs[i:]
 
 
 def _fetch_ground_truth(messages: list[dict], sess=None,

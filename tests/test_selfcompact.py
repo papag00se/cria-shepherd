@@ -147,6 +147,8 @@ class SelfCompactTests(unittest.TestCase):
         self.assertEqual(selfcompact._SPEC_SHAPE_MARKER, webfetch.SHAPE_MARKER)
         self.assertIn(webfetch.ROUTES_MARKER, selfcompact._ANCHOR_MARKERS)
         self.assertIn(webfetch.SHAPE_MARKER, selfcompact._ANCHOR_MARKERS)
+        # the durable fetch-ledger anchor the loop re-injects must be kept verbatim through a fold too.
+        self.assertIn(selfcompact.FACTS_MARKER, selfcompact._ANCHOR_MARKERS)
 
     def test_continuation_reframe_is_not_fed_to_the_summarizer(self):
         # A ⟦ctx:continuation⟧ message in the middle must be kept verbatim, never summarized — so

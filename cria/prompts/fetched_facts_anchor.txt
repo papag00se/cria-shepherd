@@ -1,0 +1,3 @@
+{{MARKER}} {{LEDGER}}
+
+These are your REAL fetch results this session and they persist here even after older turns scroll away. Code directly against the endpoints and response fields listed above — do NOT re-fetch a page listed here just to rediscover what it returned; you already have it.

@@ -44,6 +44,10 @@ BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim 
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
+FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→status→endpoints) the loop re-injects
+                                    # from cria's own session memory, so the coder keeps the real endpoints it
+                                    # already fetched even after the HARNESS compacts the raw result out of its
+                                    # own history — else it re-fetches to rediscover them (370-call spec loop).
 # cria-SURFACED spec-shape markers — the [API endpoints …] / [response shape …] blocks a web_fetch result
 # carries (mirror webfetch.ROUTES_MARKER / SHAPE_MARKER; a test asserts sync). They hold the API's REAL
 # endpoint paths + response field names — EXTERNAL ground truth the coder must code against, NOT its own
@@ -60,7 +64,7 @@ _SPEC_SHAPE_MARKER = "[response shape —"
 # ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
 # + webfetch.ROUTES_MARKER / SHAPE_MARKER (selfcompact is low-level; a test asserts sync).
 _ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER,
-                   _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
+                   FACTS_MARKER, _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
 
 
 @dataclass
