@@ -309,6 +309,12 @@ STUCK_STEP_REPLAN = 4
 # truth too (it may simplify an over-engineered step — e.g. a package scaffold → a flat script). Fired
 # periodically (every N turns) so a productive-but-long step that yields an unchanged plan isn't churned.
 STEP_THRASH_REPLAN = 12
+PINNED_STEP_RELEASE = 30   # tool calls on ONE pinned step after which the pin is RELEASED. A pin is a hint,
+#                            not a life sentence: _replan_tail holds pinned steps OUT of re-derivation, so a
+#                            coder stuck on a pinned step it never clears can never be moved past it (observed:
+#                            485 calls trapped on one pinned step, building an unrelated project). Well beyond
+#                            what obtaining the facts takes (the fast-path/advance resets the count long
+#                            before this), so it fires only on a genuine trap. Task-agnostic: no inescapable pin.
 
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
@@ -1000,6 +1006,15 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
+            # A PIN is a HINT, not a life sentence. _replan_tail holds pinned steps OUT of re-derivation, so a
+            # coder stuck on a pinned step it never clears can never be moved past it (observed: 485 calls
+            # trapped on one pinned step). After an outsized per-step budget the pin has clearly failed to
+            # help — RELEASE it and re-arm the thrash re-derive so the living plan can reword/drop the stuck
+            # step and advance. General: no pin is an inescapable trap.
+            if item.pinned and sess.step_tool_calls >= PINNED_STEP_RELEASE:
+                item.pinned = False
+                sess.thrash_replanned = False
+                rlog.emit("loop.pin_released", step=idx, calls=sess.step_tool_calls, level="info")
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash

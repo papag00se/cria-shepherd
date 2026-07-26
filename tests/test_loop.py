@@ -551,6 +551,30 @@ class StuckStepReplanTests(unittest.TestCase):
         self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # forward the tool call
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
 
+    def test_pinned_step_releases_after_outsized_budget(self):
+        # A PIN is a hint, not a life sentence: _replan_tail holds pinned steps OUT of re-derivation, so a
+        # coder stuck on a pinned step it never clears can never be moved past it (observed live: 485 calls
+        # trapped on one pinned step, building an unrelated project). After PINNED_STEP_RELEASE tool calls
+        # on it, the pin releases so the living plan can reword/drop the step and advance — task-agnostic.
+        from cria.loop import PINNED_STEP_RELEASE
+        loop = self._loop(_Scripted([_replan(["A", "B"]), _text("NONE")]))
+        sess = self._sess()
+        item = sess.plan.items[1]; item.pinned = True          # the current step is pinned
+        sess.step_tool_calls = PINNED_STEP_RELEASE - 1         # one acting turn away from the release
+        loop._work_item(sess, "k", _body(), _Rlog(), item, 1)
+        self.assertFalse(item.pinned)                          # released — no longer an inescapable trap
+        # released → the re-armed thrash re-derive fires and moves the now-rederivable step off "confused"
+        self.assertNotIn("confused step 2", [it.text for it in sess.plan.items if not it.done])
+
+    def test_pinned_step_not_released_below_budget(self):
+        from cria.loop import PINNED_STEP_RELEASE
+        loop = self._loop(_Scripted([_toolcall()]))
+        sess = self._sess()
+        item = sess.plan.items[1]; item.pinned = True
+        sess.step_tool_calls = 3                                # well under the release budget
+        loop._work_item(sess, "k", _body(), _Rlog(), item, 1)
+        self.assertTrue(item.pinned)                            # still pinned — a normal research step is protected
+
     def test_thrash_replan_fires_at_most_once_per_step_no_churn(self):
         # ANTI-CHURN: re-deriving repeatedly on one step position churned the plan (a weak reasoner
         # returns a different tail each call: 11→5→6→9). The one-shot flag stops it after ONE attempt.
