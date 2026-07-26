@@ -295,6 +295,40 @@ class FetchNavSeedTests(unittest.TestCase):
         finally:
             wf.fetch = orig
 
+    def test_raw_fetch_of_a_spec_still_gets_the_route_outline(self):
+        # THE FOOTGUN (live run 0726-130831): `raw=true` returned parsed=None, and parsed is what every
+        # structural surface is built from — so an oversized spec fetched raw spilled with NO outline at
+        # all: no routes, no response fields, not even top-level keys. The coder got "saved 59,210 chars,
+        # go grep it", grepped for its own guess ("resolve" — 2 useless hits) while /handles/{handle} sat
+        # at line 363, and shipped https://api.handle.me/resolve-handle → 404. `raw` governs the BYTES the
+        # model reads, never whether cria understands the doc's shape.
+        big = json.dumps({"openapi": "3.0.3", "info": {"title": "Handles"},
+                          "paths": {"/handles/{handle}": {"get": {"summary": "s" * 60}},
+                                    "/holders/{address}": {"get": {"summary": "s" * 60}},
+                                    **{f"/pad{i}": {"get": {"summary": "s" * 80}} for i in range(400)}}},
+                         separators=(",", ":"))
+        orig = self._serve(big)
+        try:
+            wf.fetch_nav("https://api.x/openapi.json", raw=True)   # populate the cache RAW
+            status, target, content, msg = wf.oversized_spill("https://api.x/openapi.json")
+            self.assertIn("API endpoints (402)", msg)              # the outline is there...
+            self.assertIn("/handles/{handle}", msg)                # ...naming the REAL route
+            self.assertIn("/holders/{address}", msg)
+            self.assertIn(target, msg)
+        finally:
+            wf.fetch = orig
+
+    def test_raw_reduction_still_passes_the_body_through_untouched(self):
+        # `raw` must keep its own contract: the REDUCED text is the literal source, byte for byte. Only
+        # the structure is additionally learned — nothing about the model's bytes changes.
+        body = '{"a":1,   "b":[2,3]}'
+        reduced, parsed = wf.reduce_for_cache(body, "application/json", "https://api.x/x.json", raw=True)
+        self.assertEqual(reduced, body)                            # untouched, whitespace and all
+        self.assertEqual(parsed, {"a": 1, "b": [2, 3]})            # but the shape is known
+        html, hparsed = wf.reduce_for_cache("<p>hi</p>", "text/html", "https://x/", raw=True)
+        self.assertEqual(html, "<p>hi</p>")                        # raw HTML not flattened...
+        self.assertIsNone(hparsed)                                 # ...and has no structure to learn
+
     def test_small_doc_does_not_spill(self):
         orig = self._serve(json.dumps({"status": "ok"}))
         try:

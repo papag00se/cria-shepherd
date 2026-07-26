@@ -139,27 +139,52 @@ def reduce_for_cache(body: str, content_type: Optional[str], url: str,
     and minified fits MORE of the doc per page than indented would. `find=` pretty-prints the
     subtree it returns, so a section the model asks for is still legible."""
     ct = (content_type or "").lower()
-    if raw:  # caller wants the literal source (front-end debugging, markup inspection) — reduce nothing
-        return body, None
+    if raw:
+        # The caller wants the literal source (front-end debugging, markup inspection), so REDUCE
+        # nothing — but still learn the doc's STRUCTURE. `raw` is about the bytes the model reads; it
+        # was also silently discarding `parsed`, and `parsed` is what every structural surface is built
+        # from. With it None, an oversized spec spilled with NO outline: no route list, no response
+        # fields, not even the top-level keys — just "saved 59,210 chars, go grep it". Observed live:
+        # the coder fetched openapi.json with raw=true, got no map, grepped the file for its own
+        # guess ("resolve", 2 useless hits) while /handles/{handle} sat at line 363, and shipped
+        # https://api.handle.me/resolve-handle → 404. That is the exact gap _spill_outline exists to
+        # close, reopened by a flag that has nothing to do with it.
+        return body, _structure_of(body, content_type, url)
     if "html" in ct:  # incl. application/xhtml+xml — a rendered web page: flatten to readable text
         return html_to_text(body, url), None
     if "xml" in ct:   # RSS/Atom/SVG/SOAP/sitemap — STRUCTURED data; keep the tags, never prose-flatten it
         return body, None
     if "json" in ct:
-        try:
-            obj = json.loads(body)
-            return json.dumps(obj, separators=(",", ":"), ensure_ascii=False), obj
-        except (ValueError, TypeError):
+        obj = _structure_of(body, content_type, url)
+        if obj is None:
             return body, None
+        return json.dumps(obj, separators=(",", ":"), ensure_ascii=False), obj
+    if _is_yaml(content_type, url) and _yaml is not None:
+        obj = _structure_of(body, content_type, url)
+        if obj is not None:
+            # canonical, LINE-BASED rendering so paging never cuts mid-line (the seed bug)
+            return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=False), obj
+    return body, None
+
+
+def _structure_of(body: str, content_type: Optional[str], url: str) -> Optional[Any]:
+    """The doc's parsed structure (JSON or YAML) — None when it has none, or won't parse. Pure: it never
+    rewrites the body, so it is safe to call on a ``raw`` fetch whose bytes must pass through untouched.
+    ONE parser for both paths, so a structural surface can't exist for the reduced view and vanish for
+    the raw one."""
+    ct = (content_type or "").lower()
+    if "json" in ct:
+        try:
+            return json.loads(body)
+        except (ValueError, TypeError):
+            return None
     if _is_yaml(content_type, url) and _yaml is not None:
         try:
             obj = _yaml.safe_load(body)
-            if isinstance(obj, (dict, list)):
-                # canonical, LINE-BASED rendering so paging never cuts mid-line (the seed bug)
-                return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=False), obj
-        except Exception:  # noqa: BLE001 - any YAML parse error → fall through to text
-            pass
-    return body, None
+            return obj if isinstance(obj, (dict, list)) else None
+        except Exception:  # noqa: BLE001 - any YAML parse error → no structure
+            return None
+    return None
 
 
 # --- per-URL cache (web_fetch.rs DOC_CACHE) ------------------------------------------------
