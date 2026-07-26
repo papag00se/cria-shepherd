@@ -16,15 +16,6 @@ class PromptAgnosticismTests(unittest.TestCase):
         # it must NOT command an unconditional API-spec first step as the sole framing
         self.assertNotIn("DON'T GUESS THE API's ENDPOINTS", p)
 
-    def test_research_named_source_is_not_api_spec_only(self):
-        # The INJECTED research step (fired when a task names a domain) assumed the domain was an API with
-        # an openapi.json — so for a docs/service domain it steered the coder at a phantom openapi.json. It
-        # must also name docs/reference sources, not only an API spec.
-        r = prompts.render("research_named_source", domain="example.com")
-        self.assertTrue(any(w in r.lower() for w in ("docs", "documentation", "reference")),
-                        "research_named_source still frames research as API-spec only")
-        self.assertIn("don't assume a spec file exists", r.lower())
-
     def test_verifier_investigative_step_accepts_non_web_sources(self):
         v = prompts.load("verify")
         # a file read / --help / schema must be able to satisfy an investigative step, not only a web_fetch
@@ -36,10 +27,8 @@ class PromptAgnosticismTests(unittest.TestCase):
         # A research/investigative step is fulfilled the MOMENT the coder OBTAINS the real facts via a tool
         # call (visible in a `->` result) — NOT when any code USES them (that is a later step's job). Judging
         # it by code-usage made the critic keep failing an already-satisfied research step, trapping the coder
-        # re-fetching a spec it already had (churn). Both the injected step and the critic must say so.
-        r = prompts.render("research_named_source", domain="example.com").lower()
-        self.assertIn("not writing code in this step", r)
-        self.assertNotIn("so the code uses concrete values", r)   # the code-usage clause that misjudged it
+        # re-fetching a spec it already had (churn). The critic is now the ONLY thing that says so — cria no
+        # longer injects a research step of its own to carry the rule.
         v = prompts.load("verify").lower()
         self.assertIn("obtained", v)                              # done = facts obtained/visible in evidence
         self.assertIn("does not require", v)                      # ...NOT that any code used them

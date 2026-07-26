@@ -1,4 +1,0 @@
-THE SESSION SO FAR (the task, any URLs/domains the user or the agent mentioned, and its repeated searches):
-{{SESSION}}
-
-Which ONE url should it web_fetch next to move forward? Prefer a full URL named in the session; else a named domain's relevant page — its docs, or (when the task is about an API) its spec root `.../openapi.json`, `.../swagger`, or `.../`. Reply with just the URL, or `NONE` ONLY if no domain or URL is named anywhere.

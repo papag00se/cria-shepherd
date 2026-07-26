@@ -31,15 +31,21 @@ single largest risk surface.
 ### 2. Interventions are additive / regression-only — never block the first fix, never delete correct content
 **Rule.** A new guard may refuse or act only when it makes something *already working*
 worse. Validate-before-lower refuses only a write that would break a file that currently
-parses — a new or already-broken file writes freely. Additive steps (a prepended research
-step) never delete or rewrite an existing one.
+parses — a new or already-broken file writes freely. The durable fetch ledger only ever tells
+the coder MORE about what it really obtained.
 **Why.** The dangerous class of intervention is DELETION or REDIRECTION of a prior; the safe
 class is ADDITIVE + RECOVERY. A guard that blocks the *first* attempt at something can trap
 the loop forever.
+**Corollary (its own rule, learned the hard way).** ADDITIVE is *necessary, not sufficient*.
+A prepended plan step is additive and still forbidden: cria does not AUTHOR work, it shapes
+context. Two things follow — cria writes no plan step of its own, and nothing cria writes is
+exempt from the living re-derivation (a "pinned" step held out of it is an inescapable
+mandate, and one burned 485 calls). Likewise cria never SUBSTITUTES its own action for the
+coder's: surface the fact, steer, and let the coder act.
 **Embodied.** [`project_convergence_fixes_2026_07_18`] (validate-before-lower is
 regression-only; subtractive gate framing), [`project_edit_recovery_unify`] (monotonic
-policy); `cria/planner.py` (research-first is ADDITIVE, never deletes/rewrites),
-`cria/indicators.py` (markers purely additive to output).
+policy); `cria/planner.py` + `cria/plan.py` (the retired research-first injection + pin, and
+why), `cria/indicators.py` (markers purely additive to output).
 
 ### 3. Silence over noise — on a clean signal, say nothing
 **Rule.** Speak only on a high-confidence, actionable signal. When a check *passes*, inject

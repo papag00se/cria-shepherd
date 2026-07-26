@@ -40,9 +40,9 @@ class PlanItem:
     text: str
     done: bool = False
     note: str | None = None  # a clean status — only ever "verified" (a step advances ONLY on a pass)
-    pinned: bool = False      # a cria-injected must-survive step (the research-first step): the living
-    #                           re-derivation holds it out and keeps it verbatim while it's still pending,
-    #                           so a stuck/thrash replan can't drop or reword "read the real source first".
+    # NB: there is deliberately no `pinned` flag. A step cria held out of the living re-derivation was an
+    # inescapable mandate, and the only step it ever protected was one cria authored itself — planning
+    # cria has no business doing. Every step is re-derivable from the real work.
 
 
 @dataclass

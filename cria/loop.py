@@ -39,8 +39,7 @@ from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
-from . import searchloop, webfetch
-from .searchloop import normalize_search, searches_match
+from .searchloop import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
@@ -193,17 +192,12 @@ class GuardState:
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
-    # SEARCH-LOOP escalation: a weak model can web_search the same thing over and over without ever
-    # web_fetch-ing to read a page — then hallucinate the API (fabliq: 9 near-identical searches, 0
-    # fetches, wrong endpoint). At the streak cap cria stops asking and FETCHES for it (reasoner picks
-    # the URL from the full context, cria substitutes a web_fetch for the search — the escape a stuck
-    # model won't take itself).
-    search_words: list = None  # the last web_search's normalized word-set (searchloop)
-    search_streak: int = 0     # consecutive near-identical web_searches (reset by any other action)
-    search_volume: int = 0     # TOTAL web_searches since the last task-domain fetch (catches the VARIED-query
-    #                            spin the near-dup streak misses — the coder that never fetches the spec)
-    tried_spec_convention: bool = False  # spent the one deterministic <task-domain>/openapi.json escape
-    tried_domain_root: bool = False      # spent the deterministic <task-domain>/ root escape (reasoner-punt floor)
+    # NB: there is deliberately NO search-escape state here. cria used to SUBSTITUTE a web_fetch for a
+    # search-looping coder's own web_search (streak/volume counters, a convention URL, a domain-root
+    # floor when the reasoner punted). Substituting the coder's action is the REDIRECTION class, and the
+    # punt-floor was a deterministic fallback behind a reasoner call — both are what the doctrine forbids
+    # (principles #1, #2, #4). The search gate still REFUSES a near-duplicate search and steers "read the
+    # source you named" — a steer the coder can disregard, not an action taken for it.
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
     # real result has been floored out of the window (else a steer can't counter a late spiral)
 
@@ -226,8 +220,6 @@ class PlanSession(GuardState):
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
-    research_surfaced: bool = False  # cria has surfaced the named source's real routes/fields (latched — the
-    #                                  research step is DONE the instant this is true, even mid-tool-call-loop)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -282,17 +274,6 @@ def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
 # model to succeed on its OWN); it just keeps trying to unstick it.
 THRASH_STALL_CYCLES = 2
 
-# SEARCH-LOOP escalation threshold. After this many consecutive near-identical web_searches (matched by
-# searchloop.searches_match) with no fetch/other action between, the coder is clearly not going to
-# web_fetch on its own — cria asks the reasoner (given the WHOLE context, so a domain the USER mentioned
-# is in reach) which URL to read, then SUBSTITUTES a web_fetch for the search. The escape, done for it.
-SEARCH_STREAK_ESCALATE = 5
-SEARCH_VOLUME_ESCALATE = 8   # after this many web_searches with NO task-domain fetch, substitute the fetch
-#                              regardless of query wording. The near-dup streak resets on a reworded query, so
-#                              a coder that VARIES its search (observed: 94 distinct queries) never tripped the
-#                              streak, never fetched the spec, so cria's spec-surfacing never fired and it
-#                              GUESSED the endpoint (/resolve → 404). Volume catches the spin the streak can't.
-
 # STUCK-STEP re-plan threshold. A step advances ONLY on a genuine pass — there is deliberately no
 # advance-on-unverified cap (real failing checks must be fixed, never skipped). But a MISCONCEIVED step
 # — a category-error or confused step the weak planner wrote whose CHECKS pass yet whose critic keeps
@@ -311,12 +292,6 @@ STUCK_STEP_REPLAN = 4
 # truth too (it may simplify an over-engineered step — e.g. a package scaffold → a flat script). Fired
 # periodically (every N turns) so a productive-but-long step that yields an unchanged plan isn't churned.
 STEP_THRASH_REPLAN = 12
-PINNED_STEP_RELEASE = 30   # tool calls on ONE pinned step after which the pin is RELEASED. A pin is a hint,
-#                            not a life sentence: _replan_tail holds pinned steps OUT of re-derivation, so a
-#                            coder stuck on a pinned step it never clears can never be moved past it (observed:
-#                            485 calls trapped on one pinned step, building an unrelated project). Well beyond
-#                            what obtaining the facts takes (the fast-path/advance resets the count long
-#                            before this), so it fires only on a genuine trap. Task-agnostic: no inescapable pin.
 
 
 def track_gate_progress(gs: GuardState, finding: str) -> None:
@@ -398,20 +373,6 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
             str(obj.get("recommended_query") or "").strip())
 
 
-def _research_facts_obtained(evidence: str, domain: str) -> bool:
-    """GROUND TRUTH that a named-source research step is satisfied: the coder web_fetched the source AND
-    cria itself surfaced its real endpoint routes / response fields (cria's OWN spec-surface markers,
-    emitted only when it parsed a real spec-shaped doc) for that host. Those facts are then in a `->`
-    result — which IS the research step's whole goal — so completion must NOT hinge on the weak critic
-    re-judging a fetch-churn-polluted evidence log (observed live: 189 step-1 re-drives on a spec whose
-    endpoint + fields sat in the evidence the entire time). Deterministic: cria authored the markers, so
-    this reads a real fact it produced, not a judgment. Only the SPEC case (one example) — non-spec
-    research (a docs page, a --help) has no such marker and still goes to the critic."""
-    if not (domain and evidence) or domain not in evidence:
-        return False
-    return webfetch.ROUTES_MARKER in evidence or webfetch.SHAPE_MARKER in evidence
-
-
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
                        evidence: str, rlog, coder_tools: str = "") -> list[str] | None:
     """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
@@ -447,14 +408,11 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
     if not kept:
         return None
-    # NO research-first re-prepend here. Research-first is enforced ONCE, at initial plan time
-    # (Planner.plan_for), and that step is PINNED so the living re-derivation can't drop or reword it while
-    # it's still pending (see _replan_tail's pinned hold-out). Re-prepending HERE instead relied on a
-    # reasoner judging "is research already satisfied?" from a long evidence log on EVERY advance — a
-    # compound, negatively-framed judgment a small model can't make reliably, so a single wrong "not
-    # satisfied" re-added research over and over (observed: the same step re-added 3× → ~275 churning turns
-    # re-doing research it already had). Pinning is ground truth (cria knows the step it injected); a
-    # per-advance re-prepend keyed on an unreliable judgment was just churn.
+    # NO research-first re-prepend here — and none at plan time either. cria does not AUTHOR plan steps:
+    # injecting "web_fetch the named source" was cria planning, and pinning it made a possibly-wrong step
+    # an inescapable mandate. The general mechanisms carry it instead — plan.txt tells the drafter to
+    # research first, the critic clears a research step on facts obtained, and the durable ⟦ctx:facts⟧
+    # ledger keeps the real endpoints in front of the coder across compaction.
     return kept
 
 
@@ -866,8 +824,8 @@ class Loop:
         multi-step probe/`_verify` vs single `_gate_single_done`); this owns everything between:
         advertise the completion tool → call the coder → normalise a `task_complete` → rumination +
         truncation guards → banner/reasoning hygiene → track repetition + write-streak on an acting turn
-        → the search-loop escape. Returns the guarded completion ({} on a decode failure — a no-tool
-        'done' the caller's gate then handles)."""
+        → the outgoing search's query judge. Returns the guarded completion ({} on a decode failure — a
+        no-tool 'done' the caller's gate then handles)."""
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
@@ -878,13 +836,9 @@ class Loop:
         _record_reasoning(sess, coder)  # keep the coder's thinking for the quiet-flail detector
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
-        # SEARCH-LOOP escape: a run of near-identical web_searches with no fetch → cria fetches FOR it
-        # (reasoner picks the url from the full context, we swap the search for a web_fetch). Before the
-        # tracking, so the repetition/write-streak see what's actually FORWARDED.
-        # Judge an outgoing web_search's query FIRST (off-target → substitute a fetch/better query), then
-        # the streak escape. Both operate on the SAME forwarded search, query-judge before escalation.
+        # Judge an outgoing web_search's query (off-target → a better query). Before the tracking, so the
+        # repetition/write-streak guards see what's actually FORWARDED.
         coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
-        coder = guard_search_escalation(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
         if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
             guard_track_repetition(sess, coder, rlog, step=step)
@@ -1011,28 +965,6 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
-            # GROUND-TRUTH research completion, PROACTIVE (not only at verify). cria surfaces the source's real
-            # routes/fields the moment the coder fetches the spec — that IS the research step's whole goal — but
-            # the coder often keeps fetching/reading without ever signalling done, so the verify-time fast-path
-            # never fires and it LOOPS (observed: 370 calls re-fetching a spec whose routes cria had already
-            # surfaced 120×). Latch the surfaced-facts signal the instant it appears (before the HARNESS's own
-            # history compaction can drop the marker), then ADVANCE the pinned research step — don't wait for a
-            # verify the looping coder never reaches. Its facts are ground truth cria produced, not a judgment.
-            if item.pinned and not sess.research_surfaced:
-                _dom = self._research_domain_for(sess, item)
-                if _dom and _research_facts_obtained(self._grounded_evidence(sess, body), _dom):
-                    sess.research_surfaced = True
-                    rlog.emit("loop.research_facts_latched", domain=_dom, level="info")
-            if item.pinned and sess.research_surfaced:
-                return self._advance(sess, key, body, idx, len(sess.plan.items), rlog)
-            # No facts yet, and a PIN is a hint not a life sentence: _replan_tail holds pinned steps OUT of
-            # re-derivation, so a coder stuck on a pinned step it never satisfies can never be moved past it
-            # (observed: 485 calls trapped on one pinned step). After an outsized per-step budget the pin has
-            # clearly failed — RELEASE it and re-arm the thrash re-derive so the plan can move past it.
-            if item.pinned and sess.step_tool_calls >= PINNED_STEP_RELEASE:
-                item.pinned = False
-                sess.thrash_replanned = False
-                rlog.emit("loop.pin_released", step=idx, calls=sess.step_tool_calls, level="info")
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
@@ -1059,8 +991,7 @@ class Loop:
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")),
-                                  research_domain=self._research_domain_for(sess, item))
+                                  coder_tools=_coder_tools_summary(body.get("tools")))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1180,8 +1111,7 @@ class Loop:
             digest = prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                      coder_tools=_coder_tools_summary(body.get("tools")),
-                                      research_domain=self._research_domain_for(sess, item))
+                                      coder_tools=_coder_tools_summary(body.get("tools")))
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -1221,8 +1151,7 @@ class Loop:
         digest = proberun.completion_probe_digest(outcome.report)
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")),  # grounded in the coder's own runs
-                                  research_domain=self._research_domain_for(sess, item))
+                                  coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1272,16 +1201,11 @@ class Loop:
         remaining = [it for it in sess.plan.items if not it.done]
         if not remaining:
             return
-        # A PINNED step (the cria-injected research-first step) that is still pending is held OUT of the
-        # re-derivation entirely and kept verbatim at the head of the not-done tail. This path also fires
-        # from the STUCK and THRASH replans, which can run while research is the current step — and letting
-        # the reasoner reword or drop it is exactly how the shipped code loses "read the real source first"
-        # and ships a guessed endpoint. This is ground truth (cria pinned the step it injected), not a
-        # per-advance reasoner judgment. Once research VERIFIES it becomes an immutable done_item anyway.
-        pinned = [it for it in remaining if it.pinned]
-        rederivable = [it for it in remaining if not it.pinned]
-        if not rederivable:  # nothing but the pinned research step remains — leave it to verify normally
-            return
+        # EVERY pending step is re-derivable. cria used to hold a PINNED step out of the re-derivation so
+        # its own injected research step could never be reworded or dropped — but a step held out of the
+        # living plan is an inescapable mandate (485 calls burned on one), and cria authoring the step was
+        # the overreach underneath it. Nothing cria writes outranks the re-derivation any more.
+        rederivable = remaining
         evidence = self._grounded_evidence(sess, body)
         tools = _coder_tools_summary(body.get("tools"))
         steps = reassess_remaining(
@@ -1298,7 +1222,7 @@ class Loop:
                 return
         if [it.text for it in rederivable] == steps:  # unchanged → no churn, no log
             return
-        sess.plan.items = done_items + pinned + [PlanItem(text=s) for s in steps]
+        sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
         rlog.emit("loop.replan", step=idx, before=len(rederivable), after=len(steps))
 
     def _renudge(self, sess: PlanSession, key: str, body: dict, reason: str, rlog) -> dict:
@@ -1415,31 +1339,12 @@ class Loop:
             return log
         return (log + "\n\n" + facts) if log else facts
 
-    def _research_domain_for(self, sess: "PlanSession", item) -> str:
-        """The task's literal API host WHEN ``item`` is the pinned research step, else "" — the gate for
-        _verify's ground-truth research fast-path. Deterministic (searchloop.task_api_domain, the same
-        literal-host extractor that pinned the step); only the pinned research-first step can shortcut the
-        critic, never an ordinary step that merely happens to run after a spec was fetched."""
-        return searchloop.task_api_domain(sess.plan.task) if getattr(item, "pinned", False) else ""
-
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
-                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
-                research_domain: str = "") -> tuple[bool, str]:
-        # GROUND-TRUTH fast-path for the PINNED named-source research step (caller passes research_domain
-        # only then): if cria itself surfaced the source's real endpoint routes / response fields from the
-        # coder's web_fetch, the facts ARE obtained — that IS this step's whole goal — so don't route it to
-        # the weak critic, which false-negatives a research step buried in fetch-churn and traps the coder
-        # re-researching a spec it already has (observed live: 189 step-1 re-drives). Deterministic: keyed
-        # off cria's own markers in the real evidence, per "if the model extracted the info with a tool
-        # call, that fulfills the research task."
-        if research_domain and _research_facts_obtained(evidence, research_domain):
-            rlog.emit("loop.research_satisfied_groundtruth", domain=research_domain, level="info")
-            _dump_verify(self._run_dir(rlog), key, idx, total, item,
-                         "(ground-truth research fast-path — source fetched; cria surfaced its real "
-                         "endpoint routes/response fields, which ARE the step's goal)", evidence, True,
-                         f"research facts obtained for {research_domain} — no critic call needed",
-                         response="(no verifier call — decided by ground truth, not the critic)")
-            return True, ""
+                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "") -> tuple[bool, str]:
+        # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
+        # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
+        # and that injection is gone. The critic judges every step, grounded on the same durable fetch
+        # facts (_grounded_evidence) the fast-path was reading.
         # System instruction: cria/prompts/verify.txt. User message (the step + real
         # ground truth): assembled from the labels in cria/prompts/verify_user.txt.
         system = prompts.load("verify")
@@ -1894,7 +1799,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "plan": {
             "id": sess.plan.id, "task": sess.plan.task, "created": sess.plan.created,
             "status": sess.plan.status,
-            "items": [{"text": it.text, "done": it.done, "note": it.note, "pinned": it.pinned}
+            "items": [{"text": it.text, "done": it.done, "note": it.note}
                       for it in sess.plan.items],
         },
         "summary": sess.summary,
@@ -1911,8 +1816,7 @@ def _session_from_dict(d) -> PlanSession | None:
         p = d["plan"]
         plan = Plan(id=str(p["id"]), task=str(p["task"]), created=str(p["created"]),
                     status=str(p.get("status", "in_progress")),
-                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"),
-                                    pinned=bool(it.get("pinned")))
+                    items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"))
                            for it in p["items"]])
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
@@ -3159,32 +3063,6 @@ def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: di
                         condition="flail", reasoning_window=window)
 
 
-_URL_RE = re.compile(r"https?://[^\s\"'<>)\]}]+")
-
-# A bare host/domain token — used to recover the API domain the USER named in the task. The negative
-# lookahead drops file-name lookalikes (``resolve_handle.py``, ``config.json``): a trailing label that
-# is a common code/data extension is a filename, not a host.
-def _task_api_domain(messages: list[dict]) -> str:
-    """The single API host the user named in the task's latest user turn — e.g. ``api.handle.me``.
-    Thin wrapper over the shared ``searchloop.task_api_domain`` (the planner uses the same extractor for
-    its research-first enforcement, so the escape and the plan agree on what domain the task names)."""
-    return searchloop.task_api_domain(latest_user_text(messages))
-
-
-def author_search_fetch(reasoner_chat, reasoner_role, body: dict, rlog) -> str:
-    """Stuck-search escalation: the coder keeps web_searching without ever web_fetch-ing. Hand the reasoner
-    the WHOLE conversation (scrubbed of the harness frame) — so a domain the USER named is in reach — and
-    ask for the ONE url it should read to move forward. Returns a bare URL, or "" (reasoner declined)."""
-    session = selfcompact.serialize(_drop_harness_frame(_reasoner_session(body.get("messages", []))))
-    text = (summarize(reasoner_chat, reasoner_role, prompts.load("search_fetch"),
-                      prompts.render("search_fetch_user", session=session), rlog, phase="reasoner",
-                      coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
-    if re.match(r"\s*NONE\b", text, re.I):   # a WORD-anchored decline — not a substring, and not "Nonetheless…"
-        return ""
-    m = _URL_RE.search(text)
-    return m.group(0).rstrip(".,);") if m else ""
-
-
 def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> dict:
     """Swap one tool call for a web_fetch of ``url`` and attach ``note`` telling the coder cria did it."""
     msg["tool_calls"] = [{"id": tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
@@ -3245,69 +3123,6 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     _add_note(coder, f"'{query}' looked off-target for this task — searching '{rec}' instead")
     rlog.emit("loop.search_query_judged", action="requery", query=query, rec=rec)
     return coder
-
-
-def guard_search_escalation(sess: GuardState, coder: dict, body: dict,
-                            reasoner_chat, reasoner_role, rlog) -> dict:
-    """Get a coder that's flailing on doc-discovery onto the API the task NAMED. At
-    ``SEARCH_STREAK_ESCALATE`` near-identical web_searches with no fetch (runE) the coder won't fetch on
-    its own, so cria SUBSTITUTES a fetch for the search — convention-first (``<task-domain>/openapi.json``,
-    spent once via ``tried_spec_convention``), else a reasoner-picked URL, and when the reasoner declines
-    (NONE) it falls to the ``<task-domain>/`` root (``tried_domain_root``) — two ground-truth escapes so a
-    weak reasoner's NONE can't strand the coder. Any other action (a fetch, a write, a genuinely-new
-    search) resets the streak. Returns the coder, search→fetch swapped."""
-    msg = (coder.get("choices") or [{}])[0].get("message") or {}
-    tcs = msg.get("tool_calls") or []
-    domain = _task_api_domain(body.get("messages", []))
-    # A fetch of the task DOMAIN means the coder engaged the real source (cria's spec-surfacing fires on it)
-    # → clear the whole search-spin state, near-dup AND volume.
-    if domain and any(_tool_name(tc) == "web_fetch"
-                      and domain in str(massage._args((tc.get("function") or {}).get("arguments")).get("url", ""))
-                      for tc in tcs):
-        sess.search_streak, sess.search_words, sess.search_volume = 0, None, 0
-        return coder
-    search_tc = next((tc for tc in tcs if _tool_name(tc) == "web_search"), None)
-    if search_tc is None:
-        sess.search_streak, sess.search_words = 0, None   # a different action → not looping on NEAR-DUP search
-        return coder                                       # (search_volume PERSISTS: still no task-domain fetch)
-    query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", ""))
-    words = normalize_search(query)
-    sess.search_streak = sess.search_streak + 1 if (sess.search_words and searches_match(words, sess.search_words)) else 1
-    sess.search_words = words
-    sess.search_volume += 1   # every web_search adds to the spin count until a task-domain fetch clears it
-    if (sess.search_streak < SEARCH_STREAK_ESCALATE and sess.search_volume < SEARCH_VOLUME_ESCALATE) \
-            or reasoner_role is None:
-        return coder
-    # Convention-first: when the task NAMED an API domain, spend the one deterministic escape on the
-    # OpenAPI standard path <domain>/openapi.json before delegating the URL to the reasoner. Observed
-    # (runE): the reasoner, handed the whole session, kept guessing vaguer roots (/swagger, /) and
-    # NEVER /openapi.json — so the coder web_searched 33× and never fetched the spec that was 200 all
-    # along. Grounded in the user's own domain; self-limited to once (a 404 then falls to the reasoner,
-    # which may know a non-standard path) so an API without /openapi.json can't trap the escape here.
-    if domain and not sess.tried_spec_convention:
-        sess.tried_spec_convention = True
-        url = f"https://{domain}/openapi.json"
-        via = "convention"
-    else:
-        url = author_search_fetch(reasoner_chat, reasoner_role, body, rlog)
-        via = "reasoner"
-        if not url and domain and not sess.tried_domain_root:
-            # Reasoner-punt floor: a weak reasoner keeps replying NONE (observed: 5 of 6 escapes) even
-            # though the task NAMED a domain, leaving the coder to loop searches forever. When it declines,
-            # fetch the named domain's ROOT — the docs landing page the user pointed to (and, since anchor
-            # hrefs are now preserved, the page that links straight to the spec). Ground truth, not a guess;
-            # spent once so it can't itself loop. This is exactly what the repeat-search steer already tells
-            # the coder to do ("stop searching, FETCH <domain>") — cria just does it when the coder won't.
-            sess.tried_domain_root = True
-            url = f"https://{domain}/"
-            via = "domain-root"
-    sess.search_streak, sess.search_words, sess.search_volume = 0, None, 0   # cooldown whether or not a url came back
-    if not url:
-        rlog.emit("loop.search_escalation", url=None)     # reasoner had nothing → let the search go (gate refuses a repeat)
-        return coder
-    rlog.emit("loop.search_escalation", url=url, via=via)
-    return _substitute_fetch(coder, msg, search_tc, url,
-                             f"searched {SEARCH_STREAK_ESCALATE}× without fetching — fetching {url} for you")
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the

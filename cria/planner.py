@@ -17,10 +17,9 @@ import re
 import shutil
 import tempfile
 import threading
-from dataclasses import replace
 from datetime import datetime, timezone
 
-from . import massage, planner_tools, prompts, searchloop
+from . import massage, planner_tools, prompts
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -240,58 +239,15 @@ def _parse_step_numbers(ans: str, n_steps: int) -> set:
     return {int(x) - 1 for x in re.findall(r"\d+", ans) if 0 <= int(x) - 1 < n_steps}
 
 
-def reasoned_api_domain(ask, task: str) -> str:
-    """The external API host the task requires — "" for none. The host the task LITERALLY names is GROUND
-    TRUTH and WINS over a reasoner paraphrase (the reasoner was seen to drop `api.` from `api.handle.me`,
-    steering the coder at the website); the reasoner supplies a domain only for a product-only mention the
-    task didn't spell out. ``ask(system, user) -> str`` is the caller's one-shot reasoner call."""
-    ans = ask(prompts.load("plan_names_api"), "TASK:\n" + task) or ""
-    tok = ans.split()[0].strip("`'\".,;:()") if ans.split() else ""
-    if not (tok and searchloop._looks_like_domain(tok)):
-        return ""  # NONE or unparseable → no domain
-    tok = tok.lower()
-    literal = searchloop.task_api_domain(task)
-    if literal and (literal == tok or literal.endswith("." + tok)):
-        return literal   # the exact host the task named beats a registrable-domain paraphrase
-    return tok
-
-
-def reasoned_has_research(ask, task: str, steps: list[str], evidence: str = "") -> bool:
-    """Whether the plan's API research is already SATISFIED — True unless a remaining step still CALLS the
-    API with no earlier step (and no prior work in ``evidence``) reading its real source first. ``evidence``
-    lets the LIVING re-derivation see that the coder already read the spec, so it doesn't re-prepend a
-    research step forever. Unclear → True (never prepend a redundant step on a guess — silence over noise)."""
-    if not steps:
-        return True
-    plan_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
-    user = f"TASK:\n{task}\n\nPLAN:\n{plan_text}"
-    if evidence.strip():
-        user += f"\n\nEVIDENCE:\n{evidence}"
-    m = re.search(r"\b(YES|NO)\b", ask(prompts.load("plan_has_research"), user) or "", re.I)
-    return m.group(1).upper() == "YES" if m else True
-
-
-def enforce_research_first(ask, task: str, steps: list[str]) -> tuple[list[str], str, int]:
-    """ADDITIVE research-first invariant — Planner.plan_for only. When the task names an external API host,
-    ensure exactly ONE research step exists AND identify it for PINNING, whether the PLANNER drafted it or
-    cria must inject it. Returns (steps, domain-or-'', pin_index): pin_index is the index of the research step
-    to pin — so the living re-derivation can't drop it AND the verify ground-truth fast-path recognizes it
-    (a planner-drafted research step left unpinned meant the fast-path never fired and the critic
-    false-negatived it) — or -1 when no host is named or no research step is warranted. NEVER deletes or
-    rewrites a step."""
-    domain = reasoned_api_domain(ask, task)
-    if not (domain and steps):
-        return steps, "", -1
-    # Inject cria's OWN clean research step (web_fetch the named source) and PIN it ONLY when the planner
-    # drafted NO research step. Do NOT pin the PLANNER's research step: its research steps proved unreliable
-    # across runs ("locate the documentation" → a 94-search spin then a guessed endpoint; "open the source
-    # repository" → the coder built an SDK for a one-file task), and PINNING one makes a flawed step
-    # AUTHORITATIVE and inescapable. An un-pinned planner research step is still cleared by the critic (facts
-    # obtained) and can be reworded/dropped by re-derivation if it leads the coder astray — the general
-    # mechanisms, not a pin. Only cria's own grounded step earns the pin (+ the ground-truth fast-path).
-    if reasoned_has_research(ask, task, steps):
-        return steps, domain, -1
-    return [prompts.render("research_named_source", domain=domain)] + steps, domain, 0
+# NB: cria does NOT author plan steps. A "research-first" enforcement used to prepend its own step
+# ("web_fetch <the named domain>'s real source") whenever the task named an API host and the planner had
+# drafted no research step, and PIN it so the living re-derivation couldn't touch it. Both halves were
+# overreach: authoring a step is planning cria has no business doing (the injected step still had to guess
+# a discovery URL), and pinning made a possibly-wrong step an inescapable mandate — it needed its own
+# release valve to stop trapping the coder. plan.txt already tells the drafter to research first, the step
+# critic clears a research step on facts obtained, and the durable ⟦ctx:facts⟧ ledger keeps the real
+# endpoints in front of the coder across compaction. Those are the general mechanisms; this was a
+# task-shaped injection on top of them.
 
 
 class Planner:
@@ -383,24 +339,9 @@ class Planner:
             steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
-        # RESEARCH-FIRST enforcement (ADDITIVE): when the task names an external API host, ensure exactly ONE
-        # research step exists and PIN it — whether the PLANNER drafted its own "read the spec/docs" step or
-        # cria has to prepend one (the coder learns the real endpoint + fields before any code depends on
-        # them; the URL is the NAMED host's standard discovery path). The pin (below) is what lets the living
-        # re-derivation (_replan_tail) keep it from being dropped/reworded AND lets the verify ground-truth
-        # fast-path recognize it as the research step — so a planner-authored research step is no longer
-        # invisible to the fast-path (which left it churning against the weak critic). Never deletes/rewrites.
-        pin_idx, domain = -1, ""
-        if self._role is not None:
-            before_n = len(steps)
-            steps, domain, pin_idx = enforce_research_first(
-                lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
-            if domain and pin_idx >= 0:  # a new cria step was prepended, OR the planner's own step is pinned
-                rlog.emit("plan.research_prepended" if len(steps) > before_n else "plan.research_pinned",
-                          domain=domain, index=pin_idx, level="info")
+        # The plan is the PLANNER's, minus the noise judgment above — cria adds no step of its own (see the
+        # research-first note above the class).
         items = [PlanItem(text=s) for s in steps]
-        if 0 <= pin_idx < len(items):  # PIN the research step (planner's own OR cria's)
-            items[pin_idx].pinned = True
         plan = Plan(
             id=self._new_id(key),
             task=task,
