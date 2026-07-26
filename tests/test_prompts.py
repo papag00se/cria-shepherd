@@ -49,6 +49,33 @@ class PromptAgnosticismTests(unittest.TestCase):
                                                  "not the source")),
                             f"{name}.txt does not say a search fails to satisfy a research step")
 
+    def test_no_model_facing_string_carries_the_literal_project_name(self):
+        # THE VIOLATION (live run 0726-142841, every red gate): the briefing's check-state line shipped
+        # as "⟦ctx:checks⟧ GROUND TRUTH — cria ran the repo's own checks and they currently FAIL". The
+        # model must NEVER see the literal project name (principle #17) — a distinctive proper noun
+        # makes a weak model meta-reason about the mechanism instead of coding. It survived because
+        # nothing checked: the rule was doctrine and convention, never an invariant.
+        # A source line that builds ⟦ctx:…⟧ text is model-facing by construction, so it may not also
+        # carry the bare word. ⟦cria⟧ (the human indicator, stripped before the model) is exempt.
+        import pathlib, re
+        root = pathlib.Path(prompts.__file__).parent.parent
+        offenders = []
+        for py in sorted(root.glob("*.py")):
+            in_doc = False
+            for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+                fences = line.count('"""') + line.count("'''")
+                was_doc = in_doc
+                if fences % 2:
+                    in_doc = not in_doc
+                if was_doc or in_doc:      # docstrings/prose blocks are written FOR humans
+                    continue
+                code = line.split("#", 1)[0]                      # …and so are trailing comments
+                if "⟦ctx:" not in code:
+                    continue
+                if re.search(r"(?<!⟦)\bcria\b(?!⟧)", code, re.I):
+                    offenders.append(f"{py.name}:{n}: {line.strip()[:100]}")
+        self.assertEqual(offenders, [], "model-facing ⟦ctx:…⟧ string carries the literal project name")
+
     def test_red_gate_overrides_the_step_wording_it_contradicts(self):
         # THE CONTRADICTION (live run 0726-141115, call 127): a red gate fails the step via "probe
         # failed" BEFORE the critic runs, so the coder was told "Do ONLY this step (2 of 9): Examine

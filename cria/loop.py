@@ -2735,13 +2735,14 @@ def _briefing_gate_ground_truth(sess) -> str:
     the coder's unverified 'tests pass' claim into a fact is OVERRIDDEN by what the repo's own checks
     actually reported. Silent when cria has no negative signal — it never manufactures a 'green' the gate
     did not give (a red gate with findings, or a green-but-testless gate, are the only claims made)."""
+    # Model-facing, so it lives in a prompt file and carries NO literal project name: this string
+    # shipped as "GROUND TRUTH — cria ran the repo's own checks…" on every red gate, which is exactly
+    # the proper noun principle #17 forbids the model from ever seeing.
+    lines = prompts.load_map("briefing_checks")
     if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
-        return ("\n\n⟦ctx:checks⟧ GROUND TRUTH — cria ran the repo's own checks and they currently FAIL:\n"
-                + sess.last_gate_flag.strip()
-                + "\nTrust this over any claim above that the work is done or the tests pass.")
+        return "\n\n" + prompts.fill(lines["red"], findings=sess.last_gate_flag.strip())
     if getattr(sess, "last_gate_testless", False):
-        return ("\n\n⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but executed NO tests, so "
-                "the tests are UNVERIFIED. Run them before treating them as passing.")
+        return "\n\n" + lines["testless"]
     return ""
 
 

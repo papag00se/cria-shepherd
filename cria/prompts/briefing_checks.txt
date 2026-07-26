@@ -1,0 +1,7 @@
+# The check-state lines appended to the rolling briefing so a summary that LAUNDERS the coder's
+# unverified "tests pass" claim is overridden by what the repo's checks actually reported. Parsed by
+# prompts.load_map. These are MODEL-FACING, so they carry the ⟦ctx:checks⟧ marker and NEVER the
+# literal project name (principle #17: a distinctive proper noun makes a weak model meta-reason about
+# the mechanism instead of coding). {{FINDINGS}} is the red gate's own output.
+red = ⟦ctx:checks⟧ GROUND TRUTH — the repo's own checks were run and they currently FAIL:\n{{FINDINGS}}\nTrust this over any claim above that the work is done or the tests pass.
+testless = ⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but executed NO tests, so the tests are UNVERIFIED. Run them before treating them as passing.
