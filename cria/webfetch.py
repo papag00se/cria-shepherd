@@ -490,10 +490,18 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
     words = normalize_search(q)
     if not words:
         return None
-    if any(searches_match(words, normalize_search(prev)) for prev in _SEARCH_SEEN.get(session, ())):
+    prior = next((prev for prev in _SEARCH_SEEN.get(session, ())
+                  if searches_match(words, normalize_search(prev))), None)
+    if prior is not None:
+        # Name WHERE the earlier results actually are. The refusal used to say "its results are still
+        # above — use them", which is false: cria spills search results to a file and tells the model in
+        # the same breath that they are NOT inlined. So the coder was sent to look above at nothing and,
+        # finding nothing, searched again. Observed live (run 0726-135324): 8 refusals in one run, each
+        # pointing at content that was never there, while the coder never opened the file that held it.
         domain = first_domain_in(query)
         steer = _guard_msg("domain_steer", domain=domain) if domain else ""
-        return _guard_msg("search_repeat", query=query, domain_steer=steer)
+        return _guard_msg("search_repeat", query=query, prior=prior,
+                          target=search_spill_name(prior), domain_steer=steer)
     return None
 
 

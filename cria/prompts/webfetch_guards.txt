@@ -3,7 +3,7 @@
 # per key (parsed by prompts.load_map). Placeholders: {{QUERY}} {{URL}} {{DOMAIN}} {{STREAK}} and
 # {{DOMAIN_STEER}} (the domain_steer fragment, or empty when the query names no domain); the spill
 # fragments add {{STATUS_LABEL}} {{CHARS}} {{TARGET}} {{FIND}}.
-search_repeat = You already ran web_search "{{QUERY}}" (or a near-identical one), and its results are still above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
+search_repeat = You already ran web_search "{{PRIOR}}", which is near-identical to "{{QUERY}}". Its results were saved to {{TARGET}} — they are NOT repeated here, so READ THAT FILE rather than searching again: grep -n "<keyword>" {{TARGET}}, or read_file it with a start_line/end_line range. Otherwise make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
 domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH it directly: web_fetch https://{{DOMAIN}} , then read the response for what you need.
 fetch_repeat = You already fetched web_fetch {{URL}} with these exact params — this is the SAME result you got before, still above; use it (or narrow it with a different find=). If it was a large doc, it's saved in ./tmp/read-only — grep that file instead of re-fetching.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.

@@ -572,7 +572,12 @@ class GateTests(unittest.TestCase):
         r = wf.gate_search("s1", "ada handle api")
         self.assertIn("already ran", r)          # gentle re-point, not a fake HTTP-400 error
         self.assertNotIn("HTTP 400", r)
-        self.assertIn("still above", r)
+        # It must name WHERE the earlier results are. Saying "its results are still above" was a lie:
+        # cria spills them to a file and says in the same breath they are NOT inlined, so the coder
+        # was sent to look above at nothing and searched again (8× in run 0726-135324).
+        self.assertNotIn("still above", r)
+        self.assertIn(wf.search_spill_name("ada handle api"), r)   # the real file, named
+        self.assertIn("grep -n", r)                                 # ...and how to read it
         wf.set_visible("s1", [], [])                                  # compacted away → allowed again
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))
         self.assertIsNone(wf.gate_search(None, "x"))
