@@ -3448,6 +3448,83 @@ class SearchJudgeTests(unittest.TestCase):
         self.assertTrue(_looks_like_url("api.handle.me/openapi.json"))
         self.assertFalse(_looks_like_url("api.handle.me handles endpoint"))   # a search phrase, not a URL
 
+    # ---- the read-judge must judge the RESULTS, never cria's own envelope -------------------------
+    _SPILL_REL = "./tmp/read-only/search-ada_handles_api.txt"
+    _REAL_RESULTS = ("20 results:\nGitHub - koralabs/api.handle.me: decentralized API for Handles\n"
+                     "  https://github.com/koralabs/api.handle.me\nAdaHandle for Unity\n"
+                     "  https://github.com/Odiobill/AdaHandle\n  documented at the official API swagger: "
+                     "https://api.handle.me/swagger/\n")
+
+    def _spill_workspace(self, tmp):
+        import pathlib
+        p = pathlib.Path(tmp) / "tmp" / "read-only"
+        p.mkdir(parents=True)
+        (p / "search-ada_handles_api.txt").write_text(self._REAL_RESULTS, encoding="utf-8")
+        return tmp
+
+    def _read_body(self):
+        # what the coder's history really looks like: it read the spilled file, and the tool result it
+        # got back is cria's spill STEER — not the results.
+        steer = ("./tmp/read-only/search-ada_handles_api.txt is a large reference document — reading it "
+                 "whole gets truncated, so you would miss the middle. Instead grep it for what you need.")
+        return {"messages": [
+            {"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "r1", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": self._SPILL_REL})}}]},
+            {"role": "tool", "tool_call_id": "r1", "content": steer},
+        ]}
+
+    def test_read_judge_sees_the_REAL_results_not_crias_spill_steer(self):
+        # THE FOOTGUN (live, run 0726-130831 call 0009): the read-judge is what DELETES a search, and it
+        # was handed the tool result of the read — which for a spilled file is cria's "large reference
+        # document — grep it instead" steer. Asked "are the RESULTS on target?" about that boilerplate it
+        # answered false (it had seen no results), so cria permanently stripped a search whose top hits
+        # were the API's own repo and the URL of its real spec. The judge must see the file's real bytes.
+        import tempfile
+        seen = {}
+        def reasoner(b, r):
+            seen["user"] = b["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"query_on_target": True, "results_on_target": True, "recommended_query": ""})}}]}).encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._spill_workspace(tmp)
+            ctx = _ctx(_Scripted([]), reasoner); ctx.reasoner_role = self._role()
+            loop = Loop(ctx)
+            sess = PlanSession(plan=_plan(2)); sess.workspace_root = tmp
+            out = loop._judge_search_reads(sess, self._read_body(), _Rlog())
+        self.assertIn("koralabs/api.handle.me", seen["user"])      # the judge saw the REAL results...
+        self.assertIn("api.handle.me/swagger/", seen["user"])      # ...including the spec pointer
+        self.assertNotIn("large reference document", seen["user"])  # ...and NOT cria's own envelope
+        self.assertEqual(str(out[-1].get("content")), self._read_body()["messages"][-1]["content"])
+
+    def test_read_judge_strips_nothing_when_the_real_file_cannot_be_read(self):
+        # Fail OPEN on missing ground truth: no file on disk → no reasoner call, no verdict, no strip.
+        import tempfile
+        called = {"n": 0}
+        def reasoner(b, r):
+            called["n"] += 1
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"query_on_target": False, "results_on_target": False, "recommended_query": "x"})}}]}).encode()
+        with tempfile.TemporaryDirectory() as tmp:      # workspace WITHOUT the spilled file
+            ctx = _ctx(_Scripted([]), reasoner); ctx.reasoner_role = self._role()
+            loop = Loop(ctx)
+            sess = PlanSession(plan=_plan(2)); sess.workspace_root = tmp
+            body = self._read_body()
+            out = loop._judge_search_reads(sess, body, _Rlog())
+            out2 = loop._judge_search_reads(sess, body, _Rlog())   # and never re-judged turn after turn
+        self.assertEqual(called["n"], 0)                            # judged nothing
+        self.assertNotIn("were off-target", str(out[-1].get("content")))   # stripped nothing
+        self.assertNotIn("were off-target", str(out2[-1].get("content")))
+
+    def test_read_judge_never_reads_outside_the_workspace(self):
+        from cria.loop import search_file_text
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self._spill_workspace(tmp)
+            self.assertIn("koralabs", search_file_text(tmp, self._SPILL_REL))
+            self.assertEqual(search_file_text(tmp, "../../etc/passwd"), "")
+            self.assertEqual(search_file_text(tmp, "./tmp/read-only/../../../etc/passwd"), "")
+
 
 class ReasonedRedirectTests(unittest.TestCase):
     """The SHARED author_redirect (both loop + plan-off run the identical reasoning). The reasoner

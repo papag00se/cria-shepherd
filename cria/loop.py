@@ -1028,8 +1028,14 @@ class Loop:
                 key = "content" if m.get("content") is not None else "output"
                 if f not in sess.judged_search_files:
                     sess.judged_search_files.add(f)
+                    # Judge the REAL results off disk — NOT the tool result, which for a spilled file is
+                    # cria's own "grep this instead" steer. Handing the judge that envelope and asking
+                    # "are the RESULTS on target?" gets a false for a search that was perfectly on target,
+                    # and a definite false DELETES it. Unreadable → judge nothing, strip nothing (the file
+                    # stays marked judged, so this can never become a per-turn reasoner call either).
+                    results = search_file_text(sess.workspace_root, f)
                     _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                 latest_user_text(msgs), q_of.get(f, ""), _content_text(m.get(key)), rlog,
+                                                 latest_user_text(msgs), q_of.get(f, ""), results, rlog,
                                                  coder_tools=_coder_tools_summary(body.get("tools")))
                     if not r_ok:
                         sess.poisoned_search_files.add(f)
@@ -3085,6 +3091,30 @@ def _toolcall_reads_search_file(tc) -> str | None:
     s = raw if isinstance(raw, str) else json.dumps(raw or {})
     m = _SEARCH_FILE_RE.search(s or "")
     return m.group(0) if m else None
+
+
+def search_file_text(workspace_root: str, rel: str) -> str:
+    """The REAL results in a spilled search file, read from DISK NOW — "" when it can't be read.
+
+    The read-judge decides whether to DELETE the coder's search results, so it must judge the RESULTS.
+    It used to be handed the tool RESULT of the coder's read, which for a spilled file is not the
+    results at all — it is cria's own pointer/steer ("<path> is a large reference document — grep it
+    instead"). Observed live: the judge was asked "do the RESULTS contain the right thing?" about that
+    boilerplate, answered results_on_target=false (it had seen no results), and cria permanently
+    stripped a search whose top hits were the API's own GitHub repo and the URL of its real spec —
+    on step 1 of a research step. cria authored the file, so it reads the bytes itself rather than
+    judging its own envelope (principle #11: read disk NOW, never the transcript's view of a file).
+    """
+    if not rel:
+        return ""
+    try:
+        root = Path(workspace_root or ".").resolve()
+        p = (root / rel.lstrip("./")).resolve()
+        if root not in p.parents and p != root:
+            return ""     # never read outside the workspace, whatever the path claimed
+        return p.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return ""
 
 
 def _looks_like_url(s: str) -> bool:
