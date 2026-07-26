@@ -2810,12 +2810,24 @@ _STEER_TRIGGER = {
 # so matching it cleanly separates the ground-truth outcome from a hallucinated "the fetch 400'd".
 _FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
 _FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): ([^\]]+)\]")
+# The RESPONSE-SHAPE block cria surfaces beside the routes (webfetch.SHAPE_MARKER). It is the half of
+# the surfaced facts that names the real FIELDS, and it was never captured into the durable ledger —
+# so after a compaction the coder kept the endpoints and lost `resolved_addresses{ada}` / `holder`,
+# which is precisely what it then guesses. Multi-line; ends at the block's closing bracket.
+_FETCH_SHAPE_RE = re.compile(r"\[response shape — (.*?)\]\s*(?:\n|$)", re.S)
+
+
+def _fetch_facts(entry) -> tuple:
+    """A ledger entry as ``(status, routes, shapes)``, accepting the older 2-tuple form."""
+    status, routes, shapes = (tuple(entry) + ("", ""))[:3]
+    return status, routes or "", shapes or ""
 
 
 def _extract_fetches(messages: list[dict]) -> dict:
-    """url -> (status, routes) for every web_fetch result in ``messages`` (last occurrence wins), read
-    from the REAL rendered tool headers. The ` · <url>` shape is cria's render, absent from coder prose."""
-    latest: dict[str, tuple[str, str]] = {}
+    """url -> (status, routes, shapes) for every web_fetch result in ``messages`` (last occurrence
+    wins), read from the REAL rendered tool headers. The ` · <url>` shape is cria's render, absent
+    from coder prose."""
+    latest: dict[str, tuple[str, str, str]] = {}
     for m in messages:
         c = m.get("content") or ""
         if isinstance(c, list):
@@ -2825,19 +2837,25 @@ def _extract_fetches(messages: list[dict]) -> dict:
         for sm in _FETCH_STATUS_RE.finditer(c):
             url = sm.group(2).rstrip(".,);")
             rm = _FETCH_ROUTES_RE.search(c, sm.end())
-            latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "")
+            shm = _FETCH_SHAPE_RE.search(c, sm.end())
+            latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "",
+                           shm.group(1).strip() if shm else "")
     return latest
 
 
 def _merge_fetches(dst: dict, src: dict) -> dict:
-    """Merge fetch facts, keeping the RICHER routes per URL: a later ``web_fetch(url, find=…)`` returns
-    a sub-section WITHOUT the ``[API endpoints]`` outline, so its routes are empty — that must not clobber
-    an earlier full endpoint list (the endpoints are the whole point of the fact — they name /handles/{handle})."""
-    for url, (status, routes) in src.items():
+    """Merge fetch facts, keeping the RICHER routes AND shapes per URL: a later ``web_fetch(url,
+    find=…)`` returns a sub-section WITHOUT the ``[API endpoints]`` / ``[response shape]`` blocks, so
+    those are empty — that must not clobber an earlier full outline (they are the whole point of the
+    fact: they name /handles/{handle} and resolved_addresses{ada})."""
+    for url, entry in src.items():
+        status, routes, shapes = _fetch_facts(entry)
         prev = dst.get(url)
-        if prev and not routes:
-            routes = prev[1]   # preserve the earlier outline when this occurrence had none
-        dst[url] = (status, routes)
+        if prev:
+            p_routes, p_shapes = _fetch_facts(prev)[1:]
+            routes = routes or p_routes   # preserve the earlier outline when this occurrence had none
+            shapes = shapes or p_shapes
+        dst[url] = (status, routes, shapes)
     return dst
 
 
@@ -2862,8 +2880,12 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         return ""
     labels = prompts.load_map("fetched_facts_sections")
     ok, failed = [], []
-    for url, (status, routes) in latest.items():
+    for url, entry in latest.items():
+        status, routes, shapes = _fetch_facts(entry)
         line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
+        if shapes:   # the REAL field names — the half the coder guesses once they scroll away
+            line += f"\n  {labels['fields']}\n" + \
+                    "\n".join(f"  {ln.strip()}" for ln in shapes.splitlines() if ln.strip())
         (ok if _fetch_succeeded(status) else failed).append(line)
     blocks = []
     if ok:

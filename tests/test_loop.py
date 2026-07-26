@@ -428,6 +428,44 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         from cria.loop import _fetched_facts_anchor
         self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=_plan(2))))
 
+    def test_ledger_carries_the_RESPONSE_FIELDS_not_just_the_routes(self):
+        # THE FOOTGUN (live run 0726-135834, call 98): cria surfaces BOTH halves of a spec's facts —
+        # the routes AND the response shape naming the real fields — but the durable ledger captured
+        # only the routes. Once the original tool result scrolled out, the coder kept
+        # /handles/{handle} and lost `holder` / `resolved_addresses{ada}`, and promptly guessed them
+        # (`holder_address`, `resolved_addresses[<handle>]`, `total_handles` off the wrong object).
+        # The anchor exists to carry facts past a compaction; it must carry the ones being guessed.
+        from cria.loop import _extract_fetches, _fetched_facts_anchor
+        from cria import webfetch
+        result = ('HTTP 200 OK · https://api.handle.me/openapi.json\n'
+                  f'{webfetch.ROUTES_MARKER}2): /handles/{{handle}}, /holders/{{address}}]\n'
+                  f'{webfetch.SHAPE_MARKER} the fields each endpoint RETURNS:\n'
+                  '  GET /handles/{handle} → holder, resolved_addresses{ada, eth, btc}\n'
+                  '  GET /holders/{address} → total_handles, address]\n')
+        facts = _extract_fetches([{"role": "tool", "content": result}])
+        sess = PlanSession(plan=_plan(2)); sess.fetched_pages = facts
+        body = _fetched_facts_anchor(sess)["content"]
+        self.assertIn("/handles/{handle}", body)                     # routes still there...
+        self.assertIn("resolved_addresses{ada, eth, btc}", body)     # ...AND the real field names
+        self.assertIn("holder,", body)
+        self.assertIn("total_handles", body)
+        self.assertIn("do not guess", body.lower())
+
+    def test_ledger_keeps_the_shape_when_a_later_find_fetch_has_none(self):
+        # A follow-up web_fetch(url, find=…) returns a sub-section with no routes/shape blocks. That
+        # must not clobber the full outline captured earlier — same rule the routes already had.
+        from cria.loop import _extract_fetches, _merge_fetches
+        from cria import webfetch
+        full = _extract_fetches([{"role": "tool", "content":
+            'HTTP 200 OK · https://api.x/openapi.json\n'
+            f'{webfetch.ROUTES_MARKER}1): /handles/{{handle}}]\n'
+            f'{webfetch.SHAPE_MARKER} fields:\n  GET /handles/{{handle}} → holder, resolved_addresses{{ada}}]\n'}])
+        thin = _extract_fetches([{"role": "tool", "content": 'HTTP 200 OK · https://api.x/openapi.json\n(a subsection)'}])
+        merged = _merge_fetches(dict(full), thin)
+        status, routes, shapes = merged["https://api.x/openapi.json"]
+        self.assertIn("/handles/{handle}", routes)
+        self.assertIn("resolved_addresses{ada}", shapes)
+
     def test_a_ledger_of_only_FAILED_fetches_is_not_presented_as_facts_to_code_against(self):
         # THE FOOTGUN (live run 0726-132211: 66 calls, empty workspace): the coder INVENTED the domain
         # ada-handles.github.io, got 404s, and the anchor handed them back every turn as "your REAL fetch

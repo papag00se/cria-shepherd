@@ -6,3 +6,7 @@
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
 failed = THESE URLS DID NOT WORK — the fetch returned an error status, so there is nothing behind them to use. Do not fetch them again, and do not write code against them:
+# Header for the per-URL RESPONSE-SHAPE block. The ledger used to carry only the endpoint routes, so
+# after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
+# (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
+fields = fields each endpoint returns (use these EXACT names and nesting; do not guess):
