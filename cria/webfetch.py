@@ -780,6 +780,27 @@ def top_level_keys(root: Any) -> list[str]:
     return []
 
 
+def _no_text_match(content: str, query: str, cap_tokens: int) -> str:
+    """A find that matched NOTHING must never be worse than not having used find at all.
+
+    A missed narrowing used to return the four words `find "<q>": no match.` and throw the document
+    away. Observed live (run 0726-133755): the coder fetched https://api.handle.me — a 705-char index
+    page whose entire value is `<a href="/openapi.json">OpenAPI spec (JSON)</a>` and three sibling
+    links — with find="resolve". "resolve" appears nowhere on it, so cria answered "no match" and
+    nothing else. The page that names the spec was destroyed by a substring miss, and the coder went
+    on to guess URLs. Never destroy content the model reads (principle #5): when the document fits a
+    page, hand it back WITH the miss notice. When it doesn't, keep the heading outline it can
+    re-target from — dumping an oversized doc here is the truncation this rule also forbids."""
+    heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")]
+    notice = f'find "{query}": no match.'
+    page, _next, total = page_from(content, 0, cap_tokens)
+    if len(page) >= total:      # the WHOLE document fits — a miss costs the model nothing
+        return f"{notice} The full document follows.\n\n{content}"
+    if heads:
+        return f"{notice} Sections:\n" + "\n".join(heads)
+    return f"{notice} It is too large to return whole here — re-run find with a different term, or fetch without find to page it."
+
+
 def find_text(content: str, query: str, cap_tokens: int) -> str:
     q = query.lower()
     lc = content.lower()
@@ -798,12 +819,7 @@ def find_text(content: str, query: str, cap_tokens: int) -> str:
             results.append(slice_)
         frm = rel + max(1, len(q))
     if not results:
-        # ALL headings, uncapped: on a miss this outline is how the model re-targets its find —
-        # the section it wants may be the 20th heading. The floor bounds the request downstream.
-        heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")]
-        if not heads:
-            return f'find "{query}": no match.'
-        return f'find "{query}": no match. Sections:\n' + "\n".join(heads)
+        return _no_text_match(content, query, cap_tokens)
     shown = results[:FIND_TOP_K]
     body = "\n\n---\n\n".join(shown)
     if len(results) > len(shown):

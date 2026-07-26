@@ -465,6 +465,28 @@ class UncappedNavHintsTests(unittest.TestCase):
         self.assertIn("no match", out)
         self.assertIn("# Heading 27", out)         # no 15-cap on the Sections outline
 
+    def test_find_text_miss_on_a_small_doc_returns_the_WHOLE_doc(self):
+        # THE FOOTGUN (live run 0726-133755): the coder fetched https://api.handle.me — a 705-char index
+        # page whose entire value is its link list, including the OpenAPI spec — with find="resolve".
+        # "resolve" is nowhere on it, so cria answered `find "resolve": no match.` and NOTHING else,
+        # destroying the one page that names the spec. A missed narrowing must never be worse than not
+        # narrowing: when the document fits a page, hand it back.
+        body = ('<h1>api.handle.me</h1><ul><li><a href="/swagger">Swagger UI</a></li>'
+                '<li><a href="/openapi.json">OpenAPI spec (JSON)</a></li></ul>')
+        out = wf.find_text(body, "resolve", 4000)
+        self.assertIn("no match", out)                 # the miss is still disclosed, not hidden
+        self.assertIn("/openapi.json", out)            # ...and the document survives it
+        self.assertIn("Swagger UI", out)
+
+    def test_find_text_miss_on_an_oversized_doc_does_not_dump_it(self):
+        # The other half of the rule: returning a huge doc here would be the truncation-by-window this
+        # very rule forbids. No headings to outline → say how to re-target, don't dump.
+        body = "x" * (4000 * 4 + 5000)
+        out = wf.find_text(body, "zzzznope", 4000)
+        self.assertIn("no match", out)
+        self.assertLess(len(out), 500)                 # not the document
+        self.assertIn("without find", out)             # concrete re-target guidance
+
     def test_find_text_hit_discloses_residual_matches(self):
         # 5 distinct paragraphs each contain the query → top-FIND_TOP_K shown, the rest DISCLOSED,
         # never silently stopped at FIND_TOP_K (the match the model wants may be the 4th).
