@@ -53,6 +53,34 @@ _SUBMIT_PLAN_TOOL = {"type": "function", "function": {
         "required": ["steps"]}}}
 
 
+def _candidate_step_lists(args) -> list[list]:
+    """Every list a ``submit_plan`` payload offers as its steps, best first.
+
+    `json.loads` keeps the LAST value when a key repeats, and a small model repeats keys. Measured
+    (run 0727-121457) it emitted `{"steps":[<five real steps>],"steps":[1,2,3,4,5]}` — so the real
+    plan was discarded before any caller saw it and the ordinals became the plan, handing the coder
+    steps literally named "1", "2", "3". Collect ALL values for the key and let the caller take the
+    first that survives cleaning, so a junk duplicate can shadow nothing."""
+    if isinstance(args, dict):
+        v = args.get("steps")
+        return [v] if isinstance(v, list) else []
+    if not isinstance(args, str):
+        return []
+    found: list[list] = []
+
+    def keep_dupes(pairs):
+        for k, v in pairs:
+            if k == "steps" and isinstance(v, list):
+                found.append(v)
+        return dict(pairs)
+
+    try:
+        json.loads(args, object_pairs_hook=keep_dupes)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    return found
+
+
 def _steps_from_submit(msg: dict) -> list[str] | None:
     """Read the plan steps from a ``submit_plan`` tool call (native or recovered from the dialect).
     None if the model called something else or gave no steps."""
@@ -60,12 +88,7 @@ def _steps_from_submit(msg: dict) -> list[str] | None:
         if ((tc.get("function") or {}).get("name")) != "submit_plan":
             continue
         args = (tc.get("function") or {}).get("arguments")
-        try:
-            args = json.loads(args) if isinstance(args, str) else (args or {})
-        except (json.JSONDecodeError, ValueError):
-            args = {}
-        steps = args.get("steps") if isinstance(args, dict) else None
-        if isinstance(steps, list):
+        for steps in _candidate_step_lists(args):
             out = [c for s in steps if (c := _clean_step(s))]  # a step that ran into the dialect is trimmed
             if out:
                 return out
@@ -127,7 +150,11 @@ def _clean_step(text) -> str:
     if m:
         s = s[:m.start()]
     s = re.sub(r"^\s*\d+[.)]\s*", "", s)  # leading "1. " / "2) " embedded in a JSON list item
-    return _strip_trailing_junk(s).strip()
+    s = _strip_trailing_junk(s).strip()
+    # A bare ordinal is not a step. Stripping the leading "1." off the string "1." leaves nothing, and
+    # an integer element stringifies to "1" — neither is an action the coder can carry out. Measured:
+    # a duplicate-key plan handed the coder steps literally named "1", "2", "3".
+    return "" if re.fullmatch(r"[\d.)\s-]*", s) else s
 
 
 _CLOSERS = {"}": "{", "]": "["}

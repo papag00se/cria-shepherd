@@ -736,6 +736,23 @@ class StepCleaningTests(unittest.TestCase):
                  "I'm planning...<channel|><|tool_call>call:web_search{query:")
         self.assertEqual(_clean_step(dirty), "Implement tests against the real API")
 
+    def test_a_duplicate_steps_key_does_not_replace_the_plan_with_ordinals(self):
+        # MEASURED (run 0727-121457): the model emitted `{"steps":[<five real steps>],"steps":[1,2,3,4,5]}`
+        # — json.loads keeps the LAST duplicate key, so the real plan was silently discarded and the
+        # ordinals became the plan. The coder was handed steps literally named "1", "2", "3".
+        from cria.planner import _steps_from_submit
+        raw = ('{"steps":["1. Research the API spec", "2. Write the resolver", "3. Add tests"],'
+               '"steps":[1, 2, 3]}')
+        out = _steps_from_submit({"tool_calls": [{"function": {"name": "submit_plan", "arguments": raw}}]})
+        self.assertEqual(out, ["Research the API spec", "Write the resolver", "Add tests"])
+
+    def test_a_bare_ordinal_is_not_a_step(self):
+        # Whatever the route in, an integer or a lone "3." is not an action the coder can perform.
+        from cria.planner import _clean_step
+        for junk in (1, "1", "2.", " 3 ", "4)", ""):
+            self.assertEqual(_clean_step(junk), "", repr(junk))
+        self.assertEqual(_clean_step("1. Write the resolver"), "Write the resolver")
+
     def test_submit_plan_steps_are_cleaned(self):
         from cria.planner import _steps_from_submit
         msg = {"tool_calls": [{"function": {"name": "submit_plan", "arguments":
