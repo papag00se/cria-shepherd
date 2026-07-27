@@ -93,6 +93,7 @@ DIGEST_NO_PROBES = _DIGEST["no_probes"]
 DIGEST_EXIT_CLEAN = _DIGEST["exit_clean"]
 DIGEST_EXIT_NO_LAUNCH = _DIGEST["exit_no_launch"]
 DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
+DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 
 # ---------------------------------------------------------------------------
 # cria constants (proxy path — NOT probe_run.rs values)
@@ -419,7 +420,8 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     return BLOCK_NUDGE_PREAMBLE + "\n".join(combined)
 
 
-def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = None) -> str:
+def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = None,
+                            missing: list | None = None) -> str:
     """WHAT RAN and its raw outcome, for the critic.
 
     Upstream rationale (kept): unlike completion_block_nudge — which surfaces
@@ -445,6 +447,11 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
         else:
             floor_txt = DIGEST_FLOOR_FALLBACK
     lines.append(DIGEST_FLOOR_FMT.format(x=floor_txt))
+    if missing:
+        # Checks that were SELECTED but whose section never came back (a cut-short gate script). Their
+        # absence used to be invisible — `results` quietly became a subset of `selected` — so a
+        # truncated gate read exactly like a passing one to the critic.
+        lines.append(DIGEST_MISSING_FMT.format(x="; ".join(missing)))
     if not report.results:
         lines.append(DIGEST_NO_PROBES)
     else:

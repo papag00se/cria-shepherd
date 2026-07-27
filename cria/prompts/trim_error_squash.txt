@@ -1,1 +1,1 @@
-[removed {{N}} earlier failed attempts to keep you focused on current state — they returned errors (non-zero exit / file-not-found) and are superseded. Tried: {{TRIED}}. Your most recent attempts are shown below; don't repeat these.]
+[removed {{N}} earlier attempts to keep you focused on current state — each returned nothing usable (a dead-end lookup: not found / no match / empty result) and is superseded. Attempts that FAILED with a real error are never folded away — those are shown in full. Tried: {{TRIED}}. Your most recent attempts are shown below; don't repeat these.]

@@ -62,6 +62,8 @@ class GateOutcome:
     ran: bool = False  # False → no markers came back; keep don't-wedge semantics
     report: ProbeReport | None = None
     git_state: str = ""  # `git status --porcelain | sha1sum` — changed-files signal
+    unran: list = field(default_factory=list)  # selected checks whose section never came back — a GAP,
+    #                                            not a pass: without this, a truncated gate read clean
 
 
 def _marker(section_id: str) -> str:
@@ -147,6 +149,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     could_not_run = False
     failed_no_detail = False
     saw_probe = False
+    timed_out_output: list[str] = []
     for sid, body in split_sections(raw).items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
             continue
@@ -156,8 +159,17 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
         # failure (125/126/127) or timeout (124) means the check did NOT complete — never a code error
         # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
         # mentions it (a FileNotFoundError, a missing #include) as couldn't-run.
-        if code in proberun.LAUNCH_FAILURE_EXIT_CODES or code == proberun.TIMEOUT_EXIT_CODE:
+        if code in proberun.LAUNCH_FAILURE_EXIT_CODES:
+            could_not_run = True    # never launched → there is nothing it could have printed
+            continue
+        if code == proberun.TIMEOUT_EXIT_CODE:
+            # A timeout is NOT a launch failure: the command RAN and may already have printed the real
+            # error before it stalled. The state stays "couldn't run" (never a pass, and its lines must
+            # NOT be scraped as error-class findings — post-timeout output is mostly noise, the false-red
+            # class), but what it DID print is kept as CONTEXT rather than discarded.
             could_not_run = True
+            if text.strip():
+                timed_out_output.append(text.strip())
             continue
         # pytest exit 5 = no tests collected (a fresh/testless project). The runner ran fine and had
         # nothing to assess — a benign non-signal. Skip the section so its "no tests ran" line isn't
@@ -215,6 +227,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")
+    if could_not_run and timed_out_output:
+        # It ran, stalled, and printed something first — hand that over verbatim, labelled for what it
+        # is, instead of only "no signal either way".
+        return (CHECKS_MARKER + " a check did not finish (timed out) — no verdict either way. It printed "
+                "this before it was stopped:\n" + "\n".join(timed_out_output))
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
@@ -354,7 +371,12 @@ def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
     for i, c in enumerate(plan.candidates):
         body = sections.get(f"probe-{i}")
         if body is None:
-            continue  # never ran (script cut short) → no result; absence never blocks
+            # Never ran — the script was cut short (harness truncation) or the section never came back.
+            # Absence must not BLOCK, but it must not read as CLEAN either: `results` silently became a
+            # subset of `selected`, and nothing downstream said a check was missing, so a truncated gate
+            # looked like a passing one. Record the gap so the digest can report it.
+            out.unran.append(proberun.display_command(c.command))
+            continue
         raw, code = proberun.scrape_exit(body)
         results.append(proberun.interpret_probe_output(
             c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S))

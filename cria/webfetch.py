@@ -350,7 +350,8 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     if not isinstance(props, dict):
         return []
     out = []
-    for k, v in list(props.items())[:max_fields]:
+    items = list(props.items())
+    for k, v in items[:max_fields]:
         v = v if isinstance(v, dict) else {}
         if _depth == 0 and (v.get("type") == "object" or "properties" in v or "$ref" in v):
             sub = _schema_field_summary(v, schemas, 8, _depth + 1)
@@ -359,6 +360,11 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
             out.append(f"{k}[]")
         else:
             out.append(str(k))
+    # DISCLOSE the cap. A silently-cut field list reads as the complete set, so a coder looking for a
+    # field that exists but sits past the cap concludes the API doesn't return it — and guesses. Same
+    # rule as the endpoint list and the find residual: never a silent slice.
+    if len(items) > max_fields:
+        out.append(f"…+{len(items) - max_fields} more field(s)")
     return out
 
 
@@ -381,8 +387,10 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
         schemas = {}
     lines: list[str] = []
     shaped: list[str] = []  # paths already given a shape — used to collapse a resource's own sub-paths
+    capped = False
     for path, ops in paths.items():
         if len(lines) >= max_endpoints:
+            capped = True   # DISCLOSED below — a silent cut reads as "these are all the endpoints"
             break
         if not isinstance(ops, dict):
             continue
@@ -410,6 +418,8 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 lines.append(f"{str(method).upper()} {path} → {', '.join(fields)}")
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint
+    if capped:
+        lines.append(f"…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one")
     return lines
 
 

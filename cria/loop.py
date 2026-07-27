@@ -1159,7 +1159,7 @@ class Loop:
             rlog.emit("loop.step_incomplete", step=idx, reason="probe failed", attempt=sess.verify_fails)
             return self._renudge(sess, key, body, nudge, rlog)
 
-        digest = proberun.completion_probe_digest(outcome.report)
+        digest = proberun.completion_probe_digest(outcome.report, missing=outcome.unran)
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs

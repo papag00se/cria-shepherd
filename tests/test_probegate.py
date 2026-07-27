@@ -254,7 +254,19 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("no usable result", out.lower())   # NOT the couldn't-run message
 
     def test_timeout_exit_is_couldnt_run(self):
+        # A timeout is never a pass and never a "fix this" — but it is also not nothing: the command
+        # RAN, so whatever it printed before being stopped is kept as CONTEXT (it used to be discarded
+        # wholesale). Its lines must NOT become error-class findings, though — post-timeout output is
+        # mostly noise, which is the false-red class.
         raw = self._raw("(killed mid-run)\nEXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no verdict either way", out.lower())   # not a pass, not a verdict
+        self.assertNotIn("fix", out.lower())
+        self.assertNotIn("checker's own message", out.lower())  # NOT reported as error-class findings
+        self.assertIn("killed mid-run", out)                    # ...but what it printed survives
+
+    def test_timeout_with_no_output_stays_a_bare_no_signal(self):
+        raw = self._raw("EXIT:124")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())
