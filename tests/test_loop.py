@@ -3529,6 +3529,61 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         self.assertIn("swagger.json", u)            # the real tool call KEPT
         self.assertIn("HTTP 200", u)                # the real tool result KEPT
 
+    def test_steer_naming_an_invented_route_is_withheld(self):
+        # MEASURED (one session, 4 URL-bearing steers): the reasoner was told "NEVER invent a ... value
+        # that does not appear above" and invented `https://api.handle.me/api/` anyway — a host that was
+        # all over the evidence with a path that appeared NOWHERE in it. cria injected it as a [REDIRECT]
+        # directive and the coder ran `curl -s https://api.handle.me/api/` against the invented route.
+        # A prompt is a request; this is the enforcement. The whole steer goes, not just the URL.
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        body = {"messages": [
+            {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
+            {"role": "assistant", "content": "web_fetch https://api.handle.me"},
+            {"role": "tool", "content": "HTTP 200 OK · https://api.handle.me — Swagger UI, OpenAPI spec"},
+        ]}
+        out = author_steer(
+            self._chat("You should fetch the API response from https://api.handle.me/api/, "
+                       "parse the JSON, then run the unit tests."),
+            None, ws, gs, body, _Rlog(), condition="repetition")
+        self.assertIsNone(out)
+
+    def test_steer_synthesizing_a_real_route_from_the_spec_survives(self):
+        # The other half, and the reason this is host+path and not a verbatim-URL test: a reasoner that
+        # read `GET /handles/{handle}` in a fetched spec and tells the coder to fetch <host>/handles has
+        # SYNTHESIZED a correct route from real facts. That steer is the valuable one — withholding it
+        # would be exactly the deletion-on-a-guess this guard exists to prevent.
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        body = {"messages": [
+            {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
+            {"role": "tool", "content": "HTTP 200 · https://api.handle.me/swagger/swagger.yml\n"
+                                        "paths:\n  /handles/{handle}:\n    get: resolve a handle"},
+        ]}
+        out = author_steer(
+            self._chat("You are stuck re-reading the spec. Fetch https://api.handle.me/handles now."),
+            None, ws, gs, body, _Rlog(), condition="repetition")
+        self.assertIsNotNone(out)
+        self.assertIn("https://api.handle.me/handles", out)
+
+    def test_bare_host_steer_is_grounded_by_the_host_alone(self):
+        # The domain-root fetch cria itself recommends carries no guessed route — a host seen in the
+        # session is all the grounding a path-less URL needs.
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        body = {"messages": [{"role": "tool", "content": "web_search results mention api.handle.me"}]}
+        out = author_steer(self._chat("Stop searching and web_fetch https://api.handle.me directly."),
+                           None, ws, gs, body, _Rlog(), condition="repetition")
+        self.assertIn("https://api.handle.me", out)
+
+    def test_url_free_steer_is_untouched(self):
+        from cria.loop import _grounded_steer_or_none
+        d = "You keep rewriting x.py without reading it. Read x.py, then run the failing test."
+        self.assertEqual(_grounded_steer_or_none(d, "evidence with no urls", _Rlog()), d)
+
     def test_drop_harness_frame_keeps_non_frame_roles(self):
         from cria.loop import _drop_harness_frame
         msgs = [

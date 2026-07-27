@@ -28,6 +28,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -3098,7 +3099,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           reasoning=(reasoning or "(not captured for this trigger)"))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner", coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
-    return _steer_or_none(text)
+    return _grounded_steer_or_none(_steer_or_none(text), user, rlog)
 
 
 def _steer_or_none(text: str) -> str | None:
@@ -3121,6 +3122,63 @@ def _steer_or_none(text: str) -> str | None:
     # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
     # "ok"/"yes" residue without discarding a real short steer.
     return directive if len(directive) >= 8 else None
+
+
+_STEER_URL_RE = re.compile(r"https?://[^\s\"'<>)\]},;]+")
+_URL_TRAIL = "`\\.,:;'\"*)]}> "
+
+
+def _ungrounded_urls(directive: str, evidence: str) -> list[str]:
+    """URLs the directive names that the EVIDENCE cannot support. A URL is grounded when both halves of
+    it appear in the evidence cria itself composed: the host (it is a real place this session touched)
+    AND the path (it is a real route the session saw). Both halves matter — measured on one session, 3
+    of 4 URL-bearing steers named a host that was everywhere in the evidence with a path that appeared
+    NOWHERE (`https://api.handle.me/api/`), and the coder duly ran `curl` against the invented route.
+
+    Requiring the FULL url verbatim would be wrong: a reasoner that reads `GET /handles/{handle}` in a
+    fetched spec and tells the coder to fetch `<host>/handles` has SYNTHESIZED a correct route from real
+    facts, and that steer is exactly the one worth keeping (it also occurred, in the same session).
+    Host+path is what separates synthesis from invention. A bare host (no path, or "/") is grounded by
+    the host alone — that is the domain-root fetch cria itself recommends, not a guessed route.
+
+    Scope is URLs only, deliberately. The same prompt also forbids inventing FILE PATHS, but a steer may
+    legitimately name a path that does not exist yet ("write tests/test_x.py"), so the same test there
+    would delete good steers — and deletion on a guess is the footgun class this exists to prevent."""
+    bad = []
+    for raw in _STEER_URL_RE.findall(directive or ""):
+        url = raw.rstrip(_URL_TRAIL)
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            continue
+        host, path = parts.netloc, parts.path
+        if host and host.lower() not in evidence.lower():
+            bad.append(url)
+        elif path.strip("/") and path not in evidence:
+            bad.append(url)
+    return bad
+
+
+def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
+    """The authored steer, or None when it names a URL the evidence cannot support.
+
+    The steer author's own system prompt already says "NEVER invent a file path, directory, command,
+    value, or error that does not appear above" — but a prompt is a request, not an enforcement, and a
+    small reasoner breaks it. This is the enforcement, and it is deterministic: cria composed the
+    evidence, so it can check the claim against it exactly rather than judging it.
+
+    The whole steer is withheld, not just the bad URL: a directive built AROUND an invented route
+    ("fetch the response from <invented>, parse the JSON …") is wrong as a whole, and excising the URL
+    would leave cria authoring a mutilated instruction — repairing a guess with another guess. The
+    callers that need a signal already have a grounded one to fall back to (the canned redirect, the
+    raw check truth); the flail caller falls back to silence, which is the correct assist here."""
+    if not directive:
+        return None
+    bad = _ungrounded_urls(directive, evidence)
+    if bad:
+        rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
+        return None
+    return directive
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
