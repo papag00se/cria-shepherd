@@ -606,6 +606,18 @@ class GateTests(unittest.TestCase):
         # the clearance is per query — a DIFFERENT re-hunt is still refused
         self.assertIsNotNone(wf.gate_search("s1", visible))
 
+    def test_a_clearance_permits_one_run_not_a_standing_pass(self):
+        # THE REGRESSION (live run 0727-103922): the clearance was permanent for the session, so a
+        # query judged a new direction ONCE could then be re-run forever — the coder issued the
+        # identical search three times and the gate let all three through. "You may run this" is not
+        # "you may run this repeatedly": the clearance is consumed by the run it permits.
+        visible = "ADA Handle API resolve handle to address holder address total handles"
+        rehunt = "ADA Handle API resolve handle holder"
+        wf.set_visible("s9", [], [visible])
+        wf.allow_search("s9", rehunt)
+        self.assertIsNone(wf.gate_search("s9", rehunt))        # cleared → runs once
+        self.assertIsNotNone(wf.gate_search("s9", rehunt))     # ...and is a repeat again after that
+
     def test_prior_matching_search_is_the_gates_own_verdict(self):
         # Whatever decides "is there a prior to ask about?" must be the SAME code the gate refuses on,
         # or the trigger and the refusal drift apart and the reasoner gets asked about the wrong thing.

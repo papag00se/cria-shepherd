@@ -3341,7 +3341,12 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     # hand-tuned word counts. Ask about exactly the pair it would act on — and only when it WOULD act,
     # so a search with no prior costs nothing. A clear "different hunt" clears the query; anything
     # else leaves the gate's verdict alone, so this can only ever refuse LESS.
+    # An IDENTICAL query is not a judgement call, it is identity — re-running the same search
+    # returns the same results, and asking anyway is how a repeat got cleared (measured: the coder
+    # then issued it three times). Only an OVERLAPPING query is worth a reasoner call.
     prior = webfetch.prior_matching_search(sess.web_session, query)
+    if prior and normalize_search(prior) == normalize_search(query):
+        prior = None
     if prior and query not in (sess.rehunt_verdicts or {}):
         if sess.rehunt_verdicts is None:
             sess.rehunt_verdicts = {}

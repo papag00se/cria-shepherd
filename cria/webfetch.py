@@ -519,12 +519,17 @@ def prior_matching_search(session: Optional[str], query: str) -> Optional[str]:
 
 def allow_search(session: Optional[str], query: str) -> None:
     """Record that this query has been judged a genuinely NEW direction, not a re-hunt — so
-    :func:`gate_search` lets it run.
+    :func:`gate_search` lets it run ONCE.
 
     The overlap test is four hand-tuned constants deciding whether to REFUSE the model's own tool
     call, and cria has already removed a sibling threshold rule for over-firing ("0.6 core-overlap
     binds distinct searches"). The constants stay as the cheap trigger; when a reasoner has actually
-    looked at the pair and says these are different hunts, that judgement wins."""
+    looked at the pair and says these are different hunts, that judgement wins.
+
+    The clearance is CONSUMED by the run it permits (see :func:`gate_search`). "This is a new
+    direction" licenses running it, never re-running it: measured (run 0727-103922) a standing
+    clearance let the coder issue the identical search three times, which is the exact loop this
+    gate exists to stop."""
     if session and (query or "").strip():
         _SEARCH_ALLOWED.setdefault(session, set()).add(query.strip().lower())
 
@@ -543,6 +548,7 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
     if not session or not q:
         return None
     if q.lower() in _SEARCH_ALLOWED.get(session, ()):
+        _SEARCH_ALLOWED[session].discard(q.lower())   # consumed: it permitted this run, not the next
         return None
     prior = prior_matching_search(session, q)
     if prior is not None:

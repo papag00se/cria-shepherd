@@ -3682,6 +3682,28 @@ class SearchJudgeTests(unittest.TestCase):
                            self._role(), _Rlog())
         self.assertIsNotNone(wf.gate_search("sk2", rehunt))
 
+    def test_an_identical_query_is_never_sent_to_the_judge(self):
+        # Re-running the SAME search is not a judgement call, it is identity — and asking anyway is
+        # how a repeat got cleared: measured (run 0727-103922) the coder issued "ADA Handles API
+        # Python client GitHub" three times. Only an OVERLAPPING query is worth a reasoner call.
+        from cria.loop import guard_search_query, GuardState
+        from cria import webfetch as wf
+        wf.clear_cache()
+        q = "ADA Handle API resolve handle to address holder address total handles"
+        wf.set_visible("sk4", [], [q])
+        gs = GuardState()
+        gs.web_session = "sk4"
+        calls = {"n": 0}
+
+        def reasoner(b, r):
+            calls["n"] += 1
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"new_direction": True, "on_target": True})}}]}).encode()
+
+        guard_search_query(gs, self._search(q), self._body(), reasoner, self._role(), _Rlog())
+        self.assertEqual(calls["n"], 1)                 # the on-target judge only, no re-hunt call
+        self.assertIsNotNone(wf.gate_search("sk4", q))  # ...and the exact repeat stays refused
+
     def test_a_search_with_no_prior_costs_no_rehunt_call(self):
         # Zero cost when there is nothing to ask about: the gate has no prior, so the judge never runs.
         from cria.loop import guard_search_query, GuardState
