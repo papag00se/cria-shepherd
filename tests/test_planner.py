@@ -542,73 +542,6 @@ class UnreadHostTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 1)
 
 
-class PlanCoverageTests(unittest.TestCase):
-    """Nothing checked that a fresh plan covers what the request asked for. replan.txt carries the
-    rule for the RE-derivation ("every deliverable the user asked for ... must still be covered by a
-    step"); plan.txt never had it and nothing enforced it. Measured (run 0727-090143): a ONE-step plan
-    — "Explore the workspace to locate any existing source code" — was accepted for a request wanting
-    a script, unit tests, a live test and a README. Only the end-of-task satisfaction critic caught it,
-    after coder calls had already been spent."""
-
-    def _role(self):
-        from cria.config import Role
-        return Role(name="reasoner", backend="local")
-
-    def test_a_plan_missing_deliverables_is_handed_back_once(self):
-        prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "echo looked"}),                       # PHASE A
-            _tool_resp("submit_plan", {"steps": ["Explore the workspace"]}),          # covers nothing
-            _content_resp('{"missing": ["the unit tests", "the README"]}'),           # coverage judge
-            _tool_resp("submit_plan", {"steps": ["Write the script", "Add unit tests", "Add a README"]}),
-            _content_resp("NONE"),                                                    # noise judge
-        ])
-        rlog = _Rlog()
-        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
-                       clock=lambda: _FIXED).plan_for(
-            _msgs("write a script, with unit tests, and a README"), rlog)
-        self.assertIn("plan.missing_deliverables", [k for k, _ in rlog.events])
-        self.assertEqual(len(plan.items), 3)                       # the re-draft is what landed
-        self.assertTrue(any("README" in str(m.get("content"))
-                            for b in prov.bodies for m in b["messages"]))
-
-    def test_a_covering_plan_sails_through(self):
-        prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "echo looked"}),
-            _tool_resp("submit_plan", {"steps": ["Write the script", "Add unit tests", "Add a README"]}),
-            _content_resp('{"missing": []}'),      # covers everything
-            _content_resp("NONE"),                 # noise judge
-        ])
-        rlog = _Rlog()
-        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
-                       clock=lambda: _FIXED).plan_for(_msgs("script, tests, README"), rlog)
-        self.assertNotIn("plan.missing_deliverables", [k for k, _ in rlog.events])
-        self.assertEqual(len(plan.items), 3)
-
-    def test_an_unclear_verdict_challenges_nothing(self):
-        # Safe null, same posture as every other judge here: a plan is never handed back on a guess.
-        # This one matters more than most — an open "what's missing?" question is exactly where a weak
-        # reasoner starts inventing requirements (the unfalsifiable-step bug), so anything that is not
-        # a clean list is treated as "nothing missing".
-        from cria.planner import _parse_missing_verdict
-        self.assertEqual(_parse_missing_verdict('{"missing": ["tests"]}'), ["tests"])
-        self.assertEqual(_parse_missing_verdict('{"missing": []}'), [])
-        self.assertEqual(_parse_missing_verdict("NONE"), [])
-        self.assertEqual(_parse_missing_verdict("I think the tests are missing"), [])
-        self.assertEqual(_parse_missing_verdict(""), [])
-        self.assertEqual(_parse_missing_verdict('{"missing": "tests"}'), [])   # not a list → null
-
-    def test_no_reasoner_means_no_coverage_judgment(self):
-        prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "echo looked"}),
-            _tool_resp("submit_plan", {"steps": ["Explore the workspace"]}),
-        ])
-        rlog = _Rlog()
-        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("script, tests, README"), rlog)
-        self.assertNotIn("plan.missing_deliverables", [k for k, _ in rlog.events])
-        self.assertEqual(len(plan.items), 1)
-
-
 class GatherEvidenceTests(unittest.TestCase):
     def test_gather_evidence_excludes_the_models_own_turns(self):
         # The honesty of the whole check: a route the planner merely GUESSED at in its own
@@ -815,7 +748,6 @@ class NoiseStepDropTests(unittest.TestCase):
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Set up the development environment and install dependencies.\n'
                           '2. Write the fibonacci module fib.py.\n3. Add unit tests in test_fib.py.'),  # plan
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop step 1 (pure plumbing)
             _content_resp('NONE'),     # which API? none → no research question
         ])
@@ -833,7 +765,6 @@ class NoiseStepDropTests(unittest.TestCase):
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp("1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
                           "2. Write resolver.py that calls the endpoint the spec names\n3. Add unit tests"),
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop the bare grep command
             _content_resp('NONE'),     # which API? none
         ])
@@ -849,7 +780,6 @@ class NoiseStepDropTests(unittest.TestCase):
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp("1. Create tests/test_x.py with content 'import sys, json, mock, requests; def test(): ...'\n"
                           "2. Write resolver.py"),
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop the step that dictates literal code
             _content_resp('NONE'),
         ])
@@ -864,7 +794,6 @@ class NoiseStepDropTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Set up the development environment.\n2. Install the dependencies.'),
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1, 2'),     # NOISE? both — but cria never empties the plan
             _content_resp('NONE'),
         ])
@@ -892,7 +821,6 @@ class NoiseStepDropTests(unittest.TestCase):
         prov = _ScriptedProvider([
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Write fib.py.\n2. Add tests.'),
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('NONE'),     # NOISE? none
             _content_resp('NONE'),     # which API? none
         ])
@@ -918,7 +846,6 @@ class NoiseStepDropTests(unittest.TestCase):
             _content_resp('1. Fetch the OpenAPI specification from the API and read the real endpoint.\n'
                           '2. Write resolver.py.\n'
                           '3. Add README.md with installation instructions (pip install requests).'),  # plan
-            _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('NONE'),     # the ONE task-aware NOISE judgment: drop nothing
             _content_resp('1, 3'),     # would-be blinded SETUP verdict — must never be asked for/consumed
         ])

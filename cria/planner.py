@@ -315,20 +315,6 @@ def _parse_unread_verdict(ans: str, candidates: list[str]) -> list[str]:
     return sorted(set(parts))
 
 
-def _parse_missing_verdict(ans: str) -> list[str]:
-    """A coverage-judge reply → the requested deliverables it says no step produces.
-
-    Only a clean ``{"missing": [...]}`` counts. Prose, a bare word, or a non-list value takes the safe
-    null (nothing missing). That posture matters more here than anywhere else: "what is missing?" is an
-    OPEN question, and an open question is exactly where a weak reasoner starts inventing requirements
-    the user never asked for — the same failure that made a research step unsatisfiable and held one
-    plan open for 111 calls. If it cannot answer cleanly, cria hands nothing back."""
-    obj = extract_json_object(strip_think(ans or ""))
-    if not isinstance(obj, dict) or not isinstance(obj.get("missing"), list):
-        return []
-    return [t for item in obj["missing"] if (t := str(item).strip())]
-
-
 def _facts_digest(facts: dict) -> str:
     """The research findings as a few compact lines — one per source that actually returned, with the
     routes and response fields the shared spec extractors found in it. Rendered from the RECORDED
@@ -553,27 +539,6 @@ class Planner:
             rlog) or "")
         return _parse_unread_verdict(ans, candidates)
 
-    def _missing_deliverables(self, task: str, steps: list[str], rlog) -> list[str]:
-        """Which things the REQUEST asks for does this plan not produce?
-
-        The coder follows the plan and stops when its steps are done, so a plan that omits a
-        deliverable silently drops it. `replan.txt` has carried this rule for the re-derivation all
-        along ("every deliverable the user asked for ... must still be covered by a step"); the INITIAL
-        draft never had it and nothing enforced it. Measured (run 0727-090143): a one-step plan —
-        "Explore the workspace" — was accepted for a request wanting a script, unit tests, a live test
-        and a README, and only the end-of-task satisfaction critic caught it, long after coder calls
-        had been spent. This asks the same question at draft time, for one call, before any of them are.
-
-        Nothing is invented on cria's side either way: the items named back are the USER's own asks,
-        and the planner writes the steps. No reasoner → no judgment."""
-        if self._role is None or not steps:
-            return []
-        ans = self._ask(prompts.load("plan_coverage"),
-                        prompts.render("plan_coverage_user", task=task,
-                                       plan="\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))),
-                        rlog)
-        return _parse_missing_verdict(ans)
-
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
         reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
@@ -729,18 +694,6 @@ class Planner:
                         {"role": "user", "content": prompts.fill(
                             prompts.load_map("planner_steers")["host_unread"],
                             hosts=", ".join(need))}]
-                    continue
-                # And does the plan actually produce everything the request asked for? The coder stops
-                # when the steps run out, so an omitted deliverable is silently dropped.
-                missing = [] if challenged else self._missing_deliverables(task, steps, rlog)
-                if missing:
-                    challenged = True
-                    rlog.emit("plan.missing_deliverables", missing=", ".join(missing))
-                    messages = messages + [
-                        {"role": "assistant", "content": msg.get("content") or None},
-                        {"role": "user", "content": prompts.fill(
-                            prompts.load_map("planner_steers")["missing_deliverables"],
-                            missing="; ".join(missing))}]
                     continue
                 if attempt:
                     rlog.emit("plan.final_recovered", attempt=attempt + 1)
