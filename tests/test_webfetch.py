@@ -781,6 +781,15 @@ class FindMultiTermTests(unittest.TestCase):
         self.assertIn("holder_address", self._find("holder_address"))
         self.assertIn("no match", self._find("nonesuch"))
 
+    def test_a_phrase_that_really_is_in_the_document_is_answered_as_a_phrase(self):
+        """Splitting must never change the answer to a query that already HAD one. `,` is ambiguous —
+        a separator in `a, b` and ordinary punctuation in `Hello, world` — so the literal query is
+        tried first and only a MISS is re-read as a list. A phrase that exists wins outright."""
+        doc = {"greeting": "Hello, world", "other": "world"}
+        out = wf.find_in("", doc, "Hello, world", 4000)
+        self.assertIn("greeting", out)
+        self.assertNotIn('find "Hello"', out)      # not re-read as two terms
+
     def test_a_pipe_inside_one_real_key_is_not_split(self):
         spec = {"weird|key": {"a": 1}}
         self.assertIn("weird|key", wf.find_in("", spec, "weird|key", 4000))

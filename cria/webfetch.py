@@ -807,9 +807,16 @@ def _find_hits(reduced: str, parsed: Optional[Any], term: str) -> bool:
 def find_in(reduced: str, parsed: Optional[Any], query: str, cap_tokens: int) -> str:
     """MIME-aware targeted retrieval: a JSON/YAML subtree + ancestor spine + one-hop ``$ref``,
     else a text section. Strips surrounding quotes the model adds for emphasis (the Rust cure
-    for the 'a model looped a dozen fetches re-quoting terms' bug). A multi-term query is answered
-    per term, with any term that is genuinely absent named rather than dropped."""
+    for the 'a model looped a dozen fetches re-quoting terms' bug).
+
+    A query that MATCHES is answered exactly as asked — splitting must never change the answer to a
+    question that already had one, and `,` is a separator in `a, b` but ordinary punctuation in
+    `Hello, world`. Only a MISS is re-read: first as a list of terms, then with a leading HTTP verb
+    stripped. Both re-reads are answered from ground truth (the same lookup the finders do) and both
+    say what was actually searched."""
     q = (query or "").strip().strip("\"'`").strip()
+    if _find_hits(reduced, parsed, q):
+        return _find_one(reduced, parsed, q, cap_tokens)
     terms = _find_terms(q)
     if len(terms) > 1:
         found = [t for t in terms if _find_hits(reduced, parsed, t)]
@@ -822,11 +829,10 @@ def find_in(reduced: str, parsed: Optional[Any], query: str, cap_tokens: int) ->
             return body
         return (f'find "{q}": no match for any of: {", ".join(terms)} (each was searched separately).\n'
                 + _find_one(reduced, parsed, terms[0], cap_tokens))
-    if not _find_hits(reduced, parsed, q):
-        bare = _HTTP_VERB.sub("", q)
-        if bare != q and _find_hits(reduced, parsed, bare):
-            return (f'[find "{q}" — searched for "{bare}": a spec names the path, with the method as a '
-                    f'key inside it]\n\n' + _find_one(reduced, parsed, bare, cap_tokens))
+    bare = _HTTP_VERB.sub("", q)
+    if bare != q and _find_hits(reduced, parsed, bare):
+        return (f'[find "{q}" — searched for "{bare}": a spec names the path, with the method as a '
+                f'key inside it]\n\n' + _find_one(reduced, parsed, bare, cap_tokens))
     return _find_one(reduced, parsed, q, cap_tokens)
 
 
