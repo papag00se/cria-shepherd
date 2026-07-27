@@ -3629,8 +3629,16 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         if ch.get("finish_reason") == "rumination":
             ch["finish_reason"] = "stop"
     if dropped:  # no hidden guards: the partial write was refused
-        _add_note(coder, "output hit the token limit — partial write refused (retry in smaller pieces)")
-        _refusal_turn(body, prompts.load_map("call_refused")["truncated_write"])
+        # SAY WHICH IT WAS. The retry remedy already distinguishes a self-cut from a cap; these two
+        # closing messages did not, so the model got the correct diagnosis on the retry and "your
+        # response hit the output limit" on exhaustion — cria contradicting itself about one event.
+        # Measured (run 0727-145921): 17 truncations, ALL self-cuts. It matters: told it hit a limit,
+        # a model shrinks its content, and a generation that ended early is not fixed by being shorter.
+        _add_note(coder, ("output stopped early mid-write — partial write refused (retry in smaller pieces)"
+                          if selfcut else
+                          "output hit the token limit — partial write refused (retry in smaller pieces)"))
+        _refusal_turn(body, prompts.load_map("call_refused")[
+            "selfcut_write" if selfcut else "truncated_write"])
     elif attempt:  # recovered after steering to incremental writes
         _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
     return coder

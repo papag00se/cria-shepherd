@@ -4515,3 +4515,45 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         out = _format_fetches({"https://nope.example/x": ("HTTP 404", "", "")})
         self.assertIn("404", out)
         self.assertNotRegex(out, r"no endpoints|no routes")   # the failed section already explains it
+
+
+class SelfCutRefusalWordingTests(unittest.TestCase):
+    """`440ce83` gave the self-cut its own remedy, "worded truthfully for what actually happened (it
+    stopped itself; it did NOT hit the cap)". The messages that close the same event kept the cap
+    wording: the model-facing refusal says "Your response hit the output limit partway through
+    writing the file", and the operator note says "output hit the token limit".
+
+    MEASURED (run 0727-145921): 17 truncations, ALL of them self-cuts (`selfcut: true`, no
+    output_tokens), 15 on one file. So the model was handed the correct diagnosis on the retry and
+    the wrong one on exhaustion — two cria messages contradicting each other about the same event.
+    It matters behaviourally: told it hit an output limit, a model shrinks its content; a generation
+    that ended early is not fixed by making it shorter."""
+
+    _SELFCUT = r'{"path":"/x/resolver.py","content":"print(1)\n    print(\"a'
+
+    def _completion(self):
+        return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "w1", "function": {"name": "write_file", "arguments": self._SELFCUT}}]},
+            "finish_reason": "tool_calls"}]}
+
+    def test_the_exhausted_refusal_does_not_blame_a_limit_that_was_not_hit(self):
+        from cria.loop import guard_truncation
+        body = {"messages": [{"role": "user", "content": "write it"}], "tools": [_SHELL]}
+
+        def coder_chat(b, rlog):
+            return json.dumps(self._completion())        # never recovers → exhausts the retries
+
+        guard_truncation(self._completion(), body, coder_chat, _Rlog(), step=1, phase="coder-s1")
+        final = body["messages"][-1]["content"]
+        self.assertNotIn("output limit", final)
+        self.assertNotIn("token limit", final)
+        self.assertIn("stopped", final.lower())
+
+    def test_a_real_cap_truncation_still_says_so(self):
+        from cria.loop import guard_truncation
+        capped = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "w1", "function": {"name": "write_file", "arguments": self._SELFCUT}}]},
+            "finish_reason": "length"}], "usage": {"completion_tokens": 4096}}
+        body = {"messages": [{"role": "user", "content": "write it"}], "tools": [_SHELL]}
+        guard_truncation(capped, body, lambda b, r: json.dumps(capped), _Rlog(), step=1, phase="c")
+        self.assertIn("output limit", body["messages"][-1]["content"])
