@@ -1976,6 +1976,31 @@ class SteerVerdictTests(unittest.TestCase):
         self.assertIn("/handles/{handle}", out)
         self.assertNotIn("ON_TRACK", out)
 
+    def test_a_negated_verdict_never_becomes_the_directive(self):
+        # THE TRAP, REINTRODUCED BY ITS OWN FIX: both steer prompts ended by teaching the exact bigram
+        # "is NOT `ON_TRACK`", so a reasoner that agrees the coder is stuck echoes it. Token-level
+        # stripping then left the negation behind — "NOT ON_TRACK" became "NOT" (under the floor, so
+        # read as an on-track VETO that silently cancelled the rescue the reasoner had just called
+        # for) and "The coder is NOT ON_TRACK" became "The coder is NOT", which cleared the floor and
+        # was injected into the coder AS its rescue directive. That is the NOT_STUCK negation collapse
+        # this sentinel was renamed to escape. A negated verdict now takes its whole sentence.
+        from cria.loop import _steer_or_none
+        for veto in ("NOT ON_TRACK", "not on track", "The coder is NOT ON_TRACK",
+                     "A stuck or looping coder is NOT `ON_TRACK`."):
+            self.assertIsNone(_steer_or_none(veto), veto)
+        # ...and a real directive alongside the negated verdict still gets through intact
+        out = _steer_or_none("The coder is NOT ON_TRACK. Read handler.py and run the failing test.")
+        self.assertEqual(out, "Read handler.py and run the failing test.")
+
+    def test_prompts_do_not_teach_the_negated_verdict_bigram(self):
+        # The parser fix is the backstop; this is the root. A prompt that spells out "is NOT ON_TRACK"
+        # hands a weak model the exact string that collapses.
+        from cria import prompts
+        for name in ("steer_diagnose", "steer_diagnose_user"):
+            body = prompts.load(name)
+            self.assertNotRegex(body, r"(?i)\b(?:not|never)\s+.{0,3}on[_ ]track",
+                                f"{name}.txt teaches the negated verdict")
+
     def test_legacy_not_stuck_verdict_still_vetoes(self):
         from cria.loop import _steer_or_none
         self.assertIsNone(_steer_or_none("NOT_STUCK"))            # back-compat

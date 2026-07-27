@@ -3156,8 +3156,23 @@ def _steer_or_none(text: str) -> str | None:
         return None
     body = strip_think(text)
     body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
-    directive = re.sub(r"(?i)\b(on[_ ]track|not[_ ]stuck)\b", " ", body)  # remove the verdict token(s)
-    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:").strip()    # trim scaffolding; KEEP end punctuation
+    # Drop every SENTENCE that carries a verdict token, rather than excising the token and keeping the
+    # wreckage of the sentence around it. Both prompts end by teaching the exact bigram "is NOT
+    # ON_TRACK", so a reasoner that agrees the coder is stuck echoes it — and token-level stripping
+    # left the negation behind: "NOT ON_TRACK" became "NOT" (under the floor → read as an on-track
+    # VETO, silently cancelling the rescue the reasoner had just called for) and "The coder is NOT
+    # ON_TRACK" became "The coder is NOT", which cleared the floor and was injected into the coder AS
+    # its rescue. That is the NOT_STUCK negation trap this sentinel was renamed to escape.
+    # A verdict sentence carries no instruction either way, so losing it costs nothing, and the hedge
+    # this function exists for survives: Fabliq's "ON_TRACK. You keep re-fetching; write it now."
+    # keeps its second sentence. Nothing left → the caller falls back to its grounded text.
+    # A NEGATED verdict takes its whole sentence (it asserts a judgement and carries no instruction);
+    # a BARE token is only a label on a hedged reply and is excised in place, so "ON_TRACK You are
+    # stuck; write it now" keeps its directive.
+    negated = re.compile(r"(?i)\b(?:not|never|isn't|aren't)\s+(?:on[_ ]track|not[_ ]stuck)\b")
+    kept = [s for s in re.split(r"(?<=[.!?])\s+|\n+", body) if not negated.search(s)]
+    directive = re.sub(r"(?i)\b(on[_ ]track|not[_ ]stuck)\b", " ", " ".join(kept))
+    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:.,;").strip()
     # A directive remains once the verdict is stripped → deliver it (Fabliq hedges the verdict + advice);
     # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
     # "ok"/"yes" residue without discarding a real short steer.
