@@ -146,10 +146,18 @@ def _clean_step(text) -> str:
     dict item — a model that wraps each array element in an object (``{"step": "…"}``) instead of a
     bare string; the field is extracted first, so the step text is never the dict repr ``{'step': …}``."""
     if isinstance(text, dict):
-        for k in _STEP_TEXT_KEYS:
-            v = text.get(k)
-            if isinstance(v, str) and v.strip():
+        # A STEP IS A PHRASE. `action` is ambiguous — sometimes the step ("Research the API"),
+        # sometimes a tool name — and measured (run 0727-151934) it held "write_file" beside a
+        # `description` carrying the real step, so the rescue's step became a bare token the noise
+        # judge then dropped. A candidate with no whitespace is a LABEL, not something a coder can
+        # carry out; it loses to any sibling that reads like one. Shape, not keywords.
+        candidates = [v for k in _STEP_TEXT_KEYS
+                      if isinstance(v := text.get(k), str) and v.strip()]
+        for v in candidates:
+            if len(v.split()) > 1:
                 return _clean_step(v)
+        if candidates:      # every candidate is a bare token — return it rather than drop the step
+            return _clean_step(candidates[0])
         # No key anyone listed. The model still said something — take the FIRST non-empty string in
         # its OWN field order, which is where it put what it considers primary. Better than dropping
         # a whole step because nobody predicted its key name.

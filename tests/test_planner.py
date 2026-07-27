@@ -1228,3 +1228,39 @@ class ExhaustedBudgetStillLooksTests(unittest.TestCase):
                     "/v1/ada-handles/by-ada-handle/{handle} ... the task names api.handle.me")
         bad = ungrounded_urls("GET https://api.handle.me/v1/ada-handles/by-ada-handle/goose", evidence)
         self.assertEqual(bad, ["https://api.handle.me/v1/ada-handles/by-ada-handle/goose"])
+
+
+class StepMustBeAPhraseTests(unittest.TestCase):
+    """`b3d4731` ranked INTENT keys above MECHANISM keys and put `action` among the intent keys. That
+    key is ambiguous: sometimes it holds the step ("Research the API"), sometimes a tool name.
+
+    MEASURED (run 0727-151934): the one-shot rescue returned
+    `{"description": "Create unit tests for resolve_handle in …", "action": "write_file",
+      "content": "#!/usr/bin/env python3…"}` — `action` won and the step became the bare token
+    "write_file", which the noise judge then dropped, spending the rescue. Fourth declined rescue
+    today and the third distinct cause.
+
+    A STEP IS A PHRASE. A candidate with no whitespace is a label, not something a coder can carry
+    out, so it loses to any sibling that reads like one. Shape, not keywords — and if every candidate
+    is a bare token, the first is still returned rather than the step being dropped."""
+
+    def test_a_bare_token_loses_to_a_real_phrase(self):
+        from cria.planner import _clean_step
+        self.assertEqual(
+            _clean_step({"description": "Create unit tests for resolve_handle", "action": "write_file"}),
+            "Create unit tests for resolve_handle")
+
+    def test_the_measured_three_key_object_reads_as_the_step(self):
+        from cria.planner import _clean_step
+        step = {"description": "Create unit tests for resolve_handle in test_x.py",
+                "action": "write_file", "content": "#!/usr/bin/env python3\nimport json"}
+        self.assertEqual(_clean_step(step), "Create unit tests for resolve_handle in test_x.py")
+
+    def test_action_still_wins_when_it_IS_the_phrase(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"action": "Research the Ada Handles API", "id": 3}),
+                         "Research the Ada Handles API")
+
+    def test_a_lone_bare_token_is_still_returned(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"action": "write_file"}), "write_file")
