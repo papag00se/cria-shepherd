@@ -437,6 +437,18 @@ class StepCleaningTests(unittest.TestCase):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step("Write the README with usage."), "Write the README with usage.")
 
+    def test_clean_step_keeps_a_closing_brace_the_step_itself_opened(self):
+        # The blanket trailing-junk strip ate the brace off a step ending in a path template, so
+        # `GET /handles/{handle}` reached the coder as `GET /handles/{handle` — and the coder follows
+        # the plan verbatim, so it builds that URL wrong. A closer is junk only when UNBALANCED.
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("1. GET https://api.handle.me/handles/{handle}"),
+                         "GET https://api.handle.me/handles/{handle}")
+        self.assertEqual(_clean_step("Call the endpoint /v1/users/{id}"), "Call the endpoint /v1/users/{id}")
+        self.assertEqual(_clean_step("Read config[0]"), "Read config[0]")
+        # …while genuinely unbalanced JSON bleed is still stripped
+        self.assertEqual(_clean_step('Write the script",]}'), "Write the script")
+
     def test_clean_step_keeps_bare_xml_tag_mentions(self):
         # M13: the dialect marker required NO delimiter, so a bare <message>/<think>/<channel> mention —
         # a legit plan step about XML/streaming — was truncated ("Handle the <message> element" ->

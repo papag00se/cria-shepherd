@@ -115,8 +115,27 @@ def _clean_step(text) -> str:
     if m:
         s = s[:m.start()]
     s = re.sub(r"^\s*\d+[.)]\s*", "", s)  # leading "1. " / "2) " embedded in a JSON list item
-    s = re.sub(r"[\s'\"\],}]+$", "", s)  # trailing quote/comma/bracket/brace junk
-    return s.strip()
+    return _strip_trailing_junk(s).strip()
+
+
+_CLOSERS = {"}": "{", "]": "["}
+
+
+def _strip_trailing_junk(s: str) -> str:
+    """Drop the JSON/array junk that bleeds in when a model runs past the plan (``step",]}``) — but
+    never a bracket the STEP ITSELF opened. A blanket ``[\\s'\"\\],}]+$`` strip ate the brace off a
+    step ending in a path template, so ``GET /handles/{handle}`` reached the coder as
+    ``GET /handles/{handle`` — and the coder follows the plan verbatim, so it builds that URL wrong.
+    A closer is junk only when it is UNBALANCED; a matched one is part of the step's own text."""
+    while s:
+        c = s[-1]
+        if c in " \t\r\n'\",":
+            s = s[:-1]
+        elif c in _CLOSERS and s.count(_CLOSERS[c]) < s.count(c):
+            s = s[:-1]
+        else:
+            break
+    return s
 
 
 # Keys a model may wrap its step array under. `steps` is the prompt's ask; `plan` is what Fabliq
