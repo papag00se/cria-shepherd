@@ -111,6 +111,20 @@ class XmlAndRawSourceTests(unittest.TestCase):
             wf.clear_cache()
 
 
+class NestedFieldDisclosureTests(unittest.TestCase):
+    def test_a_capped_nested_object_keeps_its_disclosure(self):
+        # The nested cap BUILT its "…+N more field(s)" marker and the caller sliced it straight off
+        # with `sub[:8]` — three lines above a comment reading "never a silent slice". A nested field
+        # past the cap then read to the coder as "the API does not return it", under a prompt saying
+        # "use these EXACT names and nesting; do not guess".
+        sch = {"type": "object", "properties": {
+            "nested": {"type": "object",
+                       "properties": {f"f{i}": {"type": "string"} for i in range(14)}},
+            "other": {"type": "string"}}}
+        out = wf._schema_field_summary(sch, {}, 30)
+        self.assertTrue(any("more field(s)" in x for x in out), out)
+
+
 class StatusAndHostTests(unittest.TestCase):
     def test_status_label(self):
         self.assertEqual(wf.status_label(404), "HTTP 404 Not Found")

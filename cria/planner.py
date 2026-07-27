@@ -21,7 +21,7 @@ import urllib.parse
 from datetime import datetime, timezone
 
 from . import massage, planner_tools, prompts, urlgrounding
-from .classify import _task_key, latest_user_text
+from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 
@@ -36,7 +36,7 @@ _MAX_FINAL_RETRIES = 3
 # — it buys NO answer. At 2000 the noise judge reasoned its way to the right verdict and was cut off
 # mid-sentence with finish_reason=length and zero content, and the plan it should have corrected was
 # accepted whole.
-ASK_MAX_TOKENS = 8192
+ASK_MAX_TOKENS = JUDGE_MAX_TOKENS
 # How many times ONE draft may be handed back for a fresh problem. Two, so a plan challenged for an
 # invented route can still be challenged for missing every deliverable — and no more, so this can
 # never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its

@@ -362,8 +362,13 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     for k, v in items[:max_fields]:
         v = v if isinstance(v, dict) else {}
         if _depth == 0 and (v.get("type") == "object" or "properties" in v or "$ref" in v):
+            # NB: pass the WHOLE `sub` through. It already ends with its own "…+N more field(s)"
+            # marker when the nested object was capped, and slicing it here (`sub[:8]`) threw that
+            # marker away — the one case it exists for. A nested field past the cap then read to the
+            # coder as "the API does not return it", under a prompt that says "use these EXACT names
+            # ... do not guess". Same rule as the sibling cap below: never a silent slice.
             sub = _schema_field_summary(v, schemas, 8, _depth + 1)
-            out.append(f"{k}{{{', '.join(sub[:8])}}}" if sub else f"{k}(object)")
+            out.append(f"{k}{{{', '.join(sub)}}}" if sub else f"{k}(object)")
         elif v.get("type") == "array":
             out.append(f"{k}[]")
         else:

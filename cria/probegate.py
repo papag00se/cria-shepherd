@@ -44,8 +44,12 @@ from .proberun import ProbeReport
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
 SECTION_PREFIX = "___CRIA_GATE_"
 SECTION_SUFFIX = "___"
-# Per-probe wall-clock bound — codex-local's COMPLETION_PROBE_TIMEOUT (45 s per probe).
-COMPLETION_PROBE_TIMEOUT_S = 45.0
+# Per-probe wall-clock bound. Was 45 s (codex-local's COMPLETION_PROBE_TIMEOUT), which is fine for a
+# syntax floor and far too short for what this gate actually selects: a full test suite, a cold
+# `cargo check`, a `tsc` build. That is not merely a slow gate — `completion_block_nudge` fails CLOSED
+# on a timed-out hard-failure probe, so a repo whose tests take a minute is permanently
+# un-completable: every round re-nudges with "TIMEOUT after 45s" and no edit can ever clear it.
+COMPLETION_PROBE_TIMEOUT_S = 240.0
 
 
 @dataclass

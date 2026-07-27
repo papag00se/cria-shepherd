@@ -41,11 +41,22 @@ PLANNER_TOOLS = [
     {"type": "function", "function": {"name": "web_search", "description": _TD["web_search"], "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
 ]
 
-_FETCH_MAX_BYTES = 512 * 1024
+# Match the coder-side cap (webfetch.MAX_BODY_BYTES). This path was left at the old 512 KiB and,
+# unlike its sibling, never detected the cut: it read exactly the cap and decoded whatever came back,
+# so a spec whose `paths` block sits past 512 KiB arrived as valid-looking front matter with the
+# endpoints missing. Worse, the truncated bytes then went through `_record_fetch` → `_structure_of`,
+# where broken JSON simply fails to parse, so the durable ledger handed the CODER a 2xx with no
+# routes — indistinguishable from "this page isn't a spec".
+_FETCH_MAX_BYTES = webfetch.MAX_BODY_BYTES
 # Ask Brave for as many results as it will return (its API clamps to 20 in brave.query_url), so a
 # planner's gather sees the fuller result set rather than an arbitrary 5. The count is disclosed in
 # format_results so the model knows how many landed.
 _SEARCH_COUNT = 20
+# Wall-clock for ONE read-only gather command. Was 20 s, which a recursive grep/find or `git log -p`
+# over a real repo exceeds routinely on a contended box — and a timeout with no partial output feeds
+# the research floor as "this call taught it nothing", the exact input that makes the planner draft
+# from memory.
+GATHER_EXEC_TIMEOUT_S = 90
 
 
 @dataclass(frozen=True)
@@ -114,7 +125,7 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResul
     run_cwd = (scratch or ".") if fresh else cwd
     try:
         out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
-                             capture_output=True, text=True, timeout=20, env=env)
+                             capture_output=True, text=True, timeout=GATHER_EXEC_TIMEOUT_S, env=env)
         # Full stdout+stderr — the failing assertion / the one grep match the planner needs may be
         # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
         # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
@@ -265,15 +276,20 @@ def _web_fetch(args: dict, facts: dict | None = None) -> ToolResult:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": brave.USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as r:
-            raw = r.read(_FETCH_MAX_BYTES)
-            body = raw.decode("utf-8", "replace")
+            # Read ONE byte past the cap so the cut is detectable, exactly as webfetch.fetch does.
+            raw = r.read(_FETCH_MAX_BYTES + 1)
+            cut = len(raw) > _FETCH_MAX_BYTES
+            body = raw[:_FETCH_MAX_BYTES].decode("utf-8", "replace")
             status, final = getattr(r, "status", "?"), r.geturl()
             hdrs = getattr(r, "headers", None)
             _record_fetch(facts, final, status, body, hdrs.get("Content-Type") if hdrs else None)
             # Full decoded body (already bounded by the 512KB socket read above) — the endpoint /
             # signature the planner needs may be past any fixed char clip. The context floor
             # reduces it MIME-aware + losslessly-first if it's large for the window.
-            return ToolResult(f"HTTP {status} · {final}\n{body}", True)
+            note = (f"\n[TRUNCATED at {_FETCH_MAX_BYTES // (1024 * 1024)} MB — this document is "
+                    f"longer than that and the rest was not read; anything defined past this point "
+                    f"is missing, so do not read this as the whole document]" if cut else "")
+            return ToolResult(f"HTTP {status} · {final}\n{body}{note}", True)
     except Exception as e:  # network, TLS, decode — surface the cause, don't crash the gather
         return _nothing(f"[web_fetch error: {e}]")
 

@@ -27,6 +27,11 @@ from .jsontext import extract_json_object
 
 _ENGAGEMENTS = ("question", "simple", "task")
 _TASK_TYPES = ("coding", "reasoning", "question")
+# Output budget for cria's own short-verdict model calls (classifier, planner judges). A REASONING
+# model spends this budget THINKING before it writes a character, so a tight cap does not buy a short
+# answer — it buys NO answer, and an empty verdict is indistinguishable from "nothing to report".
+# Measured on a judge at 2000: finish_reason=length, 8,865 chars of reasoning, ZERO content.
+JUDGE_MAX_TOKENS = 8192
 _CACHE_CAP = 256
 _ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalates to an error log
 
@@ -73,7 +78,11 @@ class Classifier:
         with self._lock:
             if len(self._cache) >= _CACHE_CAP:
                 self._cache.clear()
-            self._cache[key] = result
+            # NEVER cache a fallback. It is not a classification — it is the record of one that
+            # failed (a cut-off verdict, a parse miss), and caching it applied that failure to every
+            # later turn of the same task instead of letting the next call succeed.
+            if not result.reason.startswith("fallback:"):
+                self._cache[key] = result
         return result
 
     def _call(self, task: str, rlog) -> Classification:
@@ -82,9 +91,12 @@ class Classifier:
         body = {
             "stream": False,
             "temperature": 0,  # default; the role's config (cria.toml) overrides below
-            # The classification is a short JSON. Cap the output so a reasoning model that
-            # fails to stop can't run away to context-length and hang the request.
-            "max_tokens": 1024,
+            # The cap is a RUNAWAY GUARD, not a size hint: the verdict is a short JSON, but a
+            # reasoning model spends the budget THINKING before it writes a character, so a tight cap
+            # buys no answer rather than a short one. Measured on the sibling judge at 2000:
+            # finish_reason=length, 8,865 chars of reasoning, ZERO content. This was the last cap left
+            # from the generation the 2026-07-17 truncation audit raised to 8192 everywhere else.
+            "max_tokens": JUDGE_MAX_TOKENS,
             "messages": [
                 {"role": "system", "content": prompts.load("classify")},
                 {"role": "user", "content": task},

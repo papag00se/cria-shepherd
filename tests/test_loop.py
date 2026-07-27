@@ -457,6 +457,33 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         from cria.loop import _fetched_facts_anchor
         self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=_plan(2))))
 
+    def test_shape_block_survives_an_array_field(self):
+        # MEASURED: the shape block was read with a non-greedy regex terminating on `]`, and a field
+        # summary marks an array as `k[]` — so the FIRST entry line ending in an array closed the
+        # match and every endpoint after it vanished from the durable ledger. What that dropped, in
+        # this task, was `/holders/{address} → total_handles`: the second call the work needs, under
+        # a prompt telling the coder to "use these EXACT names ... do not guess".
+        from cria.loop import _shape_block
+        from cria import webfetch
+        block = (f"{webfetch.SHAPE_MARKER} the fields each endpoint RETURNS:\n"
+                 "  GET /handles/{handle} → name, holders[]\n"
+                 "  GET /holders/{address} → total_handles, default_handle]\n")
+        out = _shape_block(block, 0)
+        self.assertIn("/holders/{address}", out)      # the endpoint after the array survives
+        self.assertIn("total_handles", out)
+        self.assertIn("holders[]", out)               # ...and the array marker is not mangled
+        self.assertFalse(out.rstrip().endswith("]") and not out.rstrip().endswith("[]"))
+
+    def test_ledger_keeps_the_endpoint_cap_disclosure(self):
+        # webfetch discloses its 12-endpoint shape cap with "…+more endpoints have shapes not shown
+        # here". The ledger filter kept only lines containing `→`, and that note carries an em dash —
+        # so the cap disclosure was dropped and a capped list read as the complete set.
+        from cria.loop import _format_fetches
+        led = {"https://x/spec": ("HTTP 200", "/a, /b",
+                                  "GET /a → f1\n…+more endpoints have shapes not shown here")}
+        body = _format_fetches(led, header="PAGES")
+        self.assertIn("…+more endpoints", body)
+
     def test_ledger_carries_the_RESPONSE_FIELDS_not_just_the_routes(self):
         # THE FOOTGUN (live run 0726-135834, call 98): cria surfaces BOTH halves of a spec's facts —
         # the routes AND the response shape naming the real fields — but the durable ledger captured

@@ -954,7 +954,14 @@ class Loop:
         satisfied, no reasoner, or the ``MAX_COMPLETION_CHECKS`` bound hit (a task the coder can't finish
         still exits rather than looping forever). Fail-CLOSED on an undecidable verdict (judge_satisfaction
         only ever CONFIRMS not-done), so the bound — not a shaky 'satisfied' — is what lets it out."""
-        if self._ctx.reasoner_role is None or sess.completion_checks >= MAX_COMPLETION_CHECKS:
+        if self._ctx.reasoner_role is None:
+            return None
+        if sess.completion_checks >= MAX_COMPLETION_CHECKS:
+            # Spending this budget ENDS THE TASK: the caller reads None as "satisfied" and sets
+            # Phase.DONE. That is the intended escape from an unfinishable task, but it used to
+            # return before the emit below, so the record could not tell a run that finished from one
+            # that gave up still being told "not done". Say which it was.
+            rlog.emit("loop.done_unverified", level="warn", checks=sess.completion_checks)
             return None
         # The AUTHORITATIVE task is the plan's own — NOT _history_root, which after a harness compaction
         # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
@@ -2932,7 +2939,30 @@ _FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): ([^\]]+)\]")
 # the surfaced facts that names the real FIELDS, and it was never captured into the durable ledger —
 # so after a compaction the coder kept the endpoints and lost `resolved_addresses{ada}` / `holder`,
 # which is precisely what it then guesses. Multi-line; ends at the block's closing bracket.
-_FETCH_SHAPE_RE = re.compile(r"\[response shape — (.*?)\]\s*(?:\n|$)", re.S)
+def _shape_block(text: str, start: int) -> str:
+    """The `[response shape — …]` block beginning at/after ``start``, read by LINE.
+
+    A regex terminated on `]` cannot work here: a field summary marks an array field as `k[]`, so the
+    first entry line ending in an array closes the match and every endpoint after it is silently lost
+    — measured, that dropped `/holders/{address} → total_handles`, the second call this task needs,
+    from the durable ledger the coder is told to "use these EXACT names ... do not guess" from.
+
+    Entry lines are the ones carrying `→`; a trailing note (webfetch's "…+more endpoints have shapes
+    not shown here") is kept too, because a cap the model cannot see reads as the complete set."""
+    i = text.find(webfetch.SHAPE_MARKER, start)
+    if i < 0:
+        return ""
+    lines = text[i:].splitlines()
+    out = [lines[0][len(webfetch.SHAPE_MARKER):].strip()] if lines else []
+    for ln in lines[1:]:
+        if "→" in ln or ln.strip().startswith("…"):
+            out.append(ln.rstrip())
+            continue
+        break
+    block = "\n".join(x for x in out if x.strip()).strip()
+    # Drop the block's closing bracket — but never mistake an ARRAY field for it: `holders[]` ends in
+    # `]` too, and stripping that turns a real field name into `holders[`.
+    return block[:-1].rstrip() if block.endswith("]") and not block.endswith("[]") else block
 
 
 def _fetch_facts(entry) -> tuple:
@@ -2966,9 +2996,8 @@ def _extract_fetches(messages: list[dict]) -> dict:
         for sm in _FETCH_STATUS_RE.finditer(c):
             url = sm.group(2).rstrip(".,);")
             rm = _FETCH_ROUTES_RE.search(c, sm.end())
-            shm = _FETCH_SHAPE_RE.search(c, sm.end())
             latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "",
-                           shm.group(1).strip() if shm else "")
+                           _shape_block(c, sm.end()))
     return latest
 
 
@@ -3015,7 +3044,8 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.
-        entries = [ln.strip() for ln in shapes.splitlines() if "→" in ln]
+        entries = [ln.strip() for ln in shapes.splitlines()
+               if "→" in ln or ln.strip().startswith("…")]   # keep the "…+more" cap note too
         if entries:
             line += f"\n  {labels['fields']}\n" + "\n".join(f"  {e}" for e in entries)
         (ok if _fetch_succeeded(status) else failed).append(line)
