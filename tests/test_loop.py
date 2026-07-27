@@ -4562,59 +4562,59 @@ class SelfCutRefusalWordingTests(unittest.TestCase):
 class CriticFixInventsARouteTests(unittest.TestCase):
     """`c17ffd8` established that cria must not hand the coder a concrete external detail the evidence
     never showed — it withheld a STEER naming an invented URL. The step critic's `proposed_fix` is the
-    same kind of authored text, delivered the same way, and was never checked.
+    same authored text, delivered the same way, and was never checked.
 
     MEASURED (run 0727-153326): the plan step read "Fetch the Ada Handles API Swagger documentation to
     identify THE RESOLVE ENDPOINT for handles" — an endpoint that does not exist. The critic hardened
-    that presupposition into a concrete route and proposed it 12 times:
+    that presupposition into a concrete route and proposed it 12 times; it reached the coder in 14 of
+    178 prompts, which grepped for that literal string across 322 calls on ONE step.
 
-        "Proposed fix: Use grep to search for 'POST /handles/resolve' in
-         ./tmp/read-only/api.handle.me_openapi.json to identify the exact resolve endpoint"
+    Routes come from the LEDGER — what cria extracted from real 2xx documents — passed in directly.
+    An earlier cut SCRAPED them out of the rendered critic prompt, which partitions to the end and
+    swept in the GROUND-TRUTH CHECKS block and the CODER'S SUMMARY: grounding a route on the coder's
+    own text is the self-grounding this check exists to defeat. Measured over 216 verdicts, that cut
+    also withheld one REAL route from a run whose ledger listed none."""
 
-    `/handles/resolve` reached the coder in 14 of 178 prompts, and the repetition log shows it
-    grepping for exactly that string, three times over, across 322 calls on one step.
-
-    The REASON is always kept — the step really was not done. Only the invented move is dropped: a
-    coder handed a route nobody has seen goes hunting for it."""
+    LEDGER = "/handles/{handle}, /holders/{address}"
 
     def test_a_proposed_fix_naming_an_unseen_route_is_withheld(self):
         from cria.loop import _verdict_nudge
-        obj = {"done": False,
-               "reason": "The coder did not locate the resolve endpoint.",
+        obj = {"done": False, "reason": "The coder did not locate the resolve endpoint.",
                "proposed_fix": "Use grep to search for 'POST /handles/resolve' in ./tmp/openapi.json"}
-        out = _verdict_nudge(obj, False, self._evidence())
-        self.assertIn("did not locate the resolve endpoint", out)   # the diagnosis survives
-        self.assertNotIn("/handles/resolve", out)                   # the invented route does not
-
-    def _evidence(self):
-        """The real shape: an action log — which is NOT an authority on what exists, and which in the
-        measured run carried the invented route twice (the coder's own grep, and cria's repeat-search
-        refusal quoting it back) — followed by the durable fetch facts, which ARE."""
-        from cria.loop import CODER_FETCH_HEADER
-        return ('$ exec_command {"cmd": "grep -n \'POST /handles/resolve\' ./tmp/openapi.json"}\n'
-                '  -> You already ran that search for POST /handles/resolve\n\n'
-                + CODER_FETCH_HEADER + "\n- https://api.handle.me/openapi.json → HTTP 200; "
-                "endpoints: /handles/{handle}, /holders/{address}")
-
-    def test_no_fetch_facts_means_no_route_judgement_at_all(self):
-        """With nothing fetched there is no authoritative source, so cria checks nothing rather than
-        guessing — the fix passes through untouched."""
-        from cria.loop import _verdict_nudge
-        obj = {"done": False, "reason": "r", "proposed_fix": "call POST /handles/resolve"}
-        self.assertIn("/handles/resolve", _verdict_nudge(obj, False, "$ ls\n  -> nothing yet"))
+        out = _verdict_nudge(obj, False, self.LEDGER)
+        self.assertIn("did not locate the resolve endpoint", out)
+        self.assertNotIn("/handles/resolve", out)
 
     def test_a_proposed_fix_naming_a_REAL_route_is_kept(self):
         from cria.loop import _verdict_nudge
         obj = {"done": False, "reason": "not done",
                "proposed_fix": "Call GET /handles/{handle} and read resolved_addresses"}
-        self.assertIn("/handles/{handle}", _verdict_nudge(obj, False, self._evidence()))
+        self.assertIn("/handles/{handle}", _verdict_nudge(obj, False, self.LEDGER))
+
+    def test_no_known_routes_means_no_route_judgement_at_all(self):
+        """THE MEASURED FALSE POSITIVE: a run whose ledger listed no routes had a sound fix — "grep
+        for the GET /handles/{handle} definition in the spec file" — withheld. An empty ledger is cria
+        knowing nothing, never proof that a route is invented."""
+        from cria.loop import _verdict_nudge
+        obj = {"done": False, "reason": "r",
+               "proposed_fix": "grep for the GET /handles/{handle} definition in the spec file"}
+        self.assertIn("/handles/{handle}", _verdict_nudge(obj, False, ""))
 
     def test_a_fix_with_no_route_at_all_is_untouched(self):
         from cria.loop import _verdict_nudge
         obj = {"done": False, "reason": "no tests yet", "proposed_fix": "Write tests/test_x.py"}
-        self.assertIn("tests/test_x.py", _verdict_nudge(obj, False, self._evidence()))
+        self.assertIn("tests/test_x.py", _verdict_nudge(obj, False, self.LEDGER))
 
     def test_a_pass_still_drops_the_fix_entirely(self):
         from cria.loop import _verdict_nudge
         obj = {"done": True, "reason": "done", "proposed_fix": "POST /handles/resolve"}
-        self.assertEqual(_verdict_nudge(obj, True, ""), "done")
+        self.assertEqual(_verdict_nudge(obj, True, self.LEDGER), "done")
+
+    def test_routes_come_from_the_ledger_not_the_transcript(self):
+        """The coder's own guessed command sits in the conversation; it must never become a route
+        cria believes in."""
+        from cria.loop import known_routes
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "1", "type": "function", "function": {
+            "name": "exec_command",
+            "arguments": '{"cmd": "grep -n POST /handles/resolve spec.json"}'}}]}]
+        self.assertNotIn("/handles/resolve", known_routes(msgs, None))

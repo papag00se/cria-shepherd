@@ -480,7 +480,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
-        return satisfied, _verdict_nudge(obj, satisfied, evidence)  # fold in proposed_fix when NOT satisfied
+        return satisfied, _verdict_nudge(obj, satisfied)  # fold in proposed_fix when NOT satisfied
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -492,7 +492,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, _verdict_nudge(retry, False, evidence)   # a reasoning-off NOT-satisfied is trustworthy
+    return False, _verdict_nudge(retry, False)   # a reasoning-off NOT-satisfied is trustworthy
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -1076,7 +1076,8 @@ class Loop:
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")))
+                                  coder_tools=_coder_tools_summary(body.get("tools")),
+                                  routes=known_routes(body.get('messages', []), sess))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1205,7 +1206,8 @@ class Loop:
             digest = prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                      coder_tools=_coder_tools_summary(body.get("tools")))
+                                      coder_tools=_coder_tools_summary(body.get("tools")),
+                                      routes=known_routes(body.get('messages', []), sess))
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -1245,7 +1247,8 @@ class Loop:
         digest = proberun.completion_probe_digest(outcome.report, missing=outcome.unran)
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
-                                  coder_tools=_coder_tools_summary(body.get("tools")))  # grounded in the coder's own runs
+                                  coder_tools=_coder_tools_summary(body.get("tools")),
+                                  routes=known_routes(body.get('messages', []), sess))  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1450,7 +1453,8 @@ class Loop:
         return (log + "\n\n" + facts) if log else facts
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
-                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "") -> tuple[bool, str]:
+                *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
+                routes: str = "") -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -1481,7 +1485,7 @@ class Loop:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
-            reason = _verdict_nudge(obj, done, user)
+            reason = _verdict_nudge(obj, done, routes)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -1498,7 +1502,7 @@ class Loop:
             reason = "unverified (no parseable verdict)"
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
-        reason = _verdict_nudge(retry, False, user)   # a reasoning-off NOT-done is trustworthy
+        reason = _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-done is trustworthy
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
@@ -3905,24 +3909,21 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n] + "…"
 
 
-def _fetched_routes_section(evidence: str) -> str:
-    """The durable FETCH-FACTS section of the evidence — routes and field shapes cria extracted from
-    real 2xx documents — and nothing else.
+def known_routes(messages: list, sess=None) -> str:
+    """Every endpoint route cria EXTRACTED from a real 2xx document this session, as one string.
 
-    The action log above it is NOT an authority on what exists. Measured (run 0727-153326), it grounded
-    the invented `POST /handles/resolve` twice over: once as the coder's own `$ exec_command grep -n
-    "POST /handles/resolve"` (what it ASKED FOR is not what exists), and once inside a `-> ` line that
-    was cria's OWN repeat-search refusal quoting the coder's query back. Anything cria echoes becomes
-    evidence for the next judgement — the same self-grounding as 48e94c4, where cria's challenge
-    grounded the URL it challenged.
+    Read from the ledger DATA, never scraped from a rendered prompt. The scraped version partitioned
+    the critic's prompt at a header and took everything after it, sweeping in the GROUND-TRUTH CHECKS
+    block and the CODER'S SUMMARY — grounding a route against the coder's own text is precisely the
+    self-grounding this check exists to defeat.
 
-    Empty when nothing has been fetched, and the caller then judges no route at all: with no
-    authoritative source, cria has nothing to check against and does not guess."""
-    head, sep, tail = (evidence or "").partition(CODER_FETCH_HEADER)
-    return tail if sep else ""
+    EMPTY when nothing spec-shaped has been fetched, and an empty route list is cria knowing NOTHING
+    — not evidence that a route is invented. The caller must abstain, never delete, on empty."""
+    merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
+    return " ".join(r for r in (_fetch_facts(e)[1] for e in merged.values()) if r)
 
 
-def _verdict_nudge(obj: dict, done: bool, evidence: str = "") -> str:
+def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
@@ -3938,8 +3939,7 @@ def _verdict_nudge(obj: dict, done: bool, evidence: str = "") -> str:
     # critic proposed `POST /handles/resolve`, a route in no spec, 12 times; the coder grepped for
     # that literal string across 322 calls on one step. The REASON always survives — the step really
     # was not done; only the invented move is dropped.
-    facts = _fetched_routes_section(evidence)
-    if facts and urlgrounding.ungrounded_routes(fix, facts):
+    if routes and urlgrounding.ungrounded_routes(fix, routes):
         return reason
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
 
