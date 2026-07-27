@@ -528,7 +528,11 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         sess.fetched_pages = {"https://ada-handles.github.io/resolve-handle": (404, ""),
                               "https://ada-handles.github.io/resolve-handle?handle=goose": (404, "")}
         body = _fetched_facts_anchor(sess)["content"]
-        self.assertIn("DID NOT WORK", body)                       # labelled as the dead ends they are
+        # Labelled as errored — but NOT as proof the address is absent. A 401 says the route exists
+        # and wants a key; a 429/5xx says come back. Blacklisting those is how a real endpoint gets
+        # abandoned, so the label states what cria knows (no content came back) and hands the status
+        # to the model to read.
+        self.assertIn("CAME BACK WITH AN ERROR", body)
         self.assertIn("ada-handles.github.io", body)              # still remembered, so it isn't re-fetched
         self.assertNotIn("SUCCEEDED", body)                       # no success section — nothing succeeded
         low = body.lower()
@@ -541,10 +545,12 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}"),
                               "https://api.handle.me/resolve-handle": (404, "")}
         body = _fetched_facts_anchor(sess)["content"]
-        ok_at, dead_at = body.index("SUCCEEDED"), body.index("DID NOT WORK")
+        ok_at, dead_at = body.index("SUCCEEDED"), body.index("CAME BACK WITH AN ERROR")
         self.assertLess(ok_at, dead_at)                                       # successes lead
         self.assertLess(body.index("/handles/{handle}"), dead_at)             # the real route is in the OK block
-        self.assertGreater(body.index("resolve-handle → 404"), dead_at)       # the 404 is below the dead-end label
+        self.assertGreater(body.index("resolve-handle → 404"), dead_at)       # the 404 is below the error label
+        # ...and the error block never tells the coder the address itself is dead
+        self.assertNotIn("nothing behind", body.lower())
 
     def test_anchor_is_placed_after_the_leading_system_message(self):
         from cria.loop import _insert_after_system
@@ -3755,6 +3761,20 @@ class SearchJudgeTests(unittest.TestCase):
                                  self._role(), _Rlog())
         self.assertEqual(self._fn(out)["name"], "web_fetch")
         self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
+
+    def test_a_recommended_url_on_an_invented_host_is_not_substituted(self):
+        # Substituting the coder's own tool call is the strongest thing this guard does, and the url
+        # was never checked — while an authored steer's url is. The judge's prompt says "never
+        # invented" and then asks it to synthesise `<domain>/openapi.json`, so an invented HOST is one
+        # bad reply away from being fetched for the coder. Host only: a path nobody has fetched yet is
+        # exactly what this judge is for, so `<the task's own domain>/openapi.json` must still work.
+        from cria.loop import guard_search_query, GuardState
+        out = guard_search_query(GuardState(), self._search("ada handles"), self._body(),
+                                 self._reasoner({"on_target": False,
+                                                 "recommendation": "https://totally-invented.example/api"}),
+                                 self._role(), _Rlog())
+        self.assertEqual(self._fn(out)["name"], "web_search")          # the coder's own search runs
+        self.assertNotIn("totally-invented", self._fn(out)["arguments"])
 
     def test_off_target_query_with_terms_rec_is_requeried(self):
         from cria.loop import guard_search_query, GuardState

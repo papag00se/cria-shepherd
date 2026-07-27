@@ -59,8 +59,15 @@ class PromptAgnosticismTests(unittest.TestCase):
         # own rule, because only ONE of the four texts that shape a plan carried it.
         # Same class as the searching-vs-reading invariant below: one rule, every prompt that can
         # rewrite a plan must know it.
+        # EVERY text that shapes a plan must carry the rule, not just the ones that had it when the
+        # rule was written: the sweep found the seed sentence still live in plan_evidence.txt (the
+        # FINAL drafting instruction, deliberately placed last for salience) and the "GOOD step"
+        # definition in plan_noise_steps.txt blessing the banned shape — both plan-shaping, neither
+        # enumerated here. A list that names four of six is how a fixed rule stays broken.
         steers = prompts.load_map("planner_steers")
         texts = {"plan": prompts.load("plan"), "replan": prompts.load("replan"),
+                 "plan_evidence": prompts.load("plan_evidence"),
+                 "plan_noise_steps": prompts.load("plan_noise_steps"),
                  "planner_steers.submit_ungrounded": steers["submit_ungrounded"],
                  "planner_steers.host_unread": steers["host_unread"]}
         # Phrasing is the prompt's own business — a model-facing steer says "when it runs" where a

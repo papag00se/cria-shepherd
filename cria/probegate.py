@@ -235,7 +235,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return "⟦ctx:checks⟧ the automatic checks produced no usable result this turn — no signal either way."
+        return "⟦ctx:checks⟧ the automatic checks produced no usable result — no signal either way."
     # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
     # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
     # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
@@ -257,7 +257,7 @@ def _checks_payload(m) -> tuple[str, str] | None:
     return (key, c) if isinstance(c, str) and c.startswith(CHECKS_MARKER) else None
 
 
-_NO_SIGNAL_CHECK = "no usable result this turn"   # the ⟦ctx:checks⟧ non-signal — nothing to act on
+_NO_SIGNAL_CHECK = "no usable result"   # the ⟦ctx:checks⟧ non-signal — nothing to act on
 
 # Gate SCAFFOLDING lines (from plan_gate): the section-marker echoes, the git-status|sha1sum changed-files
 # fingerprint, and the ``cd <ws> || exit 97`` guard. Pure plumbing the model never authored and can't act

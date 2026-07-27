@@ -37,6 +37,22 @@ def _seen_bounded(needle: str, hay: str) -> bool:
     return re.search(re.escape(needle) + r"(?![\w-])", hay) is not None
 
 
+def host_is_grounded(url: str, evidence: str) -> bool:
+    """Is this url's HOST one the session actually named or touched? Path not considered.
+
+    The weaker sibling of :func:`ungrounded_urls`, for the one caller whose JOB is to propose a route
+    nobody has fetched yet: the outgoing-search judge recommends "fetch <the domain the task named>'s
+    spec" and cria substitutes that fetch for the coder's search. Requiring the PATH to have been seen
+    would defeat the whole recommendation (if it had been seen, there would be nothing to recommend),
+    but the HOST must still be one the work is actually about — the failure to stop is the judge
+    sending the coder to an unrelated site it invented."""
+    try:
+        host = urllib.parse.urlsplit(url).netloc.lower()
+    except ValueError:
+        return False
+    return bool(host) and host in (evidence or "").lower()
+
+
 def ungrounded_urls(text: str, evidence: str) -> list[str]:
     """The URLs ``text`` names that ``evidence`` cannot support.
 

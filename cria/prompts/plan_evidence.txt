@@ -3,7 +3,9 @@ field below came out of a source you fetched, none of it is a guess):
 {{FACTS}}
 
 Plan against exactly these. Do not name a route, an operation, or a field that is not above — if the
-work needs something you never found, make the step READ the source for it rather than naming one.
+work needs something you never found, write a step in which the CODER reads the source and finds it
+while building. The finished program must never look such a thing up when it runs: that reading is
+research, done once during the work, and the code then uses the value it found.
 Where the facts show the work takes more than one call, the plan must say so.
 
 NOW WRITE THE PLAN FOR THIS REQUEST:

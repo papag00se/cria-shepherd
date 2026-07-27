@@ -3381,6 +3381,16 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
         return coder
     if _looks_like_url(rec):
         url = rec if rec.lower().startswith("http") else "https://" + rec
+        # SUBSTITUTING the coder's own tool call is the strongest thing cria does here, and the url it
+        # substituted was never checked — while an authored steer's url is (_grounded_steer_or_none).
+        # Only the HOST is required here, not the path: this judge's whole job is to say "fetch the
+        # spec of the domain the task named", and a path nobody has fetched yet is exactly what it is
+        # for. What it must not do is send the coder to a site it invented — which its own prompt
+        # invites, saying "never invented" and then asking it to synthesise `<domain>/openapi.json`.
+        evidence = task + "\n" + selfcompact.serialize(_reasoner_session(body.get("messages", [])))
+        if not urlgrounding.host_is_grounded(url, evidence):
+            rlog.emit("loop.search_query_ungrounded", level="warn", query=query, rec=url)
+            return coder
         rlog.emit("loop.search_query_judged", action="fetch", query=query, rec=url)
         return _substitute_fetch(coder, msg, search_tc, url,
                                  f"'{query}' looked off-target for this task — fetching {url} instead")

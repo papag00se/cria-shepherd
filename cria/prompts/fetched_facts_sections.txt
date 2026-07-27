@@ -5,7 +5,7 @@
 # a domain it had hallucinated — cria restating a dead URL as a REAL result it already had.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
-failed = THESE URLS DID NOT WORK — the fetch returned an error status, so there is nothing behind them to use. Do not fetch them again, and do not write code against them:
+failed = THESE FETCHES CAME BACK WITH AN ERROR — you have no content from them, so nothing here can tell you what they return; do not write code against them on the strength of a guess. An error status is not proof the address is wrong: 401/403 means it exists and wants credentials, 429 and 5xx mean try later, 404 on one path says nothing about the others. Read the status and decide — re-request one when the status says that would help, and stop re-requesting one that keeps refusing:
 # Header for the per-URL RESPONSE-SHAPE block. The ledger used to carry only the endpoint routes, so
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
