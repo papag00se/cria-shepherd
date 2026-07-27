@@ -271,3 +271,17 @@ class PromptLoaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebFetchFindDescriptionTests(unittest.TestCase):
+    """`find=` accepts several terms at once (`a|b`). The description said find="<keyword>", singular,
+    so a model that wanted three fields either issued three round-trips or — measured, run
+    0727-124354 — wrote the alternation anyway and, before the matcher understood it, was told the
+    document did not contain fields it did contain. The capability and the sentence describing it
+    have to agree; a tool that can do something the description denies is a footgun either way."""
+
+    def test_the_description_says_several_terms_are_allowed(self):
+        from cria import prompts
+        desc = prompts.load_map("tool_descs")["web_fetch"]
+        self.assertIn("|", desc.split("find=")[1][:120],
+                      "the description does not tell the model it can ask for several terms")
