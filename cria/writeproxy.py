@@ -567,7 +567,14 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace)
     if name in SHELL_TOOL_NAMES:  # the harness's raw shell → heuristic path/verb scan
         command = _command_of(fn.get("arguments"))
-        if _SENTINEL in command or "___CRIA_GATE_" in command:  # cria's own composed command → trust
+        # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
+        # model-authored command that merely mentions either literal used to inherit cria's trust and
+        # skip the guard entirely. cria always writes the sentinel as the FIRST line (`# ⟦ctx:tool⟧<b64>`)
+        # and always opens the gate script with `cd <workspace> || exit 97` followed by the section
+        # echo — so requiring the marker in the first two lines authenticates the shape cria emits
+        # rather than any text containing the token.
+        head = "\n".join(command.lstrip().splitlines()[:2])
+        if head.startswith("# " + _SENTINEL) or (head.startswith("cd ") and "___CRIA_GATE_" in head):
             return None
         return dirguard.command_refusal(command, level, workspace)
     return None

@@ -101,8 +101,18 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
         if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
             text += "\n" + prompts.load_map("planner_steers")["scratch_note"]
         return text
-    except subprocess.TimeoutExpired:
-        return "[exec timed out after 20s]"
+    except subprocess.TimeoutExpired as e:
+        # Keep whatever the command DID print before the clock ran out — a test that printed its
+        # failing assertion and then hung, or a build that logged its error before stalling, has already
+        # said the useful thing. Returning the bare notice threw that away, contradicting the never-clip
+        # rule three lines above. (TimeoutExpired carries bytes or str depending on text=; normalize.)
+        def _txt(v):
+            if not v:
+                return ""
+            return v if isinstance(v, str) else v.decode("utf-8", "replace")
+        partial = (_txt(e.stdout) + _txt(e.stderr)).strip()
+        note = f"[exec timed out after {int(e.timeout)}s]"
+        return f"{note}\n{partial}" if partial else note
     except OSError as e:
         return f"[exec failed to launch: {e}]"
 

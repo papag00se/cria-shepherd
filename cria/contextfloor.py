@@ -40,6 +40,9 @@ from .content_reduce import content_reduce, est_tokens
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
 # silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
 _COMPACTED_MARK = "⟦ctx:compacted⟧"
+# Tags a tool result the floor REDUCED in place. content_reduce is lossy, so the model must be
+# able to tell a shortened result from a verbatim one.
+_REDUCED_MARK = "⟦ctx:reduced⟧"
 # The stand-in note preserves a content_reduce()d digest of each dropped turn — not just the filenames
 # it modified — so a dropped test-failure/error output survives as a SUMMARY rather than vanishing. The
 # digests together occupy at most this share of the message budget (split across the dropped turns, each
@@ -343,7 +346,11 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
         cap = max(256, msg_budget // 4)
         new_text = content_reduce(text, _sniff_content_type(text), cap)
         if est_tokens(new_text) < sz:
-            out[i] = {**m, "content": new_text}
+            # LABEL it. content_reduce is genuinely lossy (prose function words dropped, JSON string
+            # values rewritten), and this swapped the result in with no marker — the model read a
+            # transformed tool result as the verbatim one, with no way to tell. Prefer a labelled
+            # reduction over a silent one.
+            out[i] = {**m, "content": _REDUCED_MARK + " " + new_text}
             total = total - sz + est_tokens(new_text)
             reduced += 1
     return out, reduced
@@ -403,6 +410,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
     the window still doesn't fit (fit must be guaranteed or the model errors on every call)."""
     work = list(messages)
     dropped = 0
+    removed: list[dict] = []
     while _msgs_tokens(work) > msg_budget:
         last_user = -1
         for i, m in enumerate(work):
@@ -418,8 +426,19 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
             victim = next((i for i, m in enumerate(work) if _droppable(i, m)), None)
         if victim is None:
             break  # only the irreducible core remains
-        work.pop(victim)
+        removed.append(work.pop(victim))
         dropped += 1
+    if removed:
+        # DISCLOSE the removal, exactly as _drop_oldest does. This lever silently popped whole turns —
+        # including protect-marked anchors when nothing else was droppable — so the model's history had
+        # holes in it with nothing to say so. The note goes where the gap IS: drops always start just
+        # after the last surviving user turn (the request), so it reads in chronological place rather
+        # than displacing the task at the head.
+        at = len(work)
+        for i, m in enumerate(work):
+            if m.get("role") == "user":
+                at = i + 1
+        work.insert(at, _compacted_note(removed, dropped, msg_budget))
     return work, dropped
 
 

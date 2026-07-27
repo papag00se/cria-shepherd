@@ -936,7 +936,8 @@ class Loop:
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
-                               prior_work=sess.prior_work, tools=body.get("tools"))
+                               prior_work=sess.prior_work, tools=body.get("tools"),
+                               gate_plan=getattr(sess, "gate_plan", None))
         facts = _fetched_facts_anchor(sess)  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
@@ -1635,7 +1636,8 @@ class Loop:
                 return periodic
         framed = {**body, "messages": _frame_for_item(
             body.get("messages", []), "", sess.summary, 1, 1,
-            prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True)}
+            prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True,
+            gate_plan=getattr(sess, "gate_plan", None))}
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
@@ -1906,7 +1908,7 @@ def _is_cria_scaffolding(text: str) -> bool:
     the coder's own tool output. Keyed on the real constants now, so it cannot drift again."""
     return (probegate.SECTION_PREFIX in text
             or proberun.PROBE_EXIT_SENTINEL in text
-            or selfcompact.CHECKS_MARKER in text
+            or probegate.CHECKS_MARKER in text
             or selfcompact.SEARCH_MARKER in text)
 
 
@@ -1919,9 +1921,15 @@ def _satisfaction_evidence(messages: list[dict]) -> str:
     marked a real, in-progress build as not-satisfied). The summary is the best record of the
     compacted-away work; the judge weighs it against the still-verbatim recent actions."""
     log = _work_log(messages)
+    # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
+    # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
+    # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
+    # hoisted under "treat this as a record of what was already built" and handed to the done-judge as
+    # authoritative history.
     summaries = [c.strip() for m in messages
-                 if any(mk in (c := _msg_text_content(m)) for mk in
-                        (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
+                 if m.get("role") != "assistant"
+                 and (c := _msg_text_content(m)).lstrip().startswith(
+                     (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
     if not summaries:
         return log
     head = ("SUMMARY OF EARLIER WORK (the detailed tool log was compacted to fit the window — treat "
@@ -2147,7 +2155,7 @@ def _is_env_context(m: dict) -> bool:
     return "<environment_context>" in c or "<user_instructions>" in c
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False) -> list[dict]:
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -2169,7 +2177,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       system is protected from floor-trimming and authoritative.
     """
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
-    messages = probegate.clean_gate_results(messages)  # strip raw gate plumbing/advisory from the coder's view
+    # The plan carries each section's probe KIND, which is what lets a non-zero TEST/BUILD exit whose
+    # output is all advisory-shaped (-Werror, deny(warnings), tsc noUnusedLocals) be reported as the
+    # failure it is instead of "no error-class problems".
+    messages = probegate.clean_gate_results(messages, gate_plan)  # strip raw gate plumbing/advisory
     hint = toolmenu.cheatsheet(tools)
     done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
     if synthetic:
@@ -3315,6 +3326,16 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     return coder
 
 
+def _refusal_turn(body: dict, text: str) -> None:
+    """Append a model-facing note to the OUTBOUND conversation so a dropped tool call is visible to the
+    coder on its next turn. cria's ⟦cria⟧ notes are human indicators and are stripped before the model,
+    so a refusal recorded only there leaves the coder with no result, no error, and no advice — it
+    re-sends the same doomed call. Mutates ``body["messages"]`` in place; harmless if absent."""
+    msgs = body.get("messages")
+    if isinstance(msgs, list) and text:
+        msgs.append({"role": "user", "content": text})
+
+
 def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:
     """Output-truncation guard (ported from codex-local `local_routing.rs`). The model hit
     the output-token cap MID-generation, so any file it was writing is cut off. NEVER ship
@@ -3346,8 +3367,10 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # Not a write (e.g. a shell command with inline code) — there is nothing to chunk, so refuse it.
         rlog.emit("loop.incomplete_tool_call_dropped", step=step)
         _drop_tool_calls(coder)
-        _add_note(coder, "tool call was cut off mid-arguments — partial call refused (re-send the complete "
-                         "call; if it's a shell command with inline code, keep it short and quote it simply)")
+        _add_note(coder, "tool call was cut off mid-arguments — partial call refused")
+        # ...and tell the MODEL too: _add_note is a ⟦cria⟧ human indicator, stripped before the model,
+        # so a refusal reported only there is invisible to the coder — its call just vanishes.
+        _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"])
         return coder
     attempt = 0
     conv = list(body.get("messages") or [])
@@ -3385,6 +3408,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             ch["finish_reason"] = "stop"
     if dropped:  # no hidden guards: the partial write was refused
         _add_note(coder, "output hit the token limit — partial write refused (retry in smaller pieces)")
+        _refusal_turn(body, prompts.load_map("call_refused")["truncated_write"])
     elif attempt:  # recovered after steering to incremental writes
         _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
     return coder

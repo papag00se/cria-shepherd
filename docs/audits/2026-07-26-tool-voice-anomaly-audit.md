@@ -49,54 +49,54 @@ the rest are agent findings not yet independently confirmed.
 
 ---
 
-## Tier 1 — bug-class now, small, fix-on-sight
+## Tier 1 — bug-class now, small, fix-on-sight  ✅ ALL DONE (`fb36d60`, `3c3dd7b`)
 
-- [ ] **`raw=true` still discards the model's `find=` — `1f7adf3` never reaches the live path.**
+- [x] **`raw=true` still discards the model's `find=` — `1f7adf3` never reaches the live path.**
       `writeproxy.py:435-436` nulls `find` before `fetch_nav`, and it is the only caller from the
       model path. The fix and its test both drive `fetch_nav` directly, so the test passes while the
       real boundary is untouched; nulling `find` also forces the spill branch, reproducing the exact
       "saved 96,199 chars, go grep it" reply the fix set out to kill. **[verified]**
-- [ ] **A pytest collection error vanishes when any other test failure localized.**
+- [x] **A pytest collection error vanishes when any other test failure localized.**
       `probeparse.py:335-336` returns before `_pytest_collect_errors` is consulted, so one ordinary
       failure hides an entire uncollectable file. This is the shape run 11 actually had — `96becb0`
       would not have rescued it. **[verified — reproduced]**
-- [ ] **The guard hiding cria's gate output from the work log is dead code.**
+- [x] **The guard hiding cria's gate output from the work log is dead code.**
       `loop.py:1878` tests for the literal `"PROBE_EXIT"`; the emitted sentinel is `"EXIT:"`
       (`proberun.py:111`) and the section prefix is `___CRIA_GATE_` (`probegate.py:45`). The string it
       checks appears only in test fixtures. Raw pytest/lint dumps land in the work log as the coder's
       own actions, feeding the step critic, the re-derivation, the satisfaction judge and the
       completion briefing. **[verified]**
-- [ ] **The coder can overwrite the ledger's ground truth with prose.**
+- [x] **The coder can overwrite the ledger's ground truth with prose.**
       `_extract_fetches` (`loop.py:2827-2845`) reads every message role, so a coder sentence quoting
       `HTTP 400 · <url>` replaces the real `HTTP 200`. The `898ef78` split then files that URL under
       "THESE URLS DID NOT WORK — do not write code against them" with its real endpoints still
       attached. This re-enables the documented runG failure (coder insisted on a 400, steer parroted
       it, 40 turns lost) through the door the ledger exists to close. **[verified — reproduced]**
-- [ ] **A Brave API error body is rendered to the model as "no results".**
+- [x] **A Brave API error body is rendered to the model as "no results".**
       `writeproxy.py:522` pipes `curl -sL` (no `-f`, no status check) into `json.load`; a 401/422/429
       error object parses fine, `.get("web")` is None, and the spill file gets the literal
       `no results`. The model concludes the web has nothing and starts guessing. The planner's
       in-process path (`planner_tools.py:255`) surfaces the real `HTTP Error 429` — the two paths have
       diverged.
-- [ ] **The py_compile syntax floor takes the echoed source line as the diagnostic.**
+- [x] **The py_compile syntax floor takes the echoed source line as the diagnostic.**
       `probeparse.py:502-503` tests `"Error" in t`, so for `raise ValueError("x"` the source line wins
       and `SyntaxError: '(' was never closed` two lines below is discarded. This is the tier-0 check
       for every Python workspace.
-- [ ] **The repeat-*fetch* refusal is status-blind.** `webfetch_guards.txt:8` / `webfetch.py:536-537`
+- [x] **The repeat-*fetch* refusal is status-blind.** `webfetch_guards.txt:8` / `webfetch.py:536-537`
       says "this is the SAME result you got before, still above; use it" — computed from assistant
       `tool_calls` only, never reading the returned status. A URL that 404'd is refused with "use it."
       The untouched twin of `898ef78`.
-- [ ] **The cap-truncation guard tells the model a file exists that cria refused to write.**
+- [x] **The cap-truncation guard tells the model a file exists that cria refused to write.**
       `truncation_guard.txt:2` says "re-reading the file will show it ending abruptly", but the remedy
       is injected before anything is lowered and the partial write is dropped on exhaustion. Nothing
       is ever written. The self-cut sibling (`truncation_guard_selfcut.txt`) states this truthfully.
-- [ ] **"The repo's automated checks pass" is asserted when no check ran.**
+- [x] **"The repo's automated checks pass" is asserted when no check ran.**
       `done_incomplete.txt:1`, emitted at `loop.py:1683-1688` on the no-shell path whose own comment
       reads "No shell tool → the objective gate can't run."
-- [ ] **rustc `note:` sub-spans become a phantom "compile error" at the wrong line.**
+- [x] **rustc `note:` sub-spans become a phantom "compile error" at the wrong line.**
       `probeparse.py:206` — a `note:`/`help:` line matches no header, so its `-->` falls to
       `DEFAULT_RUSTC_MESSAGE`, laundering an advisory into an unfiltered error-class finding.
-- [ ] **The repeat-search refusal can point at a file that was never written.**
+- [x] **The repeat-search refusal can point at a file that was never written.**
       `webfetch_guards.txt:6` names a target derived from the query string; only the synthetic Brave
       path spills (`writeproxy.py:526`), so a harness-native search is refused with a pointer to a
       nonexistent file. (Partly self-inflicted: `81d9b4d` added the pointer.)

@@ -45,11 +45,11 @@ RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band gro
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
 FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→status→endpoints) the loop re-injects
-CHECKS_MARKER = "⟦ctx:checks⟧"      # tags cria's gate/check-state report — cria's OWN voice, never coder work
-SEARCH_MARKER = "⟦ctx:search⟧"      # tags a suppressed search-results read — likewise cria's own, not a tool result
                                     # from cria's own session memory, so the coder keeps the real endpoints it
                                     # already fetched even after the HARNESS compacts the raw result out of its
                                     # own history — else it re-fetches to rediscover them (370-call spec loop).
+SEARCH_MARKER = "⟦ctx:search⟧"      # tags a suppressed search-results read — cria's OWN voice written back into
+                                    # the stream, so the work log/critic can tell it from a real tool result.
 # cria-SURFACED spec-shape markers — the [API endpoints …] / [response shape …] blocks a web_fetch result
 # carries (mirror webfetch.ROUTES_MARKER / SHAPE_MARKER; a test asserts sync). They hold the API's REAL
 # endpoint paths + response field names — EXTERNAL ground truth the coder must code against, NOT its own

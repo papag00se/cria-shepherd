@@ -115,7 +115,19 @@ def split_sections(text: str) -> dict[str, str]:
     return sections
 
 
-def clean_gate_output(raw: str) -> str | None:
+def _is_hard_failure(plan, sid: str) -> bool:
+    """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
+    looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
+    Unknown plan or unparseable id → False (keep the advisory-clean lint behaviour)."""
+    try:
+        idx = int(sid.split("-", 1)[1])
+        kind = plan.candidates[idx].kind()
+    except (AttributeError, IndexError, ValueError, TypeError):
+        return False
+    return kind in proberun._HARD_FAILURE_KINDS
+
+
+def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
@@ -182,6 +194,13 @@ def clean_gate_output(raw: str) -> str | None:
         # let it read as clean. If it printed only advisory lines (had_content, no findings), that's an
         # advisory-clean lint exit, NOT a failure — so keying on had_content avoids the footgun.
         if code not in (0, None) and not had_content:
+            failed_no_detail = True
+        # A non-zero exit whose output is ALL advisory-shaped is an advisory-clean LINT exit (don't send
+        # the model chasing style) — but for a TEST/TYPECHECK/BUILD probe it is a real failure whose
+        # diagnostics merely look advisory: -Werror, deny(warnings), tsc noUnusedLocals. Reporting that
+        # as "no error-class problems" is a false green on a build that did not build. The probe KIND is
+        # the grounded distinction, and it is in the plan cria already holds.
+        elif code not in (0, None) and not section_findings and _is_hard_failure(plan, sid):
             failed_no_detail = True
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
@@ -270,7 +289,7 @@ def _strip_command_plumbing(m: dict) -> dict:
     return {**m, "tool_calls": new_tcs} if changed else m
 
 
-def clean_gate_results(messages: list) -> list:
+def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
@@ -290,7 +309,7 @@ def clean_gate_results(messages: list) -> list:
             key = "content" if m.get("content") is not None else "output"
             c = m.get(key)
             if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
-                cleaned = clean_gate_output(c)
+                cleaned = clean_gate_output(c, plan)
                 if cleaned is not None:
                     if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")

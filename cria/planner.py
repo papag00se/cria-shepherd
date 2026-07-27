@@ -159,14 +159,24 @@ def _salvage_array_steps(body: str) -> list[str] | None:
     m = _ARR_KEY.search(body)
     if not m:
         return None
-    steps = []
+    steps, seen = [], 0
     for line in body[m.end():].splitlines():
         if line.lstrip().startswith("]"):
             break
+        if not line.strip():
+            continue
+        seen += 1
         im = _ARR_ITEM.match(line)
         if im and (c := _clean_step(im.group(1))):
             steps.append(c)
-    return steps or None
+    # A salvage that keeps only SOME of the items is not a salvage — it is a silently shortened plan.
+    # This path exists for JSON that json.loads rejected (an unescaped inner quote), and a line that
+    # doesn't match the item shape may well be a real step this regex can't read. Handing back a
+    # valid-LOOKING 3-step plan for a 7-step draft loses work with nothing to detect it; bail instead
+    # and let the caller re-draft (PLAN_RETRIES) or fall through to the other parsers.
+    if not steps or len(steps) != seen:
+        return None
+    return steps
 
 
 def parse_steps(text: str) -> list[str] | None:
