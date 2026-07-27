@@ -128,6 +128,35 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertIn("attempted relative import", f.message)
         self.assertEqual(r.summary, "smoke_test.py:2: ImportError: attempted relative import with no known parent package")
 
+    def test_pytest_collection_error_without_a_frame_keeps_the_collectors_own_message(self):
+        # THE FOOTGUN (live run 0726-145040, 132 red gates, ~700 coder calls on one step): an
+        # import-file-mismatch collection error has NO `path:line:` frame and NO `E   ` rows, so the
+        # traceback reader skipped the block, and the summary's bare `ERROR <nodeid>` fell through to
+        # the literal "test failed". pytest had already said exactly what to do — two test files share
+        # a basename, drop __pycache__ or rename — and cria replaced that with two words, so the coder
+        # spent hundreds of calls editing test LOGIC while nothing could be collected at all. The
+        # preamble promises "each problem below is the checker's OWN message"; it must be true.
+        r = parse_output(
+            "python3 -m pytest -q", "pytest", 2,
+            "==================================== ERRORS ====================================\n"
+            "________________ ERROR collecting tests/test_resolve_handles.py ________________\n"
+            "import file mismatch:\n"
+            "imported module 'test_resolve_handles' has this __file__ attribute:\n"
+            "  /repo/test_resolve_handles.py\n"
+            "which is not the same as the test file we want to collect:\n"
+            "  /repo/tests/test_resolve_handles.py\n"
+            "HINT: remove __pycache__ / .pyc files and/or use a unique basename for your test file modules\n"
+            "=========================== short test summary info ===========================\n"
+            "ERROR tests/test_resolve_handles.py\n"
+            "!!!!!!!! Interrupted: 1 error during collection !!!!!!!!",
+            "")
+        self.assertEqual(len(r.findings), 1)
+        msg = r.findings[0].message
+        self.assertEqual(r.findings[0].file, "tests/test_resolve_handles.py")
+        self.assertIn("import file mismatch", msg)          # the collector's real diagnostic...
+        self.assertIn("unique basename", msg)               # ...including the HINT that fixes it
+        self.assertNotIn("test failed", msg)                # ...not cria's two-word stand-in
+
     def test_pytest_normal_failure_keeps_no_line(self):
         # A plain assertion failure has no traceback :in <module>: frame — it stays line=None (unchanged).
         r = parse_output("pytest", "pytest", 1,

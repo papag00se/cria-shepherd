@@ -285,6 +285,35 @@ def _pytest_blocks(s: str) -> list[str]:
     return [s[bounds[i]:bounds[i + 1]] for i in range(len(starts))]
 
 
+_PYTEST_COLLECT_HDR = re.compile(r"^_{3,} ERROR collecting (\S+) _{3,}\s*$", re.M)
+
+
+def _pytest_collect_errors(s: str) -> dict:
+    """file → the collector's OWN message for a COLLECTION error (an import-file mismatch, a syntax
+    error in the test module, a broken conftest).
+
+    These blocks carry no ``path:line:`` frame and no ``E   `` rows, so the traceback reader finds no
+    location and skips them — and the short summary's bare ``ERROR <nodeid>`` (no ``` - ``` suffix)
+    then fell through to the literal DEFAULT_PYTEST_MESSAGE. The coder was handed "test failed" for a
+    diagnostic that had already told it exactly what to do. Observed live (run 0726-145040): two test
+    files sharing a basename plus a stale __pycache__ made pytest print
+
+        import file mismatch: ... HINT: remove __pycache__ / .pyc files and/or use a unique basename
+
+    and cria reported `tests/test_resolve_handles.py: test failed`, so the coder edited test LOGIC for
+    hundreds of calls while nothing could be collected at all."""
+    out: dict = {}
+    end = m.start() if (m := _PYTEST_SUMMARY_HDR.search(s)) else len(s)
+    hdrs = [h for h in _PYTEST_COLLECT_HDR.finditer(s) if h.start() < end]
+    for h in hdrs:
+        nxt = _PYTEST_BLOCK_HDR.search(s, h.end())
+        stop = min(nxt.start(), end) if nxt else end
+        body = [ln.rstrip() for ln in s[h.end():stop].splitlines() if ln.strip()]
+        if body:
+            out[h.group(1).replace("\\", "/")] = "\n".join(body)
+    return out
+
+
 def parse_pytest(s: str) -> list[Finding]:
     """Prefer the per-failure TRACEBACK BLOCKS: each ends with the failing ``path:line: ErrorType`` and
     carries the FULL error on ``E   …`` — so the finding gets the real test-file location and the
@@ -306,6 +335,7 @@ def parse_pytest(s: str) -> list[Finding]:
     if out:
         return out
     # No traceback blocks → read the short-summary lines (pytest may have width-clipped these).
+    collect = _pytest_collect_errors(s)   # the collector's real text, for a bare `ERROR <nodeid>`
     for l in s.splitlines():
         t = l.strip()
         if t.startswith("FAILED "):
@@ -316,8 +346,10 @@ def parse_pytest(s: str) -> list[Finding]:
             continue
         nodeid, msg = rest.split(" - ", 1) if " - " in rest else (rest, "")
         file = nodeid.split("::", 1)[0]
+        # Prefer the collector's OWN diagnostic over the "test failed" stand-in: the preamble tells the
+        # coder every problem below is the checker's own message, so it had better be one.
         out.append(Finding(file, line=None, col=None,
-                           message=(msg if msg != "" else DEFAULT_PYTEST_MESSAGE)))
+                           message=(msg or collect.get(file.replace("\\", "/")) or DEFAULT_PYTEST_MESSAGE)))
     if any(f.line is None for f in out):
         frames = {m.group(1).replace("\\", "/").rsplit("/", 1)[-1]: (m.group(1), int(m.group(2)))
                   for m in _PYTEST_FRAME.finditer(s)}          # basename → (file, line), deepest wins
