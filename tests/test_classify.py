@@ -148,3 +148,27 @@ class TitleAuxTests(unittest.TestCase):
         got = c.classify([{"role":"user","content":title}], _R())
         self.assertEqual(got.engagement, "question")   # -> proxy, never the plan loop
 
+
+
+class JudgeBudgetTests(unittest.TestCase):
+    """The cap is the ONLY bound on an internal judge call: `guard_rumination` is wired to the coder
+    path alone, and these calls are non-streamed, so nothing else can stop a runaway. It therefore
+    stays finite — but it must sit well above where real judgements land, because a judge that hits it
+    produces NOTHING (a reasoning model spends the budget thinking before it writes a character), and
+    a lost verdict costs more than a long one: measured, two of them spent a one-shot rescue.
+
+    MEASURED over 493 judge calls (runs 0727-13xx..16xx): 486 answered — median 981 tokens, p90 2,468,
+    p99 8,192 — and 7 answered NOTHING, all at exactly 8,192. So the cap bound only the top 1.4%, and
+    every time it bound, the judgement was lost. 16,384 leaves the p90 case 6.6x headroom while
+    keeping the bound finite; judge INPUTS run ~6k tokens against a 49,152 window, so the reserve
+    fits comfortably."""
+
+    def test_the_judge_budget_clears_the_measured_tail(self):
+        from cria.classify import JUDGE_MAX_TOKENS
+        self.assertGreater(JUDGE_MAX_TOKENS, 8192, "8192 was measured to lose 1.4% of judgements whole")
+        self.assertLessEqual(JUDGE_MAX_TOKENS, 20000, "it is still a BOUND — a runaway has nothing else")
+
+    def test_the_planner_ask_shares_it(self):
+        from cria.classify import JUDGE_MAX_TOKENS
+        from cria.planner import ASK_MAX_TOKENS
+        self.assertEqual(ASK_MAX_TOKENS, JUDGE_MAX_TOKENS)

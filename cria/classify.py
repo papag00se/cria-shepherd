@@ -31,7 +31,16 @@ _TASK_TYPES = ("coding", "reasoning", "question")
 # model spends this budget THINKING before it writes a character, so a tight cap does not buy a short
 # answer — it buys NO answer, and an empty verdict is indistinguishable from "nothing to report".
 # Measured on a judge at 2000: finish_reason=length, 8,865 chars of reasoning, ZERO content.
-JUDGE_MAX_TOKENS = 8192
+# The ONLY bound on an internal judge call — `guard_rumination` is wired to the coder path alone and
+# these calls are non-streamed, so nothing else can stop a runaway. Finite for that reason, and well
+# above where real judgements land, because a judge that HITS the cap produces NOTHING: a reasoning
+# model spends the budget thinking before it writes a character, so a tight cap buys no answer rather
+# than a short one, and a lost verdict costs more than a long one.
+# MEASURED over 493 judge calls (2026-07-27 runs 13xx-16xx): 486 answered — median 981 tokens, p90
+# 2,468, p99 8,192 — and 7 answered NOTHING, every one of them at exactly 8,192. The old cap bound
+# only the top 1.4%, and each time it bound, the judgement was lost whole; twice that spent a
+# one-shot rescue. Judge INPUTS run ~6k tokens against a 49,152 window, so this reserve fits.
+JUDGE_MAX_TOKENS = 16384
 _CACHE_CAP = 256
 _ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalates to an error log
 
