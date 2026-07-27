@@ -4618,3 +4618,41 @@ class CriticFixInventsARouteTests(unittest.TestCase):
             "name": "exec_command",
             "arguments": '{"cmd": "grep -n POST /handles/resolve spec.json"}'}}]}]
         self.assertNotIn("/handles/resolve", known_routes(msgs, None))
+
+
+class ReplanNoiseIsVisibleTests(unittest.TestCase):
+    """The INITIAL plan reports its noise judgement (`plan.noise_dropped` / `plan.noise_all_kept`).
+    The living re-derivation runs the SAME judge on its own output and reports nothing.
+
+    MEASURED (run 0727-164951): the submitted plan was good — six steps covering every deliverable,
+    step 2 "Create a Python function `resolve_handle(handle)` that GETs
+    https://api.handle.me/handles/{handle}". Two re-derivations later (5→8, then 7→3) the running plan's
+    step 2 was the bare command `grep -n 'resolved_addresses' ./tmp/read-only/api.handle.me_openapi.json`
+    and step 3 was "Run unit tests" — a bare command and plumbing, the two categories that judge
+    deletes. From the log there is no way to tell whether it ran and kept them, dropped something
+    else, or never ran at all.
+
+    The judgement does not change; only the record does."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_the_re_derivations_noise_pass_is_reported(self):
+        from cria.loop import reassess_remaining
+        rlog = _Rlog()
+        # re-derive returns two steps; the noise judge drops the first
+        chat = _Scripted([_replan(["grep -n x file", "Write the resolver"]), _text("1")])
+        out = reassess_remaining(chat, self._role(), "build it", "- step 1", "- old", "ev", rlog)
+        self.assertEqual(out, ["Write the resolver"])
+        self.assertIn("loop.replan_noise", rlog.kinds())
+        self.assertEqual(dict(rlog.events)["loop.replan_noise"]["dropped"], 1)
+
+    def test_it_reports_when_nothing_was_dropped(self):
+        from cria.loop import reassess_remaining
+        rlog = _Rlog()
+        chat = _Scripted([_replan(["Write the resolver", "Write the README"]), _text("NONE")])
+        reassess_remaining(chat, self._role(), "build it", "- step 1", "- old", "ev", rlog)
+        ev = dict(rlog.events).get("loop.replan_noise")
+        self.assertIsNotNone(ev, "a judgement that dropped nothing still ran and should say so")
+        self.assertEqual(ev["dropped"], 0)

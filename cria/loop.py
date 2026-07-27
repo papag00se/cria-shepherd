@@ -450,6 +450,15 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
     drop = reasoned_noise_indices(_ask, task, cleaned)
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
+    # SAY WHAT THE JUDGE DID. The initial plan reports this (plan.noise_dropped / plan.noise_all_kept);
+    # the re-derivation ran the same judge and reported nothing, so a tail that came back carrying a
+    # bare shell command was indistinguishable from one the judge had cleaned. Measured (run
+    # 0727-164951): a good six-step plan — step 2 "Create a Python function resolve_handle(handle)" —
+    # was re-derived twice (5→8, then 7→3) into a plan whose step 2 was `grep -n 'resolved_addresses'
+    # <file>` and step 3 "Run unit tests": a bare command and plumbing, the two categories this judge
+    # deletes. Nothing in the log said whether it ran, kept them, or dropped something else.
+    rlog.emit("loop.replan_noise", dropped=len(drop), kept=len(kept),
+              level="warn" if not kept else "info")
     if not kept:
         return None
     # NO research-first re-prepend here — and none at plan time either. cria does not AUTHOR plan steps:
