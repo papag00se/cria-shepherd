@@ -49,6 +49,29 @@ class PromptAgnosticismTests(unittest.TestCase):
                         "verify.txt does not say a sought fact the source lacks can't hold a step open")
         self.assertIn("never actually read the real source", v)   # ...and the guard is still there
 
+    def test_every_prompt_that_shapes_a_plan_says_research_is_not_runtime_discovery(self):
+        # THE FOOTGUN (live run 0727-102822): the ungrounded-route challenge told the planner to
+        # "word the step to READ the route from that source instead of naming one". Its reasoning
+        # quoted that clause back — "So we need to incorporate fetching the API documentation first"
+        # — and it re-drafted step 1 as "Implement fetch_api_docs() function to retrieve API
+        # documentation and locate the resolve endpoint": the shipped program discovering its own
+        # endpoint at runtime, which plan.txt explicitly forbids. cria's own steer overrode cria's
+        # own rule, because only ONE of the four texts that shape a plan carried it.
+        # Same class as the searching-vs-reading invariant below: one rule, every prompt that can
+        # rewrite a plan must know it.
+        steers = prompts.load_map("planner_steers")
+        texts = {"plan": prompts.load("plan"), "replan": prompts.load("replan"),
+                 "planner_steers.submit_ungrounded": steers["submit_ungrounded"],
+                 "planner_steers.host_unread": steers["host_unread"]}
+        # Phrasing is the prompt's own business — a model-facing steer says "when it runs" where a
+        # rule-sheet says "at RUNTIME" — so match the concept, not one wording.
+        for name, p in texts.items():
+            low = p.lower()
+            self.assertTrue(any(w in low for w in ("runtime", "when it runs", "every time it runs")),
+                            f"{name} says nothing about the shipped program looking the route up itself")
+            self.assertTrue(any(w in low for w in ("never", "must not", "not part of")),
+                            f"{name} does not FORBID the shipped program discovering its own endpoint")
+
     def test_all_three_plan_prompts_agree_a_search_is_not_research(self):
         # THE CONTRADICTION (live runs 0726-131603 / -132211): plan.txt tells the DRAFTER "a web_search
         # does NOT satisfy this — read the thing the task actually points at", and verify.txt tells the
