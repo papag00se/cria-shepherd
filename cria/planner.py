@@ -172,10 +172,21 @@ def _strip_trailing_junk(s: str) -> str:
     never a bracket the STEP ITSELF opened. A blanket ``[\\s'\"\\],}]+$`` strip ate the brace off a
     step ending in a path template, so ``GET /handles/{handle}`` reached the coder as
     ``GET /handles/{handle`` — and the coder follows the plan verbatim, so it builds that URL wrong.
-    A closer is junk only when it is UNBALANCED; a matched one is part of the step's own text."""
+    A closer is junk only when it is UNBALANCED; a matched one is part of the step's own text.
+
+    The same rule governs QUOTES, which this used to strip unconditionally one line below the
+    sentence describing the balance rule. Measured (run 0727-135951): the live-test step
+    ``Run live tests to resolve handles like 'goose' and 'papagoose'`` reached the plan as
+    ``…and 'papagoose`` — cria ate the closing quote off the two handle names the task is ABOUT.
+    A quote is junk only when it has NO PARTNER — a lone trailing `'` really is envelope debris (a
+    model that quotes array elements Python-style), but a matched pair belongs to the step. Known
+    limit: prose that mixes an apostrophe with a quoted word (`the API's 'goose'`) counts odd and
+    loses the closer. That shape has not been observed; the two that have are covered by parity."""
     while s:
         c = s[-1]
-        if c in " \t\r\n'\",":
+        if c in " \t\r\n,":
+            s = s[:-1]
+        elif c in "'\"" and s.count(c) % 2:
             s = s[:-1]
         elif c in _CLOSERS and s.count(_CLOSERS[c]) < s.count(c):
             s = s[:-1]

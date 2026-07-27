@@ -1069,3 +1069,47 @@ class StepObjectFieldChoiceTests(unittest.TestCase):
     def test_a_non_text_field_is_never_mistaken_for_the_step(self):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step({"id": 3, "status": "pending", "step": "Ship it"}), "Ship it")
+
+
+class StepTrailingQuoteTests(unittest.TestCase):
+    """`ed1ae9f` taught `_strip_trailing_junk` that a closing BRACE is junk only when unbalanced —
+    `GET /handles/{handle}` had been reaching the coder as `GET /handles/{handle`. The line right
+    below that rule still stripped quotes unconditionally.
+
+    MEASURED (run 0727-135951): the planner's live-test step, whose raw arguments read
+    `"5. Run live tests to resolve handles like 'goose' and 'papagoose'"`, reached the plan as
+    `…and 'papagoose` — cria ate the closing quote off the two handle names the task is ABOUT. The
+    coder follows a plan verbatim, and an unterminated quote in the one step that names the test
+    fixtures is cria corrupting its own instruction.
+
+    A single quote is never JSON-envelope junk (the envelope is double-quoted); a double quote is
+    junk only when it has no partner."""
+
+    def test_a_step_ending_in_a_single_quoted_name_keeps_its_quote(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("5. Run live tests to resolve handles like 'goose' and 'papagoose'"),
+                         "Run live tests to resolve handles like 'goose' and 'papagoose'")
+
+    def test_a_step_ending_in_a_double_quoted_name_keeps_its_quote(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step('6. Create a live test that resolves "goose" and "papagoose"'),
+                         'Create a live test that resolves "goose" and "papagoose"')
+
+    def test_an_apostrophe_in_prose_is_untouched(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Parse the API's response"), "Parse the API's response")
+
+    def test_a_lone_trailing_quote_is_still_envelope_junk(self):
+        """A model that quotes its array elements Python-style leaves one behind; parity catches it
+        without touching a matched pair."""
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Implement tests against the real API\n'"),
+                         "Implement tests against the real API")
+
+    def test_the_json_envelope_junk_is_still_stripped(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step('Write the resolver",]}'), "Write the resolver")
+
+    def test_the_brace_rule_from_ed1ae9f_still_holds(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step("Call GET /handles/{handle}"), "Call GET /handles/{handle}")
