@@ -53,6 +53,32 @@ def host_is_grounded(url: str, evidence: str) -> bool:
     return bool(host) and host in (evidence or "").lower()
 
 
+_METHOD_ROUTE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^\s\"'`,;)\]}]*)")
+
+
+def ungrounded_routes(text: str, evidence: str) -> list[str]:
+    """API routes written as ``METHOD /path`` that the evidence never showed.
+
+    The URL check above is deliberately URL-scoped, because a bare path in authored text is ambiguous
+    — "write tests/test_x.py" names a file that SHOULD NOT exist yet. A METHOD prefix removes that
+    ambiguity: nothing legitimately writes `POST /handles/resolve` about a file it is creating. It is
+    an assertion that an endpoint exists, and cria's own shape ledger renders endpoints in exactly
+    this form, which is where a judge learns to write them.
+
+    MEASURED (run 0727-153326): a plan step presupposed "the resolve endpoint", the step critic
+    hardened it into `POST /handles/resolve` — a route in no spec — and proposed it as a concrete
+    next move 12 times. The coder grepped for that literal string across 322 calls on one step.
+
+    Only the PATH must have been seen: a spec lists paths and keys the method inside them, so
+    requiring the method too would reject a correct route read straight out of the source."""
+    bad = []
+    for m in _METHOD_ROUTE.finditer(text or ""):
+        route = m.group(2).rstrip(_TRAIL)
+        if route.strip("/") and not _seen_bounded(route, evidence or ""):
+            bad.append(f"{m.group(1)} {route}")
+    return bad
+
+
 def ungrounded_urls(text: str, evidence: str) -> list[str]:
     """The URLs ``text`` names that ``evidence`` cannot support.
 

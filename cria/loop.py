@@ -480,7 +480,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
-        return satisfied, _verdict_nudge(obj, satisfied)  # fold in proposed_fix when NOT satisfied
+        return satisfied, _verdict_nudge(obj, satisfied, evidence)  # fold in proposed_fix when NOT satisfied
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -492,7 +492,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, _verdict_nudge(retry, False)   # a reasoning-off NOT-satisfied is trustworthy
+    return False, _verdict_nudge(retry, False, evidence)   # a reasoning-off NOT-satisfied is trustworthy
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -1444,7 +1444,7 @@ class Loop:
         what the coder really obtained; they never claim work that wasn't done."""
         messages = body.get("messages", [])
         log = _bound_evidence(_work_log(messages))
-        facts = _fetch_ground_truth(messages, sess, header="PAGES THE CODER ALREADY FETCHED")
+        facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
         if not facts:
             return log
         return (log + "\n\n" + facts) if log else facts
@@ -1481,7 +1481,7 @@ class Loop:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
-            reason = _verdict_nudge(obj, done)
+            reason = _verdict_nudge(obj, done, user)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -1498,7 +1498,7 @@ class Loop:
             reason = "unverified (no parseable verdict)"
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
-        reason = _verdict_nudge(retry, False)   # a reasoning-off NOT-done is trustworthy
+        reason = _verdict_nudge(retry, False, user)   # a reasoning-off NOT-done is trustworthy
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
@@ -3897,12 +3897,32 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
     return bool(_SHELL_WRITE_RE.search(_QUOTED_SPAN_RE.sub(" q ", text)))
 
 
+CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
+
+
 def _clip(s: str, n: int) -> str:
     s = s.strip()
     return s if len(s) <= n else s[:n] + "…"
 
 
-def _verdict_nudge(obj: dict, done: bool) -> str:
+def _fetched_routes_section(evidence: str) -> str:
+    """The durable FETCH-FACTS section of the evidence — routes and field shapes cria extracted from
+    real 2xx documents — and nothing else.
+
+    The action log above it is NOT an authority on what exists. Measured (run 0727-153326), it grounded
+    the invented `POST /handles/resolve` twice over: once as the coder's own `$ exec_command grep -n
+    "POST /handles/resolve"` (what it ASKED FOR is not what exists), and once inside a `-> ` line that
+    was cria's OWN repeat-search refusal quoting the coder's query back. Anything cria echoes becomes
+    evidence for the next judgement — the same self-grounding as 48e94c4, where cria's challenge
+    grounded the URL it challenged.
+
+    Empty when nothing has been fetched, and the caller then judges no route at all: with no
+    authoritative source, cria has nothing to check against and does not guess."""
+    head, sep, tail = (evidence or "").partition(CODER_FETCH_HEADER)
+    return tail if sep else ""
+
+
+def _verdict_nudge(obj: dict, done: bool, evidence: str = "") -> str:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
@@ -3910,6 +3930,16 @@ def _verdict_nudge(obj: dict, done: bool) -> str:
     reason = str(obj.get("reason", "")).strip()
     fix = str(obj.get("proposed_fix", "")).strip()
     if done or not fix:
+        return reason
+    # A proposed fix is authored text the coder ACTS ON, so it is held to the same bar as a steer
+    # (c17ffd8): cria does not hand over a concrete external detail the evidence never showed. A
+    # `METHOD /path` route is unambiguous — nothing writes "POST /x" about a file it is creating —
+    # and a judge learns that spelling from cria's OWN shape ledger. Measured (run 0727-153326): the
+    # critic proposed `POST /handles/resolve`, a route in no spec, 12 times; the coder grepped for
+    # that literal string across 322 calls on one step. The REASON always survives — the step really
+    # was not done; only the invented move is dropped.
+    facts = _fetched_routes_section(evidence)
+    if facts and urlgrounding.ungrounded_routes(fix, facts):
         return reason
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
 
