@@ -115,6 +115,15 @@ keyword code must never make the call itself. "The reasoner judges; code acts."
 **Why.** A keyword regex reading intent out of prose is a guess dressed as logic; a weak model
 judges a narrow, evidence-grounded question far more reliably, and catches cases the regex
 can't. Every steer detector is a deterministic TRIGGER feeding one reasoned author.
+**The tell (learned 2026-07-27).** When you find yourself *tuning* a lexical rule — weighing
+"trigger on a bare host vs only on a path", trading false positives against misses, writing the
+exception list — that weighing IS the judgment, and you are doing it at authoring time on
+imagined cases instead of at runtime on the real one. Stop and split it: let code gather the
+concrete discrepancy (this host is named in the plan and was never fetched) and ask the reasoner
+one narrow question about that fact (does building this plan require knowing what that host
+returns?). The rule that needs an exception list is the rule that should have been a question.
+Cost is nil when it matters least: the call only happens when the deterministic half found a
+discrepancy, so a task with no such gap never pays for it (rule #9).
 **Embodied.** [`project_goal_run_2026_07_18`], [`project_unified_steer_author`],
 [`project_goal_fabliq_ada_handles`]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
 (pervasive "reasoner judges / code acts").
