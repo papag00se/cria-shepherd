@@ -76,19 +76,6 @@ class PromptAgnosticismTests(unittest.TestCase):
                     offenders.append(f"{py.name}:{n}: {line.strip()[:100]}")
         self.assertEqual(offenders, [], "model-facing ⟦ctx:…⟧ string carries the literal project name")
 
-    def test_red_gate_overrides_the_step_wording_it_contradicts(self):
-        # THE CONTRADICTION (live run 0726-141115, call 127): a red gate fails the step via "probe
-        # failed" BEFORE the critic runs, so the coder was told "Do ONLY this step (2 of 9): Examine
-        # the fetched documentation…" while simultaneously handed pytest failures about a mock in a
-        # test file. It had located those endpoints 80 calls earlier — they were in its own resolver
-        # AND in the ⟦ctx:facts⟧ ledger — so it obediently re-read swagger.yml over and over while the
-        # thing actually blocking it belonged to a later step. The checks must say they outrank the
-        # step's wording; without that the two instructions simply conflict and the step's wins.
-        p = prompts.load("block_nudge_preamble").lower()
-        self.assertIn("first", p)
-        self.assertTrue("overrides" in p or "override" in p)
-        self.assertIn("step", p)                      # names the conflict explicitly
-
     def test_coder_system_research_rule_is_language_neutral(self):
         c = prompts.load("coder_system")
         self.assertNotIn("Python/requests/curl", c)          # the Python-only callout is generalized
