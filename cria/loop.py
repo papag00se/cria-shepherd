@@ -1306,6 +1306,7 @@ class Loop:
             "\n".join(f"- {it.text}" for it in done_items),
             "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools)
         if steps is None:  # declined / unparseable → keep the plan untouched
+            rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
             return
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
             satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
@@ -1313,7 +1314,12 @@ class Loop:
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
                 rlog.emit("loop.replan_empty_declined", step=idx)
                 return
-        if [it.text for it in rederivable] == steps:  # unchanged → no churn, no log
+        if [it.text for it in rederivable] == steps:
+            # Unchanged → no churn, but NOT no log. Both stuck-step callers spend their one-shot
+            # BEFORE calling here, so a re-derivation that returns the same tail permanently retires
+            # the rescue and the step re-nudges to the completion bound. Silence here made that
+            # indistinguishable, in the record, from a rescue that never fired.
+            rlog.emit("loop.replan_noop", step=idx, result="unchanged", remaining=len(rederivable))
             return
         sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
         rlog.emit("loop.replan", step=idx, before=len(rederivable), after=len(steps))

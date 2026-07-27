@@ -286,6 +286,27 @@ class LivingPlanTests(unittest.TestCase):
         self.assertEqual([it.text for it in sess.plan.items], ["step 1"])   # tail emptied → plan complete
         self.assertIsNone(sess.plan.current())
 
+    def test_a_rescue_that_changed_nothing_still_leaves_a_record(self):
+        """`_replan_tail` is the LAST-RESORT rescue for a stuck step, and both callers spend their
+        one-shot BEFORE calling it (deliberately — re-deriving repeatedly thrashed the plan 3→4→5→7→3→2).
+        So when the re-derivation comes back identical, the rescue is permanently spent and the step
+        re-nudges until the completion bound — but it returned early on `unchanged → no churn, no log`,
+        so the record showed nothing at all. "cria never tried to rescue this step" and "cria tried and
+        the reasoner returned the same tail" are different bugs with different fixes, and they looked
+        identical. The most likely mechanism behind a 100+ call single step."""
+        loop = self._loop(_Scripted([_replan(["step 2", "step 3"])]))   # same tail back
+        sess, rlog = self._sess(), _Rlog()
+        loop._replan_tail(sess, _body(), 1, rlog)
+        self.assertEqual([it.text for it in sess.plan.items], ["step 1", "step 2", "step 3"])
+        self.assertIn("loop.replan_noop", rlog.kinds())
+        self.assertEqual(dict(rlog.events)["loop.replan_noop"]["result"], "unchanged")
+
+    def test_a_rescue_the_reasoner_declined_is_recorded_too(self):
+        loop = self._loop(_Scripted([_unparseable()]))
+        sess, rlog = self._sess(), _Rlog()
+        loop._replan_tail(sess, _body(), 1, rlog)
+        self.assertEqual(dict(rlog.events)["loop.replan_noop"]["result"], "declined")
+
     def test_skipped_for_synthetic_plan(self):
         reasoner = _Scripted([_replan(["x"])])
         loop = self._loop(reasoner)
