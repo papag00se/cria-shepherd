@@ -124,17 +124,27 @@ one narrow question about that fact (does building this plan require knowing wha
 returns?). The rule that needs an exception list is the rule that should have been a question.
 Cost is nil when it matters least: the call only happens when the deterministic half found a
 discrepancy, so a task with no such gap never pays for it (rule #9).
-**But the question must have EVIDENCE on one side (measured 2026-07-27).** A weak reasoner judges
-"does this real thing satisfy that stated requirement?" well — the whole-task satisfaction critic does
-it correctly against actual tool output. It cannot judge PROSE against PROSE. A draft-time check
-asking "does this plan cover this request?" was built, and on the live model it failed in every
-sampling configuration tried: at the role's own temperature it answered `{"missing": []}` once and
-"everything is missing" the next; at temp 0 with reasoning on it emitted nothing at all three times;
-at temp 0 with reasoning off it was perfectly stable and inverted, naming two steps the plan visibly
-contained; and reduced to the simplest possible form — one item, "which step produces this?" — it
-answered "Step 1" for every item. It was reverted. Before adding a judge, ask what REAL artifact it
-compares against; if the answer is "two pieces of text the model must hold in its head at once", the
-call will fire, parse, and be wrong — which is worse than not asking (rule #1).
+**A judge prompt must FENCE the model out of doing the work (measured 2026-07-27).** A draft-time
+"does this plan cover the request?" check shipped, answered `{"missing": []}` for a plan that plainly
+omitted a deliverable, and was reverted as unreliable. Then its REASONING was read, and it had not
+failed the comparison at all: it listed the missing item ("Separate live test that resolves goose or
+papagoose"), spotted the gap outright ("It doesn't mention separate test for goose/papagoose"), and
+then spent six thousand characters designing the implementation — `requests.get`, mock strategy,
+filenames — re-summarised its checklist WITHOUT the item it had already found, and answered "nothing
+missing". The prompt opened "Read the request and list what it asks to be produced", which reads as a
+task briefing, so it did the task. Adding the fence `satisfaction.txt` already carried — *"You are a
+JUDGE, not the coder. You have NO tools... Do not think about HOW any of this would be built"* —
+changed the FAILURE MODE, which is what made it shippable: measured over 8 samples each at the role's
+own sampling, it catches the real gap 4/8 and raises a false alarm 0/8 (the misses split between
+`{"missing": []}` and an unparseable reply, both of which take the safe null). Half the time it saves
+a run; the rest of the time it is silent. The original prompt's failure mode was the dangerous one —
+naming things the plan visibly contained. **Measure the rate over enough samples to know which mode
+you have**: a first pass of 3/3 looked like "fixed" and was luck.
+**The lesson is the method, not the fix**: when a judgment comes back wrong, read the model's
+reasoning before concluding it cannot do the job. A verdict tells you only that it failed; the
+reasoning tells you WHERE — and "it lost the answer it had already found" needs a different fix from
+"it never found it". A prompt that describes the work in the imperative invites a weak model to
+perform it.
 **Embodied.** [`project_goal_run_2026_07_18`], [`project_unified_steer_author`],
 [`project_goal_fabliq_ada_handles`]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
 (pervasive "reasoner judges / code acts").
