@@ -3647,6 +3647,60 @@ class SearchJudgeTests(unittest.TestCase):
     def _body(self):
         return {"messages": [{"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"}]}
 
+    def test_a_search_the_reasoner_calls_a_new_direction_is_cleared_at_the_gate(self):
+        # END TO END: the repeat gate would refuse this on word overlap; the reasoner says it is a
+        # different hunt, and that verdict reaches the gate, so the search runs. Refusing the model's
+        # own tool call on four tuned word counts is a redirection — a sibling threshold rule was
+        # already deleted for over-firing — so the counts stay as the TRIGGER and the reasoner decides.
+        from cria.loop import guard_search_query, GuardState
+        from cria import webfetch as wf
+        wf.clear_cache()
+        prior = "ADA Handle API resolve handle to address holder address total handles"
+        rehunt = "ADA Handle API resolve handle holder"
+        wf.set_visible("sk1", [], [prior])
+        self.assertIsNotNone(wf.gate_search("sk1", rehunt))          # the gate WOULD refuse it
+        gs = GuardState()
+        gs.web_session = "sk1"
+        guard_search_query(gs, self._search(rehunt), self._body(),
+                           self._reasoner({"new_direction": True, "on_target": True}),
+                           self._role(), _Rlog())
+        self.assertIsNone(wf.gate_search("sk1", rehunt))             # ...and now it does not
+
+    def test_a_search_the_reasoner_calls_a_re_hunt_is_still_refused(self):
+        # The other half, and the fail-safe: only a clear "different hunt" clears a query, so an
+        # unparseable or negative verdict leaves the gate's own behaviour exactly as it was.
+        from cria.loop import guard_search_query, GuardState
+        from cria import webfetch as wf
+        wf.clear_cache()
+        prior = "ADA Handle API resolve handle to address holder address total handles"
+        rehunt = "ADA Handle API resolve handle holder"
+        wf.set_visible("sk2", [], [prior])
+        gs = GuardState()
+        gs.web_session = "sk2"
+        guard_search_query(gs, self._search(rehunt), self._body(),
+                           self._reasoner({"new_direction": False, "on_target": True}),
+                           self._role(), _Rlog())
+        self.assertIsNotNone(wf.gate_search("sk2", rehunt))
+
+    def test_a_search_with_no_prior_costs_no_rehunt_call(self):
+        # Zero cost when there is nothing to ask about: the gate has no prior, so the judge never runs.
+        from cria.loop import guard_search_query, GuardState
+        from cria import webfetch as wf
+        wf.clear_cache()
+        gs = GuardState()
+        gs.web_session = "sk3"
+        calls = {"n": 0}
+
+        def reasoner(b, r):
+            calls["n"] += 1
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"on_target": True, "recommendation": ""})}}]}).encode()
+
+        guard_search_query(gs, self._search("a brand new question"), self._body(), reasoner,
+                           self._role(), _Rlog())
+        self.assertEqual(calls["n"], 1)          # the on-target judge only — no re-hunt call
+        self.assertIsNone(gs.rehunt_verdicts)
+
     def test_off_target_query_with_url_rec_becomes_a_fetch(self):
         from cria.loop import guard_search_query, GuardState
         out = guard_search_query(GuardState(), self._search("Cardano Wallet Backend API"), self._body(),

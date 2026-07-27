@@ -215,6 +215,9 @@ _SEARCH_SEEN: dict[str, set] = {}
 # a harness-native search never does. The repeat refusal used to name the spill path unconditionally,
 # sending the model to grep a file that was never written.
 _SEARCH_SPILLED: dict[str, set] = {}
+# Queries a reasoner has judged a genuinely NEW direction rather than a re-hunt (`allow_search`), so
+# the word-overlap trigger does not refuse them.
+_SEARCH_ALLOWED: dict[str, set] = {}
 _GATE_CAP = 256
 
 
@@ -224,6 +227,7 @@ def clear_cache() -> None:
     _FETCH_STREAK.clear()
     _SEARCH_SEEN.clear()
     _SEARCH_SPILLED.clear()
+    _SEARCH_ALLOWED.clear()
 
 
 # --- OVERSIZED docs: spill to a file the model can grep, instead of a low-signal page-1 -------------
@@ -497,6 +501,34 @@ def _guard_msg(key: str, **tokens: object) -> str:
     return prompts.fill(prompts.load_map("webfetch_guards")[key], **tokens)
 
 
+def prior_matching_search(session: Optional[str], query: str) -> Optional[str]:
+    """The earlier visible search this one would be refused as a repeat of, or None.
+
+    Exported so a caller that CAN reason (the loop, which has the reasoner) asks its question about
+    exactly the pair :func:`gate_search` would act on. Same code, one verdict — a second matcher
+    would drift from this one and the reasoner would be asked about the wrong prior."""
+    q = (query or "").strip()
+    if not session or not q:
+        return None
+    words = normalize_search(q)
+    if not words:
+        return None
+    return next((prev for prev in _SEARCH_SEEN.get(session, ())
+                 if searches_match(words, normalize_search(prev))), None)
+
+
+def allow_search(session: Optional[str], query: str) -> None:
+    """Record that this query has been judged a genuinely NEW direction, not a re-hunt — so
+    :func:`gate_search` lets it run.
+
+    The overlap test is four hand-tuned constants deciding whether to REFUSE the model's own tool
+    call, and cria has already removed a sibling threshold rule for over-firing ("0.6 core-overlap
+    binds distinct searches"). The constants stay as the cheap trigger; when a reasoner has actually
+    looked at the pair and says these are different hunts, that judgement wins."""
+    if session and (query or "").strip():
+        _SEARCH_ALLOWED.setdefault(session, set()).add(query.strip().lower())
+
+
 def gate_search(session: Optional[str], query: str) -> Optional[str]:
     """Refuse a repeat web_search ONLY while its results are still in the conversation
     (`set_visible`); else the model may re-run it. None → proceed.
@@ -505,15 +537,14 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
     ported in `searchloop`): a weak model ruminating on the same search tweaks the wording just
     enough to slip past an exact-string guard — the live path saw a model run ~30 near-identical
     searches by alternating "…API resolve…" / "…API endpoint resolve…". A genuine refinement or a
-    new direction is NOT matched; only a re-hunt (see `searches_match`)."""
+    new direction is NOT matched; only a re-hunt (see `searches_match`) — and a query a reasoner has
+    cleared as a new direction (:func:`allow_search`) is never refused."""
     q = (query or "").strip()
     if not session or not q:
         return None
-    words = normalize_search(q)
-    if not words:
+    if q.lower() in _SEARCH_ALLOWED.get(session, ()):
         return None
-    prior = next((prev for prev in _SEARCH_SEEN.get(session, ())
-                  if searches_match(words, normalize_search(prev))), None)
+    prior = prior_matching_search(session, q)
     if prior is not None:
         # Only claim the results are in a FILE when cria itself wrote one. gate_search runs before the
         # routing split, so a harness-native search reaches here too — and it never spills. Naming the

@@ -1,0 +1,8 @@
+THE TASK BEING WORKED ON:
+{{TASK}}
+
+THE SEARCH ALREADY RUN (its results are in front of the coder):
+{{PRIOR}}
+
+THE SEARCH IT WANTS TO RUN NOW:
+{{QUERY}}

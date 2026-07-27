@@ -591,6 +591,31 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))
         self.assertIsNone(wf.gate_search(None, "x"))
 
+    def test_a_search_the_reasoner_cleared_is_not_refused(self):
+        # The refusal is decided by four hand-tuned word-overlap constants, and refusing a search is
+        # a REDIRECTION of the model's own action — a sibling threshold rule was already removed for
+        # over-firing ("0.6 core-overlap binds distinct searches"). The overlap test stays as the
+        # cheap TRIGGER; when a reasoner has judged the query a genuinely new direction rather than a
+        # re-hunt, that verdict wins and the search runs.
+        visible = "ADA Handle API resolve handle to address holder address total handles"
+        rehunt = "ADA Handle API resolve handle holder"
+        wf.set_visible("s1", [], [visible])
+        self.assertIsNotNone(wf.gate_search("s1", rehunt))       # trigger fires on word overlap
+        wf.allow_search("s1", rehunt)
+        self.assertIsNone(wf.gate_search("s1", rehunt))          # the reasoner's verdict wins
+        # the clearance is per query — a DIFFERENT re-hunt is still refused
+        self.assertIsNotNone(wf.gate_search("s1", visible))
+
+    def test_prior_matching_search_is_the_gates_own_verdict(self):
+        # Whatever decides "is there a prior to ask about?" must be the SAME code the gate refuses on,
+        # or the trigger and the refusal drift apart and the reasoner gets asked about the wrong thing.
+        visible = "ADA Handle API resolve handle to address holder address total handles"
+        wf.set_visible("s2", [], [visible])
+        self.assertEqual(wf.prior_matching_search("s2", "ADA Handle API resolve handle holder"),
+                         visible.lower())          # the gate stores what it saw, normalized
+        self.assertIsNone(wf.prior_matching_search("s2", "python requests connection timeout retry"))
+        self.assertIsNone(wf.prior_matching_search(None, "anything"))
+
     def test_search_gate_matches_near_duplicate_word_set_not_just_exact(self):
         # a weak model evades an EXACT-string gate by tweaking the wording; the word-set matcher
         # (searchloop, the codex-local port) catches the re-hunt. Real case: fabliq alternated

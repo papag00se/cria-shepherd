@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding
+from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, webfetch
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -159,6 +159,9 @@ class GuardState:
     poisoned_search_files: set = None   # spill files judged off-target → strip their reads going forward
     search_recommend: str = ""          # the last recommended query to steer
     query_verdicts: dict = None         # outgoing query -> (on_target, recommendation); cached per query
+    rehunt_verdicts: dict = None        # outgoing query -> is it a NEW direction? (cached; see judge_rehunt)
+    web_session: str = ""               # the key webfetch's per-session search/fetch gates are keyed by,
+    #                                     so the loop can ask about the pair those gates would act on
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
@@ -364,6 +367,28 @@ def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder
     if not isinstance(obj, dict):
         return True, ""
     return obj.get("on_target") is not False, str(obj.get("recommendation") or "").strip()
+
+
+def judge_rehunt(reasoner_chat, reasoner_role, task: str, query: str, prior: str, rlog,
+                 coder_tools: str = "") -> bool:
+    """Is ``query`` a genuinely NEW direction rather than a re-hunt of ``prior``?
+
+    The repeat gate refuses a search on four hand-tuned word-overlap constants, and refusing the
+    model's own tool call is a redirection — cria has already deleted a sibling threshold rule for
+    over-firing ("0.6 core-overlap binds distinct searches"). Whether two queries are the same hunt
+    or different ones is a judgement, so the overlap test stays as the cheap TRIGGER and this makes
+    the actual call.
+
+    Returns True only on a clear "different hunt". Anything else — no reasoner, an unparseable reply,
+    an error — leaves the gate's own verdict standing, so this can only ever make cria refuse LESS,
+    never more, and a session without a reasoner behaves exactly as before."""
+    if reasoner_role is None or not (query.strip() and prior.strip()):
+        return False
+    vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_rehunt_judge"),
+                      prompts.render("search_rehunt_judge_user", task=task, query=query, prior=prior),
+                      rlog, phase="reasoner", coder_tools=coder_tools) or ""
+    obj = extract_json_object(strip_think(vtext))
+    return isinstance(obj, dict) and obj.get("new_direction") is True
 
 
 def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog, coder_tools: str = "") -> tuple[bool, bool, str]:
@@ -891,6 +916,10 @@ class Loop:
         # final fallback — so the gate/steer target the harness's repo, never cria's own dir. (_ctx.
         # workspace_root is shared across sessions/None in prod; the per-session copy is the live source.)
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root
+        # The key webfetch's per-session gates use is the SAME key the loop drives under (server passes
+        # one `sk` to both drive() and the outbound translation), so recording it here lets the search
+        # judge ask about exactly the prior those gates would refuse against.
+        sess.web_session = key
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
         if item is None:  # every step verified INDIVIDUALLY — but is the WHOLE task actually done?
@@ -3306,11 +3335,27 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
         return coder
     if sess.query_verdicts is None:
         sess.query_verdicts = {}
+    task = latest_user_text(body.get("messages", []))
+    tools_summary = _coder_tools_summary(body.get("tools"))
+    # The repeat gate downstream refuses this search if it overlaps a visible earlier one, on four
+    # hand-tuned word counts. Ask about exactly the pair it would act on — and only when it WOULD act,
+    # so a search with no prior costs nothing. A clear "different hunt" clears the query; anything
+    # else leaves the gate's verdict alone, so this can only ever refuse LESS.
+    prior = webfetch.prior_matching_search(sess.web_session, query)
+    if prior and query not in (sess.rehunt_verdicts or {}):
+        if sess.rehunt_verdicts is None:
+            sess.rehunt_verdicts = {}
+        fresh = judge_rehunt(reasoner_chat, reasoner_role, task, query, prior, rlog,
+                             coder_tools=tools_summary)
+        sess.rehunt_verdicts[query] = fresh
+        if fresh:
+            webfetch.allow_search(sess.web_session, query)
+            rlog.emit("loop.search_rehunt_cleared", query=query, prior=prior)
     if query in sess.query_verdicts:
         on_target, rec = sess.query_verdicts[query]
     else:
-        on_target, rec = judge_query(reasoner_chat, reasoner_role, latest_user_text(body.get("messages", [])), query, rlog,
-                                     coder_tools=_coder_tools_summary(body.get("tools")))
+        on_target, rec = judge_query(reasoner_chat, reasoner_role, task, query, rlog,
+                                     coder_tools=tools_summary)
         sess.query_verdicts[query] = (on_target, rec)
     if on_target or not rec:
         return coder
