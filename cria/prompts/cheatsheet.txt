@@ -11,7 +11,7 @@
 # tool's real path-arg name, read from the resolved schema. Format is `key = value`, one per line;
 # `\n` in a value becomes a real newline.
 header = Tools available this turn, listed in the order you should PREFER them — call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.
-lead_write = CRITICAL — to create or change a file you MUST use {{TOOLS}}. Do NOT write files by shelling out (echo/cat/heredoc/tee/sed): the file tools are more reliable and cannot be truncated mid-write.
+lead_write = CRITICAL — to create or change a file you MUST use {{TOOLS}}. Do NOT write files by shelling out (echo >, cat <<HEREDOC, tee, sed -i): the file tools are more reliable and cannot be truncated mid-write.
 write_file = - write_file — Args: {"path": "<file>", "content": "<full file text>"}
 edit_file = - edit_file — Args: {"path": "<file>", "old_string": "<exact snippet to replace>", "new_string": "<replacement>"}
 read_file = - read_file — Args: {"{{ARG}}": "<file>"}, or add "start_line"/"end_line" for a 1-based inclusive range

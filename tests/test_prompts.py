@@ -49,6 +49,23 @@ class PromptAgnosticismTests(unittest.TestCase):
                         "verify.txt does not say a sought fact the source lacks can't hold a step open")
         self.assertIn("never actually read the real source", v)   # ...and the guard is still there
 
+    def test_every_prompt_that_asks_for_a_verdict_fences_the_model_out_of_the_work(self):
+        # MEASURED, twice. plan_coverage.txt asked "does this plan cover the request?" without a
+        # fence: the model's reasoning shows it FOUND the missing deliverable, then spent 6,000
+        # characters designing the implementation, re-summarised its checklist without the item, and
+        # answered "nothing missing". Adding satisfaction.txt's fence changed the failure mode
+        # outright. And loop.py's own comment records 6/6 compactor calls answering with a tool call,
+        # whose recovered "summary" was forward planning rather than a retrospective.
+        # A prompt that asks for a verdict and does not say "you have no tools" is one weak reply away
+        # from getting the work instead of the answer — so every one of them must say it.
+        judges = ("verify", "satisfaction", "plan_coverage", "plan_noise_steps", "plan_host_unread",
+                  "replan", "selfcompact_summary", "done_summary")
+        for name in judges:
+            body = prompts.load(name).lower()
+            self.assertIn("no tools", body, f"{name}.txt does not tell the model it has no tools")
+            self.assertIn("tool/function call", body,
+                          f"{name}.txt does not forbid emitting a tool call")
+
     def test_every_prompt_that_shapes_a_plan_says_research_is_not_runtime_discovery(self):
         # THE FOOTGUN (live run 0727-102822): the ungrounded-route challenge told the planner to
         # "word the step to READ the route from that source instead of naming one". Its reasoning

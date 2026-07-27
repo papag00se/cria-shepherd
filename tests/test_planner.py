@@ -379,7 +379,7 @@ class GatherLoopTests(unittest.TestCase):
         # endpoint did not exist, and planned a reachability probe instead of the work).
         challenge = next(str(m.get("content")) for b in prov.bodies for m in b["messages"]
                          if "UNVERIFIED" in str(m.get("content")))
-        self.assertIn("NOT evidence the route is wrong", challenge)
+        self.assertIn("NOT evidence they are wrong", challenge)
 
     def test_ungrounded_plan_is_challenged_only_once_never_wedges(self):
         # A planner that insists gets its plan anyway — cria never wedges the session on this, and

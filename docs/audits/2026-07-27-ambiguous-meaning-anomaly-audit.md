@@ -99,43 +99,53 @@ about the server.
 
 ---
 
-## Tier 2 — reported and plausible, not yet hand-verified
+## Tier 2 — investigated; fixed unless noted
 
-Recorded so they are not lost. Verify before acting.
+All checked against source. Outcome marked on each.
 
-- **`coder_system.txt` vs `step_framing.txt`, same system message.** *"Do NOT end … while any part of
+- ✅ FIXED — **`coder_system.txt` vs `step_framing.txt`, same system message.** *"Do NOT end … while any part of
   the task is unfinished"* concatenated with *"Do ONLY this step (N of M), then stop"*. Also
   *"break the user's task into … steps"* — work cria has already done and forbids.
-- **`coder_system.txt`: *"do NOT hand-write a script (requests/curl/fetch) just to pull a URL"***
+- ✅ FIXED (scoped to research; building an HTTP client is explicitly still fine) — **`coder_system.txt`: *"do NOT hand-write a script (requests/curl/fetch) just to pull a URL"***
   — the restrictive "just to" may be dropped, and the justification ("the dependency may not be
   installed") argues against `requests` generally, colliding with a deliverable that must use it.
-- **`verify.txt`: *"NEVER on the items it demonstrably lacks"*** — my own wording from this morning.
+- ⚠️ KEPT, deliberately — **`verify.txt`: *"NEVER on the items it demonstrably lacks"*** — my own wording from this morning.
   The judge cannot distinguish "the source lacks it" from "the coder never found it", and it only
   ever sees a tail-bounded evidence window. May pass an unfinished research step.
-- **`plan.txt` bullet 10 forbids "run linting" as a step; bullet 11 says "Ensure code correctness
+- ✅ FIXED (bullet 11 is now "COVER THE ASK", about coverage rather than adding a lint step) — **`plan.txt` bullet 10 forbids "run linting" as a step; bullet 11 says "Ensure code correctness
   when necessary (linting)".** Adjacent, same prompt.
-- **`plan_noise_steps.txt`: *"Mark a step for REMOVAL when it is NOT that"*** — negation over a
+- ✅ FIXED in Tier 1 (now "only when it matches one of the cases below") — **`plan_noise_steps.txt`: *"Mark a step for REMOVAL when it is NOT that"*** — negation over a
   four-way disjunction. `planner.py`'s own comments record 4-of-6 acted-on verdicts deleting steps
   the prompt explicitly excludes.
-- **Worked examples that model the banned thing** — `replan.txt`'s *"fetch the spec and use its real
+- ✅ FIXED (both examples reworded) — **Worked examples that model the banned thing** — `replan.txt`'s *"fetch the spec and use its real
   paths"* and `plan.txt`'s *"call the <specific_endpoint> FROM THE FETCHED SPEC"* both read as
   runtime discovery, three lines from the rule forbidding it. Weak models copy examples.
 - **`"still above" / "below" claims that compaction falsifies** — `fetch_repeat` ("this is the SAME
   result you got before, still above; use it"), the rollup's "the recent turns follow verbatim
   below" (at a step boundary the summary is the **last** message), `refused_command` and
   `scratch_note` asserting a `web_fetch` result "above" that may never have happened.
-- **Singular pronouns filled with a comma-joined list** — `submit_ungrounded` and `host_unread` say
+- ✅ FIXED (both now say "EACH of them") — **Singular pronouns filled with a comma-joined list** — `submit_ungrounded` and `host_unread` say
   *"go fetch **that url**"* for N urls; the check fires once, so the remainder ship unverified.
-- **`plan_host_unread.txt`'s `NONE`** is a near-synonym of the framing word `NOTHING` that dominates
+- ✅ FIXED (input reframed off the word "NOTHING") — **`plan_host_unread.txt`'s `NONE`** is a near-synonym of the framing word `NOTHING` that dominates
   its input header — the trap shape, on the veto side.
-- **`selfcompact_summary.txt` / `done_summary.txt` unfenced** against act-mode, with 6/6 measured
+- ✅ FIXED (both fenced) — **`selfcompact_summary.txt` / `done_summary.txt` unfenced** against act-mode, with 6/6 measured
   compactor failures already recorded in `loop.py`'s comments.
-- **`cheatsheet.txt` bans `cat` for writing and prescribes `cat` for reading**, ~12 lines apart, both
+- ✅ FIXED (the ban now names write FORMS: `echo >`, `cat <<HEREDOC`, `tee`, `sed -i`) — **`cheatsheet.txt` bans `cat` for writing and prescribes `cat` for reading**, ~12 lines apart, both
   emitted together.
 
 ---
 
-## Tier 3 — cosmetic / low
+### Why `verify.txt`'s "demonstrably lacks" stays
+
+The critique is fair — the judge sees only a tail-bounded evidence window, so it cannot truly
+establish that a source *lacks* something. But the wording exists because the opposite failure was
+MEASURED and expensive: a step demanding fields the API does not have held one plan open for 111
+calls with zero files written. The clause is already gated on "once the coder HAS read the real
+source", and the preceding rule still fails a step whose source was never read. Replacing a measured
+block with an unmeasured pass is not an improvement, so it stays until a run shows it passing an
+unfinished research step.
+
+## Tier 3 — all fixed
 
 `coder_system.txt`'s garbled *"a SHORT, clean, tasks with, concrete, verifiable steps"*; *"its tools
 are listed below"* when one caller prepends them; `probegate`'s *"this turn"* read a turn later;

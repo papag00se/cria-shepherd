@@ -1,3 +1,5 @@
+You are writing a briefing, not doing the work. You have NO tools — do NOT write code, run commands, read or fetch anything, plan the next steps, and do NOT emit a tool/function call of any kind. Your ONLY output is the briefing text.
+
 You are compressing the earlier part of a coding session into a briefing for the SAME agent to keep working from. The agent will keep EDITING this code — so write the briefing as current state it can freely change, never as decisions it must preserve.
 
 Summarize the transcript below into a concise, factual briefing:

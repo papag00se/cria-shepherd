@@ -102,10 +102,10 @@ class XmlAndRawSourceTests(unittest.TestCase):
             url = "https://site.x/page"
             self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))          # reduced view
             wf.set_visible("s1", [(url, "", "")], [])                           # its result is in context
-            self.assertIn("still above", wf.fetch_nav(url, session="s1"))       # reduced repeat → refused
+            self.assertIn("already fetched", wf.fetch_nav(url, session="s1"))    # reduced repeat → refused
             out = wf.fetch_nav(url, session="s1", raw=True)                     # raw is a DIFFERENT identity
             self.assertIn("<b>hi</b>", out)                                     # → served, not refused
-            self.assertNotIn("still above", out)
+            self.assertNotIn("already fetched", out)
         finally:
             wf.fetch = orig
             wf.clear_cache()
@@ -584,7 +584,7 @@ class GateTests(unittest.TestCase):
         # still above" was a lie either way: spilled results are explicitly NOT inlined.
         wf.note_search_spill("s1", "ada handle api")
         r2 = wf.gate_search("s1", "ada handle api")
-        self.assertNotIn("still above", r2)
+        self.assertNotIn("still above", r2)   # never claim a location the compaction can falsify
         self.assertIn(wf.search_spill_name("ada handle api"), r2)   # the real file, named
         self.assertIn("grep -n", r2)                                 # ...and how to read it
         wf.set_visible("s1", [], [])                                  # compacted away → allowed again
@@ -690,24 +690,24 @@ class GateTests(unittest.TestCase):
         url = "https://api.x/openapi.json"
         self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))            # first fetch
         wf.set_visible("s1", [(url, "", "")], [])                            # its result is in context
-        self.assertIn("still above", wf.fetch_nav(url, session="s1"))        # → refused
+        self.assertIn("already fetched", wf.fetch_nav(url, session="s1"))     # → refused
         wf.set_visible("s1", [], [])                                         # compaction elided it
         self.assertIn("HTTP 200", wf.fetch_nav(url, session="s1"))           # → re-read ALLOWED (the fix)
         # internal host is never gated, even when marked visible
         wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "text/plain", "up", False)
         iu = "http://localhost:8080/health"
         wf.set_visible("s1", [(iu, "", "")], [])
-        self.assertNotIn("still above", wf.fetch_nav(iu, session="s1"))
+        self.assertNotIn("already fetched", wf.fetch_nav(iu, session="s1"))
 
     def test_find_cursor_gated_by_the_full_key(self):
         # the gate key is (url, find, cursor) — a find/cursor repeat is handled just like a plain one
         wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", '{"paths":{}}', False)
         url = "https://x/spec"
         wf.set_visible("s1", [(url, "resolve", "c500")], [])
-        self.assertIn("still above", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # exact repeat
-        self.assertNotIn("still above", wf.fetch_nav(url, find="holders", session="s1"))  # a DIFFERENT find = new nav
+        self.assertIn("already fetched", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # exact repeat
+        self.assertNotIn("already fetched", wf.fetch_nav(url, find="holders", session="s1"))  # a DIFFERENT find = new nav
         wf.set_visible("s1", [], [])                                                       # compaction elided it
-        self.assertNotIn("still above", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # allowed
+        self.assertNotIn("already fetched", wf.fetch_nav(url, find="resolve", cursor="c500", session="s1"))  # allowed
 
     def test_guess_streak_nudge_after_three_non_2xx(self):
         wf.fetch = lambda u, ua=None: wf.FetchResult(404, u, "text/plain", "nope", False)
