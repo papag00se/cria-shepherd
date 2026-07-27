@@ -1985,6 +1985,39 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(items[0]["step"], 2)                        # picked up at step 2, not step 1
 
 
+class TruncatedAnswerTests(unittest.TestCase):
+    """cria checked finish_reason NOWHERE on its own model calls — only the plain proxy path did — so
+    HALF an answer was consumed as a whole one. Measured across one day's captures: 3 self-compact
+    rollups (one cut mid-JSON), 3 critic verdicts and a plan, all finish_reason=length with non-empty
+    content. The rollup is the worst: it BECOMES the coder's context after a compaction."""
+
+    def _cut(self, text):
+        return json.dumps({"choices": [{"finish_reason": "length",
+                                        "message": {"content": text}}]}).encode()
+
+    def test_summarize_refuses_a_truncated_briefing(self):
+        from cria.loop import summarize
+        calls = {"n": 0}
+
+        def chat(body, rlog):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return self._cut("Built the resolver and the tests, then began the READ")
+            return json.dumps({"choices": [{"finish_reason": "stop",
+                                            "message": {"content": "A complete briefing."}}]}).encode()
+
+        out = summarize(chat, None, "sys", "usr", _Rlog())
+        self.assertEqual(out, "A complete briefing.")   # the cut pass failed → retry landed
+        self.assertEqual(calls["n"], 2)
+
+    def test_a_truncated_critic_reply_is_not_a_verdict(self):
+        # A cut verdict either fails to parse (fine) or closed early and parses into a PARTIAL object
+        # that gets acted on. Neither is a verdict; the caller already handles "no verdict".
+        from cria.loop import _satisfaction_verdict
+        chat = lambda b, r: self._cut('{"satisfied": true')
+        self.assertIsNone(_satisfaction_verdict("sys", "usr", chat, None, _Rlog(), reasoning_off=True))
+
+
 class SteerVerdictTests(unittest.TestCase):
     """The "fine, no help" verdict is the POSITIVE sentinel ON_TRACK (the old NOT_STUCK was a negation
     trap a weak reasoner emitted for the WRONG reason — "the coder is NOT progressing → NOT_STUCK" —

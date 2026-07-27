@@ -344,7 +344,13 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
     try:
         rlog.phase = "satisfaction" + ("-noreason" if reasoning_off else "")
-        vtext = _completion_text(_parse_completion(reasoner_chat(call, rlog)))
+        comp = _parse_completion(reasoner_chat(call, rlog))
+        if massage.is_truncated(comp):
+            # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
+            # close, and the caller's retry/fail-closed path is the honest answer.
+            rlog.emit("loop.satisfaction_truncated", level="warn")
+            return None
+        vtext = _completion_text(comp)
         if reasoner_role is not None:
             vtext = reasoner_role.clean_content(vtext)  # drop leaked reasoning when off
         return extract_json_object(vtext)
@@ -1506,9 +1512,16 @@ class Loop:
             body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
             rlog.phase = "critic" + ("-noreason" if reasoning_off else "")
-            vtext = _completion_text(_parse_completion(self._ctx.reasoner_chat(body, rlog)))
+            comp = _parse_completion(self._ctx.reasoner_chat(body, rlog))
+            vtext = _completion_text(comp)
             if role is not None:
                 vtext = role.clean_content(vtext)  # drop leaked reasoning when off
+            if massage.is_truncated(comp):
+                # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
+                # finish_reason=length with content). The reasoning-off retry above has the whole
+                # budget for content; if that is also cut, _verify fails closed as it already does.
+                rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
+                return None, vtext
             return extract_json_object(vtext) or None, vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
@@ -2784,6 +2797,17 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             if answered_with_tool_call and not reasoning_off:
                 rlog.emit("summarize.tool_call_answer", level="warn", phase=rlog.phase)
                 return ""  # recovered reasoning is a plan, not a summary — force the reasoning-off retry
+            if massage.is_truncated(applied) and text:
+                # CUT OFF at the cap with content already emitted. cria checked this nowhere on its
+                # own calls — only the plain proxy path surfaces a truncation indicator — so half an
+                # answer was consumed as a whole one. Measured across one day's captures: 3 self-
+                # compact rollups (one cut mid-JSON), 3 critic verdicts and a plan, all with
+                # finish_reason=length and non-empty content. The rollup is the worst of those: it
+                # BECOMES the coder's context after a compaction, so adopting a cut one hands it a
+                # truncated account of its own work. Fail the pass; the reasoning-off retry has the
+                # whole budget for content and usually lands.
+                rlog.emit("summarize.truncated", level="warn", phase=rlog.phase, chars=len(text))
+                return ""
             return text
         except Exception as e:
             rlog.emit("summarize.error", level="warn", error=str(e))
