@@ -123,7 +123,15 @@ _DIALECT_MARKER = re.compile(
 # writeproxy._TC_DEBRIS fixture still matches (all carry a delimiter); a sync test guards the pair.
 
 
-_STEP_TEXT_KEYS = ("step", "text", "description", "action", "title", "task", "name", "content")
+# What the step IS, before how it is carried out. A model that wraps steps in objects usually
+# supplies both — `{"outcome": "Read the API documentation", "description": "read_file(path=…)"}` —
+# and the mechanism is the worse half: MEASURED (run 0727-135408) the living-plan rescue returned
+# exactly that shape, `outcome` was not on this list, cria took `description`, and the noise judge
+# then correctly dropped all five steps for "codifying a bare command". The rescue is one-shot, so
+# that cost the stuck step its last resort.
+_STEP_INTENT_KEYS = ("step", "text", "outcome", "goal", "title", "task", "name", "objective", "action")
+_STEP_DETAIL_KEYS = ("description", "detail", "details", "content", "summary")
+_STEP_TEXT_KEYS = _STEP_INTENT_KEYS + _STEP_DETAIL_KEYS
 
 
 def _clean_step(text) -> str:
@@ -135,6 +143,12 @@ def _clean_step(text) -> str:
     if isinstance(text, dict):
         for k in _STEP_TEXT_KEYS:
             v = text.get(k)
+            if isinstance(v, str) and v.strip():
+                return _clean_step(v)
+        # No key anyone listed. The model still said something — take the FIRST non-empty string in
+        # its OWN field order, which is where it put what it considers primary. Better than dropping
+        # a whole step because nobody predicted its key name.
+        for v in text.values():
             if isinstance(v, str) and v.strip():
                 return _clean_step(v)
         return ""

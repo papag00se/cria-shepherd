@@ -1026,3 +1026,46 @@ class NoiseStepDropTests(unittest.TestCase):
             _msgs("write a fibonacci module"), rlog)
         self.assertEqual(len(plan.items), 3)  # nothing dropped without a reasoner
         self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
+
+class StepObjectFieldChoiceTests(unittest.TestCase):
+    """A model that wraps each step in an object gets its text pulled out by `_clean_step`. The field
+    was chosen from a fixed key list, so an UNKNOWN intent key was invisible while a known mechanical
+    key won.
+
+    MEASURED (run 0727-135408): the living-plan rescue — the LAST resort for a step the coder cannot
+    finish, and one-shot by design — spent 2,884 tokens returning five properly re-derived steps as
+    `{"outcome": "Read Ada Handle API documentation file", "description": "read_file(path='…')"}`.
+    `outcome` was not in the key list, so cria took `description`: the bare command. The noise judge
+    then correctly dropped every one of them for "codifying a bare command", the re-derivation came
+    back empty, and the rescue was recorded as DECLINED with its one shot gone — on a step that went
+    on to burn 67 calls. cria chose the worse half of the model's answer and then rejected it.
+
+    The rule: what the step IS beats how it is carried out, and a key nobody listed is still readable
+    — the model's own field order says which it considers primary."""
+
+    def test_the_outcome_wins_over_the_mechanism(self):
+        from cria.planner import _clean_step
+        step = {"outcome": "Read the Ada Handle API documentation",
+                "description": "read_file(path='./tmp/read-only/search.txt')"}
+        self.assertEqual(_clean_step(step), "Read the Ada Handle API documentation")
+
+    def test_an_unknown_key_is_still_read(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"objective": "Write the resolver"}), "Write the resolver")
+
+    def test_the_models_own_field_order_decides_when_no_key_is_known(self):
+        """With nothing recognizable to go on, the model's OWN field order is the only signal — it
+        puts what it considers primary first. Better than dropping the step for an unguessed name."""
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"aim": "Write the resolver", "how": "python resolve.py"}),
+                         "Write the resolver")
+
+    def test_the_known_keys_still_work(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"step": "Write the README"}), "Write the README")
+        self.assertEqual(_clean_step({"description": "Write the README"}), "Write the README")
+
+    def test_a_non_text_field_is_never_mistaken_for_the_step(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"id": 3, "status": "pending", "step": "Ship it"}), "Ship it")
