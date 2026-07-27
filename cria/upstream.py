@@ -29,6 +29,11 @@ _UNSET = object()
 # so a transient miss (GPU busy on the shared box) self-heals before we commit to the fallback.
 _FALLBACK_WINDOW = 8192
 _MAX_PROPS_ATTEMPTS = 3
+# …then back OFF to one probe every N calls. The budget exists so a dead /props doesn't cost a probe
+# per call — it is NOT a verdict. Committing the 8192 fallback for the life of the process against a
+# 49,152-token model trims ~83% of the real window away, silently and permanently, and the trigger is
+# as ordinary as cria restarting while llama.cpp is still loading its model.
+_PROPS_RETRY_EVERY = 50
 # Fail-fast budget for the debug-only /apply-template render (shares the single inference slot).
 _RENDER_TIMEOUT_S = 8
 # Re-run the reasoning watcher (rumination check) only after this many new chars of reasoning, so
@@ -113,6 +118,8 @@ class Upstream:
         if self._window_final:
             return self._window
         self._props_attempts += 1
+        if self._props_attempts > _MAX_PROPS_ATTEMPTS and self._props_attempts % _PROPS_RETRY_EVERY:
+            return self._window          # backed off: the committed fallback, without a probe
         try:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -129,9 +136,9 @@ class Upstream:
         # Discovery missed this attempt: keep the floor ALIVE on a safe fallback (never cache
         # None = "no floor"), and retry next call until the attempt budget commits the fallback.
         self._window = _FALLBACK_WINDOW
-        if self._props_attempts >= _MAX_PROPS_ATTEMPTS:
-            self._window_final = True
-            rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW)
+        if self._props_attempts == _MAX_PROPS_ATTEMPTS:
+            rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW,
+                      retry_every=_PROPS_RETRY_EVERY)
         return self._window
 
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None) -> tuple[bytes, int, str | None]:

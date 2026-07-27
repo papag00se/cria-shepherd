@@ -5,6 +5,7 @@ from unittest import mock
 
 from cria import rumination
 from cria.upstream import (
+    _PROPS_RETRY_EVERY,
     _FALLBACK_WINDOW,
     _MAX_PROPS_ATTEMPTS,
     Upstream,
@@ -105,15 +106,36 @@ class WindowResolutionTests(unittest.TestCase):
         self.assertEqual(w2, 16384)
         self.assertTrue(up._window_final)
 
-    def test_persistent_props_failure_commits_fallback_never_none(self):
+    def test_persistent_props_failure_keeps_the_floor_and_backs_OFF_rather_than_giving_up(self):
+        """The attempt budget exists so a dead /props doesn't cost a probe on every single call. It
+        must not become a permanent verdict: committing 8192 for the life of the process against a
+        49,152-token model trims ~83% of the real window away, silently and forever, and the trigger
+        is as ordinary as cria being restarted while llama.cpp is still loading. Probing BACKS OFF;
+        it never stops."""
         up = Upstream("http://x")
         rlog = _Rlog()
-        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        side_effect=urllib.error.URLError("down")) as probe:
             for _ in range(_MAX_PROPS_ATTEMPTS + 2):
                 w = up._resolve_window(rlog)
-                self.assertEqual(w, _FALLBACK_WINDOW)
+                self.assertEqual(w, _FALLBACK_WINDOW)   # the floor stays alive on the fallback
                 self.assertIsNotNone(w)
-        self.assertTrue(up._window_final)  # attempt budget spent → stop probing, keep the floor
+            self.assertEqual(probe.call_count, _MAX_PROPS_ATTEMPTS)   # …and stopped hammering it
+        self.assertFalse(up._window_final)   # NOT a permanent verdict
+
+    def test_a_window_that_was_missed_is_still_discovered_much_later(self):
+        up = Upstream("http://x")
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=urllib.error.URLError("loading")):
+            for _ in range(_MAX_PROPS_ATTEMPTS + 1):
+                up._resolve_window(rlog)
+        # llama.cpp finished loading long after the budget was spent — the real window must win
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        return_value=_PropsResp({"default_generation_settings": {"n_ctx": 49152}})):
+            for _ in range(_PROPS_RETRY_EVERY):
+                w = up._resolve_window(rlog)
+        self.assertEqual(w, 49152)
+        self.assertTrue(up._window_final)
 
     def test_cloud_endpoint_never_probes_and_skips_floor(self):
         up = Upstream("http://x", api_key="sk-test")  # cloud → no floor, no /props
