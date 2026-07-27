@@ -467,3 +467,47 @@ class LedgerShapeFormatTests(unittest.TestCase):
         self.assertIn("/holders/{address}", shapes)
         self.assertEqual(len(shapes.splitlines()), 2,
                          "the planner runs every endpoint's shape together on one line")
+
+
+class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):
+    """`b862402` tells the CODER when a fetched page yielded no endpoints — "that status is a fact
+    about the REQUEST, not about what the API returns; the source that DEFINES them is still unread".
+    The PLANNER, which is the one still looking for the spec, was never told: 0 of 16 planner prompts
+    in run 0727-163703 carried it.
+
+    MEASURED, three runs (0727-142536, -153326, -163703): the gather fetched a swagger UI SHELL — an
+    HTML page with no spec in it — got a 200 and readable text back, and drafted a plan presupposing
+    "the resolve endpoint" / "the resolve-handle endpoint". Downstream, a hardener turned that phrase
+    into a concrete route: once the step critic (`POST /handles/resolve`), once the coder
+    (`preprod.api.handle.me/resolve-handle/{handle}`, which 404s).
+
+    Purely ADDITIVE — a true sentence appended to the fetch result, never an action taken for it, and
+    self-limiting: it appears only while cria knows NO routes at all, which is exactly the state that
+    produces a presupposed endpoint. Once any spec has been read, it goes quiet."""
+
+    def _fetch(self, body, facts, ct="text/html"):
+        from cria import webfetch, planner_tools
+
+        def _stub(url, user_agent=None):
+            return webfetch.FetchResult(200, url, ct, body, False)
+        with mock.patch.object(webfetch, "fetch", _stub):
+            return planner_tools._web_fetch({"url": "https://api.handle.me/swagger/"}, facts).text
+
+    def test_a_page_with_no_endpoints_says_so(self):
+        out = self._fetch("<html><body>Swagger UI</body></html>", {})
+        self.assertIn("no endpoints", out.lower())
+
+    def test_it_goes_quiet_once_a_spec_has_been_read(self):
+        facts = {"https://api.handle.me/openapi.json":
+                 ("HTTP 200", "/handles/{handle}, /holders/{address}", "GET /handles/{handle} → holder")}
+        out = self._fetch("<html><body>Swagger UI</body></html>", facts)
+        self.assertNotIn("no endpoints", out.lower())
+
+    def test_a_page_that_DOES_define_endpoints_gets_no_note(self):
+        # TWO routes: `_endpoint_routes` deliberately needs >=2 route-like keys before it calls a doc
+        # a spec, so one `/`-key is not mistaken for one.
+        spec = json.dumps({"paths": {"/handles/{handle}": {"get": {"summary": "x"}},
+                                     "/holders/{address}": {"get": {"summary": "y"}}}})
+        out = self._fetch(spec, {}, ct="application/json")
+        self.assertNotIn("no endpoints", out.lower())
+        self.assertIn("/handles/{handle}", out)

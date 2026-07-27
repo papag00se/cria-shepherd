@@ -351,11 +351,29 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     note = (f"\n[TRUNCATED at {webfetch.MAX_BODY_BYTES // (1024 * 1024)} MB — this document is "
             f"longer than that and the rest was not read; anything defined past this point "
             f"is missing, so do not read this as the whole document]" if r.truncated else "")
+    # The coder is told when a page yielded no endpoints (b862402); the PLANNER — the one still
+    # LOOKING for the spec — was not: 0 of 16 planner prompts in run 0727-163703 carried it. Measured
+    # across runs 0727-142536/-153326/-163703, the gather fetched a swagger UI SHELL, got a 200 and
+    # readable text, and drafted a plan presupposing "the resolve endpoint"; a hardener downstream
+    # then turned that phrase into a concrete 404-ing route. Additive (a true sentence, never an
+    # action) and self-limiting: only while cria knows NO routes at all — once any spec has been read
+    # it goes quiet, because then the planner has something real to plan against.
+    note += _no_structure_note(facts)
     if len(reduced) > webfetch.OVERSIZE_CHARS:
         spilled = _spill_to_scratch(r, reduced, parsed, scratch)
         if spilled is not None:
             return ToolResult(spilled + note, True)
     return ToolResult(f"HTTP {r.status} \u00b7 {r.final_url}\n{reduced}{note}", True)
+
+
+def _no_structure_note(facts: dict | None) -> str:
+    """The disclosure to append while NOTHING fetched this session defines a route. Empty once any
+    entry carries endpoints — cria says it exactly while it is true and then stops."""
+    if facts is None:
+        return ""
+    if any((e[1] if len(e) > 1 else "") for e in facts.values()):
+        return ""
+    return prompts.load_map("planner_steers")["fetch_no_structure"]
 
 
 def _spill_to_scratch(r, reduced: str, parsed, scratch: str | None) -> str | None:
