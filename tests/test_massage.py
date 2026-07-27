@@ -1,6 +1,8 @@
 import json
 import unittest
 
+from cria import massage
+
 from cria.massage import (
     coerce_text_answer,
     add_file_to_write_file,
@@ -657,3 +659,72 @@ class HasToolCallLeakTests(unittest.TestCase):
         self.assertFalse(has_tool_call_leak(""))
         # a legitimate summary that merely mentions the word 'call' in prose is fine
         self.assertFalse(has_tool_call_leak("The function makes an API call to resolve the handle."))
+
+
+class JsonEnvelopeToolCallTests(unittest.TestCase):
+    """A model that emits tool calls as JSON DATA in `content` instead of in the `tool_calls` field.
+    The leaked-call recovery only looked at angle-bracket dialects (`"<" not in content: continue`),
+    so a JSON envelope was discarded whole and the turn recorded as "called no tool".
+
+    MEASURED (run 0727-132935, planner phase A): the planner had exec_command/read_file/web_fetch/
+    web_search on its menu and answered with the exact OpenAI call shape nested under a `commands`
+    key — `{"name": "web_search", "arguments": {"query": "Ada Handles API resolve endpoint"}}` — its
+    reasoning ending "Let's start with web_search to verify API details." cria saw no tool call,
+    spent its one research nudge, moved to drafting with the 12-round gather untouched, and the plan
+    it then produced was handed back TWICE by the grounding checks (ungrounded URL, unread host)
+    before being accepted with "Use web_search to find …" as step 1. The model did its job; the
+    envelope was the only thing wrong.
+
+    The menu is the guard: a name is recovered only if it is a tool THIS request actually offers, so
+    prose that happens to mention a name-shaped word cannot become an action."""
+
+    MENU = [{"type": "function", "function": {"name": n, "parameters": p}} for n, p in (
+        ("web_search", {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+        ("web_fetch", {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}),
+        ("exec_command", {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}),
+    )]
+
+    def _completion(self, content):
+        return {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]}
+
+    def _recover(self, content):
+        out = massage.recover_leaked_tool_calls(self._completion(content), self.MENU)
+        return (out["choices"][0]["message"].get("tool_calls") or [])
+
+    def test_the_real_captured_envelope_becomes_a_real_call(self):
+        content = ('\n{\n  "plan": "1. Use web_search to find the Ada Handles API documentation.",\n'
+                   '  "commands": [\n    {\n      "name": "web_search",\n'
+                   '      "arguments": {\n        "query": "Ada Handles API resolve endpoint handle.me"\n'
+                   '      }\n    }\n  ],\n  "output": ""\n}')
+        calls = self._recover(content)
+        self.assertEqual([c["function"]["name"] for c in calls], ["web_search"])
+        self.assertIn("Ada Handles API resolve endpoint", calls[0]["function"]["arguments"])
+
+    def test_a_bare_string_argument_maps_to_the_schema_s_one_required_field(self):
+        """The same run's next turn used `"arguments": "ls -la\\n"` and `"arguments":
+        "https://api.handle.me/"`. When a tool's schema has exactly ONE required property the string
+        can only be that property — read off the schema, not guessed."""
+        content = ('{"plan": "look around", "commands": ['
+                   '{"name": "exec_command", "arguments": "ls -la\\n"},'
+                   '{"name": "web_fetch", "arguments": "https://api.handle.me/"}]}')
+        calls = self._recover(content)
+        self.assertEqual([c["function"]["name"] for c in calls], ["exec_command", "web_fetch"])
+        self.assertIn("ls -la", calls[0]["function"]["arguments"])
+        self.assertIn("api.handle.me", calls[1]["function"]["arguments"])
+
+    def test_a_name_that_is_not_on_the_menu_is_not_recovered(self):
+        content = '{"commands": [{"name": "deploy_to_prod", "arguments": {"env": "live"}}]}'
+        self.assertEqual([], self._recover(content))
+
+    def test_prose_describing_a_tool_is_not_turned_into_an_action(self):
+        content = "I will use web_search to find the docs, then web_fetch the spec."
+        self.assertEqual([], self._recover(content))
+
+    def test_a_real_tool_call_is_never_second_guessed(self):
+        comp = {"choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant",
+                "content": '{"commands": [{"name": "web_search", "arguments": {"query": "x"}}]}',
+                "tool_calls": [{"id": "1", "type": "function",
+                                "function": {"name": "web_fetch", "arguments": '{"url": "https://real"}'}}]}}]}
+        out = massage.recover_leaked_tool_calls(comp, self.MENU)
+        names = [c["function"]["name"] for c in out["choices"][0]["message"]["tool_calls"]]
+        self.assertEqual(names, ["web_fetch"])

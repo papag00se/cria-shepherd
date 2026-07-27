@@ -427,6 +427,70 @@ def _log(rlog, kind: str, **fields) -> None:
 # ------------------------------------------------------------------ leaked calls
 
 
+def _menu_schemas(tools) -> dict:
+    """{name: parameters schema} for the tools THIS request offers. The menu is what makes envelope
+    recovery safe: a name is only ever an action if the request actually offers it."""
+    out = {}
+    for t in tools or []:
+        fn = t.get("function") if isinstance(t, dict) else None
+        if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+            out[fn["name"]] = fn.get("parameters") if isinstance(fn.get("parameters"), dict) else {}
+    return out
+
+
+def _sole_required(schema: dict) -> str | None:
+    """The one property this tool requires, if there is exactly one — so a bare-string argument
+    (`"arguments": "ls -la"`) can be placed by reading the SCHEMA rather than guessing a field name."""
+    req = schema.get("required")
+    if isinstance(req, list) and len(req) == 1 and isinstance(req[0], str):
+        return req[0]
+    props = schema.get("properties")
+    if isinstance(props, dict) and len(props) == 1:
+        return next(iter(props))
+    return None
+
+
+def _envelope_calls(content: str, tools) -> list:
+    """Tool calls a model emitted as JSON DATA inside `content` instead of in the `tool_calls` field.
+
+    MEASURED (run 0727-132935): a planner holding exec_command/read_file/web_fetch/web_search answered
+    with `{"plan": "…", "commands": [{"name": "web_search", "arguments": {"query": "…"}}]}` — the exact
+    OpenAI call shape, one key away from being a call — and its reasoning said "Let's start with
+    web_search". cria saw no tool call, spent its one research nudge, and drafted a plan having read
+    nothing; the grounding checks then handed that plan back twice.
+
+    Shape-driven, not key-name-driven: ANY top-level value holding `{name, arguments}` entries counts,
+    so `commands`/`tool_calls`/`actions` all work without a list of blessed key names. The name must
+    be on the menu, which is what keeps prose from becoming an action."""
+    schemas = _menu_schemas(tools)
+    if not schemas:
+        return []
+    obj = extract_json_object(content)
+    if not isinstance(obj, dict):
+        return []
+    calls = []
+    for value in obj.values():
+        for entry in (value if isinstance(value, list) else [value]):
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or name not in schemas or "arguments" not in entry:
+                continue
+            args = entry["arguments"]
+            if isinstance(args, dict):
+                text = json.dumps(args, ensure_ascii=False)
+            elif isinstance(args, str):
+                field = _sole_required(schemas[name])
+                if field is None:
+                    continue          # can't place it without guessing — leave it alone
+                text = json.dumps({field: args.strip()}, ensure_ascii=False)
+            else:
+                continue
+            calls.append({"id": f"env_{len(calls)}", "type": "function",
+                          "function": {"name": name, "arguments": text}})
+    return calls
+
+
 def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
     """Promote a tool call the model emitted as TEXT (Hermes `<tool_call>…`, XML
     `<function=…>`) into a real tool_calls entry, and strip it from the content."""
@@ -443,7 +507,20 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             msg["content"] = content or None
         if msg.get("tool_calls"):
             continue  # already has real tool calls; don't double-recover
-        if not isinstance(content, str) or "<" not in content:
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if "<" not in content:
+            # No angle-bracket dialect. The call may still be here as JSON DATA — the same leak,
+            # a different envelope. Content is dropped whole (the call replaces it): a model that
+            # emitted its actions as data has not also written an answer worth keeping.
+            env = _envelope_calls(content, tools)
+            if env:
+                msg["tool_calls"] = env
+                msg["content"] = None
+                if choice.get("finish_reason") in (None, "stop"):
+                    choice["finish_reason"] = "tool_calls"
+                _log(rlog, "massage.envelope_recovered",
+                     calls=[c["function"]["name"] for c in env])
             continue
         calls, cleaned = _extract_leaked(content)
         if calls:
