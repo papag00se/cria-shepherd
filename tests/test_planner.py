@@ -1156,3 +1156,27 @@ class UnlistedStepKeyTests(unittest.TestCase):
         from cria.planner import parse_steps
         import json
         self.assertIsNone(parse_steps(json.dumps({"scores": [1, 2, 3]})))
+
+
+class CommandIsAlwaysMechanismTests(unittest.TestCase):
+    """`b3d4731` established that a step object's INTENT beats its MECHANISM, listing the keys of each
+    kind. `command` was on neither list, so it fell to the "first field in the model's own order"
+    fallback and won.
+
+    OBSERVED (run 0727-143340): a re-derivation returned `{"command": "cd … && python3 -m pytest …",
+    "justification": "Run unit tests to verify script functionality"}`. That decline was CORRECT —
+    both steps were plumbing the noise judge is right to delete — but the same shape with a real step
+    would have handed the coder a bare shell command, which is exactly what b3d4731 fixed.
+
+    A command is definitionally how, never what."""
+
+    def test_a_command_key_loses_to_any_sibling_text(self):
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"command": "pytest -q", "justification": "Verify the resolver works"}),
+                         "Verify the resolver works")
+
+    def test_a_command_alone_is_still_read_rather_than_dropped(self):
+        """With nothing else in the object, the command IS the only thing said — the noise judge is
+        what decides whether a command-shaped step survives, not the parser."""
+        from cria.planner import _clean_step
+        self.assertEqual(_clean_step({"command": "pytest -q"}), "pytest -q")

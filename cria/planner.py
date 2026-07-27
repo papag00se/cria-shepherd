@@ -130,7 +130,12 @@ _DIALECT_MARKER = re.compile(
 # then correctly dropped all five steps for "codifying a bare command". The rescue is one-shot, so
 # that cost the stuck step its last resort.
 _STEP_INTENT_KEYS = ("step", "text", "outcome", "goal", "title", "task", "name", "objective", "action")
-_STEP_DETAIL_KEYS = ("description", "detail", "details", "content", "summary")
+# `command`/`cmd`/`shell` sit at the BOTTOM: a command is definitionally HOW, never WHAT, so it must
+# lose to any sibling text. Observed (run 0727-143340) as `{"command": "…pytest…", "justification":
+# "Run unit tests to verify script functionality"}` — with neither key listed, the model's own field
+# order handed cria the shell line, which is the very thing b3d4731 fixed.
+_STEP_DETAIL_KEYS = ("description", "detail", "details", "content", "summary", "justification",
+                     "purpose", "rationale", "command", "cmd", "shell")
 _STEP_TEXT_KEYS = _STEP_INTENT_KEYS + _STEP_DETAIL_KEYS
 
 
