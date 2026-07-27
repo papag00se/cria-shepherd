@@ -23,6 +23,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -92,7 +93,7 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     if name in ("read_file", "cat_file"):
         return _read_file(args, cwd)
     if name == "web_fetch":
-        return _web_fetch(args, facts)
+        return _web_fetch(args, facts, scratch)
     if name in ("web_search", "local_web_search"):
         return _web_search(args, search_key, recent_searches)
     return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
@@ -269,29 +270,54 @@ def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str 
 
 # ------------------------------------------------------------------ web fetch / search
 
-def _web_fetch(args: dict, facts: dict | None = None) -> ToolResult:
+def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None) -> ToolResult:
+    """Fetch through the SHARED fetcher, reduce MIME-aware, and hand back something that FITS.
+
+    This used to read the socket itself and return the whole decoded body, trusting a comment that
+    said "the context floor reduces it if it's large for the window". The floor cannot: truncating
+    model-read content is forbidden, so a single tool message larger than the window has no lossless
+    reduction left and goes out whole. Measured (run 0727-123534): a 340,951-char page produced
+    `msg_before=108954 msg_after=108954` against a 49,152 window, llama.cpp returned 400, and the
+    planner spent all three retries on it and produced NO PLAN.
+
+    So a doc bigger than one page takes the coder's route: written IN FULL to the planner's own
+    scratchpad — never the workspace — with a pointer and an outline back. Nothing is truncated;
+    it moves from the context to a file the gather can grep with the tools it already has."""
     url = str(args.get("url") or "").strip()
     if not url:
         return _nothing("[web_fetch error: no url]")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": brave.USER_AGENT})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            # Read ONE byte past the cap so the cut is detectable, exactly as webfetch.fetch does.
-            raw = r.read(_FETCH_MAX_BYTES + 1)
-            cut = len(raw) > _FETCH_MAX_BYTES
-            body = raw[:_FETCH_MAX_BYTES].decode("utf-8", "replace")
-            status, final = getattr(r, "status", "?"), r.geturl()
-            hdrs = getattr(r, "headers", None)
-            _record_fetch(facts, final, status, body, hdrs.get("Content-Type") if hdrs else None)
-            # Full decoded body (already bounded by the 512KB socket read above) — the endpoint /
-            # signature the planner needs may be past any fixed char clip. The context floor
-            # reduces it MIME-aware + losslessly-first if it's large for the window.
-            note = (f"\n[TRUNCATED at {_FETCH_MAX_BYTES // (1024 * 1024)} MB — this document is "
-                    f"longer than that and the rest was not read; anything defined past this point "
-                    f"is missing, so do not read this as the whole document]" if cut else "")
-            return ToolResult(f"HTTP {status} · {final}\n{body}{note}", True)
-    except Exception as e:  # network, TLS, decode — surface the cause, don't crash the gather
+        r = webfetch.fetch(url)
+    except Exception as e:  # network, TLS, bad scheme — surface the cause, don't crash the gather
         return _nothing(f"[web_fetch error: {e}]")
+    reduced, parsed = webfetch.reduce_for_cache(r.body, r.content_type, r.final_url)
+    _record_fetch(facts, r.final_url, r.status, reduced, r.content_type)
+    note = (f"\n[TRUNCATED at {webfetch.MAX_BODY_BYTES // (1024 * 1024)} MB — this document is "
+            f"longer than that and the rest was not read; anything defined past this point "
+            f"is missing, so do not read this as the whole document]" if r.truncated else "")
+    if len(reduced) > webfetch.OVERSIZE_CHARS:
+        spilled = _spill_to_scratch(r, reduced, parsed, scratch)
+        if spilled is not None:
+            return ToolResult(spilled + note, True)
+    return ToolResult(f"HTTP {r.status} \u00b7 {r.final_url}\n{reduced}{note}", True)
+
+
+def _spill_to_scratch(r, reduced: str, parsed, scratch: str | None) -> str | None:
+    """Write a too-large doc to the gather's scratchpad and return the pointer message; None if it
+    could not be written (then the caller inlines it — a fetch that reached the model as nothing at
+    all would be worse than one that costs context)."""
+    content = webfetch.spill_content(reduced, parsed, r.content_type)
+    try:
+        root = scratch or tempfile.mkdtemp(prefix="gather-docs-")
+        os.makedirs(root, exist_ok=True)
+        target = os.path.join(root, os.path.basename(webfetch._spill_name(r.final_url)))
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    except OSError:
+        return None
+    return prompts.fill(prompts.load_map("planner_steers")["fetch_spill"],
+                        status=str(r.status), url=r.final_url, chars=f"{len(content):,}",
+                        target=target, outline=webfetch.spill_outline(parsed, target))
 
 
 def _record_fetch(facts: dict | None, url: str, status, body: str, content_type) -> None:

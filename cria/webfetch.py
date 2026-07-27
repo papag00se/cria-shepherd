@@ -330,6 +330,18 @@ def search_spill(query: str) -> tuple[str, str]:
     return target, _guard_msg("search_spill", query=query, target=target)
 
 
+def spill_content(reduced: str, parsed: Optional[Any], content_type: Optional[str]) -> str:
+    """The lossless, grep-oriented form of a doc being spilled to a file. Public so the PLANNER's
+    gather spills identically to the coder's fetch — one implementation, one shape on disk."""
+    return _greppable(reduced, parsed, content_type)
+
+
+def spill_outline(parsed: Optional[Any], target: str) -> str:
+    """The navigation outline that rides with a spilled doc (routes when spec-shaped, else top-level
+    keys). Public for the same reason as :func:`spill_content`."""
+    return _spill_outline(parsed, target)
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
     content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a

@@ -1,4 +1,8 @@
+import contextlib
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 from cria import planner_tools as pt
 
@@ -125,13 +129,17 @@ class WebFetchUserAgentTests(unittest.TestCase):
     """Invariant: the planner's web_fetch actually ISSUES a request with a defined browser
     User-Agent. Regression guard for the `_USER_AGENT` NameError (undefined symbol) that made
     every gather-loop fetch fail — swallowed by the broad `except`, so the reasoner planned
-    blind against docs it believed it had read."""
+    blind against docs it believed it had read. The seam moved when the planner stopped hand-rolling
+    urllib and took the shared fetcher (which also owns the UA), so the patch follows it there —
+    the invariant is unchanged: a real request goes out, carrying a real browser UA."""
 
     def test_web_fetch_sends_the_canonical_user_agent_and_does_not_nameerror(self):
         captured = {}
 
         class _Resp:
             status = 200
+
+            headers = {"Content-Type": "application/json"}
 
             def read(self, n=-1):
                 return b'{"ok": true}'
@@ -149,16 +157,18 @@ class WebFetchUserAgentTests(unittest.TestCase):
             captured["ua"] = next((v for k, v in req.header_items() if k.lower() == "user-agent"), None)
             return _Resp()
 
-        orig = pt.urllib.request.urlopen
-        pt.urllib.request.urlopen = fake_urlopen
+        from cria import webfetch
+        orig = webfetch.urllib.request.urlopen
+        webfetch.urllib.request.urlopen = fake_urlopen
         try:
             out = pt._web_fetch({"url": "https://api.handle.me/openapi.json"}).text
         finally:
-            pt.urllib.request.urlopen = orig
+            webfetch.urllib.request.urlopen = orig
 
         self.assertNotIn("is not defined", out)        # the NameError no longer leaks into the result
         self.assertIn("HTTP 200", out)                 # the real response is surfaced
-        self.assertEqual(captured["ua"], pt.brave.USER_AGENT)  # a defined, canonical browser UA was sent
+        from cria import webfetch
+        self.assertEqual(captured["ua"], webfetch.USER_AGENT)  # a defined, canonical browser UA was sent
 
 
 class ToolResultLearnedTests(unittest.TestCase):
@@ -233,13 +243,36 @@ class FullContentTests(unittest.TestCase):
         self.assertNotIn("truncated at", out)
 
     def test_web_fetch_returns_full_body_past_old_clip(self):
-        big = ("B" * 20000) + "ENDPOINT_SIGNATURE"
+        """Under one page, the whole body still comes back inline — the old 6000/8000-char clip cut
+        exactly the endpoint signatures the planner was fetching FOR."""
+        big = ("B" * 10000) + "ENDPOINT_SIGNATURE"
+        with self._urlopen(big):
+            out = pt._web_fetch({"url": "https://x/api"}).text
+        self.assertIn("ENDPOINT_SIGNATURE", out)      # the signature past 6000 survives
+        self.assertNotIn("truncated at", out)
 
+    def test_a_body_past_one_page_survives_in_full_in_the_spill(self):
+        """Past one page it moves to a file rather than the context (a message larger than the window
+        is unreducible and 400s the server) — but nothing is lost: the tail is in the file, and the
+        result says where the file is."""
+        import tempfile
+        big = ("B" * 20000) + "ENDPOINT_SIGNATURE"
+        with tempfile.TemporaryDirectory() as scratch, self._urlopen(big):
+            out = pt._web_fetch({"url": "https://x/api"}, {}, scratch=scratch).text
+            spilled = [q for q in pathlib.Path(scratch).rglob("*") if q.is_file()]
+            self.assertEqual(len(spilled), 1)
+            self.assertIn("ENDPOINT_SIGNATURE", spilled[0].read_text())
+            self.assertIn(str(spilled[0]), out)
+        self.assertNotIn("truncated at", out)
+
+    @contextlib.contextmanager
+    def _urlopen(self, body: str):
         class _Resp:
             status = 200
+            headers = {"Content-Type": "text/plain"}
 
             def read(self, n=-1):
-                return big.encode()
+                return body.encode()
 
             def geturl(self):
                 return "https://x/api"
@@ -250,14 +283,13 @@ class FullContentTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-        orig = pt.urllib.request.urlopen
-        pt.urllib.request.urlopen = lambda req, timeout=None: _Resp()
+        from cria import webfetch
+        orig = webfetch.urllib.request.urlopen
+        webfetch.urllib.request.urlopen = lambda req, timeout=None: _Resp()
         try:
-            out = pt._web_fetch({"url": "https://x/api"}).text
+            yield
         finally:
-            pt.urllib.request.urlopen = orig
-        self.assertIn("ENDPOINT_SIGNATURE", out)      # the signature past 6000 survives
-        self.assertNotIn("truncated at", out)
+            webfetch.urllib.request.urlopen = orig
 
 
 class SearchCountTests(unittest.TestCase):
@@ -279,3 +311,59 @@ class SearchCountTests(unittest.TestCase):
             pt.brave_search = orig
         self.assertEqual(captured["count"], 20)       # asked for the full set, not 5
         self.assertIn("(20 results)", out)            # and disclosed the count
+
+
+class PlannerFetchOversizeTests(unittest.TestCase):
+    """The planner's `web_fetch` returned the WHOLE decoded body inline, on the belief — written in
+    its own comment — that "the context floor reduces it if it's large for the window". The floor
+    cannot: doctrine forbids truncating model-read content, and a single tool message larger than the
+    window has no lossless reduction available. Measured in run 0727-123534: a 340,951-char GitHub
+    page arrived as one message, the floor logged `msg_before=108954 msg_after=108954` against a
+    49,152 window, llama.cpp answered **400 Bad Request**, and the planner burned all three retries
+    and produced NO PLAN — the whole run then coded unplanned.
+
+    The coder path already solved this: a doc bigger than one page is written IN FULL to a file and
+    the model gets a pointer plus an outline. The planner writes to its own scratchpad (never the
+    workspace) and can grep it back with the tools it already has."""
+
+    def _big_page(self, n=340_000):
+        return "line of documentation\n" * (n // 22)
+
+    def _fetch_stub(self, body, ct="text/html"):
+        from cria import webfetch
+
+        def _stub(url, user_agent=None):
+            return webfetch.FetchResult(200, url, ct, body, False)
+        return _stub
+
+    def test_an_oversized_page_does_not_ride_inline_into_the_planner_context(self):
+        from cria import planner_tools, webfetch
+        body = self._big_page()
+        with tempfile.TemporaryDirectory() as scratch, \
+                mock.patch.object(webfetch, "fetch", self._fetch_stub(body)):
+            res = planner_tools._web_fetch({"url": "https://example.com/huge"}, {}, scratch=scratch)
+        self.assertLess(len(res.text), webfetch.OVERSIZE_CHARS,
+                        "the planner was handed the whole document inline")
+
+    def test_the_full_document_is_kept_losslessly_and_pointed_at(self):
+        from cria import planner_tools, webfetch
+        body = self._big_page()
+        with tempfile.TemporaryDirectory() as scratch, \
+                mock.patch.object(webfetch, "fetch", self._fetch_stub(body)):
+            res = planner_tools._web_fetch({"url": "https://example.com/huge"}, {}, scratch=scratch)
+            spilled = [p for p in pathlib.Path(scratch).rglob("*") if p.is_file()]
+            self.assertEqual(len(spilled), 1, "the document was not written anywhere")
+            # rstrip: the MIME-aware reduce normalizes trailing whitespace. Every line survives,
+            # which is the property that matters — a truncation would drop the tail.
+            self.assertEqual(spilled[0].read_text().rstrip("\n"), body.rstrip("\n"),
+                             "the spilled copy is not the whole document")
+            self.assertIn(str(spilled[0]), res.text, "the planner was not told where the document is")
+        self.assertTrue(res.learned)
+
+    def test_a_normal_page_is_still_returned_inline(self):
+        from cria import planner_tools, webfetch
+        with tempfile.TemporaryDirectory() as scratch, \
+                mock.patch.object(webfetch, "fetch", self._fetch_stub("GET /handles/{handle}\n")):
+            res = planner_tools._web_fetch({"url": "https://api.example.com/spec"}, {}, scratch=scratch)
+        self.assertIn("/handles/{handle}", res.text)
+        self.assertEqual([], list(pathlib.Path(scratch).rglob("*")))
