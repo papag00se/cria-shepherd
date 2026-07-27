@@ -773,14 +773,67 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
 
 # --- find (content_reduce.rs::find_in / find_json / find_text) ------------------------------
 
+# A model asking for several things at once writes them the way every grep-shaped tool accepts:
+# `a|b`, `a, b`, `a OR b`. Matched as ONE literal string those answer "no match" about a document
+# that contains every term — a wrong FACT about ground truth, which a weak model cannot tell apart
+# from a weak answer. MEASURED (run 0727-124354): `holder_address|total_handles` against a 96 KB
+# swagger holding both, answered no match; the coder then permuted the phrasing ~10 times and spent
+# 98 calls on one step without writing a file.
+_FIND_ALTERNATION = re.compile(r"\s*(?:\||,|\bOR\b)\s*")
+# cria's OWN response-shape ledger renders endpoints as `GET /handles/{handle} → f1, f2`, so the
+# model learns that spelling from cria and then meets a find= that rejects it: a spec names the PATH,
+# with the method as a key inside it.
+_HTTP_VERB = re.compile(r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(?=/)", re.I)
+
+
+def _find_terms(query: str) -> list[str]:
+    """The separate things this query asks for. One term unless the query really is a list — a
+    separator inside a single real key (``weird|key``) leaves it whole, because the split only
+    applies when every resulting part is non-empty."""
+    parts = [p.strip() for p in _FIND_ALTERNATION.split(query) if p.strip()]
+    return parts if len(parts) > 1 else [query]
+
+
+def _find_hits(reduced: str, parsed: Optional[Any], term: str) -> bool:
+    """Does this term appear at all? Asked the same way the finders ask it, so it can never disagree
+    with them (never inferred from their rendered text)."""
+    if parsed is not None:
+        matches: list = []
+        _collect_json_matches(parsed, term.lower(), [], matches)
+        return bool(matches)
+    return term.lower() in (reduced or "").lower()
+
+
 def find_in(reduced: str, parsed: Optional[Any], query: str, cap_tokens: int) -> str:
     """MIME-aware targeted retrieval: a JSON/YAML subtree + ancestor spine + one-hop ``$ref``,
     else a text section. Strips surrounding quotes the model adds for emphasis (the Rust cure
-    for the 'a model looped a dozen fetches re-quoting terms' bug)."""
+    for the 'a model looped a dozen fetches re-quoting terms' bug). A multi-term query is answered
+    per term, with any term that is genuinely absent named rather than dropped."""
     q = (query or "").strip().strip("\"'`").strip()
+    terms = _find_terms(q)
+    if len(terms) > 1:
+        found = [t for t in terms if _find_hits(reduced, parsed, t)]
+        if found:
+            per = max(200, cap_tokens // len(found))
+            body = "\n\n".join(f'# find "{t}"\n{_find_one(reduced, parsed, t, per)}' for t in found)
+            missing = [t for t in terms if t not in found]
+            if missing:
+                body += f'\n\n[no match in this document for: {", ".join(missing)}]'
+            return body
+        return (f'find "{q}": no match for any of: {", ".join(terms)} (each was searched separately).\n'
+                + _find_one(reduced, parsed, terms[0], cap_tokens))
+    if not _find_hits(reduced, parsed, q):
+        bare = _HTTP_VERB.sub("", q)
+        if bare != q and _find_hits(reduced, parsed, bare):
+            return (f'[find "{q}" — searched for "{bare}": a spec names the path, with the method as a '
+                    f'key inside it]\n\n' + _find_one(reduced, parsed, bare, cap_tokens))
+    return _find_one(reduced, parsed, q, cap_tokens)
+
+
+def _find_one(reduced: str, parsed: Optional[Any], term: str, cap_tokens: int) -> str:
     if parsed is not None:
-        return find_json(parsed, q, cap_tokens)
-    return find_text(reduced, q, cap_tokens)
+        return find_json(parsed, term, cap_tokens)
+    return find_text(reduced, term, cap_tokens)
 
 
 def _all_json_keys(node: Any, acc: set) -> None:

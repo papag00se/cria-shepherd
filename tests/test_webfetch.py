@@ -728,3 +728,66 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("guessing", wf.fetch_nav("https://api.x/miss0", session="s1"))
         self.assertNotIn("guessing", wf.fetch_nav("https://api.x/miss1", session="s1"))
         self.assertIn("guessing", wf.fetch_nav("https://api.x/miss2", session="s1"))   # 3rd in a row
+
+
+class FindMultiTermTests(unittest.TestCase):
+    """`find=` matched the query as ONE literal string, so a multi-term query answered "no match" —
+    about a document that contains every term. Measured live (run 0727-124354): the coder needed three
+    field names out of a 96 KB swagger it had already spilled, wrote the query every grep-shaped tool
+    on earth accepts — `holder_address|total_handles` — and was told no match. It then spent ~10 more
+    fetches permuting the phrasing, 66 calls on step 1, and wrote zero files, while the critic
+    correctly held the step open because the fields were never confirmed. They were all there.
+
+    A false "no match" is not a weak answer, it is a wrong FACT about ground truth, and a weak model
+    has no way to tell the two apart."""
+
+    SPEC = {
+        "paths": {"/handles/{handle}": {"get": {"summary": "Resolve a handle"}}},
+        "components": {"schemas": {"HandleResponse": {"properties": {
+            "holder_address": {"type": "string"},
+            "total_handles": {"type": "integer"},
+            "resolved_addresses": {"type": "object"},
+        }}}},
+    }
+
+    def _find(self, q):
+        return wf.find_in("", self.SPEC, q, 4000)
+
+    def test_an_alternation_query_returns_every_term_that_is_there(self):
+        out = self._find("holder_address|total_handles")
+        self.assertNotIn("no match", out.splitlines()[0])
+        self.assertIn("holder_address", out)
+        self.assertIn("total_handles", out)
+
+    def test_a_comma_list_works_the_same_way(self):
+        out = self._find("holder_address, resolved_addresses")
+        self.assertIn("holder_address", out)
+        self.assertIn("resolved_addresses", out)
+
+    def test_a_term_that_really_is_absent_is_named_not_hidden(self):
+        out = self._find("holder_address|authentication_token")
+        self.assertNotIn("no match", out.splitlines()[0])   # the term that IS there was returned...
+        self.assertIn("HandleResponse", out)                # ...as a real rendered match, not an echo
+        self.assertIn("authentication_token", out)          # the miss is DISCLOSED, not silently dropped
+        self.assertIn("no match", out)
+
+    def test_all_terms_absent_still_reads_as_a_miss(self):
+        out = self._find("nonesuch_a|nonesuch_b")
+        self.assertIn("no match", out)
+        self.assertIn("nonesuch_a", out)
+        self.assertIn("nonesuch_b", out)
+
+    def test_a_single_term_query_is_unchanged(self):
+        self.assertIn("holder_address", self._find("holder_address"))
+        self.assertIn("no match", self._find("nonesuch"))
+
+    def test_a_pipe_inside_one_real_key_is_not_split(self):
+        spec = {"weird|key": {"a": 1}}
+        self.assertIn("weird|key", wf.find_in("", spec, "weird|key", 4000))
+
+    def test_the_verb_prefix_cria_itself_renders_is_understood(self):
+        """cria's own response-shape ledger renders endpoints as `GET /handles/{handle} → fields`, so
+        the model learns that form from cria and then finds it rejected by cria's own tool."""
+        out = self._find("GET /handles/{handle}")
+        self.assertNotIn("no match", out.splitlines()[0])
+        self.assertIn("/handles/{handle}", out)
