@@ -3082,6 +3082,13 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     for url, entry in latest.items():
         status, routes, shapes = _fetch_facts(entry)
         line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
+        # THIRD case. The anchor explains an entry WITH facts and an entry that ERRORED; a 2xx whose
+        # page had no readable structure looks identical to a successful spec read. Measured (run
+        # 0727-142536): the planner fetched the swagger UI SHELL, the coder's entire fetch record was
+        # one `→ HTTP 200` under "these SUCCEEDED", and it invented `/resolve/{handle}` with zero
+        # occurrences of the real route in its window. A status alone is a fact about the REQUEST.
+        if _fetch_succeeded(status) and not routes and not shapes.strip():
+            line += labels["no_structure"]
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.

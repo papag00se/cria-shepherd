@@ -10,3 +10,4 @@ failed = THESE FETCHES CAME BACK WITH AN ERROR — you have no content from them
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
 fields = fields each endpoint returns (use these EXACT names and nesting; do not guess):
+no_structure =  (this page answered, but no endpoints or field names could be read from it — that status is a fact about the REQUEST, not about what the API returns; the source that DEFINES them is still unread)

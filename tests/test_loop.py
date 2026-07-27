@@ -4479,3 +4479,39 @@ class GaveUpVsFinishedTests(unittest.TestCase):
                 "content": '{"commands": [{"name": "web_search", "arguments": {"query": "x"}}]}'}}]}
         massage.recover_leaked_tool_calls(comp, menu, _R())
         self.assertIn("massage.envelope_recovered", seen)
+
+
+class BareStatusLedgerEntryTests(unittest.TestCase):
+    """The ledger splits fetches that SUCCEEDED from those that errored, and the anchor explains both
+    — "where an entry lists endpoints or response fields, code against THOSE"; "where an entry came
+    back with an error, you have no content from it". There is a THIRD case it describes to nobody:
+    a 2xx whose page had no readable structure, which renders as a bare `→ HTTP 200` under the
+    heading "PAGES YOU HAVE ALREADY FETCHED — these SUCCEEDED".
+
+    MEASURED (run 0727-142536): the planner fetched `https://api.handle.me/swagger/` — the swagger UI
+    shell, an HTML page with no spec in it — so cria correctly extracted nothing, and the coder's
+    whole fetch record was that one status line. It then invented `GET /resolve/{handle}` (a 404).
+    Its window contained ZERO occurrences of `/handles/{handle}`: this is NOT the documented case of
+    a model ignoring facts cria delivered — cria delivered none, while the entry it did show implies
+    the research happened.
+
+    A status alone is a fact about the REQUEST, not about the API. Say so on the line."""
+
+    def test_a_2xx_with_no_structure_says_it_carries_no_endpoints(self):
+        from cria.loop import _format_fetches
+        out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
+        self.assertIn("HTTP 200", out)
+        self.assertRegex(out, r"no endpoints|no routes|nothing about what it returns")
+
+    def test_an_entry_WITH_facts_is_not_given_the_note(self):
+        from cria.loop import _format_fetches
+        out = _format_fetches({"https://api.handle.me/openapi.json":
+                               ("HTTP 200", "/handles/{handle}", "GET /handles/{handle} → holder")})
+        self.assertIn("/handles/{handle}", out)
+        self.assertNotRegex(out, r"no endpoints|no routes")
+
+    def test_a_failed_fetch_keeps_its_own_wording(self):
+        from cria.loop import _format_fetches
+        out = _format_fetches({"https://nope.example/x": ("HTTP 404", "", "")})
+        self.assertIn("404", out)
+        self.assertNotRegex(out, r"no endpoints|no routes")   # the failed section already explains it
