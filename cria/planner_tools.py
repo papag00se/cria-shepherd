@@ -255,6 +255,23 @@ def _web_fetch(args: dict, facts: dict | None = None) -> str:
         return f"[web_fetch error: {e}]"
 
 
+# The no-content results this module itself emits. Kept here, next to the code that produces them, so
+# the check below is a module recognising its OWN output rather than keyword-matching free text.
+NO_CONTENT_PREFIXES = ("[no output]", "[no command given]", "[web_fetch error", "[read_file error",
+                       "[web_search error")
+
+
+def result_is_substantive(text: str) -> bool:
+    """Did this tool call actually return anything to LEARN from?
+
+    Measured (run 0727-090143): in an empty workspace the planner ran `ls -la` and `find` — both
+    returned nothing — and that counted as having researched, so it drafted from memory and invented
+    `/resolve?handle={handle}`. Two calls that returned no bytes are not research. Judged against the
+    no-content strings this module emits, never by reading the content itself."""
+    t = (text or "").strip()
+    return bool(t) and not t.startswith(NO_CONTENT_PREFIXES)
+
+
 def _record_fetch(facts: dict | None, url: str, status, body: str, content_type) -> None:
     """Keep what this fetch really PROVED, as ``url -> (status, routes, fields)``.
 

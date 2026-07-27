@@ -529,7 +529,6 @@ class Planner:
                     messages.append({"role": "user",
                                      "content": prompts.load_map("planner_steers")["research_first"]})
                     continue
-                looked = True
                 rounds += 1
                 sig = _calls_signature(calls)
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
@@ -550,6 +549,10 @@ class Planner:
                 for cid, name, args in calls:
                     result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches,
                                                         rlog, scratch=scratch, facts=facts)
+                    # "Looked" means something came BACK, not that a call was made: in an empty
+                    # workspace `ls`/`find` return nothing, and counting those as research let the
+                    # planner draft from memory and invent an endpoint.
+                    looked = looked or planner_tools.result_is_substantive(result)
                     rlog.emit("plan.gather", tool=name)
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result})
             if rounds >= self._max_rounds:

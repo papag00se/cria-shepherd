@@ -234,7 +234,7 @@ class GatherLoopTests(unittest.TestCase):
         # PHASE A round 1: the reasoner calls a tool (investigate). Round 2: no tool call → done
         # looking. PHASE B: the drafting call returns the plan.
         prov = _ScriptedProvider([
-            _tool_resp("web_search", {"query": "api.handle.me docs"}),   # search_key="" → graceful result
+            _tool_resp("exec_command", {"cmd": "echo 'the docs say GET /handles/{handle}'"}),
             _content_resp("1. Fetch api.handle.me\n2. Write handler.py\n3. Run tests"),
         ])
         plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
@@ -261,6 +261,29 @@ class GatherLoopTests(unittest.TestCase):
         self.assertIn("web_fetch", research_tools)          # ...but the read-only tools ARE there
         draft_tools = [f["function"]["name"] for f in prov.bodies[-1]["tools"]]
         self.assertEqual(draft_tools, ["submit_plan"])      # the drafting call: submit, nothing else
+
+    def test_calls_that_return_nothing_do_not_count_as_research(self):
+        # MEASURED (run 0727-090143): in an EMPTY workspace the planner ran `ls -la` then `find` —
+        # both returned nothing — and cria counted that as having researched. It then drafted from
+        # memory and invented `/resolve?handle={handle}`, which the coder duly built and 404'd.
+        # Two calls that returned no bytes are not research: the nudge to look must still fire.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "true"}),   # runs fine, returns nothing at all
+            _content_resp("1. write it\n2. test it"),
+        ])
+        rlog = _Rlog()
+        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("do a thing"), rlog)
+        self.assertEqual(len([k for k, _ in rlog.events if k == "plan.research_nudge"]), 1)
+
+    def test_a_call_that_returns_real_content_is_research(self):
+        # The other half: once something actually came back, the planner has looked and is left alone.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo 'GET /handles/{handle} resolves a handle'"}),
+            _content_resp("1. write it\n2. test it"),
+        ])
+        rlog = _Rlog()
+        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("do a thing"), rlog)
+        self.assertNotIn("plan.research_nudge", [k for k, _ in rlog.events])
 
     def test_planner_that_opens_nothing_is_asked_once_to_look_first(self):
         # A planner that calls NO tool at all has planned blind (measured: one run's planner made zero
