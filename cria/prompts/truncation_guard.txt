@@ -1,4 +1,4 @@
-[OUTPUT TRUNCATED — YOUR LAST WRITE WAS CUT OFF]
-Your previous response hit {{LIMIT}} partway through writing `{{PATH}}`, so the file's content was cut off mid-way. Re-reading the file will show it ending abruptly — that is NOT a corruption you can fix by rewriting the whole file: a full rewrite will hit the SAME limit and truncate at the same place.
+[OUTPUT TRUNCATED — YOUR LAST WRITE WAS CUT OFF, THE FILE WAS NOT WRITTEN]
+Your previous response hit {{LIMIT}} partway through writing `{{PATH}}`, so the call was incomplete and nothing was saved. The file does not exist on disk yet (or still holds its older content) — re-reading it will NOT show what you just tried to write.
 
-Instead, build the file in SMALL pieces: write only the FIRST portion with write_file, then APPEND each remaining section with edit_file (one small edit at a time). Keep every single tool call well under the output limit.
+Do not re-send the same whole-file write: it will hit the SAME limit and cut off in the same place. Instead build the file in SMALL pieces: write only the FIRST portion with write_file, then APPEND each remaining section with edit_file (one small edit at a time). Keep every single tool call well under the output limit.

@@ -180,10 +180,18 @@ def parse_rustc(s: str) -> list[Finding]:
         t = l.lstrip()  # trim_start only
         # upstream quirk, preserved: startswith, NOT whole-word — "errors occurred"
         # matches "error" and yields message "occurred" after the char-class strip.
+        severity = ""
         if t.startswith("error"):
             rest = t[len("error"):]
         elif t.startswith("warning"):
             rest = t[len("warning"):]
+        # `note:` / `help:` carry their OWN `-->` span. They matched no header, so that span fell to
+        # the "compile error" stand-in — inventing a phantom error at a line rustc was only pointing to
+        # for context, AND laundering an advisory past the is_advisory filter that would have dropped a
+        # line starting with "note:". Keep rustc's own words so the filter can do its job.
+        elif t.startswith("note") or t.startswith("help"):
+            severity = t[:4]          # kept, so is_advisory still recognizes it and filters it out
+            rest = t[4:]
         else:
             rest = None
         if rest is not None:
@@ -196,7 +204,7 @@ def parse_rustc(s: str) -> list[Finding]:
                 i += 1
             msg = rest[i:].lstrip(":").strip()  # leading ':' run, then whitespace both sides
             if msg != "":
-                last_msg = msg
+                last_msg = f"{severity}: {msg}" if severity else msg
         elif t.startswith("--> "):  # elif: a line is never both header and location
             loc = t[len("--> "):].strip()
             r = split_loc(loc)
@@ -490,6 +498,10 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
 # ---------------------------------------------------------------------------
 
 _PYCOMPILE_LOC = re.compile(r'File "([^"]+)", line (\d+)')
+# An exception HEADER — `SyntaxError: …`, `IndentationError: …`, `TabError: …`, `ValueError: …`. Anchored
+# at the start so an echoed source line that merely CONTAINS an exception name (`raise ValueError("x"`)
+# cannot pose as the diagnostic.
+_PYCOMPILE_MSG = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Warning|Exception)\b\s*:")
 
 
 def parse_pycompile(text: str) -> list:
@@ -506,7 +518,13 @@ def parse_pycompile(text: str) -> list:
                                         message="compile error"))
             pending = (m.group(1), int(m.group(2)))
             continue
-        if pending is not None and ("Error" in t or t.split(":", 1)[0].strip().lower().endswith("error")):
+        # Only an EXCEPTION HEADER counts as the message. The old test was `"Error" in t`, which the
+        # echoed SOURCE line satisfies whenever the offending code merely mentions one — `raise
+        # ValueError("x"` matched, was taken as the diagnostic, and cleared `pending`, so the real
+        # `SyntaxError: '(' was never closed` two rows below was never read. The model got its own
+        # broken line handed back as the explanation, from the tier-0 syntax floor that runs on every
+        # Python workspace. Source lines and carets are skipped now; the exception header wins.
+        if pending is not None and _PYCOMPILE_MSG.match(t):
             findings.append(Finding(file=pending[0], line=pending[1], col=None, message=t))
             pending = None
     if pending is not None:

@@ -5,8 +5,16 @@
 # fragments add {{STATUS_LABEL}} {{CHARS}} {{TARGET}} {{FIND}}.
 search_repeat = You already ran web_search "{{PRIOR}}", which is near-identical to "{{QUERY}}". Its results were saved to {{TARGET}} — they are NOT repeated here, so READ THAT FILE rather than searching again: grep -n "<keyword>" {{TARGET}}, or read_file it with a start_line/end_line range. Otherwise make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
 domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH it directly: web_fetch https://{{DOMAIN}} , then read the response for what you need.
-fetch_repeat = You already fetched web_fetch {{URL}} with these exact params — this is the SAME result you got before, still above; use it (or narrow it with a different find=). If it was a large doc, it's saved in ./tmp/read-only — grep that file instead of re-fetching.
+fetch_repeat = You already fetched web_fetch {{URL}} with these exact params — this is the SAME result you got before, still above; use it (or narrow it with a different find=).
+# Same repeat, but cria KNOWS the earlier fetch failed. Telling the model to "use it" sent it back to a
+# dead URL as though the answer were sitting above; nothing is there to use.
+fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact params and it returned {{STATUS}} — refetching returns the same failure. There is nothing behind that URL to use: try a different URL or a different source.
+# Same repeat, but the doc was oversized and cria SPILLED it to a file — it is NOT above, it is on disk.
+fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved to {{TARGET}} — read THAT file (grep -n "<keyword>" {{TARGET}}, or read_file with a start_line/end_line range) instead of re-fetching.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.
 spill = {{STATUS_LABEL}} · {{URL}}\nThis document is too large for the context ({{CHARS}} chars) — I saved it IN FULL to {{TARGET}}.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 find_large = \n\n⚠ This find="{{FIND}}" match is large ({{CHARS}} chars) — narrow it (a more specific keyword) or grep the saved ./tmp file for exact lines.
 search_spill = web_search "{{QUERY}}" — results saved to {{TARGET}} (each result is title / url / description). They are NOT inlined here (search snippets are mostly noise). Read them there: grep for a term (grep -n "<keyword>" {{TARGET}}), or read the first lines with read_file start_line/end_line to see the top results and their URLs.
+# Same repeat, but cria never spilled these results to a file (a harness-native search) — so they are
+# in the conversation, not on disk. Naming a spill path here pointed at a file that was never written.
+search_repeat_inline = You already ran web_search "{{PRIOR}}", which is near-identical to "{{QUERY}}". Its results are already in this conversation above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}

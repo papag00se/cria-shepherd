@@ -1,0 +1,5 @@
+# The check-state clause of done_incomplete (prompts.load_map). It used to be the unconditional claim
+# "The repo's automated checks pass" — emitted even on the no-shell path, whose own code comment reads
+# "No shell tool → the objective gate can't run". Say which of the two actually happened.
+passed = The repo's automated checks pass
+never_ran = The repo's automated checks could NOT be run here, so nothing has verified the work

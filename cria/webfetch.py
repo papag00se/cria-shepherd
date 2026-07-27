@@ -211,6 +211,10 @@ def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: O
 _FETCH_SEEN: dict[str, set] = {}
 _FETCH_STREAK: dict[str, int] = {}
 _SEARCH_SEEN: dict[str, set] = {}
+# Queries whose results cria ITSELF spilled to a file. Only the synthetic Brave path writes that file;
+# a harness-native search never does. The repeat refusal used to name the spill path unconditionally,
+# sending the model to grep a file that was never written.
+_SEARCH_SPILLED: dict[str, set] = {}
 _GATE_CAP = 256
 
 
@@ -219,6 +223,7 @@ def clear_cache() -> None:
     _FETCH_SEEN.clear()
     _FETCH_STREAK.clear()
     _SEARCH_SEEN.clear()
+    _SEARCH_SPILLED.clear()
 
 
 # --- OVERSIZED docs: spill to a file the model can grep, instead of a low-signal page-1 -------------
@@ -437,6 +442,13 @@ def _pad4(k):
     return tuple(k) + (False,) if len(k) == 3 else tuple(k)
 
 
+def note_search_spill(session: Optional[str], query: str) -> None:
+    """Record that cria SPILLED this query's results to a file — the only warrant for later telling the
+    model to go read that file. Set by the synthetic Brave path; a harness-native search never sets it."""
+    if session and (query or "").strip():
+        _SEARCH_SPILLED.setdefault(session, set()).add(query.strip().lower())
+
+
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     """Record what's CURRENTLY visible in the conversation, so the gate refuses a repeat only while
     the model still has that result. Called per request from the fetch/search results still in
@@ -493,6 +505,13 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
     prior = next((prev for prev in _SEARCH_SEEN.get(session, ())
                   if searches_match(words, normalize_search(prev))), None)
     if prior is not None:
+        # Only claim the results are in a FILE when cria itself wrote one. gate_search runs before the
+        # routing split, so a harness-native search reaches here too — and it never spills. Naming the
+        # derived path unconditionally sent the model to grep a file that was never created.
+        domain0 = first_domain_in(query)
+        steer0 = _guard_msg("domain_steer", domain=domain0) if domain0 else ""
+        if prior.strip().lower() not in _SEARCH_SPILLED.get(session, ()):
+            return _guard_msg("search_repeat_inline", query=query, prior=prior, domain_steer=steer0)
         # Name WHERE the earlier results actually are. The refusal used to say "its results are still
         # above — use them", which is false: cria spills search results to a file and tells the model in
         # the same breath that they are NOT inlined. So the coder was sent to look above at nothing and,
@@ -534,6 +553,17 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
+        # Status- and spill-aware. The refusal used to assert "this is the SAME result you got before,
+        # still above; use it" for EVERY repeat — computed from the model's own tool calls, never from
+        # what came back. So a URL that 404'd was refused with "use it", and an oversized doc that cria
+        # had spilled to a FILE was described as sitting above. Both facts are already in the cache.
+        cached = _DOC_CACHE.get(url)
+        if cached is not None:
+            c_status, _ct, c_reduced, _parsed, _trunc = cached
+            if not (isinstance(c_status, int) and 200 <= c_status < 300):
+                return _guard_msg("fetch_repeat_failed", url=url, status=status_label(c_status))
+            if len(c_reduced) > OVERSIZE_CHARS:
+                return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
         return _guard_msg("fetch_repeat", url=url)
     out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
     if session and external and status is not None:

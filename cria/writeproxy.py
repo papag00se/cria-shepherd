@@ -520,10 +520,17 @@ def _search_command(args: dict, brave_key: str) -> str:
     query = str(args.get("query") or "")
     url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
+    # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load
+    # succeeds, `.get("web")` is None, and this used to print the literal "no results" — telling the
+    # model the web holds nothing for its query when the API had in fact refused the request, and its
+    # own code/detail was right there in the same body. The model then concludes the source doesn't
+    # exist and starts guessing. Surface the API's own error text instead; only a genuinely empty
+    # result set says "no results".
     parse = (r"""python3 -c 'import sys,json"""
              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
+             r""";e=d.get("error") or d.get("message")"""
              r""";body="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
-             r""";print(("%d results:\n"%len(r))+body if r else "no results")'""")
+             r""";print(("%d results:\n"%len(r))+body if r else ("search API error: "+json.dumps(e) if e else "no results"))'""")
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
     # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
@@ -648,6 +655,9 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     cmd = f"printf %s {_qbash(refusal)}"
                 elif "web_search" in injected and brave_key:  # synthetic → Brave curl
                     cmd = _search_command(args, brave_key)
+                    # ONLY this path writes the spill file, so only this path earns the later
+                    # "go read that file" refusal.
+                    webfetch.note_search_spill(session, str(args.get("query") or ""))
                 elif native_search and native_search != "web_search":  # route to the harness's search tool
                     rebuilt.append({**tc, "function": {**fn, "name": native_search}})
                     continue

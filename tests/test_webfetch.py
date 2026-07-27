@@ -575,12 +575,18 @@ class GateTests(unittest.TestCase):
         r = wf.gate_search("s1", "ada handle api")
         self.assertIn("already ran", r)          # gentle re-point, not a fake HTTP-400 error
         self.assertNotIn("HTTP 400", r)
-        # It must name WHERE the earlier results are. Saying "its results are still above" was a lie:
-        # cria spills them to a file and says in the same breath they are NOT inlined, so the coder
-        # was sent to look above at nothing and searched again (8× in run 0726-135324).
-        self.assertNotIn("still above", r)
-        self.assertIn(wf.search_spill_name("ada handle api"), r)   # the real file, named
-        self.assertIn("grep -n", r)                                 # ...and how to read it
+        # cria did NOT spill this one (no note_search_spill), so it must NOT send the model to a file
+        # it never wrote — gate_search runs before the routing split, and a harness-native search
+        # never spills. It points at the conversation instead.
+        self.assertNotIn("./tmp/read-only", r)
+        self.assertIn("already in this conversation", r)
+        # ...and when cria DID spill, it names the real file and how to read it. "its results are
+        # still above" was a lie either way: spilled results are explicitly NOT inlined.
+        wf.note_search_spill("s1", "ada handle api")
+        r2 = wf.gate_search("s1", "ada handle api")
+        self.assertNotIn("still above", r2)
+        self.assertIn(wf.search_spill_name("ada handle api"), r2)   # the real file, named
+        self.assertIn("grep -n", r2)                                 # ...and how to read it
         wf.set_visible("s1", [], [])                                  # compacted away → allowed again
         self.assertIsNone(wf.gate_search("s1", "ada handle api"))
         self.assertIsNone(wf.gate_search(None, "x"))
