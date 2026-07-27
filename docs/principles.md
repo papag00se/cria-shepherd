@@ -124,6 +124,17 @@ one narrow question about that fact (does building this plan require knowing wha
 returns?). The rule that needs an exception list is the rule that should have been a question.
 Cost is nil when it matters least: the call only happens when the deterministic half found a
 discrepancy, so a task with no such gap never pays for it (rule #9).
+**But the question must have EVIDENCE on one side (measured 2026-07-27).** A weak reasoner judges
+"does this real thing satisfy that stated requirement?" well — the whole-task satisfaction critic does
+it correctly against actual tool output. It cannot judge PROSE against PROSE. A draft-time check
+asking "does this plan cover this request?" was built, and on the live model it failed in every
+sampling configuration tried: at the role's own temperature it answered `{"missing": []}` once and
+"everything is missing" the next; at temp 0 with reasoning on it emitted nothing at all three times;
+at temp 0 with reasoning off it was perfectly stable and inverted, naming two steps the plan visibly
+contained; and reduced to the simplest possible form — one item, "which step produces this?" — it
+answered "Step 1" for every item. It was reverted. Before adding a judge, ask what REAL artifact it
+compares against; if the answer is "two pieces of text the model must hold in its head at once", the
+call will fire, parse, and be wrong — which is worse than not asking (rule #1).
 **Embodied.** [`project_goal_run_2026_07_18`], [`project_unified_steer_author`],
 [`project_goal_fabliq_ada_handles`]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
 (pervasive "reasoner judges / code acts").
