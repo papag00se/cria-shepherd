@@ -396,7 +396,11 @@ def _record_fetch(facts: dict | None, url: str, status, body: str, content_type)
     parsed = webfetch._structure_of(body, content_type, url)
     routes = webfetch._endpoint_routes(parsed) if parsed is not None else []
     fields = webfetch._endpoint_response_fields(parsed) if parsed is not None else []
-    facts[url] = (f"HTTP {status}", ", ".join(routes), "; ".join(fields))
+    # ONE shape per LINE — the same separator the coder-side producer uses. Both fill this field and
+    # both merge into one ⟦ctx:facts⟧ anchor, and the reader's contract is line-based (`_shape_block`:
+    # "entry lines are the ones carrying →"). Joined with "; " instead, five endpoint shapes reached
+    # the coder as 1,534 unbroken characters under a heading telling it to use these EXACT names.
+    facts[url] = (f"HTTP {status}", ", ".join(routes), "\n".join(fields))
 
 
 def _web_search(args: dict, search_key: str, recent: list) -> ToolResult:

@@ -1,4 +1,5 @@
 import contextlib
+import json
 import pathlib
 import tempfile
 import unittest
@@ -427,3 +428,42 @@ class GatherEnvironmentMutationTests(unittest.TestCase):
                               _Rlog(), scratch=self.SCRATCH).text
         self.assertIn("Nothing needs installing to research", out)
         self.assertNotIn("/tmp/api.json", out)
+
+
+class LedgerShapeFormatTests(unittest.TestCase):
+    """Two producers fill the SAME ledger field — the coder-side `_extract_fetches` (via `_shape_block`)
+    and the planner's gather (`_record_fetch`) — and they merge into one ⟦ctx:facts⟧ anchor. They must
+    agree on how entries are separated, because the reader's contract is line-based: `_shape_block`'s
+    own docstring says "entry lines are the ones carrying →".
+
+    MEASURED (run 0727-134912): the planner joined five endpoint shapes with "; ", so the coder was
+    handed 1,534 characters on ONE unbroken line — `/handles/{handle}`, `/holders/{address}`, `/stats`,
+    `/mpt-root`, `/health` all run together — under a heading that says "use these EXACT names and
+    nesting". Every fact was present and correct; only the shape of it was wrong. This is a legibility
+    fix, not a claim about what the model then does with it."""
+
+    def test_both_producers_separate_endpoint_shapes_the_same_way(self):
+        from cria import loop
+        rendered = ('HTTP 200 OK · https://api.example.com/openapi.json\n'
+                    '[response shape — the fields each endpoint RETURNS:\n'
+                    'GET /handles/{handle} → holder, resolved_addresses{ada}\n'
+                    'GET /holders/{address} → total_handles, address]\n')
+        coder_side = loop._shape_block(rendered, 0)
+        self.assertEqual(len(coder_side.splitlines()), 3)     # header + 2 entries, one per line
+
+        facts = {}
+        pt._record_fetch(facts, "https://api.example.com/openapi.json", 200,
+                         json.dumps({"paths": {
+                             "/handles/{handle}": {"get": {"responses": {"200": {"content": {
+                                 "application/json": {"schema": {"properties": {
+                                     "holder": {"type": "string"},
+                                     "resolved_addresses": {"type": "object", "properties": {"ada": {}}}}}}}}}}},
+                             "/holders/{address}": {"get": {"responses": {"200": {"content": {
+                                 "application/json": {"schema": {"properties": {
+                                     "total_handles": {"type": "integer"},
+                                     "address": {"type": "string"}}}}}}}}}}}),
+                         "application/json")
+        shapes = facts["https://api.example.com/openapi.json"][2]
+        self.assertIn("/holders/{address}", shapes)
+        self.assertEqual(len(shapes.splitlines()), 2,
+                         "the planner runs every endpoint's shape together on one line")
