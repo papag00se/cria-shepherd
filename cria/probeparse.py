@@ -359,6 +359,23 @@ def parse_pytest(s: str) -> list[Finding]:
             fr = frames.get(f.file.replace("\\", "/").rsplit("/", 1)[-1])
             if f.line is None and fr is not None:
                 out[i] = Finding(f.file, fr[1], None, err or f.message)
+    if out:
+        return out
+    # NO block header and NO summary line — pytest prints a broken conftest exactly this way:
+    #   ImportError while loading conftest '/repo/conftest.py'.
+    #   conftest.py:1: in <module>
+    #   E   ModuleNotFoundError: No module named 'nosuchmodule'
+    # The `E   ` rows ARE pytest's own error text and nothing was reading them here, so the finding fell
+    # to a generic file:line scrape that reported the stack FRAME — "conftest.py:1: in <module>" — and
+    # dropped the actual exception. Take the outermost frame (the user's file, not the library the
+    # traceback descends into) and the E-rows whole.
+    errs = [e.strip() for e in _PYTEST_ERR_LINE.findall(s)]
+    if errs:
+        locs = _PYTEST_LOC_LINE.findall(s)
+        if locs:
+            file, line, _tail = locs[0]
+            return [Finding(file, int(line), None, "\n".join(errs))]
+        return [Finding("", None, None, "\n".join(errs))]
     return out
 
 

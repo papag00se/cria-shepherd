@@ -157,6 +157,25 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertIn("unique basename", msg)               # ...including the HINT that fixes it
         self.assertNotIn("test failed", msg)                # ...not cria's two-word stand-in
 
+    def test_pytest_conftest_error_reports_the_EXCEPTION_not_the_stack_frame(self):
+        # A broken conftest prints no block header and no FAILED/ERROR summary line, so nothing read
+        # its `E   ` rows and the finding fell through to a generic file:line scrape — the model was
+        # told "conftest.py:1: in <module>", the stack FRAME, while pytest's actual words
+        # ("ModuleNotFoundError: No module named 'nosuchmodule'") were dropped. The E-rows ARE the
+        # checker's own error text. Outermost frame = the user's file, not the library beneath it.
+        r = parse_output(
+            "python3 -m pytest -q", "pytest", 4,
+            "ImportError while loading conftest '/repo/conftest.py'.\n"
+            "conftest.py:1: in <module>\n"
+            "    import nosuchmodule\n"
+            "E   ModuleNotFoundError: No module named 'nosuchmodule'\n",
+            "")
+        self.assertEqual(len(r.findings), 1)
+        f = r.findings[0]
+        self.assertEqual((f.file, f.line), ("conftest.py", 1))
+        self.assertIn("ModuleNotFoundError", f.message)
+        self.assertNotIn("in <module>", f.message)      # the frame is not the error
+
     def test_pytest_normal_failure_keeps_no_line(self):
         # A plain assertion failure has no traceback :in <module>: frame — it stays line=None (unchanged).
         r = parse_output("pytest", "pytest", 1,
