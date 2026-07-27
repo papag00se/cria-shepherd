@@ -1,5 +1,10 @@
 import json
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
+
+from cria import webfetch
 
 from cria.config import CRIA_HOME
 from cria.writeproxy import (
@@ -751,3 +756,85 @@ class CriaHomeGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
+    """cria refuses a re-fetch of a spilled doc with "it was saved to <path> — read THAT file". That
+    claim is a MEMORY (`_FETCH_SPILLED`), and the file it names lives in the WORKSPACE. When the
+    harness sends no session id, `session_key` falls back to `task:<hash of the first user message>`
+    — so two runs of the same prompt share one key, and the second inherits the first's ledger while
+    working in a different directory.
+
+    MEASURED (run 0727-131647): the coder's VERY FIRST web_fetch was refused with "You already
+    fetched … saved to ./tmp/read-only/api.handle.me_openapi.json". That directory did not exist in
+    its workspace — the file was in the previous run's. The coder then looped: fetch → refused →
+    read_file → "large document, grep it" → fetch → refused, never once seeing the spec.
+
+    The filesystem is the ground truth for "cria wrote this file". Ask it."""
+
+    PAGE = {"paths": {"/handles/{handle}": {"get": {"summary": "x" * 40}}},
+            "components": {"schemas": {"H": {"properties": {"holder": {"type": "string"}}}}},
+            "filler": ["y" * 200 for _ in range(200)]}
+
+    def setUp(self):
+        webfetch.clear_cache()
+        webfetch._FETCH_SPILLED.clear()
+
+    def _lower(self, workspace):
+        comp = {"choices": [{"message": {"tool_calls": [{"id": "1", "type": "function", "function": {
+            "name": "web_fetch", "arguments": json.dumps({"url": "https://api.example.com/openapi.json"})}}]}}]}
+        out = translate_outbound(comp, _ARR_SHELL, None, injected={"web_fetch"},
+                                 session="task:same-prompt", workspace_root=workspace)
+        return (out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+
+    def test_a_spill_from_another_workspace_does_not_refuse_a_first_fetch(self):
+        body = json.dumps(self.PAGE)
+
+        def _stub(url, user_agent=None):
+            return webfetch.FetchResult(200, url, "application/json", body, False)
+
+        with tempfile.TemporaryDirectory() as ws1, tempfile.TemporaryDirectory() as ws2, \
+                mock.patch.object(webfetch, "fetch", _stub):
+            first = self._lower(ws1)
+            self.assertIn("read-only", first)          # run 1 spills the doc into ITS workspace
+            self._run_the_cp(first, ws1)
+            second = self._lower(ws2)                  # run 2: same session key, different workspace
+        self.assertNotIn("You already fetched", second,
+                         "cria refused a first fetch by pointing at another run's file")
+
+    def _run_the_cp(self, lowered, ws):
+        """cria EMITS the spill as a `cp` command; the HARNESS runs it. Existence is only a fact once
+        it has — which is why the check is worth making: a sandbox-rejected cp now re-spills instead
+        of pointing the model at a file that was never written."""
+        target = pathlib.Path(ws) / "tmp" / "read-only" / "api.example.com_openapi.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("the spilled document")
+
+    def test_the_same_workspace_is_still_refused_a_whole_re_fetch(self):
+        """The guard this fix works around is real and must survive: a doc cria DID write into THIS
+        workspace is not copied over itself on every re-fetch (measured: 19 times in one run)."""
+        body = json.dumps(self.PAGE)
+
+        def _stub(url, user_agent=None):
+            return webfetch.FetchResult(200, url, "application/json", body, False)
+
+        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub):
+            first = self._lower(ws)
+            self._run_the_cp(first, ws)
+            again = self._lower(ws)
+            self.assertIn("You already fetched", again)
+
+    def test_a_spilled_file_the_model_deleted_is_not_claimed_to_exist(self):
+        body = json.dumps(self.PAGE)
+
+        def _stub(url, user_agent=None):
+            return webfetch.FetchResult(200, url, "application/json", body, False)
+
+        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub):
+            first = self._lower(ws)
+            self._run_the_cp(first, ws)
+            for f in pathlib.Path(ws).rglob("*"):
+                if f.is_file():
+                    f.unlink()
+            again = self._lower(ws)
+        self.assertNotIn("You already fetched", again)

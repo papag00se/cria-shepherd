@@ -418,7 +418,7 @@ def _list_command(args: dict) -> str:
             f"else printf '%s\\n' \"$__o\"; fi")
 
 
-def _fetch_command(args: dict, session: str | None = None) -> str | None:
+def _fetch_command(args: dict, session: str | None = None, workspace_root: str | None = None) -> str | None:
     """cria fetches + reduces the page IN-PROCESS (it runs as a stateful server with a per-URL
     doc cache) and lowers to a ``printf`` of the ALREADY-REDUCED, bounded result — so the harness
     records navigable content that PERSISTS in the conversation, instead of running a raw ``curl``
@@ -438,7 +438,8 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
         # died here before fetch_nav could act on it — and a nulled find also forces the oversized-spill
         # branch below, reproducing the "saved N chars, go grep it" reply that fix set out to kill.
         cursor = None
-    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw)
+    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw,
+                                workspace_root=workspace_root)
     # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
     # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
     # …but only the FIRST time. Once cria has written the doc to the workspace that file outlives the
@@ -446,11 +447,14 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     # already in `result`) instead of copying the same document over itself. Measured (run
     # 0727-104845): a 154KB docs page re-fetched NINETEEN times after the harness compacted the first
     # result away — each one re-spilling and burning a turn.
-    if find is None and cursor is None and not webfetch.already_spilled(session, str(url)):
+    if find is None and cursor is None and not webfetch.already_spilled(session, str(url), workspace_root):
         spill = webfetch.oversized_spill(str(url))
         if spill:
             _status, target, content, msg = spill
-            webfetch.note_fetch_spill(session, str(url))
+            # Record WHERE it landed: the refusal built on this ledger names that path to the model,
+            # and the same session key can be reused by a later run in a DIFFERENT workspace.
+            written = os.path.join(workspace_root, target.lstrip("./")) if workspace_root else ""
+            webfetch.note_fetch_spill(session, str(url), written)
             return _spill_command(target, content, msg)
     return f"printf %s {_qbash(result)}"
 
@@ -661,7 +665,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif name in _LIST_NAMES and name in injected:
                 cmd = _list_command(args)
             elif name in _FETCH_NAMES and name in injected:
-                cmd = _fetch_command(args, session)
+                cmd = _fetch_command(args, session, workspace_root)
             elif name == "web_search":
                 refusal = webfetch.gate_search(session, str(args.get("query") or ""))
                 if refusal is not None:  # exact-repeat search this session → refuse, don't burn a call

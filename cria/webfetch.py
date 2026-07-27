@@ -28,6 +28,7 @@ from __future__ import annotations
 import difflib
 import ipaddress
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -220,7 +221,7 @@ _SEARCH_SPILLED: dict[str, set] = {}
 _SEARCH_ALLOWED: dict[str, set] = {}
 # Urls whose document cria WROTE to a file in the workspace. That file outlives the conversation, so
 # a plain re-fetch of the url is answered with the file's name rather than the document again.
-_FETCH_SPILLED: dict[str, set] = {}
+_FETCH_SPILLED: dict[str, dict] = {}
 _GATE_CAP = 256
 
 
@@ -477,17 +478,33 @@ def _pad4(k):
     return tuple(k) + (False,) if len(k) == 3 else tuple(k)
 
 
-def note_fetch_spill(session: Optional[str], url: str) -> None:
-    """Record that cria WROTE this url's document to a file in the workspace.
+def note_fetch_spill(session: Optional[str], url: str, path: Optional[str] = None) -> None:
+    """Record that cria WROTE this url's document to a file, and WHERE.
 
     Recorded by the caller that actually issues the spill, so this is a fact about what cria did, not
-    an inference from the cache being large."""
+    an inference from the cache being large. The path matters because the refusal built on this
+    ledger names it to the model — and a session key is not always unique to a workspace: with no
+    session id from the harness, `session_key` falls back to a hash of the first user message, so two
+    runs of the SAME prompt share one key. MEASURED (run 0727-131647): the second run's very first
+    web_fetch was refused with "already fetched … saved to ./tmp/read-only/api.handle.me_openapi.json"
+    — a path that existed only in the PREVIOUS run's workspace. It never saw the spec at all."""
     if session and (url or "").strip():
-        _FETCH_SPILLED.setdefault(session, set()).add(url.strip())
+        _FETCH_SPILLED.setdefault(session, {})[url.strip()] = path or ""
 
 
-def already_spilled(session: Optional[str], url: str) -> bool:
-    return bool(session) and (url or "").strip() in _FETCH_SPILLED.get(session, ())
+def already_spilled(session: Optional[str], url: str, workspace_root: Optional[str] = None) -> bool:
+    """Did cria write this url's document to a file THIS run can read? The ledger remembers; the
+    FILESYSTEM decides — so a spill from another workspace (or one the model deleted) is not claimed."""
+    if not session:
+        return False
+    path = _FETCH_SPILLED.get(session, {}).get((url or "").strip())
+    if path is None:
+        return False
+    if not path:            # recorded before the path was known — nothing to verify against
+        return True
+    if workspace_root and not os.path.abspath(path).startswith(os.path.abspath(workspace_root) + os.sep):
+        return False
+    return os.path.exists(path)
 
 
 def note_search_spill(session: Optional[str], query: str) -> None:
@@ -609,7 +626,8 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
 
 def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = None,
               cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None,
-              session: Optional[str] = None, raw: bool = False) -> str:
+              session: Optional[str] = None, raw: bool = False,
+              workspace_root: Optional[str] = None) -> str:
     """Plain fetch, ``find=`` selection, or ``cursor=`` pagination, backed by the URL cache.
     Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx).
 
@@ -639,7 +657,7 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     # the harness compacted the result away, the guard fell silent, and it re-fetched the same url
     # NINETEEN times. Only a whole-doc re-fetch is refused — a `find=` is navigation into the doc and
     # is answered normally, which is the whole point of having spilled it.
-    if session and external and not find and not cursor and already_spilled(session, url):
+    if session and external and not find and not cursor and already_spilled(session, url, workspace_root):
         return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
