@@ -367,3 +367,63 @@ class PlannerFetchOversizeTests(unittest.TestCase):
             res = planner_tools._web_fetch({"url": "https://api.example.com/spec"}, {}, scratch=scratch)
         self.assertIn("/handles/{handle}", res.text)
         self.assertEqual([], list(pathlib.Path(scratch).rglob("*")))
+
+
+class GatherEnvironmentMutationTests(unittest.TestCase):
+    """The gather's contract is READ anything, WRITE only to the scratchpad — never the workspace,
+    never the user's machine. The guard enforced that with a list of FILESYSTEM mutators (rm, mv, cp,
+    mkdir, tee) and redirect targets, so it could not see a package manager: `pip install x` names no
+    path, and `python3 -m venv venv` has `python3` as its base.
+
+    MEASURED (run 0727-125508): during planning, cria ran `pip install requests responses
+    koios-mesh-sdk` against the user's SYSTEM python, then `python3 -m venv venv` inside the user's
+    workspace, then pip install again — 3 of 12 gather rounds, in a gather that hit its cap. The
+    install failed only because this machine is PEP 668 externally-managed; on a machine without that
+    it would have written to the user's site-packages. And pip's refusal is what TAUGHT the model to
+    create the venv, which the guard then also allowed.
+
+    Every ecosystem, not just Python: the goal is language-agnostic and so is the category."""
+
+    WS, SCRATCH = "/home/jesse/src/ws", "/tmp/scratch"
+
+    def _ok(self, cmd):
+        return pt.is_gather_safe_command(cmd, scratch=self.SCRATCH, workspace=self.WS)[0]
+
+    def test_python_installers_and_virtualenvs_are_refused(self):
+        for cmd in ("pip install requests", "pip3 install -r requirements.txt",
+                    "python3 -m venv venv", "python -m pip install responses",
+                    "virtualenv env", "uv pip install httpx", "poetry add requests",
+                    "conda install numpy"):
+            self.assertFalse(self._ok(cmd), f"allowed: {cmd}")
+
+    def test_other_ecosystems_are_refused_the_same_way(self):
+        for cmd in ("npm install express", "yarn add lodash", "pnpm install",
+                    "cargo install ripgrep", "go get github.com/x/y", "gem install rails",
+                    "bundle install", "composer require x", "apt-get install python3-dev",
+                    "brew install jq"):
+            self.assertFalse(self._ok(cmd), f"allowed: {cmd}")
+
+    def test_the_read_subcommands_of_those_same_tools_still_work(self):
+        # Research legitimately inspects a project's dependency state; only MUTATION is refused.
+        for cmd in ("pip list", "pip show requests", "npm ls", "cargo tree",
+                    "go list ./...", "bundle exec rspec --dry-run"):
+            self.assertTrue(self._ok(cmd), f"refused: {cmd}")
+
+    def test_ordinary_research_commands_are_untouched(self):
+        for cmd in ("ls -la", "grep -rn handle .", "find . -name '*.py'", "git log --oneline -5",
+                    "python3 -c \"import json; print(1)\"", "cat README.md"):
+            self.assertTrue(self._ok(cmd), f"refused: {cmd}")
+
+    def test_the_refusal_says_which_rule_was_broken(self):
+        ok, why = pt.is_gather_safe_command("pip install requests", scratch=self.SCRATCH, workspace=self.WS)
+        self.assertFalse(ok)
+        self.assertIn("install", why.lower())
+
+    def test_the_install_refusal_does_not_hand_out_impossible_advice(self):
+        """The generic refusal says "write it to /tmp instead", which is right for a redirect and
+        meaningless for `pip install` — and a refusal that suggests an impossible next move sends the
+        model somewhere worse than the one it was stopped from (`pip install --target /tmp/...`)."""
+        out = pt.execute_tool("exec_command", {"cmd": "pip install requests"}, self.WS, "", [],
+                              _Rlog(), scratch=self.SCRATCH).text
+        self.assertIn("Nothing needs installing to research", out)
+        self.assertNotIn("/tmp/api.json", out)

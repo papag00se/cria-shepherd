@@ -110,7 +110,11 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResul
         return _nothing("[no command given]")
     ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
     if not ok:
-        return _nothing(prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd, why=why))
+        # An install refusal must NOT carry the write-to-/tmp advice: redirecting a `pip install`
+        # into the scratchpad is not a thing, and a refusal that suggests an impossible next move
+        # sends the model somewhere worse than the one it was stopped from.
+        key = "refused_install" if why == REFUSED_ENV_SETUP else "refused_command"
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")[key], cmd=cmd, why=why))
     # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
     # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
     env = dict(os.environ)
@@ -200,6 +204,56 @@ _MUTATORS = {"rm", "rmdir", "mv", "cp", "mkdir", "touch", "dd", "truncate", "ins
 _NET_OUT_FLAGS = {"-o", "--output", "--output-document", "-P", "--directory-prefix"}
 
 
+# Package / environment managers. These mutate state — site-packages, node_modules, the system, a
+# new virtualenv — WITHOUT naming a path argument, so the path-based checks below never see them, and
+# `python3 -m venv` hides behind an interpreter. MEASURED (run 0727-125508): the gather ran
+# `pip install …` against the user's system python, then `python3 -m venv venv` in the user's
+# workspace, burning 3 of its 12 research rounds; the install failed only because the machine is PEP
+# 668 externally-managed, and pip's refusal is what taught the model to create the venv.
+# Every ecosystem, because the rule is about the CATEGORY, not about Python.
+_ENV_MANAGERS = {"pip", "pip3", "pipx", "poetry", "pdm", "uv", "conda", "mamba", "easy_install",
+                 "npm", "yarn", "pnpm", "bun",
+                 "cargo", "go", "gem", "bundle", "bundler", "composer", "mvn", "gradle", "sbt",
+                 "apt", "apt-get", "aptitude", "dnf", "yum", "pacman", "zypper", "apk", "brew",
+                 "virtualenv", "pyenv", "rustup", "asdf", "nix-env"}
+# Only the MUTATING subcommands: research legitimately runs `pip list`, `npm ls`, `cargo tree`.
+_ENV_MUTATE_VERBS = {"install", "uninstall", "add", "remove", "rm", "get", "update", "upgrade",
+                     "sync", "init", "new", "require", "download", "build", "publish", "link"}
+# Interpreter-hosted forms of the same thing: `python3 -m venv x`, `python -m pip install y`.
+_PY_ENV_MODULES = {"venv", "virtualenv", "ensurepip"}
+
+
+# The refusal reason for an environment mutation, as a CONSTANT: `_exec_command` picks the model
+# message by comparing against this exact value, never by pattern-matching the sentence.
+REFUSED_ENV_SETUP = "installs packages / builds an environment (planning is research, not setup)"
+
+
+def _mutates_environment(parts: list[str]) -> bool:
+    """Does this command segment install packages or build an environment? Read-only subcommands of
+    the same tools are NOT mutations — the gather inspects dependency state all the time."""
+    base = parts[0].rsplit("/", 1)[-1]
+    if base.startswith("python"):
+        if "-m" in parts:
+            mod = parts[parts.index("-m") + 1] if parts.index("-m") + 1 < len(parts) else ""
+            if mod in _PY_ENV_MODULES:
+                return True
+            if mod in ("pip", "pip3"):
+                parts, base = parts[parts.index("-m") + 1:], "pip"
+            else:
+                return False
+        else:
+            return False
+    if base not in _ENV_MANAGERS:
+        return False
+    if base in ("virtualenv", "easy_install"):   # no subcommand — the command IS the mutation
+        return True
+    # The verb can sit one token deeper when a manager wraps another (`uv pip install httpx`), so
+    # look at the first two non-flag tokens rather than only the first. Two is enough for every
+    # wrapper form seen, and short enough that a PACKAGE NAME can't be mistaken for the verb.
+    words = [p for p in parts[1:] if not p.startswith("-")][:2]
+    return any(w in _ENV_MUTATE_VERBS for w in words)
+
+
 def _net_write_targets(parts: list[str]) -> tuple[list[str], bool]:
     """(output targets, has_bare_curl_O) for a curl/wget segment — only the token AFTER an
     output flag is a target; the URL is not."""
@@ -252,6 +306,8 @@ def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str 
             continue
         base = parts[0].rsplit("/", 1)[-1]
         pathargs = [p for p in parts[1:] if not p.startswith("-")]
+        if _mutates_environment(parts):
+            return False, REFUSED_ENV_SETUP
         if base == "git" and (parts[1:] and parts[1] not in _GIT_READ):
             return False, "mutates the git repository"
         if base == "sed" and "-i" in seg:

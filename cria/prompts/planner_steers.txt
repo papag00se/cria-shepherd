@@ -13,3 +13,4 @@ no_search_key = [web_search error: no search API key configured — set BRAVE_SE
 default_ask = Continue and finish the remaining work described in the summary.
 
 fetch_spill = HTTP {{STATUS}} · {{URL}}\nThis document is too large to hand back inline ({{CHARS}} chars) — it was saved IN FULL to {{TARGET}}.\n{{OUTLINE}}Read it from there — do NOT re-fetch the url. Grep the file for what you need (exec_command: grep -n 'pattern' {{TARGET}}), or read_file it with a line range.
+refused_install = [refused: `{{CMD}}` {{WHY}}. Nothing needs installing to research: read the source with web_fetch and read_file. If the work genuinely needs a package, say so in a plan step and whoever builds it will handle it there.]
