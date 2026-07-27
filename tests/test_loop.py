@@ -4442,3 +4442,40 @@ class FlailCapVisibilityTests(unittest.TestCase):
         rlog = _Rlog()
         loop._flail_steer_if_circling(sess, _body(), 3, rlog)
         self.assertNotIn("loop.flail_exhausted", rlog.kinds())
+
+
+class GaveUpVsFinishedTests(unittest.TestCase):
+    """Two of today's fixes exist ONLY to leave a record, and an emit with no test can regress into
+    exactly the silence it was added to remove. These assert the events themselves.
+
+    `loop.done_unverified`: spending the completion budget ENDS the task — the caller reads None as
+    "satisfied" and sets Phase.DONE — so a run that gave up while the critic was still saying "not
+    done" was indistinguishable, in the record, from one that genuinely finished.
+
+    `massage.envelope_recovered`: the recovery turns model JSON into real tool calls; without the
+    emit, nobody can tell how often a model is talking in an envelope cria has to translate."""
+
+    def test_giving_up_at_the_completion_bound_says_so(self):
+        from cria.loop import MAX_COMPLETION_CHECKS
+        from cria.config import Role
+        ctx = _ctx(_Scripted([_toolcall()]), _Scripted([_text("ON_TRACK")]))
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        loop, sess, rlog = Loop(ctx), PlanSession(plan=_plan(2)), _Rlog()
+        sess.completion_checks = MAX_COMPLETION_CHECKS
+        self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), rlog))  # None == "complete"
+        self.assertIn("loop.done_unverified", rlog.kinds())
+
+    def test_recovering_an_envelope_call_is_recorded(self):
+        from cria import massage
+        seen = []
+
+        class _R:
+            def emit(self, kind, **kw):
+                seen.append(kind)
+
+        menu = [{"type": "function", "function": {"name": "web_search", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}]
+        comp = {"choices": [{"finish_reason": "stop", "message": {"role": "assistant",
+                "content": '{"commands": [{"name": "web_search", "arguments": {"query": "x"}}]}'}}]}
+        massage.recover_leaked_tool_calls(comp, menu, _R())
+        self.assertIn("massage.envelope_recovered", seen)
