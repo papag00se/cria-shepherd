@@ -2980,6 +2980,28 @@ class VerifyEvidenceTests(unittest.TestCase):
         self.assertIn("real tool output", ev)
         self.assertNotIn("off-target", ev)
 
+    def test_evidence_is_bounded_for_the_JUDGE_with_the_elision_disclosed(self):
+        # THE DOOM LOOP (live run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB
+        # across re-nudges on ONE step. At 223KB the critic call needed a context-floor REFIT and then
+        # errored outright, so the verdict came back "unverified (no parseable verdict)" — which fails
+        # CLOSED and re-nudges, which grows the evidence again. The judge could no longer answer at all.
+        # This is a prompt cria COMPOSES for a judge, and principle #5's counter-nuance says bounding
+        # one breaks no rule (over-applying never-truncate to a composed prompt is its own footgun).
+        from cria.loop import _bound_evidence, EVIDENCE_BUDGET_CHARS
+        log = "\n".join(f"$ shell {{\"command\": \"echo action {i}\"}}" for i in range(6000))
+        self.assertGreater(len(log), EVIDENCE_BUDGET_CHARS * 3)
+        out = _bound_evidence(log)
+        self.assertLessEqual(len(out), EVIDENCE_BUDGET_CHARS + 300)   # bounded...
+        self.assertIn("elided", out)                                   # ...and DISCLOSED, not silent
+        self.assertIn("action 5999", out)                              # the most recent action survives
+        self.assertNotIn("action 0\"", out)                            # the oldest is what went
+        self.assertFalse(out.splitlines()[1].startswith('command'))    # resumes on an action boundary
+
+    def test_evidence_under_budget_is_untouched(self):
+        from cria.loop import _bound_evidence
+        log = "$ write_file {\"path\": \"a.py\"}\n  -> wrote a.py"
+        self.assertEqual(_bound_evidence(log), log)
+
     def test_keeps_all_runs_in_full_no_clip_no_last_n_drop(self):
         # The critic must see the FULL ground truth: every coder run (not just the last 3) and each
         # in full (no clip). A per-site slice here would be a lie the critic can't detect.

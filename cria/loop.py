@@ -456,6 +456,34 @@ def satisfaction_done_note(reason: str) -> str:
     return f"Task complete — verified by the completion check and the repo's own checks. {reason}".strip()
 
 
+# The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
+# not something the coder reads — and principle #5's counter-nuance is explicit that bounding a composed
+# prompt breaks no rule, while over-applying never-truncate to one is itself a documented footgun.
+# Observed live (run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB across
+# re-nudges on ONE step; at 223KB the critic call needed a floor REFIT, then errored outright, so the
+# verdict came back "unverified (no parseable verdict)" — which fails CLOSED and re-nudges, which grows
+# the evidence again. A doom loop where the judge can no longer answer at all.
+EVIDENCE_BUDGET_CHARS = 24000
+
+
+def _bound_evidence(log: str) -> str:
+    """The work log bounded to the MOST RECENT actions, with the elision DISCLOSED.
+
+    Recency is what a step verdict turns on ("did the coder do this step?"), so the tail is the part
+    worth keeping; the durable fetch facts are appended separately and are never dropped by this. The
+    head is replaced by a labelled marker rather than silently cut — a judge that is told it is seeing
+    a window can weigh it, one that isn't will treat a partial log as the whole history."""
+    if len(log) <= EVIDENCE_BUDGET_CHARS:
+        return log
+    tail = log[-EVIDENCE_BUDGET_CHARS:]
+    nl = tail.find("\n")            # start at a clean action boundary, never mid-line
+    if 0 <= nl < 400:
+        tail = tail[nl + 1:]
+    dropped = len(log) - len(tail)
+    return (f"[{dropped:,} characters of EARLIER actions elided to keep this readable — the most recent "
+            f"actions follow in full; the durable fetch facts below are complete and unaffected]\n" + tail)
+
+
 class LoopStore:
     """The loop's server-side session state: live plans and each session's conversation-root
     SHAPE (structural harness-compaction detection + a one-bit `done` marker). DETECTION state
@@ -1344,7 +1372,7 @@ class Loop:
         /handles/{handle} outline right there). Additive: the facts only ever tell the critic MORE about
         what the coder really obtained; they never claim work that wasn't done."""
         messages = body.get("messages", [])
-        log = _work_log(messages)
+        log = _bound_evidence(_work_log(messages))
         facts = _fetch_ground_truth(messages, sess, header="PAGES THE CODER ALREADY FETCHED")
         if not facts:
             return log
