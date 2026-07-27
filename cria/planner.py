@@ -570,7 +570,7 @@ class Planner:
                 "messages": [{"role": "system", "content": system_prompt},
                              {"role": "user", "content": user}]}
         if self._role is not None:
-            self._role.apply(body)
+            self._role.apply(body, internal=True, rlog=rlog)
         try:
             comp = json.loads(self._provider.chat(body, rlog))
             msg = _assistant_message_obj(comp)
@@ -836,7 +836,7 @@ class Planner:
             "messages": [{"role": "system", "content": prompts.load("plan")}] + messages,
         }
         if self._role is not None:
-            self._role.apply(body)
+            self._role.apply(body, internal=True, rlog=rlog)
         if research:
             # RESEARCH phase: the read-only tools ONLY — `submit_plan` is deliberately absent, so the
             # planner cannot draft before it has looked. The tool menu is the enforcement; the prose

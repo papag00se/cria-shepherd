@@ -170,9 +170,21 @@ class Role:
     max_tokens: int | None = None
     output_reserve: int | None = None
 
-    def apply(self, body: dict) -> None:
+    def apply(self, body: dict, *, internal: bool = False, rlog=None) -> None:
         """Attach this role's sampling + reasoning to a chat-completions body, in place.
-        Only keys that are set are written (an unset key leaves the server/internal default)."""
+        Only keys that are set are written (an unset key leaves the server/internal default).
+
+        ``internal`` marks a body cria BUILT — a judge, the planner's ask, a steer author — rather
+        than one a harness sent. On those, the `max_tokens` already in the body is a MEASURED floor,
+        not a preference: the noise judge at 2000 returned `finish_reason=length`, 8,865 characters
+        of reasoning and ZERO content, because a reasoning model spends the budget thinking before it
+        writes a word. Since `apply` runs AFTER the call site builds its dict, one TOML line
+        (`[roles.reasoner] max_tokens = 4096`) would otherwise overwrite every one of those budgets
+        at once — and an empty answer reads as "nothing to report", so the judgement disappears with
+        no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
+        the cap stands: capping the coder is what the operator knob is for."""
+        asked = body.get("max_tokens") if internal else None
+        floor = asked if isinstance(asked, int) and asked > 0 else None
         # Sampling is translated into this backend's dialect (same portability fix as reasoning): a
         # llama.cpp-only knob (top_k/min_p/repeat_penalty) is dropped or renamed on a cloud backend
         # instead of 400-ing or silently vanishing. See reasoning.apply_sampling.
@@ -180,6 +192,11 @@ class Role:
             "temperature": self.temperature, "top_p": self.top_p, "top_k": self.top_k,
             "repeat_penalty": self.repeat_penalty, "min_p": self.min_p, "max_tokens": self.max_tokens,
         }, self.think_protocol)
+        if floor is not None and isinstance(body.get("max_tokens"), int) and body["max_tokens"] < floor:
+            body["max_tokens"] = floor
+            if rlog is not None:
+                rlog.emit("role.cap_below_measured_floor", level="warn",
+                          role=self.name, cap=self.max_tokens, floor=floor)
         if self.output_reserve is not None:
             # A cria-internal hint the context floor reads for the input/output split; NOT a wire
             # field — `Upstream._prep` strips it before the body is sent to (or captured for) the model.

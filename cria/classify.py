@@ -103,7 +103,7 @@ class Classifier:
             ],
         }
         if self._role is not None:
-            self._role.apply(body)
+            self._role.apply(body, internal=True, rlog=rlog)
         try:
             rlog.phase = "classifier"
             raw = self._provider.chat(body, rlog)

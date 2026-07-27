@@ -403,3 +403,46 @@ class CodexBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RoleCapVsMeasuredFloorTests(unittest.TestCase):
+    """A role's `max_tokens` is applied AFTER the call site builds its body, so one TOML line
+    (`[roles.reasoner] max_tokens = 4096`) silently overwrote every internal budget at once — the
+    planner's ask, both critics, the classifier and `summarize`. Those numbers are not preferences:
+    2000 was MEASURED to produce `finish_reason=length`, 8,865 chars of reasoning and ZERO content
+    from the noise judge, which is why they are 8192. A cap below them buys no answer, and an empty
+    answer is read as "nothing to report", so the judgement vanishes without a trace.
+
+    On a body cria BUILT, its own max_tokens is therefore a floor. On a harness pass-through it is
+    not — capping the coder is exactly what the operator knob is for."""
+
+    def _role(self, cap):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local", max_tokens=cap)
+
+    def test_a_role_cap_does_not_silently_lower_a_measured_internal_budget(self):
+        body = {"max_tokens": 8192, "messages": []}
+        self._role(4096).apply(body, internal=True)
+        self.assertEqual(body["max_tokens"], 8192)
+
+    def test_the_lowering_is_recorded_not_just_prevented(self):
+        seen = []
+
+        class _Rlog:
+            def emit(self, kind, **kw):
+                seen.append((kind, kw))
+
+        self._role(4096).apply({"max_tokens": 8192, "messages": []}, internal=True, rlog=_Rlog())
+        self.assertEqual([k for k, _ in seen], ["role.cap_below_measured_floor"])
+        self.assertEqual(seen[0][1]["cap"], 4096)
+        self.assertEqual(seen[0][1]["floor"], 8192)
+
+    def test_a_role_cap_ABOVE_the_internal_budget_still_applies(self):
+        body = {"max_tokens": 2000, "messages": []}
+        self._role(8192).apply(body, internal=True)
+        self.assertEqual(body["max_tokens"], 8192)
+
+    def test_a_harness_pass_through_is_still_capped_by_the_role(self):
+        body = {"max_tokens": 32000, "messages": []}
+        self._role(4096).apply(body)          # not internal: the operator's cap is the point
+        self.assertEqual(body["max_tokens"], 4096)

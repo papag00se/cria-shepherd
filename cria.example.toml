@@ -99,7 +99,10 @@ top_k = 64
 repeat_penalty = 1.1
 output_reserve = 8192              # input-side reserve; keeps a big write_file uncut
 # min_p = 0.0                      # sampling floor
-# max_tokens = 4096                # HARD output cap; don't set on the coder
+# max_tokens = 4096                # HARD output cap; don't set on the coder. On a
+#                                  reasoning/judge role it is a CEILING only: an internal
+#                                  judgement whose measured budget is higher keeps that budget
+#                                  (a cap below it buys zero content), and the raise is logged.
 # temp = 0.1                       # alias for temperature
 
 [roles.compactor]

@@ -339,7 +339,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     if reasoning_off:
         role = replace(role, reasoning="off") if role is not None else None
     if role is not None:
-        role.apply(call)
+        role.apply(call, internal=True, rlog=rlog)
     elif reasoning_off:
         call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
     try:
@@ -1507,7 +1507,7 @@ class Loop:
         if reasoning_off:
             role = replace(role, reasoning="off") if role is not None else None
         if role is not None:
-            role.apply(body)
+            role.apply(body, internal=True, rlog=rlog)
         elif reasoning_off:  # no role configured, but still force the think block off
             body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
@@ -2769,7 +2769,7 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
         if reasoning_off:
             r = replace(role, reasoning="off") if role is not None else None
         if r is not None:
-            r.apply(call)
+            r.apply(call, internal=True, rlog=rlog)
         elif reasoning_off:
             call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
