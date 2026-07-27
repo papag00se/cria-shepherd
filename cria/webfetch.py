@@ -798,25 +798,32 @@ def top_level_keys(root: Any) -> list[str]:
     return []
 
 
-def _no_text_match(content: str, query: str, cap_tokens: int) -> str:
-    """A find that matched NOTHING must never be worse than not having used find at all.
+_LINK_IN_TEXT = re.compile(r"\((https?://[^\s)]+)\)")
 
-    A missed narrowing used to return the four words `find "<q>": no match.` and throw the document
-    away. Observed live (run 0726-133755): the coder fetched https://api.handle.me — a 705-char index
-    page whose entire value is `<a href="/openapi.json">OpenAPI spec (JSON)</a>` and three sibling
-    links — with find="resolve". "resolve" appears nowhere on it, so cria answered "no match" and
-    nothing else. The page that names the spec was destroyed by a substring miss, and the coder went
-    on to guess URLs. Never destroy content the model reads (principle #5): when the document fits a
-    page, hand it back WITH the miss notice. When it doesn't, keep the heading outline it can
-    re-target from — dumping an oversized doc here is the truncation this rule also forbids."""
-    heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")]
+
+def _no_text_match(content: str, query: str, cap_tokens: int) -> str:
+    """A find that matched nothing answers with WHAT IS THERE — never with the document.
+
+    The model asked for one section; the honest answer is "that isn't here", plus the means to
+    re-target. It must not become "your search for X gives you Y": handing back the body under a
+    "no match" header answers a question the model did not ask, and invites a weak model to read the
+    wall of text as the match. This mirrors the JSON path, which has always answered a miss with
+    ``Available top-level keys: …`` and never the doc.
+
+    The aid is whatever the doc really offers: its headings, else the links it contains (html_to_text
+    keeps hrefs inline, so a page whose whole value IS its link list still yields one). Observed live
+    (run 0726-133755): find="resolve" on the 705-char api.handle.me index returned four words, and the
+    coder — never told the page listed /openapi.json — went on to guess URLs. It now gets those links
+    by name, which is more use than the markup ever was."""
     notice = f'find "{query}": no match.'
-    page, _next, total = page_from(content, 0, cap_tokens)
-    if len(page) >= total:      # the WHOLE document fits — a miss costs the model nothing
-        return f"{notice} The full document follows.\n\n{content}"
+    heads = [ln.strip() for ln in content.splitlines() if ln.lstrip().startswith("#")]
     if heads:
         return f"{notice} Sections:\n" + "\n".join(heads)
-    return f"{notice} It is too large to return whole here — re-run find with a different term, or fetch without find to page it."
+    links = list(dict.fromkeys(_LINK_IN_TEXT.findall(content)))
+    if links:
+        return f"{notice} Links on this page:\n" + "\n".join(links)
+    return (f"{notice} Re-run find with a different term, or fetch this url without find= "
+            "to read it page by page.")
 
 
 def find_text(content: str, query: str, cap_tokens: int) -> str:

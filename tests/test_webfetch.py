@@ -486,22 +486,25 @@ class UncappedNavHintsTests(unittest.TestCase):
         self.assertIn("no match", out)
         self.assertIn("# Heading 27", out)         # no 15-cap on the Sections outline
 
-    def test_find_text_miss_on_a_small_doc_returns_the_WHOLE_doc(self):
-        # THE FOOTGUN (live run 0726-133755): the coder fetched https://api.handle.me — a 705-char index
-        # page whose entire value is its link list, including the OpenAPI spec — with find="resolve".
-        # "resolve" is nowhere on it, so cria answered `find "resolve": no match.` and NOTHING else,
-        # destroying the one page that names the spec. A missed narrowing must never be worse than not
-        # narrowing: when the document fits a page, hand it back.
-        body = ('<h1>api.handle.me</h1><ul><li><a href="/swagger">Swagger UI</a></li>'
+    def test_find_text_miss_answers_with_WHAT_IS_THERE_never_the_document(self):
+        # THE FOOTGUN (live run 0726-133755): find="resolve" on the 705-char api.handle.me index —
+        # a page whose entire value is its link list, including /openapi.json — returned four words,
+        # and the coder went on to guess URLs. But the fix must NOT be "hand back the document": the
+        # model asked for one section, and answering with the body is "your search for X gives you Y",
+        # the same defect as raw discarding find. Answer with what the page really offers — its links,
+        # by name — mirroring the JSON path, which has always answered a miss with its top-level keys.
+        html = ('<h1>api.handle.me</h1><ul><li><a href="/swagger">Swagger UI</a></li>'
                 '<li><a href="/openapi.json">OpenAPI spec (JSON)</a></li></ul>')
-        out = wf.find_text(body, "resolve", 4000)
-        self.assertIn("no match", out)                 # the miss is still disclosed, not hidden
-        self.assertIn("/openapi.json", out)            # ...and the document survives it
-        self.assertIn("Swagger UI", out)
+        reduced, _ = wf.reduce_for_cache(html, "text/html", "https://api.handle.me")
+        out = wf.find_text(reduced, "resolve", 4000)
+        self.assertIn("no match", out)                              # the miss is disclosed, not papered over
+        self.assertIn("https://api.handle.me/openapi.json", out)    # what IS there, by name
+        self.assertIn("https://api.handle.me/swagger", out)
+        self.assertNotIn("Swagger UI", out)                         # NOT the page body dressed as a match
 
-    def test_find_text_miss_on_an_oversized_doc_does_not_dump_it(self):
-        # The other half of the rule: returning a huge doc here would be the truncation-by-window this
-        # very rule forbids. No headings to outline → say how to re-target, don't dump.
+    def test_find_text_miss_with_nothing_to_offer_says_how_to_re_target(self):
+        # No headings, no links: say plainly that it isn't here and how to read the doc properly.
+        # Still never the body — a miss is a miss.
         body = "x" * (4000 * 4 + 5000)
         out = wf.find_text(body, "zzzznope", 4000)
         self.assertIn("no match", out)
