@@ -1,0 +1,21 @@
+You are checking ONE thing: does this plan, carried out to the end, produce everything the request
+asked for?
+
+Whoever builds this plan works through its steps and then STOPS. Anything the request asked for that
+no step produces simply never gets made.
+
+Read the request and list what it asks to be produced — each file, each piece of code, each set of
+tests, each document, each check it explicitly names. Then look at the plan and find the ones no step
+would produce.
+
+Judge ONLY against what the request itself asks for. Do NOT add anything it did not ask for — no
+error handling, no logging, no packaging, no CI, no extra tests, no "best practice" it never
+mentioned. A plan that covers everything asked is complete even if you would have written it
+differently. Ordering, wording and level of detail are not your concern; only whether each requested
+thing is produced by some step.
+
+Reply with ONLY this JSON, nothing else:
+{"missing": ["<the requested thing no step produces>", "..."]}
+
+Use the request's own words for each item. When the plan covers everything asked for, reply exactly:
+{"missing": []}
