@@ -33,6 +33,22 @@ class PromptAgnosticismTests(unittest.TestCase):
         self.assertIn("obtained", v)                              # done = facts obtained/visible in evidence
         self.assertIn("does not require", v)                      # ...NOT that any code used them
 
+    def test_research_step_is_not_held_open_for_facts_the_source_lacks(self):
+        # THE TRAP (measured, 3 runs): a step lists what to find BEFORE anyone has read the source, so
+        # it names things that are not there. Run 0726-214428 re-derived step 1 to require "fields for
+        # resolved_address, holder_address, total_handles" — names invented from the plan's own output
+        # dict, in no spec — and the critic rejected that step 10 times over 111 calls with ZERO files
+        # written. Run 0726-220739 demanded "authentication requirements" from an API that needs none,
+        # and the coder started writing a spec-parsing program to hunt for them. The coder cannot prove
+        # a negative, so the step is UNFALSIFIABLE: no action can ever satisfy it.
+        # Both halves must hold together — the loosening may not swallow the guard that a research step
+        # requires reading the REAL source, or "it isn't there" becomes an excuse for never looking.
+        v = prompts.load("verify").lower()
+        self.assertIn("cannot be obtained", v)              # a missing fact does not block the step
+        self.assertTrue(any(w in v for w in ("demonstrably lacks", "not there")),
+                        "verify.txt does not say a sought fact the source lacks can't hold a step open")
+        self.assertIn("never actually read the real source", v)   # ...and the guard is still there
+
     def test_all_three_plan_prompts_agree_a_search_is_not_research(self):
         # THE CONTRADICTION (live runs 0726-131603 / -132211): plan.txt tells the DRAFTER "a web_search
         # does NOT satisfy this — read the thing the task actually points at", and verify.txt tells the
