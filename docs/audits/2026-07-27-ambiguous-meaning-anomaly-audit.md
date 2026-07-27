@@ -120,7 +120,7 @@ All checked against source. Outcome marked on each.
 - ✅ FIXED (both examples reworded) — **Worked examples that model the banned thing** — `replan.txt`'s *"fetch the spec and use its real
   paths"* and `plan.txt`'s *"call the <specific_endpoint> FROM THE FETCHED SPEC"* both read as
   runtime discovery, three lines from the rule forbidding it. Weak models copy examples.
-- **`"still above" / "below" claims that compaction falsifies** — `fetch_repeat` ("this is the SAME
+- ✅ FIXED (no prompt now asserts a location; the rollup defers to the live workspace instead) — **`"still above" / "below" claims that compaction falsifies** — `fetch_repeat` ("this is the SAME
   result you got before, still above; use it"), the rollup's "the recent turns follow verbatim
   below" (at a step boundary the summary is the **last** message), `refused_command` and
   `scratch_note` asserting a `web_fetch` result "above" that may never have happened.

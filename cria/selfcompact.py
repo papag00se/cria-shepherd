@@ -133,12 +133,17 @@ def _summary_msg(summary: str) -> dict:
     # (the model coasted to "done" over an unresolved pyproject blocker; a summary saying "I fetched the
     # spec" made it skip re-fetching). Frame it truthfully as CONTEXT, and defer to the live results:
     # anything unfinished/failing/blocked still needs doing.
+    # NB: do NOT promise verbatim turns "below". At a verified step boundary the tail budget is
+    # BOUNDARY_KEEP_TAIL_TOKENS = 0, so this summary is the LAST message and nothing follows it — the
+    # old wording sent the model to look for ground truth that was not there, and the one thing it
+    # then had was the summary it had just been told not to trust. Defer to the live workspace, which
+    # is always there, instead of to a position in the transcript.
     return {"role": "user", "content": (
         f"{SUMMARY_MARKER} Summary of your earlier turns this session (older turns were elided to keep "
-        f"you focused — the recent turns follow verbatim below). Use it as CONTEXT so you don't re-derive "
-        f"what you already worked out — but it is a summary, NOT a statement that the task is done: "
-        f"anything it describes as unfinished, failing, or blocked still needs doing, and the verbatim "
-        f"recent turns and tool results below are the ground truth if they disagree with it:\n{summary}")}
+        f"you focused). Use it as CONTEXT so you don't re-derive what you already worked out — but it "
+        f"is a summary, NOT a statement that the task is done: anything it describes as unfinished, "
+        f"failing, or blocked still needs doing. Where a real tool result or the files on disk "
+        f"disagree with it, those are the ground truth — read them rather than trusting this:\n{summary}")}
 
 
 def _task_msg(task: str) -> dict:
