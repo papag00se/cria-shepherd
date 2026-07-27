@@ -101,7 +101,7 @@ the rest are agent findings not yet independently confirmed.
       path spills (`writeproxy.py:526`), so a harness-native search is refused with a pointer to a
       nonexistent file. (Partly self-inflicted: `81d9b4d` added the pointer.)
 
-## Tier 2 — structural, scoped
+## Tier 2 — structural, scoped  ✅ ALL DONE (`f0e2a1d`, `9a4c7b2`)
 
 - **`is_advisory` is applied per raw line** (`probegate.py:175`), severing multi-part diagnostics
   (`note:` continuations) and letting an all-warning non-zero build (`-Werror`, `deny(warnings)`,
@@ -134,7 +134,7 @@ the rest are agent findings not yet independently confirmed.
   (non-zero exit)", but `focustrim.py:116-118` exempts non-zero exits and classifies on a bare
   `\bnot found\b` substring, so an exit-0 result can be deleted and reported as an error.
 
-## Tier 3 — bigger, defer until the area is touched
+## Tier 3 — bigger  ✅ ALL DONE (this pass, at the operator's instruction to fix all three tiers)
 
 - **`coder_system.txt` hardcodes tool names it cannot guarantee** (`:5,18-20,30`) while also saying
   "never invent tool names"; when the harness ships its own write tool the synthetic ones don't exist.
@@ -172,3 +172,26 @@ the rest are agent findings not yet independently confirmed.
 Findings that critique fixes made earlier the same day (`1f7adf3`, `96becb0`, `81d9b4d`) were
 independently verified by the synthesizer before being recorded — two by reproduction, one by reading
 the caller. Agent findings are candidates, not conclusions.
+
+
+---
+
+## Outcome (2026-07-26, same day)
+
+All three tiers fixed at the operator's instruction. Suite 1183 → 1208 green.
+
+**Two findings were overstated and are recorded as such** rather than "fixed":
+
+- `verify.txt` was cited for hardcoding `read_file with start_line/end_line`. It already conditions
+  on the real menu ("doable with a tool the coder actually has (its tools are listed below)"), so
+  only the reasoner-facing sibling needed the same treatment. Agent findings are candidates.
+- The briefing envelope's forgeability has no clean fix that preserves its design: it is deliberately
+  marker-free so `strip_history` spares it, and there is deliberately NO server-side copy. It is now
+  line-anchored and requires both delimiters, which stops the accidental parrot — the case that
+  actually occurs — and the residual risk is documented rather than papered over with machinery.
+
+**The distinction that came out of this sweep**, now in `AGENTS.md`: cria may SELECT which of a
+checker's real lines to show (grounded, measured — dropping `imported but unused` stopped the model
+"fixing" working code ~20× in a session). It may never SUBSTITUTE its own words for what the tool
+actually said. Every Tier-1 item was an instance of the second thing wearing the first thing's
+clothes.

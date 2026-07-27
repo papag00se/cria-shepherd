@@ -1801,7 +1801,14 @@ def _briefing_from_history(messages: list[dict]) -> str:
         if m.get("role") != "assistant":
             continue
         c = m.get("content")
-        if isinstance(c, str) and BRIEFING_OPEN in c:
+        # Both delimiters, and the opener at the START of a line — the shape cria's own closing message
+        # writes. The coder READS this block in its context and can parrot it, and a bare substring
+        # match anywhere in any assistant turn would then promote the coder's own prose to `prior_work`
+        # for the planner. This does not make the envelope unforgeable (it is deliberately marker-free
+        # so strip_history spares it, and there is no server-side copy by design) — it just stops the
+        # accidental case, which is the one that actually happens.
+        if isinstance(c, str) and BRIEFING_CLOSE in c and any(
+                ln.lstrip().startswith(BRIEFING_OPEN) for ln in c.splitlines()):
             block = c.split(BRIEFING_OPEN, 1)[1]
             return block.split(BRIEFING_CLOSE, 1)[0].strip()
     return ""

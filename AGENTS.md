@@ -24,11 +24,20 @@ derails on its own.
   Don't fear an extra reasoner call that grounds the next action — a purposeful call is cheap next to
   the coder churn (re-fetches, failed edits, gate loops) it prevents.
 - **Never destroy information the model reads** — truncation is a footgun (any clip is an
-  undetectable lie); the context floor is the ONE lossless window-fit point. Never cap output for
-  latency. Never pollute the user's workspace.
+  undetectable lie); the context floor is the ONE lossless window-fit point, and any reduction it
+  does make is LABELLED. Never cap output for latency. **Never speak over a tool**: cria may SELECT
+  which of a checker's real lines to show, but never substitute its own words for what the tool
+  actually said (see docs/audits/2026-07-26-tool-voice-anomaly-audit.md).
+- **Keep cria's own artifacts out of the user's tree** — cria's config, plan mirror and scratch live
+  in cria's dir, never the workspace. The ONE exception is deliberate: an oversized fetch/search is
+  spilled to `./tmp/read-only/` inside the workspace *because the model must be able to grep it*;
+  that dir is guarded from edits and is the only thing cria writes there.
 - **Fail safe** — fail CLOSED on completion (an undecidable judge means NOT done); fail open only
-  toward "keep working." **cria must NEVER end a session by handing back to a human.** Measure
-  prevalence before building a heuristic; assume cria caused it until proven otherwise.
+  toward "keep working." Two acknowledged fail-OPEN exits remain, both bounded and deliberate: no
+  reasoner AND no shell (nothing can verify at all), and the MAX_COMPLETION_CHECKS bound that stops a
+  task the coder genuinely cannot finish from looping forever. **cria must NEVER end a session by
+  handing back to a human.** Measure prevalence before building a heuristic; assume cria caused it
+  until proven otherwise.
 - **Assists are footguns** — the bar to ADD is high; interventions are additive / regression-only
   (never block the first fix, never delete correct content); silence over noise; **no fallbacks —
   fix upstream.**
