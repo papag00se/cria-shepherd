@@ -25,6 +25,7 @@ import re
 import subprocess
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
 from . import brave, prompts, webfetch
 from .searchloop import first_domain_in, normalize_search, searches_match
@@ -47,14 +48,34 @@ _FETCH_MAX_BYTES = 512 * 1024
 _SEARCH_COUNT = 20
 
 
+@dataclass(frozen=True)
+class ToolResult:
+    """One gather tool call: the text the planner sees, and whether the call actually RETURNED
+    something to learn from.
+
+    ``learned`` is stated by the code that ran the tool — it knows whether the command printed
+    anything, whether the file opened, whether the fetch answered — so the caller never has to
+    re-derive it by reading the text. That distinction is load-bearing: measured (run 0727-090143),
+    an empty workspace answered `ls -la` and `find` with nothing, the gather counted two calls as
+    having researched, and the planner drafted from memory and invented an endpoint the coder then
+    built. A refusal, an error, and a command that printed nothing are all calls that taught it
+    nothing."""
+    text: str
+    learned: bool
+
+
+def _nothing(text: str) -> ToolResult:
+    return ToolResult(text, False)
+
+
 def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog,
-                 scratch: str | None = None, facts: dict | None = None) -> str:
-    """Run ONE planner tool call and return human-readable text for the gather loop to feed
-    back. Reads anything; may WRITE only to a scratchpad (``scratch`` or /tmp), never the
-    workspace, so the reasoner can persist and process fetched data. ``recent_searches`` is the
-    per-gather list of normalized search word-sets the 400 guard uses (mutated in place). ``facts``
-    (mutated in place) collects what each successful fetch PROVED, so the gather's findings outlive
-    the gather — see :func:`_record_fetch`."""
+                 scratch: str | None = None, facts: dict | None = None) -> ToolResult:
+    """Run ONE planner tool call → the text for the gather loop to feed back, plus whether anything
+    came back (:class:`ToolResult`). Reads anything; may WRITE only to a scratchpad (``scratch`` or
+    /tmp), never the workspace, so the reasoner can persist and process fetched data.
+    ``recent_searches`` is the per-gather list of normalized search word-sets the 400 guard uses
+    (mutated in place). ``facts`` (mutated in place) collects what each successful fetch PROVED, so
+    the gather's findings outlive the gather — see :func:`_record_fetch`."""
     if name in ("exec_command", "shell", "bash", "local_shell"):
         return _exec_command(args, cwd, scratch)
     if name in ("read_file", "cat_file"):
@@ -63,21 +84,21 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
         return _web_fetch(args, facts)
     if name in ("web_search", "local_web_search"):
         return _web_search(args, search_key, recent_searches)
-    return prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name)
+    return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
 
 
 # ------------------------------------------------------------------ shell / files
 
-def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
+def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
     cmd = args.get("cmd") or args.get("command") or ""
     if isinstance(cmd, list):
         cmd = " ".join(str(c) for c in cmd)
     cmd = str(cmd).strip()
     if not cmd:
-        return "[no command given]"
+        return _nothing("[no command given]")
     ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
     if not ok:
-        return prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd, why=why)
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["refused_command"], cmd=cmd, why=why))
     # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
     # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
     env = dict(os.environ)
@@ -97,12 +118,13 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
         # Full stdout+stderr — the failing assertion / the one grep match the planner needs may be
         # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
         # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
-        text = (out.stdout + out.stderr).strip() or "[no output]"
+        printed = (out.stdout + out.stderr).strip()
+        text = printed or "[no output]"
         if fresh:
             text += "\n" + prompts.fill(prompts.load_map("planner_steers")["fresh_note"], cwd=cwd)
         if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
             text += "\n" + prompts.load_map("planner_steers")["scratch_note"]
-        return text
+        return ToolResult(text, bool(printed))
     except subprocess.TimeoutExpired as e:
         # Keep whatever the command DID print before the clock ran out — a test that printed its
         # failing assertion and then hung, or a build that logged its error before stalling, has already
@@ -114,24 +136,25 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> str:
             return v if isinstance(v, str) else v.decode("utf-8", "replace")
         partial = (_txt(e.stdout) + _txt(e.stderr)).strip()
         note = f"[exec timed out after {int(e.timeout)}s]"
-        return f"{note}\n{partial}" if partial else note
+        return ToolResult(f"{note}\n{partial}" if partial else note, bool(partial))
     except OSError as e:
-        return f"[exec failed to launch: {e}]"
+        return _nothing(f"[exec failed to launch: {e}]")
 
 
-def _read_file(args: dict, cwd: str) -> str:
+def _read_file(args: dict, cwd: str) -> ToolResult:
     path = args.get("path") or args.get("file_path") or ""
     if not path:
-        return "[read_file error: no path]"
+        return _nothing("[read_file error: no path]")
     import os
     full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
     try:
         with open(full, encoding="utf-8", errors="replace") as fh:
             # Full file — the section the planner must modify may be past any fixed clip. The
             # context floor bounds the window losslessly-first if this file is large.
-            return fh.read()
+            body = fh.read()
+        return ToolResult(body, bool(body.strip()))
     except OSError as e:
-        return f"[read_file error: {e}]"
+        return _nothing(f"[read_file error: {e}]")
 
 
 # A conservative ALLOW-LIST for the planner's read-only shell (reject anything else).
@@ -235,10 +258,10 @@ def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str 
 
 # ------------------------------------------------------------------ web fetch / search
 
-def _web_fetch(args: dict, facts: dict | None = None) -> str:
+def _web_fetch(args: dict, facts: dict | None = None) -> ToolResult:
     url = str(args.get("url") or "").strip()
     if not url:
-        return "[web_fetch error: no url]"
+        return _nothing("[web_fetch error: no url]")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": brave.USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -250,26 +273,9 @@ def _web_fetch(args: dict, facts: dict | None = None) -> str:
             # Full decoded body (already bounded by the 512KB socket read above) — the endpoint /
             # signature the planner needs may be past any fixed char clip. The context floor
             # reduces it MIME-aware + losslessly-first if it's large for the window.
-            return f"HTTP {status} · {final}\n{body}"
+            return ToolResult(f"HTTP {status} · {final}\n{body}", True)
     except Exception as e:  # network, TLS, decode — surface the cause, don't crash the gather
-        return f"[web_fetch error: {e}]"
-
-
-# The no-content results this module itself emits. Kept here, next to the code that produces them, so
-# the check below is a module recognising its OWN output rather than keyword-matching free text.
-NO_CONTENT_PREFIXES = ("[no output]", "[no command given]", "[web_fetch error", "[read_file error",
-                       "[web_search error")
-
-
-def result_is_substantive(text: str) -> bool:
-    """Did this tool call actually return anything to LEARN from?
-
-    Measured (run 0727-090143): in an empty workspace the planner ran `ls -la` and `find` — both
-    returned nothing — and that counted as having researched, so it drafted from memory and invented
-    `/resolve?handle={handle}`. Two calls that returned no bytes are not research. Judged against the
-    no-content strings this module emits, never by reading the content itself."""
-    t = (text or "").strip()
-    return bool(t) and not t.startswith(NO_CONTENT_PREFIXES)
+        return _nothing(f"[web_fetch error: {e}]")
 
 
 def _record_fetch(facts: dict | None, url: str, status, body: str, content_type) -> None:
@@ -295,19 +301,19 @@ def _record_fetch(facts: dict | None, url: str, status, body: str, content_type)
     facts[url] = (f"HTTP {status}", ", ".join(routes), "; ".join(fields))
 
 
-def _web_search(args: dict, search_key: str, recent: list) -> str:
+def _web_search(args: dict, search_key: str, recent: list) -> ToolResult:
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
-        return "[web_search error: no query]"
+        return _nothing("[web_search error: no query]")
     blocked = gate_search(recent, query)  # the 400 hard-nudge on a repeat
     if blocked is not None:
-        return blocked
+        return _nothing(blocked)          # a refusal of a repeat returns no NEW information
     if not (search_key or "").strip():
-        return prompts.load_map("planner_steers")["no_search_key"]
+        return _nothing(prompts.load_map("planner_steers")["no_search_key"])
     try:
-        return format_results(query, brave_search(search_key, query, _SEARCH_COUNT))
+        return ToolResult(format_results(query, brave_search(search_key, query, _SEARCH_COUNT)), True)
     except Exception as e:
-        return f"[web_search error: {e}]"
+        return _nothing(f"[web_search error: {e}]")
 
 
 def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:

@@ -108,7 +108,7 @@ class SearchFormatTests(unittest.TestCase):
 
     def test_no_key_web_search_is_graceful(self):
         # gate proceeds (records), then the missing key is reported — no network, no crash
-        msg = pt.execute_tool("web_search", {"query": "x y z"}, ".", "", [], _Rlog())
+        msg = pt.execute_tool("web_search", {"query": "x y z"}, ".", "", [], _Rlog()).text
         self.assertIn("no search API key", msg)
 
 
@@ -152,13 +152,43 @@ class WebFetchUserAgentTests(unittest.TestCase):
         orig = pt.urllib.request.urlopen
         pt.urllib.request.urlopen = fake_urlopen
         try:
-            out = pt._web_fetch({"url": "https://api.handle.me/openapi.json"})
+            out = pt._web_fetch({"url": "https://api.handle.me/openapi.json"}).text
         finally:
             pt.urllib.request.urlopen = orig
 
         self.assertNotIn("is not defined", out)        # the NameError no longer leaks into the result
         self.assertIn("HTTP 200", out)                 # the real response is surfaced
         self.assertEqual(captured["ua"], pt.brave.USER_AGENT)  # a defined, canonical browser UA was sent
+
+
+class ToolResultLearnedTests(unittest.TestCase):
+    """Each gather tool STATES whether its call returned anything to learn from. The planner's
+    research phase reads that flag; it must never have to infer it by reading the text back."""
+
+    def test_a_command_that_prints_nothing_taught_nothing(self):
+        # MEASURED (run 0727-090143): an empty workspace answered `ls -la` and `find` with nothing,
+        # two calls counted as "it researched", and the planner drafted from memory and invented
+        # `/resolve?handle={handle}` — which the coder then built and 404'd.
+        import tempfile
+        ws = tempfile.mkdtemp()
+        self.assertFalse(pt.execute_tool("exec_command", {"cmd": "true"}, ws, "", [], _Rlog()).learned)
+        self.assertTrue(pt.execute_tool("exec_command", {"cmd": "echo real output"}, ws, "", [],
+                                        _Rlog()).learned)
+
+    def test_errors_and_refusals_taught_nothing(self):
+        import tempfile
+        ws = tempfile.mkdtemp()
+        self.assertFalse(pt.execute_tool("read_file", {"path": "nope.txt"}, ws, "", [], _Rlog()).learned)
+        self.assertFalse(pt.execute_tool("web_fetch", {"url": ""}, ws, "", [], _Rlog()).learned)
+        self.assertFalse(pt.execute_tool("web_search", {"query": "x"}, ws, "", [], _Rlog()).learned)
+        self.assertFalse(pt.execute_tool("no_such_tool", {}, ws, "", [], _Rlog()).learned)
+
+    def test_a_file_that_opened_taught_something(self):
+        import os, tempfile
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "spec.txt"), "w") as fh:
+            fh.write("GET /handles/{handle}\n")
+        self.assertTrue(pt.execute_tool("read_file", {"path": "spec.txt"}, d, "", [], _Rlog()).learned)
 
 
 class FreshWorkspaceTests(unittest.TestCase):
@@ -169,7 +199,7 @@ class FreshWorkspaceTests(unittest.TestCase):
         import tempfile
         scratch = tempfile.mkdtemp()
         out = pt.execute_tool("exec_command", {"cmd": "echo hi"}, "/no/such/workspace", "", [],
-                              _Rlog(), scratch=scratch)
+                              _Rlog(), scratch=scratch).text
         self.assertNotIn("failed to launch", out)
         self.assertIn("does not exist yet", out)
         self.assertIn("FRESH build", out)
@@ -178,7 +208,7 @@ class FreshWorkspaceTests(unittest.TestCase):
         import tempfile, os
         ws = tempfile.mkdtemp()
         open(os.path.join(ws, "marker.txt"), "w").write("x")
-        out = pt.execute_tool("exec_command", {"cmd": "ls"}, ws, "", [], _Rlog())
+        out = pt.execute_tool("exec_command", {"cmd": "ls"}, ws, "", [], _Rlog()).text
         self.assertIn("marker.txt", out)
         self.assertNotIn("does not exist yet", out)
 
@@ -191,14 +221,14 @@ class FullContentTests(unittest.TestCase):
         import tempfile, os
         d = tempfile.mkdtemp()
         open(os.path.join(d, "big.py"), "w").write("A" * 20000 + "NEEDLE_AT_END")
-        out = pt.execute_tool("read_file", {"path": "big.py"}, d, "", [], _Rlog())
+        out = pt.execute_tool("read_file", {"path": "big.py"}, d, "", [], _Rlog()).text
         self.assertIn("NEEDLE_AT_END", out)          # the tail survives (was cut at 8000)
         self.assertNotIn("truncated at", out)         # no clip marker
         self.assertGreaterEqual(len(out), 20000)
 
     def test_exec_command_returns_full_output_past_old_clip(self):
         out = pt.execute_tool("exec_command",
-                              {"cmd": "python3 -c \"print('X'*20000 + 'TAILMATCH')\""}, ".", "", [], _Rlog())
+                              {"cmd": "python3 -c \"print('X'*20000 + 'TAILMATCH')\""}, ".", "", [], _Rlog()).text
         self.assertIn("TAILMATCH", out)               # the last line survives (was cut at 8000)
         self.assertNotIn("truncated at", out)
 
@@ -223,7 +253,7 @@ class FullContentTests(unittest.TestCase):
         orig = pt.urllib.request.urlopen
         pt.urllib.request.urlopen = lambda req, timeout=None: _Resp()
         try:
-            out = pt._web_fetch({"url": "https://x/api"})
+            out = pt._web_fetch({"url": "https://x/api"}).text
         finally:
             pt.urllib.request.urlopen = orig
         self.assertIn("ENDPOINT_SIGNATURE", out)      # the signature past 6000 survives
@@ -244,7 +274,7 @@ class SearchCountTests(unittest.TestCase):
         orig = pt.brave_search
         pt.brave_search = fake_brave
         try:
-            out = pt.execute_tool("web_search", {"query": "some unique query terms"}, ".", "KEY", [], _Rlog())
+            out = pt.execute_tool("web_search", {"query": "some unique query terms"}, ".", "KEY", [], _Rlog()).text
         finally:
             pt.brave_search = orig
         self.assertEqual(captured["count"], 20)       # asked for the full set, not 5

@@ -552,9 +552,9 @@ class Planner:
                     # "Looked" means something came BACK, not that a call was made: in an empty
                     # workspace `ls`/`find` return nothing, and counting those as research let the
                     # planner draft from memory and invent an endpoint.
-                    looked = looked or planner_tools.result_is_substantive(result)
+                    looked = looked or result.learned
                     rlog.emit("plan.gather", tool=name)
-                    messages.append({"role": "tool", "tool_call_id": cid, "content": result})
+                    messages.append({"role": "tool", "tool_call_id": cid, "content": result.text})
             if rounds >= self._max_rounds:
                 rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
             # ---- PHASE B: DRAFT, from what the research actually found.
@@ -580,8 +580,9 @@ class Planner:
 
         RETRY IN PLACE if it calls something else, rather than discarding the research and
         re-gathering next turn (the amnesia loop)."""
-        messages = messages + [{"role": "user", "content": prompts.render(
-            "plan_evidence", facts=_facts_digest(facts), task=task)}] if facts else messages
+        if facts:
+            messages = messages + [{"role": "user", "content": prompts.render(
+                "plan_evidence", facts=_facts_digest(facts), task=task)}]
         challenged = False  # an ungrounded-route plan is handed back at most ONCE (never wedge)
         for attempt in range(_MAX_FINAL_RETRIES):
             msg = self._reason(messages, rlog, plan_only=True)
