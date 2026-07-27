@@ -62,3 +62,28 @@ class JsonTextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DuplicateKeyTests(unittest.TestCase):
+    """`json.loads` keeps the LAST value when a key repeats, which for model output is usually the
+    wrong one: a small model emits its real answer first and a degenerate echo after. Measured (run
+    0727-121457): a planner emitted `{"steps":[<five real steps>],"steps":[1,2,3,4,5]}` and stdlib
+    semantics threw the plan away, handing the coder steps named "1", "2", "3". This lives in
+    jsontext because EVERY model-produced payload is parsed here — verdicts, tool arguments, plans —
+    so the quirk is handled once rather than wherever the symptom happens to surface."""
+
+    def test_repeated_key_keeps_the_first_real_value(self):
+        from cria.jsontext import loads
+        self.assertEqual(loads('{"steps":["real","plan"],"steps":[1,2]}')["steps"], ["real", "plan"])
+
+    def test_an_empty_first_value_does_not_shadow_a_real_one(self):
+        from cria.jsontext import loads
+        self.assertEqual(loads('{"missing":[],"missing":["the tests"]}')["missing"], ["the tests"])
+
+    def test_verdict_readers_get_it_too(self):
+        from cria.jsontext import extract_json_object
+        self.assertEqual(extract_json_object('{"missing":[],"missing":["x"]}')["missing"], ["x"])
+
+    def test_tool_arguments_get_it_too(self):
+        from cria.toolargs import parse_args
+        self.assertEqual(parse_args('{"path":"real.py","path":""}')["path"], "real.py")

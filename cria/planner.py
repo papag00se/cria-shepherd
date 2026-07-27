@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from . import massage, planner_tools, prompts, urlgrounding
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
-from .jsontext import extract_json_object, strip_think
+from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
 from .plan import Plan, PlanItem
 
 _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
@@ -66,19 +66,12 @@ def _candidate_step_lists(args) -> list[list]:
         return [v] if isinstance(v, list) else []
     if not isinstance(args, str):
         return []
-    found: list[list] = []
-
-    def keep_dupes(pairs):
-        for k, v in pairs:
-            if k == "steps" and isinstance(v, list):
-                found.append(v)
-        return dict(pairs)
-
     try:
-        json.loads(args, object_pairs_hook=keep_dupes)
+        obj = jsontext_loads(args)          # THE model-JSON parser: repeated keys resolve first-non-empty
     except (json.JSONDecodeError, ValueError):
         return []
-    return found
+    v = obj.get("steps") if isinstance(obj, dict) else None
+    return [v] if isinstance(v, list) else []
 
 
 def _steps_from_submit(msg: dict) -> list[str] | None:

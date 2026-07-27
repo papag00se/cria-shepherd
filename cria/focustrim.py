@@ -38,6 +38,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from . import jsontext
 from . import probegate, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -93,7 +94,7 @@ def _fingerprint(tc: dict) -> tuple[str, str]:
     name = str(fn.get("name", ""))
     args = fn.get("arguments")
     try:
-        parsed = json.loads(args) if isinstance(args, str) else args
+        parsed = jsontext.loads(args) if isinstance(args, str) else args
         norm = json.dumps(parsed, sort_keys=True, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError, ValueError):
         norm = str(args).strip()
@@ -142,7 +143,7 @@ def _tried_label(tc: dict) -> str:
     name = str(fn.get("name", ""))
     args = fn.get("arguments")
     try:
-        d = json.loads(args) if isinstance(args, str) else args
+        d = jsontext.loads(args) if isinstance(args, str) else args
         detail = d.get("cmd") or d.get("command") or d.get("path") or json.dumps(d, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
         detail = str(args)

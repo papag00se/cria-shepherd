@@ -16,6 +16,7 @@ import json
 import re
 import uuid
 
+from . import jsontext
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
 from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
@@ -114,7 +115,7 @@ def _recover_fused_call(raw: str) -> dict | None:
     head = raw[:cut].strip()
     for cand in (head, head.replace('\\"', '"').replace("\\'", "'")):
         try:
-            obj = json.loads(cand)
+            obj = jsontext.loads(cand)
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict):
@@ -384,7 +385,7 @@ def add_file_to_write_file(completion: dict, rlog=None) -> dict:
             if fn.get("name") != "apply_patch":
                 continue
             try:
-                args = json.loads(fn.get("arguments", "{}"))
+                args = jsontext.loads(fn.get("arguments", "{}"))
             except json.JSONDecodeError:
                 continue
             body = args.get("input") or args.get("patch")
@@ -946,7 +947,7 @@ def _content_truncated(fn: dict) -> bool:
     if fn.get("name") not in ("write_file", "create_file"):
         return False
     try:
-        args = json.loads(fn.get("arguments") or "", strict=False)
+        args = jsontext.loads(fn.get("arguments") or "", strict=False)
     except (json.JSONDecodeError, ValueError):
         return False
     if not isinstance(args, dict):
@@ -1003,7 +1004,7 @@ def normalize_apply_patch(completion: dict, rlog=None) -> dict:
             if fn.get("name") != "apply_patch":
                 continue
             try:
-                args = json.loads(fn.get("arguments", "{}"))
+                args = jsontext.loads(fn.get("arguments", "{}"))
             except json.JSONDecodeError:
                 continue
             key = "input" if "input" in args else ("patch" if "patch" in args else None)

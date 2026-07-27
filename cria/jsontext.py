@@ -45,6 +45,30 @@ def extract_json_object(text: str) -> dict | None:
     return _scan_object(cleaned)
 
 
+def _first_wins(pairs):
+    """Resolve a REPEATED key to its first non-empty value, not its last.
+
+    `json.loads` keeps the LAST occurrence, which is arbitrary and — for model output — usually the
+    wrong one: a small model that repeats a key emits its real answer first and a degenerate echo
+    after. Measured (run 0727-121457) a planner emitted `{"steps":[<five real steps>],"steps":[1,2,3,4,5]}`
+    and stdlib semantics threw the plan away, handing the coder steps named "1", "2", "3".
+    Empty-first is skipped so `{"missing":[], "missing":["the tests"]}` still reports the tests."""
+    out = {}
+    for k, v in pairs:
+        if k in out and (out[k] or not v):
+            continue          # keep the earlier value unless it was empty and this one is not
+        out[k] = v
+    return out
+
+
+def loads(text: str, *, strict: bool = True):
+    """THE parser for JSON a MODEL produced. Every such payload — a judge's verdict, a tool call's
+    arguments, a submitted plan — goes through here rather than `json.loads`, so a quirk only has to
+    be handled once. Currently: repeated keys resolve first-non-empty (see :func:`_first_wins`).
+    Raises like `json.loads`; callers that want a soft failure catch it."""
+    return json.loads(text, object_pairs_hook=_first_wins, strict=strict)
+
+
 def _scan_object(s: str) -> dict | None:
     """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
     start = s.find("{")
@@ -52,7 +76,7 @@ def _scan_object(s: str) -> dict | None:
         span = _balanced_object(s, start)
         if span is not None:
             try:
-                obj = json.loads(span)
+                obj = loads(span)
             except json.JSONDecodeError:
                 obj = None
             if isinstance(obj, dict):

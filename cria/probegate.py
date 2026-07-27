@@ -31,6 +31,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 
+from . import jsontext
 from . import probeparse, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -292,7 +293,7 @@ def _strip_command_plumbing(m: dict) -> dict:
         raw = fn.get("arguments")
         if isinstance(raw, str) and SECTION_PREFIX in raw:
             try:
-                a = json.loads(raw)
+                a = jsontext.loads(raw)
             except (ValueError, TypeError):
                 a = None
             if isinstance(a, dict):

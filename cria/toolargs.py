@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+from . import jsontext
+
 # The file-path aliases a tool call may use, in preference order. Shared so the plain-dict
 # extraction (`tool_path`) and the raw-regex extractors (for truncated JSON, in loop/massage)
 # agree on the set.
@@ -27,7 +29,7 @@ def parse_args(args) -> dict:
         except (TypeError, ValueError):
             return {}
     try:
-        d = json.loads(args, strict=False)
+        d = jsontext.loads(args, strict=False)   # THE model-JSON parser (repeated keys → first non-empty)
     except (json.JSONDecodeError, ValueError):
         return {}
     return d if isinstance(d, dict) else {}
