@@ -606,6 +606,44 @@ class GateTests(unittest.TestCase):
         # the clearance is per query — a DIFFERENT re-hunt is still refused
         self.assertIsNotNone(wf.gate_search("s1", visible))
 
+    def test_a_spilled_doc_is_not_refetched_after_the_result_is_compacted_away(self):
+        # MEASURED (live run 0727-104845): the coder fetched a 154KB docs page, cria saved it IN FULL
+        # to ./tmp/read-only/ and said "do NOT re-fetch the whole url" — then the harness compacted
+        # that result out of the conversation, the repeat guard went quiet because it keys on
+        # visibility, and the coder re-fetched the SAME url 19 times.
+        # Visibility is the right gate for an ordinary fetch (if the result is gone, let it fetch
+        # again) and the WRONG gate for a spilled one: the document is not gone, it is on disk.
+        big = json.dumps({"paths": {f"/p{i}": {"get": {"summary": "x" * 200}} for i in range(600)}})
+        self.assertGreater(len(big), wf.OVERSIZE_CHARS)      # genuinely bigger than one page
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", big, False)
+        try:
+            # Tested at the REAL boundary — the lowered shell command the model receives — because
+            # writeproxy DISCARDS fetch_nav's text on a plain fetch and re-spills from the cache. A
+            # guard proved only at fetch_nav would be inert in production (cf. the raw-honours-find
+            # fix, green at the inner function and never reached by a caller that nulled find first).
+            from cria import writeproxy
+            url = "https://docs.example.com/big"
+
+            def lower(**kw):
+                comp = {"choices": [{"message": {"tool_calls": [{"id": "t1", "type": "function",
+                        "function": {"name": "web_fetch", "arguments": json.dumps({"url": url, **kw})}}]}}]}
+                writeproxy.translate_outbound(comp, {"name": "shell", "parameters": {}},
+                                              injected={"web_fetch"}, session="sp1")
+                return json.dumps(comp["choices"][0]["message"]["tool_calls"][0])
+
+            first = lower()
+            self.assertIn("cp ", first)                           # first time: the doc is written out
+            wf.set_visible("sp1", [], [])                         # compaction: nothing visible now
+            again = lower()
+            self.assertIn(wf._spill_name(url), again)             # re-pointed at the file it has
+            self.assertNotIn("cp ", again)                        # ...not copied over itself again
+            self.assertLess(len(again), len(first))
+            # ...but a TARGETED read is navigation, not a re-fetch, and must still be answered
+            self.assertNotIn(wf._spill_name(url), lower(find="/p42"))
+        finally:
+            wf.fetch = orig
+
     def test_a_clearance_permits_one_run_not_a_standing_pass(self):
         # THE REGRESSION (live run 0727-103922): the clearance was permanent for the session, so a
         # query judged a new direction ONCE could then be re-run forever — the coder issued the

@@ -218,6 +218,9 @@ _SEARCH_SPILLED: dict[str, set] = {}
 # Queries a reasoner has judged a genuinely NEW direction rather than a re-hunt (`allow_search`), so
 # the word-overlap trigger does not refuse them.
 _SEARCH_ALLOWED: dict[str, set] = {}
+# Urls whose document cria WROTE to a file in the workspace. That file outlives the conversation, so
+# a plain re-fetch of the url is answered with the file's name rather than the document again.
+_FETCH_SPILLED: dict[str, set] = {}
 _GATE_CAP = 256
 
 
@@ -228,6 +231,7 @@ def clear_cache() -> None:
     _SEARCH_SEEN.clear()
     _SEARCH_SPILLED.clear()
     _SEARCH_ALLOWED.clear()
+    _FETCH_SPILLED.clear()
 
 
 # --- OVERSIZED docs: spill to a file the model can grep, instead of a low-signal page-1 -------------
@@ -456,6 +460,19 @@ def _pad4(k):
     return tuple(k) + (False,) if len(k) == 3 else tuple(k)
 
 
+def note_fetch_spill(session: Optional[str], url: str) -> None:
+    """Record that cria WROTE this url's document to a file in the workspace.
+
+    Recorded by the caller that actually issues the spill, so this is a fact about what cria did, not
+    an inference from the cache being large."""
+    if session and (url or "").strip():
+        _FETCH_SPILLED.setdefault(session, set()).add(url.strip())
+
+
+def already_spilled(session: Optional[str], url: str) -> bool:
+    return bool(session) and (url or "").strip() in _FETCH_SPILLED.get(session, ())
+
+
 def note_search_spill(session: Optional[str], query: str) -> None:
     """Record that cria SPILLED this query's results to a file — the only warrant for later telling the
     model to go read that file. Set by the synthetic Brave path; a harness-native search never sets it."""
@@ -597,6 +614,16 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
         cursor = None
     external = not is_internal_url(url)
     seen_key = (url, find or "", cursor or "", bool(raw))
+    # A SPILLED doc is durable, so visibility is the wrong gate for it. The rule below refuses only
+    # while the earlier result is still in the conversation — right for an ordinary fetch, since a
+    # compacted-away result is genuinely gone. But when the doc was too big to inline, cria wrote it
+    # to a FILE and told the model so ("saved it IN FULL to … do NOT re-fetch the whole url"). That
+    # file survives the compaction. Measured (run 0727-104845): the coder fetched a 154KB docs page,
+    # the harness compacted the result away, the guard fell silent, and it re-fetched the same url
+    # NINETEEN times. Only a whole-doc re-fetch is refused — a `find=` is navigation into the doc and
+    # is answered normally, which is the whole point of having spilled it.
+    if session and external and not find and not cursor and already_spilled(session, url):
+        return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):

@@ -441,10 +441,16 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw)
     # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
     # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
-    if find is None and cursor is None:
+    # …but only the FIRST time. Once cria has written the doc to the workspace that file outlives the
+    # conversation, so a later plain re-fetch is answered with the file's name (fetch_nav's refusal,
+    # already in `result`) instead of copying the same document over itself. Measured (run
+    # 0727-104845): a 154KB docs page re-fetched NINETEEN times after the harness compacted the first
+    # result away — each one re-spilling and burning a turn.
+    if find is None and cursor is None and not webfetch.already_spilled(session, str(url)):
         spill = webfetch.oversized_spill(str(url))
         if spill:
             _status, target, content, msg = spill
+            webfetch.note_fetch_spill(session, str(url))
             return _spill_command(target, content, msg)
     return f"printf %s {_qbash(result)}"
 
