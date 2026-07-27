@@ -445,6 +445,104 @@ class GatherLoopTests(unittest.TestCase):
         self.assertIn("/handles/{handle}", digest)
         self.assertIn("GET → holder", digest)
 
+class UnreadHostTests(unittest.TestCase):
+    """A plan can be built against a host nobody ever READ. Code gathers the discrepancy — hosts the
+    plan names, minus hosts a 2xx fetch actually returned — and ONE reasoner call decides whether the
+    work really depends on reading them. Measured (run 0727-090143): the planner listed an empty git
+    repo, that counted as research, and it drafted against `api.handle.me` having never fetched it,
+    inventing `/resolve?handle=` which the coder then built and 404'd."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_unread_hosts_are_the_named_ones_minus_the_fetched_ones(self):
+        from cria.planner import _unread_hosts
+        task = "resolve a handle with api.handle.me and link docs.example.com in the README"
+        facts = {"https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", "")}
+        steps = ["Call api.handle.me to resolve the handle", "Link to docs.example.com in the README"]
+        self.assertEqual(_unread_hosts(steps, facts, task), ["docs.example.com"])  # the fetched one is gone
+
+    def test_a_host_the_request_named_but_nobody_read_is_a_candidate(self):
+        # THE SEMANTIC POINT: a host counts as grounded only when something came BACK from it. Being
+        # named — by the user's own request — is what creates the dependency, not what satisfies it.
+        from cria.planner import _unread_hosts
+        self.assertEqual(_unread_hosts(["resolve it using api.handle.me"], {},
+                                       "resolve a handle using api.handle.me"), ["api.handle.me"])
+
+    def test_filenames_in_a_plan_do_not_spend_a_reasoner_call(self):
+        # The host pattern is over-inclusive by design (`fib.py`, `README.md` match it), and plans name
+        # files constantly — so the candidate must ALSO be named in the REQUEST. Otherwise nearly every
+        # plan would buy a reasoner call to be told NONE.
+        from cria.planner import _unread_hosts
+        steps = ["Write fib.py", "Add test_fib.py", "Add README.md with usage"]
+        self.assertEqual(_unread_hosts(steps, {}, "write a fibonacci module with tests"), [])
+
+    def test_reasoner_says_it_must_be_read_so_the_plan_is_handed_back_once(self):
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked at the workspace"}),   # PHASE A
+            _tool_resp("submit_plan", {"steps": ["Write a script that calls api.handle.me to resolve a handle"]}),
+            _content_resp("api.handle.me"),          # the host judge: yes, this must be read
+            _tool_resp("submit_plan", {"steps": ["Fetch the spec from api.handle.me, then write the script"]}),
+            _content_resp("NONE"),                   # the noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an ada handle using the Ada Handles API (api.handle.me)"), rlog)
+        self.assertIn("plan.host_unread", [k for k, _ in rlog.events])
+        self.assertIn("Fetch the spec", plan.items[0].text)          # the re-draft is what landed
+        self.assertTrue(any("has read" in str(m.get("content"))
+                            for b in prov.bodies for m in b["messages"]))
+
+    def test_reasoner_says_no_so_nothing_fires(self):
+        # A README link, a package registry, a git remote — named but not depended on. No challenge,
+        # and no lexical exception list needed to know that.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": ["Add a README linking to docs.example.com"]}),
+            _content_resp("NONE"),                   # the host judge: nothing needs reading
+            _content_resp("NONE"),                   # the noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("write docs, link docs.example.com"), rlog)
+        self.assertNotIn("plan.host_unread", [k for k, _ in rlog.events])
+        self.assertIn("docs.example.com", plan.items[0].text)        # accepted untouched
+
+    def test_a_host_that_was_fetched_costs_no_reasoner_call_at_all(self):
+        # Zero cost when there is no discrepancy: the deterministic half found nothing to ask about.
+        from cria.planner import _unread_hosts
+        facts = {"https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", "")}
+        self.assertEqual(_unread_hosts(["call api.handle.me for the handle"], facts,
+                                       "resolve with api.handle.me"), [])
+
+    def test_prose_answer_takes_the_safe_null(self):
+        # Strict parse, same posture as the noise judge: anything that is not a clean list of the
+        # candidates drops to "challenge nothing". cria never hands a plan back on a guess.
+        from cria.planner import _parse_unread_verdict
+        cands = ["api.handle.me", "docs.example.com"]
+        self.assertEqual(_parse_unread_verdict("api.handle.me", cands), ["api.handle.me"])
+        self.assertEqual(_parse_unread_verdict("NONE", cands), [])
+        self.assertEqual(_parse_unread_verdict("I think api.handle.me is needed here", cands), [])
+        self.assertEqual(_parse_unread_verdict("some.other.host", cands), [])
+        self.assertEqual(_parse_unread_verdict("", cands), [])
+
+    def test_no_reasoner_means_no_judgment(self):
+        from cria.planner import _unread_hosts
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": ["Call api.handle.me"]}),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("t"), rlog)                        # no role → no reasoner → no challenge
+        self.assertNotIn("plan.host_unread", [k for k, _ in rlog.events])
+        self.assertEqual(len(plan.items), 1)
+
+
+class GatherEvidenceTests(unittest.TestCase):
     def test_gather_evidence_excludes_the_models_own_turns(self):
         # The honesty of the whole check: a route the planner merely GUESSED at in its own
         # web_fetch(url=…) call must not appear in the "evidence" and ground itself.

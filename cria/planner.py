@@ -17,6 +17,7 @@ import re
 import shutil
 import tempfile
 import threading
+import urllib.parse
 from datetime import datetime, timezone
 
 from . import massage, planner_tools, prompts, urlgrounding
@@ -262,6 +263,58 @@ def _numbered_with_details(lines: list[str]) -> list[str]:
     return [c for s in steps if (c := _clean_step(s))]
 
 
+# A host-shaped name: dot-separated labels ending in a letters-only suffix. Deliberately
+# OVER-inclusive — `fib.py` and `README.md` match it too. This is the GATHER half, and its job is to
+# hand the reasoner every candidate; deciding which of them the work actually depends on reading is
+# the JUDGE's, and a filename is answered NONE without cria owning a list of what looks like a file.
+_HOST_SHAPED = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b", re.I)
+
+
+def _unread_hosts(steps: list[str], facts: dict, task: str = "") -> list[str]:
+    """Host-shaped names that BOTH the request and the plan use, and that this session never READ.
+
+    The discrepancy is deterministic: named in the request AND carried into the plan, minus every host
+    a 2xx fetch really returned (``facts``). A host counts as read only when something came back from
+    it — being NAMED is not evidence of anything, which is the whole point: the user writing
+    "api.handle.me" in their request is what creates the dependency, not what satisfies it.
+
+    Requiring it in the REQUEST is what keeps this from firing on every plan. The pattern is
+    over-inclusive by design (`fib.py` and `README.md` are host-shaped too), and a plan mentions
+    filenames constantly — so matching on the plan alone would spend a reasoner call on almost every
+    task. A service the WORK depends on is one the person asking named; a route the planner invented
+    on its own is already covered by the URL-grounding check.
+
+    Measured (run 0727-090143): the planner listed an empty git repo, that counted as research, and it
+    drafted against `api.handle.me` — named in the request, never fetched — inventing
+    `/resolve?handle={handle}`, which the coder built and 404'd."""
+    read = set()
+    for url in facts:
+        try:
+            host = urllib.parse.urlsplit(url).netloc.lower()
+        except ValueError:
+            continue
+        if host:
+            read.add(host)
+    asked = {h.lower() for h in _HOST_SHAPED.findall(task or "")}
+    named = {h.lower() for h in _HOST_SHAPED.findall("\n".join(steps))}
+    return sorted((named & asked) - read)
+
+
+def _parse_unread_verdict(ans: str, candidates: list[str]) -> list[str]:
+    """A host-judge reply → the candidates it says must be read. STRICT, same posture as the noise
+    judge's step-number parse: only a clean list of the candidate names counts. NONE, prose, or any
+    token that was not offered takes the safe null (challenge nothing) — cria never hands a plan back
+    on a guess, and a reasoner that answers in sentences must not have its nouns mined for a verdict."""
+    text = (ans or "").strip().strip(".")
+    if not text or re.fullmatch(r"(?i)none", text):
+        return []
+    parts = [p.strip().lower().strip(",.") for p in re.split(r"[,\s]+", text) if p.strip()]
+    allowed = {c.lower() for c in candidates}
+    if not parts or any(p not in allowed for p in parts):
+        return []
+    return sorted(set(parts))
+
+
 def _facts_digest(facts: dict) -> str:
     """The research findings as a few compact lines — one per source that actually returned, with the
     routes and response fields the shared spec extractors found in it. Rendered from the RECORDED
@@ -467,6 +520,25 @@ class Planner:
             content = self._role.clean_content(content)
         return content.strip()
 
+    def _hosts_needing_read(self, task: str, steps: list[str], facts: dict, rlog) -> list[str]:
+        """Which hosts the plan names, but never read, does the work actually DEPEND on reading?
+
+        Deterministic code gathers the discrepancy; ONE reasoner call judges it. The judgment is
+        genuinely a judgment — `api.handle.me` in "call it to resolve a handle" must be read, while
+        `example.com` in "link to it from the README" need not be, and no lexical rule separates
+        those without an exception list that would be wrong on its first unseen case (principles #8,
+        the tell). Costs NOTHING when there is nothing to ask about: no unread host, no call. No
+        reasoner configured → no judgment, exactly like the noise judge."""
+        candidates = _unread_hosts(steps, facts, task)
+        if not candidates or self._role is None:
+            return []
+        ans = strip_think(self._ask(
+            prompts.load("plan_host_unread"),
+            prompts.render("plan_host_unread_user", task=task, hosts="\n".join(candidates),
+                           plan="\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))),
+            rlog) or "")
+        return _parse_unread_verdict(ans, candidates)
+
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
         reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
@@ -607,6 +679,21 @@ class Planner:
                         {"role": "user", "content": prompts.fill(
                             prompts.load_map("planner_steers")["submit_ungrounded"],
                             urls=", ".join(bad))}]
+                    continue
+                # A plan can be built against a host nobody ever READ — no invented route to catch,
+                # just an assumption about what that host returns. Code finds the discrepancy (named
+                # minus fetched); ONE reasoner call decides whether the work actually depends on
+                # reading them, which is what keeps a README link or a package registry from drawing
+                # a pointless challenge without cria owning a list of what counts as incidental.
+                need = [] if challenged else self._hosts_needing_read(task, steps, facts, rlog)
+                if need:
+                    challenged = True
+                    rlog.emit("plan.host_unread", hosts=",".join(need))
+                    messages = messages + [
+                        {"role": "assistant", "content": msg.get("content") or None},
+                        {"role": "user", "content": prompts.fill(
+                            prompts.load_map("planner_steers")["host_unread"],
+                            hosts=", ".join(need))}]
                     continue
                 if attempt:
                     rlog.emit("plan.final_recovered", attempt=attempt + 1)
