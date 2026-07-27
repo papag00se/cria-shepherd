@@ -31,6 +31,12 @@ _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
 # (No "you've gathered enough, stop investigating" prose — that message was useless and jarring;
 # the tool constraint is the whole instruction.)
 _MAX_FINAL_RETRIES = 3
+# Output budget for ONE targeted judge question. Matches the shared `summarize` primitive: a reasoning
+# model spends this budget THINKING before it writes a word, so a small cap does not buy a short answer
+# — it buys NO answer. At 2000 the noise judge reasoned its way to the right verdict and was cut off
+# mid-sentence with finish_reason=length and zero content, and the plan it should have corrected was
+# accepted whole.
+ASK_MAX_TOKENS = 8192
 # How many times ONE draft may be handed back for a fresh problem. Two, so a plan challenged for an
 # invented route can still be challenged for missing every deliverable — and no more, so this can
 # never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its
@@ -525,19 +531,42 @@ class Planner:
         """One targeted, single-shot reasoner question → its cleaned text answer ("" on any failure).
         A weak model judges a narrow binary ("does the task name an API?", "does the plan research?")
         far more reliably than a keyword regex reads it out of prose — this is the "reasoner JUDGES,
-        code ACTS" path. Toolless, low max_tokens; the caller parses YES/NO or a bare token."""
-        body = {"temperature": 0, "stream": False, "max_tokens": 2000,
-                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user}]}
+        code ACTS" path. Toolless; the caller parses YES/NO or a bare token.
+
+        The budget is ASK_MAX_TOKENS, not the 2000 it used to be: a reasoning model spends the budget
+        THINKING before it writes anything, so too small a cap means it never reaches the verdict.
+        Measured (run 0727-114502, call 0028): `finish_reason: length`, `completion_tokens: 2000` —
+        the cap exactly — 8,865 characters of reasoning and ZERO content. It had already reached the
+        right answer in that reasoning ("we should remove any steps that are just environment setup.
+        Thus steps to remove: 1 (installation)") and was cut off mid-sentence before it could say so,
+        and a plan opening with `pip install` and `venv` was accepted whole.
+
+        An empty answer is indistinguishable from "nothing to report", so the judgement is skipped
+        silently — hence the emit below: a skipped judgement must show up in the record rather than
+        looking like a clean verdict. (Deliberately NOT a reasoning-off retry: that is a second call
+        papering over a budget that was simply too small, and it throws away reasoning that had
+        already arrived at the answer.)"""
+        body = {"temperature": 0, "stream": False, "max_tokens": ASK_MAX_TOKENS,
+                "messages": [{"role": "system", "content": system_prompt},
+                             {"role": "user", "content": user}]}
         if self._role is not None:
             self._role.apply(body)
         try:
-            msg = _assistant_message_obj(json.loads(self._provider.chat(body, rlog)))
+            comp = json.loads(self._provider.chat(body, rlog))
+            msg = _assistant_message_obj(comp)
         except Exception:  # noqa: BLE001 - any upstream/parse failure → let the caller fall back
             return ""
         content = strip_think(msg.get("content") or "")
         if self._role is not None:
             content = self._role.clean_content(content)
-        return content.strip()
+        content = content.strip()
+        if not content:
+            fin = ((comp.get("choices") or [{}])[0]).get("finish_reason")
+            rlog.emit("plan.ask_no_answer", level="warn", finish=fin,
+                      used=(comp.get("usage") or {}).get("completion_tokens"))
+        return content
+
+        return once(False) or once(True)
 
     def _hosts_needing_read(self, task: str, steps: list[str], facts: dict, rlog) -> list[str]:
         """Which hosts the plan names, but never read, does the work actually DEPEND on reading?

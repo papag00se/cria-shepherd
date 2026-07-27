@@ -978,6 +978,27 @@ class NoiseStepDropTests(unittest.TestCase):
         self.assertTrue(any("README.md" in t for t in texts))              # the DOCS step survives
         self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
+    def test_a_judge_question_gets_room_to_answer_after_reasoning(self):
+        # MEASURED (run 0727-114502, call 0028): finish_reason=length, completion_tokens=2000 — the
+        # cap exactly — 8,865 chars of reasoning and ZERO content. A reasoning model spends the budget
+        # THINKING before it writes anything, so a small cap does not buy a short answer, it buys NO
+        # answer: the judge had already reached "steps to remove: 1 (installation)" and was cut off
+        # before it could say so, and a plan opening with `pip install` and `venv` was accepted whole.
+        from cria.planner import ASK_MAX_TOKENS
+        from cria.loop import summarize   # the sibling primitive this must not undercut
+        import inspect
+        sibling = inspect.signature(summarize).parameters["max_tokens"].default
+        self.assertGreaterEqual(ASK_MAX_TOKENS, sibling)
+
+    def test_an_unanswered_judge_question_is_recorded_not_silent(self):
+        # An empty answer is indistinguishable from "nothing to report" — every caller safe-nulls on
+        # it — so a judgement that never happened must leave a trace instead of looking like a clean
+        # verdict. That silence is why the cap went unnoticed.
+        prov = _ScriptedProvider([_content_resp("")])
+        rlog = _Rlog()
+        Planner(prov, role=self._role(), clock=lambda: _FIXED)._ask("sys", "usr", rlog)
+        self.assertIn("plan.ask_no_answer", [k for k, _ in rlog.events])
+
     def test_no_reasoner_drops_nothing(self):
         # reasoner-only: without a role cria does NOT classify steps — the plan is used exactly as drafted
         # (no keyword-regex fallback). The basic no-role plan_for path is covered here.
