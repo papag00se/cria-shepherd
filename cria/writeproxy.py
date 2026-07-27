@@ -100,8 +100,15 @@ _SENTINEL_LINE = re.compile(r"#\s*" + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)
 # Heredoc terminator — the payload rides on stdin, so there is NO arg-size limit (no chunking). Both
 # the write and edit commands are python heredocs (they share the validate-before-lower syntax check).
 _HD_PY = "__CRIA_PY_EOF__"
-# A per-write temp suffix keeps the write atomic (write temp, then mv over the target).
-_TMP_SUFFIX = ".cria-tmp"
+# A per-write temp suffix keeps the write atomic (write temp, then mv over the target). The temp is
+# removed on ANY failure: `os.replace` onto a directory raises, and the file used to survive — measured
+# (run 0727-161325), 1,089 bytes of the model's code were left at
+# `/home/jesse/src/<workspace>.cria-tmp`, a SIBLING of the workspace, because `Path("<ws>/.")`
+# normalizes to `<ws>` and `str(p) + suffix` then lands one level UP. The dirguard had checked the
+# MODEL's path (`<ws>/.`, legitimately inside); the temp path cria derived from it was never
+# re-checked. A directory target is now refused before any temp exists, which removes the escape at
+# its source; the cleanup covers every other way a write can fail.
+_TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
 # A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
 # both look blank) would be reported to the model as "Wrote {path}" (false success).
@@ -273,10 +280,17 @@ raw=base64.b64decode('{content}')
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
     sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after))
+if p.is_dir():
+    sys.exit(base64.b64decode('{isdir}').decode().replace('%%NAME%%',str(p)))
 p.parent.mkdir(parents=True,exist_ok=True)
 tmp=str(p)+'{suffix}'
-pathlib.Path(tmp).write_bytes(raw)
-os.replace(tmp,str(p))
+try:
+    pathlib.Path(tmp).write_bytes(raw)
+    os.replace(tmp,str(p))
+except BaseException:
+    try: os.unlink(tmp)
+    except OSError: pass
+    raise
 print('{wrote}')
 '''
 
@@ -287,7 +301,8 @@ def _write_command(path: str, content: str) -> str:
     leaves a half-written file. No arg-size limit / no chunking — the content rides in the heredoc."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX, wrote=_WROTE,
-                                           refused=_b64(prompts.load("write_refused")))
+                                           refused=_b64(prompts.load("write_refused")),
+                                           isdir=_b64(prompts.load("write_isdir")))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 

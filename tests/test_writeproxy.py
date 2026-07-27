@@ -838,3 +838,50 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
                     f.unlink()
             again = self._lower(ws)
         self.assertNotIn("You already fetched", again)
+
+
+class WriteTempEscapesWorkspaceTests(unittest.TestCase):
+    """cria's atomic write is `tmp = str(p) + SUFFIX` then `os.replace(tmp, p)`. When the model aims a
+    write at a DIRECTORY — measured (run 0727-161325), the plan step read "Write resolve_handle.py in
+    /home/jesse/src/ada-goal-run-0727-161500/." and the coder took the trailing `/.` as the target —
+    `Path('<ws>/.')` normalizes to `<ws>`, so the temp path lands ONE LEVEL UP, outside the workspace.
+
+    That really happened: 1,089 bytes of the model's resolver were written to
+    `/home/jesse/src/ada-goal-run-0727-161500.cria-tmp`, a sibling of the workspace in the user's
+    ~/src. The dirguard had checked the MODEL's path (`<ws>/.`, legitimately inside); the temp path
+    cria derived from it afterwards was never re-checked. `os.replace` onto a directory then fails,
+    so the escaped file is also left behind — a second leftover was still sitting in another run's
+    workspace hours later.
+
+    A directory target is refused outright, and any temp is removed on failure."""
+
+    def _run_write(self, path: str, content: str = "print(1)\n"):
+        """Execute the REAL generated write program — the same python cria lowers to the harness."""
+        import base64, re, subprocess
+        from cria.writeproxy import _write_command
+        cmd = _write_command(path, content)
+        m = re.search(r"python3 - <<'__CRIA_PY_EOF__'\n(.*?)\n__CRIA_PY_EOF__", cmd, re.S)
+        self.assertIsNotNone(m, "could not extract the write program")
+        return subprocess.run(["python3", "-c", m.group(1)], capture_output=True, text=True)
+
+    def test_a_write_aimed_at_a_directory_creates_nothing_outside_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            ws = pathlib.Path(root) / "workspace"
+            ws.mkdir()
+            self._run_write(str(ws) + "/.")
+            strays = [p.name for p in pathlib.Path(root).iterdir() if p.name != "workspace"]
+            self.assertEqual(strays, [], f"cria wrote outside the workspace: {strays}")
+
+    def test_a_write_aimed_at_a_directory_leaves_no_temp_inside_either(self):
+        with tempfile.TemporaryDirectory() as root:
+            ws = pathlib.Path(root) / "workspace"
+            ws.mkdir()
+            self._run_write(str(ws))
+            self.assertEqual([p.name for p in ws.iterdir()], [])
+
+    def test_an_ordinary_write_still_works(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = pathlib.Path(root) / "x.py"
+            self._run_write(str(target), "print('hi')\n")
+            self.assertEqual(target.read_text(), "print('hi')\n")
+            self.assertEqual([p.name for p in pathlib.Path(root).iterdir()], ["x.py"])

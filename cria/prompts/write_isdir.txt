@@ -1,0 +1,1 @@
+[YOUR LAST WRITE WAS REFUSED] `%%NAME%%` is a DIRECTORY, not a file — nothing was written. A path ending in `/` or `/.` names the folder itself. Re-send write_file with the full path INCLUDING the filename you want, e.g. `<that folder>/your_file.py`.
