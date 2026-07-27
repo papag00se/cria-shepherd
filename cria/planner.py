@@ -262,6 +262,22 @@ def _numbered_with_details(lines: list[str]) -> list[str]:
     return [c for s in steps if (c := _clean_step(s))]
 
 
+def _facts_digest(facts: dict) -> str:
+    """The research findings as a few compact lines — one per source that actually returned, with the
+    routes and response fields the shared spec extractors found in it. Rendered from the RECORDED
+    result of each fetch, never re-derived from the model's prose, and only ever for a 2xx: this is a
+    restatement of ground truth, so a failed fetch contributes nothing."""
+    lines = []
+    for url, entry in facts.items():
+        status, routes, fields = (tuple(entry) + ("", ""))[:3]
+        lines.append(f"- {url} → {status}")
+        if routes:
+            lines.append(f"    routes it defines: {routes}")
+        if fields:
+            lines.append(f"    response fields: {fields}")
+    return "\n".join(lines)
+
+
 def _gather_evidence(messages: list[dict]) -> str:
     """What the gather actually SAW — the seed/task turns and every tool RESULT, never the model's own
     assistant turns. Excluding its own turns is what makes the grounding check honest: a route it merely
@@ -373,6 +389,7 @@ class Planner:
                 return None
         cwd = _extract_cwd(messages)
         self._retriable_failure = False
+        self._gather_facts = {}   # reset per draft: last run's findings are not this run's evidence
         steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work, rewrite_summary=rewrite_summary)
         # A weak model sometimes drafts an EMPTY / unparseable plan (observed: the reasoner returned just
         # "\n" → no plan → the whole coding session fell to the UNGUARDED proxy and stopped silently). It's
@@ -425,6 +442,9 @@ class Planner:
             task=task,
             created=self._clock().isoformat(timespec="seconds"),
             items=items,
+            # What the research READ travels with the plan, so the coder starts knowing the real
+            # routes instead of rediscovering (or inventing) them. See Plan.gather_facts.
+            gather_facts=dict(getattr(self, "_gather_facts", None) or {}),
         )
         rlog.emit("plan.drafted", id=plan.id, steps=len(steps))
         return plan
@@ -479,43 +499,38 @@ class Planner:
         messages: list[dict] = [{"role": "user", "content": seed}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
         seen_sigs: set[str] = set()
-        challenged = False  # an ungrounded-route plan is handed back at most ONCE (never wedge)
+        facts: dict = {}      # url -> (status, routes, fields) the RESEARCH really read (Plan.gather_facts)
+        looked = False        # did any round actually call a tool? (the research floor, nudged once)
+        nudged = False
         # An ephemeral scratchpad the gather may WRITE to (persist + process fetched data across
         # rounds) — in cria's OWN tmp, never the workspace (no-pollution), torn down after.
         scratch = tempfile.mkdtemp(prefix="cria-gather-")
         try:
-            for _round in range(self._max_rounds):
-                msg = self._reason(messages, rlog, gather=True)  # gather tools + submit_plan
+            # ---- PHASE A: RESEARCH. `submit_plan` is NOT offered, so the planner CANNOT draft
+            # before it has looked — the forced research step is enforced by the tool menu, not by
+            # asking. (Prose asking for research-first was already in plan.txt and was ignored: 3 of
+            # 4 measured runs planned having read no real source.) Ends when it stops calling tools.
+            rounds = 0
+            while rounds < self._max_rounds:
+                msg = self._reason(messages, rlog, research=True)
                 if msg is None:
                     return None
                 calls = _tool_calls(msg)
-                if not calls:  # no tool call → the content IS the plan
-                    return self._parse(msg, rlog)
-                steps = _steps_from_submit(msg)  # the model ended the gather by SUBMITTING its plan
-                if steps:
-                    # The coder follows the plan VERBATIM, so a route the gather never actually saw
-                    # becomes a shipped bug. Measured: a plan submitted after 17 real fetch rounds
-                    # opened with "send a POST request to the resolve endpoint at
-                    # https://api.handle.me/resolve" — a host the gather had only ever seen in search
-                    # results, and a route it had seen nowhere. Hand that back ONCE, as a proper tool
-                    # result so the protocol stays well-formed, and let it gather more and resubmit.
-                    # Once only, and never a rewrite: challenging forever would wedge the session, and
-                    # editing the step would be cria authoring a plan (which it does not do).
-                    bad = [] if challenged else urlgrounding.ungrounded_urls(
-                        "\n".join(steps), _gather_evidence(messages))
-                    if not bad:
-                        rlog.emit("plan.submitted", steps=len(steps))
-                        return steps
-                    challenged = True
-                    rlog.emit("plan.submit_ungrounded", urls=",".join(bad))
-                    messages.append({"role": "assistant", "content": msg.get("content") or None,
-                                     "tool_calls": msg["tool_calls"]})
-                    for cid, _name, _args in calls:
-                        messages.append({"role": "tool", "tool_call_id": cid,
-                                         "content": prompts.fill(
-                                             prompts.load_map("planner_steers")["submit_ungrounded"],
-                                             urls=", ".join(bad))})
+                if not calls:
+                    if looked or nudged:
+                        break            # done looking → draft from what it found
+                    # It went to plan without opening anything (measured: one run's planner made ZERO
+                    # tool calls and drafted "perform a web search…" as step 1). ONE nudge to look
+                    # first. It gets its own iteration rather than a gather round — a round spent on
+                    # a nudge is a read not taken — and `nudged` bounds it to exactly one.
+                    nudged = True
+                    rlog.emit("plan.research_nudge")
+                    messages.append({"role": "assistant", "content": msg.get("content") or None})
+                    messages.append({"role": "user",
+                                     "content": prompts.load_map("planner_steers")["research_first"]})
                     continue
+                looked = True
+                rounds += 1
                 sig = _calls_signature(calls)
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
                 # one `tool` result per call. NOT flattened to prose (the parroting trap).
@@ -533,19 +548,38 @@ class Planner:
                     continue
                 seen_sigs.add(sig)
                 for cid, name, args in calls:
-                    result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches, rlog, scratch=scratch)
+                    result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches,
+                                                        rlog, scratch=scratch, facts=facts)
                     rlog.emit("plan.gather", tool=name)
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result})
-            rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
-            return self._final_plan(messages, rlog)
+            if rounds >= self._max_rounds:
+                rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
+            # ---- PHASE B: DRAFT, from what the research actually found.
+            self._gather_facts = dict(facts)
+            return self._draft_plan(messages, task, facts, rlog)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def _final_plan(self, messages: list[dict], rlog) -> list[str] | None:
-        """The gather hit the round cap without the model submitting. Offer ONLY submit_plan (the
-        gather tools are gone), so its one move is to hand over the plan — no prose telling it to
-        stop. RETRY IN PLACE (the gather stays in ``messages``) if it calls something else, rather
-        than discarding it and re-gathering next turn (the amnesia loop)."""
+    def _draft_plan(self, messages: list[dict], task: str, facts: dict, rlog) -> list[str] | None:
+        """PHASE B — draft the plan from what the research found. Offer ONLY submit_plan (the gather
+        tools are gone), so its one move is to hand over the plan.
+
+        The research findings are re-stated as a COMPACT DIGEST in the final user turn, alongside the
+        original ask. Both halves are load-bearing. The raw transcript is not enough on its own: it is
+        tens of KB of fetched bodies in which the one line that matters appears once, and the context
+        floor drops the OLDEST turns first, so by drafting time the successful-fetch headers can be
+        gone. Measured (run 0726-221401): the planner fetched the real spec at gather call 4, the
+        `HTTP 200 ·` header for it was floored out by call 10, and the plan it drafted at call 14
+        named no endpoint at all. The digest rides in the LAST turn, which the floor drops LAST.
+
+        The full transcript is still kept underneath — the digest is an ADDITION, never a
+        replacement (a summary standing in for what the model really read is the substitution class).
+
+        RETRY IN PLACE if it calls something else, rather than discarding the research and
+        re-gathering next turn (the amnesia loop)."""
+        messages = messages + [{"role": "user", "content": prompts.render(
+            "plan_evidence", facts=_facts_digest(facts), task=task)}] if facts else messages
+        challenged = False  # an ungrounded-route plan is handed back at most ONCE (never wedge)
         for attempt in range(_MAX_FINAL_RETRIES):
             msg = self._reason(messages, rlog, plan_only=True)
             if msg is None:
@@ -553,17 +587,41 @@ class Planner:
                 return None
             steps = _steps_from_submit(msg) or self._parse(msg, rlog)  # the tool call, else any text
             if steps:
+                # The coder follows the plan VERBATIM, so a route the research never saw becomes a
+                # shipped bug. Measured: a plan drafted after 17 real fetch rounds opened with "send a
+                # POST request to the resolve endpoint at https://api.handle.me/resolve" — a host the
+                # gather had only seen in search results, a route it had seen nowhere. Hand it back
+                # ONCE and let it draft again. Never a rewrite (that would be cria authoring a plan)
+                # and never twice (that would wedge): a drafter that insists gets its plan.
+                bad = [] if challenged else urlgrounding.ungrounded_urls(
+                    "\n".join(steps), _gather_evidence(messages))
+                if bad:
+                    challenged = True
+                    rlog.emit("plan.submit_ungrounded", urls=",".join(bad))
+                    messages = messages + [
+                        {"role": "assistant", "content": msg.get("content") or None},
+                        {"role": "user", "content": prompts.fill(
+                            prompts.load_map("planner_steers")["submit_ungrounded"],
+                            urls=", ".join(bad))}]
+                    continue
                 if attempt:
                     rlog.emit("plan.final_recovered", attempt=attempt + 1)
+                rlog.emit("plan.submitted", steps=len(steps))
                 return steps
+            leaked = [((tc.get("function") or {}).get("name")) for tc in (msg.get("tool_calls") or [])]
+            if not leaked:
+                # PROSE that doesn't parse — a genuine no-plan verdict, not a tool-protocol slip.
+                # Hand it straight back so plan_for re-drafts (PLAN_RETRIES) and then NEGATIVELY
+                # CACHES an unplannable task; retrying in place would multiply the same failure and,
+                # by ending in the retriable branch below, keep the planner re-called every turn.
+                return None
             # Called something OTHER than submit_plan (e.g. a hallucinated `CreateNewProject`) →
             # retry. Log WHAT it called so the record shows it (not just "no plan").
-            leaked = [((tc.get("function") or {}).get("name")) for tc in (msg.get("tool_calls") or [])]
-            rlog.emit("plan.final_retry", attempt=attempt + 1, called=leaked or "(no tool call)")
+            rlog.emit("plan.final_retry", attempt=attempt + 1, called=leaked)
         self._retriable_failure = True  # still no plan after retries — retriable, never poison-cache
         return None
 
-    def _reason(self, messages: list[dict], rlog, *, gather: bool = False, plan_only: bool = False) -> dict | None:
+    def _reason(self, messages: list[dict], rlog, *, research: bool = False, plan_only: bool = False) -> dict | None:
         body: dict = {
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
@@ -575,8 +633,12 @@ class Planner:
         }
         if self._role is not None:
             self._role.apply(body)
-        if gather:  # investigate OR submit — the model ends the gather by submitting, not by force
-            body["tools"] = planner_tools.PLANNER_TOOLS + [_SUBMIT_PLAN_TOOL]
+        if research:
+            # RESEARCH phase: the read-only tools ONLY — `submit_plan` is deliberately absent, so the
+            # planner cannot draft before it has looked. The tool menu is the enforcement; the prose
+            # version of this rule lived in plan.txt and was ignored (3 of 4 measured runs drafted
+            # having read no real source, and two of those shipped an invented endpoint).
+            body["tools"] = planner_tools.PLANNER_TOOLS
         elif plan_only:
             body["tools"] = [_SUBMIT_PLAN_TOOL]  # the ONLY move: submit the plan as a tool call
         try:

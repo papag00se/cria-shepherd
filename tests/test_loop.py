@@ -422,6 +422,35 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         self.assertIn("/handles/{handle}", anchor["content"])        # the real endpoint the coder must code against
         self.assertIn("openapi.json", anchor["content"])
 
+    def test_the_planners_research_reaches_the_coder_from_turn_one(self):
+        # THE MEASURED LOSS (run 0726-221401): the PLANNER fetched the real spec at gather call 4 —
+        # `/handles/{handle}` and `/holders/{address}` — and those findings died with the gather
+        # transcript. The plan named no endpoint, so the coder started from nothing, invented
+        # `/handle/{handle}`, and 404'd. cria HAD the ground truth and dropped it on the floor.
+        # A plan's research findings now seed the durable ledger, so the anchor carries them from the
+        # coder's very first turn — no fetch of its own required.
+        from cria.loop import _fetched_facts_anchor
+        from cria.plan import Plan, PlanItem
+        plan = Plan(id="p1", task="resolve an ada handle", created="2026-07-27T00:00:00",
+                    items=[PlanItem(text="write the resolver")],
+                    gather_facts={"https://api.handle.me/openapi.json":
+                                  ("HTTP 200", "/handles/{handle}, /holders/{address}",
+                                   "GET /handles/{handle} → holder, resolved_addresses{ada}")})
+        anchor = _fetched_facts_anchor(PlanSession(plan=plan))
+        self.assertIsNotNone(anchor, "the planner's findings must survive into the coder's context")
+        self.assertIn("/handles/{handle}", anchor["content"])
+        self.assertIn("/holders/{address}", anchor["content"])   # the 2nd call it never knew it needed
+        self.assertIn("resolved_addresses", anchor["content"])   # and the fields it kept guessing
+
+    def test_a_plan_whose_research_fetched_nothing_seeds_nothing(self):
+        # GENERAL, not overfit: a local chore whose planner read no external source seeds an empty
+        # ledger and injects nothing. Silence beats noise.
+        from cria.loop import _fetched_facts_anchor
+        from cria.plan import Plan, PlanItem
+        plan = Plan(id="p2", task="rename a function", created="2026-07-27T00:00:00",
+                    items=[PlanItem(text="rename it")])
+        self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=plan)))
+
     def test_no_anchor_when_no_fetches(self):
         # a task with no web_fetch (a bash/git chore) → empty ledger → nothing injected. GENERAL, not overfit
         # to the API case: the anchor exists only because a real source was fetched.

@@ -1,0 +1,10 @@
+WHAT YOUR RESEARCH ACTUALLY RETURNED (the real results of the reads you just made — every route and
+field below came out of a source you fetched, none of it is a guess):
+{{FACTS}}
+
+Plan against exactly these. Do not name a route, an operation, or a field that is not above — if the
+work needs something you never found, make the step READ the source for it rather than naming one.
+Where the facts show the work takes more than one call, the plan must say so.
+
+NOW WRITE THE PLAN FOR THIS REQUEST:
+{{TASK}}

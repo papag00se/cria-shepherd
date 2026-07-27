@@ -227,6 +227,18 @@ class PlanSession(GuardState):
     recent_reasoning: list[str] = field(default_factory=list)  # coder's last FLAIL_WINDOW reasonings (flail detector)
     last_flail_drive: int = -100  # drive_count at the last flail diagnosis (cooldown gate)
 
+    def __post_init__(self) -> None:
+        # SEED the durable fetch ledger with what the PLANNER's research already read. Those facts
+        # were being thrown away with the gather transcript: measured (run 0726-221401) the planner
+        # had fetched the real spec — `/handles/{handle}` and `/holders/{address}` — and the coder,
+        # never shown them, invented `/handle/{handle}` and 404'd. Seeding here rather than at the
+        # four PlanSession call sites so no construction path can miss it. Purely additive: the
+        # ⟦ctx:facts⟧ anchor that renders these already exists, and a task whose planner fetched
+        # nothing seeds nothing.
+        facts = dict(getattr(self.plan, "gather_facts", None) or {})
+        if facts:
+            self.fetched_pages = _merge_fetches(dict(self.fetched_pages or {}), facts)
+
 
 # GROUND-TRUTH gate: composed per verification by probegate.plan_gate (syntax floor +
 # repo-discovered top probe + top TEST probe + git snapshot), run BY THE HARNESS, and

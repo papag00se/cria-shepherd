@@ -52,6 +52,12 @@ class Plan:
     created: str
     status: str = "in_progress"  # in_progress | done
     items: list[PlanItem] = field(default_factory=list)
+    # What the PLANNER's research actually read: url -> (status, routes, fields), the same tuple the
+    # coder-side durable fetch ledger holds, so it seeds that ledger and the coder starts knowing the
+    # real routes instead of rediscovering (or inventing) them. In-memory only — deliberately NOT in
+    # to_markdown/parse: the mirror is a human-readable record of the plan, not a fact store, and a
+    # round-tripped copy must never look like a fetch the coder itself made.
+    gather_facts: dict = field(default_factory=dict)
 
     def current(self) -> PlanItem | None:
         """The first not-yet-done step — the one to hand the coder next."""

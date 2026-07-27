@@ -51,6 +51,12 @@ def _content_resp(text):
 
 _FIXED = datetime(2026, 7, 7, 0, 45, 12, tzinfo=timezone.utc)
 
+# Reasoner calls one draft costs when the model never calls a tool: the RESEARCH turn, the one
+# research nudge ("look before planning"), then the DRAFT turn. Planning is two phases — research
+# with the gather tools, then drafting with submit_plan — so a model that plans blind is asked once
+# to look first. Tests assert in multiples of this rather than hard-coding a total.
+_CALLS_PER_BLIND_DRAFT = 3
+
 
 def _planner(content: str) -> Planner:
     return Planner(_Provider(content), clock=lambda: _FIXED)
@@ -152,7 +158,8 @@ class PlannerTests(unittest.TestCase):
         for it in plan1.items:          # simulate the loop completing the whole plan
             it.done = True
         plan2 = planner.plan_for(_msgs("same task"), _Rlog())
-        self.assertEqual(p.calls, 2, "re-planned fresh, not served from a positive cache")
+        self.assertEqual(p.calls, 2 * _CALLS_PER_BLIND_DRAFT,
+                         "re-planned fresh, not served from a positive cache")
         self.assertIsNot(plan2, plan1, "a distinct plan object")
         self.assertTrue(all(not it.done for it in plan2.items), "fresh plan is all not-done")
 
@@ -163,9 +170,10 @@ class PlannerTests(unittest.TestCase):
         p = _Provider("write some code, good luck")  # no parseable plan
         planner = Planner(p, clock=lambda: _FIXED)
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
-        self.assertEqual(p.calls, 1 + PLAN_RETRIES, "first plan_for retries the unparseable draft")
+        drafts = (1 + PLAN_RETRIES) * _CALLS_PER_BLIND_DRAFT
+        self.assertEqual(p.calls, drafts, "first plan_for retries the unparseable draft")
         self.assertIsNone(planner.plan_for(_msgs("bad task"), _Rlog()))
-        self.assertEqual(p.calls, 1 + PLAN_RETRIES, "then negatively cached — no further reasoner calls")
+        self.assertEqual(p.calls, drafts, "then negatively cached — no further reasoner calls")
 
     def test_empty_draft_is_retried_then_lands(self):
         # A weak model draws an empty/unparseable plan non-deterministically; re-draft within PLAN_RETRIES
@@ -223,7 +231,8 @@ class RewriteSeedTests(unittest.TestCase):
 
 class GatherLoopTests(unittest.TestCase):
     def test_investigates_with_a_tool_then_plans(self):
-        # round 1: the reasoner calls a tool (investigate). round 2: no tool call → the plan.
+        # PHASE A round 1: the reasoner calls a tool (investigate). Round 2: no tool call → done
+        # looking. PHASE B: the drafting call returns the plan.
         prov = _ScriptedProvider([
             _tool_resp("web_search", {"query": "api.handle.me docs"}),   # search_key="" → graceful result
             _content_resp("1. Fetch api.handle.me\n2. Write handler.py\n3. Run tests"),
@@ -231,11 +240,42 @@ class GatherLoopTests(unittest.TestCase):
         plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
             _msgs("build an ada handle resolver"), _Rlog())
         self.assertEqual(len(plan.items), 3)
-        self.assertEqual(prov.calls, 2)  # one gather round + one plan
+        self.assertEqual(prov.calls, 3)  # research round + end-of-research turn + the drafting call
         # the tool round-trip was fed back as PROTOCOL on the 2nd call (assistant tool_calls + tool result)
         second = prov.bodies[1]["messages"]
         self.assertTrue(any(m.get("role") == "assistant" and m.get("tool_calls") for m in second))
         self.assertTrue(any(m.get("role") == "tool" for m in second))
+
+    def test_research_phase_is_not_offered_the_submit_tool(self):
+        # THE ENFORCEMENT (measured: 3 of 4 runs drafted a plan having read no real source, and two of
+        # those shipped an invented endpoint). "Research first" was prose in plan.txt and was ignored,
+        # so it is now structural: while researching, submit_plan is not on the menu — the planner
+        # CANNOT draft before it has looked. Only the drafting call may submit.
+        prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "docs"}),
+            _content_resp("1. a\n2. b"),
+        ])
+        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("build it"), _Rlog())
+        research_tools = [f["function"]["name"] for f in prov.bodies[0]["tools"]]
+        self.assertNotIn("submit_plan", research_tools)
+        self.assertIn("web_fetch", research_tools)          # ...but the read-only tools ARE there
+        draft_tools = [f["function"]["name"] for f in prov.bodies[-1]["tools"]]
+        self.assertEqual(draft_tools, ["submit_plan"])      # the drafting call: submit, nothing else
+
+    def test_planner_that_opens_nothing_is_asked_once_to_look_first(self):
+        # A planner that calls NO tool at all has planned blind (measured: one run's planner made zero
+        # tool calls and drafted "perform a web search…" as step 1). It gets ONE nudge to look, and
+        # only one — a task with nothing to read must not be badgered, and the nudge must not eat a
+        # gather round.
+        prov = _ScriptedProvider([_content_resp("1. write it\n2. test it")])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("do a chore"), rlog)
+        nudges = [k for k, _ in rlog.events if k == "plan.research_nudge"]
+        self.assertEqual(len(nudges), 1)                       # exactly one, never a loop
+        self.assertEqual(len(plan.items), 2)                   # and it still gets its plan
+        self.assertTrue(any("LOOK" in str(m.get("content")) for b in prov.bodies
+                            for m in b["messages"] if m.get("role") == "user"))
 
     def test_tools_offered_on_gather_but_off_when_forced(self):
         prov = _ScriptedProvider([_content_resp("1. a\n2. b")])  # plans immediately, no tool call
@@ -286,57 +326,101 @@ class GatherLoopTests(unittest.TestCase):
         self.assertIn("CreateNewProject", str(retries[0].get("called")))  # the leak is in the record
         self.assertIn("plan.retriable", [k for k, _ in rlog.events])       # retriable, not cached
 
-    def test_plan_naming_a_route_the_gather_never_saw_is_handed_back_once(self):
+    # The research these three do is a local `echo` of a spec fragment, not a live fetch: it grounds
+    # the evidence exactly the same way (it is a real tool result the gather read) without making the
+    # suite depend on a network round-trip to a third-party host.
+    _SPEC_ECHO = {"cmd": "echo 'https://api.handle.me/openapi.json paths: /handles/{handle}: get: a handle'"}
+
+    def test_plan_naming_a_route_the_research_never_saw_is_handed_back_once(self):
         # MEASURED: after 17 real fetch rounds the planner submitted "send a POST request to the
         # resolve endpoint at https://api.handle.me/resolve" — a host it had only seen in search
         # results and a route it had seen NOWHERE. The coder follows the plan verbatim, built to it,
-        # got a 404, and thrashed. Hand it back ONCE as a proper tool result and keep gathering.
+        # got a 404, and thrashed. Hand it back ONCE and let it draft again.
         prov = _ScriptedProvider([
-            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
+            _tool_resp("exec_command", self._SPEC_ECHO),                      # PHASE A: research
             _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve with the handle",
                                                  "2. write tests"]}),
             _tool_resp("submit_plan", {"steps": ["1. GET https://api.handle.me/handles/{handle}",
                                                  "2. write tests"]}),
         ])
         rlog = _Rlog()
-        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
             _msgs("resolve an ada handle"), rlog)
         self.assertIn("plan.submit_ungrounded", [k for k, _ in rlog.events])
         self.assertIn("/resolve", str([kw for k, kw in rlog.events if k == "plan.submit_ungrounded"]))
-        # it re-submitted a grounded plan, and THAT is what was accepted
+        # it re-drafted a grounded plan, and THAT is what was accepted
         self.assertIn("/handles/", plan.items[0].text)
         self.assertNotIn("/resolve", plan.items[0].text)
-        # the challenge reached the model as a well-formed tool result
-        challenged = next(b for b in prov.bodies
-                          if any("nothing you fetched" in str(m.get("content")) for m in b["messages"]))
-        self.assertTrue(any(m.get("role") == "tool" and "nothing you fetched" in str(m.get("content"))
-                            for m in challenged["messages"]))
+        # the challenge reached the model, naming what was ungrounded
+        self.assertTrue(any("nothing you fetched" in str(m.get("content"))
+                            for b in prov.bodies for m in b["messages"]))
 
     def test_ungrounded_plan_is_challenged_only_once_never_wedges(self):
         # A planner that insists gets its plan anyway — cria never wedges the session on this, and
         # never rewrites the step itself (authoring a plan is not cria's job).
         prov = _ScriptedProvider([
-            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
+            _tool_resp("exec_command", self._SPEC_ECHO),
             _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
             _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
         ])
         rlog = _Rlog()
-        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("t"), rlog)
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("t"), rlog)
         self.assertEqual(len([k for k, _ in rlog.events if k == "plan.submit_ungrounded"]), 1)
         self.assertIn("/resolve", plan.items[0].text)   # accepted as drafted, not deleted or edited
 
-    def test_route_the_gather_really_read_is_accepted_untouched(self):
-        # The other half: a plan whose route the gather actually saw sails through. This guard tests
+    def test_route_the_research_really_read_is_accepted_untouched(self):
+        # The other half: a plan whose route the research actually saw sails through. This guard tests
         # for INVENTION, not novelty — a grounded plan must never pay for it.
         prov = _ScriptedProvider([
-            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
-            _tool_resp("submit_plan", {"steps": ["1. GET https://api.handle.me/swagger/swagger.yml first",
+            _tool_resp("exec_command", self._SPEC_ECHO),
+            _tool_resp("submit_plan", {"steps": ["1. GET https://api.handle.me/handles/{handle}",
                                                  "2. write the script"]}),
         ])
         rlog = _Rlog()
-        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("t"), rlog)
+        plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
+            _msgs("t"), rlog)
         self.assertNotIn("plan.submit_ungrounded", [k for k, _ in rlog.events])
         self.assertEqual(len(plan.items), 2)
+
+    def test_research_findings_travel_with_the_plan(self):
+        # THE MEASURED LOSS (run 0726-221401): at gather call 4 the planner held the REAL spec —
+        # `/handles/{handle}` and `/holders/{address}`, the two endpoints that task needs — and the
+        # findings died with the gather transcript. The plan named no endpoint, the coder was never
+        # shown the routes, invented `/handle/{handle}`, and 404'd. cria had the ground truth in hand.
+        # A fetch's routes/fields must now ride out on the plan.
+        import cria.planner_tools as pt
+        facts = {}
+        spec = _json.dumps({"paths": {"/handles/{handle}": {"get": {}},
+                                      "/holders/{address}": {"get": {}}}})
+        pt._record_fetch(facts, "https://api.handle.me/openapi.json", 200, spec, "application/json")
+        self.assertIn("https://api.handle.me/openapi.json", facts)
+        status, routes, _fields = facts["https://api.handle.me/openapi.json"]
+        self.assertEqual(status, "HTTP 200")
+        self.assertIn("/handles/{handle}", routes)      # the exact route the coder kept inventing
+        self.assertIn("/holders/{address}", routes)     # ...and the second call it never knew it needed
+
+    def test_a_failed_fetch_records_nothing(self):
+        # A fetch that failed proved NOTHING. Restating a 404 as a fact is how a hallucinated endpoint
+        # became "ground truth" once already — only a 2xx may enter the record.
+        import cria.planner_tools as pt
+        facts = {}
+        pt._record_fetch(facts, "https://api.handle.me/resolve", 404, "not found", "text/plain")
+        pt._record_fetch(facts, "https://api.handle.me/ok", 200, "{}", "application/json")
+        self.assertNotIn("https://api.handle.me/resolve", facts)
+        self.assertIn("https://api.handle.me/ok", facts)
+
+    def test_drafting_call_restates_the_findings_in_the_last_turn(self):
+        # The raw transcript is not enough on its own: it is tens of KB of fetched bodies in which the
+        # one line that matters appears once, and the context floor drops the OLDEST turns first — in
+        # the measured run the successful-fetch header was floored out before drafting. The digest
+        # rides in the LAST turn, which the floor drops LAST. It is an ADDITION: the transcript stays.
+        from cria.planner import _facts_digest
+        digest = _facts_digest({"https://api.handle.me/openapi.json":
+                                ("HTTP 200", "/handles/{handle}, /holders/{address}", "GET → holder")})
+        self.assertIn("https://api.handle.me/openapi.json", digest)
+        self.assertIn("/handles/{handle}", digest)
+        self.assertIn("GET → holder", digest)
 
     def test_gather_evidence_excludes_the_models_own_turns(self):
         # The honesty of the whole check: a route the planner merely GUESSED at in its own
@@ -540,6 +624,7 @@ class NoiseStepDropTests(unittest.TestCase):
 
     def test_reasoner_drops_a_plumbing_step_and_keeps_real_work(self):
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Set up the development environment and install dependencies.\n'
                           '2. Write the fibonacci module fib.py.\n3. Add unit tests in test_fib.py.'),  # plan
             _content_resp('1'),        # NOISE? drop step 1 (pure plumbing)
@@ -556,6 +641,7 @@ class NoiseStepDropTests(unittest.TestCase):
 
     def test_reasoner_drops_a_bare_shell_command_step(self):
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp("1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
                           "2. Write resolver.py that calls the endpoint the spec names\n3. Add unit tests"),
             _content_resp('1'),        # NOISE? drop the bare grep command
@@ -570,6 +656,7 @@ class NoiseStepDropTests(unittest.TestCase):
 
     def test_reasoner_drops_a_baked_code_step(self):
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp("1. Create tests/test_x.py with content 'import sys, json, mock, requests; def test(): ...'\n"
                           "2. Write resolver.py"),
             _content_resp('1'),        # NOISE? drop the step that dictates literal code
@@ -584,6 +671,7 @@ class NoiseStepDropTests(unittest.TestCase):
 
     def test_all_noise_plan_is_never_emptied(self):
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Set up the development environment.\n2. Install the dependencies.'),
             _content_resp('1, 2'),     # NOISE? both — but cria never empties the plan
             _content_resp('NONE'),
@@ -610,6 +698,7 @@ class NoiseStepDropTests(unittest.TestCase):
 
     def test_NONE_answer_drops_nothing(self):
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Write fib.py.\n2. Add tests.'),
             _content_resp('NONE'),     # NOISE? none
             _content_resp('NONE'),     # which API? none
@@ -632,6 +721,7 @@ class NoiseStepDropTests(unittest.TestCase):
         # writeproxy's pep668_remedy.) The script gives only ONE noise answer; a second scripted answer
         # would be consumed by a re-introduced pass and the research step would vanish again.
         prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
             _content_resp('1. Fetch the OpenAPI specification from the API and read the real endpoint.\n'
                           '2. Write resolver.py.\n'
                           '3. Add README.md with installation instructions (pip install requests).'),  # plan

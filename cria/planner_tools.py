@@ -26,7 +26,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 
-from . import brave, prompts
+from . import brave, prompts, webfetch
 from .searchloop import first_domain_in, normalize_search, searches_match
 
 # The four READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
@@ -48,17 +48,19 @@ _SEARCH_COUNT = 20
 
 
 def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog,
-                 scratch: str | None = None) -> str:
+                 scratch: str | None = None, facts: dict | None = None) -> str:
     """Run ONE planner tool call and return human-readable text for the gather loop to feed
     back. Reads anything; may WRITE only to a scratchpad (``scratch`` or /tmp), never the
     workspace, so the reasoner can persist and process fetched data. ``recent_searches`` is the
-    per-gather list of normalized search word-sets the 400 guard uses (mutated in place)."""
+    per-gather list of normalized search word-sets the 400 guard uses (mutated in place). ``facts``
+    (mutated in place) collects what each successful fetch PROVED, so the gather's findings outlive
+    the gather — see :func:`_record_fetch`."""
     if name in ("exec_command", "shell", "bash", "local_shell"):
         return _exec_command(args, cwd, scratch)
     if name in ("read_file", "cat_file"):
         return _read_file(args, cwd)
     if name == "web_fetch":
-        return _web_fetch(args)
+        return _web_fetch(args, facts)
     if name in ("web_search", "local_web_search"):
         return _web_search(args, search_key, recent_searches)
     return prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name)
@@ -233,7 +235,7 @@ def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str 
 
 # ------------------------------------------------------------------ web fetch / search
 
-def _web_fetch(args: dict) -> str:
+def _web_fetch(args: dict, facts: dict | None = None) -> str:
     url = str(args.get("url") or "").strip()
     if not url:
         return "[web_fetch error: no url]"
@@ -242,12 +244,38 @@ def _web_fetch(args: dict) -> str:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read(_FETCH_MAX_BYTES)
             body = raw.decode("utf-8", "replace")
+            status, final = getattr(r, "status", "?"), r.geturl()
+            hdrs = getattr(r, "headers", None)
+            _record_fetch(facts, final, status, body, hdrs.get("Content-Type") if hdrs else None)
             # Full decoded body (already bounded by the 512KB socket read above) — the endpoint /
             # signature the planner needs may be past any fixed char clip. The context floor
             # reduces it MIME-aware + losslessly-first if it's large for the window.
-            return f"HTTP {getattr(r, 'status', '?')} · {r.geturl()}\n{body}"
+            return f"HTTP {status} · {final}\n{body}"
     except Exception as e:  # network, TLS, decode — surface the cause, don't crash the gather
         return f"[web_fetch error: {e}]"
+
+
+def _record_fetch(facts: dict | None, url: str, status, body: str, content_type) -> None:
+    """Keep what this fetch really PROVED, as ``url -> (status, routes, fields)``.
+
+    The gather's findings used to die with the gather: the planner's transcript is thrown away once
+    the plan is drafted, so a spec it had genuinely READ never reached the coder. Measured (run
+    0726-221401): at gather call 4 the planner held the real spec — `/handles/{handle}` AND
+    `/holders/{address}`, the exact two endpoints that task needs — the plan it then wrote named
+    neither, and the coder, never shown them, invented `/handle/{handle}` and 404'd. cria had the
+    ground truth in hand and dropped it on the floor.
+
+    Same ``(status, routes, fields)`` tuple the coder-side durable ledger uses, so these merge
+    straight into it. Routes/fields are SHAPE-detected by the shared extractors — empty for a doc
+    that isn't spec-shaped, so nothing is invented for an ordinary page. Only a 2xx is recorded: a
+    fetch that failed proved nothing (a 404 restated as a fact is how a hallucinated endpoint became
+    'ground truth' once already)."""
+    if facts is None or not str(status).startswith("2"):
+        return
+    parsed = webfetch._structure_of(body, content_type, url)
+    routes = webfetch._endpoint_routes(parsed) if parsed is not None else []
+    fields = webfetch._endpoint_response_fields(parsed) if parsed is not None else []
+    facts[url] = (f"HTTP {status}", ", ".join(routes), "; ".join(fields))
 
 
 def _web_search(args: dict, search_key: str, recent: list) -> str:
