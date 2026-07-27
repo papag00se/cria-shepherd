@@ -157,6 +157,31 @@ class TestUpstreamParseOutput(unittest.TestCase):
         self.assertIn("unique basename", msg)               # ...including the HINT that fixes it
         self.assertNotIn("test failed", msg)                # ...not cria's two-word stand-in
 
+    def test_collection_error_survives_alongside_an_ordinary_failure(self):
+        # `if out: return out` used to run BEFORE the collect path, so one normal test failure hid an
+        # entire uncollectable file — the shape run 0726-145040 actually had, which is why 96becb0
+        # alone would not have rescued it. Both must be reported.
+        r = parse_output(
+            "python3 -m pytest -q", "pytest", 1,
+            "=================================== FAILURES ===================================\n"
+            "_______________________________ test_adds _______________________________\n"
+            "tests/test_math.py:4: in test_adds\n"
+            "    assert add(1,1) == 3\n"
+            "E   assert 2 == 3\n"
+            "==================================== ERRORS ====================================\n"
+            "________________ ERROR collecting tests/test_dup.py ________________\n"
+            "import file mismatch:\n"
+            "HINT: remove __pycache__ / .pyc files and/or use a unique basename for your test file modules\n"
+            "=========================== short test summary info ===========================\n"
+            "FAILED tests/test_math.py::test_adds - assert 2 == 3\n"
+            "ERROR tests/test_dup.py\n",
+            "")
+        files = {f.file for f in r.findings}
+        self.assertIn("tests/test_math.py", files)      # the ordinary failure...
+        self.assertIn("tests/test_dup.py", files)       # ...and the uncollectable file
+        dup = next(f for f in r.findings if f.file == "tests/test_dup.py")
+        self.assertIn("unique basename", dup.message)   # with the collector's own HINT
+
     def test_pytest_conftest_error_reports_the_EXCEPTION_not_the_stack_frame(self):
         # A broken conftest prints no block header and no FAILED/ERROR summary line, so nothing read
         # its `E   ` rows and the finding fell through to a generic file:line scrape — the model was

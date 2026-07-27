@@ -332,10 +332,17 @@ def parse_pytest(s: str) -> list[Finding]:
         # arrive whole — taking a single row would drop either the header or the diff. Never clipped.
         msg = "\n".join(e.strip() for e in errs) if errs else tail.strip()
         out.append(Finding(file, int(line), None, msg))
+    collect = _pytest_collect_errors(s)   # the collector's real text — for the merge here AND below
+    # MERGE collection errors alongside whatever localized, never instead of it. `if out: return out`
+    # used to run first, so one ordinary test failure hid an entire uncollectable file — the shape a
+    # live run actually had (real failures AND a collection error side by side), where the coder was
+    # told only about the failure and kept editing a file nothing could collect.
+    for cfile, cmsg in collect.items():
+        if not any(f.file.replace("\\", "/") == cfile for f in out):
+            out.append(Finding(cfile, None, None, cmsg))
     if out:
         return out
     # No traceback blocks → read the short-summary lines (pytest may have width-clipped these).
-    collect = _pytest_collect_errors(s)   # the collector's real text, for a bare `ERROR <nodeid>`
     for l in s.splitlines():
         t = l.strip()
         if t.startswith("FAILED "):

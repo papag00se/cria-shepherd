@@ -199,6 +199,28 @@ class WebTests(unittest.TestCase):
         finally:
             webfetch.fetch = orig
 
+    def test_raw_plus_find_reaches_fetch_nav_at_the_REAL_boundary(self):
+        # webfetch honors `find` under `raw`, but THIS is the only caller from the model path and it
+        # used to null `find` first — so the fix was unreachable in production while its own test
+        # (which drives fetch_nav directly) stayed green. Nulling find also forced the oversized-spill
+        # branch below, reproducing the "saved N chars, go grep it" reply the fix set out to kill.
+        from cria import webfetch
+        webfetch.clear_cache()
+        body = json.dumps({"openapi": "3.0.3",
+                           "components": {"schemas": {"Handle": {"properties": {
+                               "resolved_addresses": {"type": "object"}}}}},
+                           "paths": {f"/pad{i}": {"get": {"summary": "s" * 90}} for i in range(400)}})
+        orig = webfetch.fetch
+        webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
+        try:
+            c = _call("web_fetch", {"url": "https://x/openapi.json", "find": "resolved", "raw": True})
+            translate_outbound(c, _CMD_SHELL, injected={"web_fetch"})
+            cmd = _lowered_cmd(c)
+            self.assertIn("resolved_addresses", cmd)          # the find RAN...
+            self.assertNotIn("too large for the context", cmd)  # ...instead of the whole-doc spill
+        finally:
+            webfetch.fetch = orig
+
     def test_large_fetch_spills_to_a_tmp_file_with_a_pointer(self):
         # A plain fetch of an oversized doc lowers to: write the FULL doc to ./tmp, then print a short
         # grep/find pointer — instead of a low-signal page-1 the weak model can't navigate.

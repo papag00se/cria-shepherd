@@ -432,8 +432,12 @@ def _fetch_command(args: dict, session: str | None = None) -> str | None:
     raw = bool(args.get("raw"))
     find = str(args["find"]) if args.get("find") else None
     cursor = str(cursor) if cursor not in (None, "") else None
-    if raw:                       # raw source: the whole markup, not a filtered/paged reduced view
-        find = cursor = None
+    if raw:                       # raw source: the whole markup, not a PAGED view — `find` is honored
+        # `find` used to be nulled here too, which made webfetch's own raw-honors-find fix unreachable:
+        # this is the only caller of fetch_nav from the model path, so the model's narrowing request
+        # died here before fetch_nav could act on it — and a nulled find also forces the oversized-spill
+        # branch below, reproducing the "saved N chars, go grep it" reply that fix set out to kill.
+        cursor = None
     result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw)
     # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
     # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.

@@ -470,6 +470,23 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         self.assertIn("/handles/{handle}", routes)
         self.assertIn("resolved_addresses{ada}", shapes)
 
+    def test_ledger_ignores_coder_PROSE_and_reads_only_real_tool_results(self):
+        # The coder READS cria's rendered "HTTP 200 · <url>" header in its own context and can parrot it.
+        # _extract_fetches used to scan every role, so a sentence claiming a 400 overwrote the real 200 —
+        # and the ok/failed split then filed that URL under "THESE URLS DID NOT WORK ... do not write
+        # code against them" with its real endpoints still attached. That is the runG failure (the coder
+        # insisted on a 400 the server never sent) re-entering through the ledger built to stop it.
+        from cria.loop import _extract_fetches
+        msgs = [
+            {"role": "tool", "content": "HTTP 200 OK \u00b7 https://api.x/openapi.json\n"
+                                        "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
+            {"role": "assistant", "content": "I tried again and got HTTP 400 \u00b7 https://api.x/openapi.json"},
+            {"role": "user", "content": "also HTTP 500 \u00b7 https://api.x/openapi.json"},
+        ]
+        status, routes, _shapes = _extract_fetches(msgs)["https://api.x/openapi.json"]
+        self.assertEqual(status, "HTTP 200")                 # the real result stands
+        self.assertIn("/handles/{handle}", routes)           # ...with its endpoints intact
+
     def test_a_ledger_of_only_FAILED_fetches_is_not_presented_as_facts_to_code_against(self):
         # THE FOOTGUN (live run 0726-132211: 66 calls, empty workspace): the coder INVENTED the domain
         # ada-handles.github.io, got 404s, and the anchor handed them back every turn as "your REAL fetch
@@ -2930,15 +2947,38 @@ class VerifyEvidenceTests(unittest.TestCase):
         self.assertNotIn("web_fetch", log)          # …and its ABSENCE is visible → research not obtained
 
     def test_excludes_probe_and_empty_keeps_coder_runs(self):
+        # The fixture uses the REAL emitted sentinels. It used to fake "PROBE_EXIT=0" — the NAME of the
+        # constant, never its value — so the guard it "covered" (`"PROBE_EXIT" not in c`) passed here
+        # while never firing once in production, and every raw probe dump reached the critic, the
+        # re-derivation, the satisfaction judge and the briefing as the coder's own tool output.
         from cria.loop import _work_log
+        from cria import probegate, proberun
+        gate_out = f"{probegate.SECTION_PREFIX}probe-0\n1 failed\n{proberun.PROBE_EXIT_SENTINEL}1"
         msgs = [
-            {"role": "tool", "content": "--- cria probe ---\nPROBE_EXIT=0"},   # cria's probe output
+            {"role": "assistant", "tool_calls": [{"id": "g", "type": "function", "function": {
+                "name": "shell", "arguments": json.dumps(
+                    {"command": f"cd /w || exit 97\necho {probegate.SECTION_PREFIX}probe-0\npytest -q"})}}]},
+            {"role": "tool", "tool_call_id": "g", "content": gate_out},         # cria's gate probe
             {"role": "tool", "content": ""},                                    # empty
             {"role": "tool", "content": "3 passed, 0 failed in 0.12s"},         # coder's own test run
         ]
         ev = _work_log(msgs)
-        self.assertIn("3 passed", ev)          # the coder's real run is the evidence
-        self.assertNotIn("PROBE_EXIT", ev)     # cria's probe excluded
+        self.assertIn("3 passed", ev)                             # the coder's real run is the evidence
+        self.assertNotIn(probegate.SECTION_PREFIX, ev)            # cria's gate output excluded...
+        self.assertNotIn(proberun.PROBE_EXIT_SENTINEL, ev)
+        self.assertNotIn("exit 97", ev)                           # ...and its command side too
+
+    def test_work_log_excludes_crias_own_search_denial_note(self):
+        # The search-read denial is cria's own voice written BACK into the message stream; it was being
+        # logged as something the coder's tool returned, then read by the critic and the briefing.
+        from cria.loop import _work_log
+        from cria import selfcompact
+        msgs = [{"role": "tool", "content": f"{selfcompact.SEARCH_MARKER} Those search results were "
+                                            "off-target for this task, so they were removed."},
+                {"role": "tool", "content": "real tool output"}]
+        ev = _work_log(msgs)
+        self.assertIn("real tool output", ev)
+        self.assertNotIn("off-target", ev)
 
     def test_keeps_all_runs_in_full_no_clip_no_last_n_drop(self):
         # The critic must see the FULL ground truth: every coder run (not just the last 3) and each

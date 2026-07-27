@@ -1042,9 +1042,12 @@ class Loop:
                         sess.search_recommend = rec
                         rlog.emit("loop.search_read_poison", file=f, rec=rec)
                 if f in sess.poisoned_search_files:
+                    # Marker-tagged and prompt-file-sourced: this note is cria's OWN voice written back
+                    # into the message stream, so it must be identifiable — the work log and the critic
+                    # were reading it as something the coder's tool returned.
                     steer = f" Search instead for: {sess.search_recommend}." if sess.search_recommend else ""
-                    out.append({**m, key: f"[Those search results were off-target for this task, so they were "
-                                f"removed.{steer} Re-reading {f} is denied — it will keep returning this.]"})
+                    out.append({**m, key: prompts.render("search_read_denied",
+                                                         marker=selfcompact.SEARCH_MARKER, steer=steer, file=f)})
                     continue
             out.append(m)
         return out
@@ -1867,17 +1870,39 @@ def _work_log(messages: list[dict]) -> str:
     the one window-aware place any physical truncation happens — a per-site clip here would just be a
     dumber, undetectable slice of what the model reads."""
     lines: list[str] = []
-    for m in _reasoner_session(messages):
+    # Same scrub chain every other reasoner-facing serialization uses (author_steer, _summarize_single,
+    # _self_compact): without clean_gate_results, cria's OWN gate probe renders here as a coder action —
+    # `$ shell {"command": "cd … || exit 97\necho ___CRIA_GATE_…\npytest …"}` — and its raw output as
+    # something the coder's tool returned. This log feeds the step critic, the re-derivation, the
+    # satisfaction judge and the completion briefing, so the orchestration was being judged as work.
+    for m in probegate.clean_gate_results(_reasoner_session(messages)):
         role = m.get("role")
         if role == "assistant":
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
-                lines.append(f"$ {fn.get('name')} {str(fn.get('arguments', '')).strip()}")
+                args = str(fn.get("arguments", "")).strip()
+                if _is_cria_scaffolding(args):
+                    continue
+                lines.append(f"$ {fn.get('name')} {args}")
         elif role == "tool":
             c = str(m.get("content") or "").strip()
-            if c and "PROBE_EXIT" not in c:  # skip cria's ground-truth probe output
+            if c and not _is_cria_scaffolding(c):
                 lines.append(f"  -> {c}")
     return "\n".join(lines)
+
+
+def _is_cria_scaffolding(text: str) -> bool:
+    """Is this cria's own orchestration rather than the coder's work?
+
+    The old test was ``"PROBE_EXIT" not in c`` — the NAME of the constant, never its value. The emitted
+    sentinel is ``proberun.PROBE_EXIT_SENTINEL`` ("EXIT:") and the gate's section prefix is
+    ``probegate.SECTION_PREFIX`` ("___CRIA_GATE_"), so the literal it checked for occurs only in test
+    fixtures — the guard never fired in production and every raw probe dump landed in the work log as
+    the coder's own tool output. Keyed on the real constants now, so it cannot drift again."""
+    return (probegate.SECTION_PREFIX in text
+            or proberun.PROBE_EXIT_SENTINEL in text
+            or selfcompact.CHECKS_MARKER in text
+            or selfcompact.SEARCH_MARKER in text)
 
 
 def _satisfaction_evidence(messages: list[dict]) -> str:
@@ -2830,7 +2855,18 @@ def _extract_fetches(messages: list[dict]) -> dict:
     from coder prose."""
     latest: dict[str, tuple[str, str, str]] = {}
     for m in messages:
-        c = m.get("content") or ""
+        # TOOL RESULTS ONLY. This used to read every role, and the docstring's premise — "the ` · <url>`
+        # shape is cria's render, absent from coder prose" — is false: the coder READS that header in its
+        # context and can parrot it. A sentence like "I tried again and got HTTP 400 · <url>" then
+        # overwrote the real HTTP 200, and the ok/failed split filed that URL under "THESE URLS DID NOT
+        # WORK — do not write code against them" with its real endpoints still attached. That is the
+        # hallucination-laundering this ledger exists to defeat (runG: the coder insisted on a 400 the
+        # server never sent, the steer parroted it, 40 turns lost).
+        if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+            continue
+        c = m.get("content")
+        if c is None:
+            c = m.get("output") or ""
         if isinstance(c, list):
             c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
         if not isinstance(c, str) or "·" not in c:
