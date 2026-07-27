@@ -85,6 +85,33 @@ never-truncate to composed prompts is itself a documented footgun.
 `docs/audits/2026-07-17-truncation-audit.md`, `docs/audits/2026-07-20-useless-prompting-anomaly-audit.md`;
 `cria/contextfloor.py`, `cria/groundtruth.py`, `cria/content_reduce.py` (all "lossless-first").
 
+### 5b. cria never states a FALSE FACT about the world
+**Rule.** Everything cria tells the model in its own voice — a tool's answer, a refusal, a
+pointer to a file, a ledger of what was fetched — must be true of the world *now*, and cria
+must be able to say what makes it true. A claim built on a remembered flag, a partial matcher,
+or a bound cria imposed on itself is a claim about **cria**, not about the world. When the two
+can differ, ask the world: the filesystem for whether a file is there, the parsed document for
+whether a term is in it, the tool menu for whether a name is a tool.
+**Why.** A weak model cannot distinguish a wrong fact from a weak answer. Told a document does
+not contain a term, it believes the document and starts inventing; told a file is on disk, it
+reads and re-reads a path that was never written. Both were measured in one afternoon:
+`find="holder_address|total_handles"` answered "no match" about a 96 KB spec containing both
+(the matcher treated a multi-term query as one literal) — 134 calls on one step, zero files;
+and a run's FIRST fetch was refused with "already fetched … saved to ./tmp/read-only/…", a path
+that existed only in the previous run's workspace (a spill ledger keyed on a session id that two
+runs of the same prompt share). In both cases every component behaved as written and the model
+behaved correctly on the information it was given.
+**The tell.** A sentence cria emits in the imperative or the indicative — "it was saved to X",
+"no match", "you already fetched this" — with no live check behind it. Grep for the claim, then
+find the thing that would have to be true.
+**Counter-nuance.** Saying less is always allowed; a cap or a selection is fine when it is
+DISCLOSED (rule 5 governs what may be dropped, rule 3 governs when to stay silent). What is
+forbidden is an assertion the world would contradict.
+**Embodied.** `86ff556`, `263e510` (find= reinterpretation — and cria never reinterprets a query
+that already had an answer), `2845af1` (the spill ledger asks the filesystem), `898ef78` (the
+fetch ledger splits 2xx from failures), `96becb0` / `docs/audits/2026-07-26-tool-voice-anomaly-audit.md`
+(cria may SELECT a checker's real lines, never SUBSTITUTE its own words).
+
 ### 6. Never cap output for latency — bound runaway by rumination / timeout / n_ctx
 **Rule.** cria targets slow local boxes where users accept long waits, so output is never
 capped for speed. `output_reserve` (the window cria keeps free for the answer) is split from
