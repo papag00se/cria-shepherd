@@ -800,6 +800,13 @@ class Planner:
 
         def may_hand_back(which: str) -> bool:
             return which not in fired and len(fired) < MAX_PLAN_HANDBACKS
+        # FROZEN at the end of the gather. `_gather_evidence` excludes the model's own ASSISTANT turns
+        # precisely so a route it merely guessed at cannot ground itself — but cria's own challenge is
+        # appended as a USER turn that NAMES the offending URLs, so recomputing per attempt let the
+        # complaint ground the very thing it complained about: challenge `…/resolve` once, and a
+        # planner that re-submits it unchanged is now "grounded" and accepted silently. Nothing after
+        # the gather adds real evidence — only cria's steers and the model's drafts.
+        evidence = _gather_evidence(messages)
         for attempt in range(_MAX_FINAL_RETRIES):
             msg = self._reason(messages, rlog, plan_only=True)
             if msg is None:
@@ -813,11 +820,24 @@ class Planner:
                 # gather had only seen in search results, a route it had seen nowhere. Hand it back
                 # ONCE and let it draft again. Never a rewrite (that would be cria authoring a plan)
                 # and never twice (that would wedge): a drafter that insists gets its plan.
-                bad = urlgrounding.ungrounded_urls(
-                    "\n".join(steps), _gather_evidence(messages)) if may_hand_back("url") else []
+                # ALWAYS LOOK. The budget bounds how often cria HANDS BACK, never how often it
+                # LOOKS — the same lesson as the shared-flag bug above, one level up. Gating the
+                # LOOK meant a plan accepted on the last attempt carrying an invented route emitted
+                # nothing, and read exactly like a clean plan. Measured (run 0727-151934): the budget
+                # went to coverage and unread-host, and the accepted plan opened with
+                # `https://api.handle.me/v1/ada-handles/by-ada-handle/goose` — a REAL route belonging
+                # to a different project whose README a search returned, welded onto the task's host.
+                # This check is pure deterministic code and costs nothing to run; the reasoner-backed
+                # checks below stay gated, since a model call that cannot change anything is not a
+                # purposeful call.
+                bad = urlgrounding.ungrounded_urls("\n".join(steps), evidence)
+                if bad and not may_hand_back("url"):
+                    rlog.emit("plan.submit_ungrounded", level="warn", urls=",".join(bad),
+                              handed_back=False)
+                    bad = []
                 if bad:
                     fired.add("url")
-                    rlog.emit("plan.submit_ungrounded", urls=",".join(bad))
+                    rlog.emit("plan.submit_ungrounded", urls=",".join(bad), handed_back=True)
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
                         {"role": "user", "content": prompts.fill(

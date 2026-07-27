@@ -392,7 +392,11 @@ class GatherLoopTests(unittest.TestCase):
         rlog = _Rlog()
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
             _msgs("t"), rlog)
-        self.assertEqual(len([k for k, _ in rlog.events if k == "plan.submit_ungrounded"]), 1)
+        # ONE HAND-BACK, which is the invariant this test is named for — not one detection. cria
+        # keeps LOOKING after the budget is spent (that is how an accepted-but-ungrounded plan leaves
+        # a record at all); what is bounded is how often it sends the plan back.
+        handed = [kw for k, kw in rlog.events if k == "plan.submit_ungrounded" and kw.get("handed_back")]
+        self.assertEqual(len(handed), 1)
         self.assertIn("/resolve", plan.items[0].text)   # accepted as drafted, not deleted or edited
 
     def test_route_the_research_really_read_is_accepted_untouched(self):
@@ -1180,3 +1184,47 @@ class CommandIsAlwaysMechanismTests(unittest.TestCase):
         what decides whether a command-shaped step survives, not the parser."""
         from cria.planner import _clean_step
         self.assertEqual(_clean_step({"command": "pytest -q"}), "pytest -q")
+
+
+class ExhaustedBudgetStillLooksTests(unittest.TestCase):
+    _SPEC_ECHO = {"cmd": "echo 'https://api.handle.me/openapi.json paths: /handles/{handle}: get: a handle'"}
+
+    """The handback budget bounds how often cria HANDS BACK — the comment above the loop says exactly
+    that, having learned it once when a shared flag let the first check silence the others. The budget
+    still gates the LOOKING: `ungrounded_urls(...) if may_hand_back("url") else []`. So when the two
+    handbacks are spent, the URL check does not run and emits nothing, and a plan carrying an invented
+    route is indistinguishable in the record from a clean one.
+
+    MEASURED (run 0727-151934): the budget went to `missing_deliverables` and `host_unread`; the
+    accepted plan opened with "Perform HTTP GET request to
+    https://api.handle.me/v1/ada-handles/by-ada-handle/goose". That path is REAL — it belongs to
+    `cardano-foundation/cf-adahandle-resolver`, a different project whose README a web_search returned
+    — welded onto the task's host, where it does not exist. The coder follows a plan verbatim.
+
+    The URL check is pure deterministic code and costs nothing, so it always LOOKS and always says
+    what it found; only the handing-back is bounded. A check backed by a REASONER stays gated (a model
+    call that cannot change anything is not a purposeful call) but records that it was skipped."""
+
+    def test_the_url_check_reports_even_after_the_budget_is_spent(self):
+        """Drive the real drafting loop: the coverage check takes the budget on the first two
+        drafts, and the third — the one that is ACCEPTED — carries an invented route. Before, that
+        acceptance emitted nothing at all."""
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", self._SPEC_ECHO),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+        ])
+        rlog = _Rlog()
+        Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(_msgs("t"), rlog)
+        ung = [kw for k, kw in rlog.events if k == "plan.submit_ungrounded"]
+        self.assertTrue(ung, "an accepted plan with an invented route emitted nothing")
+        self.assertTrue(any(kw.get("handed_back") is False for kw in ung),
+                        "the acceptance-without-budget case is not distinguishable in the record")
+
+    def test_an_ungrounded_url_is_named_even_with_no_budget_left(self):
+        from cria.urlgrounding import ungrounded_urls
+        evidence = ("GitHub - cardano-foundation/cf-adahandle-resolver ... exposes "
+                    "/v1/ada-handles/by-ada-handle/{handle} ... the task names api.handle.me")
+        bad = ungrounded_urls("GET https://api.handle.me/v1/ada-handles/by-ada-handle/goose", evidence)
+        self.assertEqual(bad, ["https://api.handle.me/v1/ada-handles/by-ada-handle/goose"])
