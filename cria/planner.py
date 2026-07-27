@@ -273,6 +273,21 @@ def parse_steps(text: str) -> list[str] | None:
                 steps = _split_inline_numbered(v)
                 if steps:
                     return steps
+        # No key anyone listed. A model answering a SYNONYM of the ask still answered — cria's own
+        # replan prompt opens "Re-derive the REMAINING steps", and the reply came back under
+        # `remaining_steps` (run 0727-142536: 981 tokens of correct work discarded, and the one-shot
+        # last-resort rescue spent with it). Shape-driven, like the envelope recovery: when exactly
+        # ONE key holds a usable list, that is the list. TWO is ambiguous and stays a safe null —
+        # cria does not guess which one the model meant.
+        candidates = []
+        for k, v in obj.items():
+            if k in _STEP_KEYS or not isinstance(v, list) or not v:
+                continue
+            got = [c for x in v if (c := _clean_step(x))]
+            if got:
+                candidates.append(got)
+        if len(candidates) == 1:
+            return candidates[0]
     salvaged = _salvage_array_steps(body)  # malformed JSON array (unescaped inner quotes) → recover items
     if salvaged:
         return salvaged

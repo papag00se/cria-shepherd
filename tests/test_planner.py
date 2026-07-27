@@ -1113,3 +1113,46 @@ class StepTrailingQuoteTests(unittest.TestCase):
     def test_the_brace_rule_from_ed1ae9f_still_holds(self):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step("Call GET /handles/{handle}"), "Call GET /handles/{handle}")
+
+
+class UnlistedStepKeyTests(unittest.TestCase):
+    """`_STEP_KEYS` is ("steps", "plan", "items"). A model that answers under a SYNONYM of the ask —
+    and cria's own replan prompt opens with "Re-derive the REMAINING steps" — parses fine and yields
+    nothing, so the whole reply is discarded.
+
+    MEASURED (run 0727-142536): the living-plan rescue, one-shot and last-resort, returned 981 tokens
+    of correct work under `remaining_steps` and was recorded DECLINED with its shot spent. Second
+    cause of a declined rescue found today; `b3d4731` was the first, and would have handled these
+    elements happily (`{"step": …, "command": …}`) had the list been found at all.
+
+    Shape-driven, like the envelope recovery in `cb16830`: when no known key matches and exactly ONE
+    key holds a usable list, that is the list. TWO candidates is ambiguous and stays a safe null —
+    cria does not guess which one the model meant."""
+
+    def test_the_real_captured_reply_is_read(self):
+        from cria.planner import parse_steps
+        import json
+        body = json.dumps({"remaining_steps": [
+            {"step": "Run the resolver with handle 'goose' and capture output",
+             "command": "python ada_handle_resolver.py goose"},
+            {"step": "Execute unit tests with pytest", "command": "pytest -v"}]})
+        self.assertEqual(parse_steps(body),
+                         ["Run the resolver with handle 'goose' and capture output",
+                          "Execute unit tests with pytest"])
+
+    def test_a_known_key_still_wins_over_a_sibling_list(self):
+        from cria.planner import parse_steps
+        import json
+        body = json.dumps({"steps": ["The real plan"], "notes": ["not the plan"]})
+        self.assertEqual(parse_steps(body), ["The real plan"])
+
+    def test_two_candidate_lists_are_ambiguous_and_yield_nothing(self):
+        from cria.planner import parse_steps
+        import json
+        body = json.dumps({"commands": ["ls -la"], "files": ["a.py", "b.py"]})
+        self.assertIsNone(parse_steps(body))
+
+    def test_a_list_of_non_steps_is_not_mistaken_for_a_plan(self):
+        from cria.planner import parse_steps
+        import json
+        self.assertIsNone(parse_steps(json.dumps({"scores": [1, 2, 3]})))
