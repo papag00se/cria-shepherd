@@ -374,9 +374,12 @@ class GatherLoopTests(unittest.TestCase):
         # it re-drafted a grounded plan, and THAT is what was accepted
         self.assertIn("/handles/", plan.items[0].text)
         self.assertNotIn("/resolve", plan.items[0].text)
-        # the challenge reached the model, naming what was ungrounded
-        self.assertTrue(any("nothing you fetched" in str(m.get("content"))
-                            for b in prov.bodies for m in b["messages"]))
+        # the challenge reached the model, naming what was unverified — and saying plainly that this
+        # is NOT evidence the route is wrong (the planner read the earlier phrasing as proof the
+        # endpoint did not exist, and planned a reachability probe instead of the work).
+        challenge = next(str(m.get("content")) for b in prov.bodies for m in b["messages"]
+                         if "UNVERIFIED" in str(m.get("content")))
+        self.assertIn("NOT evidence the route is wrong", challenge)
 
     def test_ungrounded_plan_is_challenged_only_once_never_wedges(self):
         # A planner that insists gets its plan anyway — cria never wedges the session on this, and
@@ -570,6 +573,50 @@ class PlanCoverageTests(unittest.TestCase):
         self.assertEqual(len(plan.items), 3)                       # the re-draft is what landed
         self.assertTrue(any("README" in str(m.get("content"))
                             for b in prov.bodies for m in b["messages"]))
+
+    def test_a_second_distinct_problem_still_gets_its_own_hand_back(self):
+        # MEASURED (live run 0727-110625): the URL challenge fired, consumed a SHARED one-hand-back
+        # budget, and every later check was then skipped — so the re-draft was never examined at all.
+        # It came back as a single step that was a raw shell command, producing none of the four
+        # deliverables, and was accepted. Replayed against the live model, the coverage check flags
+        # that plan 4 times out of 4. The budget must bound how many times cria HANDS BACK, not how
+        # many times it LOOKS: the re-draft is the most likely thing to be degraded.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo https://api.handle.me/openapi.json paths: /handles/{handle}"}),
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve to resolve it"]}),
+            _tool_resp("submit_plan", {"steps": ["python3 -c 'print(1)'"]}),   # re-draft: covers nothing
+            _content_resp('{"missing": ["the unit tests", "the README"]}'),    # coverage: caught
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add tests", "Add a README"]}),
+            _content_resp('{"missing": []}'),                       # coverage on the good draft
+            _content_resp("NONE"),                                  # noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("resolve a handle with api.handle.me, with unit tests and a README"), rlog)
+        kinds = [k for k, _ in rlog.events]
+        self.assertIn("plan.submit_ungrounded", kinds)      # first problem handed back
+        self.assertIn("plan.missing_deliverables", kinds)   # ...and the SECOND, distinct one too
+        self.assertEqual(len(plan.items), 3)                # the good draft is what landed
+
+    def test_hand_backs_are_capped_so_a_stubborn_planner_still_gets_its_plan(self):
+        # Bounded: at most MAX_PLAN_HANDBACKS, so this can never ping-pong or wedge a session.
+        from cria.planner import MAX_PLAN_HANDBACKS
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo https://api.handle.me/openapi.json paths: /handles/{handle}"}),
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # url challenge
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # insists
+            _content_resp('{"missing": ["the tests"]}'),            # coverage challenge (2nd, the cap)
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # still insists
+            _content_resp("NONE"),                                  # noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("resolve with api.handle.me"), rlog)
+        handbacks = sum(1 for k, _ in rlog.events
+                        if k in ("plan.submit_ungrounded", "plan.missing_deliverables", "plan.host_unread"))
+        self.assertLessEqual(handbacks, MAX_PLAN_HANDBACKS)
+        self.assertIsNotNone(plan)                          # it still gets a plan
 
     def test_a_covering_plan_sails_through(self):
         prov = _ScriptedProvider([

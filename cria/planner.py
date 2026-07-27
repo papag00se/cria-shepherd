@@ -31,6 +31,11 @@ _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
 # (No "you've gathered enough, stop investigating" prose — that message was useless and jarring;
 # the tool constraint is the whole instruction.)
 _MAX_FINAL_RETRIES = 3
+# How many times ONE draft may be handed back for a fresh problem. Two, so a plan challenged for an
+# invented route can still be challenged for missing every deliverable — and no more, so this can
+# never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its
+# plan gets it.
+MAX_PLAN_HANDBACKS = 2
 # The plan-submission tool. gemma-fable is hardwired to emit tool CALLS, so instead of asking for
 # plain text (which it answers with a hallucinated `call:CreateNewProject{…}`), hand it ONE tool
 # that IS the plan and read the steps from the call.
@@ -690,7 +695,17 @@ class Planner:
         if facts:
             messages = messages + [{"role": "user", "content": prompts.render(
                 "plan_evidence", facts=_facts_digest(facts), task=task)}]
-        challenged = False  # an ungrounded-route plan is handed back at most ONCE (never wedge)
+        # Each check may hand the plan back ONCE, and no more than MAX_PLAN_HANDBACKS in total.
+        # The budget bounds how often cria HANDS BACK, not how often it LOOKS: a single shared
+        # "challenged" flag meant the first check to fire silenced all the others, so the RE-DRAFT —
+        # the most likely thing to be degraded — went unexamined. Measured (run 0727-110625): the URL
+        # check fired, and the re-draft came back as one step that was a raw shell command producing
+        # none of the four deliverables. It was accepted. Replayed against the live model, the
+        # coverage check flags that plan 4 times out of 4; it simply never got to look.
+        fired: set[str] = set()
+
+        def may_hand_back(which: str) -> bool:
+            return which not in fired and len(fired) < MAX_PLAN_HANDBACKS
         for attempt in range(_MAX_FINAL_RETRIES):
             msg = self._reason(messages, rlog, plan_only=True)
             if msg is None:
@@ -704,10 +719,10 @@ class Planner:
                 # gather had only seen in search results, a route it had seen nowhere. Hand it back
                 # ONCE and let it draft again. Never a rewrite (that would be cria authoring a plan)
                 # and never twice (that would wedge): a drafter that insists gets its plan.
-                bad = [] if challenged else urlgrounding.ungrounded_urls(
-                    "\n".join(steps), _gather_evidence(messages))
+                bad = urlgrounding.ungrounded_urls(
+                    "\n".join(steps), _gather_evidence(messages)) if may_hand_back("url") else []
                 if bad:
-                    challenged = True
+                    fired.add("url")
                     rlog.emit("plan.submit_ungrounded", urls=",".join(bad))
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
@@ -720,9 +735,10 @@ class Planner:
                 # minus fetched); ONE reasoner call decides whether the work actually depends on
                 # reading them, which is what keeps a README link or a package registry from drawing
                 # a pointless challenge without cria owning a list of what counts as incidental.
-                need = [] if challenged else self._hosts_needing_read(task, steps, facts, rlog)
+                need = self._hosts_needing_read(task, steps, facts, rlog) \
+                    if may_hand_back("host") else []
                 if need:
-                    challenged = True
+                    fired.add("host")
                     rlog.emit("plan.host_unread", hosts=",".join(need))
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
@@ -732,9 +748,10 @@ class Planner:
                     continue
                 # And does the plan actually produce everything the request asked for? The coder stops
                 # when the steps run out, so an omitted deliverable is silently dropped.
-                missing = [] if challenged else self._missing_deliverables(task, steps, rlog)
+                missing = self._missing_deliverables(task, steps, rlog) \
+                    if may_hand_back("coverage") else []
                 if missing:
-                    challenged = True
+                    fired.add("coverage")
                     rlog.emit("plan.missing_deliverables", missing=", ".join(missing))
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
