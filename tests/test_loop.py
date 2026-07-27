@@ -4397,3 +4397,48 @@ class SingleItemModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlailCapVisibilityTests(unittest.TestCase):
+    """The flail-steer cap is DELIBERATE — uncapped, one stuck step drew ~25 steers and cria's own
+    nudges thrashed an already-stuck coder. But reaching it leaves no trace, so a log shows three
+    steers and cannot say whether the fourth was unnecessary or unavailable. Those are different
+    situations: the first means the coder recovered, the second means every reasoned intervention
+    cria has for this step is now spent.
+
+    MEASURED (run 0727-140517): step 3 burned 86+ calls against a red gate naming the exact missing
+    symbol, having spent 3 of 3 flail steers and its one stuck-replan shot. The gate kept speaking —
+    cria is not mute — but nothing recorded that the reasoned layer had run out.
+
+    The cap does not change. Only the record does."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def _loop_and_sess(self, used):
+        from cria.loop import MAX_FLAIL_STEERS_PER_STEP
+        ctx = _ctx(_Scripted([_toolcall()]), _Scripted([_text("ON_TRACK")]))
+        ctx.reasoner_role = self._role()
+        loop = Loop(ctx)
+        sess = PlanSession(plan=_plan(3))
+        sess.flail_steers_this_step = used
+        sess.recent_reasoning = ["let me try again", "let me try again", "let me try again"]
+        sess.drive_count = 99
+        return loop, sess, MAX_FLAIL_STEERS_PER_STEP
+
+    def test_reaching_the_cap_is_recorded_once(self):
+        loop, sess, cap = self._loop_and_sess(used=None)
+        sess.flail_steers_this_step = cap
+        rlog = _Rlog()
+        loop._flail_steer_if_circling(sess, _body(), 3, rlog)
+        self.assertIn("loop.flail_exhausted", rlog.kinds())
+        rlog2 = _Rlog()
+        loop._flail_steer_if_circling(sess, _body(), 3, rlog2)
+        self.assertNotIn("loop.flail_exhausted", rlog2.kinds(), "it should say so ONCE, not every drive")
+
+    def test_below_the_cap_says_nothing_about_exhaustion(self):
+        loop, sess, cap = self._loop_and_sess(used=0)
+        rlog = _Rlog()
+        loop._flail_steer_if_circling(sess, _body(), 3, rlog)
+        self.assertNotIn("loop.flail_exhausted", rlog.kinds())

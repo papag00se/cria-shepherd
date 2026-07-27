@@ -223,6 +223,7 @@ class PlanSession(GuardState):
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
+    flail_cap_logged: bool = False    # the cap-reached notice is emitted ONCE per step, not per drive
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
@@ -1266,6 +1267,7 @@ class Loop:
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
         sess.flail_steers_this_step = 0  # ...and a fresh flail-steer budget
+        sess.flail_cap_logged = False    # ...so the next step can report its own exhaustion
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
@@ -1390,6 +1392,15 @@ class Loop:
         not BOUND their total, so a step stuck for hundreds of drives drew ~25 — each redirecting the coder,
         so cria's own steers thrashed an already-stuck coder (assists are footguns; silence over noise). A
         few grounded nudges, then SILENCE — the gate/satisfaction/advance carry it from there."""
+        if (sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
+                and not sess.flail_cap_logged and self._ctx.reasoner_role is not None):
+            # Say ONCE that the reasoned nudges for this step are spent. The cap itself is measured
+            # and stays (uncapped, one stuck step drew ~25 steers and cria's own nudges thrashed the
+            # coder) — but "the coder recovered" and "cria has nothing left" are different situations
+            # and looked identical in the log. The gate keeps speaking either way; this is the record.
+            sess.flail_cap_logged = True
+            rlog.emit("loop.flail_exhausted", level="warn", step=idx,
+                      steers=sess.flail_steers_this_step, drives=sess.drive_count)
         if (sess.nudge_reason or self._ctx.reasoner_role is None
                 or sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
                 or not _flail_candidate(sess.recent_reasoning)
