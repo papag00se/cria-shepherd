@@ -28,14 +28,13 @@ import os
 import re
 import threading
 import time
-import urllib.parse
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu
+from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -3124,41 +3123,6 @@ def _steer_or_none(text: str) -> str | None:
     return directive if len(directive) >= 8 else None
 
 
-_STEER_URL_RE = re.compile(r"https?://[^\s\"'<>)\]},;]+")
-_URL_TRAIL = "`\\.,:;'\"*)]}> "
-
-
-def _ungrounded_urls(directive: str, evidence: str) -> list[str]:
-    """URLs the directive names that the EVIDENCE cannot support. A URL is grounded when both halves of
-    it appear in the evidence cria itself composed: the host (it is a real place this session touched)
-    AND the path (it is a real route the session saw). Both halves matter — measured on one session, 3
-    of 4 URL-bearing steers named a host that was everywhere in the evidence with a path that appeared
-    NOWHERE (`https://api.handle.me/api/`), and the coder duly ran `curl` against the invented route.
-
-    Requiring the FULL url verbatim would be wrong: a reasoner that reads `GET /handles/{handle}` in a
-    fetched spec and tells the coder to fetch `<host>/handles` has SYNTHESIZED a correct route from real
-    facts, and that steer is exactly the one worth keeping (it also occurred, in the same session).
-    Host+path is what separates synthesis from invention. A bare host (no path, or "/") is grounded by
-    the host alone — that is the domain-root fetch cria itself recommends, not a guessed route.
-
-    Scope is URLs only, deliberately. The same prompt also forbids inventing FILE PATHS, but a steer may
-    legitimately name a path that does not exist yet ("write tests/test_x.py"), so the same test there
-    would delete good steers — and deletion on a guess is the footgun class this exists to prevent."""
-    bad = []
-    for raw in _STEER_URL_RE.findall(directive or ""):
-        url = raw.rstrip(_URL_TRAIL)
-        try:
-            parts = urllib.parse.urlsplit(url)
-        except ValueError:
-            continue
-        host, path = parts.netloc, parts.path
-        if host and host.lower() not in evidence.lower():
-            bad.append(url)
-        elif path.strip("/") and path not in evidence:
-            bad.append(url)
-    return bad
-
-
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
@@ -3174,7 +3138,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     raw check truth); the flail caller falls back to silence, which is the correct assist here."""
     if not directive:
         return None
-    bad = _ungrounded_urls(directive, evidence)
+    bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
         return None

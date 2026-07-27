@@ -19,7 +19,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 
-from . import massage, planner_tools, prompts
+from . import massage, planner_tools, prompts, urlgrounding
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -243,6 +243,18 @@ def _numbered_with_details(lines: list[str]) -> list[str]:
     return [c for s in steps if (c := _clean_step(s))]
 
 
+def _gather_evidence(messages: list[dict]) -> str:
+    """What the gather actually SAW — the seed/task turns and every tool RESULT, never the model's own
+    assistant turns. Excluding its own turns is what makes the grounding check honest: a route it merely
+    GUESSED at in a `web_fetch(url=…)` call would otherwise appear in the "evidence" and ground itself.
+
+    It also keeps a FAILED fetch from becoming a fact for free — a failed gather fetch renders as
+    `[web_fetch error: HTTP Error 404: Not Found]`, which carries no URL, so a route that 404'd
+    contributes nothing to the evidence rather than proving itself real."""
+    return "\n".join(str(m.get("content") or "")
+                     for m in messages if m.get("role") in ("user", "tool"))
+
+
 def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     """Indices of NOISE steps to DROP from a plan — pure environment-plumbing, a bare shell command,
     dictated literal code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder
@@ -448,6 +460,7 @@ class Planner:
         messages: list[dict] = [{"role": "user", "content": seed}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
         seen_sigs: set[str] = set()
+        challenged = False  # an ungrounded-route plan is handed back at most ONCE (never wedge)
         # An ephemeral scratchpad the gather may WRITE to (persist + process fetched data across
         # rounds) — in cria's OWN tmp, never the workspace (no-pollution), torn down after.
         scratch = tempfile.mkdtemp(prefix="cria-gather-")
@@ -461,8 +474,29 @@ class Planner:
                     return self._parse(msg, rlog)
                 steps = _steps_from_submit(msg)  # the model ended the gather by SUBMITTING its plan
                 if steps:
-                    rlog.emit("plan.submitted", steps=len(steps))
-                    return steps
+                    # The coder follows the plan VERBATIM, so a route the gather never actually saw
+                    # becomes a shipped bug. Measured: a plan submitted after 17 real fetch rounds
+                    # opened with "send a POST request to the resolve endpoint at
+                    # https://api.handle.me/resolve" — a host the gather had only ever seen in search
+                    # results, and a route it had seen nowhere. Hand that back ONCE, as a proper tool
+                    # result so the protocol stays well-formed, and let it gather more and resubmit.
+                    # Once only, and never a rewrite: challenging forever would wedge the session, and
+                    # editing the step would be cria authoring a plan (which it does not do).
+                    bad = [] if challenged else urlgrounding.ungrounded_urls(
+                        "\n".join(steps), _gather_evidence(messages))
+                    if not bad:
+                        rlog.emit("plan.submitted", steps=len(steps))
+                        return steps
+                    challenged = True
+                    rlog.emit("plan.submit_ungrounded", urls=",".join(bad))
+                    messages.append({"role": "assistant", "content": msg.get("content") or None,
+                                     "tool_calls": msg["tool_calls"]})
+                    for cid, _name, _args in calls:
+                        messages.append({"role": "tool", "tool_call_id": cid,
+                                         "content": prompts.fill(
+                                             prompts.load_map("planner_steers")["submit_ungrounded"],
+                                             urls=", ".join(bad))})
+                    continue
                 sig = _calls_signature(calls)
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
                 # one `tool` result per call. NOT flattened to prose (the parroting trap).

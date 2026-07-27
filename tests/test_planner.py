@@ -286,6 +286,73 @@ class GatherLoopTests(unittest.TestCase):
         self.assertIn("CreateNewProject", str(retries[0].get("called")))  # the leak is in the record
         self.assertIn("plan.retriable", [k for k, _ in rlog.events])       # retriable, not cached
 
+    def test_plan_naming_a_route_the_gather_never_saw_is_handed_back_once(self):
+        # MEASURED: after 17 real fetch rounds the planner submitted "send a POST request to the
+        # resolve endpoint at https://api.handle.me/resolve" — a host it had only seen in search
+        # results and a route it had seen NOWHERE. The coder follows the plan verbatim, built to it,
+        # got a 404, and thrashed. Hand it back ONCE as a proper tool result and keep gathering.
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve with the handle",
+                                                 "2. write tests"]}),
+            _tool_resp("submit_plan", {"steps": ["1. GET https://api.handle.me/handles/{handle}",
+                                                 "2. write tests"]}),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an ada handle"), rlog)
+        self.assertIn("plan.submit_ungrounded", [k for k, _ in rlog.events])
+        self.assertIn("/resolve", str([kw for k, kw in rlog.events if k == "plan.submit_ungrounded"]))
+        # it re-submitted a grounded plan, and THAT is what was accepted
+        self.assertIn("/handles/", plan.items[0].text)
+        self.assertNotIn("/resolve", plan.items[0].text)
+        # the challenge reached the model as a well-formed tool result
+        challenged = next(b for b in prov.bodies
+                          if any("nothing you fetched" in str(m.get("content")) for m in b["messages"]))
+        self.assertTrue(any(m.get("role") == "tool" and "nothing you fetched" in str(m.get("content"))
+                            for m in challenged["messages"]))
+
+    def test_ungrounded_plan_is_challenged_only_once_never_wedges(self):
+        # A planner that insists gets its plan anyway — cria never wedges the session on this, and
+        # never rewrites the step itself (authoring a plan is not cria's job).
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("t"), rlog)
+        self.assertEqual(len([k for k, _ in rlog.events if k == "plan.submit_ungrounded"]), 1)
+        self.assertIn("/resolve", plan.items[0].text)   # accepted as drafted, not deleted or edited
+
+    def test_route_the_gather_really_read_is_accepted_untouched(self):
+        # The other half: a plan whose route the gather actually saw sails through. This guard tests
+        # for INVENTION, not novelty — a grounded plan must never pay for it.
+        prov = _ScriptedProvider([
+            _tool_resp("web_fetch", {"url": "https://api.handle.me/swagger/swagger.yml"}),
+            _tool_resp("submit_plan", {"steps": ["1. GET https://api.handle.me/swagger/swagger.yml first",
+                                                 "2. write the script"]}),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("t"), rlog)
+        self.assertNotIn("plan.submit_ungrounded", [k for k, _ in rlog.events])
+        self.assertEqual(len(plan.items), 2)
+
+    def test_gather_evidence_excludes_the_models_own_turns(self):
+        # The honesty of the whole check: a route the planner merely GUESSED at in its own
+        # web_fetch(url=…) call must not appear in the "evidence" and ground itself.
+        from cria.planner import _gather_evidence
+        msgs = [
+            {"role": "user", "content": "the task"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"function": {"name": "web_fetch",
+                                          "arguments": '{"url":"https://x.dev/guessed"}'}}]},
+            {"role": "tool", "content": "[web_fetch error: HTTP Error 404: Not Found]"},
+        ]
+        ev = _gather_evidence(msgs)
+        self.assertNotIn("guessed", ev)     # its own guess is not evidence
+        self.assertIn("404", ev)            # what it actually got back is
+
     def test_extract_cwd_from_environment_context(self):
         from cria.planner import _extract_cwd
         msgs = [{"role": "user", "content": "<environment_context>\n<cwd>/home/jesse/src/codex.test.site</cwd>\n</environment_context>"},
