@@ -610,7 +610,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
-                       workspace_root: str = "") -> tuple[bool, str]:
+                       workspace_root: str = "", routes: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -641,7 +641,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
             rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
             if not confirmed:
                 return False, why or str(obj.get("reason") or "a named deliverable is not on disk")
-        return satisfied, _verdict_nudge(obj, satisfied)  # fold in proposed_fix when NOT satisfied
+        return satisfied, _verdict_nudge(obj, satisfied, routes)  # fold in proposed_fix when NOT satisfied
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -653,7 +653,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, _verdict_nudge(retry, False)   # a reasoning-off NOT-satisfied is trustworthy
+    return False, _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-satisfied is trustworthy
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -1141,7 +1141,8 @@ class Loop:
                    "If this task required tests, green does NOT verify them; judge accordingly.")
         satisfied, reason = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools")),
-                                               workspace_root=sess.workspace_root or "")
+                                               workspace_root=sess.workspace_root or "",
+                                               routes=known_routes(body.get("messages", []), sess))
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -1494,7 +1495,8 @@ class Loop:
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
             satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
                                               self._ctx.reasoner_role, rlog, coder_tools=tools,
-                                              workspace_root=sess.workspace_root or "")
+                                              workspace_root=sess.workspace_root or "",
+                                              routes=known_routes(body.get("messages", []), sess))
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
                 rlog.emit("loop.replan_empty_declined", step=idx)
                 return
@@ -1921,7 +1923,8 @@ class Loop:
             satisfied, reason = judge_satisfaction(
                 task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
                 coder_tools=_coder_tools_summary(body.get("tools")),
-                workspace_root=sess.workspace_root or "")
+                workspace_root=sess.workspace_root or "",
+                routes=known_routes(body.get("messages", []), sess))
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
             if satisfied:
                 probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
@@ -2019,7 +2022,8 @@ class Loop:
         satisfied, reason = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
-            workspace_root=sess.workspace_root or "")
+            workspace_root=sess.workspace_root or "",
+            routes=known_routes(body.get("messages", []), sess))
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
 

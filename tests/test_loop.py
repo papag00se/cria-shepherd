@@ -5287,3 +5287,35 @@ class ConfirmCheckerInspectsTests(unittest.TestCase):
         protocol = bodies[1]["messages"]
         self.assertEqual(protocol[-1]["role"], "tool")
         self.assertIn("tmp/", protocol[-1]["content"])             # the REAL disk answered
+
+
+class SatisfactionRouteGroundingTests(unittest.TestCase):
+    """THE COMPLETION CRITIC'S PROPOSED FIX WAS NEVER ROUTE-GROUNDED (run 0728-m10): its corrective
+    step handed the coder `GET https://api.handle.me/v1/resolve/{handle}` — an INVENTED route — while
+    the step critic's fixes have been ledger-checked since 94327f4. judge_satisfaction now takes the
+    same `routes` and _verdict_nudge withholds an ungrounded fix (the reason survives)."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_an_invented_route_in_the_corrective_is_withheld(self):
+        from cria.loop import judge_satisfaction
+        sat = {"choices": [{"message": {"content": json.dumps(
+            {"satisfied": False, "reason": "no resolver exists yet",
+             "proposed_fix": "Write resolver.py using GET /v1/resolve/{handle}"})}}]}
+        ok, reason = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
+                                        routes="/handles/{handle}, /holders/{address}")
+        self.assertFalse(ok)
+        self.assertIn("no resolver exists yet", reason)     # the reason survives
+        self.assertNotIn("/v1/resolve", reason)             # the invented route does not
+
+    def test_a_ledger_route_in_the_corrective_is_kept(self):
+        from cria.loop import judge_satisfaction
+        sat = {"choices": [{"message": {"content": json.dumps(
+            {"satisfied": False, "reason": "r",
+             "proposed_fix": "Call GET /handles/{handle} and read resolved_addresses"})}}]}
+        ok, reason = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
+                                        routes="/handles/{handle}, /holders/{address}")
+        self.assertFalse(ok)
+        self.assertIn("/handles/{handle}", reason)
