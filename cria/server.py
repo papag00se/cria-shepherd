@@ -449,9 +449,16 @@ class CriaHandler(BaseHTTPRequestHandler):
         completion = self._decorate(completion)
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
         if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
+            # Reset ONLY once the tally has actually been REPORTED. The reset used to be
+            # unconditional while the summary was gated on visible output, so an EMPTY answer
+            # (no tool calls, no content — which this path sees often) threw the counts away with
+            # nothing shown. Measured on run 0728-m2: 1711 real upstream.done calls, two summaries
+            # emitted, 86 calls between them — ~1625 calls silently unaccounted, and the operator
+            # reads "🧮 43 calls" as the cost of the run. Carrying the tally forward means the next
+            # summary covers everything since the last REPORT, so no call goes unattributed.
             if ic.enabled and ic.stats and _has_visible_output(completion):
                 _append_content_line(completion, stats.summary())
-            self.server.stats_store.reset(sess_key)
+                self.server.stats_store.reset(sess_key)
         return completion
 
     def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:

@@ -87,3 +87,52 @@ class TurnStatsTests(unittest.TestCase):
         store.get("k").calls = 5
         store.reset("k")
         self.assertEqual(store.get("k").calls, 0)  # fresh instance after reset
+
+
+class FinalizeKeepsUnreportedCallsTests(unittest.TestCase):
+    """A TALLY THAT WAS NEVER SHOWN MUST NOT BE THROWN AWAY.
+
+    `_finalize` ends a turn on "a text answer after real work" (no tool calls, >=2 calls). The reset
+    was unconditional while the SUMMARY was gated on `_has_visible_output` — so an EMPTY answer (no
+    tool calls, no content), which this path sees routinely, discarded the counts with nothing shown.
+
+    Measured on run 0728-m2: 1711 real `upstream.done` calls, TWO summaries emitted totalling 86
+    calls. ~1625 calls were attributed nowhere, and "🧮 43 calls" reads as the cost of a run that
+    actually made 1711. Reset now happens only after the summary is emitted, so the next report
+    covers everything since the last one."""
+
+    def _finalize(self, completion, stats_calls=5):
+        import types as _t
+        from cria.server import CriaHandler
+        from cria.turnstats import StatsStore
+        store = StatsStore()
+        st = store.get("k")
+        st.calls = stats_calls
+        st.model_calls = 43
+        st.observe(50.0, 100, 0)                      # t0 set; calls -> stats_calls+1
+        fake = _t.SimpleNamespace(
+            server=_t.SimpleNamespace(
+                cfg=_t.SimpleNamespace(indicators=_t.SimpleNamespace(enabled=True, stats=True)),
+                stats_store=store),
+            _decorate=lambda c: c)
+        rlog = _t.SimpleNamespace(last_tok_per_s=None, gen_tokens=0, model_calls=0, events=None)
+        CriaHandler._finalize(fake, completion, "k", rlog)
+        return store.get("k")
+
+    def _empty_answer(self):
+        return {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+
+    def _text_answer(self):
+        return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+
+    def test_an_empty_answer_does_not_discard_the_tally(self):
+        st = self._finalize(self._empty_answer())
+        self.assertGreater(st.model_calls, 0,
+                           "counts were dropped for a turn whose summary was never shown")
+
+    def test_a_visible_answer_reports_then_resets(self):
+        comp = self._text_answer()
+        st = self._finalize(comp)
+        shown = (comp["choices"][0]["message"]["content"])
+        self.assertIn("calls", shown)                 # the summary WAS surfaced
+        self.assertEqual(st.model_calls, 0)           # and only then is the tally cleared
