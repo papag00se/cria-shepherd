@@ -61,17 +61,21 @@ class PromptAgnosticismTests(unittest.TestCase):
         # fence it. verify.txt's fence changed shape (operator directive: the step judge now HAS
         # read-only inspection tools), but the essence holds: it may look, never act, and its final
         # output is only the verdict.
-        judges = ("satisfaction", "plan_coverage", "plan_noise_steps", "plan_host_unread",
+        judges = ("plan_coverage", "plan_noise_steps", "plan_host_unread",
                   "replan", "selfcompact_summary", "done_summary")
         for name in judges:
             body = prompts.load(name).lower()
             self.assertIn("no tools", body, f"{name}.txt does not tell the model it has no tools")
             self.assertIn("tool/function call", body,
                           f"{name}.txt does not forbid emitting a tool call")
-        verify = prompts.load("verify").lower()
-        self.assertIn("read-only", verify)                       # its tools only ever LOOK
-        self.assertIn("never write code, run commands, fetch pages", verify)
-        self.assertIn("final output is only the json verdict", verify)
+        # The two judges with sanctioned READ-ONLY inspection tools (operator directive) keep the
+        # fence's essence — they may LOOK, never act — in its reshaped form.
+        for name in ("verify", "satisfaction"):
+            body = prompts.load(name).lower()
+            self.assertIn("read-only", body, f"{name}.txt does not mark its tools read-only")
+            self.assertIn("never write code, run commands", body,
+                          f"{name}.txt does not fence the judge out of acting")
+            self.assertIn("final output is only the json verdict", body)
 
     def test_every_prompt_that_shapes_a_plan_says_research_is_not_runtime_discovery(self):
         # THE FOOTGUN (live run 0727-102822): the ungrounded-route challenge told the planner to

@@ -333,7 +333,7 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
         gs.gate_sig = finding
 
 
-def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool) -> dict | None:
+def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
     """One critic call → the parsed {"satisfied": …} dict, or None if the model produced no parseable
     JSON. Mirrors the plan-path _verdict: NOT summarize() — summarize returns free text and only retries
     on EMPTY, but a reasoning-ON critic pass here does not go empty, it ROLE-PLAYS THE CODER (reasons
@@ -341,18 +341,18 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     retry never fired and every verdict failed closed. Parse the completion directly and let the caller
     retry reasoning-OFF on a parse miss — reasoning-off makes the model answer the JSON verdict directly
     instead of thinking itself into the coder's seat."""
-    call = {"stream": False, "max_tokens": 8192,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     role = reasoner_role
     if reasoning_off:
         role = replace(role, reasoning="off") if role is not None else None
-    if role is not None:
-        role.apply(call, internal=True, rlog=rlog)
-    elif reasoning_off:
-        call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
     try:
-        rlog.phase = "satisfaction" + ("-noreason" if reasoning_off else "")
-        comp = _parse_completion(reasoner_chat(call, rlog))
+        # The careful pass may INSPECT (the shared judge loop; operator directive) — the completion
+        # critic authors corrective steps the coder must obey, and blind it theorized a wrong
+        # endpoint from a field-name collision. The reasoning-off retry stays toolless.
+        comp = _judge_completion(
+            reasoner_chat, role, system, user, rlog,
+            phase="satisfaction" + ("-noreason" if reasoning_off else ""),
+            workspace_root="" if reasoning_off else workspace_root,
+            force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
             # close, and the caller's retry/fail-closed path is the honest answer.
@@ -526,7 +526,60 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     return kept
 
 
-def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "") -> tuple[bool, str]:
+def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
+                      workspace_root: str = "", max_tokens: int = 8192,
+                      force_think_off: bool = False) -> dict:
+    """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
+    critic AND the completion critic (operator directive: judges get real read-only tools, not just a
+    snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
+    cria-executed, workspace-contained) and each round is fed back as PROTOCOL — the planner-gather
+    pattern — until it answers, or VERIFY_MAX_ROUNDS is spent and the tools are withdrawn with the
+    answer-now steer. Returns the FINAL parsed completion; the caller keeps its own truncation/parse
+    handling. Measured need for the completion critic specifically: the toolless satisfaction judge
+    authored a corrective step steering the coder to /stats ("total handles" BY FIELD NAME — the
+    GLOBAL count, not the holder's) because it could not read the spec section that distinguishes
+    them, and it ruled a run satisfied while the inventory in its prompt showed no README."""
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    inspectable = bool(workspace_root) and os.path.isdir(workspace_root)
+    rounds = 0
+    while True:
+        body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
+                      "messages": list(messages)}
+        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS:
+            body["tools"] = verifytools.VERIFY_TOOLS
+        if role is not None:
+            role.apply(body, internal=True, rlog=rlog)
+        elif force_think_off:  # no role configured, but still force the think block off
+            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        rlog.phase = phase
+        comp = _parse_completion(chat_fn(body, rlog))
+        msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
+        calls = msg.get("tool_calls") or []
+        if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS):
+            return comp
+        rounds += 1
+        messages.append({"role": "assistant", "content": msg.get("content") or None,
+                         "tool_calls": calls})
+        for tc in calls:
+            fn = tc.get("function") or {}
+            try:
+                targs = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                targs = None
+            out = (verifytools.execute(fn.get("name") or "", targs, workspace_root)
+                   if isinstance(targs, dict) else "[unparseable tool arguments — call again with valid JSON]")
+            messages.append({"role": "tool", "tool_call_id": tc.get("id") or f"vt{rounds}",
+                             "content": out})
+        rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
+        if rounds == verifytools.VERIFY_MAX_ROUNDS:
+            messages.append({"role": "user", "content": verifytools.ANSWER_NOW})
+
+
+def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
+                       workspace_root: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -539,7 +592,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                           evidence=evidence or "(no actions recorded yet)")
     if coder_tools:  # reasoning about the coder's work → give it the coder's tools (see _verify)
         user = user + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
-    obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False)
+    obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
+                                workspace_root=workspace_root)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
         # ending the task, because approving requires the verification a reasoning-off judge can't do
@@ -1045,7 +1099,8 @@ class Loop:
             ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
                    "If this task required tests, green does NOT verify them; judge accordingly.")
         satisfied, reason = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                               rlog, coder_tools=_coder_tools_summary(body.get("tools")))
+                                               rlog, coder_tools=_coder_tools_summary(body.get("tools")),
+                                               workspace_root=sess.workspace_root or "")
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -1397,7 +1452,8 @@ class Loop:
             return
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
             satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
-                                              self._ctx.reasoner_role, rlog, coder_tools=tools)
+                                              self._ctx.reasoner_role, rlog, coder_tools=tools,
+                                              workspace_root=sess.workspace_root or "")
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
                 rlog.emit("loop.replan_empty_declined", step=idx)
                 return
@@ -1610,66 +1666,28 @@ class Loop:
         Observed need: the toolless judge REACHED for these ("list_dir would show this" in its own
         reasoning) and asserted the imagined result. The reasoning-off retry stays toolless — its
         one job is "just answer the JSON"."""
-        messages: list[dict] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
-        use_tools = bool(workspace_root) and os.path.isdir(workspace_root) and not reasoning_off
         role = self._ctx.reasoner_role
         if reasoning_off:
             role = replace(role, reasoning="off") if role is not None else None
-        rounds = 0
         try:
-            while True:
-                body: dict = {
-                    "stream": False,
-                    "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
-                    # Bound the output generously: the verdict's `reason` feeds the coder re-nudge, so it
-                    # must never be truncated at generation. The cap stays only as a runaway backstop (a
-                    # reasoning model that never stops) — well above any real verdict.
-                    "max_tokens": 8192,
-                    "messages": list(messages),
-                }
-                if use_tools and rounds < verifytools.VERIFY_MAX_ROUNDS:
-                    body["tools"] = verifytools.VERIFY_TOOLS
-                if role is not None:
-                    role.apply(body, internal=True, rlog=rlog)
-                elif reasoning_off:  # no role configured, but still force the think block off
-                    body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-                rlog.phase = "critic" + ("-noreason" if reasoning_off else "")
-                comp = _parse_completion(self._ctx.reasoner_chat(body, rlog))
-                msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
-                calls = msg.get("tool_calls") or []
-                if use_tools and calls and rounds < verifytools.VERIFY_MAX_ROUNDS:
-                    # Feed the round back as PROTOCOL, then let the judge keep looking or answer.
-                    rounds += 1
-                    messages.append({"role": "assistant", "content": msg.get("content") or None,
-                                     "tool_calls": calls})
-                    for tc in calls:
-                        fn = tc.get("function") or {}
-                        try:
-                            targs = json.loads(fn.get("arguments") or "{}")
-                        except ValueError:
-                            targs = None
-                        out = (verifytools.execute(fn.get("name") or "", targs, workspace_root)
-                               if isinstance(targs, dict) else "[unparseable tool arguments — call again with valid JSON]")
-                        messages.append({"role": "tool", "tool_call_id": tc.get("id") or f"vt{rounds}",
-                                         "content": out})
-                    rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
-                    if rounds == verifytools.VERIFY_MAX_ROUNDS:
-                        # Budget spent: the next call carries no tools and this closing instruction.
-                        messages.append({"role": "user", "content": verifytools.ANSWER_NOW})
-                    continue
-                vtext = _completion_text(comp)
-                if role is not None:
-                    vtext = role.clean_content(vtext)  # drop leaked reasoning when off
-                if massage.is_truncated(comp):
-                    # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
-                    # finish_reason=length with content). The reasoning-off retry above has the whole
-                    # budget for content; if that is also cut, _verify fails closed as it already does.
-                    rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
-                    return None, vtext
-                return extract_json_object(vtext) or None, vtext
+            # max_tokens bounds the output generously: the verdict's `reason` feeds the coder
+            # re-nudge, so it must never be truncated at generation — the cap stays only as a
+            # runaway backstop. The reasoning-off retry stays toolless (workspace_root dropped).
+            comp = _judge_completion(
+                self._ctx.reasoner_chat, role, system, user, rlog,
+                phase="critic" + ("-noreason" if reasoning_off else ""),
+                workspace_root="" if reasoning_off else workspace_root,
+                force_think_off=reasoning_off)
+            vtext = _completion_text(comp)
+            if role is not None:
+                vtext = role.clean_content(vtext)  # drop leaked reasoning when off
+            if massage.is_truncated(comp):
+                # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
+                # finish_reason=length with content). The reasoning-off retry above has the whole
+                # budget for content; if that is also cut, _verify fails closed as it already does.
+                rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
+                return None, vtext
+            return extract_json_object(vtext) or None, vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
             return None, ""
@@ -1851,7 +1869,8 @@ class Loop:
                              "tests, a green result does NOT verify them; judge accordingly.")
             satisfied, reason = judge_satisfaction(
                 task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-                coder_tools=_coder_tools_summary(body.get("tools")))
+                coder_tools=_coder_tools_summary(body.get("tools")),
+                workspace_root=sess.workspace_root or "")
             rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
             if satisfied:
                 probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
@@ -1948,7 +1967,8 @@ class Loop:
                    "If this task required tests, green does NOT verify them; judge accordingly.")
         satisfied, reason = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-            coder_tools=_coder_tools_summary(body.get("tools")))
+            coder_tools=_coder_tools_summary(body.get("tools")),
+            workspace_root=sess.workspace_root or "")
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
 

@@ -5107,3 +5107,53 @@ class ReplanTailCoverageTests(unittest.TestCase):
         self.assertIn("Write resolve_handle.py", seen["coverage_user"])   # done steps judged too
         self.assertIn("Write unit tests", seen["coverage_user"])
         self.assertIn("Write README", seen["coverage_user"])              # alongside the new tail
+
+
+class SatisfactionJudgeToolTests(unittest.TestCase):
+    """THE COMPLETION CRITIC GETS THE SAME TOOLS (extends the operator directive to the OTHER judge).
+    Blind, it failed twice in one day: ruled a run satisfied while the inventory in its own prompt
+    showed no README (run m6), and authored a corrective step steering the coder to /stats for
+    total_handles — the GLOBAL count, equated with the per-holder field BY NAME — because it could
+    not read the spec section that distinguishes them (run m7). The careful pass may now inspect via
+    the shared _judge_completion loop; the reasoning-off retry stays toolless and fail-closed."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_the_completion_critic_inspects_before_ruling(self):
+        from cria.loop import judge_satisfaction
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve_handle.py").write_text("x = 1\n")   # no README on disk
+            bodies = []
+
+            def chat(body, rlog):
+                bodies.append(body)
+                if len(bodies) == 1:  # the judge asks to LOOK first
+                    return json.dumps({"choices": [{"message": {"tool_calls": [
+                        {"id": "s1", "type": "function",
+                         "function": {"name": "list_dir", "arguments": "{}"}}]}}]}).encode()
+                return json.dumps({"choices": [{"message": {"content": json.dumps(
+                    {"satisfied": False, "reason": "README.md is not in the workspace"})}}]}).encode()
+
+            ok, reason = judge_satisfaction("task needing a README", "ev", chat, self._role(),
+                                            _Rlog(), workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertIn("README.md is not in the workspace", reason)
+        self.assertTrue(any(t["function"]["name"] == "list_dir" for t in bodies[0]["tools"]))
+        protocol = bodies[1]["messages"]
+        self.assertEqual(protocol[-1]["role"], "tool")            # the REAL listing went back
+        self.assertIn("resolve_handle.py (6 B)", protocol[-1]["content"])
+
+    def test_without_a_root_the_completion_critic_is_toolless_as_before(self):
+        from cria.loop import judge_satisfaction
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"satisfied": True, "reason": "all present"})}}]}).encode()
+
+        ok, _ = judge_satisfaction("t", "ev", chat, self._role(), _Rlog())
+        self.assertTrue(ok)
+        self.assertNotIn("tools", bodies[0])
