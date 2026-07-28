@@ -22,7 +22,7 @@ _COMMENT = b": cria\n\n"
 
 class Heartbeat:
     def __init__(self, write_raw, interval: float = 5.0, *, clock=time.monotonic,
-                 payload: bytes = _COMMENT) -> None:
+                 payload: bytes = _COMMENT, on_beat=None, beat_status_every: float = 30.0) -> None:
         self._write_raw = write_raw  # bytes -> write+flush to the wire
         self._interval = interval
         self._clock = clock
@@ -36,6 +36,14 @@ class Heartbeat:
         # Responses client dropped a stream mid-compaction with "idle timeout waiting for SSE"
         # while comments were flowing) — such a path passes a REAL protocol event instead.
         self._payload = payload
+        # Optional VISIBLE tick: called with elapsed seconds, at most every ``beat_status_every``,
+        # from the beat thread OUTSIDE the write lock (the callback may call ``write`` itself).
+        # One long model call fires no events — the ticker went silent for 10 minutes while a 27B
+        # coder ground at 7 tok/s (operator: "no updates in between"); this is the in-between.
+        self._on_beat = on_beat
+        self._beat_status_every = beat_status_every
+        self._t0 = clock()
+        self._last_beat_cb = clock()
         self.beats = 0
 
     def start(self) -> "Heartbeat":
@@ -75,6 +83,7 @@ class Heartbeat:
     def _run(self) -> None:
         tick = min(1.0, self._interval / 2) or 0.25
         while not self._stop.wait(tick):
+            fired = False
             with self._lock:
                 if self._drained:
                     break
@@ -83,5 +92,14 @@ class Heartbeat:
                         self._write_raw(self._payload)
                         self._last = self._clock()
                         self.beats += 1
+                        fired = True
                     except Exception:
                         break  # client gone; the request thread will notice and clean up
+            if fired and self._on_beat is not None:
+                now = self._clock()
+                if now - self._last_beat_cb >= self._beat_status_every:
+                    self._last_beat_cb = now
+                    try:
+                        self._on_beat(now - self._t0)  # outside the lock — it may call write()
+                    except Exception:  # noqa: BLE001 — narration must never break the stream
+                        pass

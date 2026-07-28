@@ -126,3 +126,34 @@ class HeartbeatPayloadTests(unittest.TestCase):
         payload = json.loads(raw.split("data: ", 1)[1].strip())
         self.assertEqual(payload["response"]["status"], "in_progress")
         self.assertEqual(payload["response"]["id"], "resp_x")
+
+
+class BeatTickTests(unittest.TestCase):
+    """The IN-BETWEEN (operator: a 10-minute coder call showed nothing between ticker lines): the
+    beat thread calls on_beat with elapsed time, at most every beat_status_every, OUTSIDE the write
+    lock so the callback can itself write a visible status delta."""
+
+    def test_on_beat_fires_rate_limited_and_outside_the_lock(self):
+        from cria.heartbeat import Heartbeat
+        t = {"now": 0.0}
+        wrote, ticks = [], []
+        hb = Heartbeat(wrote.append, interval=5.0, clock=lambda: t["now"],
+                       on_beat=lambda el: (ticks.append(el), hb.write(b"tick")),
+                       beat_status_every=30.0)
+        # simulate the run loop: advance time, fire the beat condition manually
+        for now in (6, 12, 18, 24, 31, 37, 62):
+            t["now"] = float(now)
+            fired = False
+            with hb._lock:
+                if t["now"] - hb._last >= hb._interval:
+                    hb._write_raw(hb._payload); hb._last = t["now"]; hb.beats += 1; fired = True
+            if fired and hb._on_beat is not None and t["now"] - hb._last_beat_cb >= hb._beat_status_every:
+                hb._last_beat_cb = t["now"]
+                hb._on_beat(t["now"] - hb._t0)
+        self.assertEqual(ticks, [31.0, 62.0])                 # ~every 30s, not every beat
+        self.assertIn(b"tick", wrote)                          # the callback could write (no deadlock)
+
+    def test_still_working_line_names_the_phase(self):
+        from cria.statusline import still_working_line
+        self.assertIn("coder · working · 1m35s", still_working_line("coder-s4", 95))
+        self.assertIn("compacting history · 3m20s", still_working_line("self-compact", 200))

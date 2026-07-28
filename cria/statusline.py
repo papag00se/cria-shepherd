@@ -98,6 +98,16 @@ def line_for(kind: str, phase: str | None, fields: dict) -> str | None:
     return None
 
 
+def still_working_line(phase: str | None, elapsed: float) -> str:
+    """The in-between tick for one long model call (no events fire mid-generation — a 27B coder at
+    ~7 tok/s went 10 minutes with nothing on screen). Phase names the worker; elapsed is honest."""
+    m, sec = int(elapsed) // 60, int(elapsed) % 60
+    for prefix, text in _PHASE_LINES:
+        if phase and phase.startswith(prefix):
+            return f"{MARKER}⋯ {text} · {m}m{sec:02d}s"
+    return f"{MARKER}⋯ still working · {m}m{sec:02d}s"
+
+
 class StatusWriter:
     """Dedupes consecutive identical lines and hands the rest to ``write(text)``. The write callable
     owns transport (an SSE delta on the wire); failures are swallowed — a status line must never

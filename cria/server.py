@@ -805,6 +805,13 @@ class CriaHandler(BaseHTTPRequestHandler):
                     lambda line: (status_lines.append(line),
                                   hb.write(responses.status_delta(status_id, line + "\n")))[-1])
                 rlog.on_event = writer.on_event
+                # The in-between: one long model call fires no events, so the beat thread ticks a
+                # visible "still working" line (~every 30s) with the live phase and elapsed time.
+                def _beat_tick(elapsed: float, _sid=status_id) -> None:
+                    line = statusline.still_working_line(rlog.phase, elapsed)
+                    status_lines.append(line)
+                    hb.write(responses.status_delta(_sid, line + "\n"))
+                hb._on_beat = _beat_tick
             try:
                 comp, _indic = self._produce_completion(body, rlog, sess_key)
             except UpstreamError as e:
