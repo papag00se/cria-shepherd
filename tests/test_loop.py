@@ -4741,3 +4741,51 @@ class VerifyDumpNamesSortChronologicallyTests(unittest.TestCase):
             _dump_verify(root, "sid:x", 2, 7, "a step", "sys", "usr", True, "r")
             body = next(root.glob("verify-*.md")).read_text()
             self.assertIn("Step 2/7", body)
+
+
+class ReplannerToldNothingDefinesARouteTests(unittest.TestCase):
+    """`147e224` tells the PLANNER when nothing it has read defines a route. The LIVING REPLANNER is a
+    second author of plan steps and got no equivalent.
+
+    MEASURED (run 0727-180058): the thrash re-derivation rewrote step 1 into "Search within the Ada
+    Handles API documentation files for THE RESOLVE ENDPOINT pattern", and the coder materialised that
+    into `https://api.handle.me/resolve/{handle}` — a route that 404s. Its evidence at that moment
+    carried ZERO `endpoints:` and ZERO `/handles/{handle}`, while "resolve endpoint" echoed through it
+    9 times from the plan and the coder's own turns. It knew no routes and wrote as if it did.
+
+    This is the INVERSE of the route-grounding check killed earlier today: that one needed a POPULATED
+    ledger and so could not fire in the runs that motivated it. This fires BECAUSE the ledger is empty
+    — the exact state that produces a presupposed endpoint. Additive (a sentence, never an action) and
+    self-limiting (silent the moment any real route is known)."""
+
+    def _loop(self, reasoner):
+        from cria.config import Role
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        return Loop(ctx)
+
+    def _seen_evidence(self, ledger):
+        seen = {}
+
+        class _Chat:
+            def __call__(self, body, rlog):
+                # the WHOLE call — the evidence is not the last message (the coder-tools block is)
+                seen.setdefault("calls", []).append(
+                    " ".join(str(m.get("content")) for m in body["messages"]))
+                return json.dumps({"choices": [{"message": {"role": "assistant",
+                        "content": '{"steps": ["do the thing"]}'}, "finish_reason": "stop"}]})
+        loop = self._loop(_Chat())
+        sess = PlanSession(plan=_plan(3))
+        sess.plan.items[0].done = True
+        sess.fetched_pages = ledger
+        loop._replan_tail(sess, _body(), 1, _Rlog())
+        return seen.get("calls", [""])[0]   # call 0 is the re-derivation; call 1 is the noise judge
+
+    def test_with_no_known_routes_the_replanner_is_told_so(self):
+        ev = self._seen_evidence({})
+        self.assertIn("DEFINES a route", ev)
+
+    def test_with_real_routes_known_it_stays_quiet(self):
+        ev = self._seen_evidence({"https://api.handle.me/openapi.json":
+                                  ("HTTP 200", "/handles/{handle}, /holders/{address}", "")})
+        self.assertNotIn("DEFINES a route", ev)

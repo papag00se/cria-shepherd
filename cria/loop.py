@@ -1324,6 +1324,16 @@ class Loop:
         # the overreach underneath it. Nothing cria writes outranks the re-derivation any more.
         rederivable = remaining
         evidence = self._grounded_evidence(sess, body)
+        # The replanner is cria's SECOND author of plan steps, and it was never told the thing the
+        # planner is told (147e224): that nothing read so far DEFINES a route. Measured (run
+        # 0727-180058) its evidence carried zero `endpoints:` and zero `/handles/{handle}` while
+        # "resolve endpoint" echoed through it 9 times from the plan and the coder's own turns — it
+        # knew no routes and wrote "search for THE RESOLVE ENDPOINT pattern", which the coder turned
+        # into `https://api.handle.me/resolve/{handle}` (404). This fires BECAUSE the ledger is empty,
+        # which is the state that produces a presupposed endpoint — the inverse of a route CHECK,
+        # which needs a populated ledger and so cannot help here. Silent once any real route is known.
+        if not known_routes(body.get("messages", []), sess):
+            evidence = (evidence + "\n\n" + prompts.load_map("planner_steers")["fetch_no_structure"]).strip()
         tools = _coder_tools_summary(body.get("tools"))
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
