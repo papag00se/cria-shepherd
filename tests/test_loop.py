@@ -5042,3 +5042,68 @@ class JudgeToolLoopTests(unittest.TestCase):
         obj, _ = loop._verdict("sys", "usr", _Rlog(), reasoning_off=False, workspace_root="")
         self.assertTrue(obj["done"])
         self.assertNotIn("tools", seen["bodies"][0])
+
+
+class ReplanTailCoverageTests(unittest.TestCase):
+    """THE RE-DERIVED TAIL ESCAPED THE COVERAGE CHECK (run 0728-m6). The initial draft is coverage-
+    checked (Planner._missing_deliverables — added after the SAME failure on 0727); the living
+    re-derivation had only replan.txt's prose rule. Measured: a coverage-checked six-step draft was
+    thrash-re-derived into ONE step ~100s into the run, silently dropping unit tests + the live test
+    + the README, and the run ENDED "satisfied" with no README on disk — while the done-critic's own
+    prompt held the complete inventory proving its absence. The tail now passes the SAME enforced
+    check, judged on the plan as it would stand (completed + re-derived); a tail that drops
+    deliverables is REFUSED and the plan stays untouched (the parse-miss fail-safe), traced via
+    loop.replan_uncovered. Fix 31's analysis, honored: constrain what the re-derivation RETURNS."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    @staticmethod
+    def _missing(items):
+        return {"choices": [{"message": {"content": json.dumps({"missing": items})}}]}
+
+    def test_a_tail_that_drops_deliverables_is_refused_and_traced(self):
+        from cria.loop import reassess_remaining
+        rlog = _Rlog()
+        chat = _Scripted([
+            _replan(["Write resolve_handle.py that prints the JSON"]),   # the m6 veer: one step
+            _text("NONE"),                                               # noise judge keeps it
+            self._missing(["unit tests", "live test for goose/papagoose", "README"]),
+        ])
+        out = reassess_remaining(chat, self._role(), "script + unit tests + live test + README",
+                                 "", "- write script\n- write tests\n- write README", "ev", rlog)
+        self.assertIsNone(out)                                # refused → plan UNTOUCHED
+        self.assertIn(("loop.replan_uncovered",), [(k,) for k, _ in rlog.events])
+
+    def test_a_covering_tail_still_lands(self):
+        from cria.loop import reassess_remaining
+        chat = _Scripted([
+            _replan(["Write tests", "Write README"]),
+            _text("NONE"),
+            self._missing([]),                                # coverage clean
+        ])
+        out = reassess_remaining(chat, self._role(), "t", "- script done",
+                                 "- old tests step\n- old readme step", "ev", _Rlog())
+        self.assertEqual(out, ["Write tests", "Write README"])
+
+    def test_the_coverage_judge_sees_completed_steps_plus_the_new_tail(self):
+        """The check judges the plan AS IT WOULD STAND — a deliverable already produced by a DONE
+        step must not fail the tail, so the completed steps ride in the judged plan."""
+        from cria.loop import reassess_remaining
+        answers = [_replan(["Write README"]), _text("NONE"), self._missing([])]
+        seen = {"coverage_user": ""}
+
+        def chat(body, rlog):
+            ans = answers.pop(0)
+            if not answers:  # the last scripted answer is the coverage judge's
+                seen["coverage_user"] = body["messages"][-1]["content"]
+            return json.dumps(ans).encode()
+
+        out = reassess_remaining(chat, self._role(), "t",
+                                 "- Write resolve_handle.py\n- Write unit tests",
+                                 "- old readme step", "ev", _Rlog())
+        self.assertEqual(out, ["Write README"])
+        self.assertIn("Write resolve_handle.py", seen["coverage_user"])   # done steps judged too
+        self.assertIn("Write unit tests", seen["coverage_user"])
+        self.assertIn("Write README", seen["coverage_user"])              # alongside the new tail

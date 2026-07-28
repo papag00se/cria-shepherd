@@ -38,7 +38,7 @@ from . import callcapture, editrecovery, focustrim, groundtruth, indicators, mas
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
-from .planner import _clean_step, _extract_cwd, reasoned_noise_indices
+from .planner import _clean_step, _extract_cwd, missing_deliverables, reasoned_noise_indices
 from .searchloop import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args
@@ -504,6 +504,19 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     rlog.emit("loop.replan_noise", dropped=len(drop), kept=len(kept),
               level="warn" if not kept else "info")
     if not kept:
+        return None
+    # COVERAGE — the same ENFORCED check the initial draft gets (Planner._missing_deliverables), on
+    # the plan as it would stand: completed steps + the re-derived tail. replan.txt carries the rule
+    # as prose ("every deliverable ... must still be covered") and prose was not enough — measured
+    # (run 0728-m6): a coverage-checked six-step draft was thrash-re-derived into ONE step, silently
+    # dropping unit tests + the live test + the README, and the run ended "satisfied" with a named
+    # deliverable absent from the workspace. A tail that drops deliverables is REFUSED — the plan
+    # stays untouched (the same fail-safe as a parse miss; the step critic still guards every step
+    # and the done-critic still backstops), and the refusal is TRACED, never silent.
+    done_texts = [ln[2:].strip() for ln in (completed or "").splitlines() if ln.startswith("- ")]
+    missing = missing_deliverables(_ask, task, done_texts + kept)
+    if missing:
+        rlog.emit("loop.replan_uncovered", level="warn", missing=", ".join(missing))
         return None
     # NO research-first re-prepend here — and none at plan time either. cria does not AUTHOR plan steps:
     # injecting "web_fetch the named source" was cria planning, and pinning it made a possibly-wrong step

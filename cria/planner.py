@@ -441,6 +441,19 @@ def _gather_evidence(messages: list[dict]) -> str:
                      for m in messages if m.get("role") in ("user", "tool"))
 
 
+def missing_deliverables(ask, task: str, steps: list[str]) -> list[str]:
+    """Which things the REQUEST asks for does this plan not produce? Shared coverage core —
+    ``ask(system, user) -> str`` is the caller's one-shot reasoner call. Used by the INITIAL draft
+    (Planner._missing_deliverables) and the living re-derivation (loop.reassess_remaining): measured
+    (run 0728-m6) a coverage-checked six-step draft was thrash-re-derived into ONE step, dropping
+    unit tests + live test + README, and nothing re-checked the tail — the run ended "satisfied"
+    with a named deliverable absent. Safe-null parse (_parse_missing_verdict): unparseable → []."""
+    ans = ask(prompts.load("plan_coverage"),
+              prompts.render("plan_coverage_user", task=task,
+                             plan="\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))))
+    return _parse_missing_verdict(ans)
+
+
 def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     """Indices of NOISE steps to DROP from a plan — pure environment-plumbing, a bare shell command,
     dictated literal code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder
@@ -675,11 +688,7 @@ class Planner:
         and the planner writes the steps. No reasoner → no judgment."""
         if self._role is None or not steps:
             return []
-        ans = self._ask(prompts.load("plan_coverage"),
-                        prompts.render("plan_coverage_user", task=task,
-                                       plan="\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))),
-                        rlog)
-        return _parse_missing_verdict(ans)
+        return missing_deliverables(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
 
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
