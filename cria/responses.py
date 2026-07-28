@@ -241,6 +241,37 @@ def _reasoning_item(text: str, idx: int) -> tuple[list[bytes], dict]:
     return evs, done
 
 
+def status_item_open(idx: int = 0) -> tuple[bytes, bytes, str]:
+    """Open the LIVE STATUS message item early — before any model work — so status lines can stream
+    as output_text deltas while the pipeline grinds. Returns (item.added, part.added, item_id)."""
+    item_id = _new_id("msg")
+    return (
+        _event("response.output_item.added", {"output_index": idx,
+            "item": {"id": item_id, "type": "message", "status": "in_progress", "role": "assistant", "content": []}}),
+        _event("response.content_part.added", {"item_id": item_id, "output_index": idx,
+            "content_index": 0, "part": {"type": "output_text", "text": ""}}),
+        item_id,
+    )
+
+
+def status_delta(item_id: str, text: str, idx: int = 0) -> bytes:
+    return _event("response.output_text.delta",
+                  {"item_id": item_id, "output_index": idx, "content_index": 0, "delta": text})
+
+
+def status_item_close(item_id: str, text: str, idx: int = 0) -> tuple[list[bytes], dict]:
+    """Close the status item; the DONE dict joins the completed response's output list (the harness
+    stores it as assistant content — ⟦cria⟧-marked, stripped inbound like the banner)."""
+    done = {"id": item_id, "type": "message", "status": "completed", "role": "assistant",
+            "content": [{"type": "output_text", "text": text}]}
+    return [
+        _event("response.output_text.done", {"item_id": item_id, "output_index": idx, "content_index": 0, "text": text}),
+        _event("response.content_part.done", {"item_id": item_id, "output_index": idx,
+            "content_index": 0, "part": {"type": "output_text", "text": text}}),
+        _event("response.output_item.done", {"output_index": idx, "item": done}),
+    ], done
+
+
 def _message_item(text: str, idx: int) -> tuple[list[bytes], dict]:
     item_id = _new_id("msg")
     done = {"id": item_id, "type": "message", "status": "completed", "role": "assistant",
@@ -287,14 +318,15 @@ def _reasoning_transcript_block(reasoning: str) -> str:
 
 
 def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,
-                show_reasoning: bool = False, reasoning_transcript: bool = False) -> Iterator[bytes]:
+                show_reasoning: bool = False, reasoning_transcript: bool = False,
+                start_index: int = 0, extra_items: list | None = None) -> Iterator[bytes]:
     """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
     enabled), an optional cria banner line, one message item (if any text), one function_call item
     per tool call, then `response.completed`."""
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
-    out_items: list[dict] = []
-    idx = 0
+    out_items: list[dict] = list(extra_items or [])   # e.g. the closed live-status item at index 0
+    idx = start_index
 
     reasoning = msg.get("reasoning_content")
     reasoning = reasoning.strip()[:_REASONING_CAP] if isinstance(reasoning, str) and reasoning.strip() else ""

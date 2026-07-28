@@ -168,6 +168,7 @@ class BoundLog:
         # proxy) — set by the calling subsystem right before it calls the model, read by the
         # call-capture so each dump is labeled with what it is. None until set.
         self.phase: str | None = None
+        self.on_event = None  # optional live hook: (kind, phase, fields) -> None — the status ticker
 
     @property
     def session(self) -> str | None:
@@ -183,6 +184,11 @@ class BoundLog:
                 self.gen_tokens += int(toks)
             self.model_calls += 1  # one upstream.done == one real model call
         self.events[kind] += 1
+        if self.on_event is not None:
+            try:
+                self.on_event(kind, self.phase, kw)
+            except Exception:  # noqa: BLE001 — a status hook must never break the request it narrates
+                pass
         if kind == "loop.gate" and kw.get("blocked"):
             self.events["loop.gate.blocked"] += 1  # a BLOCKING gate is a steer; a clean pass is not
         self._log.emit(kind, session=self._session, turn=self._turn, **kw)

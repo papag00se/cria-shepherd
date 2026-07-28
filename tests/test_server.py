@@ -747,3 +747,57 @@ class LoopConstructionGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResponsesStatusTickerTests(unittest.TestCase):
+    """The LIVE status item: opened before any model work, ⟦cria⟧ phase lines streamed as
+    output_text deltas while the pipeline grinds, closed into the completed response's output.
+    The real message follows at the next output index."""
+
+    def setUp(self):
+        from cria.config import RoutingConfig
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
+        _serve(self.fake)
+        self.addCleanup(self.fake.server_close)
+        self.addCleanup(self.fake.shutdown)
+        cfg = Config(
+            server=ServerConfig(host="127.0.0.1", port=0),
+            upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
+            logging=LoggingConfig(dir=self._tmp.name, capture_dir=self._tmp.name, console=False),
+            routing=RoutingConfig(backends={"local": Backend("local")},
+                                  roles={"classifier": Role(name="classifier", backend="local"),
+                                         "coder": Role(name="coder", backend="local")},
+                                  failover={"coding": ("coder",)}),
+            indicators=IndicatorsConfig(enabled=True, status=True, route=False, metrics=False,
+                                        assists=False, stats=False, reasoning=False,
+                                        reasoning_transcript=False),
+        )
+        self.log = EventLog(dir=cfg.logging.dir, console=False)
+        self.addCleanup(self.log.close)
+        self.cria = CriaServer(cfg, self.log, Upstream(cfg.upstream.base_url))
+        _serve(self.cria)
+        self.addCleanup(self.cria.server_close)
+        self.addCleanup(self.cria.shutdown)
+        self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
+
+    def test_status_item_streams_and_lands_in_the_completed_output(self):
+        req = urllib.request.Request(
+            self.base + "/v1/responses",
+            data=json.dumps({"model": "m", "stream": True, "instructions": "agent",
+                             "input": [{"type": "message", "role": "user",
+                                        "content": [{"type": "input_text", "text": "hi"}]}]}).encode(),
+            method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            out = r.read().decode()
+        # a ⟦cria⟧ status delta streamed BEFORE the completed event
+        deltas = [l for l in out.splitlines() if "output_text.delta" in l and "⟦cria⟧" in l]
+        self.assertTrue(deltas, "no live status delta on the wire")
+        self.assertLess(out.index("output_text.delta"), out.index("response.completed"))
+        completed = [json.loads(l[6:]) for l in out.splitlines()
+                     if l.startswith("data: ") and '"response.completed"' in l][0]
+        output = completed["response"]["output"]
+        self.assertGreaterEqual(len(output), 2)
+        self.assertIn("⟦cria⟧", output[0]["content"][0]["text"])   # the closed status item
+        self.assertEqual(output[1]["content"][0]["text"], "Hi")    # the real message after it

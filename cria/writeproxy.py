@@ -696,7 +696,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             if cmd is not None:
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
                 if rlog is not None:
-                    rlog.emit("writeproxy.lowered", tool=name)
+                    # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
+                    # call as an opaque sentinel blob (operator: "a file wrote to the project, but
+                    # there was no indicator"), so the ACTION is narrated here in cria's own voice.
+                    rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "",
+                              detail=str(args.get("query") or args.get("url") or ""))
             else:
                 rebuilt.append(tc)
         choice["message"]["tool_calls"] = rebuilt

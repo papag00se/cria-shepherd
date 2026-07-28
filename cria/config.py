@@ -251,6 +251,8 @@ class IndicatorsConfig:
     metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
     assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
     stats: bool = True    # a terse end-of-turn "⟦cria⟧ turn done · ⏱ … · 🛡 …" summary line
+    status: bool = True   # the LIVE "⟦cria⟧ <phase>" ticker streamed while cria works (planner
+                          # rounds, judges, compaction) — the first-minutes black box, narrated
     reasoning: bool = True  # forward the model's reasoning on the native Responses reasoning channel
                             # (Codex's live 'thinking' preamble — transient, not kept in scrollback)
     reasoning_transcript: bool = True  # ALSO fold the reasoning into the PERSISTENT message content as
@@ -446,6 +448,7 @@ def _indicators(d: dict) -> IndicatorsConfig:
         metrics=bool(d.get("metrics", True)),
         assists=bool(d.get("assists", True)),
         stats=bool(d.get("stats", True)),
+        status=bool(d.get("status", True)),
         reasoning=bool(d.get("reasoning", True)),
         reasoning_transcript=bool(d.get("reasoning_transcript", True)),
     )

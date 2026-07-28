@@ -37,6 +37,8 @@ from .loop import (
 )
 from .planner import Planner, _extract_cwd
 from .routing import Router
+from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
+from . import statusline
 from .toolmenu import add_cheatsheet, focus_tools
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
@@ -789,6 +791,20 @@ class CriaHandler(BaseHTTPRequestHandler):
         self.server.register_stream(hb, resp_id)  # so a shutdown can end this stream cleanly
         try:
             hb.write(responses.created_event(resp_id, model))  # open the stream immediately
+            # LIVE STATUS TICKER (operator: "for the first 7 mins there was no feedback"). A status
+            # message item opens BEFORE any model work; the rlog hook streams ⟦cria⟧ phase lines into
+            # it as the pipeline grinds (planner rounds, judges, compaction). Stripped inbound like
+            # the banner — the coder never reads them.
+            ind = self.server.cfg.indicators
+            status_lines: list[str] = []
+            status_id = None
+            if ind.enabled and ind.status:
+                added, part, status_id = responses.status_item_open()
+                hb.write(added); hb.write(part)
+                writer = statusline.StatusWriter(
+                    lambda line: (status_lines.append(line),
+                                  hb.write(responses.status_delta(status_id, line + "\n")))[-1])
+                rlog.on_event = writer.on_event
             try:
                 comp, _indic = self._produce_completion(body, rlog, sess_key)
             except UpstreamError as e:
@@ -796,15 +812,26 @@ class CriaHandler(BaseHTTPRequestHandler):
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": {"message": str(e)}}}))
                 return
+            finally:
+                rlog.on_event = None
+            extra_items = []
+            start_index = 0
+            if status_id is not None:
+                closing, done_item = responses.status_item_close(status_id, "\n".join(status_lines))
+                for ev in closing:
+                    hb.write(ev)
+                extra_items = [done_item]
+                start_index = 1
             banner = self._compute_banner(comp, _indic, rlog)
-            ind = self.server.cfg.indicators
             show_reasoning = ind.enabled and ind.reasoning
             reasoning_transcript = ind.enabled and ind.reasoning_transcript
             for chunk in responses.body_events(comp, resp_id, model, banner,
                                                show_reasoning=show_reasoning,
-                                               reasoning_transcript=reasoning_transcript):
+                                               reasoning_transcript=reasoning_transcript,
+                                               start_index=start_index, extra_items=extra_items):
                 hb.write(chunk)
-            rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats)
+            rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
+                      status_lines=len(status_lines))
         except (BrokenPipeError, ConnectionResetError):
             rlog.emit("response.client_gone", level="warn")
         finally:
