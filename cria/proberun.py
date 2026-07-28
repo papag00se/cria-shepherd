@@ -46,6 +46,7 @@ fires and cria sees a harness-level failure instead of exit 124.
 """
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
@@ -367,6 +368,26 @@ def gate_ran_tests(report: ProbeReport) -> bool:
                 and not is_no_tests_collected(r.exit_code, r.command, r.summary):
             return True                # M3: a TIMED-OUT test probe did NOT execute a full run → not "ran tests"
     return False
+
+
+_SKIPPED_RE = re.compile(r"(\d+) skipped")
+
+
+def gate_skipped_count(report: ProbeReport) -> int:
+    """Tool-reported SKIPPED-test count across the report's Test-kind probes — a deterministic fact
+    for the satisfaction judge. Measured need (run 0728-m11): the coder's live tests skipTest() on
+    the exact 404 that proves the resolver broken; "3 passed, 2 skipped" read as green and the run
+    ended done with a resolver that 404s. Parsed from the runner's own summary line ("N skipped" —
+    pytest/jest/vitest all emit it), never from prose; runners without that phrase report 0 (the
+    same Python-first bound as the test floor, and an under-count only ever means silence)."""
+    if report is None:
+        return 0
+    kinds = _kind_by_command(report)
+    total = 0
+    for r in report.results:
+        if kinds.get(r.command) is probediscovery.ProbeKind.Test and not r.timed_out:
+            total += sum(int(n) for n in _SKIPPED_RE.findall(r.summary or ""))
+    return total
 
 
 def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:

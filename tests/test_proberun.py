@@ -592,3 +592,44 @@ class TestComposedRoundtrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GateSkippedCountTests(unittest.TestCase):
+    """A SUITE CAN PASS WHILE SKIPPING THE CHECKS THAT MATTER (run 0728-m11): the coder's live tests
+    skipTest() on the exact 404 that proves the resolver broken, and "3 passed, 2 skipped" read as
+    green — the run ended done with a resolver that 404s against the real API. The skip count is a
+    tool-reported fact (the runner's own summary line), surfaced deterministically; runners without
+    the "N skipped" phrase report 0 — an under-count only ever means silence, never a false alarm."""
+
+    def _report(self, summary, kind=None, timed_out=False):
+        from cria import probediscovery
+        from cria.proberun import ProbeReport
+        from cria.probeparse import ProbeResult
+        kind = kind or probediscovery.ProbeKind.Test
+        cand = probediscovery.cand(kind, ["python3", "-m", "pytest", "-q"], ".", 60, 90,
+                                   probediscovery.ProbeCost.Moderate, "tests")
+        r = ProbeResult(command="python3 -m pytest -q")
+        r.summary = summary
+        r.timed_out = timed_out
+        rep = ProbeReport(results=[r])
+        rep.selected = [cand]
+        return rep
+
+    def test_the_m11_summary_reports_two_skipped(self):
+        from cria.proberun import gate_skipped_count
+        self.assertEqual(gate_skipped_count(self._report("3 passed, 2 skipped in 0.24s")), 2)
+
+    def test_a_clean_run_reports_zero(self):
+        from cria.proberun import gate_skipped_count
+        self.assertEqual(gate_skipped_count(self._report("5 passed in 0.10s")), 0)
+
+    def test_non_test_probes_and_timeouts_never_count(self):
+        from cria import probediscovery
+        from cria.proberun import gate_skipped_count
+        self.assertEqual(gate_skipped_count(
+            self._report("2 skipped", kind=probediscovery.ProbeKind.Lint)), 0)
+        self.assertEqual(gate_skipped_count(self._report("2 skipped", timed_out=True)), 0)
+
+    def test_none_report_is_zero(self):
+        from cria.proberun import gate_skipped_count
+        self.assertEqual(gate_skipped_count(None), 0)

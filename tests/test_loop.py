@@ -5319,3 +5319,24 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
                                         routes="/handles/{handle}, /holders/{address}")
         self.assertFalse(ok)
         self.assertIn("/handles/{handle}", reason)
+
+
+class GateNotesTests(unittest.TestCase):
+    """The judge's evidence discloses what the gate's test run actually verified — both vacuous
+    greens: 0 collected (C4, long-standing) and N SKIPPED (0728-m11, new). Silence on a clean run."""
+
+    def test_skipped_count_becomes_a_ground_truth_note(self):
+        from cria.loop import PlanSession, _gate_notes
+        sess = PlanSession(plan=_plan())
+        sess.last_gate_skipped = 2
+        note = _gate_notes(sess)
+        self.assertIn("2 test(s) SKIPPED", note)
+        self.assertIn("verified NOTHING", note)
+
+    def test_testless_still_wins_and_clean_is_silent(self):
+        from cria.loop import PlanSession, _gate_notes
+        sess = PlanSession(plan=_plan())
+        sess.last_gate_testless = True
+        self.assertIn("NO tests were actually executed", _gate_notes(sess))
+        clean = PlanSession(plan=_plan())
+        self.assertEqual(_gate_notes(clean), "")   # no doubt-hedge on a clean run

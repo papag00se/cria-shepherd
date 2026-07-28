@@ -1,0 +1,8 @@
+# Ground-truth notes appended to the satisfaction judge's evidence about what the gate's test run
+# actually verified. `testless` (C4): a green with 0 tests collected verifies no behavior. `skipped`
+# (run 0728-m11): a suite can pass while SKIPPING the checks that matter — the coder wrote live tests
+# that skipTest() on the exact 404 that proves the resolver broken, and "3 passed, 2 skipped" read as
+# green. The note surfaces the tool-reported skip count as a fact; the judge holds the task and
+# decides whether the skipped checks were the point. Parsed by prompts.load_map.
+testless = [GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran). If this task required tests, green does NOT verify them; judge accordingly.
+skipped = [GROUND TRUTH] The test run reported {{COUNT}} test(s) SKIPPED. A skipped test verified NOTHING — if the task required a live/real check and the skipped tests are those checks, green does NOT verify them; read the skipped tests' own skip conditions before treating this as done.

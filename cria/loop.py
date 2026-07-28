@@ -188,6 +188,9 @@ class GuardState:
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
+    last_gate_skipped: int = 0        # tool-reported SKIPPED count from the last gate's test run — a suite
+    # can pass while SKIPPING the checks that matter (0728-m11: live tests skipTest() on the exact 404
+    # that proves the resolver broken; "3 passed, 2 skipped" read as green). Same evidence posture:
     # VACUOUS green. Fed to the satisfaction judge as EVIDENCE (not a deterministic block): the judge
     # holds the task and decides whether tests were even part of the ask (a script task is legitimately
     # testless-green; deterministically blocking would wedge it AND push a weak model to fabricate tests).
@@ -1136,9 +1139,7 @@ class Loop:
         # (Parity with _replan_tail, which already judges against sess.plan.task.)
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
-        if sess.last_gate_testless:  # C4 vacuous-green: a green with 0 tests collected doesn't verify behavior
-            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
-                   "If this task required tests, green does NOT verify them; judge accordingly.")
+        ev += _gate_notes(sess)
         satisfied, reason = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools")),
                                                workspace_root=sess.workspace_root or "",
@@ -1404,6 +1405,7 @@ class Loop:
         else:
             sess.last_gate_red = False   # ran and genuinely clean → GREEN
             sess.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
+            sess.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
         if nudge is not None:  # GROUND TRUTH: floor or probes failed → the exact file:line errors
@@ -1916,10 +1918,7 @@ class Loop:
                 sess.drive_count, self._ctx.satisfaction_check_start, self._ctx.satisfaction_check_every):
             task = _history_root(body.get("messages", []))[0]
             evidence = _satisfaction_evidence(body.get("messages", []))
-            if sess.last_gate_testless:  # C4: the vacuous-green FACT — the judge holds the task and decides
-                evidence += ("\n\n[GROUND TRUTH] The repo's automated checks passed, but NO tests were "
-                             "actually executed (0 collected / no test probe ran). If this task required "
-                             "tests, a green result does NOT verify them; judge accordingly.")
+            evidence += _gate_notes(sess)
             satisfied, reason = judge_satisfaction(
                 task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
                 coder_tools=_coder_tools_summary(body.get("tools")),
@@ -2016,9 +2015,7 @@ class Loop:
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
-        if sess.last_gate_testless:  # C4 vacuous-green evidence
-            ev += ("\n\n[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected). "
-                   "If this task required tests, green does NOT verify them; judge accordingly.")
+        ev += _gate_notes(sess)
         satisfied, reason = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
@@ -2962,6 +2959,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     elif outcome.ran:
         gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
         gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
+        gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
         track_gate_progress(gs, "")             # GREEN → reset the streak/stall
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
@@ -3076,6 +3074,7 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
         return msg
     gs.last_gate_red = False  # ran and genuinely clean → GREEN
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence for the judge
+    gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
     track_gate_progress(gs, "")
     return None
 
@@ -3097,6 +3096,21 @@ def gate_error_text(outcome) -> str:
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:
         return prompts.render("ground_truth_failed", failed="\n".join(failed))
+    return ""
+
+
+def _gate_notes(sess) -> str:
+    """Ground-truth notes for the satisfaction judge about what the gate's test run actually
+    verified (prompts/gate_notes.txt): the C4 vacuous-green (0 collected) and the skipped-count fact
+    (0728-m11: live tests skipTest() on the exact failure that proves the deliverable broken, and
+    "3 passed, 2 skipped" read as green). Empty when there is nothing to disclose — silence over
+    noise, and never a doubt-hedge on a clean run."""
+    lines = prompts.load_map("gate_notes")
+    if getattr(sess, "last_gate_testless", False):
+        return "\n\n" + lines["testless"]
+    skipped = getattr(sess, "last_gate_skipped", 0)
+    if skipped:
+        return "\n\n" + prompts.fill(lines["skipped"], count=str(skipped))
     return ""
 
 
