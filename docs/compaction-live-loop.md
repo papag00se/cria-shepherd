@@ -62,7 +62,7 @@ fastest way to avoid re-deriving from scratch what already works — and the ant
 
 ## Scope — the four proven models, not the MoE ones
 qwopus, qwythos, ornith, gemma4 are the baseline that did decently in codex-local. The MoE models
-(mellum2, lfm25) have been struggling and are **out of scope** for this goal — do not let them
+(e.g. mellum2) have been struggling and are **out of scope** for this goal — do not let them
 absorb the loop's time. The target is codex-local parity on these four.
 
 ## The Workload (run verbatim via codex-debug exec)

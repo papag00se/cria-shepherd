@@ -38,9 +38,9 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
 > empirically before treating them as recommended.
 
-> **LFM2.5-8B-A1B (`lfm25`) was tried live 2026-07-21 and dropped** — the base instruct MoE is not
-> agentic: dropped into the harness it monologues the plan in `content` and never emits a tool call.
-> (fabliq is the *Agent-Reasoning* fine-tune of the same family, which is why it's the live model.)
+> **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
+> was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
+> `content` and never emits a tool call), which is why the fine-tune is the live model.
 
 ---
 
