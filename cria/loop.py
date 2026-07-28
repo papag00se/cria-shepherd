@@ -1324,7 +1324,12 @@ class Loop:
             pinned_task=(getattr(sess.plan, "task", "") or ""),
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
-            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"))
+            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),
+            # The RARE fold-of-the-accumulated-summary (see selfcompact REFOLD_TOKENS).
+            refold=lambda text: summarize(self._ctx.reasoner_chat,
+                                          self._ctx.compactor_role or self._ctx.reasoner_role,
+                                          prompts.load("selfcompact_refold"), text, rlog,
+                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS))
         if applied:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
             return out
@@ -2056,7 +2061,11 @@ class Loop:
         out, sess.compact_state, applied = selfcompact.compact(
             msgs, lambda mm: self._summarize_single(mm, rlog), sess.compact_state,
             trigger_tokens=self._ctx.trigger_compaction, pinned_task=root_task,
-            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"))
+            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),
+            refold=lambda text: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
+                                          self._ctx.compactor_role or self._ctx.reasoner_role,
+                                          prompts.load("selfcompact_refold"), text, rlog,
+                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS))
         if not applied:
             return framed
         rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=sess.compact_state.covered)

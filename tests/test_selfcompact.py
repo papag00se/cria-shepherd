@@ -366,3 +366,56 @@ class RollingSummaryTests(unittest.TestCase):
                                    trigger_tokens=100, keep_tail_tokens=60, pinned_task="t")
         self.assertTrue(applied)
         self.assertEqual(st.summary, "whole")                     # replaced, not appended to stale
+
+
+class SummaryRefoldTests(unittest.TestCase):
+    """THE ACCUMULATED SUMMARY IS ITSELF BOUNDED (operator: append-only just moves the unbounded
+    growth into the summary — it would eventually overtake the window, and the rollup is anchor-
+    protected so nothing else ever shrinks it). When the accumulated increments cross REFOLD_TOKENS,
+    the summary is folded ONCE by ``refold`` — deliberately rare, so degradation stays a handful of
+    generations per session, never the every-round compounding the old rollup-of-a-rollup fear was
+    about. A failed refold keeps the un-folded text: too long beats gone."""
+
+    def _msgs(self, n, tag):
+        pad = "words " * 40
+        return [{"role": "user", "content": f"{tag} turn {i}: {pad}"} for i in range(n)]
+
+    def test_a_summary_past_the_threshold_is_refolded_once(self):
+        from cria.selfcompact import CompactState, compact
+        big_summary = "earlier facts. " * 400          # ≈ 1500 tokens of prior increments
+        msgs = ([{"role": "system", "content": "sys"}] + self._msgs(10, "early")
+                + self._msgs(40, "new"))
+        out, st, applied = compact(
+            msgs, lambda mm: "increment", CompactState(summary=big_summary, covered=11),
+            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            refold=lambda text: "FOLDED: " + text[:20], refold_tokens=800)
+        self.assertTrue(applied)
+        self.assertTrue(st.summary.startswith("FOLDED:"))          # folded, not just appended
+        self.assertLess(len(st.summary), len(big_summary))
+
+    def test_below_threshold_no_refold(self):
+        from cria.selfcompact import CompactState, compact
+        calls = []
+        msgs = ([{"role": "system", "content": "sys"}] + self._msgs(10, "early")
+                + self._msgs(40, "new"))
+        out, st, applied = compact(
+            msgs, lambda mm: "increment", CompactState(summary="small prior", covered=11),
+            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            refold=lambda text: calls.append(1) or "FOLDED", refold_tokens=6000)
+        self.assertTrue(applied)
+        self.assertEqual(calls, [])                                # rare by design
+        self.assertIn("small prior", st.summary)
+        self.assertIn("increment", st.summary)
+
+    def test_failed_refold_keeps_the_unfolded_summary(self):
+        from cria.selfcompact import CompactState, compact
+        big = "facts. " * 500
+        msgs = ([{"role": "system", "content": "sys"}] + self._msgs(10, "early")
+                + self._msgs(40, "new"))
+        out, st, applied = compact(
+            msgs, lambda mm: "increment", CompactState(summary=big, covered=11),
+            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            refold=lambda text: "", refold_tokens=800)             # refold model failed
+        self.assertTrue(applied)
+        self.assertIn("increment", st.summary)                     # too long beats gone
+        self.assertIn("facts.", st.summary)

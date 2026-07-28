@@ -45,6 +45,8 @@ BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim 
 #                                  verbatim in the 6000-tok tail and the view GREW step over step — observed
 #                                  live: +14KB / ~350 lines between step 1 and step 2.)
 RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
+REFOLD_TOKENS = 6000             # when the ACCUMULATED rolling summary itself exceeds this, fold it once
+#                                  (rollup-of-a-rollup, deliberately RARE — see the refold tier in compact())
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star
 FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→status→endpoints) the loop re-injects
@@ -245,7 +247,8 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
             recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
             boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
-            files_list: str = "") -> tuple[list[dict], CompactState, bool]:
+            files_list: str = "", refold=None,
+            refold_tokens: int = REFOLD_TOKENS) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
@@ -303,6 +306,18 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             if not fresh.strip():
                 return messages, state, False
             combined = (state.summary + "\n\n" + fresh) if (state.summary and lo > head_end) else fresh
+            # REFOLD TIER (operator: append-only just moves the unbounded growth into the summary —
+            # over a long session the accumulated increments would themselves overtake the window,
+            # and the rollup is anchor-protected so nothing else ever shrinks it). When the
+            # accumulated summary crosses REFOLD_TOKENS, fold IT once via ``refold``. This is the
+            # rollup-of-a-rollup the old code rightly feared — but the fear was doing it EVERY round
+            # (compounding degradation); at a ~3× increment threshold it happens once per ~6K summary
+            # tokens, bounding degradation to a handful of generations across a whole session. A
+            # failed/empty refold keeps the un-refolded text (fail-safe: too long beats gone).
+            if refold is not None and est_tokens(combined) >= refold_tokens:
+                folded = strip_frame_echo(refold(combined))
+                if folded.strip():
+                    combined = folded
             state = CompactState(summary=combined, covered=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
