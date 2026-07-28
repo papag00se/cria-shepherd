@@ -5340,3 +5340,36 @@ class GateNotesTests(unittest.TestCase):
         self.assertIn("NO tests were actually executed", _gate_notes(sess))
         clean = PlanSession(plan=_plan())
         self.assertEqual(_gate_notes(clean), "")   # no doubt-hedge on a clean run
+
+
+class ReplanPersistsMirrorTests(unittest.TestCase):
+    """THE ONE PLAN MUTATION THAT DIDN'T RE-PERSIST THE MIRROR (run 0728-m12, operator-spotted:
+    "Do ONLY this step (4 of 7)" while the on-disk plan showed 5 steps). The live replan resized the
+    plan in memory; the mirror kept the pre-replan snapshot, so every forensic read compared the
+    coder's REAL frames against a dead file. The corrective-step mutation and _advance both persist;
+    this pins parity for the replan tail."""
+
+    def test_a_replanned_tail_is_persisted_to_the_mirror(self):
+        from cria.loop import reassess_remaining  # noqa: F401 (behavior under test is _replan_tail)
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as runs:
+            plan = Plan(id="pm", task="t", created="c",
+                        items=[PlanItem("done one", done=True, note="verified"),
+                               PlanItem("old tail step")])
+            chat = _Scripted([_replan(["new tail step A", "new tail step B"]),
+                              _text("NONE"),                       # noise: keep all
+                              _text('{"missing": []}')])           # coverage: clean
+            ctx = _ctx(_Scripted([_toolcall()]), chat)
+            from cria.config import Role
+            ctx.reasoner_role = Role(name="reasoner", backend="local")
+            ctx.runs_dir = runs
+            loop = Loop(ctx)
+            sess = PlanSession(plan=plan)
+            loop._replan_tail(sess, _body(), 1, _Rlog())
+            self.assertEqual([i.text for i in sess.plan.items],
+                             ["done one", "new tail step A", "new tail step B"])
+            hits = list(Path(runs).rglob("plan-pm.md"))
+            self.assertTrue(hits, "the replanned plan was never re-persisted")
+            text = hits[0].read_text()
+            self.assertIn("new tail step A", text)                 # the mirror shows the LIVE plan
+            self.assertNotIn("old tail step", text)

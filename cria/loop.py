@@ -1511,6 +1511,11 @@ class Loop:
             return
         sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
         rlog.emit("loop.replan", step=idx, before=len(rederivable), after=len(steps))
+        # Re-persist the mirror — the ONE plan mutation that didn't (run 0728-m12): after a live
+        # resize the on-disk plan showed 5 steps while the coder was correctly framed "4 of 7", so
+        # the operator (and any forensic read) compared live frames against a dead snapshot. The
+        # corrective-step mutation and _advance both persist; parity here.
+        self._persist_plan(sess.plan, rlog)
 
     def _renudge(self, sess: PlanSession, key: str, body: dict, reason: str, rlog) -> dict:
         """A step failed its check → re-drive the coder on THIS step with the concrete
