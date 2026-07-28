@@ -111,11 +111,15 @@ def fmt_elapsed(seconds: float) -> str:
 
 
 def with_total(line: str, total_seconds: float | None) -> str:
-    """Suffix a status line with the SESSION's total running time (operator: the ticker should show
-    how long the whole run has been going, not just the current call)."""
+    """Lead a status line with the SESSION's total running time — "(1m07s) coder · working" — the
+    same parenthesized-clock language the beat tick uses (operator killed the "· t+1m07s" suffix
+    style: one clock, one look)."""
     if total_seconds is None or total_seconds < 2:
-        return line   # a just-born session: "t+0s" reads as a bug, and zero adds nothing
-    return f"{line} · t+{fmt_elapsed(total_seconds)}"
+        return line   # a just-born session: a zero clock reads as a bug, and adds nothing
+    clock = f"({fmt_elapsed(total_seconds)}) "
+    if line.startswith(MARKER):
+        return f"{MARKER}{clock}{line[len(MARKER):]}"
+    return f"{clock}{line}"
 
 
 def still_working_line(phase: str | None, total_seconds: float | None = None,

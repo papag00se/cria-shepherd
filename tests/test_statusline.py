@@ -114,7 +114,7 @@ class TotalRunningTimeTests(unittest.TestCase):
         t = {"now": 125.0}
         w = statusline.StatusWriter(wrote.append, total_elapsed=lambda: t["now"])
         w.on_event("plan.drafted", None, {})
-        self.assertEqual(wrote, [f"{MARKER}drafting the plan · t+2m05s"])
+        self.assertEqual(wrote, [f"{MARKER}(2m05s) drafting the plan"])
 
     def test_dedupe_ignores_the_moving_clock(self):
         wrote = []
@@ -147,4 +147,9 @@ class DurableSessionClockTests(unittest.TestCase):
     def test_zero_and_tiny_totals_are_suppressed(self):
         self.assertEqual(statusline.with_total("x", 0.0), "x")
         self.assertEqual(statusline.with_total("x", 1.4), "x")
-        self.assertEqual(statusline.with_total("x", 125.0), "x · t+2m05s")
+        self.assertEqual(statusline.with_total("x", 125.0), "(2m05s) x")
+
+    def test_clock_stays_inside_the_marker(self):
+        # The clock leads the TEXT, not the rail — strip_history keys on MARKER at line start.
+        line = statusline.with_total(f"{MARKER}coder · working", 67.0)
+        self.assertEqual(line, f"{MARKER}(1m07s) coder · working")
