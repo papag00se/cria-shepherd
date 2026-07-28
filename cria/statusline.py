@@ -98,6 +98,24 @@ def line_for(kind: str, phase: str | None, fields: dict) -> str | None:
     return None
 
 
+def fmt_elapsed(seconds: float) -> str:
+    """Compact wall-clock: 47s / 14m05s / 1h02m."""
+    t = int(seconds)
+    if t < 60:
+        return f"{t}s"
+    if t < 3600:
+        return f"{t // 60}m{t % 60:02d}s"
+    return f"{t // 3600}h{(t % 3600) // 60:02d}m"
+
+
+def with_total(line: str, total_seconds: float | None) -> str:
+    """Suffix a status line with the SESSION's total running time (operator: the ticker should show
+    how long the whole run has been going, not just the current call)."""
+    if total_seconds is None:
+        return line
+    return f"{line} · t+{fmt_elapsed(total_seconds)}"
+
+
 def still_working_line(phase: str | None, elapsed: float, tok_per_s: float | None = None) -> str:
     """The in-between tick for one long model call (no events fire mid-generation — a 27B coder at
     ~7 tok/s went 10 minutes with nothing on screen). Phase names the worker; elapsed is honest;
@@ -116,8 +134,12 @@ class StatusWriter:
     owns transport (an SSE delta on the wire); failures are swallowed — a status line must never
     break the request it narrates."""
 
-    def __init__(self, write) -> None:
+    def __init__(self, write, total_elapsed=None) -> None:
         self._write = write
+        # ``total_elapsed() -> float`` — the SESSION's running total, suffixed onto every line
+        # (" · t+14m05s"). Dedupe happens on the BASE line so a repeating phase doesn't re-tick
+        # just because the clock moved.
+        self._total = total_elapsed
         self._last: str | None = None
         self.lines = 0
 
@@ -127,7 +149,7 @@ class StatusWriter:
             return
         self._last = line
         try:
-            self._write(line)
+            self._write(with_total(line, self._total() if self._total else None))
             self.lines += 1
         except Exception:  # noqa: BLE001 — narration must never break the narrated request
             pass

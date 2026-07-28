@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -235,6 +236,7 @@ class CriaServer(ThreadingHTTPServer):
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}
+        self._session_t0: dict[str, float] = {}
         self._streams_lock = threading.Lock()
         # Conversation-shape store for HARNESS-COMPACTION detection (structural rewrite detection +
         # the completion-briefing `done` bit) — persisted so a cria restart doesn't orphan detection.
@@ -292,6 +294,12 @@ class CriaServer(ThreadingHTTPServer):
                 self.loop_store,
             )
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
+
+    def session_started(self, sess_key: str) -> float:
+        """Monotonic first-seen time for a session — the ticker's TOTAL running clock. Tiny
+        unbounded dict, bounded in practice by sessions per process lifetime."""
+        with self._streams_lock:
+            return self._session_t0.setdefault(sess_key, time.monotonic())
 
     def register_stream(self, hb, resp_id: str) -> None:
         with self._streams_lock:
@@ -801,9 +809,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             if ind.enabled and ind.status:
                 added, part, status_id = responses.status_item_open()
                 hb.write(added); hb.write(part)
+                t0 = self.server.session_started(sess_key)
+                total = lambda: __import__("time").monotonic() - t0
                 writer = statusline.StatusWriter(
                     lambda line: (status_lines.append(line),
-                                  hb.write(responses.status_delta(status_id, line + "\n")))[-1])
+                                  hb.write(responses.status_delta(status_id, line + "\n")))[-1],
+                    total_elapsed=total)
                 rlog.on_event = writer.on_event
                 # The in-between: one long model call fires no events, so the beat thread ticks a
                 # visible "still working" line (~every 30s) with the live phase and elapsed time.
@@ -818,7 +829,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                         dt = _time.monotonic() - t0
                         if dt > 1.0:
                             rate = (chars / 4) / dt   # ≈ tokens; the same chars/4 the watchers use
-                    line = statusline.still_working_line(rlog.phase, elapsed, rate)
+                    line = statusline.with_total(
+                        statusline.still_working_line(rlog.phase, elapsed, rate), total())
                     status_lines.append(line)
                     hb.write(responses.status_delta(_sid, line + "\n"))
                 hb._on_beat = _beat_tick

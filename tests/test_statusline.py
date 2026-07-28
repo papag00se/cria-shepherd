@@ -92,3 +92,29 @@ class LiveRateTests(unittest.TestCase):
                 {"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog)
         self.assertEqual(rlog.live_chars, len("hello world, streaming tokens"))
         self.assertIsNone(rlog.live_t0)                       # cleared: no stale rate after the call
+
+
+class TotalRunningTimeTests(unittest.TestCase):
+    """Every ticker line carries the SESSION's total running time (operator request) — and dedupe
+    stays on the BASE line so a repeating phase doesn't re-tick just because the clock moved."""
+
+    def test_lines_carry_the_total(self):
+        wrote = []
+        t = {"now": 125.0}
+        w = statusline.StatusWriter(wrote.append, total_elapsed=lambda: t["now"])
+        w.on_event("plan.drafted", None, {})
+        self.assertEqual(wrote, [f"{MARKER}drafting the plan · t+2m05s"])
+
+    def test_dedupe_ignores_the_moving_clock(self):
+        wrote = []
+        t = {"now": 10.0}
+        w = statusline.StatusWriter(wrote.append, total_elapsed=lambda: t["now"])
+        w.on_event("upstream.request", "planner", {})
+        t["now"] = 70.0
+        w.on_event("upstream.request", "planner", {})     # same base line, later clock
+        self.assertEqual(len(wrote), 1)                   # not re-ticked
+
+    def test_fmt_elapsed_shapes(self):
+        self.assertEqual(statusline.fmt_elapsed(47), "47s")
+        self.assertEqual(statusline.fmt_elapsed(845), "14m05s")
+        self.assertEqual(statusline.fmt_elapsed(3725), "1h02m")
