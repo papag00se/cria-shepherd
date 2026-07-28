@@ -44,6 +44,20 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > (48% draft acceptance on code; n_draft=8). Set per-model in llama-fleet models.toml extra_flags.
 > KV: `-ctk q8_0 -ctv q4_0` (asymmetric; K drives logits, V tolerates 4-bit).
 
+> **draft-dspark — measured dead end on this box (2026-07-28):** the companion 3.6B drafter
+> (`Ternary-Bonsai-27B-dspark-Q4_1.gguf`, 6 blocks, drafts 4-token blocks conditioned on target
+> hidden-state taps at layers 1/16/31/46/61) *loads and runs* on the spare GTX 1080
+> (`cuda_device` widened to both GPUs, `--spec-draft-device CUDA1 --spec-draft-ngl all
+> --spec-draft-n-max 4` — n-max MUST equal the drafter's `block_size=4`). Three structural costs
+> sank it: (1) its staging forward covers the **full target context** (~216 KiB compute buffer per
+> position on the draft device → 49K ctx needs 10.4 GiB, so ctx had to drop to 24K just to fit);
+> (2) target-side tap capture cut **prefill ~3× (360 → ~112 tok/s)** and **disables prompt-cache
+> reuse** — every agentic call would re-prefill its whole history; (3) each draft round is a
+> full-context drafter forward on Pascal → **decode 4.2–4.8 tok/s**, *below the 8.3 no-spec
+> baseline* and falling with depth. Acceptance itself was good (62%, ~3.5 tok/target-forward ≈
+> 29 tok/s if drafting were free) — the drafter wants a fast co-resident device, not a spare
+> Pascal. Re-try only with a second fast GPU; until then ngram-cache stays.
+
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
 > `content` and never emits a tool call), which is why the fine-tune is the live model.
