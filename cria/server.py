@@ -20,7 +20,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import focustrim, massage, responses, rumination
+from . import callcapture, focustrim, massage, responses, rumination
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -296,10 +296,16 @@ class CriaServer(ThreadingHTTPServer):
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
 
     def session_started(self, sess_key: str) -> float:
-        """Monotonic first-seen time for a session — the ticker's TOTAL running clock. Tiny
-        unbounded dict, bounded in practice by sessions per process lifetime."""
+        """Unix-epoch start time for a session — the ticker's TOTAL running clock. A Codex session
+        id is a UUIDv7, so its BIRTH TIME rides in the key itself: durable across cria restarts with
+        no stored state (the in-memory dict amnesia showed the operator "t+0s" on an hour-old
+        session after a restart). Non-v7 keys fall back to first-seen, in-memory."""
+        if sess_key.startswith("sid:"):
+            born = callcapture.uuid7_epoch(sess_key[4:])
+            if born is not None:
+                return born
         with self._streams_lock:
-            return self._session_t0.setdefault(sess_key, time.monotonic())
+            return self._session_t0.setdefault(sess_key, time.time())
 
     def register_stream(self, hb, resp_id: str) -> None:
         with self._streams_lock:
@@ -810,7 +816,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 added, part, status_id = responses.status_item_open()
                 hb.write(added); hb.write(part)
                 t0 = self.server.session_started(sess_key)
-                total = lambda: __import__("time").monotonic() - t0
+                total = lambda: time.time() - t0
                 writer = statusline.StatusWriter(
                     lambda line: (status_lines.append(line),
                                   hb.write(responses.status_delta(status_id, line + "\n")))[-1],

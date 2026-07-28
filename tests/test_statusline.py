@@ -118,3 +118,22 @@ class TotalRunningTimeTests(unittest.TestCase):
         self.assertEqual(statusline.fmt_elapsed(47), "47s")
         self.assertEqual(statusline.fmt_elapsed(845), "14m05s")
         self.assertEqual(statusline.fmt_elapsed(3725), "1h02m")
+
+
+class DurableSessionClockTests(unittest.TestCase):
+    """"t+0s" on an hour-old session (operator-spotted): the total clock lived in memory and every
+    cria restart amnesia'd it. A Codex session id is a UUIDv7 — its BIRTH TIME rides in the key,
+    durable across restarts with no stored state. And a truly just-born session shows no suffix at
+    all: "t+0s" reads as a bug."""
+
+    def test_uuid7_epoch_decodes_the_birth_time(self):
+        from cria.callcapture import uuid7_epoch
+        e = uuid7_epoch("019faa9b-59fc-7150-bb1b-db39aaec8766")
+        self.assertIsNotNone(e)
+        self.assertGreater(e, 1_700_000_000)              # a sane 2020s epoch
+        self.assertIsNone(uuid7_epoch("not-a-uuid"))
+
+    def test_zero_and_tiny_totals_are_suppressed(self):
+        self.assertEqual(statusline.with_total("x", 0.0), "x")
+        self.assertEqual(statusline.with_total("x", 1.4), "x")
+        self.assertEqual(statusline.with_total("x", 125.0), "x · t+2m05s")

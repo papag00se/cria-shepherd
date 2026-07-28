@@ -43,6 +43,18 @@ def _safe(s) -> str:
 _UUID7_RE = re.compile(r"([0-9a-f]{8})-([0-9a-f]{4})-(7[0-9a-f]{3})-", re.I)
 
 
+def uuid7_epoch(session) -> float | None:
+    """The creation time a UUIDv7 embeds, as unix SECONDS — the durable 'when did this session
+    start' anchor (identical across cria restarts, no stored state). None for a non-v7 id."""
+    m = _UUID7_RE.match(str(session or ""))
+    if not m:
+        return None
+    try:
+        return int(m.group(1) + m.group(2), 16) / 1000.0
+    except (ValueError, OverflowError):
+        return None
+
+
 def _uuid7_stamp(session) -> str | None:
     """The creation time a UUIDv7 embeds in its first 48 bits → local ``YYYYMMDDTHHMMSS``.
     Codex's ``prompt_cache_key`` (the cria session id) is a v7 UUID, so this is deterministic —
