@@ -1,3 +1,6 @@
+import tempfile
+import sys
+import pathlib
 import json
 import unittest
 from pathlib import Path
@@ -131,3 +134,36 @@ class BoundLogTpsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogRotatesAtUtcMidnightTests(unittest.TestCase):
+    """The jsonl path is built ONCE at construction from that moment's UTC day, and the handle is
+    never reopened — so a cria that outlives midnight keeps appending to the old file. Observed
+    directly: `cria-20260727.jsonl` holds events dated both 2026-07-27 and 2026-07-28, and a
+    freshly-computed `cria-$(date -u +%Y%m%d)` points at a file that does not exist, which silently
+    breaks every forensic grep. A long-running instance funnels every future day into day one.
+
+    A filename is a claim about its contents. Rule 5b, pointed at the operator rather than the model."""
+
+    def test_a_day_boundary_starts_a_new_file(self):
+        import time as _time
+        from cria.events import EventLog
+        with tempfile.TemporaryDirectory() as d:
+            fake = [1785196800.0 - 4 * 3600]   # 2026-07-27T20:00:00Z (computed, not assumed)
+            real = _time.time
+            events_time = sys.modules["cria.events"].time
+            events_time.time = lambda: fake[0]
+            try:
+                log = EventLog(dir=d, console=False, jsonl=True)
+                log.emit("before.midnight")
+                fake[0] += 5 * 3600         # cross into the next UTC day
+                log.emit("after.midnight")
+            finally:
+                events_time.time = real
+            names = sorted(p.name for p in pathlib.Path(d).glob("cria-*.jsonl"))
+            self.assertEqual(len(names), 2, f"events from two days share one file: {names}")
+            for name in names:
+                day = name[len("cria-"):-len(".jsonl")]
+                for line in (pathlib.Path(d) / name).read_text().splitlines():
+                    self.assertEqual(json.loads(line)["iso"][:10].replace("-", ""), day,
+                                     f"{name} contains an event from another day")

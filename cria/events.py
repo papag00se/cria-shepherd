@@ -47,14 +47,27 @@ class EventLog:
         self._console_level = _LEVELS.get(level, 20)
         self._lock = threading.Lock()
         self._fh = None
+        self._dir: Path | None = None
+        self._day: str = ""
         self.path: Path | None = None
         if jsonl and dir is not None:
             dpath = Path(dir).expanduser()
             dpath.mkdir(parents=True, exist_ok=True)
-            day = datetime.now(timezone.utc).strftime("%Y%m%d")
-            self.path = dpath / f"cria-{day}.jsonl"
-            # line-buffered so a crash still leaves a complete tail on disk.
-            self._fh = open(self.path, "a", buffering=1, encoding="utf-8")
+            self._dir = dpath
+            self._open_for(datetime.now(timezone.utc).strftime("%Y%m%d"))
+
+    def _open_for(self, day: str) -> None:
+        """(Re)open the jsonl for ``day``. A filename is a claim about its contents, and the path used
+        to be built ONCE at construction — so a cria that outlived UTC midnight kept appending to the
+        old file. Observed directly: one `cria-20260727.jsonl` holding events dated both 07-27 and
+        07-28, while a freshly-computed `cria-$(date -u)` named a file that did not exist, silently
+        breaking every forensic grep. A long-running instance funnels every later day into day one."""
+        if self._fh is not None:
+            self._fh.close()
+        self._day = day
+        self.path = self._dir / f"cria-{day}.jsonl"
+        # line-buffered so a crash still leaves a complete tail on disk.
+        self._fh = open(self.path, "a", buffering=1, encoding="utf-8")
 
     def emit(
         self,
@@ -83,6 +96,9 @@ class EventLog:
         line = json.dumps(rec, ensure_ascii=False, default=str)
         with self._lock:
             if self._fh is not None:
+                day = rec["iso"][:10].replace("-", "")   # already computed above; no extra clock read
+                if day != self._day:
+                    self._open_for(day)
                 self._fh.write(line + "\n")
             if self._console and _LEVELS.get(level, 20) >= self._console_level:
                 sys.stderr.write(_console_line(rec) + "\n")
