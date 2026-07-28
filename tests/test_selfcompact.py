@@ -247,3 +247,73 @@ class EditSteerNotFossilizedTests(unittest.TestCase):
         from cria.editrecovery import EDIT_MARK
         from cria.selfcompact import _EDIT_MARK
         self.assertEqual(EDIT_MARK, _EDIT_MARK)
+
+
+class CompactedViewTests(unittest.TestCase):
+    """Operator's compaction design (run 0728-m14, a 61K post-compaction prompt carrying one file's
+    content SIX times): the compacted view carries what EXISTS — a files list — not the bytes; only
+    the LAST tool call keeps its full arguments; the rollup must be a summary, not an echo of
+    cria's own serialization frame."""
+
+    def _write_call(self, path, content, cid="w1"):
+        import json as j
+        return {"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
+            "name": "write_file", "arguments": j.dumps({"path": path, "content": content})}}]}
+
+    def test_frame_echo_lines_are_stripped_from_the_rollup(self):
+        from cria.selfcompact import strip_frame_echo
+        echo = ("The coder wrote the resolver and ran the tests.\n"
+                "tool: Chunk ID: 0f2436\n"
+                "Wall time: 0.5630 seconds\n"
+                "assistant: <think>\n"
+                "user: ⟦ctx:edit⟧ stale stuff\n"
+                "Tests currently fail on the mock shape.")
+        out = strip_frame_echo(echo)
+        self.assertIn("wrote the resolver", out)
+        self.assertIn("Tests currently fail", out)
+        self.assertNotIn("Chunk ID", out)
+        self.assertNotIn("Wall time", out)
+        self.assertNotIn("⟦ctx:edit⟧", out)
+
+    def test_all_echo_summary_comes_back_empty_so_compact_fails_safe(self):
+        from cria.selfcompact import strip_frame_echo
+        self.assertEqual(strip_frame_echo("tool: Chunk ID: x\nassistant: did things\n"), "")
+
+    def test_older_write_args_become_on_disk_references_last_kept_whole(self):
+        import json as j
+        from cria.selfcompact import stub_old_write_args
+        big = "x = 1\n" * 200                     # >400 chars
+        msgs = [self._write_call("old.py", big, "w1"),
+                {"role": "tool", "tool_call_id": "w1", "content": "ok"},
+                self._write_call("new.py", big, "w2")]
+        out = stub_old_write_args(msgs)
+        old_args = j.loads(out[0]["tool_calls"][0]["function"]["arguments"])
+        new_args = j.loads(out[2]["tool_calls"][0]["function"]["arguments"])
+        self.assertIn("on disk at old.py", old_args["content"])   # older write → reference
+        self.assertIn("read_file", old_args["content"])
+        self.assertEqual(new_args["content"], big)                # the LAST tool call keeps content
+        self.assertEqual(msgs[0]["tool_calls"][0]["function"]["arguments"],
+                         j.dumps({"path": "old.py", "content": big}))  # originals never mutated
+
+    def test_tool_results_are_never_touched(self):
+        from cria.selfcompact import stub_old_write_args
+        big_read = "line\n" * 500
+        msgs = [{"role": "tool", "tool_call_id": "r1", "content": big_read},
+                self._write_call("new.py", "tiny")]
+        out = stub_old_write_args(msgs)
+        self.assertEqual(out[0]["content"], big_read)             # model-READ content: untouched
+
+    def test_compacted_view_carries_exactly_one_fresh_files_list(self):
+        from cria.selfcompact import CompactState, FILES_MARKER, compact
+        pad = "words " * 60
+        msgs = ([{"role": "system", "content": "sys"}]
+                + [{"role": "user", "content": f"{FILES_MARKER} stale list"}]
+                + [{"role": "user", "content": f"turn {i}: {pad}"} for i in range(40)])
+        out, _, applied = compact(msgs, lambda mm: "did early work", CompactState(),
+                                  trigger_tokens=100, keep_tail_tokens=80,
+                                  pinned_task="build it",
+                                  files_list=f"{FILES_MARKER} FRESH\n  a.py (10 B)")
+        self.assertTrue(applied)
+        lists = [m for m in out if str(m.get("content", "")).lstrip().startswith(FILES_MARKER)]
+        self.assertEqual(len(lists), 1)                           # stale copy filtered
+        self.assertIn("FRESH", lists[0]["content"])

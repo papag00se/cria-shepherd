@@ -1321,7 +1321,10 @@ class Loop:
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
             # can't summarize the original requirements away.
-            pinned_task=(getattr(sess.plan, "task", "") or ""))
+            pinned_task=(getattr(sess.plan, "task", "") or ""),
+            # The coder-flavored files list (operator's design): the compacted view carries the LIST
+            # of what exists; read_file is the road back to any content.
+            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"))
         if applied:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
             return out
@@ -2052,7 +2055,8 @@ class Loop:
         msgs = framed.get("messages") or []
         out, sess.compact_state, applied = selfcompact.compact(
             msgs, lambda mm: self._summarize_single(mm, rlog), sess.compact_state,
-            trigger_tokens=self._ctx.trigger_compaction, pinned_task=root_task)
+            trigger_tokens=self._ctx.trigger_compaction, pinned_task=root_task,
+            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"))
         if not applied:
             return framed
         rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=sess.compact_state.covered)
@@ -4141,7 +4145,7 @@ _INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache",
                                 ".tox", ".eggs"})
 
 
-def workspace_inventory(root: str | None) -> str:
+def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
     evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
     blind spot on artifact steps: without it, a "write README.md" step was passed on FEASIBILITY with
@@ -4166,6 +4170,13 @@ def workspace_inventory(root: str | None) -> str:
     if not entries:
         return prompts.fill(labels["empty"], root=root)
     entries.sort(key=lambda e: (-e[0], e[1]))
+    if flavor == "coder":
+        # The post-compaction files list for the CODER (operator's design: content lives on disk +
+        # in read_file range; the compacted view carries the LIST, not the bytes).
+        lines = [labels["coder_header"]]
+        lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+        lines.append(labels["coder_note"])
+        return "\n".join(lines)
     lines = [prompts.fill(labels["header"], root=root)]
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
     lines.append(labels["complete"])

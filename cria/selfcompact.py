@@ -24,8 +24,11 @@ _strip_orphan_tools downstream — self-compaction runs BEFORE the floor.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 
+from . import prompts
 from .content_reduce import est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -165,10 +168,84 @@ def _task_msg(task: str) -> dict:
         f"drift onto tangential work; everything below serves THIS:\n{task}")}
 
 
+FILES_MARKER = "⟦ctx:files⟧"        # tags the post-compaction workspace files list (caller-supplied)
+
+# --- Rollup echo-guard. The summarizer input is built by serialize() in a FRAME cria authors
+# ("role: text", the harness exec envelope, think tags). A weak compactor ECHOES that frame instead
+# of summarizing (measured: 20/295 rollups carried raw "Chunk ID" plumbing; p90 rollup 17K, max
+# 29.8K). Lines matching cria's OWN frame are BY CONSTRUCTION echo, not summary prose — dropping
+# them is deterministic housekeeping of cria's own artifacts, never a judgment on model prose.
+_FRAME_ECHO_RE = re.compile(
+    r"^(?:(?:system|user|assistant|tool):\s"      # serialize()'s role prefix
+    r"|Chunk ID:|Wall time:|Process exited with code|Original token count:"  # exec envelope
+    r"|</?think>\s*$"                             # leaked think tags
+    r"|<\|im_start\|>|<\|im_end\|>)")          # raw template markers
+
+
+def strip_frame_echo(summary: str) -> str:
+    """Drop summarizer-output lines that echo cria's own serialization frame (see _FRAME_ECHO_RE).
+    Returns the cleaned summary; a summary that was ALL echo comes back empty, and compact() then
+    fails safe exactly as it does on an empty summary (fold nothing, keep every turn verbatim)."""
+    kept = [ln for ln in summary.splitlines() if not _FRAME_ECHO_RE.match(ln.strip())]
+    return "\n".join(kept).strip()
+
+
+# --- Older write-args → on-disk references (operator's design, run 0728-m14: post-compaction the
+# coder does not need file CONTENT in old turns — the disk + the files list + read_file carry it;
+# only the LAST tool call keeps its full arguments). Applies ONLY to the model's OWN write arguments
+# (content it emitted, now durably on disk) — tool RESULTS the model read are never touched
+# (never-truncate). Mirrors writeproxy's write-tool names; a test asserts sync.
+_WRITE_TOOL_NAMES = ("write_file", "edit_file")
+_WRITE_ARG_KEYS = ("content", "new_string")
+_STUB_MIN_CHARS = 400
+
+
+def _stub_write_args(m: dict) -> dict:
+    """A COPY of message ``m`` with big write-tool argument bodies replaced by an on-disk reference
+    (prompts/compact_view.txt: write_stub). Returns ``m`` unchanged when nothing qualifies."""
+    changed = False
+    new_calls = []
+    for tc in m.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        raw = fn.get("arguments") or ""
+        if fn.get("name") not in _WRITE_TOOL_NAMES:
+            new_calls.append(tc); continue
+        try:
+            args = json.loads(raw)
+        except ValueError:
+            new_calls.append(tc); continue
+        if not isinstance(args, dict):
+            new_calls.append(tc); continue
+        path = str(args.get("path") or args.get("file_path") or "?")
+        touched = False
+        for key in _WRITE_ARG_KEYS:
+            v = args.get(key)
+            if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
+                args[key] = prompts.fill(prompts.load_map("compact_view")["write_stub"],
+                                         chars=str(len(v)), path=path)
+                touched = True
+        if touched:
+            changed = True
+            new_calls.append({**tc, "function": {**fn, "arguments": json.dumps(args)}})
+        else:
+            new_calls.append(tc)
+    return {**m, "tool_calls": new_calls} if changed else m
+
+
+def stub_old_write_args(msgs: list[dict]) -> list[dict]:
+    """Post-compaction view of a message span: every write-tool call OLDER than the last tool-call
+    turn gets its big argument bodies replaced by on-disk references; the LAST tool-call turn keeps
+    its full arguments (the live working set). Copies — never mutates the caller's messages."""
+    last_tc = max((i for i, m in enumerate(msgs) if m.get("tool_calls")), default=None)
+    return [m if (i == last_tc or not m.get("tool_calls")) else _stub_write_args(m)
+            for i, m in enumerate(msgs)]
+
+
 def compact(messages: list[dict], summarize, state: CompactState, *,
             trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
             recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
-            boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS) -> tuple[list[dict], CompactState, bool]:
+            boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
+            files_list: str = "") -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
@@ -204,7 +281,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     if not state.summary or band_tokens is None or band_tokens >= recompact_tokens:
         summarizable = [m for m in messages[head_end:tail_start] if not _has_anchor(m)]
         if summarizable:
-            fresh = summarize(summarizable)
+            fresh = strip_frame_echo(summarize(summarizable))
             # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
             # call (it happens — a reasoning model can burn its budget thinking and emit no content), and
             # taking it would advance ``covered`` to tail_start: every folded turn replaced by a rollup
@@ -222,5 +299,19 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     # The pinned task leads the compacted view (right after cria's system prompt) so the north star is
     # the first thing the coder reads — never summarized, re-emitted fresh from the caller each turn.
     task = [_task_msg(pinned_task)] if pinned_task.strip() else []
-    out = messages[:head_end] + task + anchors + [_summary_msg(state.summary)] + band + messages[tail_start:]
+    # The caller-supplied FILES LIST (operator's design): the compacted view carries what EXISTS —
+    # names + sizes — not the bytes; read_file is the road back to any content. Refreshed each
+    # compaction (any prior copy is filtered out of every kept segment above via _not_stale_files).
+    files = ([{"role": "user", "content": files_list}] if files_list.strip() else [])
+    working = band + messages[tail_start:]
+    working = stub_old_write_args([m for m in working if not _is_files_msg(m)])
+    anchors = [m for m in anchors if not _is_files_msg(m)]
+    out = messages[:head_end] + task + files + anchors + [_summary_msg(state.summary)] + working
     return out, state, True
+
+
+def _is_files_msg(m: dict) -> bool:
+    """A previously injected ⟦ctx:files⟧ list — stale the moment a newer one exists; filtered so
+    exactly ONE (the fresh one) rides each compacted view."""
+    c = m.get("content")
+    return isinstance(c, str) and c.lstrip().startswith(FILES_MARKER)

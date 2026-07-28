@@ -1,0 +1,6 @@
+# Post-compaction view strings (selfcompact). write_stub replaces a write-tool call's big argument
+# body in turns OLDER than the last tool call — the content is durably ON DISK and in the files
+# list; read_file is the road back (operator's design, run 0728-m14: the compacted view carries
+# what exists, not the bytes, so one file's content stops appearing six times in one prompt).
+# Parsed by prompts.load_map.
+write_stub = [elided {{CHARS}} chars — this exact content is on disk at {{PATH}}; read_file to view it]
