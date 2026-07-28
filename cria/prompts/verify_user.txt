@@ -6,3 +6,10 @@ step = STEP: {{STEP}}
 evidence = WHAT THE CODER DID — its tool CALLS and what they returned (real ground truth):\n{{EVIDENCE}}
 probe = GROUND-TRUTH CHECKS (lint · type-check · tests · git): {{PROBE}}
 summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n{{CODER_SUMMARY}}
+# Restated LAST because the step is stated once, thousands of characters earlier, while the coder's
+# summary routinely narrates its OWN numbered plan ("Step 3: write unit tests…") right before the
+# verdict. A judge asked to rule on the nearest concrete step statement takes the coder's. Observed:
+# the critic opened its reasoning with "The coder's step is 'Write unit tests…'" — the coder's Step 3
+# — and judged a "read the API spec" step NOT DONE for having no tests. Same fact, no deletion, put
+# where the ruling happens.
+step_again = THE STEP YOU ARE RULING ON IS THE ONE AT THE TOP, RESTATED HERE — any step numbering inside the coder's summary is the CODER's own and is NOT what you judge:\n{{STEP}}

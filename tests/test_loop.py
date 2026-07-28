@@ -4622,6 +4622,49 @@ class CriticFixInventsARouteTests(unittest.TestCase):
         self.assertNotIn("/handles/resolve", known_routes(msgs, None))
 
 
+class VerifyPromptStepIsRestatedLast(unittest.TestCase):
+    """THE CODER'S OWN PLAN HIJACKED THE JUDGED STEP (run 0728-m1, mellum2, step 1 of 9).
+
+    cria states the step ONCE, then appends ~10K of evidence, then the CODER'S SUMMARY — which
+    routinely narrates the coder's own numbering ("Step 2: write resolve_handle.py / Step 3: write
+    unit tests in resolve_handle_test.py"). Asked for a verdict right after that, the judge anchored
+    on the nearest concrete step statement: the coder's. Its reasoning opened "The coder's step is
+    'Write unit tests in resolve_handle_test.py…'" and called that summary "the plan", then ruled a
+    "read the OpenAPI spec" step NOT DONE because no tests existed — naming a file that appeared
+    ONLY in the coder's prose. verify.txt already says "Judge ONLY this step's goal"; the rule was
+    never the problem, POSITION was.
+
+    Additive: the same step text, restated where the ruling happens. Nothing is dropped."""
+
+    STEP = "Read the OpenAPI specification to identify the exact endpoint"
+    CODER = "Step 2: Write resolve_handle.py.\nStep 3: Write unit tests in resolve_handle_test.py."
+
+    def _user_message(self) -> str:
+        seen = {}
+
+        def reasoner(body, rlog):
+            seen["user"] = body["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {"content": '{"done": true, "reason": "ok"}'}}]}).encode()
+
+        from cria.config import Role
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        Loop(ctx)._verify(self.STEP, self.CODER, "", "$ web_fetch → 200", _Rlog(),
+                          idx=1, total=9, key="sid:x", coder_tools="write_file(path, content)")
+        return seen["user"]
+
+    def test_the_step_is_restated_after_the_coders_summary(self):
+        user = self._user_message()
+        self.assertIn(self.CODER, user)                       # the summary is NOT deleted
+        self.assertGreater(user.rindex(self.STEP), user.index(self.CODER),
+                           "the judged step must appear AFTER the coder's summary, not only before it")
+
+    def test_the_restatement_disowns_the_coders_numbering(self):
+        tail = self._user_message().rsplit(self.CODER, 1)[1]
+        self.assertIn("CODER", tail.upper())                  # says whose numbering to ignore
+        self.assertIn(self.STEP, tail)                        # and repeats the real step
+
+
 class ReplanNoiseIsVisibleTests(unittest.TestCase):
     """The INITIAL plan reports its noise judgement (`plan.noise_dropped` / `plan.noise_all_kept`).
     The living re-derivation runs the SAME judge on its own output and reports nothing.

@@ -1539,6 +1539,11 @@ class Loop:
         # reason it writes back names an action the coder can actually take (blind to them, it can't).
         if coder_tools:
             parts.append(prompts.render("reasoner_coder_tools", tools=coder_tools))
+        # LAST: the step again. It was stated once at the top, before ~10K of evidence; the coder's
+        # summary that lands just above the verdict often narrates its own numbered plan, and the
+        # judge anchors on that instead (measured: it named a file that existed only in the summary).
+        # Additive — the same step text, nothing dropped.
+        parts.append(prompts.fill(labels["step_again"], step=item))
         user = "\n\n".join(parts)
 
         # First pass uses the reasoner role AS CONFIGURED (reasoning may be ON → a considered
