@@ -3987,7 +3987,13 @@ def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str
             f"## SYSTEM message (cria/prompts/verify.txt)\n\n```\n{system}\n```\n\n"
             f"## USER message (the step + the ground truth it was handed)\n\n```\n{user}\n```\n"
         )
-        (d / f"verify-step-{idx:02d}-of-{total:02d}-{stamp}.md").write_text(md, encoding="utf-8")
+        # NO plan TOTAL in the name. The living plan resizes the tail under a running step, so a
+        # total in the filename makes the dumps stop sorting in the order the verdicts happened —
+        # observed (run 0727-174120) step 1's four dumps sorting 06,06,06,09 with the EARLIEST verdict
+        # (of-09, 17:42) last and the DONE one above it, so the bottom file read as step 1's final
+        # word says NOT DONE while the step actually passed six minutes later. The total is in the
+        # file's own header, where it cannot reorder anything.
+        (d / f"verify-step-{idx:02d}-{stamp}.md").write_text(md, encoding="utf-8")
     except OSError:
         pass
 

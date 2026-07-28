@@ -1,4 +1,6 @@
 import json
+import pathlib
+import tempfile
 import unittest
 
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
@@ -4701,3 +4703,41 @@ class GateFailsMustNotRewriteTheStepTests(unittest.TestCase):
         sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "not done", 1, _Rlog())
         self.assertGreater(reasoner.calls, 0, "a genuinely misconceived step must still be re-derived")
+
+
+class VerifyDumpNamesSortChronologicallyTests(unittest.TestCase):
+    """Verify dumps were named `verify-step-NN-of-TT-HHMMSS`, and the living plan changes TT under a
+    running step — so the filenames stop sorting in the order the verdicts happened.
+
+    OBSERVED (run 0727-174120), step 1's four dumps in lexical order:
+
+        verify-step-01-of-06-174456   17:44
+        verify-step-01-of-06-174927   17:49
+        verify-step-01-of-06-175007   17:50   <- the DONE verdict
+        verify-step-01-of-09-174236   17:42   <- the FIRST verdict, sorted LAST
+
+    Reading the bottom file as step 1's last word gives the opposite of what happened: it says NOT
+    DONE and the step actually passed six minutes later. The total is already in the file's own
+    header (`# Step 1/9 — verdict: …`), so the name loses nothing by dropping it."""
+
+    def test_names_sort_in_the_order_the_verdicts_happened(self):
+        from unittest import mock
+        from cria.loop import _dump_verify
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            # same step, plan RESIZED between verdicts (9 -> 6 -> 5), timestamps increasing
+            for total, stamp in ((9, "174236"), (6, "174456"), (6, "175007"), (5, "175117")):
+                with mock.patch("cria.loop.datetime") as dt:
+                    dt.now.return_value.strftime.return_value = stamp + "-000"
+                    _dump_verify(root, "sid:x", 1, total, "a step", "sys", "usr", False, "r")
+            names = sorted(p.name for p in root.glob("verify-*.md"))
+            stamps = [n.rsplit("-", 2)[-2] for n in names]
+            self.assertEqual(stamps, sorted(stamps), f"lexical order != chronological: {names}")
+
+    def test_the_step_total_is_still_recorded_in_the_file(self):
+        from cria.loop import _dump_verify
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            _dump_verify(root, "sid:x", 2, 7, "a step", "sys", "usr", True, "r")
+            body = next(root.glob("verify-*.md")).read_text()
+            self.assertIn("Step 2/7", body)
