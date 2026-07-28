@@ -66,18 +66,20 @@ def _action_line(fields: dict) -> str | None:
 # Fallback for the one kind that fires on EVERY model call: announce it by the call's PHASE, so a
 # slow internal call (a 27B judge at ~7 tok/s) shows as itself rather than as silence. Consecutive
 # duplicates are deduped by the writer, so repeated same-phase calls tick once.
+# (prefix, announce, worker, activity): ``announce`` is the one-shot line when the call starts;
+# ``worker``/``activity`` shape the in-between beat tick — "(worker rate - total) ⋯ activity".
 _PHASE_LINES = (
-    ("planner", "planning · thinking"),
-    ("coder", "coder · working"),
-    ("critic-confirm", "confirming the pass"),
-    ("critic", "verifying the step"),
-    ("satisfaction-confirm", "confirming completion"),
-    ("satisfaction", "completion check"),
-    ("self-compact-refold", "condensing the session summary"),
-    ("self-compact", "compacting history"),
-    ("classifier", "classifying"),
-    ("compactor", "summarizing"),
-    ("reasoner", "reasoning"),
+    ("planner", "planning · thinking", "planner", "planning"),
+    ("coder", "coder · working", "coder", "working"),
+    ("critic-confirm", "confirming the pass", "critic", "confirming the pass"),
+    ("critic", "verifying the step", "critic", "verifying the step"),
+    ("satisfaction-confirm", "confirming completion", "judge", "confirming completion"),
+    ("satisfaction", "completion check", "judge", "completion check"),
+    ("self-compact-refold", "condensing the session summary", "compactor", "condensing the summary"),
+    ("self-compact", "compacting history", "compactor", "compacting history"),
+    ("classifier", "classifying", "classifier", "classifying"),
+    ("compactor", "summarizing", "compactor", "summarizing"),
+    ("reasoner", "reasoning", "reasoner", "reasoning"),
 )
 
 
@@ -92,7 +94,7 @@ def line_for(kind: str, phase: str | None, fields: dict) -> str | None:
         except (KeyError, IndexError):
             return None  # a template's field vanished upstream — silence over a broken line
     if kind == "upstream.request" and phase:
-        for prefix, text in _PHASE_LINES:
+        for prefix, text, _worker, _activity in _PHASE_LINES:
             if phase.startswith(prefix):
                 return f"{MARKER}{text}"
     return None
@@ -116,17 +118,29 @@ def with_total(line: str, total_seconds: float | None) -> str:
     return f"{line} · t+{fmt_elapsed(total_seconds)}"
 
 
-def still_working_line(phase: str | None, elapsed: float, tok_per_s: float | None = None) -> str:
+def still_working_line(phase: str | None, total_seconds: float | None = None,
+                       tok_per_s: float | None = None) -> str:
     """The in-between tick for one long model call (no events fire mid-generation — a 27B coder at
-    ~7 tok/s went 10 minutes with nothing on screen). Phase names the worker; elapsed is honest;
-    ``tok_per_s`` appears only when the call is STREAMED (the coder) — internal judge/compactor
-    calls are non-streamed, nothing arrives until they finish, so no rate is ever invented for them."""
-    m, sec = int(elapsed) // 60, int(elapsed) % 60
-    rate = f" · ~{tok_per_s:.1f} tok/s" if tok_per_s else ""
-    for prefix, text in _PHASE_LINES:
+    ~7 tok/s went 10 minutes with nothing on screen). Format is the operator's:
+    ``⟦cria⟧ (coder ~0.5 tok/s - 1h34m) ⋯ working`` — worker + live rate + the SESSION's total
+    running time in one parenthesized head, no separate per-call timer (redundant next to the main
+    clock). ``tok_per_s`` appears only when the call is STREAMED (the coder) — internal
+    judge/compactor calls are non-streamed, nothing arrives until they finish, so no rate is ever
+    invented for them."""
+    worker, activity = "", "still working"
+    for prefix, _announce, w, a in _PHASE_LINES:
         if phase and phase.startswith(prefix):
-            return f"{MARKER}⋯ {text} · {m}m{sec:02d}s{rate}"
-    return f"{MARKER}⋯ still working · {m}m{sec:02d}s{rate}"
+            worker, activity = w, a
+            break
+    head = worker
+    if tok_per_s:
+        head = f"{head} ~{tok_per_s:.1f} tok/s".strip()
+    if total_seconds is not None and total_seconds >= 2:   # the same just-born rule as with_total
+        clock = fmt_elapsed(total_seconds)
+        head = f"{head} - {clock}" if head else clock
+    if head:
+        return f"{MARKER}({head}) ⋯ {activity}"
+    return f"{MARKER}⋯ {activity}"
 
 
 class StatusWriter:

@@ -155,5 +155,5 @@ class BeatTickTests(unittest.TestCase):
 
     def test_still_working_line_names_the_phase(self):
         from cria.statusline import still_working_line
-        self.assertIn("coder · working · 1m35s", still_working_line("coder-s4", 95))
-        self.assertIn("compacting history · 3m20s", still_working_line("self-compact", 200))
+        self.assertIn("(coder - 1m35s) ⋯ working", still_working_line("coder-s4", 95))
+        self.assertIn("(compactor - 3m20s) ⋯ compacting history", still_working_line("self-compact", 200))
