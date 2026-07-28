@@ -586,18 +586,19 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     prompt ruled from the coder's NARRATIVE — passed "write unit tests" against a complete inventory
     of three tmp spills while citing a test function that exists nowhere (m8); ruled satisfied with
     no README in the listing (m6); attached a full failure analysis to a DONE (m7). The checker sees
-    ONLY claim + reason + inventory — the coder's summary, the confabulation fuel, is deliberately
-    absent. Returns (confirmed, why). No inventory → confirmed (nothing to check against); an
-    unparseable check KEEPS the verdict (the brake is additive, never a new wedge) but is traced."""
-    inventory = workspace_inventory(workspace_root)
-    if not inventory:
+    ONLY claim + reason — the coder's summary, the confabulation fuel, is deliberately absent — and
+    INSPECTS the workspace itself via the shared read-only tools rather than being handed a pasted
+    listing (operator's call, twice over: a real repo's complete listing can be massive, and a judge
+    that must look cannot rubber-stamp a narrative). Returns (confirmed, why). No workspace to
+    inspect → confirmed (nothing to check against); an unparseable check KEEPS the verdict (the
+    brake is additive, never a new wedge) but is traced."""
+    if not workspace_root or not os.path.isdir(workspace_root):
         return True, ""
     labels = prompts.load_map("verify_confirm")
-    user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)",
-                        inventory=inventory)
+    user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
     comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
-                             phase=phase, force_think_off=True)  # toolless: no workspace_root passed
+                             phase=phase, force_think_off=True, workspace_root=workspace_root)
     vtext = _completion_text(comp)
     if reasoner_role is not None:
         vtext = reasoner_role.clean_content(vtext)

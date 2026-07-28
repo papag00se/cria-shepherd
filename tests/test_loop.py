@@ -5232,3 +5232,58 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                             _Rlog(), workspace_root=ws)
         self.assertFalse(ok)
         self.assertIn("README.md is not in the workspace", reason)
+
+
+class ConfirmCheckerInspectsTests(unittest.TestCase):
+    """The checker LOOKS instead of being handed a paste (operator's objection, twice over: a real
+    repo's complete listing can be massive in the checker's prompt, and inlining it was tailored to
+    this task's tiny workspaces). The checker now gets the shared read-only tools and no listing;
+    with no narrative in its context, it must inspect to ground a veto."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_no_pasted_listing_and_tools_offered(self):
+        from cria.loop import _confirm_completion
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"consistent": True, "why": ""})}}]}).encode()
+
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "a.py").write_text("x\n")
+            ok, _ = _confirm_completion("Write a.py", "written", ws, chat, self._role(),
+                                        _Rlog(), phase="critic-confirm")
+        self.assertTrue(ok)
+        body = bodies[0]
+        self.assertNotIn("WORKSPACE FILES", body["messages"][-1]["content"])   # no paste
+        self.assertTrue(any(t["function"]["name"] == "list_dir" for t in body["tools"]))
+
+    def test_the_checker_inspects_then_vetoes_on_the_real_listing(self):
+        """The m8 replay, tools edition: 'Write unit tests', workspace holds only a spill — the
+        checker lists the REAL directory, sees no test file, and vetoes."""
+        from cria.loop import _confirm_completion
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps({"choices": [{"message": {"tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "list_dir", "arguments": "{}"}}]}}]}).encode()
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"consistent": False, "why": "no test file exists in the workspace"})}}]}).encode()
+
+        with tempfile.TemporaryDirectory() as ws:
+            (Path(ws) / "tmp").mkdir()
+            (Path(ws) / "tmp" / "spill.txt").write_text("spec")
+            ok, why = _confirm_completion("Write unit tests", "tests parameterized with live data",
+                                          ws, chat, self._role(), _Rlog(), phase="critic-confirm")
+        self.assertFalse(ok)
+        self.assertIn("no test file", why)
+        protocol = bodies[1]["messages"]
+        self.assertEqual(protocol[-1]["role"], "tool")
+        self.assertIn("tmp/", protocol[-1]["content"])             # the REAL disk answered
