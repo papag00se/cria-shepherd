@@ -38,6 +38,12 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
 > empirically before treating them as recommended.
 
+> **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT**
+> contain MTP layers (`--spec-type draft-mtp` is a FATAL load error — the service crash-loops, no
+> graceful fallback). `--spec-type ngram-cache` works and **doubled decode: 8.3 → 17.1 tok/s**
+> (48% draft acceptance on code; n_draft=8). Set per-model in llama-fleet models.toml extra_flags.
+> KV: `-ctk q8_0 -ctv q4_0` (asymmetric; K drives logits, V tolerates 4-bit).
+
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
 > `content` and never emits a tool call), which is why the fine-tune is the live model.
