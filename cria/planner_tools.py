@@ -95,7 +95,7 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     if name == "web_fetch":
         return _web_fetch(args, facts, scratch)
     if name in ("web_search", "local_web_search"):
-        return _web_search(args, search_key, recent_searches)
+        return _web_search(args, search_key, recent_searches, facts)
     return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
 
 
@@ -366,6 +366,16 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     return ToolResult(f"HTTP {r.status} \u00b7 {r.final_url}\n{reduced}{note}", True)
 
 
+def _search_no_structure_note(facts: dict | None) -> str:
+    """The search-result flavor of the no-routes disclosure — same condition, same silence rule as
+    :func:`_no_structure_note`, worded for snippets (a search that answered is still not a SOURCE)."""
+    if facts is None:
+        return ""
+    if any((e[1] if len(e) > 1 else "") for e in facts.values()):
+        return ""
+    return prompts.load_map("planner_steers")["search_no_structure"]
+
+
 def _no_structure_note(facts: dict | None) -> str:
     """The disclosure to append while NOTHING fetched this session defines a route. Empty once any
     entry carries endpoints — cria says it exactly while it is true and then stops."""
@@ -421,7 +431,7 @@ def _record_fetch(facts: dict | None, url: str, status, body: str, content_type)
     facts[url] = (f"HTTP {status}", ", ".join(routes), "\n".join(fields))
 
 
-def _web_search(args: dict, search_key: str, recent: list) -> ToolResult:
+def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = None) -> ToolResult:
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
         return _nothing("[web_search error: no query]")
@@ -431,7 +441,13 @@ def _web_search(args: dict, search_key: str, recent: list) -> ToolResult:
     if not (search_key or "").strip():
         return _nothing(prompts.load_map("planner_steers")["no_search_key"])
     try:
-        return ToolResult(format_results(query, brave_search(search_key, query, _SEARCH_COUNT)), True)
+        # The no-routes disclosure rides SEARCH results too (run 0728-m11): a gather whose ONLY tool
+        # was web_search never saw the note — it was attached to fetch results alone — so the planner
+        # drafted a concrete invented route from snippets and the coder built a 404. Snippets are
+        # pointers, not the source (the same sentence the coder-side doctrine already carries); the
+        # note stays exactly while cria knows no routes and goes quiet the moment any spec is read.
+        note = _search_no_structure_note(facts)
+        return ToolResult(format_results(query, brave_search(search_key, query, _SEARCH_COUNT)) + note, True)
     except Exception as e:
         return _nothing(f"[web_search error: {e}]")
 

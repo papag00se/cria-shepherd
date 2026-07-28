@@ -511,3 +511,29 @@ class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):
         out = self._fetch(spec, {}, ct="application/json")
         self.assertNotIn("no endpoints", out.lower())
         self.assertIn("/handles/{handle}", out)
+
+
+class SearchNoStructureNoteTests(unittest.TestCase):
+    """THE NO-ROUTES DISCLOSURE RIDES SEARCH RESULTS TOO (run 0728-m11): a gather whose ONLY tool was
+    one web_search never saw the 147e224 note — it was attached to fetch results alone — so the
+    planner drafted invented `/api/v1/addresses/by-ada-handle/{handle}` from snippets and the coder
+    built a live 404. Same condition, same silence rule: the note appears exactly while cria knows no
+    routes and goes quiet the moment any fetched entry carries endpoints."""
+
+    def _search(self, facts):
+        from unittest import mock
+        from cria import planner_tools
+        with mock.patch.object(planner_tools, "brave_search",
+                               return_value=[{"title": "t", "url": "https://x", "description": "d"}]):
+            return planner_tools.execute_tool("web_search", {"query": "ada handles api"}, ".",
+                                              "key", [], _Rlog(), facts=facts)
+
+    def test_search_with_no_known_routes_carries_the_disclosure(self):
+        r = self._search(facts={})
+        self.assertTrue(r.learned)
+        self.assertIn("POINTERS, not the source", r.text)
+        self.assertIn("web_fetch the document", r.text)
+
+    def test_search_goes_quiet_once_any_spec_was_read(self):
+        r = self._search(facts={"https://api.x/openapi.json": (200, "/handles/{handle}", "fields")})
+        self.assertNotIn("POINTERS", r.text)
