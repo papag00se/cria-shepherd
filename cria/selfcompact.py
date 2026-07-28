@@ -279,7 +279,18 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     band_tokens = (sum(_msg_tokens(m) for m in messages[state.covered:tail_start])
                    if head_end <= state.covered <= tail_start else None)
     if not state.summary or band_tokens is None or band_tokens >= recompact_tokens:
-        summarizable = [m for m in messages[head_end:tail_start] if not _has_anchor(m)]
+        # TRULY ROLLING (operator-driven, first 27B): summarize only the NEW band — the turns past
+        # what the existing summary already covers — and APPEND the increment. The old shape
+        # re-summarized the ENTIRE middle every round into one REPLACING summary, which (a) squeezed
+        # a whole session's folded history into one output budget (the squeeze the operator called
+        # ridiculous — it saturated exactly when the session was long enough to need it most), and
+        # (b) re-paid the full summarization wall-clock every round (13+ min observed at ~7 tok/s).
+        # Incremental: each increment is bounded by the summarizer's output cap, the TOTAL summary
+        # grows with the session, and earlier increments are never re-generated. When ``covered`` is
+        # unusable (compaction state lost / indices shifted), fall back to the whole middle — the
+        # old behavior, correct just slower.
+        lo = state.covered if (state.summary and band_tokens is not None) else head_end
+        summarizable = [m for m in messages[lo:tail_start] if not _has_anchor(m)]
         if summarizable:
             fresh = strip_frame_echo(summarize(summarizable))
             # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
@@ -291,7 +302,8 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             # floor (the one lossless window-fit point) size the request.
             if not fresh.strip():
                 return messages, state, False
-            state = CompactState(summary=fresh, covered=tail_start)
+            combined = (state.summary + "\n\n" + fresh) if (state.summary and lo > head_end) else fresh
+            state = CompactState(summary=combined, covered=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
     anchors = [m for m in messages[head_end:covered] if _has_anchor(m)]   # kept verbatim, never elided

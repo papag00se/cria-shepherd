@@ -317,3 +317,52 @@ class CompactedViewTests(unittest.TestCase):
         lists = [m for m in out if str(m.get("content", "")).lstrip().startswith(FILES_MARKER)]
         self.assertEqual(len(lists), 1)                           # stale copy filtered
         self.assertIn("FRESH", lists[0]["content"])
+
+
+class RollingSummaryTests(unittest.TestCase):
+    """THE SUMMARY IS TRULY ROLLING (operator: a single replacing summary budget for a whole
+    session's folded history is "ridiculously small" — and re-summarizing everything every round
+    cost 13+ min at 27B speeds). Each round summarizes only the NEW band and APPENDS; earlier
+    increments are never re-generated, and the total summary grows with the session."""
+
+    def _msgs(self, n, tag):
+        pad = "words " * 40
+        return [{"role": "user", "content": f"{tag} turn {i}: {pad}"} for i in range(n)]
+
+    def test_second_round_summarizes_only_the_new_band_and_appends(self):
+        from cria.selfcompact import CompactState, compact
+        seen = []
+
+        def summ(mm):
+            seen.append([m["content"][:12] for m in mm])
+            return f"summary#{len(seen)}"
+
+        msgs = [{"role": "system", "content": "sys"}] + self._msgs(30, "early")
+        out, st, applied = compact(msgs, summ, CompactState(),
+                                   trigger_tokens=100, keep_tail_tokens=60, pinned_task="t")
+        self.assertTrue(applied)
+        self.assertEqual(st.summary, "summary#1")
+        # session grows: the SAME raw history plus new turns (the harness resends raw turns)
+        msgs2 = msgs + self._msgs(30, "late")
+        out2, st2, applied2 = compact(msgs2, summ, st,
+                                      trigger_tokens=100, keep_tail_tokens=60, pinned_task="t",
+                                      recompact_tokens=100)   # cross the re-summarize throttle
+        self.assertTrue(applied2)
+        self.assertEqual(st2.summary, "summary#1\n\nsummary#2")   # APPENDED, not replaced
+        self.assertTrue(all(c.startswith("late") for c in seen[1]),
+                        f"round 2 must see ONLY the new band, saw: {seen[1][:3]}...")
+
+    def test_lost_state_falls_back_to_the_whole_middle(self):
+        from cria.selfcompact import CompactState, compact
+        seen = []
+
+        def summ(mm):
+            seen.append(len(mm))
+            return "whole"
+
+        msgs = [{"role": "system", "content": "sys"}] + self._msgs(30, "x")
+        # covered index beyond the list = unusable state → whole-middle fallback
+        out, st, applied = compact(msgs, summ, CompactState(summary="old", covered=9999),
+                                   trigger_tokens=100, keep_tail_tokens=60, pinned_task="t")
+        self.assertTrue(applied)
+        self.assertEqual(st.summary, "whole")                     # replaced, not appended to stale
