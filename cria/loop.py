@@ -383,6 +383,37 @@ def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder
     return obj.get("on_target") is not False, str(obj.get("recommendation") or "").strip()
 
 
+_CALL_WRAPPED = re.compile(r"""\s*\w+\s*\(\s*(['"])(.+?)\1\s*\)\s*\Z""", re.S)
+_QUOTED_SPAN = re.compile(r"""(['"])([^'"]{2,})\1""")
+
+
+def _usable_query(rec: str) -> str:
+    """The judge's recommendation AS A SEARCH QUERY, or "" when it is not one.
+
+    `recommendation` is written straight into the coder's web_search arguments, so whatever shape the
+    reasoner answered in becomes the literal query. MEASURED across every session on 2026-07-27: 53 of
+    112 searches (47%, 87% in one run) were rewritten this way, into things like
+    `web_search('Ada Handles API documentation')` and `Search for "X" or "Y"` — the coder then searched
+    the web for that literal string, and in one case a perfectly good query (`api.handle.me
+    openapi.json`) was replaced by prose.
+
+    Shape, never keywords: a tool-call wrapper yields its argument; exactly ONE quoted span yields that
+    span; TWO or more are ambiguous and yield "" so the caller leaves the coder's own query alone —
+    cria substitutes only when it has a real query to substitute."""
+    rec = (rec or "").strip()
+    if not rec:
+        return ""
+    m = _CALL_WRAPPED.fullmatch(rec)
+    if m:
+        return m.group(2).strip()
+    spans = _QUOTED_SPAN.findall(rec)
+    if len(spans) > 1:
+        return ""              # "X" or "Y" — cria does not pick for the coder
+    if len(spans) == 1:
+        return spans[0][1].strip()
+    return rec
+
+
 def judge_rehunt(reasoner_chat, reasoner_role, task: str, query: str, prior: str, rlog,
                  coder_tools: str = "") -> bool:
     """Is ``query`` a genuinely NEW direction rather than a re-hunt of ``prior``?
@@ -3489,6 +3520,14 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
                                      coder_tools=tools_summary)
         sess.query_verdicts[query] = (on_target, rec)
     if on_target or not rec:
+        return coder
+    # The recommendation must be a QUERY before it can replace the coder's own. Measured: 47% of all
+    # searches today were rewritten, and the replacements included `web_search('…')` wrappers and
+    # instruction sentences used verbatim as the search string. An unusable recommendation means cria
+    # leaves the coder's query alone — substituting a worse query is strictly worse than not acting.
+    rec = _usable_query(rec)
+    if not rec:
+        rlog.emit("loop.search_rec_unusable", level="warn", query=query)
         return coder
     if _looks_like_url(rec):
         url = rec if rec.lower().startswith("http") else "https://" + rec

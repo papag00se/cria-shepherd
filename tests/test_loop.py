@@ -4789,3 +4789,47 @@ class ReplannerToldNothingDefinesARouteTests(unittest.TestCase):
         ev = self._seen_evidence({"https://api.handle.me/openapi.json":
                                   ("HTTP 200", "/handles/{handle}, /holders/{address}", "")})
         self.assertNotIn("DEFINES a route", ev)
+
+
+class SearchRecommendationIsAQueryTests(unittest.TestCase):
+    """The search judge's `recommendation` is written straight into the coder's web_search arguments,
+    unvalidated — so whatever shape the reasoner answers in becomes the literal query.
+
+    MEASURED across every session today: 53 of 112 searches (47%, up to 87% in one run) were rewritten
+    this way, and the replacements are malformed:
+
+        "ada handles resolve endpoint pattern"  ->  web_search('Ada Handles API documentation')
+        "api.handle.me openapi.json"            ->  Search for "Cardano Ada Handle API openapi.json" or "api.h
+        "ADA Handle resolve endpoint pattern"   ->  Search for 'ADA Handles API documentation' instead of 'ADA
+
+    The coder then searches the web for the literal string `web_search('…')`, or for an instruction
+    sentence. The middle case replaced a perfectly good query. The guard exists for a real reason —
+    queries drifting to a different API is a documented poisoning route — but it must substitute a
+    QUERY, not whatever prose the judge replied with.
+
+    Shape-based, with a safe null: a tool-call wrapper yields its argument; a single quoted span
+    yields that span; TWO quoted spans are ambiguous and cria leaves the coder's own query alone."""
+
+    def _q(self, rec):
+        from cria.loop import _usable_query
+        return _usable_query(rec)
+
+    def test_a_tool_call_wrapper_yields_its_argument(self):
+        self.assertEqual(self._q("web_search('Ada Handles API documentation')"),
+                         "Ada Handles API documentation")
+
+    def test_an_instruction_sentence_yields_its_quoted_query(self):
+        self.assertEqual(self._q("Search for 'ADA Handles API documentation' instead of ADA"),
+                         "ADA Handles API documentation")
+
+    def test_two_quoted_candidates_are_ambiguous_and_yield_nothing(self):
+        self.assertEqual(self._q('Search for "Cardano Ada Handle openapi.json" or "api.handle.me spec"'), "")
+
+    def test_a_plain_query_passes_through(self):
+        self.assertEqual(self._q("Ada Handles API documentation"), "Ada Handles API documentation")
+
+    def test_a_wrapped_url_survives_for_the_fetch_path(self):
+        from cria.loop import _looks_like_url
+        q = self._q("web_search('https://api.handle.me')")
+        self.assertEqual(q, "https://api.handle.me")
+        self.assertTrue(_looks_like_url(q), "a URL recommendation must still reach the fetch branch")
