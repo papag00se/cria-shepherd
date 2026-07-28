@@ -594,8 +594,18 @@ class Planner:
         drop = self._reasoned_noise_indices(task, steps, rlog)
         kept = [s for i, s in enumerate(steps) if i not in drop]
         if drop and kept:
-            rlog.emit("plan.noise_dropped", count=len(drop), level="info")
-            steps = kept
+            # ORDER MATTERS (run 0728-m10): coverage judges the plan at SUBMIT time, so a noise drop
+            # after it is an UNCHECKED deletion — the noise judge ate the script and test steps of a
+            # coverage-clean draft and a one-step README "plan" entered the loop. The same hole was
+            # closed in the living re-derivation (loop.reassess_remaining); this is the initial-draft
+            # side. A drop that uncovers deliverables is REFUSED — the plan keeps all its steps (the
+            # step critic still guards each one) and the refusal is traced, never silent.
+            if self._role is not None and missing_deliverables(
+                    lambda sysp, usr: self._ask(sysp, usr, rlog), task, kept):
+                rlog.emit("plan.noise_uncovered", count=len(drop), level="warn")
+            else:
+                rlog.emit("plan.noise_dropped", count=len(drop), level="info")
+                steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
         # The plan is the PLANNER's, minus the noise judgment above — cria adds no step of its own (see the

@@ -1264,3 +1264,49 @@ class StepMustBeAPhraseTests(unittest.TestCase):
     def test_a_lone_bare_token_is_still_returned(self):
         from cria.planner import _clean_step
         self.assertEqual(_clean_step({"action": "write_file"}), "write_file")
+
+
+class NoiseDropCoverageTests(unittest.TestCase):
+    """A NOISE DROP IS AN UNCHECKED DELETION UNLESS COVERAGE RE-JUDGES THE SURVIVORS (run 0728-m10):
+    coverage cleared a draft covering script+tests+README at SUBMIT time, then the noise judge ate
+    the script and test steps and a ONE-step README "plan" entered the loop. Same ordering hole the
+    living re-derivation had (fix 41), closed on the initial-draft side: a drop that uncovers
+    deliverables is REFUSED — all steps stay, traced via plan.noise_uncovered."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    def test_a_drop_that_uncovers_deliverables_is_refused(self):
+        prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),
+            _content_resp("1. Write resolver.py calling the spec's endpoint\n"
+                          "2. Add unit tests in test_resolver.py\n3. Write README.md"),
+            _content_resp('{"missing": []}'),                       # submit-time coverage: clean
+            _content_resp('1, 2'),                                  # noise judge eats the real work
+            _content_resp('{"missing": ["the script", "unit tests"]}'),  # post-drop coverage: NOT clean
+            _content_resp('NONE'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("script + tests + README"), rlog)
+        texts = [it.text for it in plan.items]
+        self.assertEqual(len(texts), 3)                             # the deletion did NOT land
+        self.assertTrue(any("resolver.py" in t for t in texts))
+        self.assertTrue(any(k == "plan.noise_uncovered" for k, _ in rlog.events))
+        self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
+    def test_a_covered_drop_still_lands(self):
+        prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),
+            _content_resp("1. Set up the environment\n2. Write resolver.py\n3. Add tests"),
+            _content_resp('{"missing": []}'),                       # submit-time coverage
+            _content_resp('1'),                                     # drop the plumbing
+            _content_resp('{"missing": []}'),                       # post-drop coverage: still clean
+            _content_resp('NONE'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("resolver with tests"), rlog)
+        self.assertEqual(len(plan.items), 2)
+        self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
