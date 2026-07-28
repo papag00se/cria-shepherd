@@ -1316,7 +1316,7 @@ class Loop:
             lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
                                  selfcompact.serialize(probegate.clean_gate_results(mm)), rlog,
-                                 phase="self-compact") + _briefing_gate_ground_truth(sess),
+                                 phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS) + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
@@ -2070,7 +2070,7 @@ class Loop:
                          self._ctx.compactor_role or self._ctx.reasoner_role,
                          prompts.load("selfcompact_summary"),
                          selfcompact.serialize(probegate.clean_gate_results(messages)), rlog,
-                         phase="self-compact")
+                         phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS)
         return text or "(earlier work this session)"
 
 
@@ -4134,6 +4134,13 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
         return True
     return bool(_SHELL_WRITE_RE.search(_QUOTED_SPAN_RE.sub(" q ", text)))
 
+
+# The mid-session rollup's OUTPUT bound. summarize's default 8192 is a runaway backstop sized for
+# fast models; on a 27B at ~7 tok/s it is an 18-MINUTE worst case, generated SYNCHRONOUSLY inside
+# the coder's turn (observed: a 13+ minute compactor call while the harness's SSE idle timer fired).
+# Median REAL rollup ≈ 500 tokens (295 measured; the p90 outliers were echo, now stripped) — 2048 is
+# 4× headroom, and a genuinely over-long pass fails safe exactly as before (truncated → "" → no fold).
+ROLLUP_MAX_TOKENS = 2048
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
 

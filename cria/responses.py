@@ -178,6 +178,16 @@ def created_event(resp_id: str, model: str) -> bytes:
     })
 
 
+def in_progress_event(resp_id: str) -> bytes:
+    """A keepalive the Responses PROTOCOL recognizes. SSE comments are spec-ignorable — and the
+    Codex extension's client ignores them for its idle timer too, so a long internal model call
+    (a 27B compactor at ~7 tok/s) tripped "idle timeout waiting for SSE" with comments flowing.
+    response.in_progress is a legal, contentless status event every Responses client must parse."""
+    return _event("response.in_progress", {
+        "response": {"id": resp_id, "object": "response", "status": "in_progress"}
+    })
+
+
 def failed_event(resp_id: str, message: str) -> bytes:
     """A TERMINAL `response.failed` SSE event. The error is generic (no `code`), which Codex maps to
     a RETRYABLE failure (ApiError::Retryable) — so on a mid-stream shutdown the client cleanly

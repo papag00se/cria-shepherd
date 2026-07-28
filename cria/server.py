@@ -784,7 +784,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         self.end_headers()
         model = body.get("model", "") or ""
         resp_id = responses._new_id("resp")
-        hb = Heartbeat(self._raw_write, interval=self.server.cfg.server.heartbeat_seconds).start()
+        hb = Heartbeat(self._raw_write, interval=self.server.cfg.server.heartbeat_seconds,
+                       payload=responses.in_progress_event(resp_id)).start()
         self.server.register_stream(hb, resp_id)  # so a shutdown can end this stream cleanly
         try:
             hb.write(responses.created_event(resp_id, model))  # open the stream immediately

@@ -96,3 +96,33 @@ class HeartbeatIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeartbeatPayloadTests(unittest.TestCase):
+    """A client whose idle timer counts EVENTS ignores SSE comments (observed: the Codex extension
+    dropped a Responses stream mid-compaction — "idle timeout waiting for SSE" — while ": cria"
+    comments were flowing). The beat payload is now caller-chosen; the Responses path passes a real
+    response.in_progress event."""
+
+    def test_custom_payload_is_what_beats(self):
+        from cria.heartbeat import Heartbeat
+        wrote = []
+        t = {"now": 0.0}
+        hb = Heartbeat(wrote.append, interval=5.0, clock=lambda: t["now"],
+                       payload=b"event: response.in_progress\n\n")
+        t["now"] = 6.0
+        with hb._lock:
+            pass
+        # drive one tick manually (no thread): emulate _run's beat condition
+        if t["now"] - hb._last >= hb._interval:
+            hb._write_raw(hb._payload); hb.beats += 1
+        self.assertEqual(wrote, [b"event: response.in_progress\n\n"])
+
+    def test_responses_in_progress_event_shape(self):
+        import json
+        from cria.responses import in_progress_event
+        raw = in_progress_event("resp_x").decode()
+        self.assertIn("event: response.in_progress", raw)
+        payload = json.loads(raw.split("data: ", 1)[1].strip())
+        self.assertEqual(payload["response"]["status"], "in_progress")
+        self.assertEqual(payload["response"]["id"], "resp_x")

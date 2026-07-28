@@ -21,7 +21,8 @@ _COMMENT = b": cria\n\n"
 
 
 class Heartbeat:
-    def __init__(self, write_raw, interval: float = 5.0, *, clock=time.monotonic) -> None:
+    def __init__(self, write_raw, interval: float = 5.0, *, clock=time.monotonic,
+                 payload: bytes = _COMMENT) -> None:
         self._write_raw = write_raw  # bytes -> write+flush to the wire
         self._interval = interval
         self._clock = clock
@@ -30,6 +31,11 @@ class Heartbeat:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._drained = False  # a terminal payload was written (shutdown drain) → no more writes
+        # The beat payload. Default = an SSE COMMENT (spec-ignorable). A client whose idle timer
+        # counts EVENTS rather than bytes never sees a comment (observed: the Codex extension's
+        # Responses client dropped a stream mid-compaction with "idle timeout waiting for SSE"
+        # while comments were flowing) — such a path passes a REAL protocol event instead.
+        self._payload = payload
         self.beats = 0
 
     def start(self) -> "Heartbeat":
@@ -74,7 +80,7 @@ class Heartbeat:
                     break
                 if self._clock() - self._last >= self._interval:
                     try:
-                        self._write_raw(_COMMENT)
+                        self._write_raw(self._payload)
                         self._last = self._clock()
                         self.beats += 1
                     except Exception:
