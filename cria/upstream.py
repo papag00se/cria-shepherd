@@ -388,6 +388,7 @@ class Upstream:
         finish: str | None = None
         usage: dict | None = None
         aborted: dict | None = None
+        stream_error: str | None = None
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
         try:
@@ -400,6 +401,17 @@ class Upstream:
                 obj = _try_json(payload)
                 if obj is None:
                     continue
+                # An SSE *error* frame ends the stream mid-generation: whatever was accumulated is a
+                # FRAGMENT, not the model's answer. Assembling it anyway would hand the caller a
+                # truncated tool call wearing finish_reason="tool_calls" — cria asserting the model
+                # produced something it never produced. Stop and let the buffered re-issue below get
+                # the real answer. (Seen live: llama.cpp raises "Invalid diff" from its streaming
+                # tool-call differ when a partial-JSON heal lands mid-escape, killing the stream ~75%
+                # through a write_file; the identical request non-streamed returns it complete.)
+                if isinstance(obj.get("error"), (dict, str)):
+                    err = obj["error"]
+                    stream_error = str(err.get("message") or err) if isinstance(err, dict) else str(err)
+                    break
                 for choice in obj.get("choices", []):
                     delta = choice.get("delta") or {}
                     if delta.get("content"):
@@ -447,6 +459,15 @@ class Upstream:
                             break  # drop the receiver → server stops generating, slot freed
         finally:
             resp.close()
+        if stream_error is not None:
+            # Re-ask the SAME request buffered. The answer still comes from the model — cria is not
+            # repairing the fragment, it is discarding it and asking again down a path that works.
+            # The watcher is forfeited for this turn (nothing to watch in a buffered call), which is
+            # the right trade: a whole lost turn costs more than one unwatched one.
+            rlog.emit("upstream.stream_error", level="warning", error=stream_error,
+                      dropped_tool_arg_chars=sum(len("".join(s["args"])) for s in tool_acc.values()),
+                      dropped_content_chars=len("".join(content)))
+            return self.chat({k: v for k, v in body.items() if k != "stream_options"}, rlog)
         t_end = time.monotonic()
         completion = _assemble_completion(body.get("model"), content, reasoning, tool_acc, finish, usage, aborted)
         self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)

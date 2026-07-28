@@ -199,6 +199,35 @@ class ChatWatchedTests(unittest.TestCase):
             raw = self._upstream().chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog())
         self.assertEqual(json.loads(raw)["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_mid_stream_error_frame_reissues_buffered_instead_of_assembling_a_fragment(self):
+        # THE bug this pins (observed live, 280 times across runs): llama.cpp's streaming tool-call
+        # differ raises "Invalid diff" when a partial-JSON heal lands mid-escape, and ends the stream
+        # with an SSE *error* frame ~75% through a write_file. Assembling the accumulated fragment
+        # would hand the caller a truncated tool call wearing finish_reason="tool_calls" — cria
+        # asserting the model wrote something it never wrote. The same request buffered returns the
+        # complete call, so cria must re-ask rather than assemble.
+        partial = '{"path":"live.py","content":"handles = [\'goose\', \'papagoose\\'
+        lines = [
+            _sse(_delta(tool_calls=[{"index": 0, "id": "c1", "function": {"name": "write_file"}}])),
+            _sse(_delta(tool_calls=[{"index": 0, "function": {"arguments": partial}}])),
+            _sse({"error": {"code": 500, "message": "Invalid diff: '...' not found at start of '...'"}}),
+        ]
+        whole = json.dumps({"path": "live.py", "content": "handles = ['goose', 'papagoose']\n"})
+        buffered = json.dumps({"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": "",
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "write_file", "arguments": whole}}]}}]}).encode()
+        up = self._upstream()
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)), \
+             mock.patch.object(Upstream, "chat", return_value=buffered) as buffered_call:
+            raw = up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog)
+        self.assertEqual(buffered_call.call_count, 1)                      # re-asked, once
+        tc = json.loads(raw)["choices"][0]["message"]["tool_calls"][0]
+        args = json.loads(tc["function"]["arguments"])                     # parses — the FULL call
+        self.assertEqual(args["content"], "handles = ['goose', 'papagoose']\n")
+        self.assertNotIn("stream_options", buffered_call.call_args[0][0])  # buffered body is clean
+
     def test_saves_full_reasoning_untruncated_to_capture_sibling(self):
         import tempfile
         from pathlib import Path
