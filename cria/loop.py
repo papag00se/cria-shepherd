@@ -387,6 +387,12 @@ _CALL_WRAPPED = re.compile(r"""\s*\w+\s*\(\s*(['"])(.+?)\1\s*\)\s*\Z""", re.S)
 _QUOTED_SPAN = re.compile(r"""(['"])([^'"]{2,})\1""")
 
 
+def _same_query(a: str, b: str) -> bool:
+    """Two search queries that would send the same thing to the search engine — case and surrounding
+    whitespace are not a redirect."""
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+
+
 def _usable_query(rec: str) -> str:
     """The judge's recommendation AS A SEARCH QUERY, or "" when it is not one.
 
@@ -3529,6 +3535,8 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     if not rec:
         rlog.emit("loop.search_rec_unusable", level="warn", query=query)
         return coder
+    if _same_query(rec, query):
+        return coder      # a query rewritten to itself is not a redirect — touch nothing, log nothing
     if _looks_like_url(rec):
         url = rec if rec.lower().startswith("http") else "https://" + rec
         # SUBSTITUTING the coder's own tool call is the strongest thing cria does here, and the url it

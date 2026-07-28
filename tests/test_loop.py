@@ -4833,3 +4833,22 @@ class SearchRecommendationIsAQueryTests(unittest.TestCase):
         q = self._q("web_search('https://api.handle.me')")
         self.assertEqual(q, "https://api.handle.me")
         self.assertTrue(_looks_like_url(q), "a URL recommendation must still reach the fetch branch")
+
+
+class IdenticalRequeryIsNotAnInterventionTests(unittest.TestCase):
+    """MEASURED over all 151 search judgements today: 16 recommendations were IDENTICAL to the query
+    they replaced and 8 more differed only in case or word order. cria rewrote the query to itself and
+    logged `action=requery`, so the record claims an intervention that never happened — and the
+    coder's own tool call was still touched for nothing.
+
+    Rewriting a query to itself is not a redirect. Say nothing and leave the call alone."""
+
+    def test_a_recommendation_equal_to_the_query_changes_nothing(self):
+        from cria.loop import _usable_query
+        self.assertEqual(_usable_query("ada handles api documentation"), "ada handles api documentation")
+
+    def test_case_only_differences_are_treated_as_the_same_query(self):
+        from cria.loop import _same_query
+        self.assertTrue(_same_query("Cardano Python SDK package name", "cardano python sdk package name"))
+        self.assertTrue(_same_query(" ada handles api  documentation ", "ada handles api documentation"))
+        self.assertFalse(_same_query("ada handles api documentation", "ada handles api openapi.json"))
