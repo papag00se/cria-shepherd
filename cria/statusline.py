@@ -98,14 +98,17 @@ def line_for(kind: str, phase: str | None, fields: dict) -> str | None:
     return None
 
 
-def still_working_line(phase: str | None, elapsed: float) -> str:
+def still_working_line(phase: str | None, elapsed: float, tok_per_s: float | None = None) -> str:
     """The in-between tick for one long model call (no events fire mid-generation — a 27B coder at
-    ~7 tok/s went 10 minutes with nothing on screen). Phase names the worker; elapsed is honest."""
+    ~7 tok/s went 10 minutes with nothing on screen). Phase names the worker; elapsed is honest;
+    ``tok_per_s`` appears only when the call is STREAMED (the coder) — internal judge/compactor
+    calls are non-streamed, nothing arrives until they finish, so no rate is ever invented for them."""
     m, sec = int(elapsed) // 60, int(elapsed) % 60
+    rate = f" · ~{tok_per_s:.1f} tok/s" if tok_per_s else ""
     for prefix, text in _PHASE_LINES:
         if phase and phase.startswith(prefix):
-            return f"{MARKER}⋯ {text} · {m}m{sec:02d}s"
-    return f"{MARKER}⋯ still working · {m}m{sec:02d}s"
+            return f"{MARKER}⋯ {text} · {m}m{sec:02d}s{rate}"
+    return f"{MARKER}⋯ still working · {m}m{sec:02d}s{rate}"
 
 
 class StatusWriter:

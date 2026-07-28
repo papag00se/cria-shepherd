@@ -63,3 +63,32 @@ class StripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveRateTests(unittest.TestCase):
+    """tok/s on the in-between tick — ONLY for the streamed call (the coder). Internal judge and
+    compactor calls are non-streamed: nothing arrives until they finish, so no rate is invented."""
+
+    def test_rate_appears_when_streaming_counters_exist(self):
+        self.assertIn("~7.8 tok/s", statusline.still_working_line("coder-s2", 125.0, 7.83))
+
+    def test_no_rate_for_non_streamed_calls(self):
+        line = statusline.still_working_line("critic", 95.0, None)
+        self.assertNotIn("tok/s", line)
+
+    def test_chat_watched_maintains_and_clears_the_counters(self):
+        import json as j
+        from unittest import mock
+        from cria.upstream import Upstream
+        from tests.test_upstream import _FakeResp, _Rlog, _delta, _sse
+        lines = [
+            _sse(_delta(content="hello world, streaming tokens")),
+            _sse({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+            b"data: [DONE]\n",
+        ]
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
+            Upstream("http://x", context_window=8192, capture_dir=None).chat_watched(
+                {"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog)
+        self.assertEqual(rlog.live_chars, len("hello world, streaming tokens"))
+        self.assertIsNone(rlog.live_t0)                       # cleared: no stale rate after the call

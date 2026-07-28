@@ -391,6 +391,11 @@ class Upstream:
         stream_error: str | None = None
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
+        # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
+        # in-between lines): the beat thread reads these while this call streams. Benign racy reads
+        # of two scalars; cleared in the finally so a finished call never shows a stale rate.
+        rlog.live_t0 = t0
+        rlog.live_chars = 0
         try:
             for raw in resp:
                 if not raw.startswith(b"data:"):
@@ -434,6 +439,7 @@ class Upstream:
                                  *(((tc.get("function") or {}).get("arguments")) for tc in (tcs or []))):
                         if frag:
                             gen_tail = (gen_tail + frag)[-rumination.DEGENERATE_RUN_CHARS:]
+                            rlog.live_chars += len(frag)  # the ticker's live tok/s numerator
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
                 if obj.get("usage"):
@@ -459,6 +465,7 @@ class Upstream:
                             break  # drop the receiver → server stops generating, slot freed
         finally:
             resp.close()
+            rlog.live_t0 = None  # the ticker must never compute a rate from a finished call
         if stream_error is not None:
             # Re-ask the SAME request buffered. The answer still comes from the model — cria is not
             # repairing the fragment, it is discarding it and asking again down a path that works.

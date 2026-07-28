@@ -808,7 +808,17 @@ class CriaHandler(BaseHTTPRequestHandler):
                 # The in-between: one long model call fires no events, so the beat thread ticks a
                 # visible "still working" line (~every 30s) with the live phase and elapsed time.
                 def _beat_tick(elapsed: float, _sid=status_id) -> None:
-                    line = statusline.still_working_line(rlog.phase, elapsed)
+                    # Live tok/s exists only for the STREAMED call (the coder): chat_watched keeps
+                    # live_chars/live_t0 on the rlog while streaming and clears them on exit.
+                    rate = None
+                    t0 = getattr(rlog, "live_t0", None)
+                    chars = getattr(rlog, "live_chars", 0)
+                    if t0 is not None and chars:
+                        import time as _time
+                        dt = _time.monotonic() - t0
+                        if dt > 1.0:
+                            rate = (chars / 4) / dt   # ≈ tokens; the same chars/4 the watchers use
+                    line = statusline.still_working_line(rlog.phase, elapsed, rate)
                     status_lines.append(line)
                     hb.write(responses.status_delta(_sid, line + "\n"))
                 hb._on_beat = _beat_tick
