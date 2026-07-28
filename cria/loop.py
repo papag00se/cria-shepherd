@@ -1505,18 +1505,21 @@ class Loop:
 
     def _grounded_evidence(self, sess: PlanSession, body: dict) -> str:
         """The critic's / re-derivation's ground truth: the coder's recent tool actions (the work log)
-        PLUS the DURABLE fetched-page facts (url→status→endpoints) cria accumulated. Without the durable
-        facts, a research step is judged NOT-done — or needlessly re-added — because the fetch that
-        satisfied it scrolled off after a compaction (observed: the step critic saw a 3-action window and
-        concluded "no OpenAPI spec reference" while the coder had fetched openapi.json 45× with the
-        /handles/{handle} outline right there). Additive: the facts only ever tell the critic MORE about
-        what the coder really obtained; they never claim work that wasn't done."""
+        PLUS the DURABLE fetched-page facts (url→status→endpoints) cria accumulated PLUS what actually
+        exists on disk (the workspace inventory). Without the durable facts, a research step is judged
+        NOT-done — or needlessly re-added — because the fetch that satisfied it scrolled off after a
+        compaction (observed: the step critic saw a 3-action window and concluded "no OpenAPI spec
+        reference" while the coder had fetched openapi.json 45× with the /handles/{handle} outline right
+        there). Without the inventory, an artifact step is judged on INFERENCE: a "write README.md" step
+        was passed on feasibility with zero write actions and no README on disk (run 0728-m4), and a
+        FileNotFoundError naming one file was read as "the directory does not exist" while the workspace
+        held files (run 0728-m1). Additive: every section only ever tells the critic MORE about the real
+        state; none claims work that wasn't done."""
         messages = body.get("messages", [])
         log = _bound_evidence(_work_log(messages))
         facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
-        if not facts:
-            return log
-        return (log + "\n\n" + facts) if log else facts
+        inventory = workspace_inventory(sess.workspace_root)
+        return "\n\n".join(part for part in (log, facts, inventory) if part)
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
@@ -3983,6 +3986,47 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
 
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
+
+# Workspace-inventory bounds: dirs that are never deliverables (VCS, caches, cria's own state, vendored
+# deps) are pruned; everything else is listed newest-first up to the cap, with truncation DISCLOSED
+# (…plus N more) so the judge never mistakes a bounded list for a complete one.
+_INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache",
+                                ".ruff_cache", "node_modules", "venv", ".venv", "site-packages",
+                                ".tox", ".eggs"})
+_INVENTORY_MAX_FILES = 40
+
+
+def workspace_inventory(root: str | None) -> str:
+    """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
+    evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
+    blind spot on artifact steps: without it, a "write README.md" step was passed on FEASIBILITY with
+    zero write actions in evidence and no README on disk, and a FileNotFoundError naming one file was
+    read as "the directory does not exist" while the workspace held files. The decisive "not listed =
+    does not exist" clause is attached ONLY when the listing is complete — attaching it to a truncated
+    list would be cria stating a false fact about the world (doctrine 5b). Empty string when there is
+    no workspace root to inspect (evidence composition drops the section, as with the fetch facts)."""
+    if not root or not os.path.isdir(root):
+        return ""
+    labels = prompts.load_map("workspace_inventory")
+    entries: list[tuple[float, str, int]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _INVENTORY_EXCLUDE)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue  # vanished mid-walk (the coder is live) — a missing entry, never a crash
+            entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
+    if not entries:
+        return prompts.fill(labels["empty"], root=root)
+    entries.sort(key=lambda e: (-e[0], e[1]))
+    lines = [prompts.fill(labels["header"], root=root)]
+    lines += [f"  {rel} ({size} B)" for _, rel, size in entries[:_INVENTORY_MAX_FILES]]
+    hidden = len(entries) - _INVENTORY_MAX_FILES
+    lines.append("  " + prompts.fill(labels["more"], count=str(hidden)) if hidden > 0
+                 else labels["complete"])
+    return "\n".join(lines)
 
 
 def _clip(s: str, n: int) -> str:

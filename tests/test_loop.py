@@ -1,7 +1,9 @@
 import json
+import os
 import pathlib
 import tempfile
 import unittest
+from pathlib import Path
 
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
@@ -4895,3 +4897,74 @@ class IdenticalRequeryIsNotAnInterventionTests(unittest.TestCase):
         self.assertTrue(_same_query("Cardano Python SDK package name", "cardano python sdk package name"))
         self.assertTrue(_same_query(" ada handles api  documentation ", "ada handles api documentation"))
         self.assertFalse(_same_query("ada handles api documentation", "ada handles api openapi.json"))
+
+
+class WorkspaceInventoryTests(unittest.TestCase):
+    """THE JUDGE COULD NOT SEE THE FILESYSTEM (runs 0728-m1 and 0728-m4, same blind spot, opposite
+    directions). The critic's evidence had three sections — coder actions, fetch facts, probe — and
+    none could say what files exist. So a "write README.md" step was passed on FEASIBILITY ("no
+    source-level obstacle blocks completion") with zero write actions and no README on disk, and a
+    FileNotFoundError naming ONE file was read as "the directory does not exist" while the workspace
+    held files. `workspace_inventory` is the deterministic fourth section: cria reads the disk and
+    states what is there. The "not listed = does not exist" clause rides ONLY on a complete listing —
+    on a truncated one it would be a false fact (doctrine 5b)."""
+
+    def _tree(self, root: Path) -> None:
+        (root / "README.md").write_text("# readme\n")
+        (root / "sub").mkdir()
+        (root / "sub" / "mod.py").write_text("x = 1\n")
+        (root / ".git").mkdir()
+        (root / ".git" / "HEAD").write_text("ref\n")
+        (root / "__pycache__").mkdir()
+        (root / "__pycache__" / "m.pyc").write_text("junk")
+        os.utime(root / "sub" / "mod.py", (1_000_000, 1_000_000))      # older
+        os.utime(root / "README.md", (2_000_000, 2_000_000))           # newer
+
+    def test_lists_real_files_newest_first_and_claims_completeness(self):
+        from cria.loop import workspace_inventory
+        with tempfile.TemporaryDirectory() as d:
+            self._tree(Path(d))
+            inv = workspace_inventory(d)
+        self.assertIn("README.md (9 B)", inv)
+        self.assertIn(os.path.join("sub", "mod.py"), inv)
+        self.assertLess(inv.index("README.md"), inv.index("mod.py"))   # newest first
+        self.assertIn("list is complete", inv)                         # untruncated → decisive clause
+
+    def test_non_deliverable_dirs_are_pruned(self):
+        from cria.loop import workspace_inventory
+        with tempfile.TemporaryDirectory() as d:
+            self._tree(Path(d))
+            inv = workspace_inventory(d)
+        self.assertNotIn(".git", inv)
+        self.assertNotIn("__pycache__", inv)
+
+    def test_truncation_is_disclosed_and_the_completeness_claim_withheld(self):
+        from cria.loop import workspace_inventory, _INVENTORY_MAX_FILES
+        with tempfile.TemporaryDirectory() as d:
+            for i in range(_INVENTORY_MAX_FILES + 3):
+                Path(d, f"f{i:03d}.txt").write_text("x")
+            inv = workspace_inventory(d)
+        self.assertIn("plus 3 more", inv)                  # bounded, and SAYS so
+        self.assertNotIn("list is complete", inv)          # the decisive clause would be a false fact
+
+    def test_empty_workspace_states_the_fact(self):
+        from cria.loop import workspace_inventory
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn("none", workspace_inventory(d))
+
+    def test_no_root_yields_no_section(self):
+        from cria.loop import workspace_inventory
+        self.assertEqual(workspace_inventory(None), "")
+        self.assertEqual(workspace_inventory("/nonexistent/nowhere"), "")
+
+    def test_grounded_evidence_carries_the_inventory(self):
+        """The integration that FAILS before the fix: evidence composed for the critic must include
+        the on-disk listing when a workspace root is known."""
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "resolve_handle.py").write_text("x = 1\n")
+            loop = Loop(_ctx(_Scripted([_toolcall()]), _Scripted([_sat(True)])))
+            sess = PlanSession(plan=_plan())
+            sess.workspace_root = d
+            ev = loop._grounded_evidence(sess, _body())
+        self.assertIn("WORKSPACE FILES", ev)
+        self.assertIn("resolve_handle.py", ev)
