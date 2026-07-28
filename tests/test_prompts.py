@@ -56,15 +56,22 @@ class PromptAgnosticismTests(unittest.TestCase):
         # answered "nothing missing". Adding satisfaction.txt's fence changed the failure mode
         # outright. And loop.py's own comment records 6/6 compactor calls answering with a tool call,
         # whose recovered "summary" was forward planning rather than a retrospective.
-        # A prompt that asks for a verdict and does not say "you have no tools" is one weak reply away
-        # from getting the work instead of the answer — so every one of them must say it.
-        judges = ("verify", "satisfaction", "plan_coverage", "plan_noise_steps", "plan_host_unread",
+        # A prompt that asks for a verdict and does not fence the model out of DOING the work is one
+        # weak reply away from getting the work instead of the answer — so every one of them must
+        # fence it. verify.txt's fence changed shape (operator directive: the step judge now HAS
+        # read-only inspection tools), but the essence holds: it may look, never act, and its final
+        # output is only the verdict.
+        judges = ("satisfaction", "plan_coverage", "plan_noise_steps", "plan_host_unread",
                   "replan", "selfcompact_summary", "done_summary")
         for name in judges:
             body = prompts.load(name).lower()
             self.assertIn("no tools", body, f"{name}.txt does not tell the model it has no tools")
             self.assertIn("tool/function call", body,
                           f"{name}.txt does not forbid emitting a tool call")
+        verify = prompts.load("verify").lower()
+        self.assertIn("read-only", verify)                       # its tools only ever LOOK
+        self.assertIn("never write code, run commands, fetch pages", verify)
+        self.assertIn("final output is only the json verdict", verify)
 
     def test_every_prompt_that_shapes_a_plan_says_research_is_not_runtime_discovery(self):
         # THE FOOTGUN (live run 0727-102822): the ungrounded-route challenge told the planner to

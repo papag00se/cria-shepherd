@@ -1,0 +1,10 @@
+# The step critic's READ-ONLY inspection tools (operator directive: the judge gets real tools, not
+# just a snapshot). cria executes these deterministically — the judge asks, code reads the disk,
+# the result goes back as protocol. Tool descriptions + steers. Parsed by prompts.load_map.
+list_dir = List a directory INSIDE the workspace: entries with sizes (dirs marked with /). Call with no path (or ".") for the workspace root. Use this to check what actually exists before ruling on a step that promises a file.
+read_file = Read a file INSIDE the workspace and see its REAL content (optionally only lines start_line..end_line, 1-based inclusive). Use this to check that a claimed artifact actually contains what the step requires — a file can exist and still be empty or a stub.
+answer_now = You have inspected enough. Answer NOW with ONLY the JSON verdict: {"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}
+outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
+unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
+missing = [{{PATH}} does not exist]
+empty_file = [{{PATH}} exists and is EMPTY (0 bytes)]

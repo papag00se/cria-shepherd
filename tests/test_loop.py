@@ -4906,8 +4906,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
     source-level obstacle blocks completion") with zero write actions and no README on disk, and a
     FileNotFoundError naming ONE file was read as "the directory does not exist" while the workspace
     held files. `workspace_inventory` is the deterministic fourth section: cria reads the disk and
-    states what is there. The "not listed = does not exist" clause rides ONLY on a complete listing —
-    on a truncated one it would be a false fact (doctrine 5b)."""
+    states what is there — IN FULL, never truncated (operator's call), so
+    "not listed = does not exist" always holds."""
 
     def _tree(self, root: Path) -> None:
         (root / "README.md").write_text("# readme\n")
@@ -4938,14 +4938,17 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertNotIn(".git", inv)
         self.assertNotIn("__pycache__", inv)
 
-    def test_truncation_is_disclosed_and_the_completeness_claim_withheld(self):
-        from cria.loop import workspace_inventory, _INVENTORY_MAX_FILES
+    def test_large_workspaces_are_listed_in_full(self):
+        """No truncation — operator's call: a bounded list weakens the one clause that makes the
+        inventory decisive. Every file is listed and the completeness claim always holds."""
+        from cria.loop import workspace_inventory
         with tempfile.TemporaryDirectory() as d:
-            for i in range(_INVENTORY_MAX_FILES + 3):
+            for i in range(120):
                 Path(d, f"f{i:03d}.txt").write_text("x")
             inv = workspace_inventory(d)
-        self.assertIn("plus 3 more", inv)                  # bounded, and SAYS so
-        self.assertNotIn("list is complete", inv)          # the decisive clause would be a false fact
+        self.assertEqual(inv.count(".txt ("), 120)         # every file, no cap
+        self.assertIn("list is complete", inv)
+        self.assertNotIn("more file", inv)
 
     def test_empty_workspace_states_the_fact(self):
         from cria.loop import workspace_inventory
@@ -4968,3 +4971,74 @@ class WorkspaceInventoryTests(unittest.TestCase):
             ev = loop._grounded_evidence(sess, _body())
         self.assertIn("WORKSPACE FILES", ev)
         self.assertIn("resolve_handle.py", ev)
+
+
+class JudgeToolLoopTests(unittest.TestCase):
+    """THE JUDGE GETS REAL TOOLS (operator directive). _verdict with a workspace_root offers
+    read-only list_dir/read_file, executes them in cria (deterministically), and feeds each round
+    back as PROTOCOL — the planner-gather pattern. The verdict itself still fails closed exactly as
+    before; the reasoning-off retry stays toolless (its one job is "just answer the JSON")."""
+
+    def _judge(self, responses, workspace_root):
+        seen = {"bodies": []}
+
+        def reasoner(body, rlog):
+            seen["bodies"].append(body)
+            return json.dumps(responses[len(seen["bodies"]) - 1]).encode()
+
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        from cria.config import Role
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        return Loop(ctx), seen
+
+    @staticmethod
+    def _tool_answer(name, args, call_id="j1"):
+        return {"choices": [{"message": {"tool_calls": [
+            {"id": call_id, "type": "function",
+             "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+
+    @staticmethod
+    def _verdict_answer(done, reason):
+        return {"choices": [{"message": {"content": json.dumps(
+            {"done": done, "reason": reason, "proposed_fix": ""})}}]}
+
+    def test_judge_inspects_the_disk_then_rules_on_what_it_read(self):
+        """The m4 failure, replayed with tools: a 'write README.md' step, no README. The judge asks
+        list_dir, cria answers from the REAL disk, and the NOT-done verdict lands."""
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve_handle.py").write_text("x = 1\n")
+            loop, seen = self._judge([
+                self._tool_answer("list_dir", {}),
+                self._verdict_answer(False, "README.md is not in the workspace"),
+            ], ws)
+            obj, _ = loop._verdict("sys", "usr", _Rlog(), reasoning_off=False, workspace_root=ws)
+        self.assertEqual(obj, {"done": False, "reason": "README.md is not in the workspace",
+                               "proposed_fix": ""})
+        first, second = seen["bodies"]
+        self.assertTrue(any(t["function"]["name"] == "list_dir" for t in first["tools"]))
+        protocol = second["messages"]
+        self.assertEqual(protocol[-1]["role"], "tool")             # the result went back as protocol
+        self.assertIn("resolve_handle.py (6 B)", protocol[-1]["content"])  # the REAL disk, cria-read
+        self.assertEqual(protocol[-2]["role"], "assistant")        # after the structured call turn
+        self.assertTrue(protocol[-2]["tool_calls"])
+
+    def test_round_budget_forces_the_verdict(self):
+        """A wandering judge is bounded: after VERIFY_MAX_ROUNDS tool rounds the tools are withdrawn,
+        the answer-now steer is appended, and the next reply must be the verdict."""
+        from cria.verifytools import VERIFY_MAX_ROUNDS
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "f.py").write_text("x\n")
+            responses = [self._tool_answer("list_dir", {}, f"j{i}") for i in range(VERIFY_MAX_ROUNDS)]
+            responses.append(self._verdict_answer(False, "forced"))
+            loop, seen = self._judge(responses, ws)
+            obj, _ = loop._verdict("sys", "usr", _Rlog(), reasoning_off=False, workspace_root=ws)
+        self.assertEqual(obj["reason"], "forced")
+        final = seen["bodies"][-1]
+        self.assertNotIn("tools", final)                            # tools withdrawn at the cap
+        self.assertIn("JSON verdict", final["messages"][-1]["content"])  # the answer-now steer
+
+    def test_toolless_behaviour_is_unchanged_without_a_root(self):
+        loop, seen = self._judge([self._verdict_answer(True, "ok")], "")
+        obj, _ = loop._verdict("sys", "usr", _Rlog(), reasoning_off=False, workspace_root="")
+        self.assertTrue(obj["done"])
+        self.assertNotIn("tools", seen["bodies"][0])

@@ -4,10 +4,8 @@
 # ("no obstacle blocks completion") with zero write actions in evidence and no README on disk
 # (run 0728-m4 step 3), and a FileNotFoundError over one file was read as "the directory does not
 # exist" (run 0728-m1 step 1). Both directions, one fact.
-# The decisive "not listed = does not exist" clause rides ONLY on the complete-list line: stating
-# it under a truncated listing would be cria asserting a false fact (doctrine 5b).
-# Parsed by prompts.load_map.
+# The listing is always COMPLETE (operator's call — no truncation), so the decisive
+# "not listed = does not exist" clause always attaches. Parsed by prompts.load_map.
 header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth at judging time, newest first):
 complete = This list is complete — a file not listed here does not exist in the workspace.
-more = …plus {{COUNT}} more file(s) not shown
 empty = WORKSPACE FILES in {{ROOT}}: none — the workspace has no files at judging time.

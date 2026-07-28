@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, webfetch
+from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -1130,7 +1130,8 @@ class Loop:
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
-                                  routes=known_routes(body.get('messages', []), sess))
+                                  routes=known_routes(body.get('messages', []), sess),
+                                  workspace_root=sess.workspace_root or "")
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1261,7 +1262,8 @@ class Loop:
             evidence = self._grounded_evidence(sess, body)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
-                                      routes=known_routes(body.get('messages', []), sess))
+                                      routes=known_routes(body.get('messages', []), sess),
+                                      workspace_root=sess.workspace_root or "")
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -1303,7 +1305,8 @@ class Loop:
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
-                                  routes=known_routes(body.get('messages', []), sess))  # grounded in the coder's own runs
+                                  routes=known_routes(body.get('messages', []), sess),
+                                  workspace_root=sess.workspace_root or "")  # grounded in the coder's own runs
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1523,7 +1526,7 @@ class Loop:
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
-                routes: str = "") -> tuple[bool, str]:
+                routes: str = "", workspace_root: str = "") -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -1554,7 +1557,7 @@ class Loop:
         # verdict is a one-line classification, and a reasoning model under the max_tokens cap
         # can burn its whole budget THINKING and never emit the closing JSON — which used to
         # fall through to a silent DONE. Reasoning-off makes it answer the JSON directly.
-        obj, raw = self._verdict(system, user, rlog, reasoning_off=False)
+        obj, raw = self._verdict(system, user, rlog, reasoning_off=False, workspace_root=workspace_root)
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
@@ -1580,44 +1583,80 @@ class Loop:
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
-    def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool) -> tuple[dict | None, str]:
-        """One critic call → (parsed verdict dict OR None if the model produced no parseable JSON /
-        the call failed, RAW response text). The raw text is dumped alongside the verdict so a human
-        can see the verifier's ACTUAL output — the parrot (an echoed instruction) or an empty/rambling
-        non-verdict is invisible in the parsed reason alone. `reasoning_off` forces enable_thinking=false
-        so a reasoning model can't exhaust its token budget before emitting the verdict."""
-        body = {
-            "stream": False,
-            "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
-            # Bound the output generously: the verdict's `reason` feeds the coder re-nudge, so it
-            # must never be truncated at generation. The cap stays only as a runaway backstop (a
-            # reasoning model that never stops) — well above any real verdict.
-            "max_tokens": 8192,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
+    def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool,
+                 workspace_root: str = "") -> tuple[dict | None, str]:
+        """One critic judgement → (parsed verdict dict OR None if the model produced no parseable
+        JSON / the call failed, RAW response text). The raw text is dumped alongside the verdict so a
+        human can see the verifier's ACTUAL output — the parrot (an echoed instruction) or an
+        empty/rambling non-verdict is invisible in the parsed reason alone. `reasoning_off` forces
+        enable_thinking=false so a reasoning model can't exhaust its token budget before the verdict.
+
+        With a ``workspace_root``, the judge gets cria-executed READ-ONLY inspection tools
+        (verifytools: list_dir/read_file) and this becomes a bounded tool loop — the same protocol
+        as the planner's gather (structured assistant tool_calls turn, then role:tool results).
+        Observed need: the toolless judge REACHED for these ("list_dir would show this" in its own
+        reasoning) and asserted the imagined result. The reasoning-off retry stays toolless — its
+        one job is "just answer the JSON"."""
+        messages: list[dict] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        use_tools = bool(workspace_root) and os.path.isdir(workspace_root) and not reasoning_off
         role = self._ctx.reasoner_role
         if reasoning_off:
             role = replace(role, reasoning="off") if role is not None else None
-        if role is not None:
-            role.apply(body, internal=True, rlog=rlog)
-        elif reasoning_off:  # no role configured, but still force the think block off
-            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        rounds = 0
         try:
-            rlog.phase = "critic" + ("-noreason" if reasoning_off else "")
-            comp = _parse_completion(self._ctx.reasoner_chat(body, rlog))
-            vtext = _completion_text(comp)
-            if role is not None:
-                vtext = role.clean_content(vtext)  # drop leaked reasoning when off
-            if massage.is_truncated(comp):
-                # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
-                # finish_reason=length with content). The reasoning-off retry above has the whole
-                # budget for content; if that is also cut, _verify fails closed as it already does.
-                rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
-                return None, vtext
-            return extract_json_object(vtext) or None, vtext
+            while True:
+                body: dict = {
+                    "stream": False,
+                    "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
+                    # Bound the output generously: the verdict's `reason` feeds the coder re-nudge, so it
+                    # must never be truncated at generation. The cap stays only as a runaway backstop (a
+                    # reasoning model that never stops) — well above any real verdict.
+                    "max_tokens": 8192,
+                    "messages": list(messages),
+                }
+                if use_tools and rounds < verifytools.VERIFY_MAX_ROUNDS:
+                    body["tools"] = verifytools.VERIFY_TOOLS
+                if role is not None:
+                    role.apply(body, internal=True, rlog=rlog)
+                elif reasoning_off:  # no role configured, but still force the think block off
+                    body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+                rlog.phase = "critic" + ("-noreason" if reasoning_off else "")
+                comp = _parse_completion(self._ctx.reasoner_chat(body, rlog))
+                msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
+                calls = msg.get("tool_calls") or []
+                if use_tools and calls and rounds < verifytools.VERIFY_MAX_ROUNDS:
+                    # Feed the round back as PROTOCOL, then let the judge keep looking or answer.
+                    rounds += 1
+                    messages.append({"role": "assistant", "content": msg.get("content") or None,
+                                     "tool_calls": calls})
+                    for tc in calls:
+                        fn = tc.get("function") or {}
+                        try:
+                            targs = json.loads(fn.get("arguments") or "{}")
+                        except ValueError:
+                            targs = None
+                        out = (verifytools.execute(fn.get("name") or "", targs, workspace_root)
+                               if isinstance(targs, dict) else "[unparseable tool arguments — call again with valid JSON]")
+                        messages.append({"role": "tool", "tool_call_id": tc.get("id") or f"vt{rounds}",
+                                         "content": out})
+                    rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
+                    if rounds == verifytools.VERIFY_MAX_ROUNDS:
+                        # Budget spent: the next call carries no tools and this closing instruction.
+                        messages.append({"role": "user", "content": verifytools.ANSWER_NOW})
+                    continue
+                vtext = _completion_text(comp)
+                if role is not None:
+                    vtext = role.clean_content(vtext)  # drop leaked reasoning when off
+                if massage.is_truncated(comp):
+                    # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
+                    # finish_reason=length with content). The reasoning-off retry above has the whole
+                    # budget for content; if that is also cut, _verify fails closed as it already does.
+                    rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
+                    return None, vtext
+                return extract_json_object(vtext) or None, vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
             return None, ""
@@ -3987,13 +4026,12 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
 
-# Workspace-inventory bounds: dirs that are never deliverables (VCS, caches, cria's own state, vendored
-# deps) are pruned; everything else is listed newest-first up to the cap, with truncation DISCLOSED
-# (…plus N more) so the judge never mistakes a bounded list for a complete one.
+# Dirs that are never deliverables (VCS, caches, cria's own state, vendored deps) are pruned from the
+# inventory; everything else is listed IN FULL, newest-first — the operator ruled out truncation, so
+# the completeness clause always holds and the judge can trust absence as absence.
 _INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache",
                                 ".ruff_cache", "node_modules", "venv", ".venv", "site-packages",
                                 ".tox", ".eggs"})
-_INVENTORY_MAX_FILES = 40
 
 
 def workspace_inventory(root: str | None) -> str:
@@ -4001,10 +4039,10 @@ def workspace_inventory(root: str | None) -> str:
     evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
     blind spot on artifact steps: without it, a "write README.md" step was passed on FEASIBILITY with
     zero write actions in evidence and no README on disk, and a FileNotFoundError naming one file was
-    read as "the directory does not exist" while the workspace held files. The decisive "not listed =
-    does not exist" clause is attached ONLY when the listing is complete — attaching it to a truncated
-    list would be cria stating a false fact about the world (doctrine 5b). Empty string when there is
-    no workspace root to inspect (evidence composition drops the section, as with the fetch facts)."""
+    read as "the directory does not exist" while the workspace held files. The listing is COMPLETE —
+    never truncated (operator's call: a bounded list weakens the one clause that makes it decisive) —
+    so "not listed = does not exist" always holds. Empty string when there is no workspace root to
+    inspect (evidence composition drops the section, as with the fetch facts)."""
     if not root or not os.path.isdir(root):
         return ""
     labels = prompts.load_map("workspace_inventory")
@@ -4022,10 +4060,8 @@ def workspace_inventory(root: str | None) -> str:
         return prompts.fill(labels["empty"], root=root)
     entries.sort(key=lambda e: (-e[0], e[1]))
     lines = [prompts.fill(labels["header"], root=root)]
-    lines += [f"  {rel} ({size} B)" for _, rel, size in entries[:_INVENTORY_MAX_FILES]]
-    hidden = len(entries) - _INVENTORY_MAX_FILES
-    lines.append("  " + prompts.fill(labels["more"], count=str(hidden)) if hidden > 0
-                 else labels["complete"])
+    lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+    lines.append(labels["complete"])
     return "\n".join(lines)
 
 
