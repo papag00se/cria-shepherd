@@ -108,12 +108,25 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     return i
 
 
+# cria's OWN edit-recovery steer (editrecovery.EDIT_MARK — mirrored literal, a test asserts sync).
+# Its body is a whole-file "EXACT current content on disk" snapshot that goes STALE by design: the
+# live mechanism re-injects the CURRENT content whenever it fires again. Fed whole into the
+# summarizer, a weak model preserves it verbatim — measured across 295 rollups: 27 carried a
+# fossilized copy, and one prompt (0728-m14 call 0281) held TWO conflicting "EXACT content" claims,
+# the rollup's stale one beside the live one. In summarizer INPUT the steer is represented by its
+# HEADLINE only — the event survives ("cria provided the file's content after N failed edits"), the
+# perishable payload does not.
+_EDIT_MARK = "⟦ctx:edit⟧"
+
+
 def msg_digest(m: dict) -> str:
     """A compact one-line rendering of a message for a summarization transcript: its text plus any
     tool call as ``name(args…)``. Shared by both paths so the rollup input is built the same way."""
     parts = []
     t = _text(m)
     if t.strip():
+        if t.lstrip().startswith(_EDIT_MARK):
+            t = t.lstrip().splitlines()[0]  # headline only — see _EDIT_MARK above
         parts.append(t)
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}

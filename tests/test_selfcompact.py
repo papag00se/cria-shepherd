@@ -221,3 +221,29 @@ class PinnedTaskTests(unittest.TestCase):
         out, _, _ = compact(_msgs(40), lambda mm: "R", CompactState(), pinned_task="Z" * 5000, **_KW)
         header = next(str(x["content"]) for x in out if selfcompact.TASK_MARKER in str(x.get("content")))
         self.assertEqual(header.count("Z"), 5000)   # full task body, no clip
+
+
+class EditSteerNotFossilizedTests(unittest.TestCase):
+    """THE ROLLUP FOSSILIZED CRIA'S OWN WHOLE-FILE STEER (measured: 27 of 295 rollups). The
+    edit-recovery steer's body is an "EXACT current content on disk" snapshot that goes stale by
+    design; fed whole into the summarizer input, a weak model preserves it verbatim — one prompt
+    (0728-m14 call 0281) carried TWO conflicting "EXACT content" claims, the rollup's stale copy
+    beside the live re-injection. In summarizer input the steer is its HEADLINE only."""
+
+    def test_edit_steer_body_is_headlined_in_summarizer_input(self):
+        from cria.selfcompact import msg_digest
+        steer = ("⟦ctx:edit⟧ test_x.py — you have failed to edit this file 5 times — STOP.\n"
+                 "import pytest\nSTALE_CONTENT_LINE_1\nSTALE_CONTENT_LINE_2\n")
+        out = msg_digest({"role": "tool", "content": steer})
+        self.assertIn("failed to edit this file 5 times", out)   # the EVENT survives
+        self.assertNotIn("STALE_CONTENT_LINE_1", out)            # the perishable payload does not
+
+    def test_ordinary_tool_results_pass_whole(self):
+        from cria.selfcompact import msg_digest
+        result = "Chunk ID: abc\nline1\nline2"
+        self.assertEqual(msg_digest({"role": "tool", "content": result}), result)
+
+    def test_marker_literal_stays_in_sync_with_editrecovery(self):
+        from cria.editrecovery import EDIT_MARK
+        from cria.selfcompact import _EDIT_MARK
+        self.assertEqual(EDIT_MARK, _EDIT_MARK)
