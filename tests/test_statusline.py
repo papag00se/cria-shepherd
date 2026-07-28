@@ -70,9 +70,10 @@ class LiveRateTests(unittest.TestCase):
     compactor calls are non-streamed: nothing arrives until they finish, so no rate is invented."""
 
     def test_rate_appears_when_streaming_counters_exist(self):
-        # Operator's format: worker + rate + SESSION total in one head, no per-call timer.
+        # Operator's format: worker, clock, rate LAST (it comes and goes — trailing it keeps the
+        # worker+clock columns aligned across lines).
         self.assertEqual(statusline.still_working_line("coder-s2", 5645.0, 0.53),
-                         f"{MARKER}(coder ~0.5 tok/s - 1h34m) ⋯ working")
+                         f"{MARKER}(coder - 1h34m ~0.5 tok/s) ⋯ working")
 
     def test_no_rate_for_non_streamed_calls(self):
         line = statusline.still_working_line("critic", 95.0, None)

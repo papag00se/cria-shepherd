@@ -126,22 +126,22 @@ def still_working_line(phase: str | None, total_seconds: float | None = None,
                        tok_per_s: float | None = None) -> str:
     """The in-between tick for one long model call (no events fire mid-generation — a 27B coder at
     ~7 tok/s went 10 minutes with nothing on screen). Format is the operator's:
-    ``⟦cria⟧ (coder ~0.5 tok/s - 1h34m) ⋯ working`` — worker + live rate + the SESSION's total
-    running time in one parenthesized head, no separate per-call timer (redundant next to the main
-    clock). ``tok_per_s`` appears only when the call is STREAMED (the coder) — internal
-    judge/compactor calls are non-streamed, nothing arrives until they finish, so no rate is ever
-    invented for them."""
+    ``⟦cria⟧ (coder - 1m45s ~0.6 tok/s) ⋯ working`` — worker, then the SESSION's total running
+    time, then the live rate LAST (the rate comes and goes, so trailing it keeps the worker+clock
+    columns aligned across lines). ``tok_per_s`` appears only when the call is STREAMED (the
+    coder) — internal judge/compactor calls are non-streamed, nothing arrives until they finish,
+    so no rate is ever invented for them."""
     worker, activity = "", "still working"
     for prefix, _announce, w, a in _PHASE_LINES:
         if phase and phase.startswith(prefix):
             worker, activity = w, a
             break
     head = worker
-    if tok_per_s:
-        head = f"{head} ~{tok_per_s:.1f} tok/s".strip()
     if total_seconds is not None and total_seconds >= 2:   # the same just-born rule as with_total
         clock = fmt_elapsed(total_seconds)
         head = f"{head} - {clock}" if head else clock
+    if tok_per_s:
+        head = f"{head} ~{tok_per_s:.1f} tok/s".strip()
     if head:
         return f"{MARKER}({head}) ⋯ {activity}"
     return f"{MARKER}⋯ {activity}"
