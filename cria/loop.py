@@ -578,6 +578,36 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             messages.append({"role": "user", "content": verifytools.ANSWER_NOW})
 
 
+def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
+                        rlog, *, phase: str) -> tuple[bool, str]:
+    """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
+    is the completion claim CONSISTENT with (a) the fresh on-disk listing and (b) the verdict's own
+    reason? Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in its
+    prompt ruled from the coder's NARRATIVE — passed "write unit tests" against a complete inventory
+    of three tmp spills while citing a test function that exists nowhere (m8); ruled satisfied with
+    no README in the listing (m6); attached a full failure analysis to a DONE (m7). The checker sees
+    ONLY claim + reason + inventory — the coder's summary, the confabulation fuel, is deliberately
+    absent. Returns (confirmed, why). No inventory → confirmed (nothing to check against); an
+    unparseable check KEEPS the verdict (the brake is additive, never a new wedge) but is traced."""
+    inventory = workspace_inventory(workspace_root)
+    if not inventory:
+        return True, ""
+    labels = prompts.load_map("verify_confirm")
+    user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)",
+                        inventory=inventory)
+    role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
+    comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
+                             phase=phase, force_think_off=True)  # toolless: no workspace_root passed
+    vtext = _completion_text(comp)
+    if reasoner_role is not None:
+        vtext = reasoner_role.clean_content(vtext)
+    obj = extract_json_object(strip_think(vtext))
+    if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
+        rlog.emit("loop.confirm_unparsed", level="info", phase=phase)
+        return True, ""
+    return obj["consistent"], str(obj.get("why") or "").strip()
+
+
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
@@ -600,6 +630,16 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
+        if satisfied and workspace_root:
+            # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
+            # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
+            # while the listing in the judge's prompt proved its absence).
+            confirmed, why = _confirm_completion(task, str(obj.get("reason") or ""), workspace_root,
+                                                 reasoner_chat, reasoner_role, rlog,
+                                                 phase="satisfaction-confirm")
+            rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
+            if not confirmed:
+                return False, why or str(obj.get("reason") or "a named deliverable is not on disk")
         return satisfied, _verdict_nudge(obj, satisfied)  # fold in proposed_fix when NOT satisfied
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
@@ -1631,6 +1671,16 @@ class Loop:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
+            if done and workspace_root:
+                # The approve-path brake (see _confirm_completion): a DONE must be consistent with
+                # the FRESH on-disk listing and with its own stated reason.
+                confirmed, why = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
+                                                     self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                     rlog, phase="critic-confirm")
+                rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
+                if not confirmed:
+                    done = False
+                    obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
             reason = _verdict_nudge(obj, done, routes)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
@@ -4158,7 +4208,9 @@ def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str
             f"- reason: {reason}\n\n"
             f"## VERIFIER RESPONSE (the reasoner's raw output)\n\n```\n{response or '(empty / call failed)'}\n```\n\n"
             "Below is the COMPLETE context the reasoner saw when it decided this step — it judged "
-            "on nothing else (no file listing, no workspace state, only what is below).\n\n"
+            "on nothing else beyond any inspection-tool reads it made mid-judgement (those are in "
+            "the capture's critic .json files; the WORKSPACE FILES section below is the on-disk "
+            "listing it was handed).\n\n"
             f"## SYSTEM message (cria/prompts/verify.txt)\n\n```\n{system}\n```\n\n"
             f"## USER message (the step + the ground truth it was handed)\n\n```\n{user}\n```\n"
         )

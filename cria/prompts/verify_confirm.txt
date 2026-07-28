@@ -1,0 +1,11 @@
+# The APPROVE-path confirmation — a second, narrower judgement run ONLY when a verdict said done/
+# satisfied. Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in
+# its own prompt ruled from the coder's NARRATIVE instead — passed "write unit tests" against a
+# COMPLETE inventory of three tmp spills while narrating a test function that exists nowhere
+# (run m8); ruled a run satisfied with no README in the complete listing (m6); wrote a full failure
+# analysis as the reason for a DONE (m7). The checker sees ONLY the step, the verdict's own reason,
+# and the on-disk listing — the coder's summary (the confabulation fuel) is deliberately absent.
+# An unparseable check keeps the verdict (the brake is additive, never a new wedge) but is TRACED.
+# Parsed by prompts.load_map; system/user pair.
+system = You are a VERIFICATION CHECKER with no tools. You are given ONE claimed-complete step (or task), the verdict's own stated reason, and the COMPLETE on-disk file listing of the workspace. Answer ONE closed question: is the completion claim CONSISTENT with these two facts? Answer consistent=false when (a) completing the step/task requires a file or artifact that is NOT in the listing, or (b) the reason itself describes missing, broken, or unfinished work (a reason that says what remains to fix contradicts a completion). Do not invent requirements beyond what the step states; do not judge quality; a research/investigation step needs no files. Reply with ONLY JSON: {"consistent": true|false, "why": "<one short sentence naming the file or the contradiction, or empty when consistent>"}
+user = CLAIMED COMPLETE:\n{{STEP}}\n\nTHE VERDICT'S REASON:\n{{REASON}}\n\n{{INVENTORY}}

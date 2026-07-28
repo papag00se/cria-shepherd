@@ -5157,3 +5157,78 @@ class SatisfactionJudgeToolTests(unittest.TestCase):
         ok, _ = judge_satisfaction("t", "ev", chat, self._role(), _Rlog())
         self.assertTrue(ok)
         self.assertNotIn("tools", bodies[0])
+
+
+class ApprovePathConfirmTests(unittest.TestCase):
+    """THE APPROVE-PATH BRAKE (n=3 in one day, both judges): a judge holding contrary ground truth in
+    its own prompt ruled from the coder's NARRATIVE — m8 passed "Write unit tests" against a COMPLETE
+    inventory of tmp spills while citing a test function that exists nowhere; m6 ruled satisfied with
+    no README in the listing; m7 attached a failure analysis to a DONE. On done/satisfied ONLY, a
+    narrow reasoning-off checker re-judges the claim against (a) the FRESH on-disk listing and (b)
+    the verdict's own reason — with the coder's summary (the confabulation fuel) deliberately absent.
+    Inconsistent → downgraded, with the checker's why as the corrective. Unparseable → the verdict
+    stands (additive brake, never a wedge), traced."""
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    @staticmethod
+    def _confirm(consistent, why=""):
+        return {"choices": [{"message": {"content": json.dumps(
+            {"consistent": consistent, "why": why})}}]}
+
+    def _loop_with(self, responses):
+        chat = _Scripted(responses)
+        ctx = _ctx(_Scripted([_toolcall()]), chat)
+        ctx.reasoner_role = self._role()
+        return Loop(ctx), chat
+
+    def test_the_m8_confabulated_done_is_downgraded(self):
+        """The replay: 'Write unit tests' DONE, workspace holds only spills — checker kills it."""
+        verdict = {"choices": [{"message": {"content": json.dumps(
+            {"done": True, "reason": "tests are parameterized with live data", "proposed_fix": ""})}}]}
+        with tempfile.TemporaryDirectory() as ws:
+            (Path(ws) / "tmp").mkdir()
+            (Path(ws) / "tmp" / "spill.txt").write_text("spilled spec")
+            loop, _ = self._loop_with([verdict,
+                                       self._confirm(False, "no test file exists in the workspace")])
+            ok, reason = loop._verify("Write unit tests for resolve_handle", "coder says done",
+                                      "", "ev", _Rlog(), idx=4, total=6, key="sid:x",
+                                      workspace_root=ws)
+        self.assertFalse(ok)                                       # the DONE did not survive
+        self.assertIn("no test file exists", reason)               # the checker's why is the nudge
+
+    def test_a_consistent_done_passes_through(self):
+        verdict = {"choices": [{"message": {"content": json.dumps(
+            {"done": True, "reason": "resolver written and verified", "proposed_fix": ""})}}]}
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve_handle.py").write_text("x = 1\n")
+            loop, _ = self._loop_with([verdict, self._confirm(True)])
+            ok, _ = loop._verify("Write resolve_handle.py", "c", "", "ev", _Rlog(),
+                                 idx=1, total=2, key="sid:x", workspace_root=ws)
+        self.assertTrue(ok)
+
+    def test_an_unparseable_check_keeps_the_verdict_and_is_traced(self):
+        verdict = {"choices": [{"message": {"content": json.dumps(
+            {"done": True, "reason": "ok", "proposed_fix": ""})}}]}
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "f.py").write_text("x\n")
+            loop, _ = self._loop_with([verdict, _text("I cannot judge this")])
+            rlog = _Rlog()
+            ok, _ = loop._verify("Write f.py", "c", "", "ev", rlog,
+                                 idx=1, total=2, key="sid:x", workspace_root=ws)
+        self.assertTrue(ok)                                        # additive brake, never a wedge
+        self.assertIn(("loop.confirm_unparsed",), [(k,) for k, _ in rlog.events])
+
+    def test_satisfaction_approve_is_braked_the_same_way(self):
+        from cria.loop import judge_satisfaction
+        sat = {"choices": [{"message": {"content": json.dumps(
+            {"satisfied": True, "reason": "everything delivered"})}}]}
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve_handle.py").write_text("x\n")        # no README anywhere
+            chat = _Scripted([sat, self._confirm(False, "README.md is not in the workspace")])
+            ok, reason = judge_satisfaction("script plus README", "ev", chat, self._role(),
+                                            _Rlog(), workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertIn("README.md is not in the workspace", reason)
