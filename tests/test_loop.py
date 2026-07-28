@@ -658,7 +658,7 @@ class StuckStepReplanTests(unittest.TestCase):
     def test_below_threshold_does_not_replan(self):
         from cria.loop import STUCK_STEP_REPLAN
         loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
-        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN - 1
+        sess = self._sess(); sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN - 1
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "confused step 2", "step 3"])   # untouched — just a re-nudge
@@ -666,7 +666,7 @@ class StuckStepReplanTests(unittest.TestCase):
     def test_at_threshold_rederives_the_stuck_tail_and_resets(self):
         from cria.loop import STUCK_STEP_REPLAN
         loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"]), _text("NONE")]))
-        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        sess = self._sess(); sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "rewritten step 2", "step 3"])  # stuck step re-derived from ground truth
@@ -676,7 +676,7 @@ class StuckStepReplanTests(unittest.TestCase):
         from cria.loop import STUCK_STEP_REPLAN
         # reasoner re-derives the SAME remaining tail → no change → normal re-nudge (streak NOT reset)
         loop = self._loop(_Scripted([_replan(["confused step 2", "step 3"]), _text("NONE")]))
-        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        sess = self._sess(); sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items], ["step 1", "confused step 2", "step 3"])
         self.assertEqual(sess.verify_fails, STUCK_STEP_REPLAN)       # not reset — the plan didn't move
@@ -685,7 +685,7 @@ class StuckStepReplanTests(unittest.TestCase):
         # the gate-fail path (real syntax/lint/test errors) uses plain _renudge, NOT _renudge_or_replan —
         # a real failing check must be FIXED, never re-derived away. Prove the plain path leaves the plan.
         loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"])]))
-        sess = self._sess(); sess.verify_fails = 9
+        sess = self._sess(); sess.verify_fails = sess.critic_fails = 9
         loop._renudge(sess, "k", _body(), "SyntaxError line 5", _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "confused step 2", "step 3"])   # gate errors never trigger a re-derive
@@ -728,7 +728,7 @@ class StuckStepReplanTests(unittest.TestCase):
         loop = self._loop(_Scripted([_replan(["A", "B"]), _text("NONE")]))
         sess = self._sess()
         sess.verify_replanned = True                       # already spent this step's one re-derive
-        sess.verify_fails = STUCK_STEP_REPLAN * 3          # a multiple → the OLD `% == 0` would re-fire here
+        sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN * 3   # a multiple → the OLD `% == 0` would re-fire here
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "confused step 2", "step 3"])    # NOT re-derived again — plan untouched
@@ -738,7 +738,7 @@ class StuckStepReplanTests(unittest.TestCase):
         # the FIRST stuck re-derive marks the one-shot spent, so a later fail on the SAME step can't re-fire
         from cria.loop import STUCK_STEP_REPLAN
         loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"]), _text("NONE")]))
-        sess = self._sess(); sess.verify_fails = STUCK_STEP_REPLAN
+        sess = self._sess(); sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
         self.assertTrue(sess.verify_replanned)             # spent — reset only on ADVANCE to a new step
 
@@ -4656,3 +4656,48 @@ class ReplanNoiseIsVisibleTests(unittest.TestCase):
         ev = dict(rlog.events).get("loop.replan_noise")
         self.assertIsNotNone(ev, "a judgement that dropped nothing still ran and should say so")
         self.assertEqual(ev["dropped"], 0)
+
+
+class GateFailsMustNotRewriteTheStepTests(unittest.TestCase):
+    """The stuck-step rescue exists for a MISCONCEIVED step — one whose checks pass but whose intent
+    no coder work can satisfy — and its own docstring says "NEVER used on a gate/real-error fail:
+    those must be FIXED, not re-derived away". It triggers on `sess.verify_fails`, and that counter
+    was incremented by THREE different things: the critic judging the step unmet, the deterministic
+    LEG-0 "no tools used" nudge, and a RED GATE ("probe failed").
+
+    MEASURED (run 0727-170754). Step 3 was "Write unit tests for resolve_handle using pytest and
+    unittest.mock…". It accrued one "no tools used" and two "probe failed" — broken code, not a
+    misconceived step — the rescue fired at 00:16:23, re-derived 5 steps to 4, and step 3 became "Add
+    retry logic on transient network errors". The coder, still finishing its tests, was then failed
+    repeatedly against a goal it had never been given: "The specific goal was to add retry logic …
+    the coder has only corrected the test code (which is unrelated)". Its correct work was called
+    unrelated because cria had swapped the step underneath it.
+
+    A red gate means FIX THE CODE. Only the critic's own judgement counts toward "this step may be
+    impossible"."""
+
+    def _loop(self, reasoner):
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        from cria.config import Role
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        return Loop(ctx)
+
+    def test_gate_failures_alone_never_trigger_the_re_derive(self):
+        from cria.loop import STUCK_STEP_REPLAN
+        reasoner = _Scripted([_replan(["a different step"]), _text("NONE")])
+        loop = self._loop(reasoner)
+        sess = PlanSession(plan=_plan(3))
+        sess.verify_fails = STUCK_STEP_REPLAN + 5      # all from red gates / no-tools
+        sess.critic_fails = 0
+        loop._renudge_or_replan(sess, "k", _body(), "probe failed", 3, _Rlog())
+        self.assertEqual(reasoner.calls, 0, "a red gate re-derived the step instead of being fixed")
+        self.assertEqual([i.text for i in sess.plan.items], [i.text for i in _plan(3).items])
+
+    def test_critic_failures_still_trigger_it(self):
+        from cria.loop import STUCK_STEP_REPLAN
+        reasoner = _Scripted([_replan(["a different step"]), _text("NONE")])
+        loop = self._loop(reasoner)
+        sess = PlanSession(plan=_plan(3))
+        sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
+        loop._renudge_or_replan(sess, "k", _body(), "not done", 1, _Rlog())
+        self.assertGreater(reasoner.calls, 0, "a genuinely misconceived step must still be re-derived")

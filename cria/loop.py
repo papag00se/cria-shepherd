@@ -219,6 +219,13 @@ class PlanSession(GuardState):
     compact_state: selfcompact.CompactState = field(default_factory=selfcompact.CompactState)  # mid-session rollup
     compact_pending: bool = False  # a step just verified → force a rollup next turn (clean prior-step signals)
     verify_fails: int = 0
+    # CRITIC judgements only — the subset of verify_fails that means "the critic read the evidence and
+    # said this step's intent is unmet". `verify_fails` also counts a RED GATE and the LEG-0 "no tools
+    # used" nudge, and the stuck-step rescue must not fire on those: a gate failure means FIX THE CODE,
+    # not "this step may be impossible". Measured (run 0727-170754): step 3 "Write unit tests…" took
+    # one no-tools and two probe-failed, the rescue re-derived it into "Add retry logic…", and the
+    # coder's in-flight test work was then failed as "unrelated" against a goal it was never given.
+    critic_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
@@ -1090,6 +1097,7 @@ class Loop:
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
+        sess.critic_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
@@ -1220,6 +1228,7 @@ class Loop:
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
+            sess.critic_fails += 1
             rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
             return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
@@ -1261,6 +1270,7 @@ class Loop:
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
+        sess.critic_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
@@ -1273,7 +1283,7 @@ class Loop:
         # small models parrot cria's own banners back), which is what leaked "logs" into the plan file.
         item.note = "verified"
         sess.summary = _extend_summary(sess.summary, idx, item.text)
-        sess.verify_fails = 0
+        sess.verify_fails = sess.critic_fails = 0
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
@@ -1357,7 +1367,7 @@ class Loop:
         re-drive fresh on the new current step; otherwise (declined/unchanged) we fall through to a normal
         re-nudge. NEVER used on a gate/real-error fail — those must be FIXED, not re-derived away."""
         if (self._ctx.reasoner_role is not None and not sess.synthetic
-                and not sess.verify_replanned and sess.verify_fails >= STUCK_STEP_REPLAN):
+                and not sess.verify_replanned and sess.critic_fails >= STUCK_STEP_REPLAN):
             # ONE grounded re-derive per step. Firing every STUCK_STEP_REPLAN fails (the old
             # `verify_fails % STUCK_STEP_REPLAN == 0`) re-derived the whole tail again and again and
             # THRASHED the plan — observed live: 8 stuck_replans bouncing the size 3→4→5→7→3→2, burning
@@ -1369,7 +1379,7 @@ class Loop:
             self._replan_tail(sess, body, idx, rlog)   # grounded re-derivation; its own fail-safes apply
             after = [it.text for it in sess.plan.items if not it.done]
             if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
-                sess.verify_fails, sess.nudge_reason = 0, ""
+                sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, ""
                 rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="verify")
                 return self._work(sess, key, body, rlog)
         return self._renudge(sess, key, body, reason, rlog)
@@ -1391,7 +1401,7 @@ class Loop:
         self._replan_tail(sess, body, idx, rlog)   # same grounded re-derivation + fail-safes
         after = [it.text for it in sess.plan.items if not it.done]
         if after != before:
-            sess.step_tool_calls, sess.verify_fails, sess.nudge_reason = 0, 0, ""
+            sess.step_tool_calls, sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, 0, ""
             rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
             return self._work(sess, key, body, rlog)
         return None
