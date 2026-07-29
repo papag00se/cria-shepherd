@@ -28,7 +28,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
 | **fabliq-reasoning** | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
-| **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | `temp 0.6, top_p 0.95, top_k 20, repeat_penalty 1.1` *(Qwen3-family defaults)* | PrismML (Qwen3.6-derived) | needs the **PrismML llama.cpp fork** (§Server launch); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
+| **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
@@ -82,6 +82,40 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > proven — the next goal runs referee it.** Earlier fun-sized data point: the AtomicBot fork
 > (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`) also works, even on the Pascal 1080
 > (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks the prism kernels.
+
+> **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
+> produced run m15 — the first fully unaided goal success):**
+>
+> ```toml
+> [roles.classifier]
+> backend = "local"
+> reasoning = "on"
+> temperature = 0.0
+> repeat_penalty = 1.1
+>
+> [roles.reasoner]                      # the planner + the step/task critic
+> backend = "local"
+> reasoning = "on"
+> temperature = 0.6
+> top_p = 0.90
+> top_k = 40
+> repeat_penalty = 1.1
+>
+> [roles.coder]
+> backend = "local"
+> reasoning = "on"
+> temperature = 0.2
+> top_p = 0.95
+> top_k = 20
+> repeat_penalty = 1.1
+> output_reserve = 16384                # input-side reserve; keeps a big write_file uncut
+>
+> [roles.compactor]
+> backend = "local"
+> reasoning = "off"
+> temperature = 0.0
+> repeat_penalty = 1.1
+> ```
 
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
