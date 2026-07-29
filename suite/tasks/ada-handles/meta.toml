@@ -1,0 +1,4 @@
+name = "ada-handles"
+language = "python"
+shape = "api-integration"   # HTTP API research + client + tests + live test + docs
+deliverables = ["resolver script", "unit tests", "live test", "README"]
