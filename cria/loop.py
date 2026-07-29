@@ -612,6 +612,30 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     return obj["consistent"], str(obj.get("why") or "").strip()
 
 
+def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:
+    """A verdict object MISSING its verdict key ("done"/"satisfied") is not a verdict — unless the
+    schema's own contract decides it: ``proposed_fix`` is defined as "" when the flag is true and
+    a concrete action when false (verify.txt / satisfaction prompts), so its presence
+    disambiguates a keyless verdict. Returns the object with the flag filled (traced via rlog —
+    an inference must never bind silently), or None when nothing sound can fill it, which routes
+    the caller to its normal parse-miss retry.
+
+    Observed live (suite run, qwythos): the judge reasoned "done: true", then emitted
+    ``{"reason": …, "proposed_fix": ""}`` with NO done key. ``bool(obj.get("done"))`` silently
+    read that as NOT-done — a contradiction the coder was nudged with (a reason arguing complete
+    under a NOT-DONE verdict), re-verified 4× in 2 minutes, and the parse-miss retry never fired
+    because the JSON parsed fine. A doom loop: the retry pass may only REJECT, so a model that
+    consistently omits the key could never pass the step at all. An inferred TRUE is still not
+    blindly trusted — it passes through the approve-path confirm brake like any other approval."""
+    if flag in obj:
+        return obj
+    if "proposed_fix" not in obj:
+        return None
+    inferred = not str(obj.get("proposed_fix") or "").strip()
+    rlog.emit("loop.verdict_flag_inferred", flag=flag, inferred=inferred, phase=phase)
+    return {**obj, flag: inferred}
+
+
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "", routes: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
@@ -628,6 +652,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         user = user + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
     obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
                                 workspace_root=workspace_root)
+    if obj is not None:
+        obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
         # ending the task, because approving requires the verification a reasoning-off judge can't do
@@ -1685,6 +1711,8 @@ class Loop:
         # can burn its whole budget THINKING and never emit the closing JSON — which used to
         # fall through to a silent DONE. Reasoning-off makes it answer the JSON directly.
         obj, raw = self._verdict(system, user, rlog, reasoning_off=False, workspace_root=workspace_root)
+        if obj is not None:
+            obj = _fill_missing_verdict_flag(obj, "done", rlog, "critic")
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.

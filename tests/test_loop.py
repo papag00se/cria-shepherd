@@ -5373,3 +5373,58 @@ class ReplanPersistsMirrorTests(unittest.TestCase):
             text = hits[0].read_text()
             self.assertIn("new tail step A", text)                 # the mirror shows the LIVE plan
             self.assertNotIn("old tail step", text)
+
+
+class KeylessVerdictTests(unittest.TestCase):
+    """A judge that emits {"reason": …, "proposed_fix": …} WITHOUT the verdict key (observed live:
+    qwythos reasoned "done: true" then omitted the key entirely). The schema's own contract decides
+    it — proposed_fix is "" exactly when the flag is true — instead of bool(None) silently reading
+    every such verdict as NOT-done (a doom loop: the retry pass may only reject, so the step could
+    never pass). The inference is traced, and an inferred TRUE still faces the confirm brake."""
+
+    def _chat(self, content):
+        def fake(body, rlog):
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
+        return fake
+
+    def test_empty_fix_infers_the_flag_true(self):
+        from cria.loop import judge_satisfaction
+        rlog = _Rlog()
+        sat, reason = judge_satisfaction(
+            "build a resolver", "wrote resolver.py; pytest: 12 passed",
+            self._chat('{"reason": "all deliverables exist and the tests pass", "proposed_fix": ""}'),
+            None, rlog)
+        self.assertTrue(sat)
+        self.assertIn(("loop.verdict_flag_inferred",),
+                      [(k,) for k, _ in rlog.events])          # never binds silently
+
+    def test_nonempty_fix_infers_the_flag_false_and_keeps_the_fix(self):
+        from cria.loop import judge_satisfaction
+        sat, reason = judge_satisfaction(
+            "t", "e",
+            self._chat('{"reason": "README missing", "proposed_fix": "write README.md"}'),
+            None, _Rlog())
+        self.assertFalse(sat)
+        self.assertIn("README", reason)
+
+    def test_no_fix_key_still_routes_to_the_retry(self):
+        from cria.loop import judge_satisfaction
+        calls = []
+
+        def fake(body, rlog):
+            calls.append(body)
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                "content": '{"reason": "looks complete"}' if len(calls) == 1
+                           else '{"satisfied": false, "reason": "no live test ran"}'}}]}).encode()
+
+        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        self.assertFalse(sat)
+        self.assertEqual(len(calls), 2)                        # careful pass unusable → retry ran
+
+    def test_helper_contract(self):
+        from cria.loop import _fill_missing_verdict_flag
+        rlog = _Rlog()
+        self.assertEqual(_fill_missing_verdict_flag({"done": False, "proposed_fix": "x"}, "done", rlog, "p")["done"], False)
+        self.assertTrue(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": " "}, "done", rlog, "p")["done"])
+        self.assertFalse(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": "do x"}, "done", rlog, "p")["done"])
+        self.assertIsNone(_fill_missing_verdict_flag({"reason": "r"}, "done", rlog, "p"))
