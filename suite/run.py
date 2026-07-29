@@ -190,8 +190,17 @@ def main() -> None:
 
     new_sessions = [CALLS_DIR / n for n in
                     set(p.name for p in CALLS_DIR.glob("2*")) - before_sessions]
-    capture = collect_capture(max(new_sessions, key=lambda p: p.stat().st_mtime)) \
-        if new_sessions else {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
+    session_dir = max(new_sessions, key=lambda p: p.stat().st_mtime) if new_sessions else None
+    capture = collect_capture(session_dir) if session_dir else \
+        {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
+
+    # EVIDENCE PRESERVATION (operator directive 2026-07-29): every run's artifacts are evidence
+    # for cria improvements and are kept until reviewed. The /tmp workspace is copied to a
+    # durable archive; the capture dir and harness log paths ride in the row. Nothing under
+    # ~/.cria/suite is ever auto-cleaned.
+    archive = Path.home() / ".cria" / "suite" / run_id
+    archive.mkdir(parents=True, exist_ok=True)
+    sh("cp", "-r", str(ws), str(archive / "workspace"), timeout=300)
 
     vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws), timeout=600)
     try:
@@ -209,6 +218,9 @@ def main() -> None:
         **capture,
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
+        "archive": str(archive),
+        "capture_dir": str(session_dir) if session_dir else None,
+        "harness_log": str(log_path),
     }
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTS, "a") as fh:

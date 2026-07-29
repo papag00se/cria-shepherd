@@ -17,3 +17,5 @@ appends one JSON row to `results/results.jsonl`; `report.py` renders the matrix.
 Phase 0: codex × {ternary-bonsai, qwythos} × ada-handles.
 Planned: harness adapters (Claude Code, OpenCode, Gemini CLI, Cline), tasks (SQL/Go,
 multi-module/TS, needs-search/Rust, CLI/Java), N≥2 repeats on headline cells.
+
+**Evidence preservation (operator directive 2026-07-29):** every run archives its workspace to `~/.cria/suite/<run_id>/`; the row records `archive`, `capture_dir` (the per-call evidence), and `harness_log`. Nothing there is cleaned until reviewed — the logs are the raw material for the next round of cria improvements.
