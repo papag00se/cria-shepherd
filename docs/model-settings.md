@@ -116,9 +116,10 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > the only limit; note the fleet's 49K default is conservative for this model — 131K on plain
 > q8_0 fits TODAY. **ornith and qwopus are KV-identical** (same 32 blocks / every-4th attention /
 > 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K,
-> which becomes their useful cap. WSL caveat: over-sized ctx does NOT OOM — CUDA VMM silently
-> spills KV to host RAM and crawls, so fit must be checked by arithmetic/KV-size, not by
-> "does it load".
+> which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim):
+> a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0
+> on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB),
+> never by load-probing.
 >
 > **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K /
 > 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA
