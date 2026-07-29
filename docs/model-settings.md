@@ -75,8 +75,12 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > `libnccl.so.2` — copied into the build dir from the `nvidia-nccl-cu12` pip wheel; KV type names
 > are `tbq3/tbq4/tbqp3/tbqp4`, NOT the atomic fork's `turbo2/3/4`). Same-build A/B, ternary-27B
 > on the 3080, `-fa on`: **tg128@d8192 11.3 → 48.7 t/s (4.3×)**, pp2048 168 → 845, pp@8K 22 → 189,
-> shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent: the deep-context wall was KV
-> reads, not the forward pass. Live serving verified 53 t/s with correct output; no `--spec-type`
+> shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent.
+> **CORRECTED MECHANISM (operator-prompted, f16 control 2026-07-28): the wall was the QUANTIZED-KV
+> CODE PATH, not KV bandwidth.** Same build, tg64@d8192: q8_0/q4_0 = 11.3, tbq3 = 48.7,
+> **f16 = 61.1** — plain f16 beats turbo. TurboQuant's real win is the COMBINATION: its cache
+> code avoids the pathological quantized path AND fits 49K ctx (~5.6 GB f16 KV + 6.7 GB weights
+> exceeds the 3080; f16 caps ctx at ~20K). Untested knob: tbq4 (more quality margin, still fits). Live serving verified 53 t/s with correct output; no `--spec-type`
 > (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 +
 > ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet
 > proven — the next goal runs referee it.** *(Update, same day: run m15 completed the goal fully
