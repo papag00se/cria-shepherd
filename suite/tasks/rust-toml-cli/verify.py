@@ -47,10 +47,15 @@ def main(ws: Path) -> dict:
         last = f"{key} → exit={code} out={got[:40]!r}"
     r["parts"]["lookup"] = {"ok": ok_n == len(checks), "detail": f"{ok_n}/{len(checks)} lookups; last: {last}"}
 
-    # 3) Missing key → stderr + nonzero exit (the pinned error contract).
-    code, out, err = run(["cargo", "run", "--quiet", "--", "vfixture.toml", "no.such.key"], ws, timeout=300)
-    err_ok = code not in (0, -1, -2) and bool(err.strip() or not out.strip())
-    r["parts"]["error_contract"] = {"ok": err_ok, "detail": f"missing key → exit={code}"}
+    # 3) Missing key → stderr + nonzero exit (the pinned error contract). GATED on a working
+    #    build — in a broken/empty project `cargo run` fails for its own reasons, which must not
+    #    score as the error contract (the negative control caught exactly that).
+    if r["parts"]["builds"]["ok"]:
+        code, out, err = run(["cargo", "run", "--quiet", "--", "vfixture.toml", "no.such.key"], ws, timeout=300)
+        err_ok = code not in (0, -1, -2) and bool(err.strip() or not out.strip())
+        r["parts"]["error_contract"] = {"ok": err_ok, "detail": f"missing key → exit={code}"}
+    else:
+        r["parts"]["error_contract"] = {"ok": False, "detail": "skipped: project does not build"}
 
     # 4) cargo test passes with ≥1 test; README covers build/use/test (half point each folded
     #    into one part to keep the 4-point scale).
