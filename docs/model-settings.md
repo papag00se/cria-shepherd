@@ -34,6 +34,8 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
 | **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
+| **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template, toggle UNVERIFIED |
+| **zaya1** (8.4B-A760M MoE) | Q6_K | `temp 0.6, top_p 0.95, top_k off` (agent/code; general `1.0`) — Zyphra | Zyphra card | ⚠ **BLOCKED**: arch `zaya` (CCA attention + MLP router; ctx_train 131K) unsupported by every build on the box — needs llama.cpp **draft** PR #23112 (+ dep #22833). Downloaded + service + toml pre-wired; boots the day a build with that PR exists |
 
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
 > empirically before treating them as recommended.
