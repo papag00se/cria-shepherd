@@ -167,6 +167,18 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
         if code in proberun.LAUNCH_FAILURE_EXIT_CODES:
             could_not_run = True    # never launched → there is nothing it could have printed
             continue
+        if code is None:
+            # The section header arrived but its EXIT sentinel never did: the HARNESS returned (its
+            # yield window / output cap) while the check was still running — observed live: a 10s
+            # exec yield cut the composed gate mid-pytest ("Process running with session ID …"), and
+            # this section previously contributed NOTHING, so a lint-green gate read CLEAN while the
+            # tests never finished (the vacuous-green shape). A missing sentinel can ONLY mean a cut
+            # stream — the script echoes EXIT:$? unconditionally, so even a missing tool prints 127.
+            # Same treatment as a timeout: never a pass, partial output kept as context not findings.
+            could_not_run = True
+            if text.strip():
+                timed_out_output.append(text.strip())
+            continue
         if code == proberun.TIMEOUT_EXIT_CODE:
             # A timeout is NOT a launch failure: the command RAN and may already have printed the real
             # error before it stalled. The state stays "couldn't run" (never a pass, and its lines must

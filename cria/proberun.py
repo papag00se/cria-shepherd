@@ -93,6 +93,10 @@ DIGEST_FLOOR_NONE = _DIGEST["floor_none"]
 DIGEST_NO_PROBES = _DIGEST["no_probes"]
 DIGEST_EXIT_CLEAN = _DIGEST["exit_clean"]
 DIGEST_EXIT_NO_LAUNCH = _DIGEST["exit_no_launch"]
+DIGEST_EXIT_UNFINISHED = _DIGEST["exit_unfinished"]
+# The stable head of probeparse.LAUNCH_FAILURE_FMT — the deterministic marker that a
+# None exit_code means a REAL launch failure rather than a cut-short section.
+LAUNCH_FAILURE_MARKER = "failed to launch"
 DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
 DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 
@@ -483,8 +487,16 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
                 exit_txt = DIGEST_EXIT_NO_TESTS  # exit 5 = nothing collected, NOT a failing test
             elif r.exit_code is not None:
                 exit_txt = f"exit {r.exit_code}"
-            else:
+            elif LAUNCH_FAILURE_MARKER in (r.summary or ""):
+                # A REAL launch failure (EXIT:125/126/127 or shell "command not found" — normalized
+                # to exit_code=None upstream, but its summary carries the launch-failure text).
                 exit_txt = DIGEST_EXIT_NO_LAUNCH
+            else:
+                # No sentinel AND no launch-failure evidence: the harness returned before the check
+                # finished (its yield window / output cap cut the stream — a missing tool would still
+                # print EXIT:127). Observed live: a 10s exec yield cut the gate mid-pytest and this
+                # read "did NOT launch (tool missing?)" — a false fact handed to the critic.
+                exit_txt = DIGEST_EXIT_UNFINISHED
             lines.append(f"$ {r.command} — {exit_txt} — {r.summary} — "
                          f"{len(r.findings)} structured finding(s)")
     return "\n".join(lines)

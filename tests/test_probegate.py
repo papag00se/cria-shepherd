@@ -439,3 +439,76 @@ class GitOnlyGateTests(unittest.TestCase):
         out = clean_gate_output(f"pre\n{P}git{S}\nabc123\n")
         self.assertIn("no usable result", out.lower())     # the neutral no-signal branch...
         self.assertNotIn("no error-class", out.lower())    # ...NOT the clean/pass message
+
+
+class CutShortGateTests(unittest.TestCase):
+    """A harness exec that YIELDS before the composed gate finishes (observed live: Codex's 10s
+    window cut the script mid-pytest — "Process running with session ID …") leaves the tail
+    section headered but EXIT-less. That must read as UNFINISHED/unknown — never as a pass (the
+    old behavior let a lint-green gate read CLEAN with tests still running) and never as "tool
+    missing" (a false fact: a missing tool still prints EXIT:127)."""
+
+    def _plan(self):
+        t = _ws(with_pytest=True)
+        return plan_gate(t)
+
+    def _i(self, plan, name_frag):
+        for i, c in enumerate(plan.candidates):
+            if name_frag in " ".join(c.command):
+                return i
+        raise AssertionError(f"no candidate matching {name_frag}")
+
+    def test_cut_short_section_is_not_a_pass_and_digest_says_unfinished(self):
+        plan = self._plan()
+        raw = (_sec(self._i(plan, "compileall"), "EXIT:0")
+               + _sec(self._i(plan, "pyflakes"), "EXIT:0")
+               + _sec(self._i(plan, "pytest"), ""))                    # header came back, then the cut
+        out = interpret_gate(plan, raw)
+        self.assertIsNone(completion_block_nudge(out.report))          # unknown ≠ a failure to fix
+        digest = completion_probe_digest(out.report)
+        self.assertIn("UNFINISHED", digest)
+        self.assertNotIn("tool missing", digest)                       # the old false fact
+        from cria.probegate import clean_gate_output
+        nudge = clean_gate_output(raw, plan)
+        self.assertNotIn("no problems reported", nudge or "")          # and never reads clean
+
+
+class GateTimeBudgetTests(unittest.TestCase):
+    """The gate call asks the harness for the composed script's real time budget via whatever
+    ms-unit field the tool's own schema declares — nothing invented for tools that declare none."""
+
+    def test_codex_shaped_tool_gets_yield_time(self):
+        from cria.shelltool import GATE_TIME_BUDGET_MS, with_time_budget
+        tool = {"name": "exec_command",
+                "schema": {"properties": {"cmd": {"type": "string"},
+                                          "yield_time_ms": {"type": "number"}}}}
+        args = with_time_budget(tool, {"cmd": "echo hi"})
+        self.assertEqual(args["yield_time_ms"], GATE_TIME_BUDGET_MS)
+
+    def test_plain_tool_unchanged(self):
+        from cria.shelltool import with_time_budget
+        tool = {"name": "shell", "schema": {"properties": {"command": {"type": "string"},
+                                                           "timeout": {"type": "number"}}}}
+        self.assertEqual(with_time_budget(tool, {"command": "x"}), {"command": "x"})  # bare
+        # "timeout" is unit-ambiguous across harnesses — never set
+
+    def test_gate_op_carries_the_budget(self):
+        import json as _json
+        from cria.loop import GuardState, guard_gate_op
+        t = _ws(with_pytest=True)
+        gs = GuardState()
+        body = {"tools": [{"type": "function",
+                           "function": {"name": "exec_command",
+                                        "parameters": {"properties": {"cmd": {"type": "string"},
+                                                                      "yield_time_ms": {"type": "number"}}}}}],
+                "messages": []}
+        tc = guard_gate_op(gs, body, _RlogStub(), workspace_root=t)
+        self.assertIsNotNone(tc)
+        args = _json.loads(tc["function"]["arguments"])
+        self.assertIn("yield_time_ms", args)
+
+
+class _RlogStub:
+    phase = "coder"
+    def emit(self, *a, **k):
+        pass

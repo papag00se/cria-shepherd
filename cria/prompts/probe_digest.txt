@@ -8,6 +8,7 @@ floor_none = did not run (no parse checks applicable)
 no_probes = PROBES: none ran — no lint/test command was discovered for this project.
 exit_clean = exit 0 (ran clean)
 exit_no_launch = did NOT launch (tool missing?)
+exit_unfinished = UNFINISHED — the harness returned before this check completed; its result is UNKNOWN (treat as not-verified, never as a pass or a failure)
 exit_no_tests = no tests collected (nothing to run — not a failure)
 # Checks that were selected but whose gate section never came back (script cut short). Absence is a
 # GAP, never a pass — without this line a truncated gate read identically to a clean one.

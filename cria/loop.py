@@ -40,7 +40,7 @@ from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .planner import _clean_step, _extract_cwd, missing_deliverables, reasoned_noise_indices
 from .searchloop import normalize_search
-from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args
+from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
@@ -2800,7 +2800,11 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
     return {
         "id": "call_" + uuid.uuid4().hex[:16],
         "type": "function",
-        "function": {"name": tool["name"], "arguments": json.dumps(shell_args(tool, plan.script))},
+        # The gate script is bounded per-probe (timeout -k 5 240) but a harness exec's DEFAULT
+        # yield window (Codex: 10s) cut it mid-pytest — ask for the script's real budget via
+        # whatever ms-unit field the tool's own schema declares (none declared → unchanged).
+        "function": {"name": tool["name"],
+                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, plan.script)))},
     }
 
 
