@@ -140,6 +140,10 @@ def collect_assists(t0: float, t1: float) -> dict:
     interesting = ("steer", "loop.replan", "plan.noise", "plan.missing", "searchloop",
                    "loop.truncated", "gate", "repetition", "wheel", "flail", "tunnel",
                    "editrecovery", "rumination", "loop.probe", "compact")
+    # loop.compaction_reframed fires on every REQUEST that re-reads a compacted history (stateless
+    # re-processing, by design) — counting it as an assist inflated one run by 85. Occurrences of
+    # compaction itself are context.self_compact / route.compaction.
+    kinds.pop("loop.compaction_reframed", None)
     return {k: v for k, v in kinds.items() if any(k.startswith(p) or p in k for p in interesting)}
 
 
