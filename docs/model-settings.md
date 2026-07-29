@@ -79,9 +79,19 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > reads, not the forward pass. Live serving verified 53 t/s with correct output; no `--spec-type`
 > (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 +
 > ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet
-> proven — the next goal runs referee it.** Earlier fun-sized data point: the AtomicBot fork
-> (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`) also works, even on the Pascal 1080
-> (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks the prism kernels.
+> proven — the next goal runs referee it.** *(Update, same day: run m15 completed the goal fully
+> unaided on this config with zero incoherence — first quality referee PASSED.)* Earlier
+> fun-sized data point: the AtomicBot fork (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`)
+> also works, even on the Pascal 1080 (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks
+> the prism kernels.
+
+> **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet
+> default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow +
+> 8K depth, r=3, zero errors): tg@8K deltas par to −13% (fabliq 277→241, lfm25 277→249,
+> mellum2/ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The
+> ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode
+> term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several
+> MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only.
 
 > **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
 > produced run m15 — the first fully unaided goal success):**
