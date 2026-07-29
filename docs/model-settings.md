@@ -69,6 +69,13 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU.
 > The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
 
+> **TurboQuant KV (tried 2026-07-28, fun-sized):** the AtomicBot fork's prebuilt CUDA build
+> (`~/src/llama.cpp-turboquant/`) works — even on the Pascal 1080. Qwythos-9B measured:
+> generation parity shallow (22.5 vs 22.7 t/s), **+5% at 8K depth** (21.8 → 22.9), −14% prefill,
+> ~3× smaller KV. Irrelevant to the live rig: ternary-bonsai needs PrismML's kernels (no fork has
+> both), and qwen35 hybrids have little KV to compress anyway. Worth revisiting only for a
+> full-attention model on a stock build.
+
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
 > `content` and never emits a tool call), which is why the fine-tune is the live model.
