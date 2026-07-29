@@ -119,6 +119,12 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > which becomes their useful cap. WSL caveat: over-sized ctx does NOT OOM — CUDA VMM silently
 > spills KV to host RAM and crawls, so fit must be checked by arithmetic/KV-size, not by
 > "does it load".
+>
+> **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K /
+> 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA
+> (1024-token window on most of its 48 layers) keeps KV small at any context, so turbo has no
+> reach advantage either. TurboQuant: nothing to offer gemma4.** 131K verified on q8_0; the 262K
+> training cap likely fits too.
 
 > **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
 > produced run m15 — the first fully unaided goal success):**
