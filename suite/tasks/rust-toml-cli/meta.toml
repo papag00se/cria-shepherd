@@ -1,0 +1,4 @@
+name = "rust-toml-cli"
+language = "rust"
+shape = "needs-search"      # must discover/use a third-party crate correctly; compile loop pressure
+deliverables = ["cargo project", "dotted-path lookup", "unit tests", "README"]

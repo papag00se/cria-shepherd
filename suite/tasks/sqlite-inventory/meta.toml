@@ -1,0 +1,4 @@
+name = "sqlite-inventory"
+language = "python"
+shape = "sql-backed-cli"    # schema design + SQL queries + CLI + tests + docs, fully offline
+deliverables = ["inventory.py CLI", "SQLite schema", "unit tests", "README"]
