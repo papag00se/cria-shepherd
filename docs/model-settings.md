@@ -58,6 +58,17 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > 29 tok/s if drafting were free) — the drafter wants a fast co-resident device, not a spare
 > Pascal. Re-try only with a second fast GPU; until then ngram-cache stays.
 
+> **draft models are off the table for this target entirely (measured 2026-07-28):** a
+> vocab-exact Qwen3.5-0.8B Q6 drafter co-resident on the 3080 (same `qwen35` family, 248320
+> vocab, fits in the spare ~2 GB at 49K — no dspark-style staging buffer) still measured
+> **2.4 tok/s vs ngram's 7.1** on an identical deep-context (6.9K) benchmark, despite 51%
+> acceptance and drafting costing only 2.8s of the 105s total. Root cause: the 27B is a
+> **hybrid-SSM** (`qwen35` arch, recurrent layers) — its state cannot rewind, so every
+> speculative round pays ~2s of checkpoint save/restore machinery (`-cms 8` changed nothing:
+> it's the state copies, not re-prefill distance). Only opportunistic near-free drafting
+> (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU.
+> The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
+
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
 > `content` and never emits a tool call), which is why the fine-tune is the live model.
