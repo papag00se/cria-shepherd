@@ -3470,8 +3470,14 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
     session = selfcompact.serialize(
         _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", [])))))
-    disk = _fresh_disk_facts(workspace_root, getattr(gs, "recent_writes", None), getattr(gs, "spin_path", "")) \
-        if gs is not None else ""
+    # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
+    # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
+    # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
+    # files. The durable source is the normalized history itself: every write the coder ever made
+    # is still there as a tool_call (paths survive compaction stubs).
+    touched = _touched_paths(body.get("messages", []))
+    recent = list(getattr(gs, "recent_writes", None) or []) + touched if gs is not None else touched
+    disk = _fresh_disk_facts(workspace_root, recent, getattr(gs, "spin_path", "") if gs is not None else "")
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
@@ -3526,6 +3532,18 @@ def _steer_or_none(text: str) -> str | None:
     return directive if len(directive) >= 8 else None
 
 
+# A steer that CONTAINS a transcript is not a directive — it is the reasoner role-playing the
+# session: fake tool calls with invented file content, fake "tool: Wrote …" results, fake command
+# output. Injected as ⟦ctx:steer⟧ it reads as fact (observed: the coder copied a steer's INVENTED
+# mock addresses verbatim into the shipped file, run 0729-mellum2 call 0157). Deterministic
+# markers of transcript syntax — never a judgment call:
+_ROLEPLAY_STEER = re.compile(
+    r"(?m)(?:\b(?:write_file|edit_file|exec_command|read_file|web_fetch|apply_patch)\s*\(\s*\{"   # tool-call syntax
+    r"|^\s*(?:assistant|tool|user)\s*:\s"      # transcript role labels
+    r"|⟦ctx:)"                                  # a steer must not nest cria's own markers
+)
+
+
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
@@ -3540,6 +3558,9 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     callers that need a signal already have a grounded one to fall back to (the canned redirect, the
     raw check truth); the flail caller falls back to silence, which is the correct assist here."""
     if not directive:
+        return None
+    if _ROLEPLAY_STEER.search(directive):
+        rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
         return None
     bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
@@ -3967,6 +3988,24 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
     return ""
 
 
+
+
+def _touched_paths(messages, cap: int = 8) -> list[str]:
+    """Paths the coder actually WROTE this session, recovered from the normalized history's
+    assistant tool_calls — the durable record. GuardState's recent_writes window is consumed by
+    detector interventions (flushed on purpose), so it alone cannot ground the steer author's
+    on-disk section. Newest-last, deduped, bounded to the last ``cap`` distinct paths."""
+    seen: list[str] = []
+    for m in messages or []:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            p = _write_path(tc.get("function") or {})
+            if p:
+                if p in seen:
+                    seen.remove(p)   # re-touch moves it to newest
+                seen.append(p)
+    return seen[-cap:]
 
 
 def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:

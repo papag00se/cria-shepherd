@@ -728,3 +728,36 @@ class JsonEnvelopeToolCallTests(unittest.TestCase):
         out = massage.recover_leaked_tool_calls(comp, self.MENU)
         names = [c["function"]["name"] for c in out["choices"][0]["message"]["tool_calls"]]
         self.assertEqual(names, ["web_fetch"])
+
+
+class DialectPayloadSalvageTests(unittest.TestCase):
+    """A toolless answer whose content is a dialect blob with EMPTY reasoning (a LOCAL_COMPACT
+    summary emitted as <|tool_call>call:write_file{content:<|\"|># How to run …}) used to pass to
+    the harness verbatim — tool-call junk as the continuation summary. The real prose lives in the
+    fake call's string payload; salvage it."""
+
+    def test_blob_content_salvaged_from_payload(self):
+        from cria.massage import coerce_text_answer
+        comp = {"choices": [{"message": {
+            "role": "assistant",
+            "content": '<|tool_call>call:write_file{content:<|"|># How to run\n\npip install requests<|"|>}<tool_call|>',
+            "reasoning_content": ""}, "finish_reason": "stop"}]}
+        out = coerce_text_answer(comp, None)
+        c = out["choices"][0]["message"]["content"]
+        self.assertIn("# How to run", c)
+        self.assertNotIn("<|tool_call>", c)
+
+    def test_reasoning_still_wins_when_present(self):
+        from cria.massage import coerce_text_answer
+        comp = {"choices": [{"message": {
+            "role": "assistant",
+            "content": '<|tool_call>call:x{a:<|"|>b<|"|>}',
+            "reasoning_content": "The summary: built the resolver and tests."}, "finish_reason": "stop"}]}
+        out = coerce_text_answer(comp, None)
+        self.assertIn("resolver and tests", out["choices"][0]["message"]["content"])
+
+    def test_clean_text_untouched(self):
+        from cria.massage import coerce_text_answer
+        comp = {"choices": [{"message": {"role": "assistant", "content": "a plain summary"}}]}
+        self.assertEqual(coerce_text_answer(comp, None)["choices"][0]["message"]["content"],
+                         "a plain summary")

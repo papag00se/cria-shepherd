@@ -149,7 +149,12 @@ def coerce_text_answer(completion: dict, rlog=None) -> dict:
         if not isinstance(msg, dict):
             continue
         content = msg.get("content")
-        has_text = isinstance(content, str) and content.strip()
+        # Dialect-debris content is NOT a text answer: a `<|tool_call>call:…` blob in content is a
+        # mangled leaked call. It used to pass the has-text check untouched — a Codex LOCAL_COMPACT
+        # summary came back as that blob (empty reasoning) and went to the harness verbatim, so the
+        # post-compaction history carried tool-call junk instead of a continuation summary
+        # (run 0729-gemma4 calls 0113/0167).
+        has_text = isinstance(content, str) and content.strip() and not has_tool_call_leak(content)
         if has_text and not msg.get("tool_calls"):
             continue  # already a clean text answer
         if msg.get("tool_calls"):
@@ -159,6 +164,17 @@ def coerce_text_answer(completion: dict, rlog=None) -> dict:
             if isinstance(reasoning, str) and reasoning.strip():
                 msg["content"] = reasoning.strip()
                 _log(rlog, "massage.text_from_reasoning", chars=len(reasoning.strip()))
+            elif isinstance(content, str) and has_tool_call_leak(content):
+                # No reasoning to promote — the model's real prose is INSIDE the fake call's string
+                # payload (`content:<|"|># How to run …`). Salvage the longest delimited span: the
+                # model's own words, never invented. Unparseable → leave as-is (the caller's retry
+                # path owns it).
+                spans = re.findall(re.escape(_GEMMA_STR) + r"(.*?)(?:" + re.escape(_GEMMA_STR) + r"|\Z)",
+                                   content, re.DOTALL)
+                best = max(spans, key=len).strip() if spans else ""
+                if best:
+                    msg["content"] = best
+                    _log(rlog, "massage.text_from_dialect_payload", chars=len(best))
         if choice.get("finish_reason") == "tool_calls":
             choice["finish_reason"] = "stop"
     return completion

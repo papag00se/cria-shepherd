@@ -5428,3 +5428,49 @@ class KeylessVerdictTests(unittest.TestCase):
         self.assertTrue(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": " "}, "done", rlog, "p")["done"])
         self.assertFalse(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": "do x"}, "done", rlog, "p")["done"])
         self.assertIsNone(_fill_missing_verdict_flag({"reason": "r"}, "done", rlog, "p"))
+
+
+class SteerRoleplayGuardTests(unittest.TestCase):
+    """A steer CONTAINING a transcript (fake tool calls, fake results, nested markers) is the
+    reasoner role-playing the session, not a directive — injected, its inventions read as fact
+    (a coder shipped a steer's fabricated mock addresses verbatim, run 0729-mellum2)."""
+
+    def test_transcript_shaped_steer_is_dropped_and_traced(self):
+        from cria.loop import _grounded_steer_or_none
+        rlog = _Rlog()
+        fake = ('You should continue. edit_file({"path": "resolve.py", "new_string": "MOCK = 1"}) '
+                "tool: Wrote /tmp/x/README.md")
+        self.assertIsNone(_grounded_steer_or_none(fake, "evidence", rlog))
+        self.assertIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
+
+    def test_nested_marker_steer_is_dropped(self):
+        from cria.loop import _grounded_steer_or_none
+        self.assertIsNone(_grounded_steer_or_none(
+            "⟦ctx:steer⟧ do the thing", "evidence", _Rlog()))
+
+    def test_plain_directive_passes(self):
+        from cria.loop import _grounded_steer_or_none
+        d = "You keep rewriting tests/test_api.py; read lines 50-58 first, then make ONE edit."
+        self.assertEqual(_grounded_steer_or_none(d, "…tests/test_api.py…", _Rlog()), d)
+
+
+class TouchedPathsTests(unittest.TestCase):
+    """The steer author's on-disk section grounds on the HISTORY's write record — GuardState's
+    recent_writes window is flushed by interventions (14 blind steers, run 0729-gemma4)."""
+
+    def test_paths_recovered_from_history_newest_last(self):
+        from cria.loop import _touched_paths
+        msgs = [
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "write_file", "arguments": '{"path": "src/api.py", "content": "x"}'}}]},
+            {"role": "tool", "content": "Wrote src/api.py"},
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "write_file", "arguments": '{"path": "tests/test_api.py", "content": "y"}'}}]},
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "write_file", "arguments": '{"path": "src/api.py", "content": "z"}'}}]},
+        ]
+        self.assertEqual(_touched_paths(msgs), ["tests/test_api.py", "src/api.py"])
+
+    def test_empty_history_is_empty(self):
+        from cria.loop import _touched_paths
+        self.assertEqual(_touched_paths([]), [])
