@@ -103,6 +103,23 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either
 > number if mellum2 ever goes live again.
 
+> **Context-vs-speed tradeoff, qwythos (measured 2026-07-28; tg64, tok/s):**
+>
+> | depth | 8K | 32K | 65K | 131K | 196K | max fit |
+> |---|---|---|---|---|---|---|
+> | q8_0   | 80 | 68 | 51 | 38 | — | **~143K** |
+> | turbo3 | 76 | 59 | 49 | 33 | 26 | **~375K** |
+>
+> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB,
+> turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12%
+> slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is
+> the only limit; note the fleet's 49K default is conservative for this model — 131K on plain
+> q8_0 fits TODAY. **ornith and qwopus are KV-identical** (same 32 blocks / every-4th attention /
+> 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K,
+> which becomes their useful cap. WSL caveat: over-sized ctx does NOT OOM — CUDA VMM silently
+> spills KV to host RAM and crawls, so fit must be checked by arithmetic/KV-size, not by
+> "does it load".
+
 > **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
 > produced run m15 — the first fully unaided goal success):**
 >
