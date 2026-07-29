@@ -32,7 +32,7 @@ _LINES = {
     "loop.replan": "replanning the remaining steps",
     "loop.replan_uncovered": "replan refused · it dropped deliverables",
     "loop.probe": "running the repo's checks",
-    "loop.verify_inspect": "judge · inspecting the workspace",
+    "loop.verify_inspect": "(judge) ⋯ inspecting the workspace",
     "loop.done_confirm": "confirming the pass",
     "loop.done_critic": "completion check",
     "loop.satisfaction_confirm": "confirming completion",
@@ -66,20 +66,20 @@ def _action_line(fields: dict) -> str | None:
 # Fallback for the one kind that fires on EVERY model call: announce it by the call's PHASE, so a
 # slow internal call (a 27B judge at ~7 tok/s) shows as itself rather than as silence. Consecutive
 # duplicates are deduped by the writer, so repeated same-phase calls tick once.
-# (prefix, announce, worker, activity): ``announce`` is the one-shot line when the call starts;
-# ``worker``/``activity`` shape the in-between beat tick — "(worker rate - total) ⋯ activity".
+# (prefix, worker, activity) — announce and beat share ONE shape (operator: "(coder - 9m07s) ⋯
+# working" everywhere, never a worker outside the parens); the beat just adds the live rate.
 _PHASE_LINES = (
-    ("planner", "planning · thinking", "planner", "planning"),
-    ("coder", "coder · working", "coder", "working"),
-    ("critic-confirm", "confirming the pass", "critic", "confirming the pass"),
-    ("critic", "verifying the step", "critic", "verifying the step"),
-    ("satisfaction-confirm", "confirming completion", "judge", "confirming completion"),
-    ("satisfaction", "completion check", "judge", "completion check"),
-    ("self-compact-refold", "condensing the session summary", "compactor", "condensing the summary"),
-    ("self-compact", "compacting history", "compactor", "compacting history"),
-    ("classifier", "classifying", "classifier", "classifying"),
-    ("compactor", "summarizing", "compactor", "summarizing"),
-    ("reasoner", "reasoning", "reasoner", "reasoning"),
+    ("planner", "planner", "planning"),
+    ("coder", "coder", "working"),
+    ("critic-confirm", "critic", "confirming the pass"),
+    ("critic", "critic", "verifying the step"),
+    ("satisfaction-confirm", "judge", "confirming completion"),
+    ("satisfaction", "judge", "completion check"),
+    ("self-compact-refold", "compactor", "condensing the summary"),
+    ("self-compact", "compactor", "compacting history"),
+    ("classifier", "classifier", "classifying"),
+    ("compactor", "compactor", "summarizing"),
+    ("reasoner", "reasoner", "reasoning"),
 )
 
 
@@ -94,9 +94,9 @@ def line_for(kind: str, phase: str | None, fields: dict) -> str | None:
         except (KeyError, IndexError):
             return None  # a template's field vanished upstream — silence over a broken line
     if kind == "upstream.request" and phase:
-        for prefix, text, _worker, _activity in _PHASE_LINES:
+        for prefix, worker, activity in _PHASE_LINES:
             if phase.startswith(prefix):
-                return f"{MARKER}{text}"
+                return f"{MARKER}({worker}) ⋯ {activity}"
     return None
 
 
@@ -111,15 +111,19 @@ def fmt_elapsed(seconds: float) -> str:
 
 
 def with_total(line: str, total_seconds: float | None) -> str:
-    """Lead a status line with the SESSION's total running time — "(1m07s) coder · working" — the
-    same parenthesized-clock language the beat tick uses (operator killed the "· t+1m07s" suffix
-    style: one clock, one look)."""
+    """Fold the SESSION's total running time into a status line. A line that already opens with a
+    parenthesized head gets the clock merged INTO it — "(coder) ⋯ working" → "(coder - 9m07s) ⋯
+    working" (operator: the worker never sits outside the parens); a headless line gets a plain
+    "(9m07s) " prefix."""
     if total_seconds is None or total_seconds < 2:
         return line   # a just-born session: a zero clock reads as a bug, and adds nothing
-    clock = f"({fmt_elapsed(total_seconds)}) "
-    if line.startswith(MARKER):
-        return f"{MARKER}{clock}{line[len(MARKER):]}"
-    return f"{clock}{line}"
+    clock = fmt_elapsed(total_seconds)
+    mark = MARKER if line.startswith(MARKER) else ""
+    body = line[len(mark):]
+    if body.startswith("(") and ")" in body:
+        head, _, tail = body.partition(")")
+        return f"{mark}{head} - {clock}){tail}"
+    return f"{mark}({clock}) {body}"
 
 
 def still_working_line(phase: str | None, total_seconds: float | None = None,
@@ -132,7 +136,7 @@ def still_working_line(phase: str | None, total_seconds: float | None = None,
     coder) — internal judge/compactor calls are non-streamed, nothing arrives until they finish,
     so no rate is ever invented for them."""
     worker, activity = "", "still working"
-    for prefix, _announce, w, a in _PHASE_LINES:
+    for prefix, w, a in _PHASE_LINES:
         if phase and phase.startswith(prefix):
             worker, activity = w, a
             break

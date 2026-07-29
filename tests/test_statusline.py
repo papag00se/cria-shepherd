@@ -25,10 +25,11 @@ class LineForTests(unittest.TestCase):
             f"{MARKER}searching · ada handles api")
 
     def test_phase_fallback_announces_slow_internal_calls(self):
+        # Announce and beat share ONE shape — the worker never sits outside the parens.
         self.assertEqual(statusline.line_for("upstream.request", "self-compact", {}),
-                         f"{MARKER}compacting history")
+                         f"{MARKER}(compactor) ⋯ compacting history")
         self.assertEqual(statusline.line_for("upstream.request", "critic-confirm", {}),
-                         f"{MARKER}confirming the pass")
+                         f"{MARKER}(critic) ⋯ confirming the pass")
 
     def test_uncurated_kinds_and_broken_templates_stay_silent(self):
         self.assertIsNone(statusline.line_for("ctx.estimate", None, {}))
@@ -152,5 +153,10 @@ class DurableSessionClockTests(unittest.TestCase):
 
     def test_clock_stays_inside_the_marker(self):
         # The clock leads the TEXT, not the rail — strip_history keys on MARKER at line start.
-        line = statusline.with_total(f"{MARKER}coder · working", 67.0)
-        self.assertEqual(line, f"{MARKER}(1m07s) coder · working")
+        line = statusline.with_total(f"{MARKER}step 2/5", 67.0)
+        self.assertEqual(line, f"{MARKER}(1m07s) step 2/5")
+
+    def test_clock_merges_into_an_existing_head(self):
+        # "(coder) ⋯ working" + clock → "(coder - 9m07s) ⋯ working", never "(9m07s) (coder) …".
+        line = statusline.with_total(f"{MARKER}(coder) ⋯ working", 547.0)
+        self.assertEqual(line, f"{MARKER}(coder - 9m07s) ⋯ working")

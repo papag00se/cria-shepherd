@@ -54,7 +54,9 @@ class EventLog:
             dpath = Path(dir).expanduser()
             dpath.mkdir(parents=True, exist_ok=True)
             self._dir = dpath
-            self._open_for(datetime.now(timezone.utc).strftime("%Y%m%d"))
+            # Same clock emit() rotates on (time.time) — two clock sources for one mechanism let
+            # construction and rotation disagree about what day it is.
+            self._open_for(datetime.fromtimestamp(time.time(), timezone.utc).strftime("%Y%m%d"))
 
     def _open_for(self, day: str) -> None:
         """(Re)open the jsonl for ``day``. A filename is a claim about its contents, and the path used
