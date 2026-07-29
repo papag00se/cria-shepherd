@@ -69,12 +69,19 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU.
 > The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
 
-> **TurboQuant KV (tried 2026-07-28, fun-sized):** the AtomicBot fork's prebuilt CUDA build
-> (`~/src/llama.cpp-turboquant/`) works — even on the Pascal 1080. Qwythos-9B measured:
-> generation parity shallow (22.5 vs 22.7 t/s), **+5% at 8K depth** (21.8 → 22.9), −14% prefill,
-> ~3× smaller KV. Irrelevant to the live rig: ternary-bonsai needs PrismML's kernels (no fork has
-> both), and qwen35 hybrids have little KV to compress anyway. Worth revisiting only for a
-> full-attention model on a stock build.
+> **TurboQuant KV = THE win — live since 2026-07-28.** The "no fork has both" assumption died on
+> a search: **`jarkevithwlad/turboquant-prismml-cuda` v1.0.1** merges PrismML's Q2_0_g128 kernels
+> with amesianx TurboQuant; the sm86 (RTX3090Ti) Linux release runs on the 3080 (needs
+> `libnccl.so.2` — copied into the build dir from the `nvidia-nccl-cu12` pip wheel; KV type names
+> are `tbq3/tbq4/tbqp3/tbqp4`, NOT the atomic fork's `turbo2/3/4`). Same-build A/B, ternary-27B
+> on the 3080, `-fa on`: **tg128@d8192 11.3 → 48.7 t/s (4.3×)**, pp2048 168 → 845, pp@8K 22 → 189,
+> shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent: the deep-context wall was KV
+> reads, not the forward pass. Live serving verified 53 t/s with correct output; no `--spec-type`
+> (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 +
+> ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet
+> proven — the next goal runs referee it.** Earlier fun-sized data point: the AtomicBot fork
+> (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`) also works, even on the Pascal 1080
+> (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks the prism kernels.
 
 > **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
 > was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
