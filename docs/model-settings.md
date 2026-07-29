@@ -92,6 +92,12 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 > ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode
 > term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several
 > MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only.
+> **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** —
+> tg64@d32768 q8_0→turbo3: fabliq 239→177 (−26%), lfm25 230→163, ornith 68→49, qwopus 67→50,
+> gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read
+> dequant overhead scales while the savings never arrive. ONE inconclusive cell: mellum2's q8_0
+> control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either
+> number if mellum2 ever goes live again.
 
 > **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
 > produced run m15 — the first fully unaided goal success):**
