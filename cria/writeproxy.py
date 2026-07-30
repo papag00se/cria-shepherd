@@ -30,6 +30,7 @@ from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import brave, editrecovery, prompts, webfetch
+from . import content_reduce as content_reduce_mod
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
@@ -781,6 +782,22 @@ _FILTER_PIPE = re.compile(r"\|\s*(?:grep|egrep|fgrep|rg|head|tail|sed|awk)\b")
 _EXIT_CODE = re.compile(r"Process exited with code (\d+)")
 
 
+def _debinarized(content: str) -> str:
+    """Binary SOUP in a tool result replaced by a fact line (operator ruling: blobs have no place in
+    any model-facing prompt). The harness exec envelope — the true record of the run — is preserved;
+    only the payload is stood in for. A hexdump/od/strings output the model asked for is TEXT and
+    passes untouched (the detector keys on replacement/control chars, which those never contain)."""
+    if not content or not content_reduce_mod.looks_binary(content):
+        return content
+    m = _ENVELOPE_OUTPUT_LINE.search(content)
+    if m and "Process exited with code" in content[:m.start()]:
+        head, payload = content[:m.end()], content[m.end():]
+        if not content_reduce_mod.looks_binary(payload):
+            return content
+        return head + "\n" + content_reduce_mod.binary_note(len(payload.encode("utf-8", "replace")), None)
+    return content_reduce_mod.binary_note(len(content.encode("utf-8", "replace")), None)
+
+
 def _blind_pipe_failure(command: str, content: str) -> bool:
     """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
     line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
@@ -892,7 +909,7 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
             out.append({**m, "tool_calls": new_calls})
         elif role == "tool":
             tid = m.get("tool_call_id")
-            content = str(m.get("content") or "")
+            content = _debinarized(str(m.get("content") or ""))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
@@ -913,6 +930,8 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
                 # The note states only computable facts: nonzero exit, empty output, a filter present.
                 out.append({**m, "content": content + "\n\n" + prompts.load("filtered_failure_note")})
+            elif content != str(m.get("content") or ""):
+                out.append({**m, "content": content})   # the binary-soup cleanse changed it
             else:
                 out.append(m)
         else:

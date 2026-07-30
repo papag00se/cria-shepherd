@@ -24,6 +24,37 @@ def est_tokens(s: str) -> int:
     return len(s) // 4
 
 
+# Magic-byte signatures for the binary-content fact line — named so the note can say WHAT was
+# omitted, not just that something was. Text-adjacent formats are absent on purpose.
+_BINARY_KINDS = ((b"\x89PNG", "PNG image"), (b"\xff\xd8\xff", "JPEG image"), (b"GIF8", "GIF image"),
+                 (b"PK\x03\x04", "ZIP archive"), (b"\x1f\x8b", "gzip data"), (b"%PDF", "PDF"),
+                 (b"\x7fELF", "ELF binary"), (b"SQLite format 3", "SQLite database"))
+
+
+def binary_kind(head: bytes) -> str | None:
+    """The named kind for a leading magic-byte signature, or None."""
+    for sig, name in _BINARY_KINDS:
+        if head.startswith(sig):
+            return name
+    return None
+
+
+def looks_binary(text: str) -> bool:
+    """True when decoded content is binary SOUP — replacement chars / raw control bytes — not text
+    (operator ruling 07-30: blobs have no place in any model-facing prompt; a fact line replaces
+    them). Deliberately strict: CJK, base64, and a hexdump the model asked for are all TEXT (no
+    replacement or control chars) and never match."""
+    sample = text[:8192]
+    bad = sum(1 for c in sample if c == "\ufffd" or (ord(c) < 32 and c not in "\t\n\r"))
+    return bad >= 20 and bad / max(1, len(sample)) > 0.02
+
+
+def binary_note(byte_len: int, kind: str | None) -> str:
+    """The fact line that stands in for stripped binary content — true everywhere it is used."""
+    k = f", {kind}" if kind else ""
+    return f"[binary content: {byte_len:,} bytes{k} — not shown; binary data cannot be read as text]"
+
+
 def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:
     """Reduce `content` toward roughly `cap_tokens`, dispatching on `content_type`.
     Returns the input unchanged when it already fits."""

@@ -18,6 +18,8 @@ Execution is deterministic (stdlib only): the model's role stays judgement, code
 """
 from __future__ import annotations
 
+from . import content_reduce as content_reduce_mod
+
 import os
 
 from . import prompts
@@ -94,10 +96,14 @@ def _read_file(args: dict, root: str) -> str:
     if not os.path.isfile(real):
         return prompts.fill(_TD["missing"], path=path)
     try:
-        with open(real, encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
+        with open(real, "rb") as fh:
+            raw = fh.read()
     except OSError as e:
         return f"[read_file error: {e}]"
+    text = raw.decode("utf-8", errors="replace")
+    # blobs have no place in a judge's prompt — a PNG the judge opens becomes a fact, not soup.
+    if content_reduce_mod.looks_binary(text) or content_reduce_mod.binary_kind(raw[:16]):
+        return content_reduce_mod.binary_note(len(raw), content_reduce_mod.binary_kind(raw[:16]))
     if not text:
         return prompts.fill(_TD["empty_file"], path=path)
     start, end = args.get("start_line"), args.get("end_line")

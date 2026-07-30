@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+
+from . import content_reduce
 import re
 import subprocess
 import tempfile
@@ -130,12 +132,17 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResul
     fresh = not cwd or not os.path.isdir(cwd)
     run_cwd = (scratch or ".") if fresh else cwd
     try:
+        # text=False + manual decode: binary stdout under text=True raises UnicodeDecodeError
+        # BEFORE any guard runs (a `cat image.png` would crash the gather tool outright).
         out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
-                             capture_output=True, text=True, timeout=GATHER_EXEC_TIMEOUT_S, env=env)
+                             capture_output=True, timeout=GATHER_EXEC_TIMEOUT_S, env=env)
         # Full stdout+stderr — the failing assertion / the one grep match the planner needs may be
         # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
         # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
-        printed = (out.stdout + out.stderr).strip()
+        raw_out = out.stdout + out.stderr
+        printed = raw_out.decode("utf-8", errors="replace").strip()
+        if content_reduce.looks_binary(printed):
+            printed = content_reduce.binary_note(len(raw_out), content_reduce.binary_kind(raw_out[:16]))
         # A curl/cat through THIS tool bypassed the web_fetch spill and inlined a measured 944,245
         # chars into ONE gather turn — the composed prompt hit ~255K est tokens and the model never
         # answered, twice (run 0729T152706 calls 0005/0006). Oversized exec output takes the same
@@ -183,13 +190,16 @@ def _read_file(args: dict, cwd: str) -> ToolResult:
     import os
     full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
     try:
-        with open(full, encoding="utf-8", errors="replace") as fh:
+        with open(full, "rb") as fh:
             # Full file — the section the planner must modify may be past any fixed clip. The
             # context floor bounds the window losslessly-first if this file is large.
-            body = fh.read()
-        return ToolResult(body, bool(body.strip()))
+            raw = fh.read()
     except OSError as e:
         return _nothing(f"[read_file error: {e}]")
+    body = raw.decode("utf-8", errors="replace")
+    if content_reduce.looks_binary(body) or content_reduce.binary_kind(raw[:16]):
+        return ToolResult(content_reduce.binary_note(len(raw), content_reduce.binary_kind(raw[:16])), True)
+    return ToolResult(body, bool(body.strip()))
 
 
 # A conservative ALLOW-LIST for the planner's read-only shell (reject anything else).

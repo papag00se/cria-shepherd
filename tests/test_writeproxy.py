@@ -937,3 +937,52 @@ class WriteTempEscapesWorkspaceTests(unittest.TestCase):
             self._run_write(str(target), "print('hi')\n")
             self.assertEqual(target.read_text(), "print('hi')\n")
             self.assertEqual([p.name for p in pathlib.Path(root).iterdir()], ["x.py"])
+
+
+class BinaryBlobTests(unittest.TestCase):
+    """Operator ruling (07-30): binary blobs have NO place in any model-facing prompt — a stated
+    fact replaces them, everywhere. Text that merely LOOKS exotic (CJK, base64, a hexdump the model
+    asked for) is text and passes untouched."""
+
+    def test_detector_matches_soup_never_text(self):
+        from cria.content_reduce import looks_binary
+        self.assertTrue(looks_binary("�" * 100))
+        self.assertTrue(looks_binary("PNG\x00\x01\x02\x03" * 50))
+        self.assertFalse(looks_binary("完全なユニコードテキスト。" * 200))          # CJK is text
+        self.assertFalse(looks_binary("aGVsbG8gd29ybGQ=" * 500))                  # base64 is text
+        self.assertFalse(looks_binary("00000000: 8950 4e47 0d0a 1a0a  .PNG....\n" * 100))  # hexdump is text
+
+    def test_coder_history_soup_replaced_envelope_kept(self):
+        from cria.writeproxy import represent_inbound
+        soup = ("Chunk ID: x\nWall time: 0.1 seconds\nProcess exited with code 0\n"
+                "Original token count: 900\nOutput:\n" + "�\x00\x01" * 400)
+        out = represent_inbound([{"role": "tool", "tool_call_id": "c9", "content": soup}])
+        c = out[0]["content"]
+        self.assertIn("Process exited with code 0", c)     # the envelope is the true record — kept
+        self.assertIn("binary content", c)                 # the payload became a fact
+        self.assertNotIn("�", c)
+
+    def test_judge_read_of_a_png_becomes_a_fact_line(self):
+        import os
+        import tempfile
+
+        from cria.verifytools import execute
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "chart.png"), "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 30)
+        out = execute("read_file", {"path": "chart.png"}, d)
+        self.assertIn("PNG image", out)
+        self.assertIn("binary content", out)
+        self.assertNotIn("�", out)
+
+    def test_gather_exec_of_binary_stdout_is_a_fact_not_a_crash(self):
+        import os
+        import tempfile
+
+        from cria import planner_tools
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "blob.bin"), "wb") as f:
+            f.write(bytes(range(256)) * 40)
+        r = planner_tools._exec_command({"command": "cat blob.bin"}, cwd=d, scratch=d)
+        self.assertIn("binary content", r.text)            # not soup, not an exception
+        self.assertNotIn("�", r.text)

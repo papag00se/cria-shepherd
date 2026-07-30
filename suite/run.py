@@ -148,11 +148,15 @@ def collect_assists(t0: float, t1: float) -> dict:
                     if t0 <= ev.get("ts", 0) <= t1:
                         k = ev.get("kind", "?")
                         kinds[k] = kinds.get(k, 0) + 1
+                        # the floor's own confession that a request may not fit even after every
+                        # lever — fired 58x in one run (C1) with nothing counting it.
+                        if k == "context.floor" and ev.get("over_budget"):
+                            kinds["context.floor_over_budget"] = kinds.get("context.floor_over_budget", 0) + 1
         except OSError:
             continue
     interesting = ("steer", "loop.replan", "plan.noise", "plan.missing", "searchloop",
                    "loop.truncated", "gate", "repetition", "wheel", "flail", "tunnel",
-                   "editrecovery", "rumination", "loop.probe", "compact")
+                   "editrecovery", "rumination", "loop.probe", "compact", "floor_over_budget")
     # loop.compaction_reframed fires on every REQUEST that re-reads a compacted history (stateless
     # re-processing, by design) — counting it as an assist inflated one run by 85. Occurrences of
     # compaction itself are context.self_compact / route.compaction.

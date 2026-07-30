@@ -42,6 +42,16 @@ holds tools. Full structured findings: workflow `wf_3f21bf2c-f34` journal (sessi
   inspection tools". Rule-5b breach to the retry judge (same class the operator caught in
   `steer_diagnose.txt`). *Fix: a truthful one-line addendum on the toolless pass.*
 
+## Addendum (same day) — operator rulings
+
+- **Binary blobs are banned from every model-facing prompt** (operator: "blobs have no place in
+  here at all"). Shipped: a strict shared detector (`content_reduce.looks_binary` — replacement/
+  control chars only, so CJK/base64/hexdumps stay text) + a stated-fact stand-in
+  (`[binary content: N bytes, PNG image — not shown…]`) wired at four seams: coder-history tool
+  results (envelope preserved), judge `read_file`, planner `read_file`, planner exec output —
+  which also fixes a latent crash (binary stdout under `text=True` raised before any guard ran).
+  `webfetch` already had this contract; now everything does.
+
 ## Tier 2 — structural, scoped; decide before building
 
 - **Steer author `{{SESSION}}` slot (~85K in the seed capture)** — three agents re-recommend a
@@ -52,10 +62,14 @@ holds tools. Full structured findings: workflow `wf_3f21bf2c-f34` journal (sessi
   and **self-compact band admits one giant message whole** (96KB prompt with a 50KB serialized
   heredoc; only ⟦ctx:edit⟧ blobs are headline-collapsed). *Direction: recency-bound the done log;
   per-message digest cap in `selfcompact.serialize`, disclosed.*
-- **`est_tokens` density assumption** (~4 chars/token) is how 210K chars read as "fits 49K" —
-  dense minified JSON runs ~2.5–3 chars/token. cria already learns real ratios per model
-  (`_calibrate`); the floor's arithmetic for *composed* prompts doesn't use them. *Direction:
-  density-aware estimate or calibration reuse.*
+- ~~`est_tokens` density assumption~~ **WITHDRAWN — the sweep misread this.** The dynamic per-model
+  ratio exists (`tokenratio`, asymmetric EWMA fed by real `usage.prompt_tokens`) and the floor uses
+  it as its safety factor. The event log proves the estimate CAUGHT the 210K prompt: the floor
+  emitted `over_budget: true` (warning) on the exact dead calls — msg 52,637 tokens est against a
+  49,152 window, nothing shrinkable — and fired **58×** across the C1 run with nothing consuming
+  the signal. Fixed the consumption side instead: the suite now counts `context.floor_over_budget`
+  per row. The arithmetic needs no change; the composed-call class is closed by Tier 1's
+  self-bounding.
 - **Spill-failure fallback inlines the whole doc** ([planner_tools.py:366](../../cria/planner_tools.py),
   up to 8MB on an OSError) — rare path, deliberately re-opens the hole the spill closed.
   *Direction: bounded head + disclosed failure note instead.*
