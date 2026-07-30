@@ -464,8 +464,14 @@ def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: s
             str(obj.get("recommended_query") or "").strip())
 
 
+REPLAN_TRIGGER_ADVANCE = "A step just finished and was verified."
+REPLAN_TRIGGER_STALLED = ("Progress has STALLED on the current step — the plan may be stale or "
+                          "mis-scoped. No step was just verified.")
+
+
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
-                       evidence: str, rlog, coder_tools: str = "") -> list[str] | None:
+                       evidence: str, rlog, coder_tools: str = "",
+                       trigger: str = REPLAN_TRIGGER_ADVANCE) -> list[str] | None:
     """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
     ACTUALLY done (real tool evidence), so the plan adjusts to reality at each verification instead of
     marching a stale guess. Returns the refined remaining step-text list (may be shorter/reworded/
@@ -474,7 +480,11 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     parse is far worse than carrying a stale step (the step critic still guards every step)."""
     if reasoner_role is None or not remaining.strip():
         return None
-    text = summarize(reasoner_chat, reasoner_role, prompts.load("replan"),
+    # The trigger sentence must be TRUE: the stuck/thrash paths reuse this call, and the old
+    # hardcoded "A step just finished and was verified" asserted an event that had not happened
+    # (run 0729-gemma4 call 0048 — a thrash-triggered replan told the reasoner a step verified).
+    text = summarize(reasoner_chat, reasoner_role,
+                     prompts.render("replan", TRIGGER=trigger),
                      prompts.render("replan_user", task=task, completed=completed or "(none)",
                                     remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
                      rlog, phase="reasoner", coder_tools=coder_tools) or ""
@@ -612,6 +622,29 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     return obj["consistent"], str(obj.get("why") or "").strip()
 
 
+# A judge holds ONLY read-only inspection tools (list_dir/read_file) — a verdict whose reason
+# claims it ran, curled, fetched or tested something is FABRICATED evidence (observed: a
+# satisfaction verdict said "confirmed by curling api.handle.me/goose"; its own reasoning shows it
+# merely INTENDED to curl via exec_command — a tool it does not hold — and the retry asserted the
+# intent as fact; that false fact became pinned plan-step text, run 0729-mellum2 calls 0153-0154).
+# Third-person reports ("the coder ran pytest") don't match — only the judge claiming its own acts.
+_JUDGE_ACTION_CLAIM = re.compile(
+    r"(?i)\b(?:i|we)\s+(?:ran|executed|curled|fetch(?:ed)?|tested)\b"
+    r"|\bconfirmed by (?:curl|runn?)ing\b")
+
+
+def _claims_impossible_action(obj: dict | None, rlog, phase: str) -> bool:
+    """True (and traced) when a parsed verdict's reason claims a judge-performed action the judge
+    cannot perform — the caller treats the verdict as unusable, which routes to the normal
+    reasoning-off retry / fail-closed path instead of letting fabricated evidence stand."""
+    reason = str((obj or {}).get("reason") or "")
+    if _JUDGE_ACTION_CLAIM.search(reason):
+        rlog.emit("loop.verdict_fabricated_action", level="warn", phase=phase,
+                  head=_clip(reason, 120))
+        return True
+    return False
+
+
 def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:
     """A verdict object MISSING its verdict key ("done"/"satisfied") is not a verdict — unless the
     schema's own contract decides it: ``proposed_fix`` is defined as "" when the flag is true and
@@ -654,6 +687,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                 workspace_root=workspace_root)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
+    if obj is not None and _claims_impossible_action(obj, rlog, "satisfaction"):
+        obj = None   # fabricated evidence → same path as an unparseable verdict (retry, fail closed)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
         # ending the task, because approving requires the verification a reasoning-off judge can't do
@@ -1489,7 +1524,7 @@ class Loop:
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
 
-    def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog) -> None:
+    def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog, *, trigger: str = REPLAN_TRIGGER_ADVANCE) -> None:
         """LIVING PLAN. A step just verified — hand a dedicated reasoner the real work done and let it
         re-derive the REMAINING (not-done) steps, replacing that tail. Completed steps are immutable
         history; only the not-yet-done steps are rewritten. This is what prunes a step the coder already
@@ -1524,7 +1559,8 @@ class Loop:
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
             "\n".join(f"- {it.text}" for it in done_items),
-            "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools)
+            "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools,
+            trigger=trigger)
         if steps is None:  # declined / unparseable → keep the plan untouched
             rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
             return
@@ -1579,7 +1615,7 @@ class Loop:
             # Spend the one-shot up front (like the thrash path), so an unchanged re-derive can't re-fire.
             sess.verify_replanned = True
             before = [it.text for it in sess.plan.items if not it.done]
-            self._replan_tail(sess, body, idx, rlog)   # grounded re-derivation; its own fail-safes apply
+            self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # grounded re-derivation; its own fail-safes apply
             after = [it.text for it in sess.plan.items if not it.done]
             if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
                 sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, ""
@@ -1601,7 +1637,7 @@ class Loop:
             return None
         sess.thrash_replanned = True   # spend the one-shot regardless of outcome — no re-derive churn
         before = [it.text for it in sess.plan.items if not it.done]
-        self._replan_tail(sess, body, idx, rlog)   # same grounded re-derivation + fail-safes
+        self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # same grounded re-derivation + fail-safes
         after = [it.text for it in sess.plan.items if not it.done]
         if after != before:
             sess.step_tool_calls, sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, 0, ""
@@ -1713,6 +1749,8 @@ class Loop:
         obj, raw = self._verdict(system, user, rlog, reasoning_off=False, workspace_root=workspace_root)
         if obj is not None:
             obj = _fill_missing_verdict_flag(obj, "done", rlog, "critic")
+        if obj is not None and _claims_impossible_action(obj, rlog, "critic"):
+            obj = None   # fabricated evidence → the parse-miss retry path, never a standing verdict
         if obj is not None:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
@@ -3482,8 +3520,13 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
     # Pass gs so DURABLE facts (a spec fetched long ago, now floored out) still reach the steer.
-    fetch_truth = _fetch_ground_truth(body.get("messages", []), gs)
-    truth = "\n\n".join(t for t in (fetch_truth, truth) if t)
+    # THIRD-person header — the default "PAGES YOU HAVE ALREADY FETCHED" told the STEER AUTHOR that
+    # it had fetched pages (role-collapse fuel for the same reasoner that fabricates transcripts).
+    # And checks-truth FIRST: the template's label says "GROUND TRUTH FROM THE REPO'S CHECKS", so the
+    # checks must sit directly under it, not the fetch block (run 0729-gemma4: every steer prompt
+    # opened the checks section with fetch content and floated the checks below the endpoint list).
+    fetch_truth = _fetch_ground_truth(body.get("messages", []), gs, header=CODER_FETCH_HEADER)
+    truth = "\n\n".join(t for t in (truth, fetch_truth) if t)
     reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
@@ -3540,8 +3583,24 @@ def _steer_or_none(text: str) -> str | None:
 _ROLEPLAY_STEER = re.compile(
     r"(?m)(?:\b(?:write_file|edit_file|exec_command|read_file|web_fetch|apply_patch)\s*\(\s*\{"   # tool-call syntax
     r"|^\s*(?:assistant|tool|user)\s*:\s"      # transcript role labels
-    r"|⟦ctx:)"                                  # a steer must not nest cria's own markers
+    r"|⟦ctx:"                                   # a steer must not nest cria's own markers
+    r"|\b[Ii] will (?:write|create|implement|add|run|fix|build)\b)"  # the author announcing ITS OWN
+    # plans — the steer contract is second person ("You …"); "I will write resolve.py" is the
+    # reasoner in the coder's seat (run 0729-mellum2 call 0059, injected verbatim, twice-doubled)
 )
+
+
+def _dedupe_doubled(text: str) -> str:
+    """A weak reasoner sometimes emits its directive twice, verbatim, in one reply (run
+    0729-mellum2: the identical paragraph back-to-back). Injecting the doubled text doubles the
+    noise a small coder must wade through — keep one copy when the halves match exactly."""
+    t = text.strip()
+    half, rem = divmod(len(t), 2)
+    if half > 40:
+        a, b = t[:half].strip(), t[half + rem:].strip()
+        if a == b:
+            return a
+    return text
 
 
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
@@ -3559,6 +3618,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     raw check truth); the flail caller falls back to silence, which is the correct assist here."""
     if not directive:
         return None
+    directive = _dedupe_doubled(directive)
     if _ROLEPLAY_STEER.search(directive):
         rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
         return None

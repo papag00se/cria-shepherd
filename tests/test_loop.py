@@ -2156,7 +2156,7 @@ class CoderToolsSummaryTests(unittest.TestCase):
 
         summarize(fake_chat, None, "sys", "THE-TASK", _Rlog(), retry_off=False,
                   coder_tools="  - exec_command(cmd) — runs ANY shell command")
-        self.assertIn("TOOLS THE CODER HAS", seen["user"])
+        self.assertIn("the tools THE CODER has", seen["user"])   # inert framing, negation-first
         self.assertIn("exec_command(cmd)", seen["user"])
         self.assertIn("THE-TASK", seen["user"])          # the real prompt still follows
         # ...and omitted by default (compaction/summarization callers must not get it)
@@ -5474,3 +5474,54 @@ class TouchedPathsTests(unittest.TestCase):
     def test_empty_history_is_empty(self):
         from cria.loop import _touched_paths
         self.assertEqual(_touched_paths([]), [])
+
+
+class FabricatedActionVerdictTests(unittest.TestCase):
+    """A judge holds only read-only inspection tools; a verdict claiming "confirmed by curling"
+    is fabricated evidence (its reasoning shows only the INTENT — run 0729-mellum2 0153/0154).
+    Such a verdict routes to the retry/fail-closed path instead of standing."""
+
+    def test_fabricated_claim_never_stands(self):
+        from cria.loop import judge_satisfaction
+        calls = []
+
+        def fake(body, rlog):
+            calls.append(body)
+            c = ('{"satisfied": false, "reason": "The real API returns 403 for all handles '
+                 '(confirmed by curling api.handle.me/goose)", "proposed_fix": "document auth"}'
+                 if len(calls) == 1 else
+                 '{"satisfied": false, "reason": "live test never ran"}')
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": c}}]}).encode()
+
+        rlog = _Rlog()
+        sat, reason = judge_satisfaction("t", "e", fake, None, rlog)
+        self.assertFalse(sat)
+        self.assertEqual(len(calls), 2)                       # careful verdict rejected → retry ran
+        self.assertNotIn("curling", reason)                   # the fabricated fact never surfaces
+        self.assertIn(("loop.verdict_fabricated_action",), [(k,) for k, _ in rlog.events])
+
+    def test_third_person_report_is_fine(self):
+        from cria.loop import _claims_impossible_action
+        ok = {"reason": "the coder ran pytest and 7 tests passed; README exists on disk"}
+        self.assertFalse(_claims_impossible_action(ok, _Rlog(), "critic"))
+
+    def test_first_person_run_claim_is_flagged(self):
+        from cria.loop import _claims_impossible_action
+        bad = {"reason": "I ran the live test and it fails with 403"}
+        self.assertTrue(_claims_impossible_action(bad, _Rlog(), "critic"))
+
+
+class SteerDedupeAndFirstPersonTests(unittest.TestCase):
+    def test_doubled_directive_collapses_to_one(self):
+        from cria.loop import _dedupe_doubled
+        half = "You keep rewriting resolve.py; read lines 10-20 and make one edit. " * 2
+        text = (half + half).strip()
+        self.assertEqual(_dedupe_doubled(text), half.strip())
+
+    def test_first_person_plan_is_dropped(self):
+        from cria.loop import _grounded_steer_or_none
+        rlog = _Rlog()
+        self.assertIsNone(_grounded_steer_or_none(
+            "The coder is making progress. I will write resolve.py with the correct endpoints.",
+            "evidence", rlog))
+        self.assertIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
