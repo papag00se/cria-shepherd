@@ -785,6 +785,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(str(e))
+        except Exception as e:  # noqa: BLE001 — never die silently mid-stream (the g4 hole)
+            rlog.emit("response.error", level="error", error=repr(e))
+            yield _error_sse(f"cria internal error: {e}")
 
     def _produce_completion(self, body: dict, rlog, sess_key: str):
         """Run the pipeline and return ``(chat-completion dict, Indicator|None)`` —
@@ -847,6 +850,14 @@ class CriaHandler(BaseHTTPRequestHandler):
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             self._send_json(502, {"error": f"upstream error: {e}"})
+            return
+        except Exception as e:  # noqa: BLE001 — the fail-SILENT hole: any other exception killed the
+            # handler thread with no response and no event (g4: FileNotFoundError on a prompt file
+            # deleted mid-run — SIX invisible deaths, only journalctl knew; codex retried 5x into
+            # silence and exited the whole run). The harness must see a clean error it can surface,
+            # and cria's own log must carry the crash.
+            rlog.emit("response.error", level="error", error=repr(e))
+            self._send_json(500, {"error": f"cria internal error: {e}"})
             return
         raw = json.dumps(comp).encode("utf-8")
         if indic is not None:  # loop path has none; routed path decorates
@@ -973,6 +984,14 @@ class CriaHandler(BaseHTTPRequestHandler):
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": {"message": str(e)}}}))
                 return
+            except Exception as e:  # noqa: BLE001 — the exact scope g4 died in, six times, silently:
+                # a FileNotFoundError here killed the handler with no event and no response; codex
+                # retried 5x into the void and exited the run. The harness gets a clean failed
+                # event; cria's log gets the crash.
+                rlog.emit("response.error", level="error", error=repr(e))
+                hb.write(responses._event("response.failed",
+                    {"response": {"id": resp_id, "status": "failed", "error": {"message": f"cria internal error: {e}"}}}))
+                return
             finally:
                 rlog.on_event = None
             extra_items = []
@@ -1026,6 +1045,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             self._send_json(502, {"error": f"upstream error: {e}"})
+            return
+        except Exception as e:  # noqa: BLE001 — never die silently (the g4 hole)
+            rlog.emit("response.error", level="error", error=repr(e))
+            self._send_json(500, {"error": f"cria internal error: {e}"})
             return
         ind = self.server.cfg.indicators
         show_reasoning = ind.enabled and ind.reasoning

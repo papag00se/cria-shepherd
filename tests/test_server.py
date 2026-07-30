@@ -898,3 +898,19 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
         self.assertIn("NO tools", head["content"])                       # the ONE proven framing,
         self.assertIn("tool/function call", head["content"])             # shared with self-compaction
 
+
+
+class FailSilentHoleTests(unittest.TestCase):
+    """g4 died to SIX invisible handler crashes (FileNotFoundError on a prompt file renamed
+    mid-run): no response, no event, only journalctl knew. Any non-upstream exception must emit
+    response.error and answer the harness; a missing prompt must fail at BOOT."""
+
+    def test_validate_referenced_catches_a_missing_prompt(self):
+        import re
+
+        from cria import prompts
+        # every name referenced in source exists right now…
+        self.assertEqual(prompts.validate_referenced(), [])
+        # …and the scanner actually sees real call sites (not a vacuous pass)
+        src = "".join(p.read_text() for p in prompts._DIR.parent.glob("*.py"))
+        self.assertGreater(len(re.findall(r"prompts\.(?:load|render|load_map)\(", src)), 50)

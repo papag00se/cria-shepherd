@@ -15,6 +15,7 @@ import sys
 from dataclasses import replace
 
 from . import __version__, brave
+from . import prompts
 from .config import Config
 from .envfile import load_env_file
 from .events import EventLog
@@ -75,6 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     if cfg.logging.capture_calls:
         log.emit("capture.enabled", dir=str(cfg.logging.capture_dir_path))
+    missing = prompts.validate_referenced(log)
+    if missing:
+        # fail at BOOT, not on first mid-session use (the g4 crash class: a renamed prompt file
+        # took down a live run six requests deep with nothing in cria's own log).
+        print(f"cria: missing prompt file(s): {', '.join(missing)}", file=sys.stderr)
+        return 2
+
     server = CriaServer(cfg, log, upstream)
 
     # systemd's `restart` sends SIGINT (KillSignal=SIGINT) → KeyboardInterrupt; route SIGTERM (the

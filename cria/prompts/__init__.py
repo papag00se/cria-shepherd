@@ -53,3 +53,29 @@ def load_map(name: str) -> dict[str, str]:
         if sep:
             out[key.strip()] = value.replace("\\n", "\n")
     return out
+
+
+_REF_RE = None
+
+
+def validate_referenced(rlog=None) -> list[str]:
+    """BOOT-TIME check: every prompt name the package source references via load()/render()/
+    load_map() must exist as a .txt file. A missing prompt otherwise surfaces as a runtime crash on
+    first use — measured: a mid-run rename left the live service referencing a deleted file, and
+    the first compaction request died with FileNotFoundError six times, killing the whole run (g4).
+    Returns the missing names (empty = healthy); the caller decides whether to refuse to start."""
+    import re
+    pat = re.compile(r"""prompts\.(?:load|render|load_map)\(\s*["']([\w-]+)["']""")
+    missing: set[str] = set()
+    for py in _DIR.parent.glob("*.py"):
+        try:
+            src = py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in pat.findall(src):
+            if not (_DIR / f"{name}.txt").exists():
+                missing.add(name)
+    out = sorted(missing)
+    if out and rlog is not None:
+        rlog.emit("prompts.missing", level="error", names=",".join(out))
+    return out
