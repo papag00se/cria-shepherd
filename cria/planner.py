@@ -824,6 +824,7 @@ class Planner:
         # none of the four deliverables. It was accepted. Replayed against the live model, the
         # coverage check flags that plan 4 times out of 4; it simply never got to look.
         fired: set[str] = set()
+        challenged_missing: set[str] = set()  # deliverables coverage has already handed back for
 
         def may_hand_back(which: str) -> bool:
             return which not in fired and len(fired) < MAX_PLAN_HANDBACKS
@@ -889,11 +890,22 @@ class Planner:
                     continue
                 # And does the plan actually produce everything the request asked for? The coder stops
                 # when the steps run out, so an omitted deliverable is silently dropped.
+                # Once coverage has challenged, EVERY re-draft is looked at again, and it may hand
+                # back again — but only for a deliverable it has not already challenged (a stubborn
+                # drafter still gets its plan; the attempt loop bounds the whole exchange). The
+                # once-only gate let a re-draft trade one deliverable for another: plan#1 was handed
+                # back for total-handles, plan#2 restored that but silently DROPPED the live-test
+                # step, and was adopted with no look — the run then structurally could not score
+                # (run 0729-gemma4 pon1: the live test never had a plan step again).
                 missing = self._missing_deliverables(task, steps, rlog) \
-                    if may_hand_back("coverage") else []
-                if missing:
+                    if (may_hand_back("coverage") or challenged_missing) else []
+                new_missing = [x for x in missing if x not in challenged_missing]
+                if missing and not new_missing:
+                    rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=False)
+                if new_missing:
                     fired.add("coverage")
-                    rlog.emit("plan.missing_deliverables", missing=", ".join(missing))
+                    challenged_missing.update(missing)
+                    rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=True)
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
                         {"role": "user", "content": prompts.fill(

@@ -603,6 +603,48 @@ class PlanCoverageTests(unittest.TestCase):
         self.assertIn("plan.missing_deliverables", kinds)   # ...and the SECOND, distinct one too
         self.assertEqual(len(plan.items), 3)                # the good draft is what landed
 
+    def test_a_redraft_that_trades_one_deliverable_for_another_is_caught(self):
+        # MEASURED (run 0729-gemma4 pon1): plan#1 was handed back for total-handles; plan#2 restored
+        # that but silently DROPPED the live-test step — and the once-only gate adopted it with no
+        # look. The live test never had a plan step again; the run structurally could not score.
+        # Coverage must look at every re-draft and may hand back again for a NEW deliverable.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add a live test", "Add a README"]}),
+            _content_resp('{"missing": ["the unit tests"]}'),                 # hand-back #1: no unit tests
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add unit tests", "Add a README"]}),
+            _content_resp('{"missing": ["the live test"]}'),                  # re-draft dropped the live test
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add unit tests",
+                                                 "Add a live test", "Add a README"]}),
+            _content_resp('{"missing": []}'),                                 # third draft: complete
+            _content_resp("NONE"),                                            # noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("a script, unit tests, a live test, and a README"), rlog)
+        handed = [kw for k, kw in rlog.events if k == "plan.missing_deliverables" and kw.get("handed_back")]
+        self.assertEqual(len(handed), 2)                    # both distinct gaps challenged
+        self.assertEqual(len(plan.items), 4)                # the complete draft is what landed
+
+    def test_a_stubborn_redraft_missing_only_the_same_item_is_still_adopted(self):
+        # The new-item rule is the wedge guard: a drafter that insists gets its plan.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add a README"]}),
+            _content_resp('{"missing": ["the unit tests"]}'),                 # hand-back #1
+            _tool_resp("submit_plan", {"steps": ["Write the script", "Add a README"]}),  # unchanged
+            _content_resp('{"missing": ["the unit tests"]}'),                 # same gap again → no wedge
+            _content_resp("NONE"),                                            # noise judge
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("a script, unit tests, and a README"), rlog)
+        handed = [kw for k, kw in rlog.events if k == "plan.missing_deliverables" and kw.get("handed_back")]
+        self.assertEqual(len(handed), 1)                    # challenged once, never re-challenged
+        self.assertEqual(len(plan.items), 2)                # the stubborn plan is adopted
+
     def test_hand_backs_are_capped_so_a_stubborn_planner_still_gets_its_plan(self):
         # Bounded: at most MAX_PLAN_HANDBACKS, so this can never ping-pong or wedge a session.
         from cria.planner import MAX_PLAN_HANDBACKS

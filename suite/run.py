@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import site
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,18 @@ def set_planner(enabled: bool) -> None:
     sh("sudo", "-n", "systemctl", "restart", "cria.service", timeout=60)
     if not wait_health("http://127.0.0.1:18085/health"):
         raise RuntimeError("cria never became healthy after planner toggle")
+
+
+def user_site_listing() -> set:
+    """Top-level names in the user's site-packages — the leak tripwire. Runs under --yolo can
+    pip-install into the REAL user site (measured: an editable install of a suite /tmp workspace via
+    a .pth, a broken resolver.py shadowing `import resolver` for every later run AND the verifier —
+    two weeks of cross-run poisoning found only by a capture walk). The delta is recorded per row so
+    contamination is evidence, never a silent confound; nothing is prevented or cleaned here."""
+    try:
+        return set(os.listdir(site.getusersitepackages()))
+    except OSError:
+        return set()
 
 
 def codex_pids():
@@ -166,6 +179,7 @@ def main() -> None:
     set_planner(args.planner == "on")
     sh("git", "-C", str(ws), "init", "-q")
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
+    site_before = user_site_listing()
 
     env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}")
     t0 = time.time()
@@ -228,6 +242,7 @@ def main() -> None:
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
         "archive": str(archive),
+        "site_packages_leak": sorted(user_site_listing() - site_before),
         "capture_dir": str(session_dir) if session_dir else None,
         "harness_log": str(log_path),
     }

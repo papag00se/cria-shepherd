@@ -801,3 +801,75 @@ class ResponsesStatusTickerTests(unittest.TestCase):
         self.assertGreaterEqual(len(output), 2)
         self.assertIn("⟦cria⟧", output[0]["content"][0]["text"])   # the closed status item
         self.assertEqual(output[1]["content"][0]["text"], "Hi")    # the real message after it
+
+
+class HardenCompactionReplyTests(unittest.TestCase):
+    """The harness stores the compaction reply as the session's ENTIRE remembered past — an empty
+    briefing is amnesia (B3 0094), and fetched-spec facts that lived only in the discarded transcript
+    got re-guessed as invented endpoints (/v1, /resolve). Retry the empty case reasoning-off; append
+    the deterministic fetch ledger always."""
+
+    class _Srv:
+        class cfg:
+            class routing:
+                roles = {}
+
+    class _Rlog:
+        phase = "proxy"
+
+        def emit(self, kind, **kw):
+            return self
+
+    @staticmethod
+    def _comp(text):
+        return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+
+    @staticmethod
+    def _history():
+        return [{"role": "user", "content": "task"},
+                {"role": "tool", "tool_call_id": "f1", "content":
+                    "HTTP 200 OK · https://api.example.com/openapi.json\n"
+                    "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
+                {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
+
+    def test_good_summary_gains_the_fetch_facts_appendix(self):
+        from cria.server import _harden_compaction_reply
+        comp = _harden_compaction_reply(self._comp("Did X, then Y."), {"messages": self._history()},
+                                        provider=None, server=self._Srv, rlog=self._Rlog())
+        text = comp["choices"][0]["message"]["content"]
+        self.assertTrue(text.startswith("Did X, then Y."))          # the model's summary leads
+        self.assertIn("/handles/{handle}", text)                    # the real routes survive the fold
+        self.assertIn("api.example.com", text)
+
+    def test_empty_summary_retries_reasoning_off_and_adopts_the_retry(self):
+        from cria.server import _harden_compaction_reply
+
+        calls = []
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                calls.append(pb)
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "Recovered briefing."}}]})
+
+        comp = _harden_compaction_reply(self._comp(""), {"messages": self._history()},
+                                        provider=_Provider, server=self._Srv, rlog=self._Rlog())
+        self.assertEqual(len(calls), 1)                             # one retry, no loop
+        self.assertFalse(calls[0].get("tools"))                     # still a toolless summarize
+        text = comp["choices"][0]["message"]["content"]
+        self.assertTrue(text.startswith("Recovered briefing."))
+        self.assertIn("/handles/{handle}", text)                    # appendix rides the retry too
+
+    def test_failed_retry_never_breaks_the_reply(self):
+        from cria.server import _harden_compaction_reply
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                raise RuntimeError("upstream dead")
+
+        comp = _harden_compaction_reply(self._comp(""), {"messages": self._history()},
+                                        provider=_Provider, server=self._Srv, rlog=self._Rlog())
+        text = comp["choices"][0]["message"]["content"]
+        self.assertIn("/handles/{handle}", text)                    # facts still appended to the empty

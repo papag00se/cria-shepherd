@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import uuid
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import callcapture, focustrim, massage, responses, rumination
@@ -32,6 +33,7 @@ from .loop import (
     Loop,
     LoopContext,
     LoopStore,
+    _fetch_ground_truth,
     completion_to_sse,
     reframe_compaction,
     session_key,
@@ -180,6 +182,57 @@ def _proxy_body(body: dict) -> dict:
     if len(kept) == len(msgs):
         return body  # nothing to strip → same object
     return {**body, "messages": kept}
+
+
+def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> dict:
+    """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
+    is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
+    hardenings, both from captured failures:
+
+    (1) EMPTY-BRIEFING RETRY. The compactor sometimes answers a summarize with only a hallucinated
+    tool call and NO salvageable prose (run 0729-gemma4 B3 0094): the harness then carries an empty
+    summary and the coder wakes to "Your summary of the work so far:" followed by nothing. The
+    loop-side ``summarize()`` already retries reasoning-OFF for exactly this shape; this is the same
+    retry for the harness path — thinking suppressed, the summary lands straight in content instead
+    of being drafted in reasoning and lost behind a fake call.
+
+    (2) FETCH-FACTS APPENDIX. Post-compaction coders re-guessed API knowledge the session had
+    already obtained (an invented /v1 base, a made-up /resolve endpoint) because the fetched-spec
+    facts lived only in the discarded transcript. The deterministic fetch ledger (final status per
+    URL + surfaced endpoint routes) is computed from the history being folded and appended to the
+    summary — cria appends only facts it can re-derive from the record, never judgment."""
+    def _text_of(c: dict) -> str:
+        for ch in c.get("choices") or []:
+            t = (ch.get("message") or {}).get("content")
+            if isinstance(t, str):
+                return t
+        return ""
+
+    text = _text_of(comp).strip()
+    if not text or massage.has_tool_call_leak(text):
+        role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+        pb = _proxy_body(dict(body))
+        if role is not None:
+            replace(role, reasoning="off").apply(pb)
+        else:
+            pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text))
+        try:
+            comp2 = massage.coerce_text_answer(
+                massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)
+            text2 = _text_of(comp2).strip()
+            if text2 and not massage.has_tool_call_leak(text2):
+                comp, text = comp2, text2
+        except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
+            rlog.emit("route.compaction_retry_failed", level="warning")
+    facts = _fetch_ground_truth(body.get("messages", []))
+    if facts:
+        merged = (text + "\n\n" + facts).strip()
+        chs = [dict(ch) for ch in comp.get("choices") or []]
+        if chs:
+            chs[0] = {**chs[0], "message": {**(chs[0].get("message") or {}), "content": merged}}
+            comp = {**comp, "choices": chs}
+    return comp
 
 
 class CriaServer(ThreadingHTTPServer):
@@ -709,6 +762,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
             # or dialect-only "answer" recovers the summary from the model's reasoning.
             comp = massage.coerce_text_answer(comp, rlog)
+            if _is_compaction_request(body.get("messages", [])):
+                comp = _harden_compaction_reply(comp, body, provider, server, rlog)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
