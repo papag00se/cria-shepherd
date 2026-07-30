@@ -891,11 +891,10 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
         self.assertTrue(_is_compaction_request(msgs))
         pb = _proxy_body({"messages": msgs})
-        from cria import selfcompact
-        convo = [m for m in pb.get("messages", []) if m.get("role") != "system"]
+        from cria.server import _compaction_transcript
         pb = {**pb, "messages": [
             {"role": "system", "content": prompts.load("selfcompact_summary")},
-            {"role": "user", "content": selfcompact.serialize(convo)},
+            {"role": "user", "content": _compaction_transcript(pb.get("messages", []))},
         ]}
         head = pb["messages"][0]
         self.assertEqual(head["role"], "system")
@@ -905,6 +904,21 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
         self.assertEqual(len(pb["messages"]), 2)
         self.assertTrue(all(not m.get("tool_calls") for m in pb["messages"]))
         self.assertIn("shell", pb["messages"][1]["content"])              # the calls survive AS TEXT
+
+    def test_transcript_drops_harness_boilerplate_keeps_work(self):
+        # g7: the flat transcript LED with Codex's plugin ads (119,361 chars) — the briefing model
+        # read plugin blurbs before any work. Same cleaning every other reasoner path uses.
+        from cria.server import _compaction_transcript
+        t = _compaction_transcript([
+            {"role": "system", "content": "<recommended_plugins> Atlassian Rovo, Figma ..."},
+            {"role": "user", "content": "write a resolver"},
+            {"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "r.py"})}}]},
+            {"role": "tool", "tool_call_id": "a", "content": "Wrote r.py"},
+        ])
+        self.assertNotIn("recommended_plugins", t)
+        self.assertIn("write a resolver", t)
+        self.assertIn("r.py", t)
 
 
 

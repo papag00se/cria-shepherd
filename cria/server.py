@@ -21,7 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import callcapture, focustrim, massage, prompts, responses, rumination, selfcompact
+from . import callcapture, focustrim, massage, probegate, prompts, responses, rumination, selfcompact
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -31,6 +31,7 @@ from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
 from .loop import (
     Loop,
+    _drop_harness_frame,
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
@@ -198,6 +199,16 @@ def _last_checks_note(server, sess_key: str) -> str:
     return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
 
 
+def _compaction_transcript(messages: list) -> str:
+    """The conversation to be briefed, as flat text — the SAME preparation cria's internal
+    compaction and steer author use: the harness's agent frame dropped (Codex ships ~7.8K tokens of
+    update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
+    briefing model read plugin ads before any work), gate blobs cleaned, then serialized. Structured
+    tool-call turns become text lines: nothing for a weak model to pattern-match into a tool call."""
+    convo = [m for m in messages if m.get("role") not in ("system", "developer")]
+    return selfcompact.serialize(probegate.clean_gate_results(_drop_harness_frame(convo)))
+
+
 def _workspace_listing(ws: str | None) -> str:
     """FILES ALREADY IN THIS WORKSPACE, names only (top level + one level down), for the compaction
     summary. Empty string when the workspace is unknown/absent — silence over noise."""
@@ -256,8 +267,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
         # for weak models: prose only, no tools, name real files, quote real checks.
         pb = {**pb, "messages": [
             {"role": "system", "content": prompts.load("selfcompact_summary")},
-            {"role": "user", "content": selfcompact.serialize(
-                [m for m in pb.get("messages", []) if m.get("role") != "system"])},
+            {"role": "user", "content": _compaction_transcript(pb.get("messages", []))},
         ]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
@@ -829,10 +839,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             # prompt says (measured g6: correct framing led, and both replies were still
             # `call:write_file{...}`). With no tool-call turns in front of it, there is no shape to
             # mimic. One mechanism, both paths.
-            convo = [m for m in pbody.get("messages", []) if m.get("role") != "system"]
             pbody = {**pbody, "messages": [
                 {"role": "system", "content": prompts.load("selfcompact_summary")},
-                {"role": "user", "content": selfcompact.serialize(convo)},
+                {"role": "user", "content": _compaction_transcript(pbody.get("messages", []))},
             ]}
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
