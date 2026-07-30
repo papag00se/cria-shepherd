@@ -2,6 +2,7 @@ import json
 import os
 import pathlib
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -3508,7 +3509,11 @@ class FreshDiskFactsTests(unittest.TestCase):
     """The reasoned redirect now grounds on the files as they ARE on disk (groundtruth port),
     not the transcript's stale view."""
 
-    def test_reads_current_bytes_and_reports_missing(self):
+    def test_lists_name_size_lines_and_never_inlines_contents(self):
+        # Contents are the AUTHOR's to read via its tools (operator redesign): inlining them built
+        # the 210K prompt that killed the reasoner (run 0729-gemma4 C1 0062-0065). The list carries
+        # the facts that guide the read — bytes and LINE COUNT ('57,588 bytes, 1 line' = a minified
+        # blob to grep, not code).
         import os
         import tempfile
 
@@ -3517,12 +3522,91 @@ class FreshDiskFactsTests(unittest.TestCase):
         with open(os.path.join(d, "h.py"), "w") as f:
             f.write("def f():\n    return 42\n")
         out = _fresh_disk_facts(d, ["h.py", None, "h.py"], "")   # dedups, skips None
-        self.assertIn("h.py", out)
-        self.assertIn("return 42", out)                          # the ACTUAL current disk bytes
-        self.assertIn("on disk NOW", out)
+        self.assertIn("FILE h.py", out)
+        self.assertIn("2 lines", out)
+        self.assertNotIn("return 42", out)                       # NO contents — read_file's job
         self.assertIn("does NOT exist", _fresh_disk_facts(d, ["nope.py"], ""))  # missing = a fact
         self.assertEqual(_fresh_disk_facts(None, ["h.py"], ""), "")  # no root → empty (prior behavior)
         self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
+
+    def test_path_spellings_of_one_file_are_one_entry(self):
+        # `api.json` vs `./api.json` vs the absolute form are ONE file; the exact-string dedupe
+        # listed (previously: inlined) it twice. Dedupe is canonical; the coder's spelling displays.
+        import os
+        import tempfile
+
+        from cria.loop import _fresh_disk_facts
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "api.json"), "w") as f:
+            f.write('{"openapi": "3.0.3"}')
+        out = _fresh_disk_facts(d, ["api.json", "./api.json", os.path.join(d, "api.json")], "")
+        self.assertEqual(out.count("FILE "), 1)
+
+
+class AuthorSteerInspectsTests(unittest.TestCase):
+    """The steer author holds the judges' read-only tools and gathers its own evidence — the disk
+    section is a file LIST, and a fact the author READ (a URL inside a file) must count as grounded."""
+
+    def _run(self, replies):
+        import tempfile
+
+        from cria.config import Role
+        from cria.loop import author_steer
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "api.json"), "w") as f:
+            f.write('{"servers": [{"url": "https://api.example.com"}], "paths": {"/handles/{h}": {}}}')
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            return json.dumps(replies[len(bodies) - 1]).encode()
+
+        gs = types.SimpleNamespace(recent_writes=["api.json"], spin_path="")
+        steer = author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
+                             {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
+                             condition="flail", reasoning_window=["thinking"])
+        return steer, bodies
+
+    def test_author_reads_a_file_then_steers_grounded_in_what_it_read(self):
+        read_call = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "t1", "type": "function",
+             "function": {"name": "read_file", "arguments": json.dumps({"path": "api.json"})}}]}}]}
+        answer = {"choices": [{"message": {"role": "assistant", "content":
+            "You keep re-guessing the base URL; api.json already names https://api.example.com — use it with /handles/{h} now."}}]}
+        steer, bodies = self._run([read_call, answer])
+        self.assertIsNotNone(steer)
+        self.assertIn("api.example.com", steer)      # grounded via the READ, not dropped as invented
+        self.assertTrue(any(t.get("function", {}).get("name") == "read_file"
+                            for t in bodies[0].get("tools", [])))   # tools were offered
+        self.assertNotIn('{"servers"', bodies[0]["messages"][1]["content"])  # contents NOT pre-inlined
+
+    def test_toolless_answer_still_works(self):
+        answer = {"choices": [{"message": {"role": "assistant", "content":
+            "You are rewriting the same file; read api.json and make one targeted change."}}]}
+        steer, _ = self._run([answer])
+        self.assertIn("targeted change", steer)
+
+    def test_a_dialect_leaked_tool_call_is_recovered_and_executed(self):
+        # qwythos/mellum2 emitted their read_file as TEXT ('<tool_call>{...}</tool_call>'); without
+        # massage in the judge loop the inspection silently never happened (matrix pass 1).
+        leaked = {"choices": [{"message": {"role": "assistant", "content":
+            'Sure.\n<tool_call>{"name": "read_file", "arguments": {"path": "api.json"}}</tool_call>'}}]}
+        answer = {"choices": [{"message": {"role": "assistant", "content":
+            "You keep re-guessing; api.json names https://api.example.com — use it now."}}]}
+        steer, bodies = self._run([leaked, answer])
+        self.assertEqual(len(bodies), 2)                          # the leak became a real round
+        self.assertIn("api.example.com", steer)                   # grounded via the recovered read
+        tool_msgs = [m for m in bodies[1]["messages"] if m.get("role") == "tool"]
+        self.assertTrue(any('"servers"' in str(m.get("content")) for m in tool_msgs))
+
+    def test_a_bare_json_verdict_reply_is_never_injected_as_a_steer(self):
+        # gemma answered the steer prompt in the CRITIC's schema (matrix pass 1, trial 0):
+        # {"done": true, ...} — a role-collapse artifact, not a directive. Safe null.
+        from cria.loop import _steer_or_none
+        self.assertIsNone(_steer_or_none('{"done": true, "reason": "complete", "proposed_fix": "none"}'))
+        self.assertIsNone(_steer_or_none('```json\n{"done": true, "reason": "complete"}\n```'))
+        self.assertIsNotNone(_steer_or_none(
+            'You are stuck on {"done": true} appearing in your output; remove that line and rerun.'))
 
 
 class GroundTruthSilenceTests(unittest.TestCase):

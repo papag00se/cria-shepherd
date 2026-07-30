@@ -541,7 +541,7 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
 
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
                       workspace_root: str = "", max_tokens: int = 8192,
-                      force_think_off: bool = False) -> dict:
+                      force_think_off: bool = False, transcript: list | None = None) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -568,10 +568,17 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         elif force_think_off:  # no role configured, but still force the think block off
             body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         rlog.phase = phase
-        comp = _parse_completion(chat_fn(body, rlog))
+        # massage the reply exactly like every other reasoner path: a flaky-dialect model leaks its
+        # tool call as TEXT ('read_file({"path":...})' in content), which this loop then never
+        # executed — measured live in the steer-author matrix (qwythos trial 1, mellum2 trial 3:
+        # both wanted to inspect, both leaks dropped on the floor). Recovery promotes the leak to a
+        # real tool_calls entry so the inspection actually happens.
+        comp = massage.apply(_parse_completion(chat_fn(body, rlog)), body.get("tools"), rlog)
         msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
         calls = msg.get("tool_calls") or []
         if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS):
+            if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
+                transcript.extend(messages[2:])
             return comp
         rounds += 1
         messages.append({"role": "assistant", "content": msg.get("content") or None,
@@ -3532,13 +3539,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
-    # Bounded like the critic's evidence (rule #5's counter-nuance: a prompt cria COMPOSES for a
-    # judge may be bounded, disclosed). Unbounded, one run's rewrite-loop serialized to 210,601
-    # chars — including a 57K single-line grep blob — and the reasoner never answered, four calls
-    # in a row, silently burning ~4 minutes of a 30-minute wall (run 0729-gemma4 C1 0062-0065).
-    # The tail is what a stuck-diagnosis turns on; durable fetch facts ride separately below.
-    session = _bound_evidence(selfcompact.serialize(
-        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", []))))))
+    session = selfcompact.serialize(
+        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", [])))))
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
@@ -3564,8 +3566,27 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
                           reasoning=(reasoning or "(not captured for this trigger)"))
+    coder_tools = _coder_tools_summary(body.get("tools"))
+    if workspace_root and os.path.isdir(workspace_root):
+        # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
+        # lists names/sizes only, and the author holds the same read-only tools the judges hold —
+        # it reads the real bytes it wants to cite instead of having every touched file inlined
+        # (the 210K-prompt incident). The inspection transcript joins the grounding evidence so a
+        # URL the author legitimately READ from a file is not dropped as invented.
+        tooled_user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
+        transcript: list = []
+        comp = _judge_completion(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"),
+                                 tooled_user, rlog, phase="reasoner",
+                                 workspace_root=workspace_root, transcript=transcript)
+        text = _completion_text(comp)
+        if reasoner_role is not None:
+            text = reasoner_role.clean_content(text)
+        text = strip_think(text or "").strip()
+        evidence = user + "\n\n" + "\n".join(
+            str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
+        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog)
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
-                      phase="reasoner", coder_tools=_coder_tools_summary(body.get("tools"))) or "").strip()
+                      phase="reasoner", coder_tools=coder_tools) or "").strip()
     return _grounded_steer_or_none(_steer_or_none(text), user, rlog)
 
 
@@ -3582,6 +3603,17 @@ def _steer_or_none(text: str) -> str | None:
     if not text:
         return None
     body = strip_think(text)
+    # A reply that IS one bare JSON object is a role-collapse artifact — the author answering in a
+    # judge's verdict schema (measured live: the tool-looped author returned {"done": true,
+    # "reason": "complete implementation..."}, which the cleaning below would inject verbatim as a
+    # steer). A directive is prose; a lone JSON object is not a directive → safe null.
+    fenced = re.sub(r"^```[a-z]*\s*|\s*```$", "", body.strip())
+    if fenced.startswith("{") and fenced.endswith("}"):
+        try:
+            if isinstance(json.loads(fenced), dict):
+                return None
+        except ValueError:
+            pass
     body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
     # Drop every SENTENCE that carries a verdict token, rather than excising the token and keeping the
     # wreckage of the sentence around it. Both prompts end by teaching the exact bigram "is NOT
@@ -4103,20 +4135,35 @@ def _touched_paths(messages, cap: int = 8) -> list[str]:
 
 
 def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
-    """The files the coder has been TOUCHING, read from disk NOW (via cria.groundtruth) — not the
-    transcript's stale 'what the model said it wrote' view. This is the grounding the reasoned
-    redirect was missing (groundtruth.py was ported but never wired). Empty when the workspace root
-    is unknown or nothing has been written yet, so the redirect degrades to its prior behavior."""
+    """The files the coder has been TOUCHING, as a LIST — name, byte size, line count, read from
+    disk NOW. Contents are deliberately NOT inlined (operator redesign, 07-30): the steer author
+    holds read_file/list_dir and gathers its own evidence, exactly like the step critic. Inlining
+    was the 210K-prompt incident — a 57K minified spec the coder curl'd to ./api.json flowed in
+    whole, TWICE via two path spellings, into a composed two-message prompt the context floor
+    cannot shrink (no turns to drop), and the reasoner died silently four calls in a row (run
+    0729-gemma4 C1 0062-0065). The line count is load-bearing: '57,588 bytes, 1 line' tells the
+    author it is looking at a minified blob to grep, not code to read whole. Deduped on the
+    CANONICAL path — `api.json` and `./api.json` are one file."""
     if not root or root == ".":   # "." is cria's OWN dir, never the coder's workspace — never read it
         return ""
     paths: list[str] = []
+    seen: set[str] = set()
     for p in list(recent_writes or []) + [spin_path]:
-        if p and p not in paths:
-            paths.append(p)
+        canon = os.path.normpath(groundtruth.resolve(root, p)) if p else ""
+        if p and canon not in seen:
+            seen.add(canon)
+            paths.append(p)   # keep the coder's own spelling for display
     if not paths:
         return ""
-    snaps = groundtruth.file_snapshot(root, paths, groundtruth.DEFAULT_FILE_CAP)
-    return groundtruth.GroundTruth(files=snaps).render()
+    lines: list[str] = []
+    for p in paths:
+        try:
+            raw = open(groundtruth.resolve(root, p), "rb").read()
+            n_lines = raw.count(b"\n") + (0 if raw.endswith(b"\n") or not raw else 1)
+            lines.append(f"FILE {p} — {len(raw):,} bytes, {n_lines:,} line{'s' if n_lines != 1 else ''}")
+        except OSError:
+            lines.append(f"FILE {p} — does NOT exist on disk")
+    return "\n".join(lines)
 
 
 def _completion_text(completion: dict) -> str:

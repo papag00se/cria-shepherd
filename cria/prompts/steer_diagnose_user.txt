@@ -4,7 +4,7 @@ WHAT TRIPPED THE DETECTOR:
 THE CODING SESSION SO FAR (the task, and every tool call the coder made with its result):
 {{SESSION}}
 
-THE FILES IT HAS BEEN CHANGING, AS THEY ARE ON DISK RIGHT NOW (fresh — trust this over the transcript):
+THE FILES IT HAS BEEN CHANGING (on disk right now — name, size, and line count only; use your read_file tool on any of them BEFORE citing or quoting their contents, and trust what you read over the transcript):
 {{DISK}}
 
 GROUND TRUTH FROM THE REPO'S CHECKS:
