@@ -716,7 +716,10 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # false "done" over fake work is far worse than a few more work turns.
     retry = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
     if retry is None:
-        return False, "unverified (no parseable verdict)", ""
+        # Fail closed — but the CODER-facing reason is a plain instruction, never cria's internal
+        # bookkeeping: "unverified (no parseable verdict)" injected as a steer made one model
+        # confabulate a meaning for it and leap ahead to another file (run 0729-gemma4 pon2 0243).
+        return False, prompts.load("unverified_step"), ""
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
@@ -1688,7 +1691,8 @@ class Loop:
                 or sess.drive_count - sess.last_flail_drive < FLAIL_COOLDOWN):
             return
         sess.last_flail_drive = sess.drive_count
-        diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
+        diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog,
+                                  workspace_root=sess.workspace_root, gs=sess)
         if diag:
             sess.flail_steers_this_step += 1  # spend one of the step's few unstick nudges (then SILENCE)
             sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
@@ -1799,7 +1803,8 @@ class Loop:
             rlog.emit("loop.verify_failclosed", level="info")
             retry = None
         if retry is None:
-            reason = "unverified (no parseable verdict)"
+            # Same fail-closed / plain-instruction contract as the satisfaction judge above.
+            reason = prompts.load("unverified_step")
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
         reason = _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-done is trustworthy
@@ -2005,7 +2010,8 @@ class Loop:
                 and _flail_candidate(sess.recent_reasoning) \
                 and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
             sess.last_flail_drive = sess.drive_count
-            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog)
+            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog,
+                                      workspace_root=sess.workspace_root, gs=sess)
             if diag:
                 steer, sess.steer_source = diag, "reasoning appears to be circling"
                 rlog.emit("loop.flail_steer", plan_off=True, drive=sess.drive_count)
@@ -3526,8 +3532,13 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
-    session = selfcompact.serialize(
-        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", [])))))
+    # Bounded like the critic's evidence (rule #5's counter-nuance: a prompt cria COMPOSES for a
+    # judge may be bounded, disclosed). Unbounded, one run's rewrite-loop serialized to 210,601
+    # chars — including a 57K single-line grep blob — and the reasoner never answered, four calls
+    # in a row, silently burning ~4 minutes of a 30-minute wall (run 0729-gemma4 C1 0062-0065).
+    # The tail is what a stuck-diagnosis turns on; durable fetch facts ride separately below.
+    session = _bound_evidence(selfcompact.serialize(
+        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", []))))))
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
@@ -3721,13 +3732,16 @@ def _flail_candidate(window: list[str]) -> bool:
     return sum(1 for r in window if _STRUGGLE_RE.search(r)) >= FLAIL_MIN_STRUGGLING
 
 
-def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog) -> str | None:
+def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog,
+                       workspace_root=None, gs=None) -> str | None:
     """The reasoned FLAIL-assist (flail trigger) — a thin wrapper over :func:`author_steer`. The pre-filter
     fired on the coder's circling PRIVATE reasoning (which the transcript doesn't carry), so we pass that
-    reasoning window alongside the real session; the reasoner decides stuck-or-ON_TRACK. There is no gate
-    outcome and no GuardState here (the trigger is reasoning, not a check/write count), so disk facts are
-    empty — the reasoner grounds on the session's own tool results and reads on demand via the steer."""
-    return author_steer(reasoner_chat, reasoner_role, None, None, body, rlog,
+    reasoning window alongside the real session; the reasoner decides stuck-or-ON_TRACK. The session's
+    GuardState and workspace root ride along: without ``gs`` the DURABLE fetch facts are invisible, so a
+    spec fetched long ago (since floored out of the window) was reported "still unread" — two flail steers
+    then sent the coder back to re-reading it (run 0729-gemma4 pon2 calls 0046/0175) — and without the
+    root the author judged file churn blind to the files' real on-disk bytes."""
+    return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
                         condition="flail", reasoning_window=window)
 
 

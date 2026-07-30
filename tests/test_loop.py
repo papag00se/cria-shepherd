@@ -4109,7 +4109,8 @@ class SatisfactionCheckTests(unittest.TestCase):
         from cria.loop import judge_satisfaction
         sat, reason, _fx = judge_satisfaction("t", "e", self._chat("maybe it is done, hard to say"), None, _Rlog())
         self.assertFalse(sat)                 # no JSON → NOT satisfied; never end a session on silence
-        self.assertIn("unverified", reason)
+        # the coder-facing reason is a plain instruction, never cria's internal bookkeeping
+        self.assertIn("not yet verified", reason)
 
     def test_reasoning_off_retry_cannot_APPROVE_completion(self):
         # THE false-complete: the reasoning-ON pass leaked a tool call (non-JSON), so the reasoning-OFF
