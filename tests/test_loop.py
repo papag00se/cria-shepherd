@@ -5699,3 +5699,24 @@ class FalseLineCitationTests(unittest.TestCase):
         self.assertIsNotNone(self._clean("Fix test_client.py:34 — remove the match= kwarg.", ev))
         self.assertIsNotNone(self._clean("Fix other_file.py:500 now.", ev))    # no stated count → pass
         self.assertIsNotNone(self._clean("Run pytest and read the output.", ev))
+
+
+class TextualNullFixTests(unittest.TestCase):
+    """gemma writes the literal word "None" where the verdict schema means "" (g2 0141) — the
+    emptiness contract must read null spellings as empty, or a keyless DONE verdict is inferred
+    NOT-done and a finished task is re-opened."""
+
+    def test_null_spellings_infer_done_true(self):
+        from cria.loop import _fill_missing_verdict_flag
+        for word in ("None", "none", "null", "N/A", "None."):
+            obj = _fill_missing_verdict_flag({"reason": "all good", "proposed_fix": word},
+                                             "done", _Rlog(), "verify")
+            self.assertTrue(obj["done"], word)
+
+    def test_a_real_fix_still_infers_not_done_and_survives(self):
+        from cria.loop import _fill_missing_verdict_flag, _fix_text
+        obj = _fill_missing_verdict_flag({"reason": "x", "proposed_fix": "add the missing README"},
+                                         "done", _Rlog(), "verify")
+        self.assertFalse(obj["done"])
+        self.assertEqual(_fix_text(obj), "add the missing README")
+        self.assertEqual(_fix_text({"proposed_fix": "None"}), "")   # never becomes a step named "None"

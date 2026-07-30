@@ -674,9 +674,24 @@ def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict |
         return obj
     if "proposed_fix" not in obj:
         return None
-    inferred = not str(obj.get("proposed_fix") or "").strip()
+    inferred = not _fix_text(obj)
     rlog.emit("loop.verdict_flag_inferred", flag=flag, inferred=inferred, phase=phase)
     return {**obj, flag: inferred}
+
+
+# Textual null spellings a model writes where the schema means "" — observed live: gemma emits
+# "None"/"none" in proposed_fix on DONE verdicts (g2 0141; g1's role-collapsed steers). A bounded
+# normalization of null spellings, not a judgment list.
+_NULL_FIX = {"", "none", "null", "n/a"}
+
+
+def _fix_text(obj: dict) -> str:
+    """The verdict's proposed_fix as ACTION TEXT — "" when absent or a textual null. Without this,
+    the emptiness contract read the literal word "None" as a concrete fix (inferring NOT-done on a
+    done verdict), and the completion fix-step path could append a step whose entire text was
+    "None"."""
+    fix = str(obj.get("proposed_fix") or "").strip()
+    return "" if fix.lower().rstrip(".") in _NULL_FIX else fix
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
@@ -718,7 +733,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # The ACTION comes back separately so a caller building a plan step can use the fix alone —
         # the old single string (framing + reason essay + fix) became a whole step verbatim
         # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
-        return satisfied, _verdict_nudge(obj, satisfied, routes), str(obj.get("proposed_fix") or "").strip()
+        return satisfied, _verdict_nudge(obj, satisfied, routes), _fix_text(obj)
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
