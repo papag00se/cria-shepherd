@@ -4093,7 +4093,7 @@ class SatisfactionCheckTests(unittest.TestCase):
 
     def test_satisfied_verdict_parsed(self):
         from cria.loop import judge_satisfaction
-        sat, reason = judge_satisfaction("build a resolver", "wrote resolver.py; pytest: 3 passed",
+        sat, reason, _fx = judge_satisfaction("build a resolver", "wrote resolver.py; pytest: 3 passed",
                                          self._chat('{"satisfied": true, "reason": "tests pass, live check works"}'),
                                          None, _Rlog())
         self.assertTrue(sat)
@@ -4101,13 +4101,13 @@ class SatisfactionCheckTests(unittest.TestCase):
 
     def test_not_satisfied_verdict(self):
         from cria.loop import judge_satisfaction
-        sat, _ = judge_satisfaction("t", "e",
+        sat, _, _fx = judge_satisfaction("t", "e",
                                     self._chat('{"satisfied": false, "reason": "tests failing"}'), None, _Rlog())
         self.assertFalse(sat)
 
     def test_fails_closed_on_unparseable_verdict(self):
         from cria.loop import judge_satisfaction
-        sat, reason = judge_satisfaction("t", "e", self._chat("maybe it is done, hard to say"), None, _Rlog())
+        sat, reason, _fx = judge_satisfaction("t", "e", self._chat("maybe it is done, hard to say"), None, _Rlog())
         self.assertFalse(sat)                 # no JSON → NOT satisfied; never end a session on silence
         self.assertIn("unverified", reason)
 
@@ -4125,7 +4125,7 @@ class SatisfactionCheckTests(unittest.TestCase):
                        else '{"satisfied": true, "reason": "all three tests pass"}')
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
 
-        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        sat, reason, _fx = judge_satisfaction("t", "e", fake, None, _Rlog())
         self.assertFalse(sat)                 # reasoning-off "satisfied" is FAILED CLOSED
         self.assertEqual(len(calls), 2)       # both passes ran (on, then off)
         self.assertIn("keep working", reason)
@@ -4141,7 +4141,7 @@ class SatisfactionCheckTests(unittest.TestCase):
                        else '{"satisfied": false, "reason": "the live test was never run against the API"}')
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
 
-        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        sat, reason, _fx = judge_satisfaction("t", "e", fake, None, _Rlog())
         self.assertFalse(sat)
         self.assertIn("never run", reason)
 
@@ -4156,14 +4156,14 @@ class SatisfactionCheckTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"role": "assistant",
                 "content": '{"satisfied": true, "reason": "resolver + tests + README all present"}'}}]}).encode()
 
-        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        sat, reason, _fx = judge_satisfaction("t", "e", fake, None, _Rlog())
         self.assertTrue(sat)
         self.assertEqual(len(calls), 1)       # careful pass parsed → no retry
         self.assertIn("resolver", reason)
 
     def test_empty_task_is_not_satisfied(self):
         from cria.loop import judge_satisfaction
-        sat, _ = judge_satisfaction("   ", "e", self._chat('{"satisfied": true}'), None, _Rlog())
+        sat, _, _fx = judge_satisfaction("   ", "e", self._chat('{"satisfied": true}'), None, _Rlog())
         self.assertFalse(sat)                 # nothing to judge → fail closed
 
 
@@ -4275,13 +4275,13 @@ class SingleItemMethodTests(unittest.TestCase):
                             reasoner_role=Role(name="reasoner", backend="local"))
         orig = loopmod.judge_satisfaction
         try:
-            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing")
+            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing", "")
             sess = _synth()
             # NOT satisfied → returns the critic's CONCRETE reason (to steer the coder back with)...
             self.assertEqual(loop._done_critic_reason(sess, body, _Rlog()), "total_handles is missing")
             # ...and it is NOT bounded — a second still-incomplete 'done' is critiqued again, not waved through
             self.assertEqual(loop._done_critic_reason(sess, body, _Rlog()), "total_handles is missing")
-            loopmod.judge_satisfaction = lambda *a, **k: (True, "all present")
+            loopmod.judge_satisfaction = lambda *a, **k: (True, "all present", "")
             self.assertEqual(loop._done_critic_reason(_synth(), body, _Rlog()), "")  # satisfied → "" → done
         finally:
             loopmod.judge_satisfaction = orig
@@ -4306,7 +4306,7 @@ class SingleItemMethodTests(unittest.TestCase):
         body = {"messages": [{"role": "user", "content": "build X"}], "tools": []}  # no shell
         orig = loopmod.judge_satisfaction
         try:
-            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing")
+            loopmod.judge_satisfaction = lambda *a, **k: (False, "total_handles is missing", "")
             out = loop._gate_single_done(sess, _done("all done"), {"messages": []}, body, "k", _Rlog())
             self.assertNotEqual(out["choices"][0]["message"].get("content"), "all done")  # NOT forwarded
         finally:
@@ -5136,7 +5136,7 @@ class SatisfactionJudgeToolTests(unittest.TestCase):
                 return json.dumps({"choices": [{"message": {"content": json.dumps(
                     {"satisfied": False, "reason": "README.md is not in the workspace"})}}]}).encode()
 
-            ok, reason = judge_satisfaction("task needing a README", "ev", chat, self._role(),
+            ok, reason, _fx = judge_satisfaction("task needing a README", "ev", chat, self._role(),
                                             _Rlog(), workspace_root=ws)
         self.assertFalse(ok)
         self.assertIn("README.md is not in the workspace", reason)
@@ -5154,7 +5154,7 @@ class SatisfactionJudgeToolTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": json.dumps(
                 {"satisfied": True, "reason": "all present"})}}]}).encode()
 
-        ok, _ = judge_satisfaction("t", "ev", chat, self._role(), _Rlog())
+        ok, _, _fx = judge_satisfaction("t", "ev", chat, self._role(), _Rlog())
         self.assertTrue(ok)
         self.assertNotIn("tools", bodies[0])
 
@@ -5228,7 +5228,7 @@ class ApprovePathConfirmTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve_handle.py").write_text("x\n")        # no README anywhere
             chat = _Scripted([sat, self._confirm(False, "README.md is not in the workspace")])
-            ok, reason = judge_satisfaction("script plus README", "ev", chat, self._role(),
+            ok, reason, _fx = judge_satisfaction("script plus README", "ev", chat, self._role(),
                                             _Rlog(), workspace_root=ws)
         self.assertFalse(ok)
         self.assertIn("README.md is not in the workspace", reason)
@@ -5304,7 +5304,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
         sat = {"choices": [{"message": {"content": json.dumps(
             {"satisfied": False, "reason": "no resolver exists yet",
              "proposed_fix": "Write resolver.py using GET /v1/resolve/{handle}"})}}]}
-        ok, reason = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
+        ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
                                         routes="/handles/{handle}, /holders/{address}")
         self.assertFalse(ok)
         self.assertIn("no resolver exists yet", reason)     # the reason survives
@@ -5315,7 +5315,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
         sat = {"choices": [{"message": {"content": json.dumps(
             {"satisfied": False, "reason": "r",
              "proposed_fix": "Call GET /handles/{handle} and read resolved_addresses"})}}]}
-        ok, reason = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
+        ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
                                         routes="/handles/{handle}, /holders/{address}")
         self.assertFalse(ok)
         self.assertIn("/handles/{handle}", reason)
@@ -5390,7 +5390,7 @@ class KeylessVerdictTests(unittest.TestCase):
     def test_empty_fix_infers_the_flag_true(self):
         from cria.loop import judge_satisfaction
         rlog = _Rlog()
-        sat, reason = judge_satisfaction(
+        sat, reason, _fx = judge_satisfaction(
             "build a resolver", "wrote resolver.py; pytest: 12 passed",
             self._chat('{"reason": "all deliverables exist and the tests pass", "proposed_fix": ""}'),
             None, rlog)
@@ -5400,7 +5400,7 @@ class KeylessVerdictTests(unittest.TestCase):
 
     def test_nonempty_fix_infers_the_flag_false_and_keeps_the_fix(self):
         from cria.loop import judge_satisfaction
-        sat, reason = judge_satisfaction(
+        sat, reason, _fx = judge_satisfaction(
             "t", "e",
             self._chat('{"reason": "README missing", "proposed_fix": "write README.md"}'),
             None, _Rlog())
@@ -5417,7 +5417,7 @@ class KeylessVerdictTests(unittest.TestCase):
                 "content": '{"reason": "looks complete"}' if len(calls) == 1
                            else '{"satisfied": false, "reason": "no live test ran"}'}}]}).encode()
 
-        sat, reason = judge_satisfaction("t", "e", fake, None, _Rlog())
+        sat, reason, _fx = judge_satisfaction("t", "e", fake, None, _Rlog())
         self.assertFalse(sat)
         self.assertEqual(len(calls), 2)                        # careful pass unusable → retry ran
 
@@ -5494,7 +5494,7 @@ class FabricatedActionVerdictTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": c}}]}).encode()
 
         rlog = _Rlog()
-        sat, reason = judge_satisfaction("t", "e", fake, None, rlog)
+        sat, reason, _fx = judge_satisfaction("t", "e", fake, None, rlog)
         self.assertFalse(sat)
         self.assertEqual(len(calls), 2)                       # careful verdict rejected → retry ran
         self.assertNotIn("curling", reason)                   # the fabricated fact never surfaces

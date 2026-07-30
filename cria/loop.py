@@ -677,7 +677,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     otherwise role-plays the coder and never emits the verdict). Fails CLOSED — an unparseable verdict is
     NOT satisfied, so a session is never ended on the critic's silence."""
     if not task.strip():
-        return False, "no task text to judge"
+        return False, "no task text to judge", ""
     system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
@@ -704,8 +704,11 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                                  phase="satisfaction-confirm")
             rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
             if not confirmed:
-                return False, why or str(obj.get("reason") or "a named deliverable is not on disk")
-        return satisfied, _verdict_nudge(obj, satisfied, routes)  # fold in proposed_fix when NOT satisfied
+                return False, why or str(obj.get("reason") or "a named deliverable is not on disk"), ""
+        # The ACTION comes back separately so a caller building a plan step can use the fix alone —
+        # the old single string (framing + reason essay + fix) became a whole step verbatim
+        # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
+        return satisfied, _verdict_nudge(obj, satisfied, routes), str(obj.get("proposed_fix") or "").strip()
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -713,11 +716,11 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # false "done" over fake work is far worse than a few more work turns.
     retry = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
     if retry is None:
-        return False, "unverified (no parseable verdict)"
+        return False, "unverified (no parseable verdict)", ""
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
-        return False, "unverified — the careful check could not confirm completion; keep working"
-    return False, _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-satisfied is trustworthy
+        return False, "unverified — the careful check could not confirm completion; keep working", ""
+    return False, _verdict_nudge(retry, False, routes), str(retry.get("proposed_fix") or "").strip()
 
 
 def satisfaction_done_note(reason: str) -> str:
@@ -1201,7 +1204,7 @@ class Loop:
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         ev += _gate_notes(sess)
-        satisfied, reason = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+        satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools")),
                                                workspace_root=sess.workspace_root or "",
                                                routes=known_routes(body.get("messages", []), sess))
@@ -1210,11 +1213,28 @@ class Loop:
             return None
         sess.completion_checks += 1
         reason = reason or "a deliverable the task named is missing, stubbed, or does not actually work"
-        fix = PlanItem(text=_COMPLETION_FIX_PREFIX + reason)
-        if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
-            sess.plan.items[-1] = fix          # reuse the one corrective step across re-checks (no plan bloat)
+        # The STEP is the judge's proposed ACTION, not its verdict essay: the old framing+reason+fix
+        # paragraph became a step verbatim and pinned a run for 118 calls (0729-mellum2) — carrying
+        # literal {{…}} braces the coder shipped into a URL, and "or fallback on…" advice. The essay
+        # still reaches the coder through the nudge below; the plan gets only something DOABLE. And
+        # a judge-authored step is NOT exempt from the noise scrub every other authored step passes
+        # (operator: the model may author steps; cria's routing must apply the same quality bar).
+        step_text = fix_action or reason
+        try:
+            noisy = reasoned_noise_indices(
+                lambda sysm, userm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                              sysm, userm, rlog, phase="reasoner") or "",
+                task, [step_text])
+        except Exception:  # noqa: BLE001 — the scrub is advisory; never lose the corrective step to a crash
+            noisy = set()
+        if 0 in noisy:
+            rlog.emit("loop.completion_fix_noise", level="info", head=_clip(step_text, 120))
         else:
-            sess.plan.items.append(fix)
+            fix = PlanItem(text=_COMPLETION_FIX_PREFIX + step_text)
+            if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
+                sess.plan.items[-1] = fix      # reuse the one corrective step across re-checks (no plan bloat)
+            else:
+                sess.plan.items.append(fix)
         sess.plan.status = "in_progress"
         sess.nudge_reason = prompts.render("done_incomplete", reason=reason,
                                            check_state=prompts.load_map("done_check_state")["passed"])
@@ -1565,7 +1585,7 @@ class Loop:
             rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
             return
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
-            satisfied, _ = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
+            satisfied, _, _fix = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
                                               self._ctx.reasoner_role, rlog, coder_tools=tools,
                                               workspace_root=sess.workspace_root or "",
                                               routes=known_routes(body.get("messages", []), sess))
@@ -1998,7 +2018,7 @@ class Loop:
             task = _history_root(body.get("messages", []))[0]
             evidence = _satisfaction_evidence(body.get("messages", []))
             evidence += _gate_notes(sess)
-            satisfied, reason = judge_satisfaction(
+            satisfied, reason, _fix = judge_satisfaction(
                 task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
                 coder_tools=_coder_tools_summary(body.get("tools")),
                 workspace_root=sess.workspace_root or "",
@@ -2095,7 +2115,7 @@ class Loop:
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         ev += _gate_notes(sess)
-        satisfied, reason = judge_satisfaction(
+        satisfied, reason, _fix = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
             workspace_root=sess.workspace_root or "",
