@@ -11,6 +11,7 @@ the result; only a verifier bug exits nonzero).
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -55,6 +56,29 @@ def main(ws: Path) -> dict:
             live_ok, live_detail = True, f"{lf.name}: real resolution (addr1+stake1 present)"
             break
         live_detail = f"{lf.name}: exit={code}, real-data markers {'partial' if ADDR_RE.search(out) or HOLDER_RE.search(out) else 'absent'}"
+    if not live_ok:
+        # Operator ruling (07-30): a live TEST inside the test file counts — it need not be a
+        # separate file. It must still be provably LIVE (the m14 lesson: a mocked "live" test is
+        # zero): with the network BLOCKED (dead proxy) the selected live tests must FAIL, and with
+        # the network they must PASS. A mock passes both ways and scores nothing.
+        dead = {**os.environ, "HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9",
+                "http_proxy": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9"}
+        sel = [sys.executable, "-m", "pytest", "-q", "-k", "live", "--tb=no"]
+        try:
+            blocked = subprocess.run(sel, cwd=ws, capture_output=True, text=True,
+                                     timeout=TIMEOUT, env=dead)
+            normal = subprocess.run(sel, cwd=ws, capture_output=True, text=True, timeout=TIMEOUT)
+            b_out, n_out = blocked.stdout + blocked.stderr, normal.stdout + normal.stderr
+            n_pass = re.search(r"(\d+) passed", n_out)
+            ran_some = bool(n_pass) and int(n_pass.group(1)) > 0
+            needs_net = blocked.returncode != 0 or "failed" in b_out or "error" in b_out.lower()
+            if ran_some and normal.returncode == 0 and needs_net:
+                live_ok = True
+                live_detail = f"in-file live test: {n_pass.group(1)} passed with network, fails without (provably live)"
+            elif ran_some and normal.returncode == 0:
+                live_detail = "in-file 'live' test passes even with the network blocked — mocked, not live"
+        except subprocess.TimeoutExpired:
+            live_detail = "in-file live check timed out"
     r["parts"]["live_test"] = {"ok": live_ok, "detail": live_detail}
 
     # 3) Resolver works as the README says — or, failing README instructions, the conventional
