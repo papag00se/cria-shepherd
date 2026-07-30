@@ -44,10 +44,13 @@ def main(ws: Path) -> dict:
 
     # 2) Live test: find it, RUN it, and demand evidence of a real resolution (addr1 + stake1
     #    in output). Shape-agnostic: any file whose name mentions "live".
-    live_files = sorted(p for p in ws.glob("*.py") if "live" in p.name.lower())
+    # RECURSIVE — the first version only looked at the workspace root, and a src-layout run
+    # (gemma's habit) had its real tests/live.py scored "no live-test file found" (false FAIL).
+    live_files = sorted(p for p in ws.rglob("*.py")
+                        if "live" in p.name.lower() and "__pycache__" not in p.parts)
     live_ok, live_detail = False, "no live-test file found"
     for lf in live_files:
-        code, out = run([sys.executable, lf.name], ws)
+        code, out = run([sys.executable, str(lf.relative_to(ws))], ws)
         if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out):
             live_ok, live_detail = True, f"{lf.name}: real resolution (addr1+stake1 present)"
             break
@@ -56,11 +59,12 @@ def main(ws: Path) -> dict:
 
     # 3) Resolver works as the README says — or, failing README instructions, the conventional
     #    `python3 <main>.py goose` shape. Demands all three facts: address, holder, a count.
-    mains = [p for p in ws.glob("*.py")
-             if "test" not in p.name.lower() and "live" not in p.name.lower()]
+    mains = [p for p in ws.rglob("*.py")
+             if "test" not in p.name.lower() and "live" not in p.name.lower()
+             and "__pycache__" not in p.parts]
     cli_ok, cli_detail = False, "no candidate resolver script"
     for cand in sorted(mains, key=lambda p: -p.stat().st_size):
-        code, out = run([sys.executable, cand.name, "goose"], ws)
+        code, out = run([sys.executable, str(cand.relative_to(ws)), "goose"], ws)
         if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and re.search(r"\d+", out):
             cli_ok, cli_detail = True, f"{cand.name} goose → address+holder+count"
             break

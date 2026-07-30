@@ -254,10 +254,11 @@ pathological event.
 **Embodied.** [`project_useless_prompting_sweep`], [`feedback_no_footgunning`],
 [`project_convergence_fixes_2026_07_18`].
 
-### 16. Assume cria caused it until proven otherwise — read what the model ACTUALLY received
-**Rule.** Before building machinery to fix a model's apparent mistake, correlate what was
+### 16. Assume cria caused it until proven otherwise
+**Rule.** Read what the model ACTUALLY received and what the model reasoned/thought.
+Before building machinery to fix a model's apparent mistake, correlate what was
 *sent* against what's *on disk*, and run the real tool. When a steer "doesn't work," inspect
-the delivered bytes — the loop can end up "fixing" a footgun cria itself introduced.
+the delivered bytes and the model reasoning — the loop can end up "fixing" a footgun cria itself introduced.
 **Why.** Multiple derails first blamed on the model were real cria bugs (a steer that never
 reached the model, an envelope leak). The reflex must be self-suspicion, not model-blame.
 **Embodied.** [`feedback_no_footgunning`], [`project_goal_fabliq_ada_handles`] (self-corrected
