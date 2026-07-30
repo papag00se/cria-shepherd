@@ -184,6 +184,20 @@ def _proxy_body(body: dict) -> dict:
     return {**body, "messages": kept}
 
 
+def _last_checks_note(server, sess_key: str) -> str:
+    """The most recent gate verdict, verbatim, for the compaction summary — deterministic check
+    truth the model-authored briefing kept omitting (and on gemma the briefing never materializes
+    at all: 4-of-4 compactor passes across g1/g2 leaked, so the appendices ARE the memory; the
+    post-compaction coder otherwise re-learns 'tests are failing' by re-running them). Empty when
+    no gate has spoken or the last gate was clean — silence over noise."""
+    loop = getattr(server, "loop", None)
+    sess = loop._store.get(sess_key) if loop is not None else None
+    flag = getattr(sess, "last_gate_flag", "") if sess is not None else ""
+    if not flag:
+        return ""
+    return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
+
+
 def _workspace_listing(ws: str | None) -> str:
     """FILES ALREADY IN THIS WORKSPACE, names only (top level + one level down), for the compaction
     summary. Empty string when the workspace is unknown/absent — silence over noise."""
@@ -258,9 +272,11 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
     # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
     # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
-    ws = _session_cwd(session_key({}, body.get("messages", [])), body.get("messages", []))
+    sk = session_key({}, body.get("messages", []))
+    ws = _session_cwd(sk, body.get("messages", []))
     inventory = _workspace_listing(ws)
-    facts = "\n\n".join(t for t in (facts, inventory) if t)
+    checks = _last_checks_note(server, sk)
+    facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
     if facts:
         merged = (text + "\n\n" + facts).strip()
         chs = [dict(ch) for ch in comp.get("choices") or []]

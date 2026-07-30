@@ -3572,8 +3572,13 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
-    session = selfcompact.serialize(
-        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", [])))))
+    # Superseded write payloads are STUBBED to their on-disk reference (the existing compact_view
+    # write_stub — restructuring, not trimming: the bytes stay on disk and the author holds
+    # read_file). Without this the author's session carried every historical version whole — 49
+    # copies of one function at g2-0159 — and it asserted "current state" from the pile instead of
+    # reading (the latest tool-call turn keeps its full arguments: the live working set).
+    session = selfcompact.serialize(selfcompact.stub_old_write_args(
+        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", []))))))
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the

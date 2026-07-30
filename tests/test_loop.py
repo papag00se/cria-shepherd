@@ -5720,3 +5720,26 @@ class TextualNullFixTests(unittest.TestCase):
         self.assertFalse(obj["done"])
         self.assertEqual(_fix_text(obj), "add the missing README")
         self.assertEqual(_fix_text({"proposed_fix": "None"}), "")   # never becomes a step named "None"
+
+
+class AuthorSessionStubsSupersededWritesTests(unittest.TestCase):
+    """g2-0159: the author's serialized session carried 49 historical copies of one function and it
+    asserted current state from the pile. Superseded write payloads are stubbed to their on-disk
+    reference (the compact_view write_stub); the LATEST tool-call turn keeps its full arguments."""
+
+    def test_older_write_bodies_are_stubbed_latest_kept(self):
+        from cria import selfcompact
+        old_body = "def test_live_api(self):\n    pass\n" * 40
+        new_body = "def test_live_api_real(self):\n    assert 1\n" * 40
+        msgs = [
+            {"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "t.py", "content": old_body})}}]},
+            {"role": "tool", "tool_call_id": "w1", "content": "Wrote t.py"},
+            {"role": "assistant", "tool_calls": [{"id": "w2", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "t.py", "content": new_body})}}]},
+            {"role": "tool", "tool_call_id": "w2", "content": "Wrote t.py"},
+        ]
+        out = selfcompact.serialize(selfcompact.stub_old_write_args(msgs))
+        self.assertNotIn("def test_live_api(self)", out)        # superseded body → stub
+        self.assertIn("on disk at t.py", out)                    # ...pointing at the real file
+        self.assertIn("def test_live_api_real", out)             # live working set stays whole
