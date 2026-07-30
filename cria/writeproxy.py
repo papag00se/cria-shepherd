@@ -536,6 +536,17 @@ def _spill_relpath(path: str) -> str | None:
     return "./" + rel if (rel == tail or rel.startswith(tail + os.sep)) else None
 
 
+def _respill_command(command: str) -> str:
+    """Root-absolute spill references inside a RAW command string, rewritten to the real
+    workspace-relative form — the command-string twin of :func:`_spill_relpath`. ``read_file`` on
+    ``/tmp/read-only/x`` was silently redirected while the SAME string in a grep/cp was dirguard-
+    refused; shown both, the model learned "the sandbox blocks this file" and burned ~130 calls on
+    it (run 0729-gemma4 pon2; ~25 more in poff-C1). cria controls the spill dir name, so the
+    rewrite is exact — only a token that STARTS at the filesystem root is touched."""
+    tail = webfetch.SPILL_DIR.lstrip("./")
+    return re.sub(r"(?<![\w.])/" + re.escape(tail) + r"(?=[/\s\"']|$)", "./" + tail, command)
+
+
 def _search_command(args: dict, brave_key: str) -> str:
     """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
     shared `brave` module (same request the planner's in-process search builds), then parsed to
@@ -634,6 +645,23 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         break
                 if rlog is not None:
                     rlog.emit("writeproxy.spill_path_redirect", tool=name, to=_rel)
+            # The same rescue for RAW commands (grep/cp/sed on the spill file), which previously got
+            # only the dirguard refusal — the file-tool half succeeding while the command half was
+            # blocked on the same path string taught the model a false sandbox rule.
+            if name in SHELL_TOOL_NAMES and (_c0 := _command_of(fn.get("arguments"))) \
+                    and _respill_command(_c0) != _c0:
+                _d = _parse(fn.get("arguments"))
+                for _f in (*_CMD_FIELDS, "script"):
+                    _v = _d.get(_f)
+                    if isinstance(_v, list) and _v and isinstance(_v[-1], str):
+                        _d = {**_d, _f: [*_v[:-1], _respill_command(_v[-1])]}
+                    elif isinstance(_v, str) and _v:
+                        _d = {**_d, _f: _respill_command(_v)}
+                fn = {**fn, "arguments": json.dumps(_d, ensure_ascii=False)}
+                tc = {**tc, "function": fn}
+                args = _d
+                if rlog is not None:
+                    rlog.emit("writeproxy.spill_command_redirect", tool=name)
             cmd = None
             # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
@@ -747,6 +775,24 @@ _ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
 _ENVELOPE_ADVISORY = re.compile(r"^(?:Warning: truncated output.*|Total output lines: \d+)[ \t]*$")
 
 
+# A pipe into a line-filter: the class of self-blinding observed live (`| grep -E 'passed|failed'`,
+# `| grep -v Error`, `| tail`). Only these — a pipe into tee/xargs/python is not a filter.
+_FILTER_PIPE = re.compile(r"\|\s*(?:grep|egrep|fgrep|rg|head|tail|sed|awk)\b")
+_EXIT_CODE = re.compile(r"Process exited with code (\d+)")
+
+
+def _blind_pipe_failure(command: str, content: str) -> bool:
+    """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
+    line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
+    than all three → stay silent (a bare `grep pat file` exiting 1 with no output is a real answer)."""
+    if not command or not _FILTER_PIPE.search(command):
+        return False
+    m = _EXIT_CODE.search(content)
+    if not m or m.group(1) == "0":
+        return False
+    return _strip_exec_envelope(content).strip() == ""
+
+
 def _strip_exec_envelope(content: str) -> str:
     """The harness exec envelope around a re-presented synthetic-tool result → just the payload.
     Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
@@ -818,6 +864,7 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     swapped = 0
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
+    own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -827,6 +874,8 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 name = fn.get("name")
                 if name in SHELL_TOOL_NAMES:
                     orig = _read_sentinel(_command_of(fn.get("arguments")))
+                    if orig is None:
+                        own_cmds[tc.get("id")] = _command_of(fn.get("arguments"))
                     if orig is not None:
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
@@ -858,6 +907,12 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /
                 # --break-system-packages / venv) ONCE — grounded in the real error, not invented.
                 out.append({**m, "content": content + "\n\n" + prompts.load("pep668_remedy")})
+            elif _blind_pipe_failure(own_cmds.get(tid, ""), content):
+                # The model's OWN filter pipe ate the error: `pytest … | grep -E 'passed|failed'` on a
+                # collection error prints NOTHING (grep exits 1 on no match), and a weak model re-ran
+                # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
+                # The note states only computable facts: nonzero exit, empty output, a filter present.
+                out.append({**m, "content": content + "\n\n" + prompts.load("filtered_failure_note")})
             else:
                 out.append(m)
         else:

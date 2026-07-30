@@ -128,9 +128,13 @@ def _exempt(path: str) -> bool:
     return p in _EXEMPT_EXACT or any(p == pre.rstrip("/") or p.startswith(pre) for pre in _EXEMPT_PREFIXES)
 
 
-def _refusal(verb: str, path: str) -> str:
+def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
-    return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path))
+    # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
+    # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
+    # the one place cria can state the real one.
+    root = f" ({workspace})" if workspace else ""
+    return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root)
 
 
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:
@@ -140,7 +144,7 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -
         return None
     if level == "read" and not is_write:
         return None
-    return _refusal("Writing" if is_write else "Reading", path)
+    return _refusal("Writing" if is_write else "Reading", path, workspace)
 
 
 def command_refusal(command: str, level: str, workspace: str | None) -> str | None:
@@ -182,4 +186,4 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     # it as "Writing", also misnaming the action).
     if level == "read" and not (ext_is_write or _MUTATING_VERB.search(command)):
         return None
-    return _refusal("Writing/reading" if level == "none" else "Writing", external)
+    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace)

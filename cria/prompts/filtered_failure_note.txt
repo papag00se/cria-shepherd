@@ -1,0 +1,1 @@
+⚠ nonzero exit with EMPTY output: this command pipes through a filter (grep/head/tail/…), which consumed whatever the underlying command printed — its real output and exit status are unknown to you. Re-run the same command WITHOUT the pipe/filter to see the actual result before drawing any conclusion.

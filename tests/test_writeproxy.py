@@ -369,6 +369,26 @@ class WebTests(unittest.TestCase):
         self.assertIn("grep", wcmd)
         self.assertIn("./tmp/read-only/api.handle.me_openapi.json", wcmd)
 
+    def test_dropped_dot_slash_spill_COMMAND_is_redirected_not_dirguard_blocked(self):
+        # The command-string half of the same footgun: read_file on '/tmp/read-only/x' was silently
+        # redirected while a grep/cp naming the SAME string was dirguard-refused — the model, shown
+        # both, learned "the sandbox blocks this file" and burned ~130 calls (run 0729-gemma4 pon2).
+        comp = _call("exec_command", {"command": "grep -n 'holder' /tmp/read-only/api.json"})
+        translate_outbound(comp, _CMD_SHELL, injected=set(),
+                           workspace_root="/home/jesse/src/proj", external_dir_permission="none")
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        args = json.loads(tc["function"]["arguments"])
+        self.assertEqual(args["command"], "grep -n 'holder' ./tmp/read-only/api.json")
+        self.assertNotIn("outside the working directory", json.dumps(comp))     # no refusal fired
+
+    def test_a_genuinely_external_command_refusal_names_the_real_workspace(self):
+        # The anonymous "the project directory" left a blocked model inventing roots (/tmp/src,
+        # /tmp/project) for whole runs — the refusal must state the one true root.
+        comp = _call("exec_command", {"command": "cat /etc/passwd"})
+        translate_outbound(comp, _CMD_SHELL, injected=set(),
+                           workspace_root="/home/jesse/src/proj", external_dir_permission="none")
+        self.assertIn("(/home/jesse/src/proj)", _lowered_cmd(comp))
+
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
         translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
@@ -386,6 +406,38 @@ class WebTests(unittest.TestCase):
             {"id": "s1", "type": "function", "function": {"name": "local_web_search", "arguments": '{"query":"x"}'}}]}]
         out = represent_inbound(hist)
         self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "web_search")
+
+
+class BlindPipeNoteTests(unittest.TestCase):
+    """`pytest … | grep -E 'passed|failed'` on a collection error prints NOTHING (grep exits 1 on no
+    match) — a weak model re-ran that blind for eleven turns (run 0729-gemma4 B3) while the real
+    traceback existed. When the model's OWN command has a filter pipe, exits nonzero, and printed
+    nothing, the result gains a note stating those three facts; anything less stays silent."""
+
+    @staticmethod
+    def _msgs(command, exit_code=1, output=""):
+        content = (f"Chunk ID: 805c35\nWall time: 0.1 seconds\nProcess exited with code {exit_code}\n"
+                   f"Original token count: 0\nOutput:\n{output}")
+        return [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
+                 "function": {"name": "exec_command", "arguments": json.dumps({"command": command})}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": content}]
+
+    def test_filtered_empty_failure_gains_the_note(self):
+        out = represent_inbound(self._msgs("python3 -m pytest -q 2>&1 | grep -E 'passed|failed'"))
+        self.assertIn("filter", out[1]["content"])
+        self.assertIn("WITHOUT the pipe", out[1]["content"])
+
+    def test_no_pipe_no_note(self):
+        out = represent_inbound(self._msgs("grep -E 'passed' log.txt"))       # grep IS the command
+        self.assertNotIn("WITHOUT the pipe", out[1]["content"])
+
+    def test_output_present_no_note(self):
+        out = represent_inbound(self._msgs("pytest | grep failed", output="3 failed\n"))
+        self.assertNotIn("WITHOUT the pipe", out[1]["content"])
+
+    def test_exit_zero_no_note(self):
+        out = represent_inbound(self._msgs("pytest | grep passed", exit_code=0))
+        self.assertNotIn("WITHOUT the pipe", out[1]["content"])
 
 
 class WebFetchEnvelopeTests(unittest.TestCase):
