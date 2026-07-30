@@ -52,16 +52,12 @@ holds tools. Full structured findings: workflow `wf_3f21bf2c-f34` journal (sessi
   which also fixes a latent crash (binary stdout under `text=True` raised before any guard ran).
   `webfetch` already had this contract; now everything does.
 
-## Tier 2 — structural, scoped; decide before building
+## Tier 2 — DEAD by operator ruling (2026-07-30): "we are not trimming or truncating anything"
 
-- **Steer author `{{SESSION}}` slot (~85K in the seed capture)** — three agents re-recommend a
-  disclosed recency bound. The operator rejected the blanket 24K session bound on 07-30; the changed
-  premise is that the author now holds tools to recover anything elided. **Operator's call** —
-  parked, not built.
-- **Completion briefing `{{LOG}}` unbounded** ([loop.py:1900](../../cria/loop.py), 68KB measured)
-  and **self-compact band admits one giant message whole** (96KB prompt with a 50KB serialized
-  heredoc; only ⟦ctx:edit⟧ blobs are headline-collapsed). *Direction: recency-bound the done log;
-  per-message digest cap in `selfcompact.serialize`, disclosed.*
+- ~~Steer author `{{SESSION}}` slot bound~~ — **dead.** No trim. The sanctioned mechanisms remain
+  restructuring (list + tools, spill + pointer), never cutting.
+- ~~Completion briefing `{{LOG}}` bound~~ and ~~self-compact per-message cap~~ — **dead.** Same
+  ruling. If these ever hurt in a capture, the fix shape is spill/list+tools, not a cut.
 - ~~`est_tokens` density assumption~~ **WITHDRAWN — the sweep misread this.** The dynamic per-model
   ratio exists (`tokenratio`, asymmetric EWMA fed by real `usage.prompt_tokens`) and the floor uses
   it as its safety factor. The event log proves the estimate CAUGHT the 210K prompt: the floor
