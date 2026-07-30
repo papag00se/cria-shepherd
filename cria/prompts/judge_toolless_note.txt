@@ -1,0 +1,1 @@
+(For this pass your inspection tools are WITHDRAWN — you cannot call read_file or list_dir. Answer from the evidence already shown to you, and do not claim to have inspected anything.)

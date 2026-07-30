@@ -13,3 +13,4 @@ summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n
 # — and judged a "read the API spec" step NOT DONE for having no tests. Same fact, no deletion, put
 # where the ruling happens.
 step_again = THE STEP YOU ARE RULING ON IS THE ONE AT THE TOP, RESTATED HERE — any step numbering inside the coder's summary is the CODER's own and is NOT what you judge:\n{{STEP}}
+summary_leak = (the coder's completion message was a malformed tool call, not a summary — judge from the evidence above)

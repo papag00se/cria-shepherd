@@ -17,27 +17,27 @@ holds tools. Full structured findings: workflow `wf_3f21bf2c-f34` journal (sessi
 
 ## Tier 1 — bug-class now, small fixes
 
-- [ ] **Satisfaction/done-critic evidence is unbounded** — the e4564da `_bound_evidence` fix
+- [x] **Satisfaction/done-critic evidence is unbounded** — the e4564da `_bound_evidence` fix
   covered only the step critic's `_grounded_evidence`; the sibling `_satisfaction_evidence`
   ([loop.py:2355](../../cria/loop.py) → `satisfaction_user {{EVIDENCE}}`, consumed at 1215/2032/2129)
   never got it. Measured: **73.7KB** of "RECENT VERBATIM ACTIONS" in a 78.7KB prompt
   (0183-satisfaction, run 0729T224807). Same self-growing doom-loop mechanism as the critic incident
   (fails closed → re-nudge → evidence grows). *Fix: route through `_bound_evidence`; the judge holds
   read_file/list_dir to drill past the elision.*
-- [ ] **The step critic's CODER'S SUMMARY slot is unbounded** — `sess.pending_coder_text`
+- [x] **The step critic's CODER'S SUMMARY slot is unbounded** — `sess.pending_coder_text`
   ([loop.py:1763](../../cria/loop.py)) embeds whatever the coder emitted as text, including a whole
   file when a weak model leaks a giant `edit_file` as prose. Measured: **119KB of leaked edit text
   inside a 151KB critic prompt** (0567-critic, run 0728T000013) — 5× the 24K evidence budget,
   defeating the bound in the *same prompt*. *Fix: hard-bound the slot; collapse a leaked-tool-call
   summary to a one-line fact (the editrecovery.summarize pattern).*
-- [ ] **Planner gather `exec_command` results bypass the spill** — web_fetch spills at 16K, but
+- [x] **Planner gather `exec_command` results bypass the spill** — web_fetch spills at 16K, but
   `curl` through the gather's exec tool returns raw
   ([planner_tools.py:104/134/143](../../cria/planner_tools.py)). Measured: a **944,245-char** curl of
   docs.ada.cx → a 960,600-byte planner prompt (~255K tokens est), sent twice, **no response either
   time** — the model died silently and the gather restarted. This is the 0727-123534 341KB web_fetch
   incident reborn through the feeder that fix didn't cover. *Fix: oversized exec output takes the
   same spill road — scratchpad file + pointer/outline the gather greps with tools it already holds.*
-- [ ] **The judges' toolless retry passes are lied to** — the reasoning-off retry withholds
+- [x] **The judges' toolless retry passes are lied to** — the reasoning-off retry withholds
   verifytools, but `satisfaction.txt`/`verify.txt` still open with "You have exactly two READ-ONLY
   inspection tools". Rule-5b breach to the retry judge (same class the operator caught in
   `steer_diagnose.txt`). *Fix: a truthful one-line addendum on the toolless pass.*

@@ -5610,3 +5610,66 @@ class SteerDedupeAndFirstPersonTests(unittest.TestCase):
             "The coder is making progress. I will write resolve.py with the correct endpoints.",
             "evidence", rlog))
         self.assertIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
+
+
+class ComposedPromptBoundsTests(unittest.TestCase):
+    """Tier-1 fixes from the file-bloated-prompts sweep: two-message composed prompts must bound
+    their own slots — the floor cannot drop turns a two-message call does not have."""
+
+    def test_satisfaction_evidence_is_bounded_and_disclosed(self):
+        # The e4564da bound covered only the step critic; this sibling grew a measured 73.7KB slot
+        # (0183-satisfaction, run 0729T224807) via the same fail-closed -> re-nudge -> grow loop.
+        from cria.loop import EVIDENCE_BUDGET_CHARS, _satisfaction_evidence
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
+                 "function": {"name": "exec_command",
+                              "arguments": json.dumps({"command": "grep x api.json"})}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "X" * 80000}]
+        ev = _satisfaction_evidence(msgs)
+        self.assertLess(len(ev), EVIDENCE_BUDGET_CHARS + 2000)
+        self.assertIn("elided", ev)                              # the cut is DISCLOSED
+
+    def test_toolless_retry_system_discloses_withdrawn_tools(self):
+        # The reasoning-off retry withholds verifytools while satisfaction.txt still opens with
+        # "You have exactly two READ-ONLY inspection tools" — the retry must be told the truth.
+        from cria.loop import _satisfaction_verdict
+        seen = []
+
+        def chat(body, rlog):
+            seen.append(body)
+            return json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": '{"satisfied": false, "reason": "x"}'}}]}).encode()
+
+        _satisfaction_verdict("SYSTEM WITH TOOL CLAIM", "user", chat, None, _Rlog(),
+                              reasoning_off=True)
+        self.assertIn("WITHDRAWN", seen[0]["messages"][0]["content"])
+        seen.clear()
+        _satisfaction_verdict("SYSTEM WITH TOOL CLAIM", "user", chat, None, _Rlog(),
+                              reasoning_off=False)
+        self.assertNotIn("WITHDRAWN", seen[0]["messages"][0]["content"])  # careful pass untouched
+
+
+class GatherExecSpillTests(unittest.TestCase):
+    """A curl/cat through the gather's exec tool bypassed the web_fetch spill and inlined 944,245
+    chars into one turn — the model never answered, twice (run 0729T152706). Oversized exec output
+    takes the same spill road."""
+
+    def test_oversized_output_spills_with_pointer_and_head(self):
+        import os
+        import tempfile
+
+        from cria import planner_tools
+        d = tempfile.mkdtemp()
+        r = planner_tools._exec_command({"command": "python3 -c \"print('y'*40000)\""}, cwd=d, scratch=d)
+        self.assertLess(len(r.text), 4000)                      # pointer + head, not the blob
+        self.assertIn("grep", r.text)                            # tells the gather how to use it
+        spilled = [f for f in os.listdir(d) if f.startswith("exec-")]
+        self.assertEqual(len(spilled), 1)
+        self.assertGreater(os.path.getsize(os.path.join(d, spilled[0])), 39000)  # saved IN FULL
+
+    def test_small_output_stays_inline(self):
+        import tempfile
+
+        from cria import planner_tools
+        d = tempfile.mkdtemp()
+        r = planner_tools._exec_command({"command": "echo hello"}, cwd=d, scratch=d)
+        self.assertEqual(r.text.strip(), "hello")

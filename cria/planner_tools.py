@@ -20,6 +20,7 @@ shell.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -135,6 +136,24 @@ def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResul
         # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
         # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
         printed = (out.stdout + out.stderr).strip()
+        # A curl/cat through THIS tool bypassed the web_fetch spill and inlined a measured 944,245
+        # chars into ONE gather turn — the composed prompt hit ~255K est tokens and the model never
+        # answered, twice (run 0729T152706 calls 0005/0006). Oversized exec output takes the same
+        # road as an oversized fetch: saved whole to the scratchpad, a pointer + head inlined, and
+        # the gather greps the file with the tools it already holds. Spill-impossible (no scratch /
+        # write failed) keeps the old inline path — output that reaches the model as nothing at all
+        # would be worse than output that costs context.
+        if scratch and len(printed) > webfetch.OVERSIZE_CHARS:
+            target = os.path.join(scratch, f"exec-{hashlib.sha1(cmd.encode()).hexdigest()[:10]}.txt")
+            try:
+                os.makedirs(scratch, exist_ok=True)
+                with open(target, "w", encoding="utf-8") as fh:
+                    fh.write(printed)
+                head = printed[:2000]
+                printed = prompts.fill(prompts.load_map("planner_steers")["exec_spill"],
+                                       chars=f"{len(printed):,}", target=target, head=head)
+            except OSError:
+                pass
         text = printed or "[no output]"
         if fresh:
             text += "\n" + prompts.fill(prompts.load_map("planner_steers")["fresh_note"], cwd=cwd)

@@ -347,6 +347,9 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
     role = reasoner_role
     if reasoning_off:
         role = replace(role, reasoning="off") if role is not None else None
+        # the retry is TOOLLESS, but the system prompt opens "You have exactly two READ-ONLY
+        # inspection tools" — tell this pass the truth (the steer_diagnose stale-line lesson).
+        system = system + "\n\n" + prompts.load("judge_toolless_note")
     try:
         # The careful pass may INSPECT (the shared judge loop; operator directive) — the completion
         # critic authors corrective steps the coder must obey, and blind it theorized a wrong
@@ -1760,6 +1763,15 @@ class Loop:
             parts.append(prompts.fill(labels["evidence"], evidence=evidence))
         if probe:
             parts.append(prompts.fill(labels["probe"], probe=probe))
+        # The summary slot is a CLAIM, labeled as such — but unbounded it carried a measured 119KB
+        # leaked edit_file blob into a 151KB critic prompt (0567-critic, run 0728T000013), 5x the
+        # evidence budget in the same prompt. A leaked tool call is not a summary at all; a huge
+        # summary keeps only its tail, disclosed.
+        if massage.has_tool_call_leak(coder_text):
+            coder_text = labels["summary_leak"]
+        elif len(coder_text) > 8000:
+            coder_text = (f"[{len(coder_text) - 8000:,} characters of the coder's summary elided — "
+                          f"its most recent part follows]\n" + coder_text[-8000:])
         parts.append(prompts.fill(labels["summary"], coder_summary=coder_text))
         # The critic is reasoning about the coder's work — give it the coder's tools too, so a NOT-done
         # reason it writes back names an action the coder can actually take (blind to them, it can't).
@@ -1835,6 +1847,8 @@ class Loop:
         role = self._ctx.reasoner_role
         if reasoning_off:
             role = replace(role, reasoning="off") if role is not None else None
+            # toolless pass → the system prompt's tool claim would be false; disclose it.
+            system = system + "\n\n" + prompts.load("judge_toolless_note")
         try:
             # max_tokens bounds the output generously: the verdict's `reason` feeds the coder
             # re-nudge, so it must never be truncated at generation — the cap stays only as a
@@ -2352,7 +2366,11 @@ def _satisfaction_evidence(messages: list[dict]) -> str:
     yet)" and hallucinated that NO work was done (the observed false "the coder hasn't started" that
     marked a real, in-progress build as not-satisfied). The summary is the best record of the
     compacted-away work; the judge weighs it against the still-verbatim recent actions."""
-    log = _work_log(messages)
+    # Bounded like the step critic's evidence (e4564da) — this sibling never got the fix and grew a
+    # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
+    # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
+    # the same mechanism the critic bound was shipped for.
+    log = _bound_evidence(_work_log(messages))
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
