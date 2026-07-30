@@ -205,8 +205,23 @@ def _compaction_transcript(messages: list) -> str:
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
     briefing model read plugin ads before any work), gate blobs cleaned, then serialized. Structured
     tool-call turns become text lines: nothing for a weak model to pattern-match into a tool call."""
-    convo = [m for m in messages if m.get("role") not in ("system", "developer")]
-    return selfcompact.serialize(probegate.clean_gate_results(_drop_harness_frame(convo)))
+    convo = [m for m in messages
+             if m.get("role") not in ("system", "developer")
+             # the harness's OWN summarize request is the instruction, not work to summarize —
+             # left in, it became the transcript's last line while the line BEFORE it was a stale
+             # "produce the corrected FULL file in a single write_file call". The model obeys the
+             # last instruction it reads, and answered with a write_file (measured g8 0187/0188).
+             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)]
+    body = selfcompact.serialize(probegate.clean_gate_results(_drop_harness_frame(convo)))
+    # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
+    return body + "\n\n" + prompts.load("compact_closing_ask")
+
+
+def _text_of_msg(m: dict) -> str:
+    c = m.get("content")
+    if isinstance(c, list):
+        return " ".join(str(p.get("text", "")) for p in c if isinstance(p, dict))
+    return c if isinstance(c, str) else ""
 
 
 def _workspace_listing(ws: str | None) -> str:

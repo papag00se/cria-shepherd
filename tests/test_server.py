@@ -920,6 +920,22 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
         self.assertIn("write a resolver", t)
         self.assertIn("r.py", t)
 
+    def test_the_ask_is_last_and_the_summarize_turn_is_not_evidence(self):
+        # THE cause (g8 0187/0188): the transcript ended on a stale instruction — "produce the
+        # corrected FULL file in a single write_file call" — with the harness's summarize request
+        # buried as the final transcript line. A pattern-completer obeys the LAST instruction it
+        # reads, and answered with a write_file. cria's ask must be last; the summarize turn is not
+        # work to summarize. (The internal compaction that WORKS ends on neutral pytest output.)
+        from cria.server import _compaction_transcript
+        t = _compaction_transcript([
+            {"role": "user", "content": "write a resolver"},
+            {"role": "assistant", "content": "produce the corrected FULL file in a single write_file call"},
+            {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread for continuation."},
+        ])
+        self.assertNotIn("LOCAL_COMPACT", t)                       # the instruction is not evidence
+        self.assertTrue(t.rstrip().endswith("what you were doing last."))
+        self.assertLess(t.index("write_file call"), t.index("Write the briefing now"))
+
 
 
 class FailSilentHoleTests(unittest.TestCase):
