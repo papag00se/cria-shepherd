@@ -170,7 +170,12 @@ def main() -> None:
     env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}")
     t0 = time.time()
     with open(log_path, "w") as lf:
+        # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
+        # BEFORE starting the turn, and after an interrupted turn it returns to reading stdin.
+        # An inherited never-closing stdin (a live socket from the launch environment) froze two
+        # cells for their full 30-minute walls with zero work — pre-banner, zero API calls.
         proc = subprocess.Popen(HARNESSES[args.harness](prompt), cwd=ws,
+                                stdin=subprocess.DEVNULL,
                                 stdout=lf, stderr=subprocess.STDOUT, env=env,
                                 start_new_session=True)
     terminal = "exited"
