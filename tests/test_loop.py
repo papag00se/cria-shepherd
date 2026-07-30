@@ -5673,3 +5673,29 @@ class GatherExecSpillTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         r = planner_tools._exec_command({"command": "echo hello"}, cwd=d, scratch=d)
         self.assertEqual(r.text.strip(), "hello")
+
+
+class FalseLineCitationTests(unittest.TestCase):
+    """A steer citing a line past the file's REAL length (which cria itself stated in the disk list)
+    is provably false and is withheld — run g1 0034 cited 'lines 108-112' of a 68-line file with
+    the count in its own prompt."""
+
+    def _clean(self, text, evidence):
+        from cria.loop import _grounded_steer_or_none
+
+        class _R:
+            def emit(self, *a, **k):
+                return self
+
+        return _grounded_steer_or_none(text, evidence, _R())
+
+    def test_citation_past_the_known_length_drops_the_steer(self):
+        ev = "FILE tests/test_client.py — 2,740 bytes, 68 lines"
+        self.assertIsNone(self._clean("Fix lines 108-112 of test_client.py — the match= idiom.", ev))
+        self.assertIsNone(self._clean("Delete test_client.py:112 and rerun.", ev))
+
+    def test_valid_citations_and_unknown_files_pass(self):
+        ev = "FILE tests/test_client.py — 2,740 bytes, 68 lines"
+        self.assertIsNotNone(self._clean("Fix test_client.py:34 — remove the match= kwarg.", ev))
+        self.assertIsNotNone(self._clean("Fix other_file.py:500 now.", ev))    # no stated count → pass
+        self.assertIsNotNone(self._clean("Run pytest and read the output.", ev))

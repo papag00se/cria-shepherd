@@ -184,6 +184,29 @@ def _proxy_body(body: dict) -> dict:
     return {**body, "messages": kept}
 
 
+def _workspace_listing(ws: str | None) -> str:
+    """FILES ALREADY IN THIS WORKSPACE, names only (top level + one level down), for the compaction
+    summary. Empty string when the workspace is unknown/absent — silence over noise."""
+    if not ws or not os.path.isdir(ws):
+        return ""
+    lines: list[str] = []
+    try:
+        for name in sorted(os.listdir(ws))[:40]:
+            if name.startswith(".") or name == "tmp" or name.endswith(".pyc"):
+                continue
+            full = os.path.join(ws, name)
+            if os.path.isdir(full):
+                inner = sorted(x for x in os.listdir(full) if not x.startswith((".", "__pycache__")))[:12]
+                lines.append(f"  {name}/" + (("  (" + ", ".join(inner) + ")") if inner else ""))
+            else:
+                lines.append(f"  {name}")
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    return "FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):\n" + "\n".join(lines)
+
+
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
@@ -223,9 +246,21 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
             text2 = _text_of(comp2).strip()
             if text2 and not massage.has_tool_call_leak(text2):
                 comp, text = comp2, text2
+            else:
+                # both passes produced no usable prose (observed: two pseudo write_file dumps in a
+                # row, run g1 0093/0094) — the summary will be the deterministic appendices ONLY.
+                # Without this emit that fact was invisible in the events.
+                rlog.emit("route.compaction_no_briefing", level="warning", retry_leak=bool(text2))
         except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
             rlog.emit("route.compaction_retry_failed", level="warning")
     facts = _fetch_ground_truth(body.get("messages", []))
+    # WORKSPACE LEDGER — the fetch-facts pattern extended to files. g1's compaction summary carried
+    # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
+    # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
+    # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
+    ws = _session_cwd(session_key({}, body.get("messages", [])), body.get("messages", []))
+    inventory = _workspace_listing(ws)
+    facts = "\n\n".join(t for t in (facts, inventory) if t)
     if facts:
         merged = (text + "\n\n" + facts).strip()
         chs = [dict(ch) for ch in comp.get("choices") or []]

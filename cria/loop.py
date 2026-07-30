@@ -3707,7 +3707,39 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
         return None
+    cite = _false_line_citation(directive, evidence)
+    if cite:
+        # Same enforcement, next claim class: the author cited a LINE past the file's real length —
+        # its own disk list said "68 lines" and the steer said "lines 108-112" (run g1 0034; run g1
+        # 0127's misread rode a citation too). cria stated the line count, so the check is exact.
+        rlog.emit("loop.steer_false_citation", level="warn", cite=cite)
+        return None
     return directive
+
+
+# Explicit line citations only — two fixed shapes, both anchored on a filename: `path.py:108` and
+# "lines 108-112 of path.py". Anything fuzzier would be judgment dressed as a rule.
+_CITE_COLON = re.compile(r"\b([\w./-]+\.\w{1,4}):(\d{1,5})\b")
+_CITE_WORDS = re.compile(r"\blines?\s+(\d{1,5})(?:\s*[-–—]\s*(\d{1,5}))?\s+(?:of|in)\s+([\w./-]+\.\w{1,4})\b", re.I)
+_DISK_LINE = re.compile(r"^FILE\s+(\S+)\s+—\s+[\d,]+\s+bytes,\s+([\d,]+)\s+lines?$", re.M)
+
+
+def _false_line_citation(directive: str, evidence: str) -> str | None:
+    """A `file:line` citation in the steer that exceeds the file's REAL line count as stated by the
+    disk list cria itself composed into the evidence — or None. Only files whose count we stated are
+    checkable; everything else passes (silence over noise)."""
+    counts = {os.path.basename(m.group(1)): int(m.group(2).replace(",", ""))
+              for m in _DISK_LINE.finditer(evidence)}
+    if not counts:
+        return None
+    cited: list[tuple[str, int]] = []
+    cited += [(m.group(1), int(m.group(2))) for m in _CITE_COLON.finditer(directive)]
+    cited += [(m.group(3), max(int(m.group(1)), int(m.group(2) or 0))) for m in _CITE_WORDS.finditer(directive)]
+    for f, n in cited:
+        known = counts.get(os.path.basename(f))
+        if known is not None and n > known:
+            return f"{f}:{n} (file has {known} lines)"
+    return None
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
