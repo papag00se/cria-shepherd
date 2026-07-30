@@ -891,12 +891,20 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
         self.assertTrue(_is_compaction_request(msgs))
         pb = _proxy_body({"messages": msgs})
-        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")}]
-              + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
+        from cria import selfcompact
+        convo = [m for m in pb.get("messages", []) if m.get("role") != "system"]
+        pb = {**pb, "messages": [
+            {"role": "system", "content": prompts.load("selfcompact_summary")},
+            {"role": "user", "content": selfcompact.serialize(convo)},
+        ]}
         head = pb["messages"][0]
         self.assertEqual(head["role"], "system")
         self.assertIn("NO tools", head["content"])                       # the ONE proven framing,
         self.assertIn("tool/function call", head["content"])             # shared with self-compaction
+        # …and the history is FLAT TEXT: no structured tool-call turn for a weak model to mimic
+        self.assertEqual(len(pb["messages"]), 2)
+        self.assertTrue(all(not m.get("tool_calls") for m in pb["messages"]))
+        self.assertIn("shell", pb["messages"][1]["content"])              # the calls survive AS TEXT
 
 
 

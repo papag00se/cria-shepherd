@@ -21,7 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import callcapture, focustrim, massage, prompts, responses, rumination
+from . import callcapture, focustrim, massage, prompts, responses, rumination, selfcompact
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -249,12 +249,16 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     if not text or massage.has_tool_call_leak(text):
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
         pb = _proxy_body(dict(body))
+        pb = {**pb, "messages": [m for m in pb.get("messages", []) if m.get("role") != "system"]}
         # The retry must not re-ask the question that just failed: the harness's own summarize
         # prompt + a weak model = a pseudo tool call, BOTH passes (g1 0093/0094, g2 twice — the
         # summary degraded to appendices-only). Lead the retry with cria's briefing framing built
         # for weak models: prose only, no tools, name real files, quote real checks.
-        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")}]
-              + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
+        pb = {**pb, "messages": [
+            {"role": "system", "content": prompts.load("selfcompact_summary")},
+            {"role": "user", "content": selfcompact.serialize(
+                [m for m in pb.get("messages", []) if m.get("role") != "system"])},
+        ]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
         else:
@@ -818,9 +822,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             # ever spoken tool calls, yields a tool call. The briefing framing must lead the FIRST
             # pass — and it is the SAME battle-tested framing the internal rolling compaction uses
             # (selfcompact_summary), not a parallel variant (operator: one compaction prompt).
-            pbody = {**pbody, "messages":
-                     [{"role": "system", "content": prompts.load("selfcompact_summary")}]
-                     + [m for m in pbody.get("messages", []) if m.get("role") != "system"]}
+            # …and the history is FLATTENED to a text transcript in ONE user message, exactly as
+            # cria's internal rolling compaction does. THIS is why internal briefings succeed and
+            # harness ones failed: passed 89 STRUCTURED turns — 42 of them its own tool calls — a
+            # weak model continues the pattern and answers with a tool call, whatever the system
+            # prompt says (measured g6: correct framing led, and both replies were still
+            # `call:write_file{...}`). With no tool-call turns in front of it, there is no shape to
+            # mimic. One mechanism, both paths.
+            convo = [m for m in pbody.get("messages", []) if m.get("role") != "system"]
+            pbody = {**pbody, "messages": [
+                {"role": "system", "content": prompts.load("selfcompact_summary")},
+                {"role": "user", "content": selfcompact.serialize(convo)},
+            ]}
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:
