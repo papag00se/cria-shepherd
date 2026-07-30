@@ -512,3 +512,39 @@ class _RlogStub:
     phase = "coder"
     def emit(self, *a, **k):
         pass
+
+
+class DelimiterFactTests(unittest.TestCase):
+    """Unmatched-delimiter findings get ONE counted fact — the line's on-disk bytes + opener/closer
+    counts. Code counts, the model applies; the fact prescribes nothing (delete-vs-add is the
+    model's call), and a balanced flagged line gets silence (the imbalance is elsewhere)."""
+
+    def test_imbalanced_line_gets_a_counted_fact(self):
+        import tempfile, os
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        with tempfile.TemporaryDirectory() as ws:
+            os.makedirs(os.path.join(ws, "tests"))
+            with open(os.path.join(ws, "tests", "t.py"), "w") as fh:
+                fh.write("import x\n" * 53 + 'with patch("a", side_effect=ValueError("x (503)"))):\n')
+            out = _with_delimiter_facts(
+                [f"tests/t.py:54:52: unmatched ')'"], GatePlan(workspace=ws))
+            self.assertEqual(len(out), 2)
+            self.assertIn("counted fact", out[1])
+            self.assertIn("3 '('", out[1])
+            self.assertIn("4 ')'", out[1])
+            self.assertNotIn("delete", out[1].lower())          # never prescribes
+            self.assertNotIn("add", out[1].lower())
+
+    def test_balanced_line_stays_silent(self):
+        import tempfile, os
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        with tempfile.TemporaryDirectory() as ws:
+            with open(os.path.join(ws, "t.py"), "w") as fh:
+                fh.write("x = (1)\n")
+            out = _with_delimiter_facts(["t.py:1:1: unmatched ')'"], GatePlan(workspace=ws))
+            self.assertEqual(out, ["t.py:1:1: unmatched ')'"])   # fact withheld — imbalance elsewhere
+
+    def test_non_delimiter_findings_untouched(self):
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        f = ["a.py:3:1: undefined name 'requests'"]
+        self.assertEqual(_with_delimiter_facts(f, GatePlan(workspace="/tmp")), f)

@@ -122,6 +122,43 @@ def split_sections(text: str) -> dict[str, str]:
     return sections
 
 
+_DELIM_PAIRS = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
+_UNMATCHED_RE = re.compile(r"^(.+?):(\d+):.*?\bunmatched\b.*?['\"]([()\[\]{}])")
+
+
+def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
+    """For an unmatched-delimiter finding, append ONE counted fact: the flagged line's actual
+    on-disk bytes plus how many openers and closers it holds. Code counts, the model applies —
+    a small model provably cannot (run 0729-gemma4: 137 calls failing to remove one ')', its own
+    steer author miscounting too). The fact PRESCRIBES NOTHING (operator: cria cannot know whether
+    the fix is deleting the extra closer or adding a missing opener). When the flagged line's
+    counts BALANCE, the imbalance lives on another line — a single-line count would mislead, so
+    stay silent (state the fact or be silent)."""
+    import os
+    from pathlib import Path
+    out: list[str] = []
+    workspace = getattr(plan, "workspace", "") or ""
+    for f in findings:
+        out.append(f)
+        m = _UNMATCHED_RE.match(f)
+        if not m or not workspace:
+            continue
+        path, line_no, d = m.group(1), int(m.group(2)), m.group(3)
+        p = Path(path) if os.path.isabs(path) else Path(workspace) / path
+        try:
+            line = p.read_text(errors="replace").splitlines()[line_no - 1]
+        except (OSError, IndexError):
+            continue
+        opener = d if d in "([{" else _DELIM_PAIRS[d]
+        closer = _DELIM_PAIRS[opener]
+        n_open, n_close = line.count(opener), line.count(closer)
+        if n_open == n_close:
+            continue
+        out.append(f"  counted fact: line {line_no} on disk is `{line.strip()}` — it contains "
+                   f"{n_open} '{opener}' and {n_close} '{closer}'.")
+    return out
+
+
 def _is_hard_failure(plan, sid: str) -> bool:
     """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
     looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
@@ -233,6 +270,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
             failed_no_detail = True
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
+    findings = _with_delimiter_facts(findings, plan)
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         # Show EVERY error-class finding — a 40-line clip once hid findings 41+, so the model "fixed"
         # what it saw and claimed done while real errors remained invisible. The context floor
