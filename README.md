@@ -1,136 +1,167 @@
-# cria-shepherd
+<div align="center">
 
-**A harness-agnostic shim that makes a small local model do real agentic coding.**
+# 🦙 cria-shepherd
 
-`cria-shepherd` sits between an OpenAI-compatible coding agent and a small local model
-(9B-class, on llama.cpp or any OpenAI-compatible server) and rewrites the stream between
-them. A 9B driving an agent loop alone stalls, loops on failing commands, leaks malformed
-tool calls, and declares victory over broken code. cria catches each failure mode with a
-targeted **heuristic assist** and hands the harness a completion it can use.
+**Your 8B can't do agentic coding. Shepherded, it can.**
 
-It speaks the OpenAI wire protocol on both sides — no harness plugin, no model fork — and
-owns no executors: the harness still runs the tools and owns the workspace. Standard
-library only, Python ≥ 3.11, local-first, and every decision emits a structured event.
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)
+![zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+![tests](https://img.shields.io/badge/tests-1474%20passing-brightgreen)
+![local first](https://img.shields.io/badge/cloud-optional-9cf)
 
-The name: a *cria* is a baby llama.
+*A cria is a baby llama. It needs a shepherd.*
+
+</div>
+
+---
+
+Small local models are terrible agents. Left alone in a coding loop, a 9B stalls, reruns
+the same failing command sixteen times, leaks mangled tool calls, invents API endpoints,
+and proudly declares victory over broken code.
+
+cria-shepherd is a **compound AI system** that sits between your agent harness and your
+model server and fixes that. What the harness sees as one model endpoint is actually a
+crew: a classifier, a planner, a coder, a step critic, a completion judge, a steer
+author, a compactor — plus deterministic detectors, probes, verifiers, and repairs
+around every one of them. The capability comes from the structure, not the weights.
 
 ```
   ┌─────────┐  /v1/chat/completions  ┌───────────────┐  /v1/chat/completions  ┌──────────────┐
   │ harness │ ─────────────────────► │ cria-shepherd │ ─────────────────────► │ model server │
-  │ (agent) │  /v1/responses         │    :18085     │  applies assists       │   (:18084)   │
+  │ (agent) │  /v1/responses         │    :18085     │  the whole crew        │   (:18084)   │
   └─────────┘ ◄───────────────────── └───────────────┘ ◄───────────────────── └──────────────┘
 ```
 
-Point your harness at cria instead of at the model server. Endpoints:
-`POST /v1/chat/completions`, `POST /v1/responses`, `GET /v1/models`, `GET /health`.
+**The receipt:** a quantized local model, driven by cria through a stock coding harness,
+completed a real API-integration task fully unaided — working resolver, 12 passing unit
+tests, a *genuinely live* network test, and an accurate README — in 25 minutes. Every
+deliverable verified by running it, not by believing anyone.
 
-## The heuristic assists
+## Sixty seconds to shepherded
 
-The reason cria exists — five families, [full catalog in `docs/heuristic-assists.md`](docs/heuristic-assists.md):
+```bash
+git clone https://github.com/papag00se/cria-shepherd.git && cd cria-shepherd
+pip install -e .                     # stdlib only — installs `cria` and `cria-tail`
+cp cria.example.toml ~/.cria/cria.toml   # point [defaults].base_url at your model server
+python -m cria                       # cria now serves :18085
+```
 
-- **Nudges** — directives the model *sees* to break loops: repetition, thrash,
-  rumination, tunnel-vision, and read-without-write guards.
-- **Massages** — silent output repairs the model never sees: `write_file` lowered to a
-  byte-exact `base64` shell call, leaked-tool-call recovery, JSON and `apply_patch` fixes.
-- **Context shaping** — cria keeps every request under the model's window *itself*,
-  whatever the harness sends: it auto-detects the real window, budgets for the tool
-  schema, reduces oversized tool outputs, and trims the oldest turns so the request
-  always fits — no reliance on the harness to compact — plus a destructive-overwrite guard.
-- **Probes** — cria makes its own read-only calls for ground truth: a syntax floor
-  (`py_compile`/`node --check`) and a completion gate that runs tests on any "done" claim.
-- **Reasoned guidance** — a cheap local reasoner drafts a plan up front, and on a stuck
-  loop authors the next step from fresh ground truth instead of a canned nudge.
+Point your harness at `http://127.0.0.1:18085/v1` instead of the model server. That's it.
+Chat-Completions harnesses set a base URL; Responses-API harnesses (Codex) set
+`wire_api = "responses"`. No plugin, no model fork, no API key. A `⟦cria⟧` status ticker
+narrates the pipeline live — planning, steps, checks, compaction, running clock.
 
-## Design doctrine
+## Why it's different
 
-The *why* behind those mechanisms is a set of hard-won rules — truncation is a footgun,
-deterministic code gathers facts while a reasoner judges, assists are footguns, fail closed,
-cria never ends a session to a human. They are collected in
-**[`docs/principles.md`](docs/principles.md)**, with [`AGENTS.md`](AGENTS.md) as the entry
+**vs. server-side compound systems** (groq/compound and friends): their model mix is a
+product decision — cria's is a config file. Bind every role to one scrappy local 9B, or
+put the judges on a big cloud model and keep the coder local, or anything between.
+Failover chains handle whatever doesn't resolve. And cria **owns no executors** — every
+tool runs in *your* harness, on *your* machine, under *your* permissions. cria composes,
+interprets, verifies. It never runs your code itself.
+
+**vs. "just use a bigger model"**: that's the point. The research question this repo
+exists to answer is how far structure alone can carry small weights — so we test the
+hardest configuration on purpose: every role played by one 8–27B, no cloud, no help.
+
+## Battle-tested across the board
+
+- **A dozen models, 8B–27B, dense and MoE** — Ornith, Qwopus, Qwythos, Gemma 4 Fable,
+  Fabliq, Mellum 2, LFM2.5, Nemotron Elastic, ZAYA1, Ternary-Bonsai. A model that
+  breaks cria isn't a nuisance here — it's a requirement. Launch recipes per model in
+  [`docs/model-settings.md`](docs/model-settings.md).
+- **Harnesses**: exercised under Codex (Responses API) and Claude tooling; anything
+  speaking OpenAI Chat-Completions works. Tools are matched by *family*, never by one
+  harness's names.
+- **Languages**: gates and probes discover each ecosystem's own checks — parse floors,
+  linters, test runners — for Python, TypeScript/JS, Rust, Go, Java (plus Ruby and PHP
+  floors), fresh from the workspace on every gate.
+- **Prompts**: hardened on multi-step agentic tasks — API integrations, database work,
+  test suites, CLI tools — scored by a matrix (`suite/`) whose verifiers **run the
+  deliverables**. Not the model's claim. Not a judge's vibe. The code, executed.
+  cria never special-cases a benchmark prompt.
+
+## The assists
+
+Six families. Every one of them exists because a captured run failed without it —
+the full catalog with receipts lives in
+[`docs/heuristic-assists.md`](docs/heuristic-assists.md).
+
+| family | what it does |
+|---|---|
+| **Nudges** | directives the model *sees* — break repetition, wheel-spinning, thrash, rumination, quiet flailing |
+| **Massages** | silent repairs it *doesn't* — byte-exact write lowering, leaked/fused tool-call recovery, dialect salvage, poisoned-history repair |
+| **Probes** | cria gathers its own ground truth — syntax floors, a completion gate that runs the repo's real checks on every "done" claim, computed facts (it counts the parens; the model just fixes them) |
+| **Reasoned guidance** | detectors *trigger*, a reasoner *judges* — stuck-loop steers authored from fresh on-disk truth, living-plan re-derivation, step verdicts. Guarded both ways: fabricated steers and impossible judge claims get dropped, traced |
+| **Context shaping** | every request fits the model's real window, cria's own responsibility — auto-detected, budget-aware, never truncating what the model must read; rolling self-compaction that points at files on disk instead of quoting stale copies |
+| **Guards** | for how small models actually fail — invented endpoints (route-grounding against really-fetched specs), dropped/invented actions and completions (fail-closed accountability), false signals (an unfinished check reads UNFINISHED — never "passed", never "tool missing") |
+
+## Planning mode
+
+Optional plan-first loop, built for small attention spans:
+
+- The planner **investigates before it plans** — a real tool loop over the repo, docs,
+  and filesystem. Steps come from evidence, not vibes.
+- The plan is **alive** — after each verified step (and on stalls) a reasoner re-derives
+  what remains from the work actually done.
+- Every step faces a **critic** with its own inspection tools, an approve-path brake
+  that re-checks the disk, and fail-closed handling of anything unparseable.
+- Noise steps — bare commands, dictated code, speculative endpoints — get scrubbed,
+  whoever authored them. Deliverable coverage is checked at draft, at every re-derive,
+  and at the end.
+
+## The doctrine
+
+Every mechanism above traces back to a rule learned from a captured failure: *assists
+are footguns. Never truncate what the model reads. Deterministic code gathers facts;
+a reasoner judges. Fail closed. State the fact or be silent. Never end a session to a
+human.* The full set — with the incidents that forged them — is in
+[`docs/principles.md`](docs/principles.md), and [`AGENTS.md`](AGENTS.md) is the entry
 point for anyone (human or agent) about to change cria's behavior.
 
-## Install
+## Roles & backends
 
-Requires Python ≥ 3.11 and an OpenAI-compatible model server (llama.cpp is the reference)
-already serving your model.
-
-```bash
-git clone https://github.com/papag00se/cria-shepherd.git
-cd cria-shepherd
-pip install -e .          # installs the `cria` and `cria-tail` scripts; no third-party deps
-```
-
-## Configure
-
-cria auto-discovers `~/.cria/cria.toml` then `./cria.toml` (deep-merged, cwd wins), or pass
-`--config`:
-
-```bash
-mkdir -p ~/.cria && cp cria.example.toml ~/.cria/cria.toml && $EDITOR ~/.cria/cria.toml
-```
-
-Minimum config — a transparent, assist-applying proxy in front of one model server:
-
-```toml
-[server]
-port = 18085                            # 18084 = raw model, 18085 = cria
-
-[defaults]
-base_url = "http://127.0.0.1:18084"     # shared endpoint for backends that omit their own
-```
-
-cria uses ONE config model: **`[backends]`** say WHERE a model runs (transport `http` | `cli`);
-**`[roles]`** bind a backend to the sampling + reasoning cria attaches to every request for that
-role (applied per request — change = cria restart, not a model reload). cria addresses four roles —
-`classifier`, `reasoner`, `coder`, `compactor`:
+Four roles — `classifier`, `reasoner`, `coder`, `compactor` — each bound to a backend
+with its own sampling and reasoning protocol:
 
 ```toml
 [backends.local]
 transport = "http"
-base_url  = "http://127.0.0.1:18084"    # a served (keyless) endpoint — cria uses the loaded model
+base_url  = "http://127.0.0.1:18084"     # any OpenAI-compatible server
+
+[backends.groq]                          # optional: escalate a role off-box
+transport = "http"
+base_url  = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"             # the config names the var, never the key
+model = "llama-3.3-70b"
 
 [roles.coder]
-backend        = "local"
-reasoning      = "on"                    # "on" | "off" | "auto"
-temperature    = 0.0
-repeat_penalty = 1.05                    # also: top_p · top_k · min_p · max_tokens · output_reserve
+backend = "local"
+reasoning = "on"                         # on | off | auto — translated per backend dialect
+temperature = 0.2
+
+[failover]
+coding = ["coder", "reasoner"]           # unresolvable backends are skipped, chain collapses
 ```
 
-Route by task type through a `[failover]` chain, and escalate off-box by adding a **keyed** backend
-(`api_key_env = "GROQ_API_KEY"` + `model = "…"`) or a `transport = "cli"` backend (the `claude`
-CLI) and appending its role to the chain — a role whose backend needs a missing key/binary is
-simply skipped, so the chain collapses to whatever resolves. Secrets stay in the environment (the
-config names the env var, never the key). Model **launch** settings (context, quant, GPU) belong to
-the model server, not cria — see [`docs/model-settings.md`](docs/model-settings.md). Every key is
-documented inline in [`cria.example.toml`](cria.example.toml).
+Backends can also be `transport = "cli"` subprocesses — ride your `claude` OAuth
+subscription as a role. Usage-limit pooling across backends is on the roadmap. Every key
+is documented inline in [`cria.example.toml`](cria.example.toml).
 
-## Run
+## Watch it work
 
 ```bash
-python -m cria             # auto-discovers ~/.cria/cria.toml; flags: --host --port --log-level --config
+cria-tail -f                         # follow the decision log — every action has a reason
+python -m pytest                     # 1,474 stdlib-only tests, no GPU, no network
+python suite/run.py --task ada-handles --model qwythos --harness codex --planner on
 ```
 
-Then point your harness's model client at `http://127.0.0.1:18085/v1`. Chat-Completions
-harnesses just set that base URL; Responses-API harnesses (e.g. Codex) point their
-provider there with `wire_api = "responses"` and no API key. You don't have to tune the
-harness's context-window to the model — cria discovers the real window and keeps every
-request under it regardless. Each response opens with a `⟦cria⟧ <role> · <model>` line so
-you can see cria is in the loop.
+Every action emits a structured event to `~/.cria/logs/`. Every suite run archives its
+full evidence — workspace, per-call capture, event trail — because every future fix
+starts from a captured failure.
 
-## Observe & test
+## Lineage
 
-Every action logs a structured event with an explicit `reason` to
-`~/.cria/logs/cria-YYYYMMDD.jsonl`; inspect with the bundled tool. Tests are stdlib-only
-with a fake upstream — no GPU or network.
-
-```bash
-cria-tail -f               # follow the log  ·  --decisions  ·  --turn <id>
-python -m pytest
-```
-
-## Background
-
-cria-shepherd is the Python form of the "Shephard" research prototyped in a Rust fork of
-the Codex CLI; that fork is the research vehicle, the specs it produced are the
-deliverable. See [`docs/heuristic-assists.md`](docs/heuristic-assists.md) and
-[`docs/shephard.md`](docs/shephard.md).
+cria-shepherd is the Python form of the "Shephard" research first prototyped in a Rust
+fork of the Codex CLI. The fork was the lab; the specs it produced are the deliverable —
+see [`docs/shephard.md`](docs/shephard.md).
