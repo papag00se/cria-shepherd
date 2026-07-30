@@ -477,11 +477,19 @@ class Upstream:
             return self.chat({k: v for k, v in body.items() if k != "stream_options"}, rlog)
         t_end = time.monotonic()
         completion = _assemble_completion(body.get("model"), content, reasoning, tool_acc, finish, usage, aborted)
+        tokens = (usage or {}).get("completion_tokens")
+        tok_s = round(tokens / (t_end - (t_first or t0)), 1) if (tokens and t_end > (t_first or t0)) else None
+        if tokens and t_end > (t_first or t0):
+            # Streamed answers carry no server "timings" block, so every streamed (coder) call was
+            # invisible to timing readers of the capture — suite tok/s silently measured crew calls
+            # only. Field names mirror llama.cpp's so those readers need no second shape; "source"
+            # says these are cria-measured (first token → end), not server-reported.
+            completion["timings"] = {"predicted_n": tokens,
+                                     "predicted_ms": round((t_end - (t_first or t0)) * 1000, 3),
+                                     "source": "cria-measured"}
         self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
         callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
         self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
-        tokens = (usage or {}).get("completion_tokens")
-        tok_s = round(tokens / (t_end - (t_first or t0)), 1) if (tokens and t_end > (t_first or t0)) else None
         rlog.emit("upstream.done", total_ms=round((t_end - t0) * 1000, 1), tokens=tokens,
                   tok_per_s=tok_s, from_usage=bool(usage), aborted=bool(aborted))
         return json.dumps(completion).encode("utf-8")

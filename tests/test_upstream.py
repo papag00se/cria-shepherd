@@ -165,6 +165,35 @@ class ChatWatchedTests(unittest.TestCase):
         self.assertEqual(json.loads(tc["function"]["arguments"])["path"], "h.py")
         self.assertEqual(c["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_streamed_completion_carries_measured_timings(self):
+        """Streamed answers have no server "timings" block, so every streamed (coder) call was
+        invisible to timing readers of the capture — the suite's tok/s silently averaged crew calls
+        only. The assembled completion must stamp cria-measured timings whenever usage arrived."""
+        lines = [
+            _sse(_delta(content="hi")),
+            _sse({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                  "usage": {"prompt_tokens": 10, "completion_tokens": 7}}),
+            b"data: [DONE]\n",
+        ]
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
+            raw = self._upstream().chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog())
+        c = json.loads(raw)
+        self.assertEqual(c["timings"]["predicted_n"], 7)
+        self.assertGreater(c["timings"]["predicted_ms"], 0)
+        self.assertEqual(c["timings"]["source"], "cria-measured")
+
+    def test_no_usage_means_no_timings_block(self):
+        # No token count → no rate to state. A fabricated or zero-token timings block would be
+        # cria asserting a measurement it never made.
+        lines = [
+            _sse(_delta(content="hi")),
+            _sse({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+            b"data: [DONE]\n",
+        ]
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
+            raw = self._upstream().chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog())
+        self.assertNotIn("timings", json.loads(raw))
+
     def test_degenerate_tool_arg_runaway_is_aborted(self):
         # THE runaway: a model emits a stuck single-token stream inside tool-call ARGUMENTS (observed:
         # 44,807 '0's in exec_command args), which the rumination watcher deliberately skips. The
