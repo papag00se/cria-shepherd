@@ -21,7 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import callcapture, focustrim, massage, responses, rumination
+from . import callcapture, focustrim, massage, prompts, responses, rumination
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -249,6 +249,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     if not text or massage.has_tool_call_leak(text):
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
         pb = _proxy_body(dict(body))
+        # The retry must not re-ask the question that just failed: the harness's own summarize
+        # prompt + a weak model = a pseudo tool call, BOTH passes (g1 0093/0094, g2 twice — the
+        # summary degraded to appendices-only). Lead the retry with cria's briefing framing built
+        # for weak models: prose only, no tools, name real files, quote real checks.
+        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("compact_system")}]
+              + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
         else:
@@ -799,7 +805,19 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog)
         rlog.phase = "proxy"
-        pbody, _ = self._focus_trim(self._apply_route_role(_proxy_body(body), indic), rlog)
+        pbody = _proxy_body(body)
+        if _is_compaction_request(body.get("messages", [])):
+            # THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the
+            # proxy path drops the harness system prompt, the compactor role's reasoning-off then
+            # injects nothink_directive ("Do not think out loud... Respond directly") as the ONLY
+            # system line, and the history below it is 100% tool-call turns (42-0 vs prose in g2).
+            # A summarize task whose entire framing forbids narration, atop a context that has only
+            # ever spoken tool calls, yields a tool call. The briefing framing must lead the FIRST
+            # pass — prose only, no tools, name real files — not just the retry.
+            pbody = {**pbody, "messages":
+                     [{"role": "system", "content": prompts.load("compact_system")}]
+                     + [m for m in pbody.get("messages", []) if m.get("role") != "system"]}
+        pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)

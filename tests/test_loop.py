@@ -5780,3 +5780,66 @@ class AuthorForcedAnswerVoiceTests(unittest.TestCase):
         self.assertTrue(forced)
         self.assertNotIn("JSON verdict", forced[-1]["content"])     # never the critic's schema
         self.assertIn("ON_TRACK", forced[-1]["content"])            # the author's own contract
+
+
+class CorruptedFinalReplyTests(unittest.TestCase):
+    """g2-0104: the author's final reply was a corrupted tool call the leak parser could not
+    recover — a question nobody answered, five calls of inspection thrown away silently. The loop
+    now runs ONE forced-answer round (tools withdrawn) instead of returning garbage."""
+
+    _LEAK = '<|tool_call>call:read_file{end_line:630,path:<|"|>/tmp/x/api.json<tool_call|>'
+
+    def test_toolless_leak_reply_gets_one_forced_answer_round(self):
+        # The real 0104 shape: TOOLS ALREADY WITHDRAWN (forced/toolless round), the reply is a
+        # tool call as text — previously returned as-is, guards dropped it, silence. Now: one
+        # forced textual round, and the real answer is adopted.
+        from cria.loop import _judge_completion
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps({"choices": [{"message": {"role": "assistant",
+                                                            "content": self._LEAK}}]}).encode()
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                "content": '{"done": false, "reason": "tests failing", "proposed_fix": "fix the mock"}'}}]}).encode()
+
+        comp = _judge_completion(chat, None, "sys", "user", _Rlog(), phase="verify",
+                                 workspace_root="")
+        self.assertEqual(len(bodies), 2)                                  # exactly one extra round
+        self.assertNotIn("tools", bodies[1])                              # still toolless
+        self.assertIn("Answer NOW", str(bodies[1]["messages"][-1]["content"]))
+        self.assertIn("tests failing", str(comp))                         # the real answer adopted
+
+    def test_a_second_leak_ends_the_loop_bounded(self):
+        from cria.loop import _judge_completion
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                                                        "content": self._LEAK}}]}).encode()
+
+        _judge_completion(chat, None, "sys", "user", _Rlog(), phase="verify", workspace_root="")
+        self.assertEqual(len(bodies), 2)                                  # never loops on leaks
+
+    def test_a_recoverable_leak_mid_loop_is_executed_not_dropped(self):
+        # bycatch proof: with tools live, massage in the loop RECOVERS this leak into a native
+        # read_file and the loop executes it as a normal round.
+        import tempfile
+
+        from cria.loop import _judge_completion
+        d = tempfile.mkdtemp()
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps({"choices": [{"message": {"role": "assistant",
+                                                            "content": self._LEAK}}]}).encode()
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                "content": '{"done": true, "reason": "ok", "proposed_fix": ""}'}}]}).encode()
+
+        _judge_completion(chat, None, "sys", "user", _Rlog(), phase="verify", workspace_root=d)
+        tool_msgs = [m for m in bodies[1]["messages"] if m.get("role") == "tool"]
+        self.assertTrue(tool_msgs)                                        # the read RAN

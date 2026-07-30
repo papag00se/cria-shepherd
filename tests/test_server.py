@@ -873,3 +873,27 @@ class HardenCompactionReplyTests(unittest.TestCase):
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
         text = comp["choices"][0]["message"]["content"]
         self.assertIn("/handles/{handle}", text)                    # facts still appended to the empty
+
+
+class CompactionFirstPassFramingTests(unittest.TestCase):
+    """THE blank-briefing cause (07-30 forensics): the compaction call's only system line was the
+    reasoning-off nothink directive atop a 100%-tool-call history — a summarize task framed to
+    forbid narration. The briefing system must lead the FIRST pass, not just the retry."""
+
+    def test_compaction_body_leads_with_the_briefing_system(self):
+        from cria import prompts
+        from cria.server import _is_compaction_request, _proxy_body
+        msgs = [{"role": "system", "content": "harness persona"},
+                {"role": "user", "content": "task"},
+                {"role": "assistant", "tool_calls": [{"id": "t", "type": "function",
+                 "function": {"name": "shell", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "t", "content": "ok"},
+                {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
+        self.assertTrue(_is_compaction_request(msgs))
+        pb = _proxy_body({"messages": msgs})
+        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("compact_system")}]
+              + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
+        head = pb["messages"][0]
+        self.assertEqual(head["role"], "system")
+        self.assertIn("ONLY plain prose", head["content"])
+        self.assertIn("never emit a tool call", head["content"])

@@ -562,11 +562,12 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     ]
     inspectable = bool(workspace_root) and os.path.isdir(workspace_root)
     rounds = 0
+    forced_rounds = 0
     while True:
         body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
                       "messages": list(messages)}
-        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS:
-            body["tools"] = verifytools.VERIFY_TOOLS
+        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and not forced_rounds:
+            body["tools"] = verifytools.VERIFY_TOOLS   # withdrawn on the forced-answer round
         if role is not None:
             role.apply(body, internal=True, rlog=rlog)
         elif force_think_off:  # no role configured, but still force the think block off
@@ -581,6 +582,26 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
         calls = msg.get("tool_calls") or []
         if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS):
+            # A final reply that is a CORRUPTED tool call (leaked dialect the recovery could not
+            # parse — g2-0104: four clean read rounds, then `<|tool_call>call:read_file{...<|"|>`)
+            # meant the model asked a question nobody answered and the whole loop died silently.
+            # ONE forced-answer round (tools withdrawn) instead of returning garbage; bounded once.
+            content = str(msg.get("content") or "")
+            # The judge/author ASKED for something and no answer is possible: either the reply is
+            # an unexecutable tool call (tools withdrawn, or the round cap reached — g2-0104's
+            # `<|tool_call>call:read_file{…<|"|>` recovered into a call nobody could run) or it is
+            # raw leak debris. Returning it means the whole inspection dies as silence. ONE forced
+            # textual round, tools withdrawn, bounded once.
+            if forced_rounds == 0 and (calls or massage.has_tool_call_leak(content)):
+                forced_rounds = 1
+                messages.append({"role": "assistant", "content": content or None,
+                                 **({"tool_calls": calls} if calls else {})})
+                if calls:   # a dangling tool_call needs its result turn or the next request is malformed
+                    for tc in calls:
+                        messages.append({"role": "tool", "tool_call_id": tc.get("id") or "vt",
+                                         "content": "[not executed — no further inspection rounds]"})
+                messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
+                continue
             if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
                 transcript.extend(messages[2:])
             return comp
