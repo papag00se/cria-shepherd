@@ -891,9 +891,10 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
         self.assertTrue(_is_compaction_request(msgs))
         pb = _proxy_body({"messages": msgs})
-        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("compact_system")}]
+        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")}]
               + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
         head = pb["messages"][0]
         self.assertEqual(head["role"], "system")
-        self.assertIn("ONLY plain prose", head["content"])
-        self.assertIn("never emit a tool call", head["content"])
+        self.assertIn("NO tools", head["content"])                       # the ONE proven framing,
+        self.assertIn("tool/function call", head["content"])             # shared with self-compaction
+

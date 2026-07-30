@@ -253,7 +253,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
         # prompt + a weak model = a pseudo tool call, BOTH passes (g1 0093/0094, g2 twice — the
         # summary degraded to appendices-only). Lead the retry with cria's briefing framing built
         # for weak models: prose only, no tools, name real files, quote real checks.
-        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("compact_system")}]
+        pb = {**pb, "messages": [{"role": "system", "content": prompts.load("selfcompact_summary")}]
               + [m for m in pb.get("messages", []) if m.get("role") != "system"]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
@@ -813,9 +813,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             # system line, and the history below it is 100% tool-call turns (42-0 vs prose in g2).
             # A summarize task whose entire framing forbids narration, atop a context that has only
             # ever spoken tool calls, yields a tool call. The briefing framing must lead the FIRST
-            # pass — prose only, no tools, name real files — not just the retry.
+            # pass — and it is the SAME battle-tested framing the internal rolling compaction uses
+            # (selfcompact_summary), not a parallel variant (operator: one compaction prompt).
             pbody = {**pbody, "messages":
-                     [{"role": "system", "content": prompts.load("compact_system")}]
+                     [{"role": "system", "content": prompts.load("selfcompact_summary")}]
                      + [m for m in pbody.get("messages", []) if m.get("role") != "system"]}
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
