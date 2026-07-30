@@ -8,3 +8,4 @@ outside = [refused: {{PATH}} is outside the workspace — the judge inspects onl
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
 empty_file = [{{PATH}} exists and is EMPTY (0 bytes)]
+answer_now_steer = You have inspected enough. Answer NOW with the short unstick directive spoken to the coder ("You ..."), or EXACTLY the one word ON_TRACK — never JSON, never a verdict.

@@ -5743,3 +5743,40 @@ class AuthorSessionStubsSupersededWritesTests(unittest.TestCase):
         self.assertNotIn("def test_live_api(self)", out)        # superseded body → stub
         self.assertIn("on disk at t.py", out)                    # ...pointing at the real file
         self.assertIn("def test_live_api_real", out)             # live working set stays whole
+
+
+class AuthorForcedAnswerVoiceTests(unittest.TestCase):
+    """The author borrows the judges' inspection loop, and the loop's cap-round forced answer was
+    verdict-shaped — cria itself instructing the role collapse it then guarded against (g2-0104's
+    prompt ends 'Answer NOW with ONLY the JSON verdict'; the {"done": true} steers obeyed it)."""
+
+    def test_author_cap_round_speaks_steer_not_verdict(self):
+        import tempfile
+
+        from cria import verifytools
+        from cria.config import Role
+        from cria.loop import author_steer
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "a.py"), "w") as f:
+            f.write("x = 1\n")
+        read_call = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+            {"id": "t", "type": "function",
+             "function": {"name": "read_file", "arguments": json.dumps({"path": "a.py"})}}]}}]}
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            if len(bodies) <= verifytools.VERIFY_MAX_ROUNDS:
+                return json.dumps(read_call).encode()
+            return json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": "You are looping; make one targeted edit."}}]}).encode()
+
+        gs = types.SimpleNamespace(recent_writes=["a.py"], spin_path="")
+        author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
+                     {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
+                     condition="flail", reasoning_window=["thinking"])
+        forced = [m for b in bodies for m in b["messages"]
+                  if m.get("role") == "user" and "Answer NOW" in str(m.get("content"))]
+        self.assertTrue(forced)
+        self.assertNotIn("JSON verdict", forced[-1]["content"])     # never the critic's schema
+        self.assertIn("ON_TRACK", forced[-1]["content"])            # the author's own contract

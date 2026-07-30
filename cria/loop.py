@@ -544,7 +544,8 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
 
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
                       workspace_root: str = "", max_tokens: int = 8192,
-                      force_think_off: bool = False, transcript: list | None = None) -> dict:
+                      force_think_off: bool = False, transcript: list | None = None,
+                      answer_now: str | None = None) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -598,7 +599,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                              "content": out})
         rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
         if rounds == verifytools.VERIFY_MAX_ROUNDS:
-            messages.append({"role": "user", "content": verifytools.ANSWER_NOW})
+            messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
@@ -3615,7 +3616,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         transcript: list = []
         comp = _judge_completion(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"),
                                  tooled_user, rlog, phase="reasoner",
-                                 workspace_root=workspace_root, transcript=transcript)
+                                 workspace_root=workspace_root, transcript=transcript,
+                                 answer_now=verifytools.ANSWER_NOW_STEER)
         text = _completion_text(comp)
         if reasoner_role is not None:
             text = reasoner_role.clean_content(text)

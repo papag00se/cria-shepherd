@@ -33,6 +33,11 @@ VERIFY_MAX_ROUNDS = 6
 
 # The closing instruction appended when the round budget is spent — the next call carries no tools.
 ANSWER_NOW = _TD["answer_now"]
+# The STEER AUTHOR borrows the same inspection loop, but the judge-shaped forced answer told it to
+# emit the CRITIC's JSON — cria itself instructing the role collapse it then had to guard against
+# (g2-0104's prompt ends with "Answer NOW with ONLY the JSON verdict"; 0141's {"done": true,
+# "proposed_fix": "None"} steer is that instruction obeyed). Callers pass the voice that fits.
+ANSWER_NOW_STEER = _TD["answer_now_steer"]
 
 VERIFY_TOOLS = [
     {"type": "function", "function": {
