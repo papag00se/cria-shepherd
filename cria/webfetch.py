@@ -449,7 +449,12 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 params = _path_param_notes(op, ops, schemas)
                 head = f"{str(method).upper()} {path}"
                 if params:
-                    head += f" (takes {'; '.join(params)})"
+                    # WORDING IS LOAD-BEARING: the first cut said "(takes {address} = …)" and the
+                    # model read "takes" as "accepts an argument" — it turned BOTH path parameters
+                    # into query strings (?handle=…, ?address=…) and got 400/404 on every call,
+                    # where every earlier run had built the path form correctly. Say plainly that
+                    # the placeholder is part of the URL and must be replaced in place.
+                    head += f" (replace in the URL path: {'; '.join(params)})"
                 lines.append(f"{head} → {', '.join(fields)}")
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint

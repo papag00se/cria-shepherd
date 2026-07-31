@@ -828,6 +828,10 @@ class PathParamNotesTests(unittest.TestCase):
         lines = _endpoint_response_fields(self._SPEC)
         holders = next(l for l in lines if "/holders/" in l)
         self.assertIn("{address} = The stake/enterprise/script/other address of the Holder", holders)
+        # the phrasing must say PATH: the first cut said "takes {address} = …" and the model
+        # converted both path parameters into query strings (?address=…) — 400/404 on every call.
+        self.assertIn("replace in the URL path", holders)
+        self.assertNotIn("takes {", holders)
         self.assertIn("total_handles", holders)                      # outputs still there
 
     def test_silent_when_the_spec_says_nothing(self):
@@ -835,7 +839,7 @@ class PathParamNotesTests(unittest.TestCase):
         from cria.webfetch import _endpoint_response_fields
         lines = _endpoint_response_fields(self._SPEC)
         stats = next(l for l in lines if "/stats" in l)
-        self.assertNotIn("takes", stats)
+        self.assertNotIn("replace in the URL path", stats)
 
     def test_example_stands_in_when_there_is_no_description(self):
         from cria.webfetch import _endpoint_response_fields
