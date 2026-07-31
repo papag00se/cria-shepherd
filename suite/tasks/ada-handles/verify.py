@@ -83,16 +83,42 @@ def main(ws: Path) -> dict:
 
     # 3) Resolver works as the README says — or, failing README instructions, the conventional
     #    `python3 <main>.py goose` shape. Demands all three facts: address, holder, a count.
+    skip = ("__pycache__", "venv", ".venv", "testvenv", "site-packages", "node_modules")
     mains = [p for p in ws.rglob("*.py")
              if "test" not in p.name.lower() and "live" not in p.name.lower()
-             and "__pycache__" not in p.parts]
-    cli_ok, cli_detail = False, "no candidate resolver script"
+             and not any(x in p.parts for x in skip)]
+    # Invocation forms, in the order a user would try them: what the README actually documents,
+    # then `python file.py`, then `python -m pkg.module` (a package layout is a legitimate reading
+    # of "write a script" — the earlier root-only-glob blindness, one level up).
+    cmds = []
+    readme_txt = ""
+    rd = next((p for p in ws.iterdir() if p.name.lower().startswith("readme")), None)
+    if rd:
+        readme_txt = rd.read_text(errors="replace")
+        for m in re.finditer(r"(?m)^\s*(?:\$\s*)?(python3?\s+(?:-m\s+)?[\w./-]+(?:\s+[\w-]+)*)\s*$", readme_txt):
+            line = m.group(1)
+            if "pip" in line or "venv" in line or "pytest" in line:
+                continue
+            parts = line.split()
+            parts[0] = sys.executable
+            cmds.append(parts if any(a in ("goose", "papagoose") for a in parts) else parts + ["goose"])
     for cand in sorted(mains, key=lambda p: -p.stat().st_size):
-        code, out = run([sys.executable, str(cand.relative_to(ws)), "goose"], ws)
+        rel = cand.relative_to(ws)
+        cmds.append([sys.executable, str(rel), "goose"])
+        if cand.name != "__init__.py":
+            mod = ".".join(rel.with_suffix("").parts)
+            cmds.append([sys.executable, "-m", mod, "goose"])
+    cli_ok, cli_detail = False, "no candidate resolver script"
+    for cmd in cmds:
+        code, out = run(cmd, ws)
+        shown = " ".join(cmd[1:])
         if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and re.search(r"\d+", out):
-            cli_ok, cli_detail = True, f"{cand.name} goose → address+holder+count"
+            cli_ok, cli_detail = True, f"{shown} → address+holder+count"
             break
-        cli_detail = f"{cand.name}: exit={code}"
+        if code == 0 and ADDR_RE.search(out):   # it RAN and resolved, but is missing holder/count
+            cli_detail = f"{shown}: ran, but holder/total missing (address only)"
+        elif cli_detail.startswith("no candidate"):
+            cli_detail = f"{shown}: exit={code}"
     r["parts"]["resolver_cli"] = {"ok": cli_ok, "detail": cli_detail}
 
     # 4) README exists and covers install + how to run script AND tests.
