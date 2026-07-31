@@ -645,8 +645,18 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     INSPECTS the workspace itself via the shared read-only tools rather than being handed a pasted
     listing (operator's call, twice over: a real repo's complete listing can be massive, and a judge
     that must look cannot rubber-stamp a narrative). Returns (confirmed, why). No workspace to
-    inspect → confirmed (nothing to check against); an unparseable check KEEPS the verdict (the
-    brake is additive, never a new wedge) but is traced."""
+    inspect → confirmed (nothing to check against).
+
+    An UNPARSEABLE check fails CLOSED — it does not confirm. It used to keep the verdict, on the
+    reasoning that an additive brake must never become a new wedge; that is the fail-open on missing
+    ground truth this whole file treats as the root of early exits, and the policy stated a hundred
+    lines below ("a 'satisfied' that exists ONLY because the careful pass failed is downgraded and we
+    fail CLOSED") already contradicted it. Measured, g20 (gemma4, ada-handles, 2/4, exited at 12 of
+    its 30 minutes): the judge spent all six inspection rounds calling tools and never answered, cria
+    logged `confirm_unparsed`, confirmed anyway, and ended the run over a workspace holding no test
+    file at all — while that same judge's own reasoning had found the real defects ("the test suite
+    never asserts total_handles", "a circular mock of the function under test"). Not confirming costs
+    work turns cria had already paid for; confirming on nothing ends the run."""
     if not workspace_root or not os.path.isdir(workspace_root):
         return True, ""
     labels = prompts.load_map("verify_confirm")
@@ -659,8 +669,11 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         vtext = reasoner_role.clean_content(vtext)
     obj = extract_json_object(strip_think(vtext))
     if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
-        rlog.emit("loop.confirm_unparsed", level="info", phase=phase)
-        return True, ""
+        # The coder-facing reason is the plain keep-working instruction, never cria's bookkeeping and
+        # never the satisfied-verdict's own reason (which argues the opposite of what the caller is
+        # about to say) — same wording the satisfaction path already uses when it fails closed.
+        rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
+        return False, prompts.load("unverified_step")
     return obj["consistent"], str(obj.get("why") or "").strip()
 
 

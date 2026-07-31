@@ -1456,7 +1456,12 @@ class GateFlowTests(unittest.TestCase):
             def __call__(self, body, rlog):
                 _R.calls += 1
                 captured.setdefault("user", body["messages"][-1]["content"])
-                return json.dumps(_verdict(True)).encode()
+                # Answers the step critic AND the approve-path confirm that follows a DONE: one object
+                # carrying both shapes, since the confirm now fails CLOSED on a reply it cannot read
+                # and this test is about the gate digest, not the brake.
+                return json.dumps({"choices": [{"message": {"content": json.dumps(
+                    {"done": True, "reason": "ok", "proposed_fix": "",
+                     "consistent": True, "why": ""})}}]}).encode()
 
         coder = _Scripted([_toolcall(), _done()])
         loop = Loop(_ctx(coder, _R(), _plan(1), workspace_root=ws))
@@ -5295,16 +5300,23 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
 
-    def test_an_unparseable_check_keeps_the_verdict_and_is_traced(self):
+    def test_an_unparseable_check_fails_CLOSED_and_is_traced(self):
+        # g20 (gemma4, ada-handles): the judge burned all six inspection rounds without answering,
+        # cria logged confirm_unparsed, CONFIRMED on nothing, and ended the run at 12 of its 30
+        # minutes over a workspace with no test file — while that judge's own reasoning had named the
+        # real defects. An approve-path brake that approves when it cannot read the answer is the
+        # fail-open on missing ground truth, not an additive brake.
         verdict = {"choices": [{"message": {"content": json.dumps(
             {"done": True, "reason": "ok", "proposed_fix": ""})}}]}
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "f.py").write_text("x\n")
             loop, _ = self._loop_with([verdict, _text("I cannot judge this")])
             rlog = _Rlog()
-            ok, _ = loop._verify("Write f.py", "c", "", "ev", rlog,
-                                 idx=1, total=2, key="sid:x", workspace_root=ws)
-        self.assertTrue(ok)                                        # additive brake, never a wedge
+            ok, why = loop._verify("Write f.py", "c", "", "ev", rlog,
+                                   idx=1, total=2, key="sid:x", workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertIn("not yet verified", why)      # the plain keep-working instruction...
+        self.assertNotIn("parseable", why)          # ...never cria's own bookkeeping
         self.assertIn(("loop.confirm_unparsed",), [(k,) for k, _ in rlog.events])
 
     def test_satisfaction_approve_is_braked_the_same_way(self):
