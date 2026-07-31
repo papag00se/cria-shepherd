@@ -1,1 +1,1 @@
-No test files were found, so no tests were run — the checks above cover syntax and lint only. If you have written tests, or the task calls for them, they must be named {{GLOBS}} to be discovered and run.
+No tests ran — the checks above cover syntax and lint only. {{FINDINGS}} If the task calls for tests, that is not done yet.

@@ -52,6 +52,7 @@ import enum
 import fnmatch
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -952,45 +953,54 @@ class TestConvention:
     fact everywhere else, which is why ``label`` is written out per language rather than generated."""
 
     exts: tuple            # source extensions that prove the language is present at all
-    globs: tuple           # filename patterns its DEFAULT runner discovers by
+    globs: tuple           # filename patterns its DEFAULT runner discovers by ( () = no filename rule )
     dirs: tuple            # directories whose contents are tests whatever the filename (jest)
+    marker: str            # regex identifying test code IN the source ( "" = none precise enough )
     configs: tuple         # a config that RE-POINTS discovery; its presence silences cria entirely
-    label: str             # the convention in this language's own words, for the coder
+    label: str             # how tests are IDENTIFIED here, in this language's own words
     runner: str            # who owns the convention — named so the claim has an author
     floor: tuple = ()      # zero-config runner, for the one language that needs a floor probe
 
 
-# A language earns an entry ONLY when its default runner has a test-file convention cria can state as
-# a FACT.
+# Tests are identified TWO ways, and a language may use either or both: by FILENAME (pytest collects
+# test_*.py) and by an in-source DECORATION (cargo runs any #[test] fn wherever it lives). Carrying both
+# is what lets cria answer three questions instead of two — see :func:`undiscoverable_tests`.
 #
-# RUST is deliberately absent: its tests are `#[cfg(test)]` modules INSIDE the source file, so "no test
-# file exists" proves nothing and any note would be a false fact. JAVA is absent for the mirror reason —
-# surefire's `*Test.java` default is overridable in the `pom.xml` that every Java project has, so cria
-# cannot assert it without reading the pom.
+# A language earns an entry when at least one of those two is a documented default cria can state as a
+# FACT. `marker` is left empty rather than guessed at: a loose pattern that matches ordinary code would
+# have cria telling a coder its production file is a stranded test.
 #
-# ``floor`` is separate from the rest, and only Python has one: you cannot have a Go/Rust/JS project
-# without go.mod/Cargo.toml/package.json — the language will not build — so those always trigger ranked
-# ecosystem discovery, which adds their real test command. Python needs no manifest at all: `resolve.py`
-# plus `test_resolve.py` is a complete, testable project that ranked discovery sees nothing in.
+# ``floor`` is separate, and only Python has one: you cannot have a Go/Rust/JS project without
+# go.mod/Cargo.toml/package.json — the language will not build — so those always trigger ranked
+# ecosystem discovery, which adds their real test command. Python needs no manifest at all:
+# `resolve.py` plus `test_resolve.py` is a complete, testable project ranked discovery sees nothing in.
 TEST_CONVENTIONS: tuple = (
-    TestConvention(("py",), ("test_*.py", "*_test.py"), (), ("pytest.ini", "tox.ini"),
-                   "test_*.py or *_test.py", "pytest",
+    TestConvention(("py",), ("test_*.py", "*_test.py"), (),
+                   r"^\s*(?:def test_|class \w*\(.*\bTestCase\b)|^\s*import pytest\b",
+                   ("pytest.ini", "tox.ini"),
+                   "named test_*.py or *_test.py", "pytest",
                    ("python3", "-m", "pytest", "-q")),
-    TestConvention(("go",), ("*_test.go",), (), (),
-                   "*_test.go", "go test"),
+    TestConvention(("go",), ("*_test.go",), (), r"^\s*func Test[A-Z_]", (),
+                   "named *_test.go, with functions named TestXxx", "go test"),
+    TestConvention(("rs",), (), (), r"#\[(?:test|cfg\(test\))\]", (),
+                   "marked with #[test], normally inside a #[cfg(test)] mod", "cargo test"),
+    TestConvention(("java",), ("Test*.java", "*Test.java", "*Tests.java", "*TestCase.java"), (),
+                   r"^\s*@Test\b", (),
+                   "annotated @Test, in a file named *Test.java or *Tests.java (surefire default)",
+                   "mvn test"),
     TestConvention(("js", "jsx", "ts", "tsx", "mjs", "cjs"),
                    ("*.test.js", "*.spec.js", "*.test.jsx", "*.spec.jsx",
                     "*.test.ts", "*.spec.ts", "*.test.tsx", "*.spec.tsx",
                     "*.test.mjs", "*.spec.mjs", "*.test.cjs", "*.spec.cjs"),
-                   ("__tests__",),
+                   ("__tests__",), r"^\s*describe\s*\(",
                    ("jest.config.js", "jest.config.ts", "jest.config.mjs", "jest.config.cjs",
                     "vitest.config.js", "vitest.config.ts"),
-                   "*.test.js / *.spec.ts (any of .js .jsx .ts .tsx) or any file under __tests__/",
-                   "jest/vitest"),
-    TestConvention(("rb",), ("*_spec.rb",), (), (".rspec",),
-                   "*_spec.rb", "rspec"),
-    TestConvention(("php",), ("*Test.php",), (), ("phpunit.xml", "phpunit.xml.dist"),
-                   "*Test.php", "phpunit"),
+                   "named *.test.js / *.spec.ts, or placed under __tests__/", "jest/vitest"),
+    TestConvention(("rb",), ("*_spec.rb",), (), r"^\s*RSpec\.describe\b", (".rspec",),
+                   "named *_spec.rb", "rspec"),
+    TestConvention(("php",), ("*Test.php",), (), r"extends\s+TestCase\b",
+                   ("phpunit.xml", "phpunit.xml.dist"),
+                   "named *Test.php", "phpunit"),
 )
 
 
@@ -1004,19 +1014,53 @@ def _language_files(root: Path, conv: TestConvention) -> list[str]:
     return out
 
 
-def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -> bool:
+def _rel_to(root: Path, p: str) -> Path:
+    q = Path(p)
+    if not q.is_absolute():
+        return q
+    try:
+        return q.relative_to(root)
+    except ValueError:
+        return Path(q.name)
+
+
+def _carries_test_code(path: str, conv: TestConvention) -> bool:
+    """Does this source file contain test code, by the language's own decoration?"""
+    if not conv.marker:
+        return False
+    try:
+        return bool(re.search(conv.marker, Path(path).read_text(errors="replace"), re.M))
+    except OSError:
+        return False
+
+
+def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bool, list[str]]:
+    """``(discoverable, stranded)`` — whether this language's runner will find ANY test, and the files
+    that hold test code it will NOT find.
+
+    A language identifies tests by filename, by decoration, or by both, and the two answer different
+    questions. Filename alone cannot see the g20 failure (unittest classes inside resolve_handle.py —
+    real tests, zero collected); decoration alone cannot see that `cargo test` needs no filename at
+    all. Reading both is what turns "no tests found" into "your tests are HERE and will not run"."""
+    discoverable, stranded = False, []
     for p in paths:
-        rel = Path(p)
-        if rel.is_absolute():
-            try:
-                rel = rel.relative_to(root)
-            except ValueError:
-                rel = Path(rel.name)
-        if any(part in conv.dirs for part in rel.parts[:-1]):
-            return True
-        if any(fnmatch.fnmatch(rel.name, g) for g in conv.globs):
-            return True
-    return False
+        rel = _rel_to(root, p)
+        named = (any(part in conv.dirs for part in rel.parts[:-1])
+                 or any(fnmatch.fnmatch(rel.name, g) for g in conv.globs))
+        if not conv.globs:
+            # No filename rule at all (Rust): the decoration IS the discovery rule, so test code
+            # anywhere in the tree is already discoverable and nothing can be stranded.
+            discoverable = discoverable or _carries_test_code(p, conv)
+            continue
+        if named:
+            discoverable = True
+        elif _carries_test_code(p, conv):
+            stranded.append(str(rel))
+    return discoverable, sorted(stranded)
+
+
+def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -> bool:
+    return _audit_tests(root, paths, conv)[0]
 
 
 def undiscoverable_tests(root: Path) -> list[str]:
@@ -1041,9 +1085,21 @@ def undiscoverable_tests(root: Path) -> list[str]:
             continue                                   # language absent — say nothing about it
         if any((root / cfg).exists() for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
-        if _has_discoverable_test(root, paths, conv):
+        discoverable, stranded = _audit_tests(root, paths, conv)
+        if discoverable:
             continue                                   # its tests are already discoverable
-        out.append(f"{conv.label} ({conv.runner})")
+        # Each finding is a COMPLETE sentence. They are not interchangeable halves of one template:
+        # "your tests exist and will not run" and "you have no tests" are different facts and read as
+        # different instructions, and gluing either into a fixed "must be named {X}" frame produced a
+        # sentence that said neither.
+        if stranded:
+            # The strongest thing cria can say: the tests EXIST and will never run. Naming the file
+            # makes it checkable — this is g20, where unittest classes sat in resolve_handle.py and
+            # the gate reported "no error-class problems" fifty-four times.
+            out.append(f"Test code in {', '.join(stranded[:4])} will not run: "
+                       f"{conv.runner} only runs tests {conv.label}.")
+        else:
+            out.append(f"No {conv.runner} tests were found — to be run they must be {conv.label}.")
     return out
 
 

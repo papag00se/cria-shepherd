@@ -574,7 +574,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             plan = probegate.plan_gate(ws)
             out = probegate.clean_gate_output(self.CLEAN, plan)
         self.assertIn("no error-class problems", out)      # the original fact is unchanged...
-        self.assertIn("no tests were run", out)            # ...and no longer half a sentence
+        self.assertIn("No tests ran", out)            # ...and no longer half a sentence
         self.assertIn("test_*.py or *_test.py", out)       # the convention cria SEARCHED by
         self.assertNotIn("required", out)                  # cria cannot know whether this task wants tests
 
@@ -583,16 +583,32 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"resolve_handle.py": "x = 1\n",
                                   "tests|test_resolve.py": "def test_ok():\n    assert True\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertNotIn("no tests were run", out)
+        self.assertNotIn("No tests ran", out)
         self.assertEqual(out, "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.")
 
-    def test_silent_for_a_language_with_no_file_convention(self):
-        # Rust puts tests in #[cfg(test)] modules INSIDE the source file, so "no test file" proves
-        # nothing and the note would be a false fact.
+    def test_a_decoration_language_is_silent_when_its_tests_exist(self):
+        # Rust puts tests in #[cfg(test)] modules INSIDE the source file — no test FILE exists even
+        # when there are plenty of tests, and `cargo test` runs them wherever they are.
         with tempfile.TemporaryDirectory() as tmp:
-            ws = self._ws(tmp, **{"src|main.rs": "fn main(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
-            self.assertNotIn("no tests were run", probegate.clean_gate_output(self.CLEAN,
+            ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n#[cfg(test)]\nmod t {\n #[test]\n fn x(){}\n}\n",
+                                  "Cargo.toml": "[package]\nname='x'\n"})
+            self.assertNotIn("No tests ran", probegate.clean_gate_output(self.CLEAN,
                                                                              probegate.plan_gate(ws)))
+
+    def test_a_decoration_language_with_no_tests_is_told_the_decoration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
+            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+        self.assertIn("No tests ran", out)
+        self.assertIn("#[test]", out)          # the DECORATION, not a filename
+
+    def test_stranded_test_code_is_named_in_the_gate(self):
+        # g20 end to end: real tests, in a file pytest will never collect.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"resolve_handle.py":
+                                  "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
+            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+        self.assertIn("Test code in resolve_handle.py will not run", out)
 
     def test_go_with_a_manifest_and_no_test_file_is_covered_too(self):
         # `go test ./...` IS selected here and exits 0 printing "no test files", so the gate reads
@@ -601,8 +617,8 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"main.go": "package main\n", "go.mod": "module x\ngo 1.21\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertIn("no tests were run", out)
-        self.assertIn("*_test.go (go test)", out)
+        self.assertIn("No tests ran", out)
+        self.assertIn("*_test.go", out)
 
     def test_a_venv_full_of_test_files_does_not_mask_a_testless_project(self):
         # The vendored .gitignore templates (cria/ignore.py) are the signal for where NOT to look:
@@ -611,7 +627,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"resolve.py": "x = 1\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_main.py": "def test_x(): pass\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_cfg.py": "def test_y(): pass\n"})
-            self.assertIn("no tests were run", probegate.clean_gate_output(self.CLEAN,
+            self.assertIn("No tests ran", probegate.clean_gate_output(self.CLEAN,
                                                                           probegate.plan_gate(ws)))
 
     def test_findings_are_never_buried_under_the_note(self):
@@ -622,4 +638,4 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"app.py": "import unittest\n"})
             out = probegate.clean_gate_output(failing, probegate.plan_gate(ws))
         self.assertIn("undefined name", out)
-        self.assertNotIn("no tests were run", out)
+        self.assertNotIn("No tests ran", out)

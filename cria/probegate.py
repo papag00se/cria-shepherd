@@ -314,7 +314,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     # no Go/PHP/Ruby toolchain to have verified those strings against).
     untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
     if untested:
-        clean += " " + prompts.render("no_tests_found", globs="; ".join(untested))
+        clean += " " + prompts.render("no_tests_found", findings=" ".join(untested))
     return clean
 
 

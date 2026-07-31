@@ -246,18 +246,54 @@ class TestConventionTableTests(unittest.TestCase):
     def test_every_entry_states_its_own_convention(self):
         from cria.probediscovery import TEST_CONVENTIONS
         for c in TEST_CONVENTIONS:
-            self.assertTrue(c.exts and c.globs and c.label and c.runner, c)
+            self.assertTrue(c.exts and c.label and c.runner, c)
+            # A language identifies tests by FILENAME, by DECORATION, or by both — but by at least one,
+            # or cria has nothing it can truthfully say.
+            self.assertTrue(c.globs or c.marker, f"{c.runner} identifies tests by nothing")
             for g in c.globs:
                 self.assertIn("*", g, f"{c.runner}: {g!r} is not a pattern")
 
-    def test_languages_without_a_file_convention_are_absent_on_purpose(self):
-        # Rust's tests are #[cfg(test)] modules INSIDE the source file, and Java's *Test.java default is
-        # overridable in the pom every Java project has — for both, "no test file" proves nothing, so a
-        # note would be cria stating a false fact.
-        from cria.probediscovery import TEST_CONVENTIONS
-        exts = {e for c in TEST_CONVENTIONS for e in c.exts}
-        self.assertNotIn("rs", exts)
-        self.assertNotIn("java", exts)
+    def test_a_language_with_no_filename_rule_is_carried_by_its_decoration(self):
+        # Rust's tests are #[cfg(test)] modules INSIDE the source file. Filenames say nothing there —
+        # but `cargo test` runs any #[test] fn wherever it lives, so the DECORATION is the rule, and
+        # cria can both check it and state it.
+        import tempfile
+        from cria.probediscovery import TEST_CONVENTIONS, undiscoverable_tests
+        rs = next(c for c in TEST_CONVENTIONS if "rs" in c.exts)
+        self.assertEqual(rs.globs, ())
+        self.assertTrue(rs.marker)
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "src").mkdir()
+            Path(ws, "src/lib.rs").write_text("fn a(){}\n#[cfg(test)]\nmod t {\n #[test]\n fn x(){}\n}\n")
+            self.assertEqual(undiscoverable_tests(ws), [])          # cargo will find it — say nothing
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "src").mkdir()
+            Path(ws, "src/lib.rs").write_text("fn a(){}\n")
+            self.assertEqual(undiscoverable_tests(ws),
+                             ["No cargo test tests were found — to be run they must be marked with #[test], normally inside a #[cfg(test)] mod."])
+
+    def test_test_code_in_a_file_that_will_never_run_is_named(self):
+        # The strongest answer, and the g20 failure exactly: the tests EXIST and are not collected.
+        import tempfile
+        from cria.probediscovery import undiscoverable_tests
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve_handle.py").write_text(
+                "import unittest\n\nclass TestResolve(unittest.TestCase):\n"
+                "    def test_it(self):\n        pass\n")
+            out = undiscoverable_tests(ws)
+        self.assertEqual(len(out), 1)
+        self.assertIn("Test code in resolve_handle.py will not run", out[0])
+        self.assertIn("test_*.py or *_test.py", out[0])
+
+    def test_java_needs_both_the_annotation_and_the_filename(self):
+        import tempfile
+        from cria.probediscovery import undiscoverable_tests
+        with tempfile.TemporaryDirectory() as ws:   # @Test in a file surefire will not pick up
+            Path(ws, "Helper.java").write_text("class Helper {\n  @Test\n  void a(){}\n}\n")
+            self.assertIn("will not run", undiscoverable_tests(ws)[0])
+        with tempfile.TemporaryDirectory() as ws:   # correctly named → silent
+            Path(ws, "FooTest.java").write_text("class FooTest {\n  @Test\n  void a(){}\n}\n")
+            self.assertEqual(undiscoverable_tests(ws), [])
 
     def test_only_python_carries_a_zero_config_floor_runner(self):
         # You cannot have a Go/Rust/JS project without go.mod/Cargo.toml/package.json, so those always
@@ -282,16 +318,18 @@ class TestConventionTableTests(unittest.TestCase):
         import tempfile
         from cria.probediscovery import undiscoverable_tests
         with tempfile.TemporaryDirectory() as ws:
-            Path(ws, "resolve.py").write_text("import unittest\n")
-            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py (pytest)"])
+            Path(ws, "resolve.py").write_text("x = 1\n")
+            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found — to be run they must be named test_*.py or *_test.py."])
         with tempfile.TemporaryDirectory() as ws:   # Go: the vacuous green reached the other way
             Path(ws, "main.go").write_text("package main\n")
             Path(ws, "go.mod").write_text("module x\n")
-            self.assertEqual(undiscoverable_tests(ws), ["*_test.go (go test)"])
-        with tempfile.TemporaryDirectory() as ws:   # Rust is never claimed about
+            self.assertEqual(undiscoverable_tests(ws),
+                             ["No go test tests were found — to be run they must be named *_test.go, with functions named TestXxx."])
+        with tempfile.TemporaryDirectory() as ws:   # Rust: named by its decoration, not a filename
             Path(ws, "src").mkdir()
             Path(ws, "src/main.rs").write_text("fn main(){}\n")
-            self.assertEqual(undiscoverable_tests(ws), [])
+            self.assertEqual(undiscoverable_tests(ws),
+                             ["No cargo test tests were found — to be run they must be marked with #[test], normally inside a #[cfg(test)] mod."])
 
     def test_a_runner_config_silences_the_claim(self):
         # phpunit.xml / jest.config / pytest.ini re-point discovery, so cria's default-convention
@@ -316,4 +354,4 @@ class TestConventionTableTests(unittest.TestCase):
             sp = Path(ws, ".venv/lib/python3.12/site-packages/_pytest")
             sp.mkdir(parents=True)
             (sp / "test_main.py").write_text("def test_x(): pass\n")
-            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py (pytest)"])
+            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found — to be run they must be named test_*.py or *_test.py."])
