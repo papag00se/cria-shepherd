@@ -5843,3 +5843,64 @@ class CorruptedFinalReplyTests(unittest.TestCase):
         _judge_completion(chat, None, "sys", "user", _Rlog(), phase="verify", workspace_root=d)
         tool_msgs = [m for m in bodies[1]["messages"] if m.get("role") == "tool"]
         self.assertTrue(tool_msgs)                                        # the read RAN
+
+
+class SteerBlindnessAndCodeDictationTests(unittest.TestCase):
+    """The two roots behind 71 cria-side findings across six gemma runs: the flail author saw the
+    header 'GROUND TRUTH FROM THE REPO'S CHECKS:' with NOTHING under it (6/6 runs, most steers), and
+    steers that DICTATE code — the author is the same weak model, its code is usually broken, and
+    the coder transcribes it verbatim."""
+
+    def test_the_last_check_text_is_persisted_for_the_author(self):
+        from cria.loop import GuardState, track_gate_progress
+        gs = GuardState()
+        track_gate_progress(gs, "tests/test_x.py:12: undefined name 'client'")
+        self.assertIn("undefined name", gs.last_checks_text)
+        track_gate_progress(gs, "")                       # GREEN clears it — no stale red
+        self.assertEqual(gs.last_checks_text, "")
+
+    def test_flail_author_receives_the_checks_as_truth(self):
+        import tempfile
+
+        from cria.config import Role
+        from cria.loop import GuardState, author_flail_steer
+        d = tempfile.mkdtemp()
+        gs = GuardState()
+        gs.last_checks_text = "tests/test_x.py:12: undefined name 'client'"
+        gs.recent_writes, gs.spin_path, gs.workspace_root = ["a.py"], "", d
+        seen = []
+
+        def chat(body, rlog):
+            seen.append(body)
+            return json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": "You are looping; read the file and fix line 12."}}]}).encode()
+
+        author_flail_steer(chat, Role(name="reasoner", backend="local"), ["thinking"],
+                           {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
+                           workspace_root=d, gs=gs)
+        user = seen[0]["messages"][-1]["content"]
+        self.assertIn("undefined name 'client'", user)     # the checks reached the author
+        self.assertNotIn("(no check results for this steer)", user)
+
+    def test_code_dictating_steers_are_dropped_prose_survives(self):
+        from cria.loop import _grounded_steer_or_none
+
+        class _R:
+            def emit(self, *a, **k):
+                return self
+
+        drop = [
+            "Rewrite it as:\n```python\ndef get(self):\n    return 1\n```",
+            "Add this line:\nfrom .resolver import resolve_handle",
+            "First:\npython3 -m pytest tests/ -q\nthen read the error.",
+            "Fix it:\nsed -i 's/Httx/httpx/' client.py",
+        ]
+        for d in drop:
+            self.assertIsNone(_grounded_steer_or_none(d, "", _R()), d[:40])
+        keep = [
+            "You have an undefined resolve_handle on line 11 of cli.py; import it at the top.",
+            "Read resolver.py and use the resolved_addresses.ada field the checks name.",
+            "Change line 32 to use a default instead of direct indexing, then rerun the tests.",
+        ]
+        for k in keep:
+            self.assertIsNotNone(_grounded_steer_or_none(k, "", _R()), k[:40])

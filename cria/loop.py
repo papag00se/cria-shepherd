@@ -236,6 +236,12 @@ class PlanSession(GuardState):
     flail_cap_logged: bool = False    # the cap-reached notice is emitted ONCE per step, not per drive
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # The last check output as TEXT, for the steer author. The flail trigger carries no gate outcome,
+    # so its author saw the header "GROUND TRUTH FROM THE REPO'S CHECKS:" with NOTHING under it — in
+    # 6 of 6 gemma runs, on the MAJORITY of steers (57/57, 88/109, 87/117, 69/74, 79/109, 31/47).
+    # Authoring blind, it invented endpoints, fields, paths and flags, and the coder obeyed. cria HELD
+    # this text the whole time.
+    last_checks_text: str = ""
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
     recent_reasoning: list[str] = field(default_factory=list)  # coder's last FLAIL_WINDOW reasonings (flail detector)
@@ -324,7 +330,11 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
     a FALSY value on a GREEN/clean gate. Maintains the identical-finding stall (same error unchanged
     across gates = no progress → the reasoned thrash-assist). A COULDN'T-RUN gate must NOT call this
-    (it is a neutral non-signal — neither red nor green)."""
+    (it is a neutral non-signal — neither red nor green).
+
+    It also PERSISTS the check text for the steer author. Every gate path funnels through here, so
+    this one line covers plan-on and plan-off alike."""
+    gs.last_checks_text = finding or ""
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
@@ -3727,6 +3737,25 @@ def _dedupe_doubled(text: str) -> str:
     return text
 
 
+# A steer that DICTATES CODE is the highest-damage class measured across the gemma runs: the author
+# is the same weak model, its code is usually broken (unbalanced parens, a phantom `Httx`, a `2>&3`
+# redirect, `sed -i` the system prompt forbids, an import that cannot resolve), cria's own relay
+# flattens the newlines out of it, and the coder transcribes the wreckage verbatim ("The user is
+# right" opened 14 of one run's post-steer reasonings). The steer contract is already "name the
+# file:line and describe the change in words" — this enforces it: a directive carrying a multi-line
+# code block, or a shell command line, is dropped. Prose that merely NAMES an identifier is fine.
+_CODE_DICTATION = re.compile(
+    r"```"                                              # a fenced block of any kind
+    r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # a code LINE
+    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )",     # a command LINE
+    re.M)
+
+
+def _dictates_code(directive: str) -> bool:
+    """True when the directive hands the coder code/commands to copy rather than an instruction."""
+    return bool(_CODE_DICTATION.search(directive))
+
+
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
@@ -3749,6 +3778,9 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
+        return None
+    if _dictates_code(directive):
+        rlog.emit("loop.steer_dictated_code", level="warn", head=_clip(directive, 120))
         return None
     cite = _false_line_citation(directive, evidence)
     if cite:
@@ -3867,7 +3899,8 @@ def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: di
     then sent the coder back to re-reading it (run 0729-gemma4 pon2 calls 0046/0175) — and without the
     root the author judged file churn blind to the files' real on-disk bytes."""
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-                        condition="flail", reasoning_window=window)
+                        condition="flail", reasoning_window=window,
+                        truth_text=getattr(gs, "last_checks_text", "") if gs is not None else "")
 
 
 def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> dict:
