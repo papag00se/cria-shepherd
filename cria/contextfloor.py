@@ -52,6 +52,18 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 _NOTE_DIGEST_FRACTION = 0.25
 _MIN_NOTE_DIGEST_TOKENS = 256   # total floor: even a tight budget leaves room for a real summary
 _MIN_PER_TURN_TOKENS = 64       # per-turn floor: each digested turn gets at least this much room
+# ...but a stand-in may never cost as much as what it stands in for. A share of the BUDGET alone let a
+# note re-embed a whole dropped turn verbatim whenever that turn fit under the per-turn allowance, so
+# the drop saved nothing (measured: a 1,215-token turn dropped, a 1,244-token note inserted — the
+# transcript ENDED UP LARGER). The floor then read "still over budget" and escalated to lever 5,
+# deleting the model's most recent turns for no gain: 350 turns + 736 protected messages destroyed in
+# one 30-minute run, over_budget declared 60 times. Every drop must net at least (1 - this) of what it
+# removed, and the drop loops count the same bound against the budget instead of discovering it after.
+_NOTE_MAX_SHARE_OF_DROPPED = 0.6   # every drop nets at least 40% of what it removed. Tighter starves
+                                   # the digest: a fetched HTML page — the biggest thing these
+                                   # transcripts drop — compresses about 2x, and a 0.4 share would
+                                   # reject it and lose the page's substance to buy back 20% more.
+_NOTE_FRAME_TOKENS = 48         # the note's own header/file-list overhead, counted with its digests
 # Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
 _WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_editor",
                      "create_file", "text_editor")
@@ -410,8 +422,12 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
     the window still doesn't fit (fit must be guaranteed or the model errors on every call)."""
     work = list(messages)
     dropped = 0
+    dropped_tokens = 0
     removed: list[dict] = []
-    while _msgs_tokens(work) > msg_budget:
+    # The stand-in note this lever appends counts against the budget too — dropping to exactly the
+    # budget and THEN adding a note leaves the request over, which is how a "last resort" ended up
+    # firing on nearly every request of a long run.
+    while _msgs_tokens(work) + _note_cost_bound(dropped_tokens, msg_budget) > msg_budget:
         last_user = -1
         for i, m in enumerate(work):
             if m.get("role") == "user":
@@ -423,9 +439,19 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
         victim = next((i for i, m in enumerate(work)
                        if _droppable(i, m) and not _has_protect_marker(m)), None)
         if victim is None:
-            victim = next((i for i, m in enumerate(work) if _droppable(i, m)), None)
+            # Only protect-marked turns are left. Sacrificing one is the worst loss there is (it is the
+            # summary standing in for everything already gone), so pay it ONLY when it actually buys the
+            # fit: if dropping every remaining droppable turn STILL leaves the request over budget, the
+            # anchors would be destroyed for nothing. Stop instead and let over_budget say so honestly.
+            remaining = [i for i, m in enumerate(work) if _droppable(i, m)]
+            freed = sum(est_tokens(_msg_text(work[i])) for i in remaining)
+            if not remaining or (_msgs_tokens(work) - freed
+                                 + _note_cost_bound(dropped_tokens + freed, msg_budget)) > msg_budget:
+                break
+            victim = remaining[0]
         if victim is None:
             break  # only the irreducible core remains
+        dropped_tokens += est_tokens(_msg_text(work[victim]))
         removed.append(work.pop(victim))
         dropped += 1
     if removed:
@@ -446,17 +472,23 @@ def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int
     """Drop oldest droppable messages (not system, not the active turn) until the transcript fits
     the budget or nothing droppable remains — but SYNTHESIZE their durable state (the files they
     modified) into a protected note in their place, so a long overflowing session doesn't lose track
-    of what exists on disk (spirit of trim/state_extract — deterministic, no LLM)."""
+    of what exists on disk (spirit of trim/state_extract — deterministic, no LLM).
+
+    The note is part of the result, so it is part of the arithmetic: stop when the survivors PLUS the
+    note fit, not when the survivors alone do (see ``_note_cost_bound``)."""
     prot = _protected_mask(messages)
     keep = [True] * len(messages)
     total = _msgs_tokens(messages)
     dropped = 0
+    dropped_tokens = 0
     for i, m in enumerate(messages):
-        if total <= msg_budget:
+        if total + _note_cost_bound(dropped_tokens, msg_budget) <= msg_budget:
             break
         if prot[i]:
             continue
-        total -= est_tokens(_msg_text(m))
+        size = est_tokens(_msg_text(m))
+        total -= size
+        dropped_tokens += size
         keep[i] = False
         dropped += 1
     kept = [m for i, m in enumerate(messages) if keep[i]]
@@ -482,17 +514,33 @@ def _modified_files(msgs: list[dict]) -> list[str]:
     return out
 
 
+def _note_cost_bound(dropped_tokens: int, msg_budget: int) -> int:
+    """The most the stand-in note may cost, given how much was dropped for it.
+
+    ONE definition shared by the drop loops (which must stop early enough to leave room for it) and by
+    the note builder (which must honour it) — so the two cannot disagree, which is exactly how the
+    floor used to end up bigger than it started."""
+    if dropped_tokens <= 0:
+        return 0
+    of_budget = max(_MIN_NOTE_DIGEST_TOKENS, int(msg_budget * _NOTE_DIGEST_FRACTION))
+    of_dropped = int(dropped_tokens * _NOTE_MAX_SHARE_OF_DROPPED)
+    return min(of_budget, of_dropped) + _NOTE_FRAME_TOKENS
+
+
 def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> dict:
     """The synthesized stand-in for the dropped turns: a content_reduce()d digest of what each turn
     CONTAINED (so a dropped test-failure/error output survives as a summary, not just a filename) plus
     the full list of files those turns modified. Digests are lossless-first (content_reduce, never a
-    blind slice) and bounded to a share of the budget so the note can't itself blow the window."""
+    blind slice) and bounded BOTH by a share of the budget and by a share of what was dropped, so the
+    note can neither blow the window nor cost as much as the turns it replaces."""
     parts = [f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."]
 
-    # Per-turn digests. The digests together may occupy at most a share of the message budget; split
-    # that share across the dropped turns (each with a per-turn floor so a digest stays usable).
-    note_budget = max(_MIN_NOTE_DIGEST_TOKENS, int(msg_budget * _NOTE_DIGEST_FRACTION))
-    per_turn = max(_MIN_PER_TURN_TOKENS, note_budget // max(dropped, 1))
+    # Per-turn digests. The digests together may occupy at most the same bound the drop loops budgeted
+    # for (share of the budget AND share of what was dropped); split it across the dropped turns, each
+    # with a per-turn floor so a digest stays usable — but never a floor larger than the whole bound.
+    note_budget = max(0, _note_cost_bound(sum(est_tokens(_msg_text(m)) for m in dropped_msgs),
+                                          msg_budget) - _NOTE_FRAME_TOKENS)
+    per_turn = min(max(_MIN_PER_TURN_TOKENS, note_budget // max(dropped, 1)), note_budget)
     digests: list[tuple[int, str]] = []
     spent = 0
     omitted = 0
@@ -505,15 +553,17 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
         if spent >= note_budget:
             omitted += 1
             continue
-        sz = est_tokens(text)
         digest = content_reduce(text, _sniff_content_type(text), per_turn).strip()
-        # Keep the digest only if content_reduce actually summarized it (or the turn was already small
-        # enough to carry verbatim). Never re-embed a full unreduced blob we just dropped — that would
-        # defeat the drop and risk the window; such a turn is disclosed as omitted instead. (Its file,
-        # if it wrote one, still survives via the file list below.)
-        if digest and (est_tokens(digest) < sz or sz <= per_turn):
+        # Keep the digest only if it FITS the remaining note budget. content_reduce is lossless-first:
+        # asked for `per_turn` it returns the best it can honestly do, which for ordinary prose is the
+        # text nearly unchanged — so a cap it merely aims at is not a cap. The budget check is the
+        # enforcement, and it is what makes "the note costs less than what it replaces" true rather
+        # than aspirational. A turn that won't fit is disclosed as omitted, never re-embedded whole
+        # (its file, if it wrote one, still survives via the file list below).
+        cost = est_tokens(digest)
+        if digest and spent + cost <= note_budget:
             digests.append((idx, digest))
-            spent += est_tokens(digest)
+            spent += cost
         else:
             omitted += 1
     if digests:

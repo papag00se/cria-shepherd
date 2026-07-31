@@ -374,24 +374,44 @@ class FloorSynthesisTests(unittest.TestCase):
         self.assertIn("app/resolver.py", joined)              # the modified file survives the drop
         self.assertEqual(out[0]["role"], "system")            # system stays at the front
 
-    def test_drop_oldest_digests_dropped_prose_output(self):
-        # A dropped test-failure / error output must survive as a content_reduce()d SUMMARY in the
-        # stand-in note — not vanish, and not be carried whole. This is the core enrichment.
-        fail = ("The test suite failed because the resolver returned None for the Ada handle "
-                "and the assertion did not hold on the second row. ") * 30
+    def test_drop_oldest_digests_dropped_output_that_compresses(self):
+        # A dropped tool output must survive as a content_reduce()d SUMMARY in the stand-in note —
+        # not vanish, and not be carried whole. This is the core enrichment.
+        blob = ("<html><body>" + "".join(
+            f"<div class='row r{i}'><p>Failure {i}: the resolver returned None</p></div>"
+            for i in range(60)) + "</body></html>")
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "assistant", "content": "fetch the page",
+             "tool_calls": [{"id": "c1", "function": {"name": "web_fetch", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": blob},
+            {"role": "user", "content": "x" * 12000},
+        ]
+        out, dropped = contextfloor._drop_oldest(msgs, msg_budget=2400)
+        self.assertGreater(dropped, 0)
+        note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
+        self.assertIn("resolver returned None", note["content"])         # the substance survives
+        self.assertLess(est_tokens(note["content"]), est_tokens(blob))   # summarized, not carried whole
+
+    def test_output_that_will_not_compress_is_disclosed_not_carried_whole(self):
+        # content_reduce is lossless-first: ordinary prose comes back near its original size. Carrying
+        # THAT as the "summary" is what made a drop net zero (measured in g16: 1,215 tokens dropped,
+        # 1,244-token note inserted). The honest outcome is to say the turn was compacted and could not
+        # be summarized — the model can re-read the file; it cannot un-corrupt a window.
+        prose = ("The test suite failed because the resolver returned None for the Ada handle "
+                 "and the assertion did not hold on the second row. ") * 30
         msgs = [
             {"role": "system", "content": "sys"},
             {"role": "assistant", "content": "run tests",
              "tool_calls": [{"id": "c1", "function": {"name": "shell", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": fail},
+            {"role": "tool", "tool_call_id": "c1", "content": prose},
             {"role": "user", "content": "x" * 4000},
         ]
         out, dropped = contextfloor._drop_oldest(msgs, msg_budget=400)
         self.assertGreater(dropped, 0)
         note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
-        self.assertIn("resolver", note["content"])            # the failure's substance survives
-        self.assertIn("assertion", note["content"])
-        self.assertLess(est_tokens(note["content"]), est_tokens(fail))  # summarized, not carried whole
+        self.assertIn("could not be summarized", note["content"])          # disclosed, never silent
+        self.assertLess(est_tokens(note["content"]), est_tokens(prose) * 0.5)
 
     def test_drop_oldest_lists_all_modified_files_no_cap(self):
         # No 30-file cap: every file the dropped turns modified is listed, however many.
@@ -405,3 +425,42 @@ class FloorSynthesisTests(unittest.TestCase):
         note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
         for i in range(40):
             self.assertIn(f"pkg/mod_{i}.py", note["content"])   # all 40 listed, no silent omission
+
+
+class NoteCostsLessThanItReplacesTests(unittest.TestCase):
+    """g16 (gemma4, ada-handles): the floor dropped to exactly the budget and THEN appended a note
+    worth up to 25% of that budget — and a turn small enough to fit the per-turn allowance was carried
+    into it VERBATIM, so the drop saved nothing. Measured on that run: a 1,215-token turn dropped, a
+    1,244-token note inserted; floor events with msg_after ABOVE msg_before; 350 turns and 736
+    protected messages destroyed across 30 minutes, over_budget declared 60 times."""
+
+    BIG = ("Project instructions (from the repo — follow these): keep the resolver in one module "
+           "and do not add fallbacks. ") * 60
+
+    def test_a_drop_always_shrinks_the_transcript(self):
+        note = contextfloor._compacted_note([{"role": "user", "content": self.BIG}], 1, 16000)
+        self.assertLess(est_tokens(note["content"]), est_tokens(self.BIG) * 0.5)
+
+    def test_drop_oldest_leaves_room_for_its_own_note(self):
+        msgs = ([{"role": "system", "content": "sys"}]
+                + [{"role": "assistant", "content": f"turn {i} " + "x " * 400} for i in range(20)]
+                + [{"role": "user", "content": "do the thing"}])
+        kept, dropped = contextfloor._drop_oldest(msgs, msg_budget=2000)
+        self.assertGreater(dropped, 0)
+        self.assertLessEqual(contextfloor._msgs_tokens(kept), 2000)   # note INCLUDED, not discovered after
+
+    def test_lever5_leaves_room_for_its_own_note(self):
+        msgs = ([{"role": "system", "content": "sys"}, {"role": "user", "content": "request"}]
+                + [{"role": "assistant", "content": "a " * 300} for _ in range(30)])
+        out, dropped = contextfloor._drop_protected_overflow(msgs, msg_budget=3000)
+        self.assertGreater(dropped, 0)
+        self.assertLessEqual(contextfloor._msgs_tokens(out), 3000)
+
+    def test_an_anchor_is_not_sacrificed_when_the_fit_is_unreachable(self):
+        # Sacrificing a protect-marked turn is the worst loss there is; paying it and STILL landing
+        # over budget buys nothing at all.
+        anchor = {"role": "user", "content": "⟦ctx:rollup⟧ the rolling summary " + "s" * 400}
+        msgs = ([{"role": "system", "content": "sys"}, {"role": "user", "content": "request"}, anchor]
+                + [{"role": "assistant", "content": "a" * 900} for _ in range(8)])
+        out, _ = contextfloor._drop_protected_overflow(msgs, msg_budget=100)   # unreachable
+        self.assertIn(anchor, out)

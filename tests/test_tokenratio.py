@@ -31,10 +31,24 @@ class TokenRatioTests(unittest.TestCase):
             tokenratio.record("m", 100000, 10000)  # 10x → clamps at MAX
         self.assertLessEqual(tokenratio.observed("m"), tokenratio.MAX_RATIO)
 
-    def test_never_below_default(self):
-        for _ in range(10):
-            tokenratio.record("m", 5000, 10000)  # 0.5x → clamped up to DEFAULT
-        self.assertGreaterEqual(tokenratio.observed("m"), tokenratio.DEFAULT_RATIO)
+    def test_learns_below_the_initial_guess(self):
+        # g16/g17 (gemma4): real÷est measured 1.13 median over 251 calls, 1.59 the densest call ever
+        # seen across five models — NOT ONE reached the 1.8 initial guess. Clamping the learner at its
+        # own starting value made it one-way, and the floor paid the ~36% haircut by deleting history.
+        for _ in range(20):
+            tokenratio.record("m", 11300, 10000)   # 1.13x — real agent traffic
+        self.assertLess(tokenratio.observed("m"), 1.3)
+
+    def test_never_below_min_ratio(self):
+        for _ in range(20):
+            tokenratio.record("m", 5000, 10000)    # 0.5x → clamped up to MIN_RATIO
+        self.assertGreaterEqual(tokenratio.observed("m"), tokenratio.MIN_RATIO)
+
+    def test_still_rises_fast_from_a_learned_low(self):
+        for _ in range(20):
+            tokenratio.record("m", 10000, 10000)   # settles near 1.0
+        tokenratio.record("m", 35000, 10000)       # a base64/blob turn — guard must snap back up
+        self.assertGreater(tokenratio.observed("m"), 2.0)
 
     def test_per_model(self):
         tokenratio.record("dense", 30000, 10000)

@@ -12,13 +12,25 @@ compaction request ever fires, so that request budgets correctly on the first tr
 Asymmetric EWMA — **rise fast, fall slow** — because the costs are asymmetric: under-estimating the
 ratio overflows the window (a hard failure / wasted retry), while over-estimating only spends a
 little less context. So a denser-than-seen turn pulls the ratio up hard; a lighter turn barely
-lowers our guard. Clamped to ``[DEFAULT_RATIO, MAX_RATIO]``.
+lowers our guard. Clamped to ``[MIN_RATIO, MAX_RATIO]`` — the floor is 1.0, NOT the initial guess:
+a learner that cannot fall below its own starting value never learns anything about a light model.
 """
 from __future__ import annotations
 
 import threading
 
-DEFAULT_RATIO = 1.8   # real÷(chars/4) before any measurement (codex-local's DEFAULT_SAFETY_FACTOR)
+DEFAULT_RATIO = 1.8   # the INITIAL guess, before any measurement (codex-local's DEFAULT_SAFETY_FACTOR).
+                      # Conservative on purpose: the first call or two budget as if the content were
+                      # dense, then the measurement below replaces the guess with the truth.
+MIN_RATIO = 1.0       # the floor a MEASURED ratio may fall to: never budget as if a prompt were
+                      # CHEAPER than its own chars/4 estimate. This used to be DEFAULT_RATIO, which
+                      # made the learner one-way — it could only ever learn UP from the guess. Measured
+                      # over 778 real calls across five models (gemma4 1.13, mellum2 1.12, qwythos 1.06,
+                      # nemotron 1.02, ternary-bonsai 1.00 median; 1.59 the densest single call): NOT ONE
+                      # reached 1.8. cria's estimate counts JSON envelope characters the tokenizer barely
+                      # charges for, so agent traffic runs near 1.0 — and the clamp turned that into a
+                      # permanent ~36% haircut on every window, which the floor then paid for by deleting
+                      # the model's history (350 turns + 736 protected messages in one 30-minute run).
 MAX_RATIO = 4.0       # cap so one outlier can't starve the budget — but 4.0 = the true 1-token/char
                       # ceiling (dense CJK/base64), so real ~4x density budgets right on the FIRST try
                       # instead of overflowing and paying a wasted _overflow_refit round-trip every turn
@@ -44,7 +56,7 @@ def record(model, real_tokens, estimate) -> float | None:
         return None
     if real <= 0 or not estimate or estimate <= 0:
         return None
-    observed_ratio = min(max(real / estimate, DEFAULT_RATIO), MAX_RATIO)
+    observed_ratio = min(max(real / estimate, MIN_RATIO), MAX_RATIO)
     key = model or ""
     with _lock:
         cur = _ratios.get(key, DEFAULT_RATIO)

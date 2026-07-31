@@ -359,13 +359,33 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     return status, target, content, msg
 
 
+def _deref(sch: Any, schemas: dict) -> dict:
+    """Follow ``$ref`` into ``components/schemas`` until a real schema is reached (bounded, so a
+    self-referential spec can't spin). A ``$ref`` is a POINTER, not a shape: resolving it before
+    classifying is the difference between "this field is an object" and the truth."""
+    hops = 0
+    while isinstance(sch, dict) and "$ref" in sch and hops < 8:
+        sch = schemas.get(str(sch["$ref"]).rsplit("/", 1)[-1], {})
+        hops += 1
+    return sch if isinstance(sch, dict) else {}
+
+
 def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> list[str]:
     """Top-level property names of an OpenAPI object schema, dereferencing a ``$ref`` into
     ``components/schemas``. A nested object is expanded ONE level (``resolved_addresses{ada, eth, btc}``)
-    so the model sees the real nesting it otherwise guesses; an array field is marked ``[]``."""
-    if isinstance(sch, dict) and "$ref" in sch:
-        sch = schemas.get(str(sch["$ref"]).rsplit("/", 1)[-1], {})
-    if not isinstance(sch, dict):
+    so the model sees the real nesting it otherwise guesses; an array field is marked ``[]``; every
+    other field carries its declared scalar type (``holder(string)``, ``length(integer)``).
+
+    Both halves of that are load-bearing, and both were wrong. A field was called an object whenever it
+    merely CARRIED a ``$ref`` — which in the Ada Handles spec mislabels 19 of 241 response fields, 8 of
+    them (``handle_type``, ``holder_type``, ``rarity``, ``characters`` …) on the one endpoint the task
+    needs; they are all plain strings. And scalars carried no type at all, so the one field that mattered
+    read as unknown shape sitting in a crowd of "(object)". The coder's own words, three runs running:
+    "gives resolved_addresses.ada … and a holder OBJECT; then I need to call GET /holders/{holder.address}".
+    ``holder`` is a string — the holder's stake address — so ``holder.address`` was None, the model
+    substituted the payment address it did have, and every second lookup 404'd."""
+    sch = _deref(sch, schemas)
+    if not sch:
         return []
     props = sch.get("properties")
     if not isinstance(props, dict):
@@ -373,8 +393,8 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     out = []
     items = list(props.items())
     for k, v in items[:max_fields]:
-        v = v if isinstance(v, dict) else {}
-        if _depth == 0 and (v.get("type") == "object" or "properties" in v or "$ref" in v):
+        v = _deref(v if isinstance(v, dict) else {}, schemas)
+        if _depth == 0 and (v.get("type") == "object" or "properties" in v):
             # NB: pass the WHOLE `sub` through. It already ends with its own "…+N more field(s)"
             # marker when the nested object was capped, and slicing it here (`sub[:8]`) threw that
             # marker away — the one case it exists for. A nested field past the cap then read to the
@@ -384,8 +404,10 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
             out.append(f"{k}{{{', '.join(sub)}}}" if sub else f"{k}(object)")
         elif v.get("type") == "array":
             out.append(f"{k}[]")
+        elif v.get("type"):
+            out.append(f"{k}({v['type']})")
         else:
-            out.append(str(k))
+            out.append(str(k))   # the spec itself declares no type — say nothing rather than guess
     # DISCLOSE the cap. A silently-cut field list reads as the complete set, so a coder looking for a
     # field that exists but sits past the cap concludes the API doesn't return it — and guesses. Same
     # rule as the endpoint list and the find residual: never a silent slice.

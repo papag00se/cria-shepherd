@@ -125,6 +125,43 @@ class NestedFieldDisclosureTests(unittest.TestCase):
         self.assertTrue(any("more field(s)" in x for x in out), out)
 
 
+class FieldTypeTruthTests(unittest.TestCase):
+    """g16 call 0009 / g17 call 0016 (gemma4, ada-handles): the coder read cria's own API map and
+    concluded "a holder OBJECT … GET /holders/{holder.address}". ``holder`` is a string. It then
+    passed the payment address to the holder endpoint, 404'd every time, and shipped
+    "Holder: unknown / Total handles: 1"."""
+
+    SPEC = {"type": "object", "properties": {
+        "holder": {"type": "string"},                       # the field that mattered — was unlabelled
+        "holder_type": {"$ref": "#/components/schemas/AddressType"},   # a $ref to a STRING
+        "length": {"type": "integer"},
+        "og": {"type": "boolean"},
+        "resolved_addresses": {"type": "object", "properties": {"ada": {"type": "string"}}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "untyped": {},
+    }}
+    SCHEMAS = {"AddressType": {"type": "string", "enum": ["stake", "enterprise"]}}
+
+    def test_ref_to_a_scalar_is_not_called_an_object(self):
+        out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
+        self.assertIn("holder_type(string)", out)
+        self.assertNotIn("holder_type(object)", out)
+
+    def test_scalars_carry_their_declared_type(self):
+        out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
+        self.assertIn("holder(string)", out)
+        self.assertIn("length(integer)", out)
+        self.assertIn("og(boolean)", out)
+
+    def test_objects_and_arrays_keep_their_existing_notation(self):
+        out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
+        self.assertIn("resolved_addresses{ada(string)}", out)
+        self.assertIn("tags[]", out)
+
+    def test_an_undeclared_type_is_left_alone_not_guessed(self):
+        self.assertIn("untyped", wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30))
+
+
 class StatusAndHostTests(unittest.TestCase):
     def test_status_label(self):
         self.assertEqual(wf.status_label(404), "HTTP 404 Not Found")
@@ -416,7 +453,7 @@ class FetchNavSeedTests(unittest.TestCase):
         msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
         self.assertIn("response shape", msg)
         self.assertIn("holder", msg)
-        self.assertIn("resolved_addresses{ada, eth}", msg)   # $ref dereferenced + nesting expanded
+        self.assertIn("resolved_addresses{ada(string), eth(string)}", msg)  # $ref dereffed, nesting + types
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
     def test_response_shape_collapses_subpaths_so_distinct_resources_survive(self):
