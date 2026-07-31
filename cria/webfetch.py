@@ -31,11 +31,12 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import brave, prompts
+from . import apidiscovery, brave, prompts
 from .content_reduce import est_tokens, html_to_text
 from .searchloop import first_domain_in, normalize_search, searches_match
 
@@ -60,6 +61,10 @@ GUESS_STREAK_THRESHOLD = 3           # consecutive non-2xx before the stop-guess
 # off these (a named constant, shared, so the two are never a magic string that drifts out of sync).
 ROUTES_MARKER = "[API endpoints ("   # ...N): /a, /b, ...]
 SHAPE_MARKER = "[response shape —"   # ...the fields each endpoint RETURNS: GET /x → f1, f2{a,b}, ...]
+# ...and where an API's machine-readable DESCRIPTION lives, when the fetched doc is a catalogue of
+# other documents rather than a spec itself (RFC 9727 .well-known/api-catalog, carried as an RFC 9264
+# linkset). Its whole value is the hrefs, which a top-level-keys outline throws away.
+CATALOG_MARKER = "[API descriptions ("   # ...N): <anchor> → service-desc: <url>; ...]
 
 # Human-readable form of the body cap, for the truncation disclosure (so the model knows the
 # fetched doc was cut at a real boundary and content remains beyond it — not a silent slice).
@@ -359,6 +364,57 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     return status, target, content, msg
 
 
+def _ref_map(parsed: Any) -> dict:
+    """Everything a ``$ref`` can point at, keyed by its FINAL path segment — merged across the dialects'
+    containers: OpenAPI 3's ``components/*``, Swagger 2's top-level ``definitions`` / ``parameters`` /
+    ``responses``, and JSON Schema's ``$defs``. :func:`_deref` resolves by last segment, so one flat map
+    is exactly what it wants.
+
+    Only ``components/schemas`` was consulted before, so for a SWAGGER 2 spec every response
+    ``$ref: #/definitions/X`` resolved to nothing and the endpoint outline carried NO response fields at
+    all — the same "has the endpoint, guesses the response shape" failure that cost runs g15-g18, but
+    total instead of partial. Components merge LAST, and schemas last within them, so the richest
+    dialect wins a name collision."""
+    out: dict = {}
+    if not isinstance(parsed, dict):
+        return out
+    for key in ("responses", "parameters", "$defs", "definitions"):
+        sub = parsed.get(key)
+        if isinstance(sub, dict):
+            out.update({str(k): v for k, v in sub.items() if isinstance(v, dict)})
+    comp = parsed.get("components")
+    if isinstance(comp, dict):
+        for key in ("securitySchemes", "headers", "examples", "requestBodies", "responses",
+                    "parameters", "schemas"):
+            sub = comp.get(key)
+            if isinstance(sub, dict):
+                out.update({str(k): v for k, v in sub.items() if isinstance(v, dict)})
+    return out
+
+
+def _base_path(parsed: Any) -> str:
+    """The path prefix the spec says its routes hang off — Swagger 2's ``basePath``, or the path
+    component of OpenAPI 3's first ``servers[].url``. Empty when the spec declares none.
+
+    A spec's ``paths`` keys are RELATIVE to this. Listing them bare told the model that
+    ``/handles/{handle}`` is the route when the real one is ``/v2/handles/{handle}`` — cria stating a
+    false fact about how to call the API, which is the exact class of error the g18 walk found the
+    steer author making in prose (four steers arguing about a ``/v1/`` prefix)."""
+    if not isinstance(parsed, dict):
+        return ""
+    base = parsed.get("basePath")
+    if not isinstance(base, str):
+        servers = parsed.get("servers")
+        first = servers[0] if isinstance(servers, list) and servers else None
+        url = first.get("url") if isinstance(first, dict) else None
+        if not isinstance(url, str):
+            return ""
+        # A server url may be absolute (https://host/v2) or already just a path (/v2).
+        base = urllib.parse.urlsplit(url).path if "//" in url else url
+    base = (base or "").strip().rstrip("/")
+    return base if base.startswith("/") and base != "/" else ""
+
+
 def _deref(sch: Any, schemas: dict) -> dict:
     """Follow ``$ref`` into ``components/schemas`` until a real schema is reached (bounded, so a
     self-referential spec can't spin). A ``$ref`` is a POINTER, not a shape: resolving it before
@@ -417,8 +473,8 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 
 
 def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = 30) -> list[str]:
-    """For an OpenAPI-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through the
-    response schema's ``$ref`` into ``components/schemas`` — so a coder knows WHAT an endpoint returns
+    """For an OpenAPI/Swagger-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through
+    the response schema's ``$ref`` (see :func:`_ref_map`) — so a coder knows WHAT an endpoint returns
     (the exact field names to extract, plus one level of nesting), not just WHERE to call. The recurring
     last-mile bug is a coder that has the right endpoint but GUESSES the response shape (a ``{"handles":[…]}``
     wrapper, a singular ``resolved_address``, a ``holder.address`` that's really a bare ``holder``) because
@@ -430,9 +486,8 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
     paths = parsed.get("paths")
     if not isinstance(paths, dict):
         return []
-    schemas = (parsed.get("components") or {}).get("schemas") or {}
-    if not isinstance(schemas, dict):
-        schemas = {}
+    schemas = _ref_map(parsed)
+    base = _base_path(parsed)
     lines: list[str] = []
     shaped: list[str] = []  # paths already given a shape — used to collapse a resource's own sub-paths
     capped = False
@@ -454,6 +509,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 continue
             resp = op.get("responses") if isinstance(op.get("responses"), dict) else {}
             r = resp.get("200") or resp.get("201") or resp.get("default")
+            r = _deref(r, schemas) if isinstance(r, dict) else None   # responses may themselves be $refs
             content = r.get("content") if isinstance(r, dict) else None
             schema = None
             if isinstance(content, dict):
@@ -461,6 +517,8 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                     if isinstance(v, dict):
                         schema = v.get("schema")
                         break
+            if schema is None and isinstance(r, dict):
+                schema = r.get("schema")   # Swagger 2.0 hangs the schema straight off the response
             fields = _schema_field_summary(schema, schemas, max_fields)
             if fields:
                 # PATH PARAMETERS carry the other half of "how do I call this": what to PUT IN. Across
@@ -469,7 +527,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 # model chained the payment address it had just resolved into it and got a 404, in
                 # every single run. Outputs without inputs is half a spec.
                 params = _path_param_notes(op, ops, schemas)
-                head = f"{str(method).upper()} {path}"
+                head = f"{str(method).upper()} {base}{path}"
                 if params:
                     # WORDING IS LOAD-BEARING: the first cut said "(takes {address} = …)" and the
                     # model read "takes" as "accepts an argument" — it turned BOTH path parameters
@@ -524,6 +582,12 @@ def _spill_outline(parsed: Any, target: str) -> str:
     /holders or resolved_addresses, and gave up. Same shape-branch as render_page's inline outline,
     keyed off real bytes; the grep example uses a REAL route/key (no ``<placeholder>`` to echo). Ends
     with a newline when non-empty; "" when the doc has no walkable structure (an HTML/text spill)."""
+    catalog = _catalog_links(parsed)
+    if catalog:
+        # Same treatment a catalogue gets inline. A catalogue big enough to SPILL would otherwise be
+        # written to a file with an outline that never mentioned the one thing it contains — hrefs.
+        return (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
+                "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
     routes = _endpoint_routes(parsed)
     if routes:
         shapes = _endpoint_response_fields(parsed)
@@ -741,16 +805,41 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
             if len(c_reduced) > OVERSIZE_CHARS:
                 return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
         return _guard_msg("fetch_repeat", url=url)
-    out, status = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
+    out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
     if session and external and status is not None:
-        out += guess_hint(status, _note_streak(session, status))
+        # A PROTOCOL endpoint answers a GET with 405/400 by design, and cria just came back with its
+        # full callable surface. Counting that as another failed URL guess would push the model over
+        # the streak and append "you keep guessing URLs, stop" underneath the answer it asked for —
+        # cria contradicting itself in one message. The probe succeeded: score it as a success.
+        out += guess_hint(200 if discovered else status, _note_streak(session, 200 if discovered else status))
     return out
 
 
-def _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw=False) -> tuple[str, Optional[int]]:
+def _render_discovery(url: str, status: int, ct: Optional[str], found) -> str:
+    """A probed protocol endpoint, rendered through the SAME markers a fetched spec uses.
+
+    That is deliberate and load-bearing: loop's durable fetch ledger rebuilds session facts by parsing
+    these markers out of rendered tool results, so a bespoke marker here would produce a fact that
+    vanishes at the first compaction — exactly the half-built mechanism this file exists to avoid."""
+    head = (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
+            f"{found.note}\n"
+            # INLINE on the marker line, like a spec's routes: loop._extract_fetches reads the
+            # routes from INSIDE the brackets, so entries on following lines rendered perfectly and
+            # were captured as the header phrase — a fact that looks delivered and is gone by the
+            # first compaction. Separated by "; " because an entry carries its own commas.
+            f"{ROUTES_MARKER}{len(found.routes)}): {'; '.join(found.routes)}]\n")
+    if found.shapes:
+        head += (f"{SHAPE_MARKER} the fields each call RETURNS (extract these; don't guess "
+                 "field names or nesting):\n" + "\n".join(f"  {s}" for s in found.shapes) + "]\n")
+    return head
+
+
+def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
+                      raw=False) -> tuple[str, Optional[int], bool]:
     """Fetch (or serve from cache) → reduce → render to the model-facing text. Returns
-    ``(text, status)``; ``status`` is None on a transport error (no HTTP response). ``raw`` fetches
-    always re-fetch (never navigate) so a stale reduced-cache entry is never served as source."""
+    ``(text, status, discovered)``; ``status`` is None on a transport error (no HTTP response) and
+    ``discovered`` is True when the text came from a protocol probe rather than the document. ``raw``
+    fetches always re-fetch (never navigate) so a stale reduced-cache entry is never served as source."""
     # A raw fetch NEVER serves the cache: that entry may hold the REDUCED text of an earlier ordinary
     # fetch, and handing that back as "source" is the stale-view lie this flag exists to avoid. It
     # re-fetches, then `find` (now honored under raw) applies to the freshly-read raw body.
@@ -762,17 +851,26 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw=False) -> t
         try:
             r = fetch(url, user_agent)
         except ValueError as e:
-            return str(e), None
+            return str(e), None, False
         except (urllib.error.URLError, OSError) as e:
-            return f"web_fetch error fetching {url}: {e}", None
+            return f"web_fetch error fetching {url}: {e}", None, False
         reduced, parsed = reduce_for_cache(r.body, r.content_type, url, raw)
         status, ct, truncated = r.status, r.content_type, r.truncated
         _cache_put(url, status, ct, reduced, parsed, truncated)
 
+    # An MCP or GraphQL endpoint has no document to read — a GET of it answers 405, or 400, or a
+    # playground shell. Ask it what it offers instead of handing the model a dead end (api.handle.me
+    # advertises an MCP endpoint; it sat in cria's route list and taught the model nothing). Probed
+    # only for a URL the model itself asked for, only when it answers like one of those protocols, and
+    # only with the two fixed read-only payloads in cria.apidiscovery.
+    if not raw and not find and not cursor:
+        found = apidiscovery.discover(url, status, reduced, ct)
+        if found:
+            return _render_discovery(url, status, ct, found), status, True
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 "The response body was EMPTY. Retrying this exact URL returns the same empty "
-                "result — try a different source or path."), status
+                "result — try a different source or path."), status, False
     if find:
         slice_ = find_in(reduced, parsed, find, cap_tokens)
         # A broad find (e.g. `paths` on a whole spec) can match a subtree far bigger than one page —
@@ -787,9 +885,9 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw=False) -> t
                        "the term you searched may lie in the un-fetched remainder. Fetch a more "
                        "specific URL/path or an alternate source.")
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
-                f'find="{find.strip()}"\n\n---\n{slice_}'), status
+                f'find="{find.strip()}"\n\n---\n{slice_}'), status, False
     offset = _parse_cursor(cursor) if cursor else 0
-    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated), status
+    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated), status, False
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------
@@ -824,6 +922,17 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
                 offset: int, cap_tokens: int, truncated: bool = False) -> str:
     body, nxt, total = page_from(reduced, offset, cap_tokens)
     head = f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
+    # A CATALOGUE names where other documents live, and is short enough to fit one page — so it is
+    # surfaced regardless of size, unlike the spec blocks below (which exist to navigate a doc too big
+    # to read). Without this its hrefs reached the model only as raw JSON body text.
+    if offset == 0 and parsed is not None:
+        catalog = _catalog_links(parsed)
+        if catalog:
+            # Relation-agnostic wording: the live api.handle.me catalogue files its openapi.json under
+            # `service-doc`, not `service-desc`, so naming one relation sent the model looking for a
+            # link that wasn't there.
+            head += (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
+                     "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
     # For a large structured doc, lead with the shape so the model can `find=` a key instead
     # of blindly paging a minified blob (the "summarize with top-level keys" ask).
     if offset == 0 and parsed is not None and nxt < total:
@@ -1041,16 +1150,64 @@ def _resolve_ref_path(root: Any, ref: str) -> Any:
 def _endpoint_routes(parsed: Any) -> list[str]:
     """The API's endpoint routes when the doc is a spec: the keys of a top-level object that are mostly
     URL paths (start with ``/``) — OpenAPI's ``paths``, but detected by SHAPE not by the key name, so it
-    surfaces for any dialect. Empty when the doc isn't route-shaped (so nothing is invented)."""
+    surfaces for any dialect. Empty when the doc isn't route-shaped (so nothing is invented).
+
+    Prefixed with the spec's declared base path (:func:`_base_path`) so the list is the route the coder
+    must actually CALL. A spec's ``paths`` keys are relative to ``basePath``/``servers[0].url``, and
+    listing them bare said ``/handles/{handle}`` where the real route was ``/v2/handles/{handle}``."""
     if not isinstance(parsed, dict):
         return []
+    base = _base_path(parsed)
     for v in parsed.values():
         if isinstance(v, dict) and len(v) >= 2:
             ks = [str(k) for k in v.keys()]
             slashed = [k for k in ks if k.startswith("/")]
             if len(slashed) >= max(2, int(len(ks) * 0.6)):  # mostly route-like → these are endpoints
-                return slashed
+                return [base + k for k in slashed]
     return []
+
+
+# Link relations in an api-catalog that point at something worth FETCHING NEXT. `service-desc` is the
+# machine-readable description (an OpenAPI document); `service-doc` is the human one; `service-meta` and
+# `status` carry metadata. Anything else in the linkset is left alone rather than guessed at.
+_CATALOG_RELS = ("service-desc", "service-doc", "service-meta", "status")
+
+
+def _catalog_links(parsed: Any, max_entries: int = 20) -> list[str]:
+    """``<anchor> → service-desc: <url>; service-doc: <url>`` per API in an RFC 9727 api-catalog
+    (carried as an RFC 9264 JSON linkset). Empty for any other doc, so nothing is invented.
+
+    A catalogue's entire value is its hrefs: it exists to say "the OpenAPI document for this API lives
+    HERE". Rendered as a structured doc it produced ``top-level keys: linkset`` — one word — and the
+    model went back to guessing spec URLs. Shape-detected (a ``linkset`` array of objects carrying link
+    relations), so it works whether or not the server sent the ``application/linkset+json`` type."""
+    if not isinstance(parsed, dict):
+        return []
+    linkset = parsed.get("linkset")
+    if not isinstance(linkset, list):
+        return []
+    out: list[str] = []
+    for entry in linkset:
+        if not isinstance(entry, dict):
+            continue
+        if len(out) >= max_entries:
+            # DISCLOSE the cap, as every other list here does: a silent cut reads as "these are all
+            # the APIs in this catalogue".
+            out.append(f"…+{len(linkset) - max_entries} more catalogued API(s) not shown")
+            break
+        anchor = str(entry.get("anchor") or "").strip()
+        parts: list[str] = []
+        for rel in _CATALOG_RELS:
+            links = entry.get(rel)
+            if not isinstance(links, list):
+                continue
+            hrefs = [str(l.get("href")).strip() for l in links
+                     if isinstance(l, dict) and str(l.get("href") or "").strip()]
+            if hrefs:
+                parts.append(f"{rel}: {', '.join(hrefs)}")
+        if anchor and parts:
+            out.append(f"{anchor} → {'; '.join(parts)}")
+    return out
 
 
 def top_level_keys(root: Any) -> list[str]:

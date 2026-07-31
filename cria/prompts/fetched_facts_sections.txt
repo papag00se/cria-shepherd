@@ -11,3 +11,7 @@ failed = THESE FETCHES CAME BACK WITH AN ERROR — you have no content from them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
 fields = fields each endpoint returns (use these EXACT names and nesting; do not guess):
 no_structure =  (this page answered, but no endpoints or field names could be read from it — that status is a fact about the REQUEST, not about what the API returns; the source that DEFINES them is still unread)
+# Header for the per-URL API-CATALOGUE block (RFC 9727 .well-known/api-catalog). A catalogue's whole
+# content is hrefs — where each API's machine-readable description lives. Without this the ledger
+# recorded the fetch as "answered, no readable structure" and the model went back to guessing spec URLs.
+descriptions = this page is a catalogue — it names where each API's description lives; fetch a service-desc url to get the spec itself:

@@ -517,7 +517,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # /handles/{handle} and lost `holder` / `resolved_addresses{ada}`, and promptly guessed them
         # (`holder_address`, `resolved_addresses[<handle>]`, `total_handles` off the wrong object).
         # The anchor exists to carry facts past a compaction; it must carry the ones being guessed.
-        from cria.loop import _extract_fetches, _fetched_facts_anchor
+        from cria.loop import _extract_fetches, _fetch_facts, _fetched_facts_anchor
         from cria import webfetch
         result = ('HTTP 200 OK · https://api.handle.me/openapi.json\n'
                   f'{webfetch.ROUTES_MARKER}2): /handles/{{handle}}, /holders/{{address}}]\n'
@@ -540,7 +540,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
     def test_ledger_keeps_the_shape_when_a_later_find_fetch_has_none(self):
         # A follow-up web_fetch(url, find=…) returns a sub-section with no routes/shape blocks. That
         # must not clobber the full outline captured earlier — same rule the routes already had.
-        from cria.loop import _extract_fetches, _merge_fetches
+        from cria.loop import _extract_fetches, _fetch_facts, _merge_fetches
         from cria import webfetch
         full = _extract_fetches([{"role": "tool", "content":
             'HTTP 200 OK · https://api.x/openapi.json\n'
@@ -548,7 +548,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
             f'{webfetch.SHAPE_MARKER} fields:\n  GET /handles/{{handle}} → holder, resolved_addresses{{ada}}]\n'}])
         thin = _extract_fetches([{"role": "tool", "content": 'HTTP 200 OK · https://api.x/openapi.json\n(a subsection)'}])
         merged = _merge_fetches(dict(full), thin)
-        status, routes, shapes = merged["https://api.x/openapi.json"]
+        status, routes, shapes, _cat = _fetch_facts(merged["https://api.x/openapi.json"])
         self.assertIn("/handles/{handle}", routes)
         self.assertIn("resolved_addresses{ada}", shapes)
 
@@ -558,14 +558,15 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # and the ok/failed split then filed that URL under "THESE URLS DID NOT WORK ... do not write
         # code against them" with its real endpoints still attached. That is the runG failure (the coder
         # insisted on a 400 the server never sent) re-entering through the ledger built to stop it.
-        from cria.loop import _extract_fetches
+        from cria.loop import _extract_fetches, _fetch_facts
         msgs = [
             {"role": "tool", "content": "HTTP 200 OK \u00b7 https://api.x/openapi.json\n"
                                         "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
             {"role": "assistant", "content": "I tried again and got HTTP 400 \u00b7 https://api.x/openapi.json"},
             {"role": "user", "content": "also HTTP 500 \u00b7 https://api.x/openapi.json"},
         ]
-        status, routes, _shapes = _extract_fetches(msgs)["https://api.x/openapi.json"]
+        status, routes, _shapes, _cat = _fetch_facts(
+            _extract_fetches(msgs)["https://api.x/openapi.json"])
         self.assertEqual(status, "HTTP 200")                 # the real result stands
         self.assertIn("/handles/{handle}", routes)           # ...with its endpoints intact
 

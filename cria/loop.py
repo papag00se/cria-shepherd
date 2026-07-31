@@ -3380,11 +3380,20 @@ _STEER_TRIGGER = {
 # for a spec. The ` · <url>` shape appears ONLY in a real rendered result, never in the coder's prose,
 # so matching it cleanly separates the ground-truth outcome from a hallucinated "the fetch 400'd".
 _FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
-_FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): ([^\]]+)\]")
+# Greedy to the LAST `]` ON THE LINE, not the first: a GraphQL discovery entry names a list type
+# as `[Handle]`, and stopping at the first bracket cut every route after it out of the ledger.
+# `.` excludes newlines, so this still cannot run past the marker line.
+_FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): (.+)\]")
 # The RESPONSE-SHAPE block cria surfaces beside the routes (webfetch.SHAPE_MARKER). It is the half of
 # the surfaced facts that names the real FIELDS, and it was never captured into the durable ledger —
 # so after a compaction the coder kept the endpoints and lost `resolved_addresses{ada}` / `holder`,
 # which is precisely what it then guesses. Multi-line; ends at the block's closing bracket.
+def _catalog_block(text: str, start: int) -> str:
+    """The `[API descriptions — …]` block beginning at/after ``start``, read by LINE — same reasoning as
+    :func:`_shape_block` (a url can contain `]`, and entry lines are the ones carrying `→`)."""
+    return _marker_block(text, start, webfetch.CATALOG_MARKER)
+
+
 def _shape_block(text: str, start: int) -> str:
     """The `[response shape — …]` block beginning at/after ``start``, read by LINE.
 
@@ -3395,11 +3404,18 @@ def _shape_block(text: str, start: int) -> str:
 
     Entry lines are the ones carrying `→`; a trailing note (webfetch's "…+more endpoints have shapes
     not shown here") is kept too, because a cap the model cannot see reads as the complete set."""
-    i = text.find(webfetch.SHAPE_MARKER, start)
+    return _marker_block(text, start, webfetch.SHAPE_MARKER)
+
+
+def _marker_block(text: str, start: int, marker: str) -> str:
+    """The cria-authored block introduced by ``marker`` at/after ``start``, read by LINE (see
+    :func:`_shape_block` for why a regex cannot do this). ONE reader for every such block, so a second
+    marker cannot drift into a second, subtly different parser."""
+    i = text.find(marker, start)
     if i < 0:
         return ""
     lines = text[i:].splitlines()
-    out = [lines[0][len(webfetch.SHAPE_MARKER):].strip()] if lines else []
+    out = [lines[0][len(marker):].strip()] if lines else []
     for ln in lines[1:]:
         if "→" in ln or ln.strip().startswith("…"):
             out.append(ln.rstrip())
@@ -3412,9 +3428,9 @@ def _shape_block(text: str, start: int) -> str:
 
 
 def _fetch_facts(entry) -> tuple:
-    """A ledger entry as ``(status, routes, shapes)``, accepting the older 2-tuple form."""
-    status, routes, shapes = (tuple(entry) + ("", ""))[:3]
-    return status, routes or "", shapes or ""
+    """A ledger entry as ``(status, routes, shapes, catalog)``, accepting every older/shorter form."""
+    status, routes, shapes, catalog = (tuple(entry) + ("", "", ""))[:4]
+    return status, routes or "", shapes or "", catalog or ""
 
 
 def _extract_fetches(messages: list[dict]) -> dict:
@@ -3443,7 +3459,7 @@ def _extract_fetches(messages: list[dict]) -> dict:
             url = sm.group(2).rstrip(".,);")
             rm = _FETCH_ROUTES_RE.search(c, sm.end())
             latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "",
-                           _shape_block(c, sm.end()))
+                           _shape_block(c, sm.end()), _catalog_block(c, sm.end()))
     return latest
 
 
@@ -3453,13 +3469,14 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
     those are empty — that must not clobber an earlier full outline (they are the whole point of the
     fact: they name /handles/{handle} and resolved_addresses{ada})."""
     for url, entry in src.items():
-        status, routes, shapes = _fetch_facts(entry)
+        status, routes, shapes, catalog = _fetch_facts(entry)
         prev = dst.get(url)
         if prev:
-            p_routes, p_shapes = _fetch_facts(prev)[1:]
+            p_routes, p_shapes, p_catalog = _fetch_facts(prev)[1:]
             routes = routes or p_routes   # preserve the earlier outline when this occurrence had none
             shapes = shapes or p_shapes
-        dst[url] = (status, routes, shapes)
+            catalog = catalog or p_catalog
+        dst[url] = (status, routes, shapes, catalog)
     return dst
 
 
@@ -3485,14 +3502,14 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     labels = prompts.load_map("fetched_facts_sections")
     ok, failed = [], []
     for url, entry in latest.items():
-        status, routes, shapes = _fetch_facts(entry)
+        status, routes, shapes, catalog = _fetch_facts(entry)
         line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
         # THIRD case. The anchor explains an entry WITH facts and an entry that ERRORED; a 2xx whose
         # page had no readable structure looks identical to a successful spec read. Measured (run
         # 0727-142536): the planner fetched the swagger UI SHELL, the coder's entire fetch record was
         # one `→ HTTP 200` under "these SUCCEEDED", and it invented `/resolve/{handle}` with zero
         # occurrences of the real route in its window. A status alone is a fact about the REQUEST.
-        if _fetch_succeeded(status) and not routes and not shapes.strip():
+        if _fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip():
             line += labels["no_structure"]
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
@@ -3501,6 +3518,12 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
                if "→" in ln or ln.strip().startswith("…")]   # keep the "…+more" cap note too
         if entries:
             line += f"\n  {labels['fields']}\n" + "\n".join(f"  {e}" for e in entries)
+        # A catalogue names WHERE each API's spec lives. Without this the durable ledger recorded the
+        # fetch as "HTTP 200, no readable structure" and the hrefs — the only thing a catalogue has —
+        # were gone the moment the raw result scrolled out.
+        cat = [ln.strip() for ln in catalog.splitlines() if "→" in ln or ln.strip().startswith("…")]
+        if cat:
+            line += f"\n  {labels['descriptions']}\n" + "\n".join(f"  {c}" for c in cat)
         (ok if _fetch_succeeded(status) else failed).append(line)
     blocks = []
     if ok:
