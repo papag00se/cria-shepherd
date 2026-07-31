@@ -800,3 +800,48 @@ class FindMultiTermTests(unittest.TestCase):
         out = self._find("GET /handles/{handle}")
         self.assertNotIn("no match", out.splitlines()[0])
         self.assertIn("/handles/{handle}", out)
+
+
+class PathParamNotesTests(unittest.TestCase):
+    """Outputs without inputs is half a spec. Across 13 measured gemma runs the outline listed
+    /holders/{address}'s RESPONSE fields but never that {address} means the HOLDER'S STAKE address —
+    so every run chained the payment address it had just resolved into it and got a 404."""
+
+    _SPEC = {
+        "paths": {
+            "/handles/{handle}": {"get": {
+                "parameters": [{"name": "handle", "in": "path", "description": "The Handle name"}],
+                "responses": {"200": {"content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"holder": {"type": "string"}}}}}}}}},
+            "/holders/{address}": {"get": {
+                "parameters": [{"name": "address", "in": "path",
+                                "description": "The stake/enterprise/script/other address of the Holder"}],
+                "responses": {"200": {"content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"total_handles": {"type": "integer"}}}}}}}}},
+            "/stats": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"total_holders": {"type": "integer"}}}}}}}}},
+        }
+    }
+
+    def test_path_parameter_meaning_is_surfaced(self):
+        from cria.webfetch import _endpoint_response_fields
+        lines = _endpoint_response_fields(self._SPEC)
+        holders = next(l for l in lines if "/holders/" in l)
+        self.assertIn("{address} = The stake/enterprise/script/other address of the Holder", holders)
+        self.assertIn("total_handles", holders)                      # outputs still there
+
+    def test_silent_when_the_spec_says_nothing(self):
+        # cria never invents a parameter's meaning — an undocumented param adds no note.
+        from cria.webfetch import _endpoint_response_fields
+        lines = _endpoint_response_fields(self._SPEC)
+        stats = next(l for l in lines if "/stats" in l)
+        self.assertNotIn("takes", stats)
+
+    def test_example_stands_in_when_there_is_no_description(self):
+        from cria.webfetch import _endpoint_response_fields
+        spec = {"paths": {"/x/{id}": {"get": {
+            "parameters": [{"name": "id", "in": "path", "example": "stake1u..."}],
+            "responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"ok": {"type": "boolean"}}}}}}}}}}}
+        line = _endpoint_response_fields(spec)[0]
+        self.assertIn("{id} = e.g. stake1u...", line)

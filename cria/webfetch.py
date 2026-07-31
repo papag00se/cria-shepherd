@@ -441,12 +441,52 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                         break
             fields = _schema_field_summary(schema, schemas, max_fields)
             if fields:
-                lines.append(f"{str(method).upper()} {path} → {', '.join(fields)}")
+                # PATH PARAMETERS carry the other half of "how do I call this": what to PUT IN. Across
+                # 13 measured runs the outline listed /holders/{address}'s OUTPUT fields but never that
+                # {address} means "The stake/enterprise/script/other address of the Holder" — so the
+                # model chained the payment address it had just resolved into it and got a 404, in
+                # every single run. Outputs without inputs is half a spec.
+                params = _path_param_notes(op, ops, schemas)
+                head = f"{str(method).upper()} {path}"
+                if params:
+                    head += f" (takes {'; '.join(params)})"
+                lines.append(f"{head} → {', '.join(fields)}")
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint
     if capped:
         lines.append(f"…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one")
     return lines
+
+
+def _path_param_notes(op: dict, ops: dict, schemas: dict, max_len: int = 90) -> list[str]:
+    """``{name}: <description>`` for each PATH parameter of an operation — the spec's own words for
+    what the caller must supply. Reads the operation's parameters and the path-level ones (both are
+    legal OpenAPI), resolves a $ref into components, and falls back to the example when a parameter
+    carries no description. Empty when the spec says nothing — cria never invents the meaning."""
+    out: list[str] = []
+    seen: set[str] = set()
+    raw = list(op.get("parameters") or []) + list(ops.get("parameters") or [])
+    for prm in raw:
+        if not isinstance(prm, dict):
+            continue
+        if "$ref" in prm:
+            ref = str(prm["$ref"]).rsplit("/", 1)[-1]
+            prm = ((schemas or {}).get(ref) if isinstance(schemas, dict) else None) or {}
+            if not isinstance(prm, dict):
+                continue
+        if prm.get("in") != "path":
+            continue
+        name = str(prm.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        note = str(prm.get("description") or "").strip().replace("\n", " ")
+        if not note:
+            ex = prm.get("example") or (prm.get("schema") or {}).get("example")
+            note = f"e.g. {ex}" if ex else ""
+        if note:
+            out.append(f"{{{name}}} = {note[:max_len]}")
+    return out
 
 
 def _spill_outline(parsed: Any, target: str) -> str:
