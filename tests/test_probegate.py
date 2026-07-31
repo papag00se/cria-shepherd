@@ -586,11 +586,23 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         self.assertNotIn("no tests were run", out)
         self.assertEqual(out, "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.")
 
-    def test_silent_when_the_language_is_not_present_at_all(self):
+    def test_silent_for_a_language_with_no_file_convention(self):
+        # Rust puts tests in #[cfg(test)] modules INSIDE the source file, so "no test file" proves
+        # nothing and the note would be a false fact.
         with tempfile.TemporaryDirectory() as tmp:
-            ws = self._ws(tmp, **{"main.go": "package main\n"})
+            ws = self._ws(tmp, **{"src|main.rs": "fn main(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
             self.assertNotIn("no tests were run", probegate.clean_gate_output(self.CLEAN,
                                                                              probegate.plan_gate(ws)))
+
+    def test_go_with_a_manifest_and_no_test_file_is_covered_too(self):
+        # `go test ./...` IS selected here and exits 0 printing "no test files", so the gate reads
+        # clean — the same vacuous green as g20's Python, reached the other way round. Keyed on the
+        # FILES, so it needs no parsing of a runner output cria has no toolchain to verify against.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"main.go": "package main\n", "go.mod": "module x\ngo 1.21\n"})
+            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+        self.assertIn("no tests were run", out)
+        self.assertIn("*_test.go (go test)", out)
 
     def test_a_venv_full_of_test_files_does_not_mask_a_testless_project(self):
         # The vendored .gitignore templates (cria/ignore.py) are the signal for where NOT to look:

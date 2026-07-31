@@ -307,10 +307,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     # check (what it looked for, what it found), never a claim that this task needs tests; it stops
     # the moment a matching file exists. Only on the CLEAN branch: where real findings exist the coder
     # has concrete work, and this would be noise on top of it.
+    # Keyed on the FILES, not on whether a test command was invoked. A Go project with go.mod and no
+    # *_test.go DOES get `go test ./...` — which exits 0 saying "no test files", so the gate reads
+    # clean and says nothing. Same vacuous green as g20's Python, reached the other way round. The
+    # absence of a test file is the fact either way, and it needs no runner output parsing (cria has
+    # no Go/PHP/Ruby toolchain to have verified those strings against).
     untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
-    if untested and not any(getattr(c, "kind", None) is probediscovery.ProbeKind.Test
-                            for c in (getattr(plan, "candidates", None) or [])):
-        clean += " " + prompts.render("no_tests_found", globs=" or ".join(untested))
+    if untested:
+        clean += " " + prompts.render("no_tests_found", globs="; ".join(untested))
     return clean
 
 

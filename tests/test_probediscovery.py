@@ -237,31 +237,83 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestFloorConventionTests(unittest.TestCase):
-    """The runner and the naming convention cria TELLS the coder about come from one table entry, so
-    they cannot disagree. Deriving the convention from the extension instead (f"test_*.{ext}") reads
-    true for Python and is a FALSE FACT for every other language: Go discovers only `*_test.go`, Rust
-    has no filename convention at all, jest uses `*.test.js` / `__tests__/`."""
+class TestConventionTableTests(unittest.TestCase):
+    """One table entry owns what cria RUNS, what it SEARCHES by, and what it TELLS the coder, so the
+    three cannot disagree. Deriving the convention from the file extension (f"test_*.{ext}") reads true
+    for Python and is a FALSE FACT everywhere else: Go discovers only `*_test.go`, jest uses
+    `*.test.js` / `__tests__/`."""
 
-    def test_every_floor_entry_carries_its_own_globs(self):
-        from cria.probediscovery import _TEST_FLOORS
-        for ext, command, reason, globs in _TEST_FLOORS:
-            self.assertTrue(globs, f"{ext} floor has no discovery globs")
-            for g in globs:
-                self.assertIn("*", g, f"{ext}: {g!r} is not a pattern")
-                self.assertTrue(g.endswith(f".{ext}"), f"{ext}: {g!r} is not a {ext} pattern")
+    def test_every_entry_states_its_own_convention(self):
+        from cria.probediscovery import TEST_CONVENTIONS
+        for c in TEST_CONVENTIONS:
+            self.assertTrue(c.exts and c.globs and c.label and c.runner, c)
+            for g in c.globs:
+                self.assertIn("*", g, f"{c.runner}: {g!r} is not a pattern")
 
-    def test_the_globs_are_what_selection_actually_matches(self):
-        from cria.probediscovery import _matches_test_globs, _TEST_FLOORS
-        globs = dict((e, g) for e, _c, _r, g in _TEST_FLOORS)["py"]
+    def test_languages_without_a_file_convention_are_absent_on_purpose(self):
+        # Rust's tests are #[cfg(test)] modules INSIDE the source file, and Java's *Test.java default is
+        # overridable in the pom every Java project has — for both, "no test file" proves nothing, so a
+        # note would be cria stating a false fact.
+        from cria.probediscovery import TEST_CONVENTIONS
+        exts = {e for c in TEST_CONVENTIONS for e in c.exts}
+        self.assertNotIn("rs", exts)
+        self.assertNotIn("java", exts)
+
+    def test_only_python_carries_a_zero_config_floor_runner(self):
+        # You cannot have a Go/Rust/JS project without go.mod/Cargo.toml/package.json, so those always
+        # trigger ranked ecosystem discovery, which adds their real test command. Python needs no
+        # manifest at all, and that is the hole the floor exists to close.
+        from cria.probediscovery import TEST_CONVENTIONS
+        self.assertEqual([c.runner for c in TEST_CONVENTIONS if c.floor], ["pytest"])
+
+    def test_matching_is_what_the_table_says(self):
+        from cria.probediscovery import TEST_CONVENTIONS, _has_discoverable_test
+        py = next(c for c in TEST_CONVENTIONS if "py" in c.exts)
         for name in ("test_resolve.py", "resolve_test.py"):
-            self.assertTrue(_matches_test_globs(name, globs), name)
-        for name in ("resolve.py", "testing.py", "contest.py", "test_resolve.txt"):
-            self.assertFalse(_matches_test_globs(name, globs), name)
+            self.assertTrue(_has_discoverable_test(Path("/r"), [f"/r/{name}"], py), name)
+        for name in ("resolve.py", "testing.py", "contest.py"):
+            self.assertFalse(_has_discoverable_test(Path("/r"), [f"/r/{name}"], py), name)
+        js = next(c for c in TEST_CONVENTIONS if "js" in c.exts)
+        self.assertTrue(_has_discoverable_test(Path("/r"), ["/r/a.test.ts"], js))
+        self.assertTrue(_has_discoverable_test(Path("/r"), ["/r/__tests__/anything.js"], js))
+        self.assertFalse(_has_discoverable_test(Path("/r"), ["/r/index.js"], js))
 
-    def test_undiscoverable_reports_the_table_s_globs_verbatim(self):
+    def test_undiscoverable_names_the_convention_and_its_runner(self):
         import tempfile
         from cria.probediscovery import undiscoverable_tests
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve.py").write_text("import unittest\n")
-            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py"])
+            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py (pytest)"])
+        with tempfile.TemporaryDirectory() as ws:   # Go: the vacuous green reached the other way
+            Path(ws, "main.go").write_text("package main\n")
+            Path(ws, "go.mod").write_text("module x\n")
+            self.assertEqual(undiscoverable_tests(ws), ["*_test.go (go test)"])
+        with tempfile.TemporaryDirectory() as ws:   # Rust is never claimed about
+            Path(ws, "src").mkdir()
+            Path(ws, "src/main.rs").write_text("fn main(){}\n")
+            self.assertEqual(undiscoverable_tests(ws), [])
+
+    def test_a_runner_config_silences_the_claim(self):
+        # phpunit.xml / jest.config / pytest.ini re-point discovery, so cria's default-convention
+        # sentence would be wrong for that project.
+        import tempfile
+        from cria.probediscovery import undiscoverable_tests
+        for src, cfg in (("resolve.py", "pytest.ini"), ("index.js", "jest.config.js"),
+                         ("a.php", "phpunit.xml"), ("a.rb", ".rspec")):
+            with tempfile.TemporaryDirectory() as ws:
+                Path(ws, src).write_text("x\n")
+                self.assertNotEqual(undiscoverable_tests(ws), [], f"{src} alone should flag")
+            with tempfile.TemporaryDirectory() as ws:
+                Path(ws, src).write_text("x\n")
+                Path(ws, cfg).write_text("\n")
+                self.assertEqual(undiscoverable_tests(ws), [], f"{cfg} must silence it")
+
+    def test_a_vendored_tree_never_masks_a_testless_project(self):
+        import tempfile
+        from cria.probediscovery import undiscoverable_tests
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("x\n")
+            sp = Path(ws, ".venv/lib/python3.12/site-packages/_pytest")
+            sp.mkdir(parents=True)
+            (sp / "test_main.py").write_text("def test_x(): pass\n")
+            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py (pytest)"])

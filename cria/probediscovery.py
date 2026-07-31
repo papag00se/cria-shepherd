@@ -737,6 +737,15 @@ def build_php(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     if p.has("phpunit.xml") or p.has("phpunit.xml.dist"):
         out.append(cand(ProbeKind.Test, ["vendor/bin/phpunit"], d, 85, 88,
                         ProbeCost.Moderate, "phpunit configured"))
+    else:
+        # PHP was the ONE ecosystem whose test probe required a config file, so a composer project with
+        # a real phpunit and no phpunit.xml got syntax + lint and NEVER its tests — the vacuous-green
+        # shape, and inconsistent with its siblings: build_ruby adds `bundle exec rspec` and
+        # build_elixir adds `mix test` on ecosystem detection alone, with no config check. Lower
+        # confidence than the configured form, and an absent vendor/bin/phpunit exits 127, which the
+        # runner already classifies as "could not run" — never a pass, never a finding.
+        out.append(cand(ProbeKind.Test, ["vendor/bin/phpunit"], d, 70, 88,
+                        ProbeCost.Moderate, "phpunit if installed (composer project)"))
 
 
 def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
@@ -933,21 +942,81 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
 # and runs unittest- AND pytest-style tests. (`node --test` is deliberately NOT an entry: it cannot run
 # jest/vitest/mocha suites — different globals — so it would falsely fail them.) Add a language here the
 # day it has an equally safe zero-config runner.
-# Each entry carries the runner AND the file patterns that runner actually discovers by, because the
-# two must never disagree: cria both SEARCHES by these and TELLS the coder about them, and a naming
-# convention derived from the extension instead (f"test_*.{ext}") is a false fact for every language
-# but Python — Go discovers only `*_test.go`, Rust has no filename convention at all (`#[cfg(test)]`
-# modules), jest uses `*.test.js` / `__tests__/`. Keeping them here means adding a language cannot
-# silently invent a convention for it.
-_TEST_FLOORS: list[tuple[str, list[str], str, tuple[str, ...]]] = [
-    ("py", ["python3", "-m", "pytest", "-q"],
-     "Python tests: pytest auto-discovers test_*.py / *_test.py (zero-config)",
-     ("test_*.py", "*_test.py")),
-]
+@dataclass(frozen=True)
+class TestConvention:
+    """How ONE language names its test files, and how cria may talk about them.
+
+    One entry owns everything cria does with a language's tests: what it SEARCHES for, what it RUNS
+    when there is no manifest, and what it TELLS the coder. They must not disagree — a convention
+    derived from the file extension instead (f"test_*.{ext}") reads true for Python and is a false
+    fact everywhere else, which is why ``label`` is written out per language rather than generated."""
+
+    exts: tuple            # source extensions that prove the language is present at all
+    globs: tuple           # filename patterns its DEFAULT runner discovers by
+    dirs: tuple            # directories whose contents are tests whatever the filename (jest)
+    configs: tuple         # a config that RE-POINTS discovery; its presence silences cria entirely
+    label: str             # the convention in this language's own words, for the coder
+    runner: str            # who owns the convention — named so the claim has an author
+    floor: tuple = ()      # zero-config runner, for the one language that needs a floor probe
 
 
-def _matches_test_globs(name: str, globs: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(name, g) for g in globs)
+# A language earns an entry ONLY when its default runner has a test-file convention cria can state as
+# a FACT.
+#
+# RUST is deliberately absent: its tests are `#[cfg(test)]` modules INSIDE the source file, so "no test
+# file exists" proves nothing and any note would be a false fact. JAVA is absent for the mirror reason —
+# surefire's `*Test.java` default is overridable in the `pom.xml` that every Java project has, so cria
+# cannot assert it without reading the pom.
+#
+# ``floor`` is separate from the rest, and only Python has one: you cannot have a Go/Rust/JS project
+# without go.mod/Cargo.toml/package.json — the language will not build — so those always trigger ranked
+# ecosystem discovery, which adds their real test command. Python needs no manifest at all: `resolve.py`
+# plus `test_resolve.py` is a complete, testable project that ranked discovery sees nothing in.
+TEST_CONVENTIONS: tuple = (
+    TestConvention(("py",), ("test_*.py", "*_test.py"), (), ("pytest.ini", "tox.ini"),
+                   "test_*.py or *_test.py", "pytest",
+                   ("python3", "-m", "pytest", "-q")),
+    TestConvention(("go",), ("*_test.go",), (), (),
+                   "*_test.go", "go test"),
+    TestConvention(("js", "jsx", "ts", "tsx", "mjs", "cjs"),
+                   ("*.test.js", "*.spec.js", "*.test.jsx", "*.spec.jsx",
+                    "*.test.ts", "*.spec.ts", "*.test.tsx", "*.spec.tsx",
+                    "*.test.mjs", "*.spec.mjs", "*.test.cjs", "*.spec.cjs"),
+                   ("__tests__",),
+                   ("jest.config.js", "jest.config.ts", "jest.config.mjs", "jest.config.cjs",
+                    "vitest.config.js", "vitest.config.ts"),
+                   "*.test.js / *.spec.ts (any of .js .jsx .ts .tsx) or any file under __tests__/",
+                   "jest/vitest"),
+    TestConvention(("rb",), ("*_spec.rb",), (), (".rspec",),
+                   "*_spec.rb", "rspec"),
+    TestConvention(("php",), ("*Test.php",), (), ("phpunit.xml", "phpunit.xml.dist"),
+                   "*Test.php", "phpunit"),
+)
+
+
+def _language_files(root: Path, conv: TestConvention) -> list[str]:
+    """This language's source files, with vendored/build trees pruned by the .gitignore templates —
+    so a venv full of pytest's OWN test suite never reads as "this project has tests"."""
+    from . import linterprobe  # local import: linterprobe never imports this module
+    out: list[str] = []
+    for ext in conv.exts:
+        out += linterprobe.collect_files(str(root), [ext])
+    return out
+
+
+def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -> bool:
+    for p in paths:
+        rel = Path(p)
+        if rel.is_absolute():
+            try:
+                rel = rel.relative_to(root)
+            except ValueError:
+                rel = Path(rel.name)
+        if any(part in conv.dirs for part in rel.parts[:-1]):
+            return True
+        if any(fnmatch.fnmatch(rel.name, g) for g in conv.globs):
+            return True
+    return False
 
 
 def undiscoverable_tests(root: Path) -> list[str]:
@@ -964,14 +1033,17 @@ def undiscoverable_tests(root: Path) -> list[str]:
     tests, which cria cannot know."""
     from . import linterprobe  # local import: linterprobe never imports this module
     root = Path(root)
+    root = Path(root)
     out: list[str] = []
-    for ext, _command, _reason, globs in _TEST_FLOORS:
-        names = [Path(f).name for f in linterprobe.collect_files(str(root), [ext])]
-        if not names:
-            continue  # the language isn't here at all — nothing to say about its tests
-        if any(_matches_test_globs(n, globs) for n in names):
-            continue  # tests are discoverable; test_floor_candidates has it covered
-        out.append(" or ".join(globs))
+    for conv in TEST_CONVENTIONS:
+        paths = _language_files(root, conv)
+        if not paths:
+            continue                                   # language absent — say nothing about it
+        if any((root / cfg).exists() for cfg in conv.configs):
+            continue                                   # the project re-pointed its own runner
+        if _has_discoverable_test(root, paths, conv):
+            continue                                   # its tests are already discoverable
+        out.append(f"{conv.label} ({conv.runner})")
     return out
 
 
@@ -981,11 +1053,13 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
     test file" project runs syntax + lint but NEVER its tests — a VACUOUS-GREEN gate that reports "no
     error-class problems" while the tests are broken, and a satisfaction judge that can complete on them.
     See ``_TEST_FLOORS`` for why the table is (currently) Python-only and how other languages are covered."""
-    from . import linterprobe  # local import: linterprobe never imports this module
     root = Path(root)
     out: list[ProbeCandidate] = []
-    for ext, command, reason, globs in _TEST_FLOORS:
-        names = [Path(f).name for f in linterprobe.collect_files(str(root), [ext])]
-        if any(_matches_test_globs(n, globs) for n in names):
-            out.append(cand(ProbeKind.Test, list(command), root, 60, 90, ProbeCost.Moderate, reason))
+    for conv in TEST_CONVENTIONS:
+        if not conv.floor:
+            continue
+        paths = _language_files(root, conv)
+        if paths and _has_discoverable_test(root, paths, conv):
+            out.append(cand(ProbeKind.Test, list(conv.floor), root, 60, 90, ProbeCost.Moderate,
+                            f"{conv.runner} auto-discovers {conv.label} (zero-config)"))
     return out
