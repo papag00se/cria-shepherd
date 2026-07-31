@@ -29,7 +29,7 @@ RESULTS = SUITE / "results" / "results.jsonl"
 CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
-WALL_SECONDS = 30 * 60
+WALL_SECONDS = int(os.environ.get("SUITE_WALL_MINUTES", "30")) * 60
 KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
