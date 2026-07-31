@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 from cria import probegate
 from cria.probediscovery import ProbeKind
@@ -548,3 +549,65 @@ class DelimiterFactTests(unittest.TestCase):
         from cria.probegate import GatePlan, _with_delimiter_facts
         f = ["a.py:3:1: undefined name 'requests'"]
         self.assertEqual(_with_delimiter_facts(f, GatePlan(workspace="/tmp")), f)
+
+
+class NoTestsFoundNoteTests(unittest.TestCase):
+    """g20 (gemma4, ada-handles): the coder put its unittest classes INSIDE resolve_handle.py. No file
+    matched the naming convention, so no test probe was ever selected, and the gate answered "the repo's
+    own checks that ran reported no error-class problems" FIFTY-FOUR times over a project whose tests
+    could not run at all — then the completion judge approved on it. The clean line was true and half a
+    sentence."""
+
+    CLEAN = "___CRIA_GATE_probe-0___\nEXIT:0\n___CRIA_GATE_git___\nabc\n"
+
+    def _ws(self, tmp, **files):
+        for name, body in files.items():
+            p = Path(tmp, name.replace("|", "/"))
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body)
+        return tmp
+
+    def test_the_clean_line_says_no_tests_ran_and_names_the_convention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"resolve_handle.py":
+                                  "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
+            plan = probegate.plan_gate(ws)
+            out = probegate.clean_gate_output(self.CLEAN, plan)
+        self.assertIn("no error-class problems", out)      # the original fact is unchanged...
+        self.assertIn("no tests were run", out)            # ...and no longer half a sentence
+        self.assertIn("test_*.py or *_test.py", out)       # the convention cria SEARCHED by
+        self.assertNotIn("required", out)                  # cria cannot know whether this task wants tests
+
+    def test_it_stops_the_moment_a_discoverable_test_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"resolve_handle.py": "x = 1\n",
+                                  "tests|test_resolve.py": "def test_ok():\n    assert True\n"})
+            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+        self.assertNotIn("no tests were run", out)
+        self.assertEqual(out, "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.")
+
+    def test_silent_when_the_language_is_not_present_at_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"main.go": "package main\n"})
+            self.assertNotIn("no tests were run", probegate.clean_gate_output(self.CLEAN,
+                                                                             probegate.plan_gate(ws)))
+
+    def test_a_venv_full_of_test_files_does_not_mask_a_testless_project(self):
+        # The vendored .gitignore templates (cria/ignore.py) are the signal for where NOT to look:
+        # pytest's and pip's own suites live under site-packages and are not this project's tests.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"resolve.py": "x = 1\n",
+                                  ".venv|lib|python3.12|site-packages|_pytest|test_main.py": "def test_x(): pass\n",
+                                  ".venv|lib|python3.12|site-packages|_pytest|test_cfg.py": "def test_y(): pass\n"})
+            self.assertIn("no tests were run", probegate.clean_gate_output(self.CLEAN,
+                                                                          probegate.plan_gate(ws)))
+
+    def test_findings_are_never_buried_under_the_note(self):
+        # Where a real error-class finding exists the coder has concrete work; a naming note on top of
+        # it is noise. Only the CLEAN branch carries the qualifier.
+        failing = "___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\nEXIT:1\n___CRIA_GATE_git___\nabc\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._ws(tmp, **{"app.py": "import unittest\n"})
+            out = probegate.clean_gate_output(failing, probegate.plan_gate(ws))
+        self.assertIn("undefined name", out)
+        self.assertNotIn("no tests were run", out)

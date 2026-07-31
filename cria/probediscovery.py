@@ -49,6 +49,7 @@ evidence must come from the same tree the composed commands will run against.
 from __future__ import annotations
 
 import enum
+import fnmatch
 import json
 import os
 from dataclasses import dataclass
@@ -932,10 +933,46 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
 # and runs unittest- AND pytest-style tests. (`node --test` is deliberately NOT an entry: it cannot run
 # jest/vitest/mocha suites — different globals — so it would falsely fail them.) Add a language here the
 # day it has an equally safe zero-config runner.
-_TEST_FLOORS: list[tuple[str, list[str], str]] = [
+# Each entry carries the runner AND the file patterns that runner actually discovers by, because the
+# two must never disagree: cria both SEARCHES by these and TELLS the coder about them, and a naming
+# convention derived from the extension instead (f"test_*.{ext}") is a false fact for every language
+# but Python — Go discovers only `*_test.go`, Rust has no filename convention at all (`#[cfg(test)]`
+# modules), jest uses `*.test.js` / `__tests__/`. Keeping them here means adding a language cannot
+# silently invent a convention for it.
+_TEST_FLOORS: list[tuple[str, list[str], str, tuple[str, ...]]] = [
     ("py", ["python3", "-m", "pytest", "-q"],
-     "Python tests: pytest auto-discovers test_*.py / *_test.py (zero-config)"),
+     "Python tests: pytest auto-discovers test_*.py / *_test.py (zero-config)",
+     ("test_*.py", "*_test.py")),
 ]
+
+
+def _matches_test_globs(name: str, globs: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatch(name, g) for g in globs)
+
+
+def undiscoverable_tests(root: Path) -> list[str]:
+    """The test-file naming conventions cria LOOKED FOR and did not find, for each floor language whose
+    source files are present. Empty when a language has matching test files (or isn't present at all).
+
+    The mirror image of :func:`test_floor_candidates`, from the same table so the two can never drift:
+    that function says which tests cria can run, this one says which convention it searched by when it
+    found none. Measured need, g20 (gemma4, ada-handles): the coder put its unittest classes INSIDE
+    resolve_handle.py, so no file matched, no test probe was ever selected, and the gate reported "the
+    repo's own checks that ran reported no error-class problems" fifty-four times over a project whose
+    tests could not run at all. Naming what cria searched by is a FACT about cria's own check — it lets
+    a coder that did write tests make them reachable, and it says nothing about whether the task wants
+    tests, which cria cannot know."""
+    from . import linterprobe  # local import: linterprobe never imports this module
+    root = Path(root)
+    out: list[str] = []
+    for ext, _command, _reason, globs in _TEST_FLOORS:
+        names = [Path(f).name for f in linterprobe.collect_files(str(root), [ext])]
+        if not names:
+            continue  # the language isn't here at all — nothing to say about its tests
+        if any(_matches_test_globs(n, globs) for n in names):
+            continue  # tests are discoverable; test_floor_candidates has it covered
+        out.append(" or ".join(globs))
+    return out
 
 
 def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
@@ -947,8 +984,8 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
     from . import linterprobe  # local import: linterprobe never imports this module
     root = Path(root)
     out: list[ProbeCandidate] = []
-    for ext, command, reason in _TEST_FLOORS:
+    for ext, command, reason, globs in _TEST_FLOORS:
         names = [Path(f).name for f in linterprobe.collect_files(str(root), [ext])]
-        if any(n.startswith("test_") or n.endswith(f"_test.{ext}") for n in names):
+        if any(_matches_test_globs(n, globs) for n in names):
             out.append(cand(ProbeKind.Test, list(command), root, 60, 90, ProbeCost.Moderate, reason))
     return out

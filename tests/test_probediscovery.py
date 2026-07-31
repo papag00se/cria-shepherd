@@ -235,3 +235,33 @@ class TomlFloorTests(DiscoveryCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFloorConventionTests(unittest.TestCase):
+    """The runner and the naming convention cria TELLS the coder about come from one table entry, so
+    they cannot disagree. Deriving the convention from the extension instead (f"test_*.{ext}") reads
+    true for Python and is a FALSE FACT for every other language: Go discovers only `*_test.go`, Rust
+    has no filename convention at all, jest uses `*.test.js` / `__tests__/`."""
+
+    def test_every_floor_entry_carries_its_own_globs(self):
+        from cria.probediscovery import _TEST_FLOORS
+        for ext, command, reason, globs in _TEST_FLOORS:
+            self.assertTrue(globs, f"{ext} floor has no discovery globs")
+            for g in globs:
+                self.assertIn("*", g, f"{ext}: {g!r} is not a pattern")
+                self.assertTrue(g.endswith(f".{ext}"), f"{ext}: {g!r} is not a {ext} pattern")
+
+    def test_the_globs_are_what_selection_actually_matches(self):
+        from cria.probediscovery import _matches_test_globs, _TEST_FLOORS
+        globs = dict((e, g) for e, _c, _r, g in _TEST_FLOORS)["py"]
+        for name in ("test_resolve.py", "resolve_test.py"):
+            self.assertTrue(_matches_test_globs(name, globs), name)
+        for name in ("resolve.py", "testing.py", "contest.py", "test_resolve.txt"):
+            self.assertFalse(_matches_test_globs(name, globs), name)
+
+    def test_undiscoverable_reports_the_table_s_globs_verbatim(self):
+        import tempfile
+        from cria.probediscovery import undiscoverable_tests
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("import unittest\n")
+            self.assertEqual(undiscoverable_tests(ws), ["test_*.py or *_test.py"])

@@ -32,7 +32,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import jsontext
-from . import probeparse, proberun
+from . import probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -60,6 +60,9 @@ class GatePlan:
     workspace: str
     script: str = ""
     candidates: list = field(default_factory=list)  # selected ProbeCandidates, in section order
+    # Test-naming conventions cria searched by and found nothing for (probediscovery.undiscoverable_tests).
+    # Computed with the selection, so the clean-gate render reads a fact instead of re-walking the tree.
+    untested: list = field(default_factory=list)
 
 
 @dataclass
@@ -89,6 +92,7 @@ def plan_gate(workspace: str) -> GatePlan:
     plan = GatePlan(workspace=workspace)
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
+        plan.untested = probediscovery.undiscoverable_tests(workspace)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
     for i, c in enumerate(plan.candidates):
@@ -295,7 +299,19 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
     # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
     # coder that a green check might still be wrong. (Operator directive, twice.)
-    return "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems."
+    clean = "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems."
+    # ...but "the checks reported no problems" is half a sentence when NO test ran. g20 (gemma4,
+    # ada-handles) returned exactly this line fifty-four times over a project whose unittest classes
+    # sat inside resolve_handle.py — unmatched by any naming convention, so no test probe was ever
+    # selected — and the completion judge approved on it. The qualifier is a fact about cria's own
+    # check (what it looked for, what it found), never a claim that this task needs tests; it stops
+    # the moment a matching file exists. Only on the CLEAN branch: where real findings exist the coder
+    # has concrete work, and this would be noise on top of it.
+    untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
+    if untested and not any(getattr(c, "kind", None) is probediscovery.ProbeKind.Test
+                            for c in (getattr(plan, "candidates", None) or [])):
+        clean += " " + prompts.render("no_tests_found", globs=" or ".join(untested))
+    return clean
 
 
 CHECKS_MARKER = "⟦ctx:checks⟧"
