@@ -39,11 +39,40 @@ def _tag(path: str) -> str:
     return f"{EDIT_MARK} {os.path.basename(path or 'the file')} — "
 
 
+def _wrote_since(prior_msgs: list, path: str) -> int:
+    """Index just past the coder's most recent SUCCESSFUL write of ``path`` (0 if it never landed one).
+    Matched on the write-confirm line by basename, so a relative call and an absolute one still count as
+    the same file."""
+    head = prompts.render("write_confirm", path="").strip()
+    base = os.path.basename(path or "")
+    at = 0
+    for i, m in enumerate(prior_msgs):
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        for ln in str(m.get("content") or "").splitlines():
+            ln = ln.strip()
+            if base and ln.startswith(head) and os.path.basename(ln[len(head):].strip()) == base:
+                at = i + 1
+                break
+    return at
+
+
 def _prior_edit_steers(prior_msgs: list, path: str) -> int:
-    """How many times this module has already steered edits on ``path`` (its directive tag appears in the
-    conversation-so-far). Stateless — reconstructed from the messages, so it survives a cria restart."""
+    """How many times this module has steered edits on ``path`` SINCE the coder last wrote it
+    successfully — the clock that decides when to escalate to a whole-file rewrite.
+
+    Counting a file's LIFETIME misses instead was a trap. Once a file crossed the threshold it stayed
+    in forced-rewrite mode for the rest of the session, however well the model did afterwards — and a
+    whole-file rewrite asks a small model to retype thousands of characters from memory, which is the
+    one thing it is worst at. Measured in g18 (gemma4, ada-handles): 4 edit steers on test_resolve.py
+    with 7 SUCCESSFUL writes interleaved, 5 of them after the threshold. cria kept ordering a ~2,000
+    character retype, and one of those retypes silently reverted a one-character fix the model had
+    already made — so it spent the rest of the run chasing a NameError that cria had reintroduced.
+    A successful write is the model proving it can pin this file's text; the clock starts over.
+
+    Stateless — reconstructed from the messages, so it survives a cria restart."""
     tag = _tag(path)
-    return sum(1 for m in prior_msgs
+    return sum(1 for m in prior_msgs[_wrote_since(prior_msgs, path):]
                if isinstance(m, dict) and tag in str(m.get("content") or ""))
 
 

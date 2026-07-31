@@ -718,6 +718,28 @@ class EditRecoveryTests(unittest.TestCase):
         self.assertIn("produce the corrected FULL file", late)        # committed rewrite
         self.assertIn("a = 1\nb = 2", late)                           # grounded in the real current bytes
 
+    def test_a_successful_write_restarts_the_escalation_clock(self):
+        # g18 (gemma4, ada-handles), calls 153-182: 4 edit steers on test_resolve.py with SEVEN
+        # successful writes interleaved. The clock counted lifetime misses, so the file stayed in
+        # forced-whole-rewrite mode — and one of those ~2,000-character retypes silently reverted the
+        # `handler` -> `handle` fix the model had already landed. It chased that NameError for the rest
+        # of the run. A landed write proves the model can pin this file; the clock starts over.
+        from cria import editrecovery, prompts
+        tag = editrecovery.EDIT_MARK + " app.py — "
+        steer = {"role": "user", "content": tag + "copy this VERBATIM"}
+        ok = {"role": "tool", "content": prompts.render("write_confirm", path="/work/app.py")}
+        self.assertEqual(editrecovery._prior_edit_steers([steer, steer, steer], "/work/app.py"), 3)
+        self.assertEqual(editrecovery._prior_edit_steers([steer, steer, steer, ok], "/work/app.py"), 0)
+        self.assertEqual(editrecovery._prior_edit_steers([steer, steer, ok, steer], "/work/app.py"), 1)
+
+    def test_the_clock_is_per_file_and_path_form_agnostic(self):
+        from cria import editrecovery, prompts
+        mine = {"role": "user", "content": editrecovery.EDIT_MARK + " app.py — miss"}
+        other = {"role": "tool", "content": prompts.render("write_confirm", path="other.py")}
+        rel = {"role": "tool", "content": prompts.render("write_confirm", path="app.py")}
+        self.assertEqual(editrecovery._prior_edit_steers([mine, other], "/work/app.py"), 1)  # not my file
+        self.assertEqual(editrecovery._prior_edit_steers([mine, rel], "/work/app.py"), 0)    # same file
+
     def test_summarize_collapses_the_base64_report_for_a_reasoner(self):
         # The raw ⟦ctx:editfail⟧<base64> embeds the file's WHOLE current bytes — 96K-token poison in a
         # reasoner prompt. summarize() collapses it to a one-line fact (the model still gets recover()).
