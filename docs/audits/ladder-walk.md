@@ -28,7 +28,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
-| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 3 | 2/4 | 📖 all walked — planner-OFF next |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 4 | 2/4 | 📖 all walked — 1 attempt from BLOCKED |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
@@ -304,3 +304,49 @@ mis-reported the very run that motivated it.
 Three stalls at the hypothesised setting. The goal doc sanctions flipping the planner as an explicit
 experiment at this point, and it is also the operator's own hypothesis (dense cope with it off, MoEs
 need it on) finally getting an arm that can disconfirm it. Attempt 4 runs `--planner off`.
+
+
+## ada-handles_mellum2_codex_poff_1785626379
+
+**1/4** · planner **OFF** (the sanctioned experiment after three stalls) · killed at 30 min ·
+225 calls · 142.9 tok/s · capture `~/.cria/calls/20260801T161949-019fbfa0-6dd0-7710-b67f-127f4a2fe40a`
+
+README green. One qualitative change from attempts 1–3: the CLI **exits 1** instead of exiting 0
+silently — a program that runs and errors, rather than a library that does nothing. One run, so not
+a finding; the planner flip is the only variable but this model has scored 2/4, 0/4, 0/4 on
+identical settings.
+
+### The finding: cria withheld its correction on a premise that was false 73% of the time
+
+`loop.steer_same_checks` fired **11 times**. That guard suppresses a second steer when the repo's
+findings have not moved, and its reasoning is sound and measured — 36% of every steer cria has ever
+authored was fresh prose on unchanged findings, and g22 cost ten consecutive contradicting steers on
+one assertion diff. It rests on one stated premise:
+
+> *"The check output is the better steer, it is already in front of the coder."*
+
+Measured across this run's coder prompts:
+
+```
+coder prompts                     176
+...carrying the checks or a steer  47   (27%)
+...with NO correction attached    129   (73%)
+```
+
+The premise is false for three turns in four. So cria was staying quiet because a better correction
+was visible, while for most turns nothing was — the same shape as attempt 3's walk, seen from the
+other side. There the standing instruction outlived its artifact; here the correction is actively
+suppressed and nothing replaces it.
+
+**Fixed — by making the premise TRUE rather than by removing the guard.** When the findings are
+unchanged AND the checker's own first line is not present in the request, cria now hands back the
+**checker's exact lines**, wrapped in "unchanged since you were last shown them — you have not
+cleared them yet". It never re-invokes the reasoner, so g22's failure mode is untouched: no second
+diagnosis, no new prose, no paraphrase. cria may SELECT a checker's real lines and must never
+SUBSTITUTE its own words, and this only repeats them.
+
+When the checks ARE already visible, the guard suppresses exactly as before.
+
+Two existing tests asserted the old shape and were updated to assert the INVARIANT instead of the
+exact output — "no second reasoner diagnosis" rather than "returns None". The distinction is the
+whole fix. A third case neither covered (checks visible → still silent) was added.

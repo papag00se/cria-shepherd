@@ -3411,6 +3411,25 @@ def gate_error_text(outcome) -> str:
     return ""
 
 
+def _checks_already_visible(body: dict, checks: str) -> bool:
+    """Is the check output the guard assumes the coder can see actually in this request?
+
+    The suppression it gates was measured withholding cria's correction while nothing else carried
+    it: 129 of 176 coder prompts in one run had neither the checks nor a steer. Anchored on the
+    checker's own FIRST line rather than the whole block, because the block is re-rendered with
+    different framing in different places and an exact-match test would answer "no" every time.
+    """
+    first = next((ln.strip() for ln in (checks or "").splitlines() if ln.strip()), "")
+    if not first:
+        return True          # nothing to re-show -> nothing withheld
+    needle = first.lstrip("•").strip()[:80]
+    for m in (body.get("messages") or []):
+        c = m.get("content")
+        if isinstance(c, str) and needle and needle in c:
+            return True
+    return False
+
+
 def _gate_notes(sess) -> str:
     """Ground-truth notes for the satisfaction judge about what the gate's test run actually
     verified (prompts/gate_notes.txt): the C4 vacuous-green (0 collected) and the skipped-count fact
@@ -3763,6 +3782,21 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
     checks_now = (truth_text or "").strip()
     if checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", ""):
+        # The suppression above rests on ONE premise, stated in its own reasoning: "the check output
+        # is already in front of the coder". Measured on run ada-handles_mellum2_codex_poff_1785626379
+        # that premise was false for 129 of 176 coder prompts — the checks or a steer rode along in
+        # only 27% of them. So cria was withholding its correction on the grounds that a better one
+        # was visible, while for three turns in four nothing was.
+        #
+        # The answer is NOT to let the reasoner paraphrase again (that is the 36%-junk-steer problem
+        # this guard exists to stop, and g22's ten contradicting steers). It is to make the premise
+        # TRUE: hand back the CHECKER'S OWN LINES verbatim. cria may select which real lines to show
+        # and must never substitute its own words for them — so this repeats ground truth, and
+        # authors nothing.
+        if not _checks_already_visible(body, checks_now):
+            rlog.emit("loop.steer_checks_reattached", level="info", condition=condition,
+                      head=_clip(checks_now, 100))
+            return prompts.render("steer_checks_repeat", findings=checks_now)
         rlog.emit("loop.steer_same_checks", level="info", condition=condition,
                   head=_clip(checks_now, 100))
         return None

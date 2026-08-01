@@ -1,0 +1,5 @@
+⟦ctx:checks⟧ These are the repo's own checks, unchanged since you were last shown them — you have not cleared them yet. They are the checker's exact words, not a summary:
+
+{{FINDINGS}}
+
+Read what each one names and fix exactly that. Make the smallest change that clears it. If you have already tried a fix for one of these and it did not work, read the file as it stands now before trying another — the version in your head may not be the version on disk.

@@ -3716,7 +3716,20 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         self.assertIn("line 31", first)                      # the FIRST diagnosis still lands
         second = author_steer(self._chat("actually the assertions are swapped"), None, ws, gs,
                               {"messages": []}, rlog, condition="flail", truth_text=checks)
-        self.assertIsNone(second)                            # ...the second one does not
+        # The invariant is NO SECOND REASONER DIAGNOSIS — not "no output". Updated 2026-08-01 after
+        # measuring that suppressing outright withheld the correction while nothing else carried it
+        # (129 of 176 coder prompts in run …poff_1785626379 had neither the checks nor a steer).
+        # With the checks ABSENT from the body, cria now repeats the CHECKER'S OWN LINES; it still
+        # never emits the reasoner's fresh re-guess, which is what g22 cost.
+        self.assertNotIn("swapped", second)                  # the re-guess is still dropped
+        self.assertIn("test_resolve.py:31", second)          # ...the CHECKER's own words come back
+        self.assertNotIn("fix the expected literal", second)  # not the earlier reasoner prose either
+        self.assertIn(("loop.steer_checks_reattached",), [(k,) for k, _ in rlog.events])
+        # ...and when the checks ARE already in front of the coder, cria stays silent as before.
+        visible = author_steer(self._chat("another re-guess"), None, ws, gs,
+                               {"messages": [{"role": "user", "content": checks}]}, rlog,
+                               condition="flail", truth_text=checks)
+        self.assertIsNone(visible)
         self.assertIn(("loop.steer_same_checks",), [(k,) for k, _ in rlog.events])
         moved = author_steer(self._chat("now fix the import on line 3"), None, ws, gs,
                              {"messages": []}, rlog, condition="flail",
@@ -4124,7 +4137,11 @@ class ReasonedRedirectTests(unittest.TestCase):
         reply = lambda b, r: json.dumps({"choices": [{"message": {"content": "you keep re-adding a colon on line 1; delete it"}}]}).encode()
         self.assertIn("delete it", author_thrash_steer(reply, None, ws, gs, truth, body, _Rlog()))
         empty = lambda b, r: json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
-        self.assertEqual(author_thrash_steer(empty, None, ws, gs, truth, body, _Rlog()), truth)  # fall back to ground truth
+        # Falls back to GROUND TRUTH. The exact-equality assertion became a containment one on
+        # 2026-08-01: on a repeat of unchanged findings cria now wraps the checker's lines in the
+        # "unchanged, you have not cleared these" framing rather than returning them bare. What must
+        # hold either way is that the checker's real output reaches the coder.
+        self.assertIn(truth, author_thrash_steer(empty, None, ws, gs, truth, body, _Rlog()))
 
     def _test_cand(self, cmd, kind):
         from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind  # noqa: F401
