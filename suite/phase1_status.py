@@ -51,10 +51,13 @@ def in_flight():
     except Exception:  # noqa: BLE001
         return None
     for line in ps.splitlines():
-        if "suite/run.py" in line and "--task" in line and "grep" not in line:
-            parts = line.split()
-            if "--task" in parts:
-                return parts[parts.index("--task") + 1]
+        parts = line.split()
+        # argv[1] must BE the runner. Matching "suite/run.py" anywhere in the line matches the
+        # shell that is asking the question — any command whose text merely mentions the runner,
+        # including this file being edited — and the oracle then reports a phantom run forever and
+        # blocks every action. Same self-match that makes `pkill -f` kill its own caller.
+        if len(parts) >= 4 and parts[1].endswith("suite/run.py") and "--task" in parts:
+            return parts[parts.index("--task") + 1]
     return None
 
 
@@ -90,12 +93,18 @@ def main() -> None:
             "running": running == t,
             "complete": r is not None and t in walk,
         })
-    remaining = [s["task"] for s in state if not s["complete"]]
+    # The two kinds of "not done" need DIFFERENT actions, and conflating them told me to spend 30
+    # minutes re-running a cell that was already scored and merely needed writing up.
+    to_walk = [s["task"] for s in state if s["scored"] and not s["walked"]]
+    to_run = [s["task"] for s in state if not s["scored"]]
+    remaining = to_walk + to_run
     complete = not remaining
 
     if args.json:
         print(json.dumps({"complete": complete, "running": running,
-                          "remaining": remaining, "cells": state}, indent=1))
+                          "next_action": ("wait" if running else "walk" if to_walk
+                                          else "run" if to_run else "none"),
+                          "to_walk": to_walk, "to_run": to_run, "cells": state}, indent=1))
     else:
         print(f"{'task':16s} {'scored':>7s} {'score':>7s} {'walked':>7s}  state")
         print("-" * 58)
@@ -111,10 +120,19 @@ def main() -> None:
             print(f"IN FLIGHT: {running} — do not start another run, and do not edit code")
         elif complete:
             print("PHASE 1 COMPLETE")
+        elif to_walk:
+            # WALKING COMES FIRST: a scored cell already holds its evidence, and walking costs no
+            # GPU. Starting another run instead buries the capture under a newer one.
+            t = to_walk[0]
+            cap = (done[t] or {}).get("capture_dir", "(see results.jsonl)")
+            print(f"WORK REMAINS — walk {len(to_walk)}, run {len(to_run)}")
+            print(f"NEXT: WALK {t} — read {cap} call by call, then write "
+                  f"'## {t}' into docs/audits/phase1-walk.md")
         else:
-            print(f"WORK REMAINS: {', '.join(remaining)}")
-            print(f"NEXT: python3 suite/run.py --task {remaining[0]} --model ternary-bonsai "
-                  f"--harness codex --planner off --note \"P1 {remaining[0]} <sha>\"")
+            t = to_run[0]
+            print(f"WORK REMAINS — walk 0, run {len(to_run)}")
+            print(f"NEXT: RUN python3 suite/run.py --task {t} --model ternary-bonsai "
+                  f"--harness codex --planner off --note \"P1 {t} $(git rev-parse --short HEAD)\"")
 
     sys.exit(2 if running else (0 if complete else 1))
 
