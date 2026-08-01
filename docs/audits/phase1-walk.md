@@ -66,22 +66,60 @@ round 4   102K chars   →   247 seconds for one call
 
 That single steer cost **544 seconds — 9 of the 30 minutes**.
 
+### What it was stuck on
+
+One bug, from call 13 to the wall: mocking `urllib.request.urlopen`. The coder's helper built a
+`MagicMock`, and `resp.read().decode()` handed back another mock instead of bytes:
+
+```
+TypeError: the JSON object must be str, bytes or bytearray, not MagicMock
+```
+
+Its own diagnosis at call 13 was **correct**: *"the mock chain isn't returning proper bytes/str
+values."* It knew. What it could not find was why its fix didn't take. Call 15 is 11,617 characters
+of private reasoning that traces the chain five separate times and concludes *"Wait, that should
+work!"*, *"this should work"*, *"but the error says it got a MagicMock"* — a model correctly
+refusing to believe a false premise it had been handed.
+
+The premise was false in two places, and one of them was cria's.
+
 ### The four questions
 
 | | |
 |:--|:--|
-| false or stale? | **No.** All three steers correctly diagnosed the same real bug — a `MagicMock` chain where `resp.read().decode()` yields a new mock instead of bytes. |
-| impossible? | No. |
+| false or stale? | **YES — and it was cria's own code.** Steer 1 diagnosed the bug correctly, then told the coder to `patch(..., side_effect=_mock_urlopen(GOOSE_RESPONSE))`. Replayed verbatim, that snippet **reproduces the exact TypeError it was explaining** — `side_effect` set to a mock object makes `urlopen()` return that mock's *return value*, a fresh auto-mock, so `.read()` yields a mock again. |
+| impossible? | **YES.** Steer 2's fix line was `resp_mock.__enter__ = lambda s=self: s`. `self` is not defined at module scope, where the helper lives. `NameError`. It cannot run. |
 | withheld? | No. |
-| wording? | No. The coder's own reasoning at calls 24 and 25 restates the diagnosis accurately. |
+| wording? | Not the wording — the code. |
 
-**Verdict: a cria fault, but of cost, not content.** The advice was right and the model understood
-it. cria spent half the model budget delivering it, and the coder got 16 turns to finish a task
-needing far more. Not a model wall — the model was converging when the wall arrived.
+Steer 2's *prose* was exactly right, and better than anything the coder produced:
+*"`MagicMock.__enter__()` yields a **new** MagicMock — not the one with `.read` set."* That is the
+whole answer, and it is the one fact the coder never found on its own (call 15 asserts the
+opposite: *"MagicMock's `__enter__` returns self by default"* — it does not).
 
-**Fixed** — [`2eaf2e1`](#) bounds the inspection loop by **size** as well as round count. Rounds
-aren't equal cost, so capping rounds bounded the wrong dimension. Worst chain fell 544s → 195s and
-throughput went 24 → 67 calls in the next cell.
+So cria held the diagnosis the coder needed, said it correctly, and then buried it under a fix that
+could not work. The coder rewrote the same test file **five times** against that advice, never wrote
+the live test, never wrote the README.
+
+Verified by running all four forms:
+
+```
+cria steer 1 verbatim                     TypeError: … not MagicMock   ← the bug it was fixing
+same, with return_value= instead          TypeError: lambda takes 0 args, 1 given
+cria steer 2's line, at module scope      NameError: name 'self' is not defined
+__enter__.return_value = resp             OK                            ← what actually works
+```
+
+**Verdict: a cria fault of CONTENT, not only cost.** The earlier pass of this walk recorded "the
+advice was right and the model understood it." That was wrong — I read the diagnoses, which were
+right, and never ran the code, which was not.
+
+**Fixed — two things:**
+
+| | fix |
+|:--|:--|
+| the inspection loop was unbounded by size — one steer ate 9 of 30 minutes | [`2eaf2e1`](#) bounds it by size as well as rounds; worst chain 544s → 195s, throughput 24 → 67 calls |
+| the steer author wrote code it cannot run | [`e0c0ef4`](#) — the rule was narrow ("never retype a broken line") and permitted *inventing* a fix. Now: describe the change in words, never write code. Measured first: **19% of 1,544 captured steers shipped a code block.** |
 
 ---
 
@@ -220,13 +258,18 @@ thrash, and a language with no compile step, no borrow checker, and no async run
 
 ## What this phase says so far
 
-**Two cria defects found and fixed**, both in the machinery around the model rather than the advice
-it gives:
+**Three cria defects found and fixed** — and the third is in the advice itself, which the first
+pass of this walk wrongly cleared:
 
 | | from | fix |
 |:--|:--|:--|
 | inspection loop unbounded by size — one steer ate 9 of 30 minutes | C1 | `2eaf2e1` |
 | `go test` gate could report a pass it never ran | C2 | `8fd698d` |
+| **the steer author wrote code it cannot run — both C1 steers shipped a broken fix under a correct diagnosis** | C1 | `e0c0ef4` |
+
+The method failure worth recording: I read the steers' *diagnoses*, found them accurate, and wrote
+"the advice was right." I never ran the code they contained. Reading a fix is not checking it —
+the same rule cria itself is built on (verify by doing, not by reading) applies to the walk.
 
 **Two cells walked clean.** C3 and C4 produced no cria-side finding. Saying so plainly rather than
 manufacturing one.
