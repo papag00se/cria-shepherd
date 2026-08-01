@@ -5,13 +5,41 @@ Hand this to a `/goal` prompt. It states the objective, the method, what has alr
 
 ---
 
-## Objective
+## Objective — PHASE 1: the language sweep, and only that
 
-Run the full matrix — task × model × harness × planner — and turn the results into cria fixes.
+Run **one task, seven languages**: the handles problem across `ada-handles` (Python) and
+`handles-{go,rust,node,ruby,php,java}`, on the models we care about. Nothing else. The other task
+types in `docs/task-battery.md` are built and proven but are a LATER matrix run — establish this
+baseline first.
+
+Why this cut: the handles problem is the one cria has the most history with, and holding the task
+constant makes the language the only variable. A cell that fails then says something about that
+language or about cria, not about a different problem.
 
 **Success is not a score.** It is: every cell has evidence, every failure has been walked to a
 cause, and every cause is either fixed upstream or written down as a model wall with one line of
 proof. A matrix full of numbers nobody walked is a wasted day of GPU.
+
+### The phase-1 grid
+
+| | ada-handles | handles-go | handles-rust | handles-node | handles-ruby | handles-php | handles-java |
+|---|---|---|---|---|---|---|---|
+| ternary-bonsai | | | | | | | |
+| qwythos | | | | | | | |
+| gemma4 | | | | | | | |
+
+Start with ternary-bonsai (the normal live model) across all seven, then widen. Planner off,
+harness codex, unless a cell is specifically about those axes.
+
+### Before the first run
+
+```bash
+python3 suite/preflight.py --warm
+```
+
+It must print READY. A cold `cargo` or `mvn` cache turns a 30-minute budget into a download, and
+the cell then records a model failure that was really a machine failure. `docker` is reported
+absent and that is fine — it is only used by a later task, whose Dockerfile is read, not built.
 
 ## How to run it
 
@@ -103,6 +131,8 @@ gemma4 (1/6 each). Everything else already works, which is why nothing else chan
 
 ## The battery
 
+### Phase 1 — these seven, and nothing else
+
 | task | language |
 |---|---|
 | `ada-handles` | Python |
@@ -112,6 +142,13 @@ gemma4 (1/6 each). Everything else already works, which is why nothing else chan
 | `handles-ruby` | Ruby |
 | `handles-php` | PHP |
 | `handles-java` | Java |
+
+### Later phases — built, proven, and deliberately NOT in phase 1
+
+`shipping-rates-py`, `cart-billing-go`, `orders-api-py`, `feed-pipeline-py`, `handles-cli-node`
+cover the other sixteen task categories (see `docs/task-battery.md`). Every one starts from seeded
+code and every verifier has been checked against both a correct solution and a real cheat. They
+wait until the language baseline is understood.
 
 **Seeded** tasks (`failing-tests-py`, `bug-report-go`, `missing-tests-py`) start from existing code
 instead of an empty directory — categories 3, 2 and 4 of the operator's battery list. That is the

@@ -1,0 +1,9 @@
+The nightly supplier feed importer has three problems and I'd like your help with all of them.
+
+First, it is far too slow. It takes minutes on a feed we receive every hour, and profiling says it is the code and not the disk. Make it substantially faster without changing what it produces.
+
+Second, there is a threading bug. When we turned on parallel workers the totals came out different every run, so someone disabled the parallelism instead of fixing it. Please fix it properly and turn the workers back on.
+
+Third, the feed has started arriving with rows we didn't anticipate — blank quantities, prices with currency symbols, duplicate SKUs, and a few rows with the columns in a different order. Right now the importer either crashes or silently imports rubbish. Decide sensible handling, implement it, and make sure the summary it prints says how many rows were skipped and why.
+
+When you're done, write REVIEW.md giving me your assessment of the code you worked on: what is still wrong or risky in there, with the file and line for each thing you name.

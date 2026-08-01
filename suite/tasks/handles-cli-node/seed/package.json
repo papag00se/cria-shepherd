@@ -1,0 +1,12 @@
+{
+  "name": "handle-lookup",
+  "version": "0.1.0",
+  "description": "Looks up an Ada Handle",
+  "main": "lookup.js",
+  "scripts": {
+    "start": "node lookup.js"
+  },
+  "dependencies": {
+    "request": "^2.88.2"
+  }
+}
