@@ -1389,7 +1389,9 @@ class Loop:
         framed["stream"] = False
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
                                prior_work=sess.prior_work, tools=body.get("tools"),
-                               gate_plan=getattr(sess, "gate_plan", None))
+                               gate_plan=getattr(sess, "gate_plan", None),
+                               workspace_root=sess.workspace_root,
+                               gate_red=bool(getattr(sess, "last_gate_red", False)))
         facts = _fetched_facts_anchor(sess)  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
@@ -2182,7 +2184,9 @@ class Loop:
         framed = {**body, "messages": _frame_for_item(
             body.get("messages", []), "", sess.summary, 1, 1,
             prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True,
-            gate_plan=getattr(sess, "gate_plan", None))}
+            gate_plan=getattr(sess, "gate_plan", None),
+            workspace_root=sess.workspace_root,
+            gate_red=bool(getattr(sess, "last_gate_red", False)))}
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
@@ -2716,7 +2720,7 @@ def _is_env_context(m: dict) -> bool:
     return "<environment_context>" in c or "<user_instructions>" in c
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None) -> list[dict]:
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -2765,7 +2769,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
     # told to use ONLY the tools actually in this turn's menu — the harness system message that
     # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).
-    prompt = _item_prompt(item, summary, idx, total)
+    prompt = _item_prompt(item, summary, idx, total, workspace_root, gate_red)
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
                         "content": prompts.load("coder_system") + "\n\n" + hint_block + done_block + prompt}]
@@ -2784,11 +2788,69 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     return out
 
 
-def _item_prompt(item: str, summary: str, idx: int, total: int) -> str:
+# A file-looking token in a step's text: `test_resolve_handle.py`, src/main.go, "README.md".
+_STEP_ARTIFACT = re.compile(r"[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})[`'\")]?")
+
+
+def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:
+    """Files the STEP NAMES that already exist. Deterministic — the filesystem, asked now."""
+    if not step or not root:
+        return []
+    out: list[str] = []
+    for m in _STEP_ARTIFACT.finditer(step):
+        rel = m.group(1)
+        if rel in out:
+            continue
+        try:
+            if os.path.isfile(groundtruth.resolve(root, rel)):
+                out.append(rel)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def _repair_note(item: str, workspace_root: str | None, gate_red: bool) -> str:
+    """Reframe an AUTHORING step whose artifact already exists and is currently failing.
+
+    Measured on mellum2 attempt 3 (`ada-handles_mellum2_codex_pon_1785625253`). Step 4 of 7 read
+    "Write unit tests in `test_resolve_handle.py` …" and was sent, byte-identical, in **33
+    consecutive prompts**. The gate's findings rode along in only **15** of them. On the 18 turns
+    where the step arrived without the failures attached, the model read the standing order and did
+    exactly what it said — its own words, three turns running: *"The user is telling me to write
+    unit tests"*, *"asking me to complete step 4"*, *"The user is asking me to write unit tests"* —
+    and rewrote the file each time, regenerating the same two failing assertions it had just been
+    told to fix. The instruction that caused the loop was present 100% of the time; the correction,
+    45%.
+
+    So the fix is not to act on the stall signal, it is to stop the step's wording outliving its
+    artifact. Both conditions are facts cria already holds, and BOTH are required:
+
+      * the file the step names is on disk NOW (not a claim — `os.path.isfile`)
+      * the repo's own checks are currently RED
+
+    Either one alone stays silent (principle 3), and nothing is ever deleted or blocked — the step
+    itself is untouched and this only ever tells the coder MORE about the real state (principle 2).
+    """
+    if not gate_red:
+        return ""
+    files = step_artifacts_on_disk(item, workspace_root)
+    if not files:
+        return ""
+    many = len(files) > 1
+    return "\n\n" + prompts.render(
+        "step_repair_note", files=", ".join(f"`{f}`" for f in files),
+        plural="s" if many else "", verb="" if many else "s",
+        pronoun="them" if many else "it", are="are" if many else "is")
+
+
+def _item_prompt(item: str, summary: str, idx: int, total: int,
+                 workspace_root: str | None = None, gate_red: bool = False) -> str:
     # Templates: cria/prompts/step_framing.txt (+ step_completed.txt for the prior-steps
-    # prefix, included only once there's progress to show).
+    # prefix, included only once there's progress to show, + step_repair_note.txt when the step's
+    # artifact already exists and the checks are red).
     completed = prompts.render("step_completed", summary=summary) + "\n\n" if summary else ""
-    return prompts.render("step_framing", completed=completed, idx=idx, total=total, step=item)
+    return (prompts.render("step_framing", completed=completed, idx=idx, total=total, step=item)
+            + _repair_note(item, workspace_root, gate_red))
 
 
 def _completion_toolcalls(tool_calls: list[dict], *, note: str | None = None) -> dict:

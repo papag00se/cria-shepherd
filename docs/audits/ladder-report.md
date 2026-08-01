@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 16:18:00 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 16:27:20 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785625253` (capture `/home/jesse/.cria/calls/20260801T160104-019fbf8f-40be-7f53-a1c0-881700caf8e7`), then write `## ada-handles_mellum2_codex_pon_1785625253` into `docs/audits/ladder-walk.md`.
+**RUNNING — mellum2**, 7 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **1/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🔴 | 1 failed, 4 passed in 0.16s |
+| live_test | 🔴 | no live-test file found |
+| resolver_cli | 🔴 | ada_handle_resolver.py goose: exit=1 |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
@@ -19,7 +32,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 3 | 2/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 3 | 2/4 | 🔵 RUNNING |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 0 | — | ⬜ not started |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
@@ -40,6 +53,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+af69c12 docs(ladder)+fix(execcheck): walk mellum2 attempt 3; a test file is not a program
 c4d955c feat(suite): shout when the ladder is idle
 484d75d fix(suite,docs): a package named after cria's own tool poisoned a run for nine days
 0c0a6d1 docs(ladder): walk mellum2 attempt 2 — 0/4, model wall, and a correction
@@ -54,7 +68,6 @@ b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused q
 4379943 fix(suite,docs): fabliq is an MoE — the ladder's kinds now come from the GGUF headers
 bc29023 feat(suite): the language ladder — one model at a time, 15 min per deliverable
 1d49456 fix(prompts): the steer author wrote code it cannot run — describe the change instead
-53cae4a fix(dirguard,prompts): cria RECOMMENDED the escape from its own workspace bound
 ```
 
 ---
