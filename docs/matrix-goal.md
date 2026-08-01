@@ -85,6 +85,21 @@ Rules learned the hard way:
 | Should the ask offer both shapes at once? | **No** — worst of the three. | zaya1 9/12 vs 11/12 |
 | Can gemma4 copy a 60+ char opaque literal? | **Unreliably** — ~1 in 3, always case corruption, deterministic at temp 0. | bisected 60→120 chars |
 | Does maven print a test failure's file/line? | **No** — only in `target/surefire-reports`. | real failing run |
+| Is qwythos's critic verdict broken? | **No.** 6/6. The 1/4 was a scorer artefact. | re-measured with cria's parser |
+
+### Fleet verdict readability (n=6, cria's own parser, greedy)
+
+| model | confirm JSON | confirm word | critic JSON | critic word |
+|---|---|---|---|---|
+| qwythos | 6/6 | 6/6 | 6/6 | 6/6 |
+| fabliq | 6/6 | 6/6 | 4/6 | 6/6 |
+| mellum2 | 6/6 | 6/6 | 5/6 | **1/6** |
+| nemotron-elastic | 6/6 | 6/6 | 5/6 | 6/6 |
+| gemma4 | **0/6** | 6/6 | 5/6 | **1/6** |
+
+Reads as: gemma4's confirm is the ONE real failure (0/6, reproduced at n=6, 10 and 14) — hence the
+escalation in `_judge_completion`. The critic must KEEP its JSON ask: a word costs mellum2 and
+gemma4 (1/6 each). Everything else already works, which is why nothing else changed.
 
 ## Open threads
 
