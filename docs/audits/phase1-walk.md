@@ -119,7 +119,7 @@ right, and never ran the code, which was not.
 | | fix |
 |:--|:--|
 | the inspection loop was unbounded by size — one steer ate 9 of 30 minutes | [`2eaf2e1`](#) bounds it by size as well as rounds; worst chain 544s → 195s, throughput 24 → 67 calls |
-| the steer author wrote code it cannot run | [`e0c0ef4`](#) — the rule was narrow ("never retype a broken line") and permitted *inventing* a fix. Now: describe the change in words, never write code. Measured first: **19% of 1,544 captured steers shipped a code block.** |
+| the steer author wrote code it cannot run | [`1d49456`](#) — the rule was narrow ("never retype a broken line") and permitted *inventing* a fix. Now: describe the change in words, never write code. Measured first: **19% of 1,544 captured steers shipped a code block.** |
 
 ---
 
@@ -265,7 +265,7 @@ pass of this walk wrongly cleared:
 |:--|:--|:--|
 | inspection loop unbounded by size — one steer ate 9 of 30 minutes | C1 | `2eaf2e1` |
 | `go test` gate could report a pass it never ran | C2 | `8fd698d` |
-| **the steer author wrote code it cannot run — both C1 steers shipped a broken fix under a correct diagnosis** | C1 | `e0c0ef4` |
+| **the steer author wrote code it cannot run — both C1 steers shipped a broken fix under a correct diagnosis** | C1 | `1d49456` |
 
 The method failure worth recording: I read the steers' *diagnoses*, found them accurate, and wrote
 "the advice was right." I never ran the code they contained. Reading a fix is not checking it —
