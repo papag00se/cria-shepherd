@@ -5335,6 +5335,22 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
 
+    def test_the_simple_ask_is_a_SECOND_attempt_not_the_standing_one(self):
+        """Fleet-measured on real captured rounds: nine of ten models answer the normal JSON verdict
+        4/4 and must never see the simplified ask. gemma4 answers it 0/10 (a JSON object is the shape
+        of the tool-call template it has just used five times, so it emits another one) and answers a
+        bare word 10/10. zaya1 is the mirror — JSON 4/4, word 1/4. So the simple shape is a second
+        attempt keyed on an UNREADABLE reply, never the standing ask, and nothing keys on which model
+        is loaded."""
+        import inspect
+        from cria import loop as L
+        src = inspect.getsource(L._confirm_completion)
+        self.assertIn("answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT", src)
+        self.assertNotIn("answer_now=verifytools.ANSWER_NOW_CONSISTENT", src)
+        # ...and a caller that offers no simple shape still gets exactly ONE forced round.
+        loop_src = inspect.getsource(L._judge_completion)
+        self.assertIn("2 if answer_now_simple else 1", loop_src)
+
     def test_the_confirm_reads_a_one_word_verdict_AND_still_reads_json(self):
         """Measured on real captured forced-answer rounds: the confirm judge answers a JSON demand
         0/10 (it emits another tool call — it has just made five) and a one-word demand 10/10.

@@ -564,7 +564,7 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
                       workspace_root: str = "", max_tokens: int = 8192,
                       force_think_off: bool = False, transcript: list | None = None,
-                      answer_now: str | None = None) -> dict:
+                      answer_now: str | None = None, answer_now_simple: str | None = None) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -611,15 +611,28 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # `<|tool_call>call:read_file{…<|"|>` recovered into a call nobody could run) or it is
             # raw leak debris. Returning it means the whole inspection dies as silence. ONE forced
             # textual round, tools withdrawn, bounded once.
-            if forced_rounds == 0 and (calls or massage.has_tool_call_leak(content)):
-                forced_rounds = 1
+            # ESCALATION, not a fallback: round 1 asks for the verdict in its normal shape; round 2
+            # asks the SAME question in the simplest shape the caller can accept. Measured across the
+            # fleet on real captured rounds — nine of ten models answer the normal (JSON) shape 4/4,
+            # so they never reach round 2 and nothing changes for them. gemma4 answers it 0/10,
+            # because a JSON object is the shape of the tool-call template it has just used five
+            # times, so it emits another one; asked for a bare word it answers 10/10. zaya1 is the
+            # mirror — JSON 4/4, word 1/4 — which is exactly why the simple shape is a SECOND
+            # attempt keyed on an unreadable reply, never the standing ask. Nothing here keys on
+            # which model is loaded.
+            if forced_rounds < (2 if answer_now_simple else 1) and (calls or massage.has_tool_call_leak(content)):
+                forced_rounds += 1
                 messages.append({"role": "assistant", "content": content or None,
                                  **({"tool_calls": calls} if calls else {})})
                 if calls:   # a dangling tool_call needs its result turn or the next request is malformed
                     for tc in calls:
                         messages.append({"role": "tool", "tool_call_id": tc.get("id") or "vt",
                                          "content": "[not executed — no further inspection rounds]"})
-                messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
+                ask_text = (answer_now_simple if forced_rounds == 2
+                            else (answer_now or verifytools.ANSWER_NOW))
+                if forced_rounds == 2:
+                    rlog.emit("loop.verdict_simplified", phase=phase)
+                messages.append({"role": "user", "content": ask_text})
                 continue
             if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
                 transcript.extend(messages[2:])
@@ -689,7 +702,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
     comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
                              phase=phase, force_think_off=True, workspace_root=workspace_root,
-                             answer_now=verifytools.ANSWER_NOW_CONSISTENT)
+                             answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
     vtext = _completion_text(comp)
     if reasoner_role is not None:
         vtext = reasoner_role.clean_content(vtext)
