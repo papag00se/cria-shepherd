@@ -26,7 +26,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
-| 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 0 | — | not started |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
@@ -50,6 +50,15 @@ The first gemma4 run on its own settings (`1.0/0.95/64`, coding temp 0) scored *
 26-run ceiling of 3/4. **That is n=1 and is not a finding yet** — this model's scores have swung
 0 to 3 on identical code, so one run cannot separate the settings from variance. It is recorded
 here as the thing to measure, not as the reason.
+
+**Four dense models passed on the first attempt (2026-08-01)** — ternary-bonsai 26.2 min, gemma4
+28.4, qwythos 12.7, qwopus 6.5. The same Python task scored 0/4 for ternary-bonsai yesterday under
+the phase-1 matrix. Two things changed between: the milestone pacing (which was NOT binding — every
+run finished well inside the old 30-minute wall) and the day's cria fixes, of which the
+steer-writes-no-code rule has a direct mechanism, since C1's documented cause was two steers
+shipping broken code under correct diagnoses. **Mechanism is not measurement.** Each model is n=1
+and no A/B has been run against the previous build. Recorded as the leading hypothesis to test, not
+as a result.
 
 **The shared-install guard was exercised in the field.** gemma4 built a `.venv` inside its
 workspace rather than installing into the user's Python; `site_packages_leak` was empty. Landed
