@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 14:59:32 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 15:43:52 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -39,6 +39,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+0c0a6d1 docs(ladder): walk mellum2 attempt 2 — 0/4, model wall, and a correction
 05b01a7 feat(execcheck): live execution check — corroborate three sources, run, never block
 b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused question
 81ab891 docs(ladder): ornith 4/4 — five for five on dense, planner off
@@ -53,7 +54,6 @@ bc29023 feat(suite): the language ladder — one model at a time, 15 min per del
 53cae4a fix(dirguard,prompts): cria RECOMMENDED the escape from its own workspace bound
 1b97228 fix(suite): preflight now catches a PREVIOUS run's install still on sys.path
 c301d1d fix(suite): the status oracle told me to redo finished work, and saw a run that wasn't there
-8fa6d71 feat(suite): phase1_status.py — ground truth for the matrix, read from disk not from narration
 ```
 
 ---

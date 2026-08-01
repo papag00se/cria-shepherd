@@ -171,9 +171,44 @@ Everything red: 8 of 9 unit tests failing, no README, no live test, CLI silent.
 | withheld? | No — the same accurate diagnosis was in front of it eleven times. `loop.gate_stalled` fired 9 times, which is cria correctly recording "this is not converging". |
 | wording? | No. One steer in the whole run. |
 
-**Verdict: model wall.** Same shape as phase 1's Go cell — an accurate error shown eleven times and
-never fixed. The model chose `aiohttp` and `async def` for a task with no concurrency in it (7
-occurrences in one file), then could not get its own mocks to match the coroutines.
+**Verdict: MOSTLY a model wall, with one finding cria seeded — corrected after reading the
+reasoning.** Three of the four gate findings are the model's own: it chose `aiohttp` and `async def`
+for a task with no concurrency (7 occurrences in one file) and could not make its mocks match the
+coroutines. The fourth was not its fault.
+
+#### `resolve_holder.py:24 — TypeError: 'module' object is not callable`
+
+The model wrote `from web_fetch import web_fetch`. **`web_fetch` is one of cria's own synthetic tool
+names** — the model treated a tool it had been given as a library it could import. On its own that
+is a rare slip (measured: **1 of 59 archived workspaces**, so NOT a pattern and NOT worth an assist).
+
+What made it unrecoverable was the box. A real, unrelated PyPI package called `web_fetch` (a web
+scraper by another author) had been sitting in the user's site-packages since **2026-07-23** —
+installed by some earlier `--yolo` run that made the same mistake and ran `pip install web_fetch`.
+So the import did not fail cleanly. It SUCCEEDED, bound a module, and produced
+`TypeError: 'module' object is not callable` — an error with no reachable explanation from where the
+model stood.
+
+Its reasoning shows exactly that. It traced the line correctly, twice, and could not accept the
+result:
+
+> *"The import `from web_fetch import web_fetch` makes `web_fetch` the function. So `web_fetch(url)`
+> IS correct. But the error says 'module' object is not callable, which suggests that `web_fetch` is
+> the module, not the function."*
+
+It was right, and the world disagreed with it. ~12,000 characters of reasoning went into that one
+line, inside a 15-minute budget.
+
+**Fixed, both ends:**
+
+| | |
+|:--|:--|
+| the install that seeded it | already refused by `53cae4a` — `pip install web_fetch` is a shared install and dirguard now blocks it |
+| the package already on the box | moved out of site-packages (backed up, not deleted); the import now raises a clean `ModuleNotFoundError` |
+| the class | `suite/preflight.py` now refuses READY while any package on the path collides with a cria tool name (`web_fetch`, `read_file`, `write_file`, …). Tested both ways. |
+
+The earlier `.pth` check could not have caught this — it looks for editable installs pointing into
+`/tmp`, and this was an ordinary PyPI package.
 
 ### The budget was NOT the problem, contrary to first impression
 

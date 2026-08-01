@@ -45,6 +45,13 @@ TOOLS = {
 }
 
 
+# The synthetic tools cria advertises to the model. A package on the path with one of these names is
+# something a model installed after mistaking a TOOL for a library, and it turns that rare mistake
+# into an inexplicable one. Kept in sync by hand with cria/toolmenu.py — a short, stable list.
+TOOL_NAMES = ("web_fetch", "web_search", "read_file", "write_file", "edit_file", "list_dir",
+              "exec_command", "update_plan", "view_image")
+
+
 def stale_suite_installs():
     """Packages a PREVIOUS run installed into the real user site-packages, still on sys.path.
 
@@ -66,6 +73,22 @@ def stale_suite_installs():
         user_site = site.getusersitepackages()
     except Exception:  # noqa: BLE001
         return found
+
+    # A package whose name COLLIDES with one of cria's synthetic tool names. Measured 2026-08-01:
+    # `web_fetch` — an unrelated third-party scraper off PyPI — sat here from 2026-07-23, installed
+    # by some earlier --yolo run. Nine days later a model wrote `from web_fetch import web_fetch`
+    # into its source (a rational mistake: `web_fetch` is a TOOL it is given), and instead of a
+    # clean ModuleNotFoundError the import SUCCEEDED and bound a module, producing
+    # "TypeError: 'module' object is not callable" — an error with no reachable explanation from
+    # where the model stood. It burned ~12,000 characters of reasoning on that one line.
+    # The install itself is now refused by dirguard; this catches the ones already on the box.
+    for name in sorted(TOOL_NAMES):
+        for suffix in ("", ".py"):
+            p = os.path.join(user_site, name + suffix)
+            if os.path.exists(p):
+                found.append({"pth": p, "target": f"shadows cria's own `{name}` tool name",
+                              "target_exists": True})
+
     for pth in sorted(glob.glob(os.path.join(user_site, "*.pth"))):
         try:
             body = open(pth, errors="replace").read()
