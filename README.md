@@ -6,7 +6,7 @@
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)
 ![zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
-![tests](https://img.shields.io/badge/tests-1474%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-1591%20passing-brightgreen)
 ![local first](https://img.shields.io/badge/cloud-optional-9cf)
 
 *A cria is a baby llama. It needs a shepherd.*
@@ -152,7 +152,7 @@ is documented inline in [`cria.example.toml`](cria.example.toml).
 
 ```bash
 cria-tail -f                         # follow the decision log — every action has a reason
-python -m pytest                     # 1,474 stdlib-only tests, no GPU, no network
+python -m pytest                     # 1,591 stdlib-only tests, no GPU, no network
 python suite/run.py --task ada-handles --model qwythos --harness codex --planner on
 ```
 

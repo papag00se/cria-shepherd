@@ -62,6 +62,6 @@ derails on its own.
 cria runs as `cria.service` in front of the local model on `:18084`; cria serves on `:18085`.
 After landing a behavior change: restart it (`sudo systemctl restart cria.service`, passwordless)
 and say what went live. Swap models via `scripts/live_model.py` / `scripts/swap_and_test.sh`. The
-live model is **fabliq** (`fabliq_8b_reasoning_q6`). Every decision logs a structured event to
+live model is **ternary-bonsai** (`ternary_bonsai_27b_q2_0`). Every decision logs a structured event to
 `~/.cria/logs/cria-YYYYMMDD.jsonl` (`cria-tail -f`); per-call captures (exact body + rendered prompt
 + response) go to `~/.cria/calls/<session>/` when `capture_calls` is on.
