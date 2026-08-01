@@ -101,6 +101,32 @@ Reads as: gemma4's confirm is the ONE real failure (0/6, reproduced at n=6, 10 a
 escalation in `_judge_completion`. The critic must KEEP its JSON ask: a word costs mellum2 and
 gemma4 (1/6 each). Everything else already works, which is why nothing else changed.
 
+## The battery
+
+| task | language |
+|---|---|
+| `ada-handles` | Python |
+| `handles-go` | Go |
+| `handles-rust` | Rust |
+| `handles-node` | JavaScript |
+| `handles-ruby` | Ruby |
+| `handles-php` | PHP |
+| `handles-java` | Java |
+
+Same problem in every language, on purpose: the matrix varies ONE thing at a time and this axis is
+the language. A cell that fails therefore says something about the language or about cria, not
+about a different task.
+
+Toolchains for every verifier are installed on this box (go, cargo, node, ruby+rspec, php+phpunit,
+mvn). A missing one scores `toolchain: not installed`, never a silent zero.
+
+**Run the verifier against a known-good solution before trusting a cell.** Doing exactly that
+caught a verifier bug that would have mis-scored every Go run: `go test` replays a cached pass
+without executing anything, so the network-blocked half of the liveness check succeeded and a
+genuinely live test was scored as mocked. `-count=1` fixes it. Assume the same class of trap exists
+in the runners not yet exercised this way — rust, node, ruby, php, java are wired but only Go has
+been proven in both directions (live scores 4/4, mocked scores 3/4).
+
 ## Open threads
 
 - **The score is flat.** Ten runs since the big fixes: `2,0,2,2,1,2,1,3,2,0`. Best 3/4, no trend.

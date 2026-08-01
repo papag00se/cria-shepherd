@@ -14,6 +14,29 @@ appends one JSON row to `results/results.jsonl`; `report.py` renders the matrix.
   verifier score + per-part detail, calls by phase, avg output tok/s (timed calls),
   assist events by kind (from cria's rlog), workspace path.
 
+## Tasks
+
+| task | language | toolchain the verifier needs |
+|---|---|---|
+| `ada-handles` | Python | python3 + pytest |
+| `handles-go` | Go | go |
+| `handles-rust` | Rust | cargo |
+| `handles-node` | JavaScript | node (npm) |
+| `handles-ruby` | Ruby | ruby + rspec |
+| `handles-php` | PHP | php + phpunit |
+| `handles-java` | Java | mvn |
+
+The `handles-*` battery is deliberately the SAME problem in every language: the matrix varies one
+thing at a time, and this axis is the language. Shape variation (SQL, multi-module, needs-search)
+is a separate axis added as its own tasks. A missing toolchain scores the cell `toolchain: not
+installed` rather than a silent zero.
+
+**Liveness is checked with `unshare -rn`** — an unprivileged network namespace with no interfaces.
+That is the only block that works for every language's HTTP client: Go and Ruby honour proxy
+environment variables, PHP's curl often does not, Java ignores them entirely. `go test` also needs
+`-count=1`, or it replays a cached pass without running anything and a genuinely live test scores
+as mocked (caught by running the verifier against a known-good solution).
+
 Phase 0: codex × {ternary-bonsai, qwythos} × ada-handles.
 Planned: harness adapters (Claude Code, OpenCode, Gemini CLI, Cline), tasks (SQL/Go,
 multi-module/TS, needs-search/Rust, CLI/Java), N≥2 repeats on headline cells.
