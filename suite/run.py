@@ -2,10 +2,17 @@
 """Suite runner — one cell of the test matrix per invocation.
 
 Provisions a throwaway workspace, points the rig at the requested model + planner setting,
-drives one harness run of the task prompt under a HARD 30-minute wall clock (operator's call:
-no call budget — slow models surfacing as budget-kills is itself signal), then collects
-metrics from cria's own capture/events, runs the task's deterministic verifier, and appends
-one JSON row to suite/results/results.jsonl.
+drives one harness run of the task prompt under a wall clock (operator's call: no call budget —
+slow models surfacing as budget-kills is itself signal), then collects metrics from cria's own
+capture/events, runs the task's deterministic verifier, and appends one JSON row to
+suite/results/results.jsonl.
+
+Two pacing modes:
+  * flat (default) — one HARD 30-minute wall, scored once at the end.
+  * `--milestone-minutes N` — N minutes per deliverable, with the workspace scored at every N-minute
+    mark and a floor that climbs by one each time. A run that keeps delivering earns the whole
+    budget; a stalled one is killed after the first interval instead of burning the full wall. Which
+    deliverable lands first does not matter — only the count does.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -22,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 
 SUITE = Path(__file__).resolve().parent
@@ -164,6 +172,39 @@ def collect_assists(t0: float, t1: float) -> dict:
     return {k: v for k, v in kinds.items() if any(k.startswith(p) or p in k for p in interesting)}
 
 
+def deliverable_count(task_dir: Path) -> int:
+    """How many things this task must produce — the task's own meta.toml is the authority, so the
+    milestone budget follows the task rather than a number hardcoded here."""
+    meta = tomllib.loads((task_dir / "meta.toml").read_text())
+    n = len(meta.get("deliverables") or [])
+    if n < 1:
+        raise RuntimeError(f"{task_dir.name}/meta.toml declares no deliverables — "
+                           "milestone pacing has nothing to pace against")
+    return n
+
+
+def score_snapshot(ws: Path, task_dir: Path) -> tuple[float, float, dict]:
+    """Score the workspace AS IT STANDS, without touching it.
+
+    The verifier runs the deliverables — pytest, the CLI, the network-blocked live check — and
+    those leave `__pycache__`, `.pytest_cache` and stray output behind. Running it against the live
+    workspace would put cria's own artifacts in front of the coder's `ls` mid-run (principle 7), so
+    a COPY is scored and thrown away.
+    """
+    snap = Path(tempfile.mkdtemp(prefix="milestone-snap-", dir="/tmp"))
+    try:
+        sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
+        vr = sh(sys.executable, str(task_dir / "verify.py"), str(snap / "ws"), timeout=600)
+        v = json.loads(vr.stdout)
+        return float(v.get("score") or 0), float(v.get("max_score") or 0), v.get("parts") or {}
+    except Exception:  # noqa: BLE001
+        # An unreadable verdict must not read as "no progress" and kill a healthy run — the one
+        # direction this check may fail is OPEN (principle 13: fail open only toward keep working).
+        return -1.0, 0.0, {}
+    finally:
+        sh("rm", "-rf", str(snap), timeout=120)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
@@ -171,6 +212,12 @@ def main() -> None:
     ap.add_argument("--harness", default="codex", choices=sorted(HARNESSES))
     ap.add_argument("--planner", required=True, choices=["on", "off"])
     ap.add_argument("--note", default="")
+    ap.add_argument("--milestone-minutes", type=int, default=0,
+                    help="minutes allowed per deliverable. 0 (default) keeps the flat 30-minute "
+                         "wall. When set, the run must hold score >= 1 after the first interval, "
+                         ">= 2 after the second, and so on; it is killed the moment it does not. "
+                         "A run that keeps delivering therefore EARNS more clock than the flat "
+                         "wall gave it, and a stalled one is stopped in a quarter of the time.")
     args = ap.parse_args()
 
     task_dir = SUITE / "tasks" / args.task
@@ -208,19 +255,55 @@ def main() -> None:
                                 stdin=subprocess.DEVNULL,
                                 stdout=lf, stderr=subprocess.STDOUT, env=env,
                                 start_new_session=True)
+    def stop_run():
+        for pid in codex_pids():
+            sh("kill", "-INT", str(pid))
+        time.sleep(KILL_GRACE)
+        for pid in codex_pids():
+            sh("kill", "-9", str(pid))
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    milestone_s = args.milestone_minutes * 60
+    wall = WALL_SECONDS
+    milestones = []
+    if milestone_s:
+        # One interval per deliverable, so a run that earns every milestone gets the full budget.
+        wall = milestone_s * deliverable_count(task_dir)
+    next_check = milestone_s
     terminal = "exited"
     while proc.poll() is None:
-        if time.time() - t0 > WALL_SECONDS:
+        elapsed = time.time() - t0
+        if milestone_s and elapsed >= next_check:
+            due = int(round(next_check / milestone_s))       # 1 after the 1st interval, 2 after 2nd
+            score, mx, parts = score_snapshot(ws, task_dir)
+            ok = score < 0 or score >= due                   # score < 0 = unreadable -> fail open
+            milestones.append({"at_minutes": round(next_check / 60), "floor": due,
+                               "score": None if score < 0 else score, "ok": ok,
+                               "parts": {k: v.get("ok") for k, v in parts.items()}})
+            print(f"[milestone] {round(next_check/60)}min  score={score}/{mx}  floor={due}  "
+                  f"{'ok' if ok else 'MISS'}", flush=True)
+            if not ok:
+                # Confirm before killing. The snapshot is taken while the coder is writing, so a
+                # single sample can catch a half-written file and score a healthy run as stalled.
+                # A second reading is cheap next to discarding a good run.
+                time.sleep(20)
+                score2, _, parts2 = score_snapshot(ws, task_dir)
+                confirmed = not (score2 < 0 or score2 >= due)
+                milestones[-1].update({"recheck_score": None if score2 < 0 else score2,
+                                       "confirmed": confirmed})
+                print(f"[milestone] recheck score={score2}  "
+                      f"{'CONFIRMED MISS' if confirmed else 'recovered'}", flush=True)
+                if confirmed:
+                    terminal = f"milestone-miss-{round(next_check/60)}min"
+                    stop_run()
+                    break
+            next_check += milestone_s
+        if time.time() - t0 > wall:
             terminal = "budget-killed"
-            for pid in codex_pids():
-                sh("kill", "-INT", str(pid))
-            time.sleep(KILL_GRACE)
-            for pid in codex_pids():
-                sh("kill", "-9", str(pid))
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            stop_run()
             break
         time.sleep(10)
     t1 = time.time()
@@ -252,6 +335,7 @@ def main() -> None:
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
         "planner": args.planner, "note": args.note,
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
+        "milestone_minutes": args.milestone_minutes or None, "milestones": milestones or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),
         "max_score": verdict.get("max_score"), "verify": verdict.get("parts"),
         **capture,
