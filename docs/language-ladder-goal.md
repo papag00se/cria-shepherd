@@ -50,19 +50,26 @@ Dense first, largest first. A model that is known to be capable failing tells yo
 which is the cheaper thing to debug. A 760M-active model failing tells you almost nothing until the
 big ones have passed.
 
-| # | model | params | kind | planner |
-|--:|:--|:--|:--|:--|
-| 1 | ternary-bonsai | 27B | dense | off |
-| 2 | gemma4 | 12B | dense | off |
-| 3 | qwythos | 9B | dense | off |
-| 4 | qwopus | 9B | dense | off |
-| 5 | ornith | 9B | dense | off |
-| 6 | fabliq | 8B | dense | off |
-| 7 | mellum2 | 12B / A2.5B | MoE | on |
-| 8 | nemotron-elastic | 12B / A2B | MoE | on |
-| 9 | zaya1 | 8.4B / A760M | MoE | on |
+| # | model | params | architecture | experts | kind | planner |
+|--:|:--|:--|:--|:--|:--|:--|
+| 1 | ternary-bonsai | 27B | `qwen35` | — | dense | off |
+| 2 | gemma4 | 12B | `gemma4` | — | dense | off |
+| 3 | qwythos | 9B | `qwen35` | — | dense | off |
+| 4 | qwopus | 9B | `qwen35` | — | dense | off |
+| 5 | ornith | 9B | `qwen35` | — | dense | off |
+| 6 | mellum2 | 12B / A2.5B | `mellum` | 64, 8 active | MoE | on |
+| 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` | 128, 6 active | MoE | on |
+| 8 | zaya1 | 8.4B / A760M | `zaya` | 16, 1 active | MoE | on |
+| 9 | fabliq | 8B / A1B | `lfm2moe` | 32, 4 active | MoE | on |
 
 The order lives in **one place** — `LADDER` in `suite/ladder_status.py`. Nothing else defines it.
+
+**dense/MoE here is read from each model's own GGUF header** (`general.architecture` plus
+`<arch>.expert_count` / `expert_used_count`), not from a model card and not from the name. That
+matters: fabliq sat on the dense list until the operator questioned it and the header was actually
+read — it is an LFM2.5-8B-A1B, 32 experts with 4 active. `docs/model-settings.md` had labelled the
+other three MoEs and left fabliq unlabelled, which reads as dense by omission. The fleet is five
+dense and four MoE, not six and three.
 
 `lfm25` is deliberately absent: its systemd unit exists but it has no entry in
 `~/.config/llama-fleet/models.toml`, so starting it cannot work. Put it back when that is fixed.

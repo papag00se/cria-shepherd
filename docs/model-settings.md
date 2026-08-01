@@ -27,7 +27,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
-| **fabliq-reasoning** | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
+| **fabliq-reasoning** (8B-A1B **MoE**) | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | arch `lfm2moe`, **32 experts / 4 active** (LFM2.5-8B-A1B base) — read from the GGUF header, not the card; trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
 | **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
@@ -39,6 +39,22 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
 > empirically before treating them as recommended.
+
+> **Dense vs MoE, read from the GGUF headers (2026-08-01)** — `general.architecture` plus
+> `<arch>.expert_count` / `expert_used_count`, never a card or a name. The fleet is **five dense,
+> four MoE**:
+>
+> | dense | | MoE | experts (active) |
+> |---|---|---|---|
+> | ternary-bonsai 27B | `qwen35` | mellum2 12B/A2.5B | `mellum` 64 (8) |
+> | gemma4 12B | `gemma4` | nemotron-elastic 12B/A2B | `nemotron_h_moe` 128 (6) |
+> | qwythos 9B | `qwen35` | zaya1 8.4B/A760M | `zaya` 16 (1) |
+> | qwopus 9B | `qwen35` | fabliq 8B/A1B | `lfm2moe` 32 (4) |
+> | ornith 9B | `qwen35` | | |
+>
+> **fabliq is an MoE**, which this table implied it was not by labelling the other three and
+> leaving it bare. `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot
+> launch — fix that before putting it in any run order.
 
 > **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT**
 > contain MTP layers (`--spec-type draft-mtp` is a FATAL load error — the service crash-loops, no

@@ -33,17 +33,21 @@ MILESTONE_MINUTES = 15
 # `planner` is the OPERATOR'S HYPOTHESIS, not a measured result: dense models appear to cope with the
 # planner off, MoEs appear to need it on. It is recorded here so the ladder GENERATES the evidence
 # rather than assuming it — every row carries the setting it ran under.
+# dense/MoE is read from each GGUF's own header (general.architecture + <arch>.expert_count /
+# expert_used_count), NOT from a model card or a name. fabliq was on the dense list until the header
+# was actually read: `lfm2moe`, 32 experts, 4 active — an LFM2.5-8B-A1B. docs/model-settings.md had
+# labelled the other three MoEs and left fabliq unlabelled, which reads as dense by omission.
 LADDER = [
-    # name,              params,        kind,    planner
-    ("ternary-bonsai",   "27B",         "dense", "off"),
-    ("gemma4",           "12B",         "dense", "off"),
-    ("qwythos",          "9B",          "dense", "off"),
-    ("qwopus",           "9B",          "dense", "off"),
-    ("ornith",           "9B",          "dense", "off"),
-    ("fabliq",           "8B",          "dense", "off"),
-    ("mellum2",          "12B/A2.5B",   "moe",   "on"),
-    ("nemotron-elastic", "12B/A2B",     "moe",   "on"),
-    ("zaya1",            "8.4B/A760M",  "moe",   "on"),
+    # name,              params,        arch/experts,        kind,    planner
+    ("ternary-bonsai",   "27B",         "qwen35",            "dense", "off"),
+    ("gemma4",           "12B",         "gemma4",            "dense", "off"),
+    ("qwythos",          "9B",          "qwen35",            "dense", "off"),
+    ("qwopus",           "9B",          "qwen35",            "dense", "off"),
+    ("ornith",           "9B",          "qwen35",            "dense", "off"),
+    ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "on"),
+    ("nemotron-elastic", "12B/A2B",     "nemotron_h_moe 128/6", "moe", "on"),
+    ("zaya1",            "8.4B/A760M",  "zaya 16/1",         "moe",   "on"),
+    ("fabliq",           "8B/A1B",      "lfm2moe 32/4",      "moe",   "on"),
 ]
 # lfm25 is deliberately absent: the systemd unit exists but the model has no entry in
 # ~/.config/llama-fleet/models.toml, so starting it cannot work. Add it back when that is fixed.
@@ -108,14 +112,14 @@ def state_for(task):
         by_model.setdefault(r["model"], []).append(r)
 
     out = []
-    for name, params, kind, planner in LADDER:
+    for name, params, arch, kind, planner in LADDER:
         rs = sorted(by_model.get(name, []), key=lambda r: r.get("started") or 0)
         passed = any((r.get("score") or 0) >= (r.get("max_score") or 4) for r in rs)
         last = rs[-1] if rs else None
         unwalked = [r for r in rs if r["run_id"] not in walked
                     and (r.get("score") or 0) < (r.get("max_score") or 4)]
         out.append({
-            "model": name, "params": params, "kind": kind, "planner": planner,
+            "model": name, "params": params, "arch": arch, "kind": kind, "planner": planner,
             "attempts": len(rs),
             "best": max([(r.get("score") or 0) for r in rs], default=None),
             "last_score": (last or {}).get("score"),
@@ -159,16 +163,16 @@ def main() -> None:
                           "target": target, "cells": cells}, indent=1))
     else:
         print(f"LANGUAGE LADDER — {args.language} ({task}), {MILESTONE_MINUTES} min per deliverable\n")
-        print(f"{'model':18s} {'params':12s} {'kind':6s} {'plan':5s} {'tries':>5s} "
-              f"{'best':>5s}  state")
-        print("-" * 74)
+        print(f"{'model':18s} {'params':12s} {'architecture':22s} {'kind':6s} {'plan':5s} "
+              f"{'tries':>5s} {'best':>5s}  state")
+        print("-" * 96)
         for c in cells:
             st = ("RUNNING" if c["running"] else "PASSED 4/4" if c["passed"] else
                   "BLOCKED" if c["blocked"] else "needs walk" if c["needs_walk"] else
                   "not started" if not c["attempts"] else "ready to rerun")
             best = f"{c['best']:.0f}" if c["best"] is not None else "—"
-            print(f"{c['model']:18s} {c['params']:12s} {c['kind']:6s} {c['planner']:5s} "
-                  f"{c['attempts']:5d} {best:>5s}  {st}")
+            print(f"{c['model']:18s} {c['params']:12s} {c['arch']:22s} {c['kind']:6s} "
+                  f"{c['planner']:5s} {c['attempts']:5d} {best:>5s}  {st}")
         print()
         if running:
             print(f"IN FLIGHT: {running} — do not start another run, and do not edit cria or its "

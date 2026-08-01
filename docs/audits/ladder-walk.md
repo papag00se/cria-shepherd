@@ -21,17 +21,17 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 
 ## Ladder
 
-| # | model | params | kind | planner | attempts | best | state |
-|--:|:--|:--|:--|:--|--:|:--:|:--|
-| 1 | ternary-bonsai | 27B | dense | off | 0 | — | not started |
-| 2 | gemma4 | 12B | dense | off | 0 | — | not started |
-| 3 | qwythos | 9B | dense | off | 0 | — | not started |
-| 4 | qwopus | 9B | dense | off | 0 | — | not started |
-| 5 | ornith | 9B | dense | off | 0 | — | not started |
-| 6 | fabliq | 8B | dense | off | 0 | — | not started |
-| 7 | mellum2 | 12B / A2.5B | MoE | on | 0 | — | not started |
-| 8 | nemotron-elastic | 12B / A2B | MoE | on | 0 | — | not started |
-| 9 | zaya1 | 8.4B / A760M | MoE | on | 0 | — | not started |
+| # | model | params | architecture | kind | planner | attempts | best | state |
+|--:|:--|:--|:--|:--|:--|--:|:--:|:--|
+| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 0 | — | not started |
+| 2 | gemma4 | 12B | `gemma4` | dense | off | 0 | — | not started |
+| 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 0 | — | not started |
+| 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
+| 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
+| 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
 
 This table is a human-readable mirror. `python3 suite/ladder_status.py` is the authority; when they
 disagree, the command is right and this table is stale.
