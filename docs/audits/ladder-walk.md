@@ -27,7 +27,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
-| 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
 | 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 0 | — | not started |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
@@ -39,6 +39,17 @@ disagree, the command is right and this table is stale.
 ---
 
 ## Notes — findings that are not a single run's walk
+
+**ALL FIVE DENSE MODELS PASSED, planner OFF, first attempt (2026-08-01).** 27B → 9B, 26.2 / 28.4 /
+12.7 / 6.5 / 7.6 minutes. The dense half of the operator's hypothesis — that dense models cope with
+the planner off — is now supported by 5 for 5.
+
+**The MoE half cannot be tested by the ladder as written, and that is a flaw in this doc's design.**
+The ladder runs MoEs with the planner ON and only flips the setting when a model repeatedly fails.
+If the MoEs pass with it on, we learn that they pass with it on — not that they NEEDED it. The clean
+test is a planner-OFF arm for each MoE, run regardless of whether the ON arm passed. Queued
+separately; not silently folded into the ladder, because the ladder's job is 4/4 and this is a
+different question.
 
 **gemma4's sampling was wrong for 26 runs (2026-08-01).** Every gemma4 row before the ladder was
 sent ternary-bonsai's numbers — coder `0.2/0.95/20`, reasoner `0.6/0.90/40` — read from g26's
