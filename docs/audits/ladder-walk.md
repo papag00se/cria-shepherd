@@ -28,7 +28,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
-| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 0 | — | not started |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 1 | 2/4 | 📖 walked — rerun pending |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
@@ -78,3 +78,78 @@ same day in `53cae4a`.
 ---
 
 <!-- walks go below, newest last -->
+
+
+## ada-handles_mellum2_codex_pon_1785613520
+
+**2/4** · planner ON · 16.3 min · 114 calls · 144.7 tok/s · `exited` (the model believed it was done)
+· capture `~/.cria/calls/20260801T124541-019fbedc-5f1b-7812-b2f9-9da30b0575e4`
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit tests | 🟢 | 9 passed |
+| README | 🟢 | install / run / tests |
+| resolver CLI | 🔴 | `resolve_handle.py goose` → exit 0, **no output** |
+| live test | 🔴 | never written |
+
+### What it built
+
+A pure library. `resolve_handle.py` has **no `main()`, no `__main__` guard, no argparse, no
+`sys.argv`** — only importable functions. Its README documents `python resolve_handle.py --live
+goose papagoose`, which runs and prints nothing.
+
+It also targeted `https://api.handle.me/mcp` with malformed JSON-RPC (`"jsonrpc": "2025-11-25"` —
+a protocol date where the version belongs). The endpoint is REAL and answers "Invalid JSON-RPC
+request".
+
+### The four questions
+
+| | |
+|:--|:--|
+| false or stale? | **No.** The MCP endpoint was not cria's suggestion — `api.handle.me`'s own root page lists it, and its OpenAPI spec defines `/mcp` as "Model Context Protocol endpoint". cria relayed the site verbatim, and its note was actively good: *"Nothing you have read so far DEFINES a route, so any endpoint in your plan would be a guess"* — after which the model fetched the real spec. |
+| impossible? | No. |
+| withheld? | **YES — see below.** |
+| wording? | Contributory, same finding. |
+
+### The finding: the completion brake asks ONE fused question about a FOUR-deliverable task
+
+The approve-path brake works as designed and has real tools. It used them — `list_dir(".")` returned:
+
+```
+README.md (795 B)   resolve_handle.py (1995 B)   test_resolve_handle.py (4227 B)
+```
+
+That listing PROVES the live test is absent. The brake answered `{"consistent": true, "why": ""}`.
+
+It was asked whether the verdict's *reason* was consistent — one yes/no over a four-clause claim
+("resolves addresses, retrieves holder details, comprehensive unit tests, implements live mode,
+includes a README"). Three of those clauses were true. A fused question over a mostly-true claim
+gets a yes.
+
+**cria already owns the decomposition it needed.** `planner.missing_deliverables(ask, task, steps)`
+takes the task, names its deliverables, and returns the ones nothing produces. It runs at plan
+draft and at every re-derivation — and **never at completion**, which is the one place a wrong
+answer ends the session.
+
+The plan also shrank 8 → 4 → 3 → 2 → 1 steps across four re-derivations while two deliverables were
+never built, and no coverage event fired at any of them.
+
+### Prevalence
+
+Across every captured suite run with a results row: **17 `satisfied: true` verdicts, 7 of them on
+runs that finished below full marks — 41%.** Three different models (qwythos, gemma4, mellum2). Not
+a mellum2 quirk.
+
+### Status: measuring before changing
+
+The mechanism is identified and the component already exists, but the fix is a new model call on the
+completion path, and the bar to ADD is high. Doctrine says measure first, and the replay harness can
+answer this without spending runs: replay captured `satisfaction-confirm` prompts with the current
+fused ask against a per-deliverable ask, n≥12, across the fleet — the critic-wording change that was
+"obviously right" once before took a judge from 8/8 to 1/8.
+
+Not fixed yet. Recorded as the leading candidate with its measurement queued.
+
+**Also true and not to be papered over:** mellum2 is a weak judge — the fleet readability table has
+it at **1/6** on the critic ask. Part of this is the model. The cria-side question is whether a
+sharper question rescues a weak judge, which is exactly what the replay will say.
