@@ -111,6 +111,30 @@ def _json_objects(text: str):
                 break
 
 
+class _Silent:
+    def emit(self, *a, **k):
+        pass
+
+
+def cria_reads_verdict(text: str) -> bool:
+    """Would CRIA accept this reply as a verdict? Asked of cria's OWN parsers, never a lookalike.
+
+    A scorer that merely looks for the literal key is not measuring cria. Measured the hard way:
+    qwythos returns valid JSON with a sound reason and simply omits `done`, and cria's
+    `_fill_missing_verdict_flag` infers the flag from the schema's own `proposed_fix` contract —
+    empty means done, filled means not. A key-spotting scorer called that 1/4; cria accepts 4/4,
+    and I reported a live defect that did not exist. Import the real thing or measure nothing."""
+    from cria.loop import _consistent_word, _fill_missing_verdict_flag
+    if _consistent_word(text) is not None:
+        return True
+    for obj in _json_objects(text):
+        for flag in ("done", "satisfied", "consistent"):
+            filled = _fill_missing_verdict_flag(obj, flag, _Silent(), "replay")
+            if filled is not None and isinstance(filled.get(flag), bool):
+                return True
+    return False
+
+
 def score(body: dict, msg: dict, phase: str) -> dict:
     content = (msg.get("content") or "")
     calls = msg.get("tool_calls") or []
@@ -132,8 +156,7 @@ def score(body: dict, msg: dict, phase: str) -> dict:
         # count turns where the model tried to act.
         res["tool_ok"] = ok if calls else None
     if any(k in json.dumps(body.get("messages", []))[:20000] for k in VERDICT_KEYS):
-        res["verdict_ok"] = any(any(k in o for k in VERDICT_KEYS)
-                                for o in _json_objects(content + json.dumps(calls)))
+        res["verdict_ok"] = cria_reads_verdict(content + json.dumps(calls))
     prompt_text = json.dumps(body.get("messages", []))
     reply_text = content + json.dumps(calls)
     literals = {m for m in LONG_LITERAL.findall(prompt_text)}

@@ -610,3 +610,49 @@ class ErrorClassFilterTests(unittest.TestCase):
         r = parse_output("eslint .", "eslint", 1, out, "")
         self.assertEqual([(f.line, "error" in f.message or "no-undef" in f.message)
                           for f in r.findings], [(12, True)])
+
+
+class RunnerLocationTests(unittest.TestCase):
+    """Test runners that print their location in a shape `file:line: message` does not cover.
+
+    Verified against REAL failing runs on this box — a Rust crate, an rspec spec, a phpunit case —
+    not reconstructions. Reconstructions are what made me report maven as a parser gap when its
+    console output carries no location at all."""
+
+    CARGO = ("running 1 test\ntest tests::it_adds ... FAILED\n\n"
+             "---- tests::it_adds stdout ----\n\n"
+             "thread 'tests::it_adds' (722421) panicked at src/lib.rs:7:20:\n"
+             "assertion `left == right` failed\n  left: 4\n right: 5\n")
+    RSPEC = ("Failures:\n\n  1) adder adds\n     Failure/Error: expect(2 + 2).to eq(5)\n\n"
+             "       expected: 5\n            got: 4\n\n"
+             "     # ./a_spec.rb:3:in `block (2 levels) in <top (required)>'\n")
+    PHPUNIT = ("There was 1 failure:\n\n1) AppTest::testAdd\n"
+               "Failed asserting that 4 is identical to 5.\n\n/w/tests/AppTest.php:14\n\nFAILURES!\n")
+    MAVEN = ("Results :\n\nFailed tests:   testAdd(app.AdderTest): expected:<5> but was:<4>\n\n"
+             "Tests run: 1, Failures: 1, Errors: 0, Skipped: 0\n")
+
+    def test_cargo_panic_location(self):
+        f = probeparse.parse_generic(self.CARGO)
+        self.assertEqual((f[0].file, f[0].line), ("src/lib.rs", 7))
+        self.assertIn("assertion", f[0].message)      # the assertion, not the panic line itself
+
+    def test_rspec_backtrace_location(self):
+        f = probeparse.parse_generic(self.RSPEC)
+        self.assertEqual((f[0].file, f[0].line), ("./a_spec.rb", 3))
+
+    def test_phpunit_bare_location_line(self):
+        f = probeparse.parse_generic(self.PHPUNIT)
+        self.assertEqual((f[0].file, f[0].line), ("/w/tests/AppTest.php", 14))
+        self.assertIn("Failed asserting", f[0].message)
+
+    def test_maven_prints_no_location_so_none_is_invented(self):
+        # The file and line exist only in target/surefire-reports. Inventing one would be worse
+        # than reporting none.
+        self.assertEqual(probeparse.parse_generic(self.MAVEN), [])
+
+    def test_a_compilers_own_diagnostics_are_never_crowded_out(self):
+        # A panic further down must not displace real file:line: diagnostics above it.
+        mixed = "src/main.rs:4:13: error: cannot find value `x`\n" + self.CARGO
+        f = probeparse.parse_generic(mixed)
+        self.assertEqual(f[0].line, 4)
+        self.assertIn("cannot find value", f[0].message)

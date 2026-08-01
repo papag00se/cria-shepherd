@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from suite.replay import SETTINGS, ask, captured, _json_objects  # noqa: E402
+from suite.replay import SETTINGS, ask, captured, cria_reads_verdict  # noqa: E402
 from suite.run import SERVICES, wait_health  # noqa: E402
 
 JSON_ASK = None  # leave the captured prompt exactly as cria sends it today
@@ -45,7 +45,8 @@ VERDICT_KEYS = ("consistent", "satisfied", "done")
 
 
 def answered_json(text: str) -> bool:
-    return any(any(k in o for k in VERDICT_KEYS) for o in _json_objects(text))
+    """cria's OWN acceptance test — see replay.cria_reads_verdict for why a lookalike is worthless."""
+    return cria_reads_verdict(text)
 
 
 def answered_word(text: str, words) -> bool:

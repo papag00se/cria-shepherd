@@ -18,4 +18,19 @@ Phase 0: codex × {ternary-bonsai, qwythos} × ada-handles.
 Planned: harness adapters (Claude Code, OpenCode, Gemini CLI, Cline), tasks (SQL/Go,
 multi-module/TS, needs-search/Rust, CLI/Java), N≥2 repeats on headline cells.
 
+## Offline harness — ask before you burn a run
+
+A run costs 30 minutes and yields one noisy number. `replay.py` re-sends REAL captured calls from
+`~/.cria/calls/` under a settings/wording matrix and scores with **cria's own parsers**, so a
+question about a prompt or a setting costs minutes instead of a run.
+
+| script | question it answers |
+|---|---|
+| `replay.py` | do these settings/wordings change tool-call validity, verdict readability, literal fidelity? |
+| `sampling_probe.py` | can this model copy a long literal exactly? (per model, exact-match scored) |
+| `ask_shape.py` | does a wording change hold across the whole fleet? (swaps models via systemd) |
+
+Score with cria's real parser, never a lookalike, and never act on n<12 — both mistakes produced
+false findings. See `docs/matrix-goal.md` for the full method and what is already settled.
+
 **Evidence preservation (operator directive 2026-07-29):** every run archives its workspace to `~/.cria/suite/<run_id>/`; the row records `archive`, `capture_dir` (the per-call evidence), and `harness_log`. Nothing there is cleaned until reviewed — the logs are the raw material for the next round of cria improvements.

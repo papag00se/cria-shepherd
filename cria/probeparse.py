@@ -394,6 +394,55 @@ def parse_pytest(s: str) -> list[Finding]:
     return out
 
 
+# A test runner that prints its location in a shape `file:line: message` does NOT cover. Verified
+# against REAL failing runs of each tool on this box (a Rust crate, an rspec spec, a phpunit case) —
+# not against reconstructions, which is how the maven row below was caught.
+#
+#   cargo test   thread 'tests::it_adds' (72242) panicked at src/lib.rs:7:20:
+#   rspec            # ./a_spec.rb:3:in `block (2 levels) in <top (required)>'
+#   phpunit      /w/tests/AppTest.php:14                       (bare, on its own line)
+#
+# Compiler and linter output was always parsed; TEST-runner failures mostly were not, so a failing
+# Rust/Ruby/PHP suite reached the coder as `$ cargo test — summary` with no file:line at all.
+#
+# MAVEN IS DELIBERATELY ABSENT: its console output carries NO location whatsoever
+# ("Failed tests: testAdd(app.AdderTest): expected:<5> but was:<4>") — the file and line exist only
+# in target/surefire-reports. No pattern can extract what was never printed.
+_RUNNER_LOCATIONS = (
+    re.compile(r"panicked at ([^\s:][^:]*):(\d+):(\d+)"),          # cargo test / any Rust panic
+    re.compile(r"^\s*#\s+(\.?[^\s:]+):(\d+)(?::in\b|\s*$)", re.M),  # rspec backtrace line
+    re.compile(r"^\s*(/[^\s:]+\.php):(\d+)\s*$", re.M),            # phpunit failure location
+)
+
+
+def parse_runner_locations(s: str) -> list[Finding]:
+    """Locations printed by TEST runners whose shape ``file:line: message`` does not match.
+
+    The message is deliberately the runner's own nearest line rather than an invented summary: the
+    gate's contract is "the checker's OWN message and the line it flagged"."""
+    lines = s.splitlines()
+    out: list[Finding] = []
+    seen: set[tuple[str, int]] = set()
+    for rx in _RUNNER_LOCATIONS:
+        for m in rx.finditer(s):
+            file, line = m.group(1), parse_u32(m.group(2))
+            if line is None or not looks_like_path(file) or (file, line) in seen:
+                continue
+            seen.add((file, line))
+            # The most informative nearby line: the runner states the assertion right after the
+            # location (cargo) or right before it (phpunit/rspec).
+            at = s[:m.start()].count("\n")
+            # The LOCATION line itself is not the diagnosis — cargo prints `panicked at src/lib.rs:7`
+            # and the assertion on the NEXT line. Look around it, never at it.
+            near = [x.strip() for i, x in enumerate(lines[max(0, at - 3):at + 4], max(0, at - 3))
+                    if i != at and x.strip() and not x.strip().startswith(("#", "-", "="))]
+            msg = next((x for x in near if any(w in x.lower() for w in
+                                               ("assert", "expected", "failed", "error"))),
+                       (near[0] if near else "test failure"))
+            out.append(Finding(file, line, None, msg[:200]))
+    return out
+
+
 def parse_generic(s: str) -> list[Finding]:
     """``file:line[:col]: message`` — ruff / flake8 / mypy / go vet / gcc shape.
 
@@ -409,6 +458,10 @@ def parse_generic(s: str) -> list[Finding]:
             file, line, col, msg = r
             if looks_like_path(file):
                 out.append(Finding(file, line, col, msg))
+    if not out:
+        # Only when the ordinary shape found nothing: a compiler's own `file:line:` diagnostics must
+        # never be crowded out by a panic location further down the same output.
+        out = parse_runner_locations(s)
     return out
 
 
