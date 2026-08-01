@@ -480,7 +480,14 @@ def build_go(p: ProjectDir, out: list[ProbeCandidate]) -> None:
                     ProbeCost.Cheap, "go.mod found; build checks compilation"))
     out.append(cand(ProbeKind.Lint, ["go", "vet", "./..."], d, conf, 80,
                     ProbeCost.Cheap, "go vet is a fast built-in static check"))
-    out.append(cand(ProbeKind.Test, ["go", "test", "./..."], d, conf, 90,
+    # `-count=1` is required, not tidiness: `go test` REPLAYS a cached pass without executing
+    # anything ("ok  example.com/x  (cached)"), so a gate that runs it can report tests as green
+    # having run none of them. That is the vacuous-green shape the whole gate exists to prevent,
+    # and it hides exactly the failures that come and go without a code change — a live test whose
+    # API is now down, a flake, anything time- or network-dependent. Verified on this box: run one
+    # prints "ok 0.001s", run two prints "ok (cached)", run two with -count=1 executes again.
+    # Caught while walking P1-C2 (handles-go), where the gate ran `go test ./...` 148 times.
+    out.append(cand(ProbeKind.Test, ["go", "test", "-count=1", "./..."], d, conf, 90,
                     ProbeCost.Moderate, "go test across all packages"))
     # external tools: lower confidence (may not be installed / configured)
     out.append(cand(ProbeKind.StaticAnalysis, ["golangci-lint", "run"], d, 60,

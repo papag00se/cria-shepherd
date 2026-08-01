@@ -47,7 +47,10 @@ class UpstreamPortedTests(DiscoveryCase):
         write(self.d, "go.mod", "module x\n")
         c = cmds(discover(self.d))
         self.assertIn("go vet ./...", c)
-        self.assertIn("go test ./...", c)
+        # `-count=1`, not the bare form: `go test` replays a cached pass without executing
+        # anything, and a gate that reports tests green having run none is the vacuous-green shape
+        # the gate exists to prevent (see GoTestCacheTests).
+        self.assertIn("go test -count=1 ./...", c)
 
     def test_python_probe_discovery_prefers_uv_and_config_gated(self):  # T3
         write(self.d, "pyproject.toml",
@@ -355,3 +358,20 @@ class TestConventionTableTests(unittest.TestCase):
             sp.mkdir(parents=True)
             (sp / "test_main.py").write_text("def test_x(): pass\n")
             self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found — to be run they must be named test_*.py or *_test.py."])
+
+
+class GoTestCacheTests(unittest.TestCase):
+    """`go test` replays a cached pass without executing anything, so the gate could report tests
+    green having run none. Verified on this box: run one "ok 0.001s", run two "ok (cached)".
+    Caught while walking P1-C2 (handles-go x ternary-bonsai), where the gate ran it 148 times."""
+
+    def test_the_go_test_probe_disables_the_cache(self):
+        import tempfile
+        from cria.probediscovery import ProbeKind, discover
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "go.mod").write_text("module x\n\ngo 1.22\n")
+            Path(ws, "main.go").write_text("package main\n\nfunc main() {}\n")
+            tests = [c for c in discover(ws) if c.kind is ProbeKind.Test]
+            self.assertTrue(tests, "no go test probe was produced")
+            for c in tests:
+                self.assertIn("-count=1", c.command, f"{c.command} can replay a cached pass")
