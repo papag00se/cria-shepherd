@@ -30,6 +30,16 @@ _TD = prompts.load_map("verify_tools")
 # the planner's gather cap does; each round may carry several calls, so 6 is generous for "look at a
 # directory, open two or three files".
 VERIFY_MAX_ROUNDS = 6
+# ...and a SIZE bound, because rounds are not equal cost. Each inspection round re-sends the whole
+# accumulated conversation plus every file read so far, so round 4 costs several times round 1.
+# Measured, P1-C1 (ternary-bonsai, ada-handles): one steer's loop grew 47K -> 62K -> 83K -> 102K
+# chars and its final call alone took 247 SECONDS; the whole steer cost 544s — 9 of the run's 30
+# minutes — while the coder got 16 turns in total and scored 0/4. Across 28 captured sessions the
+# crew takes 54% of all model time (median 56%), so this is the mechanism and not one slow model;
+# what the slow model changes is the worst case. Past this many characters the loop stops READING
+# and answers from what it already has — the same bounded-inspection idea the round cap encodes,
+# measured in the dimension that actually costs.
+VERIFY_MAX_CHARS = 60_000
 
 # The closing instruction appended when the round budget is spent — the next call carries no tools.
 ANSWER_NOW = _TD["answer_now"]

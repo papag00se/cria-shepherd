@@ -585,8 +585,13 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     while True:
         body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
                       "messages": list(messages)}
-        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and not forced_rounds:
+        sent_chars = sum(len(str(m.get("content") or "")) for m in messages)
+        room_left = sent_chars < verifytools.VERIFY_MAX_CHARS
+        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and room_left and not forced_rounds:
             body["tools"] = verifytools.VERIFY_TOOLS   # withdrawn on the forced-answer round
+        elif inspectable and not room_left and not forced_rounds:
+            rlog.emit("loop.verify_inspect_capped", phase=phase, chars=sent_chars,
+                      rounds=rounds, level="info")
         if role is not None:
             role.apply(body, internal=True, rlog=rlog)
         elif force_think_off:  # no role configured, but still force the think block off
@@ -600,7 +605,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         comp = massage.apply(_parse_completion(chat_fn(body, rlog)), body.get("tools"), rlog)
         msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
         calls = msg.get("tool_calls") or []
-        if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS):
+        if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS and room_left):
             # A final reply that is a CORRUPTED tool call (leaked dialect the recovery could not
             # parse — g2-0104: four clean read rounds, then `<|tool_call>call:read_file{...<|"|>`)
             # meant the model asked a question nobody answered and the whole loop died silently.
@@ -651,7 +656,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             messages.append({"role": "tool", "tool_call_id": tc.get("id") or f"vt{rounds}",
                              "content": out})
         rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
-        if rounds == verifytools.VERIFY_MAX_ROUNDS:
+        if rounds == verifytools.VERIFY_MAX_ROUNDS or \
+                sum(len(str(m.get("content") or "")) for m in messages) >= verifytools.VERIFY_MAX_CHARS:
             messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
 
 

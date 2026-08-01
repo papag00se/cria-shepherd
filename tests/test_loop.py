@@ -5335,6 +5335,33 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
 
+    def test_inspection_stops_reading_once_the_prompt_is_huge(self):
+        """P1-C1 (ternary-bonsai, ada-handles, 0/4): ONE steer's inspection loop grew 47K -> 62K ->
+        83K -> 102K chars and cost 544 seconds — 9 of the run's 30 minutes — while the coder got 16
+        turns in total. Rounds are not equal cost: each one re-sends everything read so far, so the
+        round cap alone bounds the wrong dimension."""
+        import tempfile
+        from cria import loop as L, verifytools
+        ws = tempfile.mkdtemp()
+        Path(ws, "big.txt").write_text("x" * 200)
+        calls = {"n": 0, "tools_offered": []}
+
+        def chat(body, rlog):
+            calls["n"] += 1
+            calls["tools_offered"].append(bool(body.get("tools")))
+            # always ask to read another file — an unbounded loop if nothing stops it
+            return json.dumps({"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": f"t{calls['n']}", "type": "function",
+                 "function": {"name": "read_file", "arguments": json.dumps({"path": "big.txt"})}}]}}]}).encode()
+
+        huge = "y" * (verifytools.VERIFY_MAX_CHARS + 1000)
+        L._judge_completion(chat, None, "system", huge, _Rlog(), phase="critic", workspace_root=ws)
+        # The FIRST call already carries an over-budget prompt, so no tools are ever offered: cria
+        # answers from what it holds instead of paying for another read.
+        self.assertNotIn(True, calls["tools_offered"],
+                         "tools were offered despite an already-oversized prompt")
+        self.assertLessEqual(calls["n"], 3, "the loop kept going past the size bound")
+
     def test_the_simple_ask_is_a_SECOND_attempt_not_the_standing_one(self):
         """Fleet-measured on real captured rounds: nine of ten models answer the normal JSON verdict
         4/4 and must never see the simplified ask. gemma4 answers it 0/10 (a JSON object is the shape
