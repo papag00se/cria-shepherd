@@ -3699,6 +3699,41 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
                                reasoning_window=["keep guessing at the attr"])
             self.assertIn("read the real file", out, cond)
 
+    def test_unchanged_check_findings_suppress_a_SECOND_diagnosis(self):
+        """g22 (gemma4, ada-handles): TEN consecutive steers on ONE pytest assertion diff, each
+        contradicting the last — "an extra zero", then "asserting ..01 but mocking ..02", then
+        "assertions swapped", then "addresses cut off mid-string" — while the diff itself sat in the
+        coder's context naming the exact character. Measured across 24 runs: 36% of every steer cria
+        has authored re-diagnosed check findings that had not moved since the previous one. A small
+        reasoner asked to explain the same output twice does not repeat itself, it re-guesses."""
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        checks = "test_resolve.py:31: AssertionError: 'addr1e0…0002' != 'addr1e0…002'"
+        rlog = _Rlog()
+        first = author_steer(self._chat("fix the expected literal on line 31"), None, ws, gs,
+                             {"messages": []}, rlog, condition="flail", truth_text=checks)
+        self.assertIn("line 31", first)                      # the FIRST diagnosis still lands
+        second = author_steer(self._chat("actually the assertions are swapped"), None, ws, gs,
+                              {"messages": []}, rlog, condition="flail", truth_text=checks)
+        self.assertIsNone(second)                            # ...the second one does not
+        self.assertIn(("loop.steer_same_checks",), [(k,) for k, _ in rlog.events])
+        moved = author_steer(self._chat("now fix the import on line 3"), None, ws, gs,
+                             {"messages": []}, rlog, condition="flail",
+                             truth_text="resolve.py:3: undefined name 'requests'")
+        self.assertIn("line 3", moved)                       # findings MOVED → cria speaks again
+
+    def test_a_steer_with_no_check_text_is_never_suppressed(self):
+        # The guard is about re-explaining the same CHECK OUTPUT. A detector that fires with no checks
+        # in hand (a wheel-spin on a green repo) has nothing to repeat and must still be able to speak.
+        import tempfile
+        from cria.loop import author_steer
+        gs, ws = self._gs(), tempfile.mkdtemp()
+        for _ in range(3):
+            out = author_steer(self._chat("read the file before editing it"), None, ws, gs,
+                               {"messages": []}, _Rlog(), condition="wheel_spin")
+            self.assertIn("read the file", out)
+
     def test_on_track_reply_suppresses_the_steer(self):
         import tempfile
         from cria.loop import author_steer

@@ -242,6 +242,15 @@ class PlanSession(GuardState):
     # Authoring blind, it invented endpoints, fields, paths and flags, and the coder obeyed. cria HELD
     # this text the whole time.
     last_checks_text: str = ""
+    # The check text the LAST authored steer was written against. A detector firing again over check
+    # output that has not moved means the previous steer did not land — and re-describing the same
+    # findings in fresh prose is the failure mode measured across 24 runs: ~554 steers, 61% authored
+    # on top of already-located findings, 36% of ALL steers re-diagnosing findings unchanged since the
+    # previous one. g22 is the shape of it: ten consecutive steers on ONE pytest assertion diff, each
+    # contradicting the last ("an extra zero" -> "asserting ..01 but mocking ..02" -> "assertions
+    # swapped" -> "addresses cut off mid-string") while the diff itself sat in the coder's context
+    # naming the exact character.
+    steered_checks_text: str = ""
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
     recent_reasoning: list[str] = field(default_factory=list)  # coder's last FLAIL_WINDOW reasonings (flail detector)
@@ -3640,6 +3649,22 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
     with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
+    # SILENCE OVER A SECOND OPINION ON THE SAME FACTS. If the repo's checks have not moved since the
+    # last steer, the previous directive did not land — and a small reasoner asked to explain the same
+    # output again does not repeat itself, it re-guesses. Measured over 24 runs: 36% of every steer
+    # cria has ever authored was a fresh prose diagnosis of check findings unchanged since the
+    # previous one. g22 is what that costs: TEN consecutive steers on one pytest assertion diff, each
+    # contradicting the last, while the diff sat in the coder's own context pointing at the exact
+    # character ("- addr1e000…0002  ?  -"). The check output is the better steer, it is already in
+    # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
+    checks_now = (truth_text or "").strip()
+    if checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", ""):
+        rlog.emit("loop.steer_same_checks", level="info", condition=condition,
+                  head=_clip(checks_now, 100))
+        return None
+    if gs is not None:
+        gs.steered_checks_text = checks_now
+
     # Superseded write payloads are STUBBED to their on-disk reference (the existing compact_view
     # write_stub — restructuring, not trimming: the bytes stay on disk and the author holds
     # read_file). Without this the author's session carried every historical version whole — 49
