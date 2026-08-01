@@ -158,3 +158,34 @@ class ParseIntentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFilesAreNotProgramsTests(unittest.TestCase):
+    """A test file carrying `if __name__ == "__main__": unittest.main()` is not the deliverable.
+
+    Measured on mellum2 attempt 3: the workspace's ONLY entry point was in
+    test_resolve_handle.py, the deliverable ended on a function definition, and
+    `resolve_handle.py goose` printed nothing — yet the check reported an entry point present.
+    """
+
+    RUNNER = ('import unittest\n'
+              'class T(unittest.TestCase):\n    def test_x(self): pass\n'
+              'if __name__ == "__main__":\n    unittest.main()\n')
+
+    def test_a_test_files_runner_block_does_not_count(self):
+        for name in ("test_resolve.py", "resolve_test.py", "tests__test_x.py",
+                     "AppTest.java", "thing.spec.js"):
+            with self.subTest(name=name):
+                self.assertEqual(execcheck.entrypoints(ws(**{name: self.RUNNER})), [])
+
+    def test_the_real_program_is_still_found_beside_tests(self):
+        d = ws(**{"tool.py": PROGRAM, "test_tool.py": self.RUNNER})
+        self.assertEqual(execcheck.entrypoints(d), ["tool.py"])
+
+    def test_the_mellum2_attempt3_shape_is_correctly_empty(self):
+        d = ws(**{"resolve_handle.py": LIBRARY, "test_resolve_handle.py": self.RUNNER})
+        self.assertEqual(execcheck.entrypoints(d), [])
+        r = execcheck.evaluate(d, {"runs": True, "command": "python3 resolve_handle.py goose",
+                                   "success": "prints an address"})
+        self.assertEqual(r.verdict, execcheck.INCONCLUSIVE)
+        self.assertIn("entry point", r.why)

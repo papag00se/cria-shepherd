@@ -78,6 +78,19 @@ ENTRY_CONVENTIONS: tuple[EntryConvention, ...] = (
 _SKIP_DIRS = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", "node_modules",
                         "venv", ".venv", "site-packages", "target", "dist", "build", ".tox"})
 
+# A TEST file is not the program. Test files routinely carry their own runner block
+# (`if __name__ == "__main__": unittest.main()`), and counting it meant a workspace whose only
+# entry point was in test_resolve_handle.py read as "this project has a program" — measured on
+# mellum2 attempt 3, whose deliverable ends on a function definition and prints nothing.
+_TEST_NAME = re.compile(r"(^test[_.]|[_.]test\.|_test$|(?:^|[_.])spec[_.]|Test\.|Tests\.)", re.I)
+
+
+def _is_test_file(rel: str) -> bool:
+    base = os.path.basename(rel)
+    stem = base.rsplit(".", 1)[0]
+    return bool(_TEST_NAME.search(base) or _TEST_NAME.search(stem + ".")
+                or "tests" in rel.split(os.sep)[:-1] or "test" in rel.split(os.sep)[:-1])
+
 # A command cria is willing to execute. Anything else is INCONCLUSIVE rather than run — the point is
 # to observe a delivered program, never to give a weak model a way to have cria run what it likes.
 _RUNNERS = frozenset({"python", "python3", "node", "ruby", "php", "java", "go", "cargo", "npm",
@@ -119,6 +132,8 @@ def entrypoints(root: str) -> list[str]:
         dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
         for name in filenames:
             rel = os.path.relpath(os.path.join(dirpath, name), root)
+            if _is_test_file(rel):
+                continue
             conv = by_ext.get(name.rsplit(".", 1)[-1].lower()) if "." in name else None
             if conv:
                 try:

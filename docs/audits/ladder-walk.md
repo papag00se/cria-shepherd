@@ -28,7 +28,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
-| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 2 | 2/4 | 📖 both walked — rerun pending |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 3 | 2/4 | 📖 all walked — planner-OFF next |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
@@ -243,3 +243,64 @@ mellum2 signature. It happened once. The claim that three workspaces in a row la
 
 Killed at 15.9 minutes instead of running the old flat 30. The saved half hour bought this walk and
 the live-execution check.
+
+
+## ada-handles_mellum2_codex_pon_1785625253
+
+**0/4** · planner ON · killed at 15 min (re-checked, confirmed) · 91 calls · 166.4 tok/s
+· capture `~/.cria/calls/20260801T160104-019fbf8f-40be-7f53-a1c0-881700caf8e7`
+
+Tested exactly one change from attempt 2: the leaked `web_fetch` package removed from the box.
+That error is gone. The run failed anyway, differently.
+
+### It went BACKWARDS at the checkpoint
+
+| | |
+|:--|:--|
+| 13 min | 2 tests passing → unit tests 🟢 → **1/4** |
+| 15 min | 2 failed, 2 passed → 🔴 → **0/4** |
+
+It did not lose work — it **added two error-path tests that fail** to a green suite, and the
+checkpoint landed mid-edit.
+
+### The four questions
+
+| | |
+|:--|:--|
+| false or stale? | **No.** `loop.gate_stalled` fired **11 times** — cria correctly recording that the same findings kept coming back. Two steers were dropped as roleplay by the existing guard, which is that guard working. |
+| impossible? | No. |
+| withheld? | No. |
+| wording? | No. |
+
+**Verdict: model wall**, and the third distinct failure shape in three attempts.
+
+### The ONE thing consistent across all three attempts
+
+Every mellum2 run produced a **CLI that exits 0 and prints nothing**:
+
+| attempt | score | entry point in the deliverable | CLI |
+|:--|:--:|:--|:--|
+| 1 | 2/4 | **none** | `--live goose papagoose` → exit 0, silent |
+| 2 | 0/4 | present | exit 0, silent |
+| 3 | 0/4 | **none** (only the TEST file had one) | exit 0, silent |
+
+Attempt 3's `resolve_handle.py` ends on a function definition. Running it defines functions and
+exits. Nothing else in the three runs repeats — the API shape, the async choice, the failing tests
+all differ — but the deliverable is never a program.
+
+### A defect this exposed in cria's OWN new check
+
+`execcheck.entrypoints()` counted `test_resolve_handle.py` as an entry point, because test files
+routinely carry `if __name__ == "__main__": unittest.main()`. So a workspace whose only runnable
+file was its test suite read as "this project has a program". Fixed the same hour: test files are
+excluded by name and by directory, across languages. Re-run over all three archives now reports
+NONE / present / NONE, which matches the deliverables by hand.
+
+Worth stating plainly: that check was written today to catch this exact class, and it would have
+mis-reported the very run that motivated it.
+
+### Next: planner OFF
+
+Three stalls at the hypothesised setting. The goal doc sanctions flipping the planner as an explicit
+experiment at this point, and it is also the operator's own hypothesis (dense cope with it off, MoEs
+need it on) finally getting an arm that can disconfirm it. Attempt 4 runs `--planner off`.
