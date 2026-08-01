@@ -13,8 +13,11 @@ Reports three states per toolchain: present, MISSING, or present-but-COLD (insta
 real use in a workspace would hit the network).
 """
 import argparse
+import glob
 import json
+import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -40,6 +43,42 @@ TOOLS = {
     "docker": (["docker", "--version"], "OPTIONAL — handles-cli-node's Dockerfile is read, not built"),
     "unshare": (["unshare", "--version"], "the network block every live-test check depends on"),
 }
+
+
+def stale_suite_installs():
+    """Packages a PREVIOUS run installed into the real user site-packages, still on sys.path.
+
+    A run is `--yolo`: nothing stops the model running `pip install -e .` on its own workspace.
+    That drops a `.pth` naming the run's `/tmp` directory into the user's site-packages, and it
+    OUTLIVES the run — every later Python process on the box, including the next cell's tests and
+    the verifier itself, imports the dead run's code.
+
+    Found live on 2026-08-01: `__editable__.handle_resolver-0.1.0.pth` from a gemma4 run on 07-31
+    was still resolving `import handle_resolver` to that run's temp directory two days later.
+
+    run.py's `site_packages_leak` column records the DELTA across one run, which is the right thing
+    for attributing a leak to the cell that caused it — and is blind by construction to a leak that
+    was ALREADY there. This is the standing check the delta cannot be: it asks what is on the path
+    right now, not what changed.
+    """
+    found = []
+    try:
+        user_site = site.getusersitepackages()
+    except Exception:  # noqa: BLE001
+        return found
+    for pth in sorted(glob.glob(os.path.join(user_site, "*.pth"))):
+        try:
+            body = open(pth, errors="replace").read()
+        except OSError:
+            continue
+        for line in body.splitlines():
+            target = line.strip()
+            # A suite workspace is a mkdtemp under /tmp; anything pointing into a temp dir is by
+            # definition not a durable install, whoever wrote it.
+            if target.startswith("/tmp/"):
+                found.append({"pth": pth, "target": target,
+                              "target_exists": os.path.exists(target)})
+    return found
 
 
 def probe(argv):
@@ -95,8 +134,12 @@ def main() -> None:
         if not ok and not optional:
             missing.append(name)
 
+    stale = stale_suite_installs()
+    ready = not missing and not stale
+
     if args.json:
-        print(json.dumps({"ready": not missing, "missing": missing, "tools": rows}, indent=1))
+        print(json.dumps({"ready": ready, "missing": missing,
+                          "stale_installs": stale, "tools": rows}, indent=1))
     else:
         print(f"{'tool':10s} {'state':8s} {'version':32s} needed for")
         print("-" * 100)
@@ -105,14 +148,30 @@ def main() -> None:
             print(f"{r['tool']:10s} {state:8s} "
                   f"{r['version']:32s} {r['needed_for']}")
         print()
-        print("READY" if not missing else f"NOT READY — missing: {', '.join(missing)}")
+        for s in stale:
+            print(f"LEAKED INSTALL  {s['pth']}\n"
+                  f"                -> {s['target']} "
+                  f"({'still present' if s['target_exists'] else 'gone'})")
+        if stale:
+            print("  A previous run installed itself into your real site-packages. It is on the\n"
+                  "  path for every Python process, so the next cell's imports may resolve to it.\n"
+                  "  Remove the .pth and its dist-info before running.\n")
+        if ready:
+            print("READY")
+        else:
+            reasons = []
+            if missing:
+                reasons.append(f"missing: {', '.join(missing)}")
+            if stale:
+                reasons.append(f"{len(stale)} leaked install(s) on sys.path")
+            print(f"NOT READY — {'; '.join(reasons)}")
 
     if args.warm:
         print("\nwarming caches (first use in a run then costs nothing):")
         for what, ok in warm():
             print(f"  {'ok  ' if ok else 'FAIL'} {what}")
 
-    sys.exit(0 if not missing else 1)
+    sys.exit(0 if ready else 1)
 
 
 if __name__ == "__main__":
