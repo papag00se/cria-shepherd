@@ -28,7 +28,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
-| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 1 | 2/4 | 📖 walked — rerun pending |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 2 | 2/4 | 📖 both walked — rerun pending |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
@@ -153,3 +153,58 @@ Not fixed yet. Recorded as the leading candidate with its measurement queued.
 **Also true and not to be papered over:** mellum2 is a weak judge — the fleet readability table has
 it at **1/6** on the critic ask. Part of this is the model. The cria-side question is whether a
 sharper question rescues a weak judge, which is exactly what the replay will say.
+
+
+## ada-handles_mellum2_codex_pon_1785620496
+
+**0/4** · planner ON · killed at 15 min (`milestone-miss-15min`, re-checked and confirmed) · 81 calls
+· 160.4 tok/s · capture `~/.cria/calls/20260801T144148-019fbf46-ad70-7271-bd36-f98d97802a35`
+
+Everything red: 8 of 9 unit tests failing, no README, no live test, CLI silent.
+
+### The four questions
+
+| | |
+|:--|:--|
+| false or stale? | **No.** The gate ran and blocked **11 consecutive times** on the same real findings (4, then 2), floor clean throughout. The failures are genuine: `TypeError: 'coroutine' object…`, `aiohttp…`, `TypeError: 'module' object…`. |
+| impossible? | No. |
+| withheld? | No — the same accurate diagnosis was in front of it eleven times. `loop.gate_stalled` fired 9 times, which is cria correctly recording "this is not converging". |
+| wording? | No. One steer in the whole run. |
+
+**Verdict: model wall.** Same shape as phase 1's Go cell — an accurate error shown eleven times and
+never fixed. The model chose `aiohttp` and `async def` for a task with no concurrency in it (7
+occurrences in one file), then could not get its own mocks to match the coroutines.
+
+### The budget was NOT the problem, contrary to first impression
+
+| phase | calls | seconds | share |
+|:--|--:|--:|--:|
+| coder | 27 | 532.1 | **69.9%** |
+| planner | 25 | 88.6 | 11.6% |
+| critic | 11 | 71.3 | 9.4% |
+| reasoner | 13 | 49.5 | 6.5% |
+
+The coder's first call came **91 seconds in**, and it got 70% of all model time. The planner's 25
+calls cost 88 seconds total. Worth recording because "planner ON means the crew eats the run" was
+the obvious hypothesis from the call counts alone, and the timings refute it.
+
+### What the two mellum2 attempts say together
+
+| | attempt 1 | attempt 2 |
+|:--|:--|:--|
+| score | 2/4 | 0/4 |
+| terminal | `exited` (believed itself done) | `milestone-miss-15min` |
+| entry point | **none** — a pure library | present in all three files |
+| shape | sync `requests`, MCP endpoint | async `aiohttp`, coroutine mocks |
+
+**Same build, same settings, same model, 2/4 then 0/4.** The two runs did not even fail the same
+way. This is the variance the goal doc warns about, and it is the justification for the ladder's
+repeat-until-pass design over reading any single score.
+
+It also corrects something written after attempt 1: the missing entry point is **not** a repeating
+mellum2 signature. It happened once. The claim that three workspaces in a row lacked one was wrong.
+
+### Cost of the milestone pacing, measured
+
+Killed at 15.9 minutes instead of running the old flat 30. The saved half hour bought this walk and
+the live-execution check.
