@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 12:14:06 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 12:26:53 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **run** `qwythos` (attempt 1).
+**RUNNING — qwythos**, 12 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **4/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🟢 | 10 passed in 1.01s |
+| live_test | 🟢 | in-file live test: 2 passed with network, fails without (provably live) |
+| resolver_cli | 🟢 | resolve_handle.py goose → address+holder+count |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
@@ -16,7 +29,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
+| 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | 🔵 RUNNING |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
 | 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 0 | — | ⬜ not started |
@@ -34,6 +47,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+3897a8d docs(ladder): ternary-bonsai and gemma4 both 4/4; record the sampling finding as untested
 7259203 fix(suite): the runner sets each model's sampling — it was missed 26 times running
 91d44ba feat(suite): ladder-report.md — a GENERATED follow-along report
 4379943 fix(suite,docs): fabliq is an MoE — the ladder's kinds now come from the GGUF headers
@@ -48,7 +62,6 @@ c301d1d fix(suite): the status oracle told me to redo finished work, and saw a r
 615a6fc feat(suite): the remaining three task categories, a preflight check, and phase-1 scoping
 9c9f022 feat(suite): task battery documented and raised to comparable complexity
 4a0afe7 feat(suite): seeded task categories — resolve failing tests, fix a reported bug, write missing tests
-298a145 feat(suite): one task per supported language — handles-{go,rust,node,ruby,php,java}
 ```
 
 ---

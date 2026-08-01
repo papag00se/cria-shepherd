@@ -25,7 +25,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
-| 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | not started |
+| 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 0 | — | not started |
