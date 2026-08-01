@@ -1,0 +1,1 @@
+The ledger module in this project has no unit tests at all. Please write a thorough test suite for it — cover the normal paths and the edge cases you think matter, including the error conditions. Add a short README section explaining how to run the tests.

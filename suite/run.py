@@ -181,7 +181,19 @@ def main() -> None:
 
     swap_model(args.model)
     set_planner(args.planner == "on")
+    # SEEDED tasks start from existing code the model must read, not a blank directory. Every task
+    # before this one was greenfield, which exercises research and creation and never touches the
+    # machinery most of cria's measured footguns live in: reading a file it did not write, editing
+    # it surgically, and reading its own gate output. The seed is committed so `git status` is clean
+    # and the model's own diff is legible to it.
+    seed = task_dir / "seed"
+    if seed.is_dir():
+        sh("cp", "-r", *[str(p) for p in seed.iterdir()], str(ws), timeout=120)
     sh("git", "-C", str(ws), "init", "-q")
+    if seed.is_dir():
+        sh("git", "-C", str(ws), "add", "-A")
+        sh("git", "-C", str(ws), "-c", "user.email=suite@local", "-c", "user.name=suite",
+           "commit", "-qm", "seed", timeout=120)
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
     site_before = user_site_listing()
 

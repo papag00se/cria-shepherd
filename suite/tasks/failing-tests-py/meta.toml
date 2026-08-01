@@ -1,0 +1,5 @@
+name = "failing-tests-py"
+language = "python"
+shape = "seeded-debug"      # starts from EXISTING code; one real bug; tests state the contract
+category = 3               # "investigate and resolve failing tests" (operator's battery list)
+deliverables = ["failing test passes", "no other test broken", "tests left intact"]

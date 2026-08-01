@@ -1,0 +1,1 @@
+A customer has reported a billing problem. They bought three items at 19.99 each with the SUMMER25 code and were charged 48.57, but they worked it out by hand as 48.58 and say we are undercharging by a cent on lots of orders. Our accountant confirms the totals are consistently a cent low. Please find the cause and fix it. The existing tests should still pass when you're done.

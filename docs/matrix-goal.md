@@ -113,6 +113,12 @@ gemma4 (1/6 each). Everything else already works, which is why nothing else chan
 | `handles-php` | PHP |
 | `handles-java` | Java |
 
+**Seeded** tasks (`failing-tests-py`, `bug-report-go`, `missing-tests-py`) start from existing code
+instead of an empty directory — categories 3, 2 and 4 of the operator's battery list. That is the
+axis that was missing entirely: every earlier task was greenfield, so nothing exercised reading a
+file the model did not write, editing it surgically, or acting on gate output, which is where most
+of cria's measured footguns live.
+
 Same problem in every language, on purpose: the matrix varies ONE thing at a time and this axis is
 the language. A cell that fails therefore says something about the language or about cria, not
 about a different task.

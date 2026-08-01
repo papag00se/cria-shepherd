@@ -16,6 +16,29 @@ appends one JSON row to `results/results.jsonl`; `report.py` renders the matrix.
 
 ## Tasks
 
+Two families. **Greenfield** tasks start from an empty directory and test research + creation.
+**Seeded** tasks ship existing code in `tasks/<task>/seed/` (copied in and committed before the
+run) and test the machinery most of cria's measured footguns live in: reading a file it did not
+write, editing it surgically, and reading its own gate output.
+
+### Seeded — start from existing code
+
+| task | language | category | how it is scored |
+|---|---|---|---|
+| `failing-tests-py` | Python | 3 · resolve failing tests | suite green + tests byte-identical + hidden contract |
+| `bug-report-go` | Go | 2 · fix a bug from a user report | reported case fixed + hidden cases + no regression |
+| `missing-tests-py` | Python | 4 · write missing unit tests | **mutation score** — seeded bugs its tests must catch |
+
+Every seeded verifier is built to make the easy cheats worthless, and each was checked against a
+real cheat before being trusted:
+
+- weakening or deleting the failing test → `tests_intact` false (hashes against the seed)
+- special-casing the visible numbers → hidden cases at inputs the model never saw
+- `assert True` × 20 → mutation scoring; a shallow suite scored 2/4 (29% of seeded bugs caught), a
+  thorough one 4/4
+
+### Greenfield
+
 | task | language | toolchain the verifier needs |
 |---|---|---|
 | `ada-handles` | Python | python3 + pytest |
