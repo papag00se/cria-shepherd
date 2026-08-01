@@ -1,0 +1,12 @@
+# Markers the live-execution check attaches to a completion (prompts.load_map).
+#
+# NEITHER MARKER BLOCKS ANYTHING (operator's ruling 2026-08-01): a brand-new check that can refuse
+# work is the dangerous class of intervention, so this one is evidence and nothing more. The two
+# negative outcomes stay SEPARATE rather than collapsing into one "failed", because they mean
+# different things and call for different action: not_observed is a defect in the delivered
+# program, inconclusive is a gap in what cria was able to establish.
+#
+# There is deliberately no marker for a confirmed run or for a task needing no run — on a clean
+# signal cria says nothing (principle 3).
+not_observed = ⟦ctx:live-execution⟧ The delivered program was run and did not show the result it was meant to. Command: `{{COMMAND}}` — expected: {{EXPECT}} — but {{WHY}}. Everything else the checks cover passed. This is evidence about the program, not a verdict on the whole task.
+inconclusive = ⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because {{WHY}}. Everything else the checks cover passed. This says nothing about whether the program works, only that the run could not be established.
