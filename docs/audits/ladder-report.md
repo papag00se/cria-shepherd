@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 11:16:42 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 11:41:33 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,17 +8,13 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — ternary-bonsai**, 4 min elapsed.
-
-| next checkpoint | at | must hold |
-|:--|--:|:--|
-| milestone 1 | 15 min | 1/4 |
+**Nothing running.** Next action: **run** `gemma4` (attempt 1).
 
 ## Ladder
 
 | # | model | params | architecture | kind | planner | tries | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
-| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 0 | — | 🔵 RUNNING |
+| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 0 | — | ⬜ not started |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
@@ -30,11 +26,14 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Attempts
 
-_No runs recorded yet._
+| started | model | score | terminal | milestones | calls | tok/s | run id |
+|:--|:--|:--:|:--|:--|--:|--:|:--|
+| 08-01 11:13 | ternary-bonsai | 4/4 | exited | 15m:2✓ | 54 | 39.7 | `ada-handles_ternary-bonsai_codex_poff_1785607985` |
 
 ## Fixes landed during the ladder
 
 ```
+91d44ba feat(suite): ladder-report.md — a GENERATED follow-along report
 4379943 fix(suite,docs): fabliq is an MoE — the ladder's kinds now come from the GGUF headers
 bc29023 feat(suite): the language ladder — one model at a time, 15 min per deliverable
 1d49456 fix(prompts): the steer author wrote code it cannot run — describe the change instead
@@ -49,7 +48,6 @@ c301d1d fix(suite): the status oracle told me to redo finished work, and saw a r
 4a0afe7 feat(suite): seeded task categories — resolve failing tests, fix a reported bug, write missing tests
 298a145 feat(suite): one task per supported language — handles-{go,rust,node,ruby,php,java}
 74a9700 fix(suite,probeparse): score with cria's real parser; parse the test-runner locations cria was blind to
-f72ff73 fix(loop): the simplified verdict ask is a SECOND attempt, not the standing one
 ```
 
 ---

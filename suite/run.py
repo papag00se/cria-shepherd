@@ -32,6 +32,8 @@ import time
 import tomllib
 from pathlib import Path
 
+import sampling
+
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 CALLS_DIR = Path.home() / ".cria" / "calls"
@@ -89,16 +91,26 @@ def swap_model(model: str) -> None:
         raise RuntimeError(f"model {model} ({target}) never became healthy")
 
 
-def set_planner(enabled: bool) -> None:
+def configure_cria(model: str, planner_enabled: bool) -> dict:
+    """Write this model's sampling AND the planner setting, then restart cria once.
+
+    Sampling used to be a manual step in the goal doc, and it was missed 26 consecutive times: every
+    gemma4 run in results.jsonl was sent ternary-bonsai's numbers (coder 0.2/0.95/20) because the
+    runner swapped the model and the planner and left `[roles.*]` alone. Those runs measured a model
+    nobody was testing. A step that must be remembered before each run is a footgun, so the runner
+    does it.
+    """
+    spec = sampling.apply(model, CRIA_TOML)
     text = CRIA_TOML.read_text()
     new = re.sub(r"(\[planner\][^\[]*?enabled\s*=\s*)(true|false)",
-                 lambda m: m.group(1) + ("true" if enabled else "false"), text, count=1)
-    if new == text and f"= {'true' if enabled else 'false'}" not in text:
+                 lambda m: m.group(1) + ("true" if planner_enabled else "false"), text, count=1)
+    if new == text and f"= {'true' if planner_enabled else 'false'}" not in text:
         raise RuntimeError("could not toggle [planner].enabled in cria.toml")
     CRIA_TOML.write_text(new)
     sh("sudo", "-n", "systemctl", "restart", "cria.service", timeout=60)
     if not wait_health("http://127.0.0.1:18085/health"):
-        raise RuntimeError("cria never became healthy after planner toggle")
+        raise RuntimeError("cria never became healthy after reconfiguration")
+    return spec
 
 
 def user_site_listing() -> set:
@@ -227,7 +239,9 @@ def main() -> None:
     log_path = SUITE / "results" / f"{run_id}.log"
 
     swap_model(args.model)
-    set_planner(args.planner == "on")
+    spec = configure_cria(args.model, args.planner == "on")
+    print(f"[sampling] {args.model}: "
+          + "  ".join(f"{r}={dict(k)}" for r, k in spec.items()), flush=True)
     # SEEDED tasks start from existing code the model must read, not a blank directory. Every task
     # before this one was greenfield, which exercises research and creation and never touches the
     # machinery most of cria's measured footguns live in: reading a file it did not write, editing
@@ -333,7 +347,7 @@ def main() -> None:
 
     row = {
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
-        "planner": args.planner, "note": args.note,
+        "planner": args.planner, "note": args.note, "sampling": spec,
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes or None, "milestones": milestones or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),

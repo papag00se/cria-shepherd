@@ -23,7 +23,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 
 | # | model | params | architecture | kind | planner | attempts | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
-| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 0 | — | not started |
+| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 0 | — | not started |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | not started |
