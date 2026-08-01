@@ -66,6 +66,60 @@ _WRITE_TARGET_BEFORE = re.compile(r"(?:>>?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\
 _TEXT_SEARCH_LEAD = re.compile(r"(?:^|[\s;&|(])(?:e?grep|fgrep|rg|ag|ack|sed|awk|gawk)\b", re.IGNORECASE)
 
 
+# --- Installs: an external write whose destination the command never NAMES -------------------
+#
+# Every rule above reasons about a path token IN the command. A package manager takes its
+# destination from the environment, so `pip install -e .` writes into the user's real
+# site-packages while naming nothing outside the workspace — and the path scan finds nothing to
+# refuse. Measured 2026-08-01: a run's `pip install -e .` left an `__editable__…pth` in the user's
+# site-packages pointing at that run's /tmp workspace; two days later it was still on sys.path for
+# every Python process on the box, shadowing `import handle_resolver` for later runs AND for the
+# suite's own verifier.
+#
+# Matched here are only invocations whose destination is SHARED by default. A manager that
+# installs into the project by default is absent on purpose: `npm install` (./node_modules),
+# `composer require` (./vendor), `bundle install`, `cargo add`, `go get` are ordinary
+# workspace-local work and must pass untouched. Their global FORMS are matched.
+_GLOBAL_INSTALL = re.compile(
+    r"(?:^|[\s;&|(])(?:"
+    r"(?:pip|pip3|python3?\s+-m\s+pip)\s+install"          # user/system site-packages
+    r"|(?:npm|pnpm|yarn)\s+(?:install|add|i)\b(?=[^;&|]*(?:\s-g\b|\s--global\b))"
+    r"|(?:gem|cargo|go)\s+install"                          # ~/.gem, ~/.cargo/bin, GOPATH/bin
+    r"|composer\s+global\b"
+    r"|(?:apt|apt-get|dnf|yum|pacman|apk|brew)\s+(?:install|add)\b"
+    r")", re.IGNORECASE)
+
+# The same command made workspace-local. Any ONE of these means the install lands inside the
+# project, so it is ordinary work: an interpreter/pip run from a RELATIVE path (`./.venv/bin/pip`),
+# an explicit destination flag, or a venv activated in the same command line.
+_LOCAL_INSTALL_SCOPE = re.compile(
+    r"(?:^|[\s;&|(])\.{0,2}/?[\w.-]*(?:venv|env|virtualenv)[\w.-]*/bin/"   # ./.venv/bin/pip …
+    r"|--target(?:=|\s)|--prefix(?:=|\s)|--root(?:=|\s)"
+    r"|(?:^|[\s;&|(])(?:source|\.)\s+\.{0,2}/?[\w.-]*(?:venv|env)[\w.-]*/bin/activate",
+    re.IGNORECASE)
+
+
+def install_refusal(command: str, level: str, workspace: str | None) -> str | None:
+    """The refusal for an install whose destination is SHARED, or None when allowed.
+
+    Deliberately NOT a security control — the same best-effort posture as the rest of raw-shell
+    handling. It closes the one hole that is invisible to a path scan by construction: the
+    destination is decided by the environment, so there is no token to find.
+
+    Allowed at ``write``, since that level means "no external-directory restriction" and an
+    operator who set it has accepted exactly this. Refused at ``read`` too: ``read`` permits
+    external READS, and an install is a write.
+    """
+    if level == "write" or not command:
+        return None
+    if not _GLOBAL_INSTALL.search(command):
+        return None
+    if _LOCAL_INSTALL_SCOPE.search(command):
+        return None
+    return prompts.fill(prompts.load("external_install_refusal"),
+                        root=f" ({workspace})" if workspace else "")
+
+
 def _is_write_target(command: str, start: int) -> bool:
     """True when the path token at ``start`` is the target of a file WRITE (a redirect or an output
     flag) — the only external file access still refused inside a network command."""
@@ -153,6 +207,11 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
     if level == "write" or not command:
         return None
+    # An install writes outside the workspace WITHOUT naming a path, so it must be judged before
+    # the path scan — which by construction finds nothing to refuse in it.
+    installing = install_refusal(command, level, workspace)
+    if installing:
+        return installing
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)

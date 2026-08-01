@@ -175,3 +175,81 @@ class TranslateOutboundEnforcementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GlobalInstallTests(unittest.TestCase):
+    """An install writes OUTSIDE the workspace while naming no external path, so the path scan
+    cannot see it. Measured 2026-08-01: a run's `pip install -e .` left an editable-install .pth in
+    the user's real site-packages pointing at that run's /tmp workspace; two days later it still
+    shadowed `import handle_resolver` for every Python process on the box."""
+
+    WS = "/tmp/suite-ws"
+
+    def refuse(self, cmd, level="none"):
+        return dirguard.command_refusal(cmd, level, self.WS)
+
+    def test_pip_install_is_refused_though_it_names_no_external_path(self):
+        for cmd in ("pip install requests",
+                    "pip3 install -e .",
+                    "python3 -m pip install -e .",
+                    "python -m pip install --upgrade build setuptools"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self.refuse(cmd), cmd)
+
+    def test_break_system_packages_is_refused(self):
+        # The exact escape cria's own PEP-668 remedy used to recommend.
+        self.assertIsNotNone(self.refuse("pip install --break-system-packages requests"))
+
+    def test_other_shared_scope_managers(self):
+        for cmd in ("npm install -g typescript", "yarn add --global foo",
+                    "gem install rspec", "cargo install ripgrep",
+                    "go install golang.org/x/tools/cmd/goimports@latest",
+                    "composer global require phpunit/phpunit",
+                    "apt-get install -y jq", "brew install jq"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self.refuse(cmd), cmd)
+
+    def test_project_local_installs_are_ordinary_work_and_pass(self):
+        # These managers install INTO the project by default. Refusing them would block the
+        # first fix — the class of intervention the doctrine forbids.
+        for cmd in ("npm install", "npm install express", "npm ci",
+                    "pnpm install", "yarn add left-pad",
+                    "composer require guzzlehttp/guzzle", "bundle install",
+                    "cargo add serde", "cargo build", "go get ./...", "go mod tidy",
+                    "mvn -q test", "python3 -m pytest"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.refuse(cmd), cmd)
+
+    def test_a_venv_inside_the_workspace_is_allowed(self):
+        for cmd in ("python3 -m venv .venv && ./.venv/bin/pip install requests",
+                    ".venv/bin/pip install requests",
+                    "./venv/bin/pip install -e .",
+                    "source .venv/bin/activate && pip install requests",
+                    ". venv/bin/activate && pip install -r requirements.txt"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.refuse(cmd), cmd)
+
+    def test_an_explicit_local_destination_is_allowed(self):
+        for cmd in ("pip install --target ./deps requests",
+                    "pip install --prefix=./out requests"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.refuse(cmd), cmd)
+
+    def test_read_level_still_refuses_because_an_install_is_a_write(self):
+        self.assertIsNotNone(self.refuse("pip install requests", level="read"))
+
+    def test_write_level_never_refuses(self):
+        self.assertIsNone(self.refuse("pip install requests", level="write"))
+
+    def test_refusal_names_the_workspace_and_the_venv_route(self):
+        msg = self.refuse("pip install requests")
+        self.assertIn(self.WS, msg)
+        self.assertIn(".venv", msg)
+
+    def test_the_word_install_in_prose_or_another_verb_is_not_an_install(self):
+        for cmd in ("grep -rn 'pip install' README.md",
+                    "echo see README for install steps",
+                    "python3 -m pip --version",
+                    "pip list"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.refuse(cmd), cmd)

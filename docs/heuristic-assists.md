@@ -17,6 +17,7 @@ the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in
 - **Domain-fetch steer** — a search naming a bare domain → "fetch `https://<domain>` directly" hint.
 - **Fetch exact-repeat guard** — an identical external `web_fetch` (url + find + cursor) this session → HTTP 400; internal hosts exempt.
 - **Failing-fetch guard** — 3 consecutive non-2xx external fetches → a "stop guessing URLs" nudge; localhost exempt.
+- **Shared-install guard** — a package install whose destination is the user/system environment (`pip install`, `npm -g`, `gem`/`cargo`/`go install`, `apt`/`brew`) → refused with the in-project venv route; project-local installs (`npm install`, `composer require`, `cargo add`) pass untouched.
 
 ## Massages — silent output repair so the harness accepts it
 
