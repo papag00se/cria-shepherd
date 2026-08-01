@@ -38,6 +38,10 @@ ANSWER_NOW = _TD["answer_now"]
 # (g2-0104's prompt ends with "Answer NOW with ONLY the JSON verdict"; 0141's {"done": true,
 # "proposed_fix": "None"} steer is that instruction obeyed). Callers pass the voice that fits.
 ANSWER_NOW_STEER = _TD["answer_now_steer"]
+# The forced-answer line for the CONFIRM judge: a WORD, not a JSON object. See the note in
+# prompts/verify_tools.txt — it answers after five rounds of its own tool calls, and a JSON
+# demand there gets another tool call (measured 0/10 vs 10/10).
+ANSWER_NOW_CONSISTENT = _TD["answer_now_consistent"]
 
 VERIFY_TOOLS = [
     {"type": "function", "function": {

@@ -8,4 +8,13 @@ outside = [refused: {{PATH}} is outside the workspace — the judge inspects onl
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
 empty_file = [{{PATH}} exists and is EMPTY (0 bytes)]
+# The CONFIRM judge answers after FIVE rounds of its own tool calls, and a JSON object is the
+# shape of the tool-call template it has been repeating — so it emits another one. Measured on
+# real captured rounds: gemma4 answered the JSON demand 0/10, and this one-word demand 10/10.
+# Prefixing the JSON demand with the critic's "you have no tools now" sentence did NOT help
+# (1/10) — the pattern it is continuing is in the transcript, not in the instruction. A bare
+# word is the one shape that resembles nothing it can call, which is why answer_now_steer
+# (prose or the single word ON_TRACK) has never had this failure either. ternary-bonsai answers
+# every shape 6/6, so nothing here costs a model that was already fine.
+answer_now_consistent = You have inspected enough. Reply with EXACTLY ONE WORD on the first line — CONSISTENT if the completion claim holds up against what you read, INCONSISTENT if it does not — then, on a second line, one short sentence saying why.
 answer_now_steer = You have inspected enough. Answer NOW with the short unstick directive spoken to the coder ("You ..."), or EXACTLY the one word ON_TRACK — never JSON, never a verdict.

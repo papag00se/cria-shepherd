@@ -642,6 +642,22 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
 
 
+def _consistent_word(text: str) -> bool | None:
+    """The confirm judge's one-word verdict, or None when it did not give one.
+
+    Both shapes are read, always: the ask is now a WORD (a JSON demand after five rounds of the
+    judge's own tool calls gets another tool call — measured 0/10 vs 10/10 on gemma4), but a model
+    that answers with the JSON object anyway is still understood. ternary-bonsai answers every shape
+    6/6, so no model can be made worse by the change — the only movement is a model that answered
+    NOTHING now answering."""
+    head = (text or "").strip().lstrip("*#`\"' ").upper()
+    if head.startswith("INCONSISTENT"):
+        return False
+    if head.startswith("CONSISTENT"):
+        return True
+    return None
+
+
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
                         rlog, *, phase: str) -> tuple[bool, str]:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
@@ -672,11 +688,18 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
     comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
-                             phase=phase, force_think_off=True, workspace_root=workspace_root)
+                             phase=phase, force_think_off=True, workspace_root=workspace_root,
+                             answer_now=verifytools.ANSWER_NOW_CONSISTENT)
     vtext = _completion_text(comp)
     if reasoner_role is not None:
         vtext = reasoner_role.clean_content(vtext)
-    obj = extract_json_object(strip_think(vtext))
+    cleaned = strip_think(vtext)
+    word = _consistent_word(cleaned)
+    if word is not None:
+        # The one-word answer, plus whatever reason line followed it.
+        why = "\n".join(cleaned.strip().splitlines()[1:]).strip()
+        return word, why
+    obj = extract_json_object(cleaned)
     if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
         # The coder-facing reason is the plain keep-working instruction, never cria's bookkeeping and
         # never the satisfied-verdict's own reason (which argues the opposite of what the caller is

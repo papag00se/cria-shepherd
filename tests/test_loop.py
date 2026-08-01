@@ -5335,6 +5335,18 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
 
+    def test_the_confirm_reads_a_one_word_verdict_AND_still_reads_json(self):
+        """Measured on real captured forced-answer rounds: the confirm judge answers a JSON demand
+        0/10 (it emits another tool call — it has just made five) and a one-word demand 10/10.
+        Prefixing the critic's "you have no tools now" sentence did not help: 1/10. ternary-bonsai
+        answers every shape 6/6, so BOTH are read and no model can be made worse."""
+        from cria.loop import _consistent_word
+        self.assertIs(_consistent_word("CONSISTENT\nthe README and tests are both on disk"), True)
+        self.assertIs(_consistent_word("INCONSISTENT\nno README anywhere"), False)
+        self.assertIs(_consistent_word("**CONSISTENT**"), True)      # a model that bolds it
+        self.assertIs(_consistent_word('{"consistent": true}'), None)  # ...JSON falls through to the
+        self.assertIs(_consistent_word("I think it is fine"), None)    #    object parser / fail-closed
+
     def test_an_unparseable_check_fails_CLOSED_and_is_traced(self):
         # g20 (gemma4, ada-handles): the judge burned all six inspection rounds without answering,
         # cria logged confirm_unparsed, CONFIRMED on nothing, and ended the run at 12 of its 30
