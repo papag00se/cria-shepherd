@@ -24,7 +24,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | # | model | params | architecture | kind | planner | attempts | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
-| 2 | gemma4 | 12B | `gemma4` | dense | off | 0 | — | not started |
+| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | **4/4** | ✅ PASSED (no walk needed) |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | not started |
 | 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | not started |
@@ -35,6 +35,25 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 
 This table is a human-readable mirror. `python3 suite/ladder_status.py` is the authority; when they
 disagree, the command is right and this table is stale.
+
+---
+
+## Notes — findings that are not a single run's walk
+
+**gemma4's sampling was wrong for 26 runs (2026-08-01).** Every gemma4 row before the ladder was
+sent ternary-bonsai's numbers — coder `0.2/0.95/20`, reasoner `0.6/0.90/40` — read from g26's
+captured request bodies, not inferred. `run.py` swapped the model and the planner and never touched
+`[roles.*]`. Fixed in `7259203`: `suite/sampling.py` holds canonical per-model values with sources
+cited, and the runner applies them on every swap.
+
+The first gemma4 run on its own settings (`1.0/0.95/64`, coding temp 0) scored **4/4** against a
+26-run ceiling of 3/4. **That is n=1 and is not a finding yet** — this model's scores have swung
+0 to 3 on identical code, so one run cannot separate the settings from variance. It is recorded
+here as the thing to measure, not as the reason.
+
+**The shared-install guard was exercised in the field.** gemma4 built a `.venv` inside its
+workspace rather than installing into the user's Python; `site_packages_leak` was empty. Landed
+same day in `53cae4a`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 11:41:33 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 12:14:06 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,14 +8,14 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **run** `gemma4` (attempt 1).
+**Nothing running.** Next action: **run** `qwythos` (attempt 1).
 
 ## Ladder
 
 | # | model | params | architecture | kind | planner | tries | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 2 | gemma4 | 12B | `gemma4` | dense | off | 0 | — | ⬜ not started |
+| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
 | 5 | ornith | 9B | `qwen35` | dense | off | 0 | — | ⬜ not started |
@@ -29,10 +29,12 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | started | model | score | terminal | milestones | calls | tok/s | run id |
 |:--|:--|:--:|:--|:--|--:|--:|:--|
 | 08-01 11:13 | ternary-bonsai | 4/4 | exited | 15m:2✓ | 54 | 39.7 | `ada-handles_ternary-bonsai_codex_poff_1785607985` |
+| 08-01 11:44 | gemma4 | 4/4 | exited | 15m:3✓ | 230 | 55.1 | `ada-handles_gemma4_codex_poff_1785609848` |
 
 ## Fixes landed during the ladder
 
 ```
+7259203 fix(suite): the runner sets each model's sampling — it was missed 26 times running
 91d44ba feat(suite): ladder-report.md — a GENERATED follow-along report
 4379943 fix(suite,docs): fabliq is an MoE — the ladder's kinds now come from the GGUF headers
 bc29023 feat(suite): the language ladder — one model at a time, 15 min per deliverable
@@ -47,7 +49,6 @@ c301d1d fix(suite): the status oracle told me to redo finished work, and saw a r
 9c9f022 feat(suite): task battery documented and raised to comparable complexity
 4a0afe7 feat(suite): seeded task categories — resolve failing tests, fix a reported bug, write missing tests
 298a145 feat(suite): one task per supported language — handles-{go,rust,node,ruby,php,java}
-74a9700 fix(suite,probeparse): score with cria's real parser; parse the test-runner locations cria was blind to
 ```
 
 ---
