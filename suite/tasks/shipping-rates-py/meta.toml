@@ -1,0 +1,5 @@
+name = "shipping-rates-py"
+language = "python"
+shape = "seeded-multi"     # starts from EXISTING code; debug + feature + tests + docs
+categories = [3, 1, 4, 19] # resolve failing tests / implement from spec / write tests / update docs
+deliverables = ["failing test fixed", "express zone implemented", "tests for it", "README rate table"]

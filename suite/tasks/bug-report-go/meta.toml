@@ -1,5 +1,0 @@
-name = "bug-report-go"
-language = "go"
-shape = "seeded-bug-report"  # a SYMPTOM, no failing test: reproduce, trace, fix
-category = 2                 # "fix a bug from a user report" (operator's battery list)
-deliverables = ["rounding fixed", "existing tests still pass", "no regression on hidden cases"]
