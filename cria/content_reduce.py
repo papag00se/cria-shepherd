@@ -19,10 +19,6 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 
-# Disclosure for a digest cut short — the loss is STATED, never silent.
-_DIGEST_CUT = "\n[… {n:,} characters of this turn omitted]"
-
-
 def est_tokens(s: str) -> int:
     """chars/4 token estimate (the same crude estimate the trimmer uses)."""
     return len(s) // 4
@@ -62,8 +58,16 @@ def binary_note(byte_len: int, kind: str | None) -> str:
 def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:
     """:func:`content_reduce` for text a model must READ AS INSTRUCTION, never as raw evidence.
 
-    Identical for structured content, but for prose it CUTS AND SAYS SO instead of running
-    :func:`strip_prose_text`. That stripper deletes function words, and its docstring's claim that
+    Identical for structured content, but for prose it returns the text UNCHANGED rather than running
+    :func:`strip_prose_text`. The caller enforces the budget and discloses what would not fit — so the
+    outcome is "kept whole" or "stated as not summarized", never "quietly reworded".
+
+    An earlier version of this cut the prose to the cap and labelled the cut. The operator rejected
+    that, correctly: it is a truncation, and shown a real example it was cutting mid-word
+    ("...ithub.com/matiassi") out of search-result noise that should never have been in the context
+    to begin with. Reaching for a size fix before removing the redundancy and the noise is treating
+    the symptom. The real repairs were elsewhere — collapse identical digests (42% of one measured
+    note) and spill search results the way fetches already spill. That stripper deletes function words, and its docstring's claim that
     they are "certain-junk" is wrong: `is`, `to`, `of`, `for`, `be` carry the grammatical relations
     that decide meaning. The result reads as fluent English and is not — which makes it a worse
     failure than truncation, because truncation is visible.
@@ -92,12 +96,7 @@ def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> st
         if reduced is not None and est_tokens(reduced) <= cap_tokens:
             return reduced
         content = reduced if reduced is not None else content
-    if est_tokens(content) <= cap_tokens:
-        return content
-    keep = max(1, cap_tokens * 4)          # est_tokens is ~4 chars/token
-    if len(content) <= keep:
-        return content
-    return content[:keep].rstrip() + _DIGEST_CUT.format(n=len(content) - keep)
+    return content   # still over cap: KEEP IT WHOLE and let the caller disclose it
 
 
 def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:

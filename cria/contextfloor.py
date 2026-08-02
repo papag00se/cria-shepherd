@@ -527,6 +527,38 @@ def _note_cost_bound(dropped_tokens: int, msg_budget: int) -> int:
     return min(of_budget, of_dropped) + _NOTE_FRAME_TOKENS
 
 
+_REPEAT_SUFFIX = "   [identical result, {n} times in a row]"
+
+
+def _collapse_repeats(digests: list[tuple[int, str]]) -> list[str]:
+    """Consecutive identical digests folded into ONE, with the count stated.
+
+    Repeating a byte-identical result N times is not a summary of anything — it costs N times the
+    context to say what one copy plus a number says exactly. This is lossless: nothing is reworded,
+    nothing is cut, and the count is on the line.
+
+    Measured on run 20260801T225200 (zaya1). One compaction note ran to 22,149 characters across 117
+    bullets of which **25 were distinct** — the single line
+
+        {"error":"route_not_found","message":"Route not found: /info", ...}
+
+    appeared **89 times**, and repeated bullets were 42% of the note's characters. The model had
+    emitted the same failing curl in a loop; cria then replayed the identical failure back at it 89
+    times."""
+    out: list[str] = []
+    run_text, run_n = None, 0
+    for _, d in digests:
+        if d == run_text:
+            run_n += 1
+            continue
+        if run_text is not None:
+            out.append(run_text + (_REPEAT_SUFFIX.format(n=run_n) if run_n > 1 else ""))
+        run_text, run_n = d, 1
+    if run_text is not None:
+        out.append(run_text + (_REPEAT_SUFFIX.format(n=run_n) if run_n > 1 else ""))
+    return out
+
+
 def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> dict:
     """The synthesized stand-in for the dropped turns: a content_reduce()d digest of what each turn
     CONTAINED (so a dropped test-failure/error output survives as a summary, not just a filename) plus
@@ -571,7 +603,7 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     if digests:
         digests.sort(key=lambda p: p[0])  # chronological
         parts.append("Summary of what those turns contained:")
-        parts.extend("• " + d for _, d in digests)
+        parts.extend("• " + d for d in _collapse_repeats(digests))
     if omitted:
         parts.append(f"(+{omitted} further compacted turn(s) whose content could not be summarized here.)")
 

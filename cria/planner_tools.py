@@ -56,6 +56,9 @@ _FETCH_MAX_BYTES = webfetch.MAX_BODY_BYTES
 # planner's gather sees the fuller result set rather than an arbitrary 5. The count is disclosed in
 # format_results so the model knows how many landed.
 _SEARCH_COUNT = 20
+# Above this, a result list goes to the scratchpad instead of the context. Titles+URLs
+# still ride inline; it is the snippet bodies that carry the unrelated vocabulary.
+_SEARCH_INLINE_CHARS = 1500
 # Wall-clock for ONE read-only gather command. Was 20 s, which a recursive grep/find or `git log -p`
 # over a real repo exceeds routinely on a contended box — and a timeout with no partial output feeds
 # the research floor as "this call taught it nothing", the exact input that makes the planner draft
@@ -98,7 +101,7 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     if name == "web_fetch":
         return _web_fetch(args, facts, scratch)
     if name in ("web_search", "local_web_search"):
-        return _web_search(args, search_key, recent_searches, facts)
+        return _web_search(args, search_key, recent_searches, facts, scratch)
     return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
 
 
@@ -460,7 +463,8 @@ def _record_fetch(facts: dict | None, url: str, status, body: str, content_type)
     facts[url] = (f"HTTP {status}", ", ".join(routes), "\n".join(fields))
 
 
-def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = None) -> ToolResult:
+def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = None,
+                scratch: str | None = None) -> ToolResult:
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
         return _nothing("[web_search error: no query]")
@@ -476,9 +480,37 @@ def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = 
         # pointers, not the source (the same sentence the coder-side doctrine already carries); the
         # note stays exactly while cria knows no routes and goes quiet the moment any spec is read.
         note = _search_no_structure_note(facts)
-        return ToolResult(format_results(query, brave_search(search_key, query, _SEARCH_COUNT)) + note, True)
+        body = format_results(query, brave_search(search_key, query, _SEARCH_COUNT))
+        # SPILL, exactly as the fetch sibling does. Twenty results of titles+snippets is thousands of
+        # characters of OTHER people's words, and a search is speculative by nature — the model asked
+        # "what is out there", not "give me this document". Measured on run 20260801T225200: one
+        # web_search for "README.md generation guide install run script tests" put 9,269 characters
+        # into the planner's context — npm packages, Reddit threads, jest configs, valkey test docs —
+        # none of it about the task. It then survived into the compaction note and was still there,
+        # verbatim, at call 0004. The list stays reachable in full on disk; what rides in the context
+        # is the pointer plus the titles.
+        spilled = _spill_search(query, body, scratch)
+        return ToolResult((spilled if spilled is not None else body) + note, True)
     except Exception as e:
         return _nothing(f"[web_search error: {e}]")
+
+
+def _spill_search(query: str, body: str, scratch: str | None) -> str | None:
+    """Save a search result list to the scratchpad and return the pointer + the titles, or None when
+    it is small enough to inline. Same contract as :func:`_spill_to_scratch` for fetches."""
+    if scratch is None or len(body) <= _SEARCH_INLINE_CHARS:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:60] or "search"
+    target = os.path.join(scratch, f"search-{slug}.txt")
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(body)
+    except OSError:
+        return None
+    titles = "\n".join(ln for ln in body.splitlines()
+                       if ln[:2].strip().rstrip(".").isdigit() or ln.startswith("Search results for:"))
+    return prompts.fill(prompts.load_map("planner_steers")["search_spill"],
+                        query=query, chars=f"{len(body):,}", target=target, titles=titles)
 
 
 def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:
