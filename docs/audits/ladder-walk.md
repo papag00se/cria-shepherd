@@ -1424,3 +1424,49 @@ concrete file artifact (`live_test_goose.py`) is definitionally not strategy noi
 candidate rule — but it should be measured, not assumed.
 
 **Model wall: not reached.** The model built what it was asked to build; it was asked for half the task.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785660278
+
+**0/4.** 68 calls, killed at the 15-minute floor.
+
+**cria fault: yes** — the noise judge deleted the live test and the README from the plan, and this
+time the log proves it directly.
+
+The dropped-step logging added one run earlier caught it on its very first outing:
+
+```
+loop.replan_noise  dropped 2  kept 1
+  "Write live_test.py: call GET /handles/goose, print resolved_address, holder_address, total_handles"
+  "Write README.md: install requirements (requests, pytest); run script; run tests; explain two-step resolution"
+```
+
+The verifier then reported `no live-test file found` and `no README` — precisely the two steps
+deleted. No reconstruction from captures needed; the log says it.
+
+**Third occurrence in this ladder**, and the first one measured rather than archaeologically
+recovered:
+
+| run | deleted | outcome |
+|:--|:--|:--|
+| 1785625253 | unit tests, live test, README | 0/4 |
+| 1785659842 | unit tests, live test | 1/4, **session ended in 181 s** |
+| 1785660278 | live test, README | 0/4 |
+
+`missing_deliverables` is the reasoned brake for exactly this, and it works — 34 firings across every
+log day. It is a judge, and it missed all three.
+
+**Fixed** — a step that says to WRITE a file is definitionally not strategy noise, so it is settled
+deterministically before any judgment. The judge's real targets are untouched: "Error handling
+strategy.", "Run the tests", "Set up the development environment".
+
+Authoring intent is the discriminator, not the presence of a filename — an existing test caught that
+within a minute. `grep -n 'resolve' spec.json` names a file and IS the bare-command noise this judge
+should delete; it stays droppable.
+
+**Known limit, recorded rather than papered over:** *"Write unit tests for resolve_handle with 3-4
+test cases"* names no file and is NOT protected. Two of the three cases above are covered in full;
+that one is not, and a test asserts the gap so it cannot be quietly assumed away.
+
+**Model wall: not reached.**

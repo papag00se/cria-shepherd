@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 01:41:32 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-02 02:04:05 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785659842` (capture `/home/jesse/.cria/calls/20260802T013732-019fc19f-075c-74c0-a3cf-443d6f17fbb1`), then write `## ada-handles_mellum2_codex_pon_1785659842` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785660278` (capture `/home/jesse/.cria/calls/20260802T014448-019fc1a5-aee9-7e70-9d47-981d22544edf`), then write `## ada-handles_mellum2_codex_pon_1785660278` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -19,7 +19,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 3/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 6 | 3/4 | 📖 needs walk |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
@@ -39,10 +39,13 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-02 00:12 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 145 | 171.4 | `ada-handles_mellum2_codex_pon_1785654712` |
 | 08-02 00:33 | mellum2 | 3/4 | milestone-miss-60min | 15m:1✓ 30m:2✓ 45m:3✓ 60m:3✗ | 375 | 156.8 | `ada-handles_mellum2_codex_pon_1785656001` |
 | 08-02 01:37 | mellum2 | 1/4 | exited | — | 40 | 186.4 | `ada-handles_mellum2_codex_pon_1785659842` |
+| 08-02 01:44 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 68 | 160.3 | `ada-handles_mellum2_codex_pon_1785660278` |
 
 ## Fixes landed during the ladder
 
 ```
+8c85646 fix(replan): the noise judge may not delete a step that AUTHORS a file
+151435b obs(loop): log WHICH steps the noise judge deleted, not just how many
 69efeaf fix(probeparse): stop pointing the coder at Python's standard library
 78d5d05 fix(replan): refuse a re-derived step that names a CRIA TOOL as the product's code
 7bbf886 feat(verify): show the critic when a step's quoted values are absent from the file
@@ -56,8 +59,6 @@ ea4b8c2 fix(prompts,ladder): stop cria knowing this task, and block the model th
 429e35d fix(planner): the cut-off guard I shipped was wrong twice, and it shipped a false claim
 5d2b119 fix(verify,selfcompact): close the fail-open default; the THIRD compaction path
 dfcd83c refactor(selfcompact): ONE owner for the compaction request, not two that agree
-36d2d4b fix(planner): a reply cut off at the output cap is not a finished turn
-743405d fix(planner): tell the planner where the workspace is, and stop re-running its own calls
 ```
 
 ---
