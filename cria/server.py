@@ -273,7 +273,8 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
         return ""
 
     text = _text_of(comp).strip()
-    if not text or massage.has_tool_call_leak(text):
+    truncated = massage.is_truncated(comp)
+    if not text or massage.has_tool_call_leak(text) or truncated:
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
         pb = _proxy_body(dict(body))
         pb = {**pb, "messages": [m for m in pb.get("messages", []) if m.get("role") != "system"]}
@@ -289,20 +290,24 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
             replace(role, reasoning="off").apply(pb)
         else:
             pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text))
+        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text), truncated=truncated)
         try:
             comp2 = massage.coerce_text_answer(
                 massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)
             text2 = _text_of(comp2).strip()
-            if text2 and not massage.has_tool_call_leak(text2):
+            if text2 and not massage.has_tool_call_leak(text2) and not massage.is_truncated(comp2):
                 comp, text = comp2, text2
             else:
                 # both passes produced no usable prose (observed: two pseudo write_file dumps in a
                 # row, run g1 0093/0094) — the summary will be the deterministic appendices ONLY.
                 # Without this emit that fact was invisible in the events.
                 rlog.emit("route.compaction_no_briefing", level="warning", retry_leak=bool(text2))
+                text = ""   # this comment's own claim, now true in the code: a leaked or cut-off
+                            # summary was still MERGED with the appendices and shipped as the
+                            # session's entire remembered past. Ship the re-derivable facts alone.
         except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
             rlog.emit("route.compaction_retry_failed", level="warning")
+            text = ""
     facts = _fetch_ground_truth(body.get("messages", []))
     # WORKSPACE LEDGER — the fetch-facts pattern extended to files. g1's compaction summary carried
     # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
@@ -313,7 +318,9 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     inventory = _workspace_listing(ws)
     checks = _last_checks_note(server, sk)
     facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
-    if facts:
+    # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
+    # otherwise a dropped summary silently survives as the untouched original content.
+    if facts or text != _text_of(comp).strip():
         merged = (text + "\n\n" + facts).strip()
         chs = [dict(ch) for ch in comp.get("choices") or []]
         if chs:

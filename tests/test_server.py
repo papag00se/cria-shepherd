@@ -861,6 +861,48 @@ class HardenCompactionReplyTests(unittest.TestCase):
         self.assertTrue(text.startswith("Recovered briefing."))
         self.assertIn("/handles/{handle}", text)                    # appendix rides the retry too
 
+    def test_a_truncated_summary_is_retried_like_the_loop_path_does(self):
+        # loop.summarize() has retried on finish_reason=length since the truncation guard landed;
+        # this sibling never got it, and its own docstring called the two "the same" hardening.
+        # A 63,370-char briefing repeating "I closed the issue" 148 times rode 49 prompts.
+        from cria.server import _harden_compaction_reply
+
+        calls = []
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                calls.append(pb)
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "Whole briefing."}, "finish_reason": "stop"}]})
+
+        cut = {"choices": [{"message": {"role": "assistant", "content": "I closed the issue. I clo"},
+                            "finish_reason": "length"}]}
+        comp = _harden_compaction_reply(cut, {"messages": self._history()},
+                                        provider=_Provider, server=self._Srv, rlog=self._Rlog())
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(comp["choices"][0]["message"]["content"].startswith("Whole briefing."))
+
+    def test_a_summary_cut_off_TWICE_is_dropped_not_shipped(self):
+        # When both passes are unusable the code's own comment says the summary is "the
+        # deterministic appendices ONLY" — it was not: the cut text was merged and shipped as the
+        # session's entire remembered past.
+        from cria.server import _harden_compaction_reply
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "Still cut off mid-"}, "finish_reason": "length"}]})
+
+        cut = {"choices": [{"message": {"role": "assistant", "content": "I closed the issue. I clo"},
+                            "finish_reason": "length"}]}
+        comp = _harden_compaction_reply(cut, {"messages": self._history()},
+                                        provider=_Provider, server=self._Srv, rlog=self._Rlog())
+        text = comp["choices"][0]["message"]["content"]
+        self.assertNotIn("I clo", text)                             # the cut prose is gone
+        self.assertIn("/handles/{handle}", text)                    # the re-derivable facts remain
+
     def test_failed_retry_never_breaks_the_reply(self):
         from cria.server import _harden_compaction_reply
 
