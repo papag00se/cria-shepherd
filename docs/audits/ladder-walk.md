@@ -1906,8 +1906,26 @@ gate cria already runs — not by the suite's verifier, which cria must never se
 mechanism, and it must be measured across the captures first: how often does a gate go green→red
 within a step, and does the coder recover on its own?
 
+**Measured, same session, from the logs cria already writes.** `loop.gate` records `findings`, so
+green/red is derivable with no new instrumentation:
+
+| | |
+|:--|--:|
+| sessions with ≥2 gate results | 49 |
+| gate results | 1,065 |
+| **GREEN → RED transitions** | **34**, in 28 sessions |
+| sessions that regressed at least once | **57%** |
+
+So this is not one bad run. **More than half of all captured sessions have at least one moment where
+a passing gate goes failing**, and cria treats that transition exactly like any other red gate — it
+steers at the new failure with no notion that the previous state was better.
+
+(My first attempt to measure this looked for an `ok`/`clean` field, found none, and reported zero
+sessions. The field is `findings`. A count is not a reading, and neither is a field name I guessed.)
+
 Recorded rather than built, because the last four runs are a sustained lesson in what shipping a
-mechanism before its false-positive surface is understood actually costs.
+mechanism before its false-positive surface is understood actually costs — but the prevalence is now
+known, and it is high.
 
 **This is the highest-value open finding in the ladder.** Six 3/4s and now a 3/4 held for thirty
 minutes and thrown away — mellum2's problem is no longer reaching four, it is keeping three.
