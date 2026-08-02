@@ -780,30 +780,35 @@ class Planner:
             # asking. (Prose asking for research-first was already in plan.txt and was ignored: 3 of
             # 4 measured runs planned having read no real source.) Ends when it stops calling tools.
             rounds = 0
-            cut_retried = False   # one re-ask for a cut-off reply, then take what parses
+            cut_noted = False      # say 'your reply was cut short' once, not every round
+            pending_note = ""     # rides WITH the round's tool results, never instead of them
             while rounds < self._max_rounds:
                 msg = self._reason(messages, rlog, research=True)
                 if msg is None:
                     return None
                 calls = _tool_calls(msg)
-                # A reply CUT OFF at the output cap is not a finished turn, and its tool-call list is
-                # not a finished list — the final call is literally mid-token. Measured over every
-                # captured planner round (n=333): finish=length occurs in 8, and ALL SEVEN rounds
-                # that emitted more than 12 distinct calls are among them. Healthy rounds sit at a
-                # median and p90 of ONE distinct call. Run 20260801T213731 (zaya1, 0/4) produced 95,
-                # 100, 92 and 93 calls in four consecutive cut-off rounds — one of them an
-                # exec_command whose `cmd` was the model's own leaked reasoning, sliced mid-sentence:
-                #     {"cmd":"shamefully I cannot make HTTP requests directly via exec_command? …
-                # cria ran those lists, including dozens of curls against a live API, and spent the
-                # entire 15-minute wall in the planner without ever reaching the coder.
-                # Same contract as the coder's guard_truncation: refuse the partial, re-ask once,
-                # bounded. Nothing is truncated — the round is simply not treated as complete.
-                if msg.get(FINISH_KEY) == "length" and not cut_retried:
-                    cut_retried = True
-                    rlog.emit("plan.gather_cut_off", calls=len(calls))
-                    messages.append({"role": "user",
-                                     "content": prompts.load_map("planner_steers")["reply_cut_off"]})
-                    continue
+                # A reply CUT OFF at the output cap did not finish — but WHAT was unfinished
+                # decides the handling, and my first version got this wrong in two ways.
+                #
+                # Checked against every captured cut-off round that carried tool calls (n=8): the
+                # LAST call's arguments parse as valid JSON in 5 of them and are truncated mid-object
+                # ("{") in 3. So "the list is unfinished" is true less than half the time, and
+                # refusing the whole round threw away research the model really had made. And on
+                # rounds with NO calls at all, the steer said "none of its tool calls were run" —
+                # cria asserting something untrue (principle 5b), which is how it fired on run
+                # 20260801T221447 calls 0002 and 0006, both of which made zero calls.
+                #
+                # So: drop only a trailing call that does not parse, keep and run the rest, and say
+                # plainly that the reply was cut short. Nothing real is discarded.
+                if msg.get(FINISH_KEY) == "length" and calls:
+                    if _last_call_truncated(msg):
+                        rlog.emit("plan.gather_partial_call_dropped", tool=calls[-1][1])
+                        calls = calls[:-1]
+                        msg["tool_calls"] = msg["tool_calls"][:len(calls)]
+                    if calls and not cut_noted:
+                        cut_noted = True
+                        rlog.emit("plan.gather_cut_off", calls=len(calls))
+                        pending_note = prompts.load_map("planner_steers")["reply_cut_off"]
                 if not calls:
                     if looked or nudged:
                         break            # done looking → draft from what it found
@@ -861,6 +866,9 @@ class Planner:
                     # planner draft from memory and invent an endpoint.
                     looked = looked or result.learned
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result.text})
+                if pending_note:   # additive: the results come first and whole, the note follows
+                    messages.append({"role": "user", "content": pending_note})
+                    pending_note = ""
             if rounds >= self._max_rounds:
                 rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
             # ---- PHASE B: DRAFT, from what the research actually found.
@@ -1082,6 +1090,29 @@ def _extract_cwd(messages: list[dict]) -> str | None:
 
 def _assistant_message_obj(obj) -> dict:
     return ((obj.get("choices") or [{}])[0].get("message")) or {} if isinstance(obj, dict) else {}
+
+
+def _last_call_truncated(msg: dict) -> bool:
+    """Is the LAST tool call in ``msg`` a FRAGMENT — arguments cut off mid-object?
+
+    Checked on the RAW argument string, because ``_tool_calls`` parses leniently and turns an
+    unparseable one into ``{}`` — indistinguishable from a call that legitimately takes no
+    arguments. Raw is unambiguous: a real empty object is "{}", a truncated one is "{".
+
+    Measured over every captured planner round that was cut off at the output cap and still carried
+    tool calls (n=8): 5 end on a complete call, 3 on a fragment. So a cut-off reply is NOT
+    automatically an unusable list — only the fragment is unusable."""
+    tcs = msg.get("tool_calls") or []
+    if not tcs:
+        return False
+    args = ((tcs[-1].get("function") or {}).get("arguments"))
+    if isinstance(args, dict) or args in (None, ""):
+        return False
+    try:
+        json.loads(args, strict=False)
+        return False
+    except (ValueError, TypeError):
+        return True
 
 
 def _tool_calls(msg: dict) -> list[tuple[str, str, dict]]:

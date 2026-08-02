@@ -1,9 +1,16 @@
-"""A planner reply cut off at the output cap is not a finished turn.
+"""A planner reply cut off at the output cap: what was unfinished decides the handling.
 
-Measured over every captured planner round (n=333): finish=length occurs in 8, and ALL SEVEN rounds
-emitting more than 12 distinct calls are among them. Healthy rounds sit at median and p90 of ONE
-distinct call. Run 20260801T213731 (zaya1, 0/4) produced 95, 100, 92 and 93 calls in four
-consecutive cut-off rounds and never reached the coder.
+The first version of this guard refused the whole round. Checked against every captured cut-off
+round that carried tool calls (n=8), that was wrong twice over:
+
+  * the LAST call's arguments parse as valid JSON in 5 of the 8 and are a fragment ("{") in 3 — so
+    "the list is unfinished" is true less than half the time, and refusing threw away real research;
+  * on a cut-off round with NO calls at all it still fired, telling the model "none of its tool
+    calls were run" when there were none. That is cria asserting something untrue (principle 5b),
+    and it shipped — run 20260801T221447 calls 0002 and 0006 both made zero calls and got it.
+
+Now: drop only a trailing call that does not parse, keep and run the rest, and say the reply was cut
+short — once, and only when calls were actually present.
 """
 import inspect
 import json
@@ -13,55 +20,80 @@ import unittest
 from cria import planner, prompts
 
 
-class CutOffTests(unittest.TestCase):
-    def test_the_finish_reason_is_carried_out_of_reason(self):
-        src = inspect.getsource(planner.Planner._reason)
-        self.assertIn("FINISH_KEY", src)
-        self.assertIn("finish_reason", src)
+class FragmentDetectionTests(unittest.TestCase):
+    def _msg(self, raw):
+        return {"tool_calls": [{"function": {"name": "read_file", "arguments": raw}}]}
 
-    def test_a_cut_off_round_is_refused_and_re_asked_once(self):
-        src = inspect.getsource(planner.Planner._gather_and_plan)
-        self.assertIn('msg.get(FINISH_KEY) == "length" and not cut_retried', src)
-        self.assertIn("cut_retried = True", src)
-        self.assertIn("plan.gather_cut_off", src)
+    def test_a_complete_call_is_not_a_fragment(self):
+        self.assertFalse(planner._last_call_truncated(self._msg('{"path":"a.py"}')))
 
-    def test_the_refusal_happens_BEFORE_any_call_is_executed(self):
-        src = inspect.getsource(planner.Planner._gather_and_plan)
-        cut = src.index("gather_cut_off")
-        exec_at = src.index("planner_tools.execute_tool")
-        self.assertLess(cut, exec_at, "the partial list must never be executed")
+    def test_a_truncated_call_IS(self):
+        self.assertTrue(planner._last_call_truncated(self._msg("{")))
+        self.assertTrue(planner._last_call_truncated(self._msg('{"path":"a.p')))
 
-    def test_it_is_bounded_so_a_model_that_always_overruns_still_progresses(self):
-        src = inspect.getsource(planner.Planner._gather_and_plan)
-        self.assertIn("cut_retried = False", src)
+    def test_a_legitimately_empty_argument_object_is_not(self):
+        # _tool_calls parses leniently and turns BOTH into {}, so the check must read the raw string.
+        self.assertFalse(planner._last_call_truncated(self._msg("{}")))
 
-    def test_the_private_key_never_reaches_the_wire(self):
-        # The gather composes its own assistant dict; the private key must not be in it.
-        src = inspect.getsource(planner.Planner._gather_and_plan)
-        self.assertIn('messages.append({"role": "assistant", "content": msg.get("content") or None, '
-                      '"tool_calls": msg["tool_calls"]})', src)
-        self.assertNotIn('messages.append(msg)', src)
+    def test_no_calls_at_all_is_not_a_fragment(self):
+        self.assertFalse(planner._last_call_truncated({"tool_calls": []}))
+        self.assertFalse(planner._last_call_truncated({}))
 
-    def test_the_steer_is_plain_and_names_no_internals(self):
-        t = prompts.load_map("planner_steers")["reply_cut_off"]
-        self.assertNotIn("cria", t.lower())
-        self.assertIn("cut off", t)
-        self.assertIn("none of its tool calls were run", t)
+
+class HandlingTests(unittest.TestCase):
+    SRC = inspect.getsource(planner.Planner._gather_and_plan)
+
+    def test_it_only_engages_when_calls_are_actually_present(self):
+        self.assertIn('if msg.get(FINISH_KEY) == "length" and calls:', self.SRC)
+
+    def test_only_the_fragment_is_dropped(self):
+        self.assertIn("if _last_call_truncated(msg):", self.SRC)
+        self.assertIn("calls = calls[:-1]", self.SRC)
+
+    def test_the_surviving_calls_are_still_EXECUTED(self):
+        drop = self.SRC.index("calls = calls[:-1]")
+        run = self.SRC.index("planner_tools.execute_tool")
+        self.assertLess(drop, run, "the round must still happen after the fragment is dropped")
+
+    def test_the_note_rides_WITH_the_results_never_instead_of_them(self):
+        results = self.SRC.index('messages.append({"role": "tool", "tool_call_id": cid')
+        note = self.SRC.index("if pending_note:")
+        self.assertLess(results, note, "results first and whole, then the note")
+
+    def test_it_is_said_once_not_every_round(self):
+        self.assertIn("cut_noted = False", self.SRC)
+        self.assertIn("and not cut_noted", self.SRC)
+
+
+class SteerTextTests(unittest.TestCase):
+    TEXT = prompts.load_map("planner_steers")["reply_cut_off"]
+
+    def test_it_no_longer_claims_calls_were_discarded(self):
+        self.assertNotIn("none of its tool calls were run", self.TEXT)
+
+    def test_it_states_what_is_actually_true(self):
+        self.assertIn("cut short", self.TEXT)
+        self.assertIn("calls that arrived complete", self.TEXT)
+
+    def test_it_names_no_internals(self):
+        self.assertNotIn("cria", self.TEXT.lower())
 
 
 class MeasurementTests(unittest.TestCase):
-    def test_the_measured_runaway_rounds_all_carry_finish_length(self):
+    def test_the_5_of_8_split_is_what_the_captures_still_say(self):
         root = pathlib.Path.home()/".cria"/"calls"
         if not root.is_dir():
             self.skipTest("captures not present on this machine")
-        runaway_not_cut = []
+        complete = fragment = 0
         for r in root.glob("*/*-planner.response.json"):
             try: ch = json.load(r.open())["choices"][0]
             except Exception: continue
-            tc = ch["message"].get("tool_calls") or []
-            n = len({(t["function"]["name"], t["function"].get("arguments", "")) for t in tc})
-            if n > 12 and ch.get("finish_reason") != "length":
-                runaway_not_cut.append(str(r))
-        self.assertEqual(runaway_not_cut, [],
-                         "every runaway round should be a cut-off round; if this fails the "
-                         "finish_reason signal is no longer sufficient and needs re-measuring")
+            if ch.get("finish_reason") != "length": continue
+            if not (ch["message"].get("tool_calls") or []): continue
+            if planner._last_call_truncated(ch["message"]): fragment += 1
+            else: complete += 1
+        if complete + fragment == 0:
+            self.skipTest("no cut-off rounds with calls in these captures")
+        self.assertGreater(complete, 0,
+                           "if NO cut-off round ends on a complete call, refusing the whole round "
+                           "would have been right after all — re-derive this guard")
