@@ -44,7 +44,7 @@ LADDER = [
     ("qwythos",          "9B",          "qwen35",            "dense", "off"),
     ("qwopus",           "9B",          "qwen35",            "dense", "off"),
     ("ornith",           "9B",          "qwen35",            "dense", "off"),
-    ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "on"),
+    ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "off"),  # flipped 2026-08-02 — see docs/audits/ladder-walk.md (16 planner-on runs peaked at 3/4 over 27-60 min; the first planner-off run reached the same score in 3.9 min and 53 calls, with none of the plan-side faults)
     ("nemotron-elastic", "12B/A2B",     "nemotron_h_moe 128/6", "moe", "on"),
     ("zaya1",            "8.4B/A760M",  "zaya 16/1",         "moe",   "on"),
     ("fabliq",           "8B/A1B",      "lfm2moe 32/4",      "moe",   "on"),
