@@ -2623,6 +2623,21 @@ class Loop:
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         ev += _gate_notes(sess)
+        # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
+        # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
+        # this path is the one that actually fires: on a plan-OFF run the coder reaches a green gate and
+        # calls task_complete, which lands HERE, while _periodic_satisfaction is `blocked` by exactly the
+        # conditions that precede a finish (a pending steer, a red gate, a done-probe in flight).
+        # Measured on ada-handles_mellum2_codex_poff_1785693138: `loop.done_critic` fired twice (calls
+        # 0158 and 0164), `loop.satisfaction_check` fired ZERO times, so the two fixes that day did not
+        # touch the run they were written for. Both judges approved a CLI that dies with
+        # `NameError: name 'json' is not defined` in main(); the coder's own two attempts to run it were
+        # blocked on a typo'd path and nothing else ever executed it. EVIDENCE, never a gate — empty on
+        # a confirmed run or a task that needs no run, so a clean signal stays silent.
+        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
+                                            self._ctx.reasoner_role, rlog)
+        if exec_marker:
+            ev += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
@@ -4372,9 +4387,17 @@ def _steer_or_none(text: str) -> str | None:
     # A NEGATED verdict takes its whole sentence (it asserts a judgement and carries no instruction);
     # a BARE token is only a label on a hedged reply and is excised in place, so "ON_TRACK You are
     # stuck; write it now" keeps its directive.
-    negated = re.compile(r"(?i)\b(?:not|never|isn't|aren't)\s+(?:on[_ ]track|not[_ ]stuck)\b")
+    # `NOT_STUCK` is a SENTINEL — the underscore is part of the token. `on[_ ]track` may keep the space
+    # form because "on track" is only ever the verdict; "not stuck" is ordinary English a directive says
+    # about the coder, and excising it INVERTS the sentence. Measured on
+    # ada-handles_mellum2_codex_poff_1785693138 call 0138: the reasoner wrote "You are making genuine
+    # progress ... This is not stuck." and the coder was handed "... This is ." as its rescue; the same
+    # regex turns "You are not stuck on the import, you are stuck on the missing live test" into "You are
+    # on the import, ..." — cria asserting the opposite of what the reasoner ruled.
+    _SENTINEL = r"on[_ ]track|not_stuck"
+    negated = re.compile(rf"(?i)\b(?:not|never|isn't|aren't)\s+(?:{_SENTINEL})\b")
     kept = [s for s in re.split(r"(?<=[.!?])\s+|\n+", body) if not negated.search(s)]
-    directive = re.sub(r"(?i)\b(on[_ ]track|not[_ ]stuck)\b", " ", " ".join(kept))
+    directive = re.sub(rf"(?i)\b({_SENTINEL})\b", " ", " ".join(kept))
     directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:.,;").strip()
     # A directive remains once the verdict is stripped → deliver it (Fabliq hedges the verdict + advice);
     # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare

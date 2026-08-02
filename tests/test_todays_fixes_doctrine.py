@@ -150,6 +150,24 @@ class BothCompletionPathsRunTheDeliverable(unittest.TestCase):
 
     'Before shipping any fix, grep for its sibling' — this IS the sibling."""
 
+    def test_EVERY_caller_of_the_completion_judge_runs_the_deliverable(self):
+        """The sibling grep, done properly. `judge_satisfaction` decides whether a session may end, and
+        it has THREE callers, not two — the third is `_done_critic_reason`, the plan-OFF critic on a
+        green `task_complete`, and it was the one that actually fired.
+
+        Measured on ada-handles_mellum2_codex_poff_1785693138 (planner off, 166 calls, 2/4):
+        `loop.done_critic` fired at calls 0158 and 0164, `loop.satisfaction_check` fired ZERO times, so
+        both fixes landed that day missed the run they were written for. Both judges approved a CLI that
+        dies with `NameError: name 'json' is not defined`."""
+        for name in ("_periodic_satisfaction", "_reopen_if_unsatisfied", "_done_critic_reason"):
+            with self.subTest(caller=name):
+                src = inspect.getsource(getattr(loop.Loop, name))
+                self.assertIn("judge_satisfaction(", src)
+                marker_at = src.index("live_execution_marker(")
+                judge_at = src.index("judge_satisfaction(")
+                self.assertLess(marker_at, judge_at,
+                                f"{name}: the run must inform the verdict, not follow it")
+
     def test_the_plan_ON_completion_critic_runs_the_deliverable(self):
         src = inspect.getsource(loop.Loop._reopen_if_unsatisfied)
         self.assertIn("live_execution_marker", src)

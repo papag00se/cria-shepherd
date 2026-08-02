@@ -2118,6 +2118,28 @@ class SteerVerdictTests(unittest.TestCase):
         out = _steer_or_none("The coder is NOT ON_TRACK. Read handler.py and run the failing test.")
         self.assertEqual(out, "Read handler.py and run the failing test.")
 
+    def test_plain_english_not_stuck_survives_the_sentinel_scrub(self):
+        """`NOT_STUCK` is a sentinel token; "not stuck" is ordinary English. The excision pattern wrote
+        the legacy sentinel as `not[_ ]stuck`, so the space form matched too and the scrub ate the words
+        out of any sentence that used them.
+
+        Measured on ada-handles_mellum2_codex_poff_1785693138: at call 0137 the reasoner wrote "You are
+        making genuine progress ... This is not stuck." and at call 0138 cria handed the coder
+        "... This is ." as its rescue. The same substitution INVERTS a real directive — "You are not
+        stuck on the import, you are stuck on the missing live test" became "You are on the import, ..."
+        — which is cria asserting the opposite of what the reasoner ruled."""
+        from cria.loop import _steer_or_none
+        out = _steer_or_none("You are making genuine progress. This is not stuck.")
+        self.assertIsNotNone(out)
+        self.assertIn("not stuck", out)
+        self.assertNotIn("This is .", out)
+        # the inversion case: the negation must not be silently deleted from a live directive
+        out = _steer_or_none("You are not stuck on the import. You are stuck on the missing live test.")
+        self.assertIn("not stuck on the import", out)
+        # the LEGACY SENTINEL (underscored) is still stripped — that is what the pattern is for
+        self.assertIsNone(_steer_or_none("NOT_STUCK"))
+        self.assertNotIn("NOT_STUCK", _steer_or_none("NOT_STUCK Read handler.py and run the test.") or "")
+
     def test_prompts_do_not_teach_the_negated_verdict_bigram(self):
         # The parser fix is the backstop; this is the root. A prompt that spells out "is NOT ON_TRACK"
         # hands a weak model the exact string that collapses.
