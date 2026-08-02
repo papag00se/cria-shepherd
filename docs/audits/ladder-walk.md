@@ -322,6 +322,44 @@ sharper question rescues a weak judge, which is exactly what the replay will say
 
 ## ada-handles_mellum2_codex_pon_1785620496
 
+### FULL READ (2026-08-01) — the model reasons well and does nothing
+
+Read end to end. The earlier walk called this a model wall over async mocks. The async diagnosis
+was in fact CORRECT and the model reached it repeatedly; what killed the run is that it never
+acted on it.
+
+**Eleven consecutive coder turns with no tool call.** Turns 0056, 0057, 0060, 0061, 0062, 0063 and
+their neighbours are each thousands of characters of reasoning, all circling `from web_fetch import
+web_fetch`, and every one ends without a tool call. Fleet-wide, the longest actionless streak for
+EVERY other model is **1** — cria's LEG0 nudge catches a single dead turn and forces action.
+mellum2 slips past it eleven times in a row.
+
+| model | longest streak of turns taking no action |
+|:--|--:|
+| **mellum2** | **11** |
+| every other model | 1 |
+
+**Its diagnosis was right.** Turn 0057: *"the test is calling an async function from a sync test…
+resolve_handle returns a coroutine, and the with block doesn't raise ValueError because the
+coroutine isn't executed."* That is exactly correct for three of the four findings. The fourth was
+the `web_fetch` collision, which was unsolvable from inside the run.
+
+**Where `web_fetch` came from — cria's tool name.** Turn 0043, before any error: *"I'll use
+web_fetch to GET the URL… I'll use `unittest.mock.patch('web_fetch')` to mock the web_fetch call."*
+The model took a TOOL it had been given and wrote it into its source as an importable module. A
+stray PyPI package of the same name then resolved the import instead of failing cleanly, turning a
+clean ModuleNotFoundError into "'module' object is not callable" — an error with no reachable
+explanation. Both halves of that are now closed (the package is gone; preflight refuses to start
+while any package shadows a cria tool name). The tool NAME remains.
+
+**cria's truncation guard fired here too** (turn 0053): *"my previous attempt to write the file was
+cut off at ~43k tokens and nothing was saved."* Its remedy — build the file in small pieces with
+edit_file — is correct, and it is the mode attempt 5 then oscillated inside.
+
+**Verdict: not a model wall. An EMISSION wall.** The reasoning was sound; eleven turns of it
+produced no file, no edit, no command.
+
+
 **0/4** · planner ON · killed at 15 min (`milestone-miss-15min`, re-checked and confirmed) · 81 calls
 · 160.4 tok/s · capture `~/.cria/calls/20260801T144148-019fbf46-ad70-7271-bd36-f98d97802a35`
 
