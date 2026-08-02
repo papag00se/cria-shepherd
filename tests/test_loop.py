@@ -4676,7 +4676,8 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         from cria.loop import _format_fetches
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
         self.assertIn("HTTP 200", out)
-        self.assertRegex(out, r"no endpoints|no routes|nothing about what it returns")
+        self.assertRegex(out, r"no endpoint definitions|no endpoints|no routes")
+        self.assertIn("DEFINES", out)      # nothing read so far defines the routes — true here
 
     def test_an_entry_WITH_facts_is_not_given_the_note(self):
         from cria.loop import _format_fetches
@@ -4684,6 +4685,29 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
                                ("HTTP 200", "/handles/{handle}", "GET /handles/{handle} → holder")})
         self.assertIn("/handles/{handle}", out)
         self.assertNotRegex(out, r"no endpoints|no routes")
+
+    def test_a_DATA_response_is_not_called_unreadable_once_a_spec_HAS_been_read(self):
+        """The note's "no field names could be read from it ... the source that DEFINES them is
+        still unread" is written for a spec page and is FALSE about a plain data response whose body
+        is in the transcript. Walked on ada-handles_mellum2_codex_poff_1785686596: cria attached it
+        to `/handles/goose -> HTTP 200` in a prompt whose line 87 was that page's full body, holder
+        and resolved_addresses.ada included. The reasoner believed cria over the transcript and told
+        the coder the API "returns 404 for every request", offering to "remove the live test from
+        the suite entirely". The coder did."""
+        from cria.loop import _format_fetches
+        out = _format_fetches({
+            "https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", ""),
+            "https://api.handle.me/handles/goose": ("HTTP 200", "", ""),
+        })
+        self.assertNotIn("no field names could be read", out)
+        self.assertNotIn("nothing read so far DEFINES", out)   # a spec WAS read this session
+        self.assertIn("its body is in the transcript above", out)
+
+    def test_the_unread_claim_survives_when_NOTHING_has_yielded_routes(self):
+        # The swagger-shell case this note was built for is untouched.
+        from cria.loop import _format_fetches
+        out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
+        self.assertIn("nothing read so far DEFINES", out)
 
     def test_a_failed_fetch_keeps_its_own_wording(self):
         from cria.loop import _format_fetches

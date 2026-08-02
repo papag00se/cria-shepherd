@@ -699,3 +699,32 @@ class SucceededCommandsHaveNoFailures(unittest.TestCase):
         r = probeparse.parse_output("python3 -m pytest -q", "pytest", 1,
                                     "FAILED test_x.py::test_a - AssertionError: nope\n", "")
         self.assertTrue(r.findings)
+
+
+class MockedFrameVisibilityTests(unittest.TestCase):
+    """When a test's own mock supplies the exception, pytest prints the test's frame as
+    `path:line:` with NOTHING after it. The pattern required a non-empty tail, so that frame was
+    invisible to every consumer of _PYTEST_LOC_LINE — including the outermost-frame fallback, which
+    then reported a library frame as the user's file."""
+
+    def test_a_frame_line_with_no_tail_is_seen(self):
+        self.assertEqual(probeparse._PYTEST_LOC_LINE.findall("resolve_handle_test.py:28: "),
+                         [("resolve_handle_test.py", "28", "")])
+
+    def test_a_frame_line_with_no_trailing_space_is_seen(self):
+        self.assertEqual(probeparse._PYTEST_LOC_LINE.findall("t.py:9:"),
+                         [("t.py", "9", "")])
+
+    def test_the_normal_shape_is_unchanged(self):
+        self.assertEqual(probeparse._PYTEST_LOC_LINE.findall("resolve_handle.py:19: in resolve_handle"),
+                         [("resolve_handle.py", "19", "in resolve_handle")])
+
+    def test_the_outermost_frame_fallback_now_names_the_TEST_file(self):
+        # The conftest/no-block path takes locs[0]. With the test frame invisible it took a
+        # deeper one; now the user's own entry point is first.
+        s = ("resolve_handle_test.py:28: \n"
+             "resolve_handle.py:19: in resolve_handle\n"
+             "E   Exception: Network error\n")
+        out = probeparse.parse_pytest(s)
+        self.assertEqual(out[0].file, "resolve_handle_test.py")
+        self.assertIn("Network error", out[0].message)

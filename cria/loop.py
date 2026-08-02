@@ -4097,8 +4097,24 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # 0727-142536): the planner fetched the swagger UI SHELL, the coder's entire fetch record was
         # one `→ HTTP 200` under "these SUCCEEDED", and it invented `/resolve/{handle}` with zero
         # occurrences of the real route in its window. A status alone is a fact about the REQUEST.
+        # ...but the note may only say what is TRUE. Its old wording — "no endpoints or field names
+        # could be read from it ... the source that DEFINES them is still unread" — is written for a
+        # SPEC page and is false about a plain DATA response, which legitimately has no OpenAPI
+        # structure while its body is right there in the transcript with its field names in it.
+        # Walked on ada-handles_mellum2_codex_poff_1785686596, where cria attached it to
+        # `/handles/goose → HTTP 200` in a prompt whose line 87 is that page's full body, `holder`
+        # and `resolved_addresses.ada` included. The reasoner believed cria over the transcript —
+        # the block is headed GROUND TRUTH — and authored the steer that told the coder the API
+        # "returns 404 for every request" and offered to "remove the live test from the suite
+        # entirely". The coder did. That was two of the four deliverables.
+        #
+        # And "the source that DEFINES them is still unread" is checkable, not a guess: cria composed
+        # this ledger, so it knows whether ANY fetch this session yielded routes. When one did, the
+        # sentence is simply false and is dropped. All that survives is the true, narrow fact — this
+        # URL yielded no endpoint definitions — which is what the swagger-shell case needed.
         if _fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip():
-            line += labels["no_structure"]
+            any_routes = any(_fetch_facts(e)[1] for e in latest.values())
+            line += labels["no_spec_here" if any_routes else "no_structure"]
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.

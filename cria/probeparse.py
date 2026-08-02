@@ -277,7 +277,14 @@ def parse_eslint(s: str) -> list[Finding]:
 # ``E`` line is never width-clipped, so the finding gets the real expected-vs-got. Never touch COLUMNS.
 _PYTEST_BLOCK_HDR = re.compile(r"^_{3,} .+? _{3,}\s*$", re.M)          # ____ TestClass.test_name ____
 _PYTEST_SUMMARY_HDR = re.compile(r"^=+ short test summary", re.M)     # the width-clipped summary section
-_PYTEST_LOC_LINE = re.compile(r"^([\w./\\-]+\.py):(\d+): (\S.*)$", re.M)  # path:line: ErrorType / "in fn"
+# path:line: ErrorType / "in fn" — and path:line: with NOTHING after it, which is what pytest prints
+# for the frame that raised when a test's own mock supplies the exception. Requiring a non-empty tail
+# made that frame invisible, so `_failing_frame` fell through to the deepest frame it COULD see: the
+# production module. Walked on ada-handles_mellum2_codex_poff_1785686596 — five prompts (0041, 0042,
+# 0047, 0048, 0053) told the coder `resolve_handle.py:19: Exception: Network error` under "They are
+# the checker's exact words", when pytest's own words named `resolve_handle_test.py`. It sent the
+# model to edit working production code to satisfy a test that was scripting the failure itself.
+_PYTEST_LOC_LINE = re.compile(r"^([\w./\\-]+\.py):(\d+):(?:[ \t]+(\S.*))?[ \t]*$", re.M)
 _PYTEST_FRAME = re.compile(r"^([\w./\\-]+\.py):(\d+): in ", re.M)     # a traceback frame (fallback localize)
 _PYTEST_ERR_LINE = re.compile(r"^E\s{2,}(.+)$", re.M)                 # E   <full error, never width-clipped>
 
