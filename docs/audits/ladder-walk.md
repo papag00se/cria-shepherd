@@ -2426,3 +2426,68 @@ run after run chained the payment address into `/holders/` and got a 404.
 Treat the per-run sections above as **superseded** where they conflict with the agent reports. My
 verdicts there were reached by counting; the agent verdicts were reached by reading and by running
 the code. Every time those two disagreed this session, reading was right.
+
+---
+
+# WHAT WAS FIXED — 2026-08-02, from the eighteen walks above
+
+Eleven changes, each with a test that fails before and passes after; `python3 -m pytest` green
+(1,940 passing). `cria.service` restarted after each. In effectiveness order as ranked, with the
+three the operator challenged resolved first.
+
+## The three that were questioned
+
+**1. "Notice when a passing check goes failing" — no new calls are needed.** The concern was that
+detecting it means checking every turn. It does not. The gate already runs on every completion claim
+and already records its findings; the 34 measured GREEN→RED transitions were observed *by gates that
+already ran*. cria holds both sides of the comparison and never compares them. Not built yet —
+recorded here so the next session starts from "compare what you already have", not from "add a check".
+
+**2. "Show the spec's field descriptions" — half of it had landed.** The TYPE half shipped earlier
+(`holder(string)` instead of `holder(object)`). The EXAMPLE half had not, and the example is the
+decisive bit. Now, from the real spec:
+
+    holder(string, e.g. stake1uxxxxxxxxxxxxxxxxxxxxxxxxx…)
+    resolved_addresses{ada(string, e.g. addr1e00000000000000000000000000…), …}
+
+`stake1u…` versus `addr1e…` is the whole cluster. 25 of that spec's 34 response fields carry an
+example. DESCRIPTIONS were measured (471 → 997 → 2,072 chars) and deliberately left out: 4.4× for
+prose that mostly restates the field name.
+
+**3. "Give the session-ending judge the file listing" — DO NOT. Withdrawn.** The operator was right:
+it was removed on purpose (`616076e fix(confirm): the checker inspects instead of receiving a pasted
+listing`) because the judge read filenames and declared work complete without checking. The comment
+in `_satisfaction_evidence` says so, and the judge already holds `read_file`/`list_dir`. Re-adding it
+would reopen the hole it was removed for. Why it is not USING those tools is the next thing to read,
+not a data change.
+
+## Landed
+
+| what | evidence |
+|:--|:--|
+| A command that exited 0 has no failure to scrape | a PASSING pytest run shipped `PytestUnknownMarkWarning` under "[GROUND TRUTH — the repo's own checks fail]" in 40 consecutive prompts; `parse_pytest` correctly found nothing and `parse_generic` invented it |
+| The compaction reply's truncation guard, on the sibling path | `loop.summarize` retried on `finish_reason=length`; `server._harden_compaction_reply` did not, while its docstring called them "the same". A 63,370-char briefing repeating "I closed the issue" 148 times rode 49 prompts. Also: both passes unusable now DROPS the prose, which the code's comment already claimed |
+| No summary, no rollup header | an all-anchored middle leaves nothing summarizable, so the coder got the "here is your summary, trust the disk over it" paragraph with nothing under it |
+| A recovered verdict's reason is cut on a sentence | `reason[:300]` amputated a judge's diagnosis mid-word; a hard ceiling now cuts unpunctuated text on a word with a disclosed ellipsis |
+| Both completion paths run the deliverable | `live_execution_marker` reached only `_periodic_satisfaction`. The plan-ON path ends because every STEP verified and shipped without running what it built. The result goes to the completion CRITIC as evidence, not onto a closing note nobody acts on |
+| The plan judges see what was actually fetched | they are told to delete a "guessed field name" and were given the task and the plan only. 57% of recorded drops named a snake_case field, 17% a URL path; one deleted `/holders/{address} … total_handles`, both real. All THREE call sites supply it; omitted when empty, because knowing nothing is not evidence of a guess |
+| The repair note states a disk fact and stops | it asserted "this step's wording asks you to WRITE them" over a list of every filename token; 145 of 1,052 notes named more than one file. It now OVERRIDES contradicting claims instead of standing beside them. "but them are already written" shipped 145 times |
+| A refused call exits non-zero | every refusal was a `printf`, so the harness stamped `Process exited with code 0` above cria's own "Nothing was run" — 331 captured prompts. ONE owner now instead of five hand-rolled sites. **This was the unverified item in the record; it reproduces** |
+| A field's declared EXAMPLE rides with its type | see #2 above |
+| Quote-vs-dictation is judged, not pattern-matched | the regex fired TWICE ever while `pytest.register_pytest_mark("live")` — not a real function — reached the coder inline in prose. Now a deliberately over-firing TRIGGER (16% of steers) gates ONE two-word question, ~3-4 calls per run |
+| No proposed action, no plan step | `step_text = fix_action or reason` promoted the verdict essay the comment two lines above says pinned a run for 118 calls |
+
+## Measured and deliberately NOT built
+
+**`probeparse._failing_frame` taking the deepest own-code frame.** Reproduced in principle: a test
+whose mock raises makes cria point at `resolve.py:20` — correct production code — instead of the
+`side_effect` line that scripted it. But the prevalence could not be shown above noise: of 4,415
+shipped check locations, 68 (2%, 5 runs) point at a non-test file with a scripted-looking exception,
+and reading them shows those are genuine production `raise` statements, not mocks. One constructed
+reproduction is not a base rate. Left alone, per "do not manufacture a finding to have one".
+
+## The sibling rule held
+
+Every fix above was grepped for its twin before shipping. Three of the eleven ARE sibling fixes
+(the truncation guard, the deliverable run, the research facts across all three plan judges), which
+is the failure mode that cost six fixes earlier in the week.
