@@ -26,6 +26,7 @@ cria owns no executors.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -137,6 +138,57 @@ def lint_digest(root: str, runner: Runner) -> Optional[str]:
 
 # --- workspace inventory (moved here from loop.py so the PLANNER can use the same ground
 # truth the critic gets; loop imports planner, so planner cannot import loop) ------------------
+
+# A quoted literal in a step ('goose', "papagoose", `--live`) that the step expects to end up IN the
+# artifact it names. Bounded length so a quoted sentence isn't treated as a token.
+_STEP_LITERAL = re.compile(r"['\"`]([^'\"`\s]{3,30})['\"`]")
+
+
+def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[str]]]:
+    """[(artifact, literals the step quotes that are NOT in that file)] — a FACT, not a verdict.
+
+    Deterministic code gathers; the reasoner judges (principle 8). This does not block a step; it
+    puts in front of the critic something it otherwise has to infer from a summary.
+
+    Measured need, run 20260801T235629 (mellum2, ada-handles, 3/4). The step read "Write
+    live_test.py: a standalone script that calls the real API ... to resolve the handle 'goose' and
+    'papagoose'". The coder wrote a general CLI that resolves whatever handle you pass it and prints
+    a usage message with none. It works — run by hand with a handle it returns goose's real address,
+    holder, and 15 handles — but neither literal appears anywhere in the file, so run as a test it
+    exits 1 and the deliverable scored zero.
+
+    The critic approved it, and its own stated reason contains the disproof: "live_test.py exists and
+    calls the real API to resolve handles ... and prints a usage message when no handle is provided.
+    The step is fully satisfied." It observed the file does not resolve those handles by itself and
+    called the step satisfied anyway.
+
+    Base-rated across every captured critic approval (n=106 with a workspace and a parseable verdict):
+    this fires ONCE, on exactly that verdict. No false positives — which is why it is offered as
+    evidence rather than enforced as a gate."""
+    if not step or not root or not os.path.isdir(root):
+        return []
+    from .loop import _STEP_ARTIFACT   # the module's one file-token pattern
+    lits = [m.group(1) for m in _STEP_LITERAL.finditer(step)]
+    lits = [l for l in lits if "/" not in l and "." not in l]   # a path/filename is not a value
+    if not lits:
+        return []
+    out = []
+    for m in _STEP_ARTIFACT.finditer(step):
+        rel = m.group(1)
+        try:
+            path = resolve(root, rel)
+        except (OSError, ValueError):
+            continue
+        if not os.path.isfile(path):
+            continue
+        try:
+            body = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        missing = [l for l in lits if l not in body]
+        if missing:
+            out.append((rel, missing))
+    return out
 
 _INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache",
                                 ".ruff_cache", "node_modules", "venv", ".venv", "site-packages",

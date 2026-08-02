@@ -2122,6 +2122,14 @@ class Loop:
         # LAST: the step again. It was stated once at the top, before ~10K of evidence; the coder's
         # summary that lands just above the verdict often narrates its own numbered plan, and the
         # judge anchors on that instead (measured: it named a file that existed only in the summary).
+        # A quoted literal the step names that is absent from the artifact it names. Deterministic
+        # fact, offered as evidence — the critic still judges (principle 8). Measured need: a critic
+        # approved "resolve the handle 'goose' and 'papagoose'" against a file containing neither,
+        # and said so in its own reason. See groundtruth.absent_step_literals.
+        for artifact, missing in groundtruth.absent_step_literals(item, workspace_root):
+            parts.append(prompts.fill(labels["absent_literals"], artifact=artifact,
+                                      literals=", ".join(repr(m) for m in missing),
+                                      them="it" if len(missing) == 1 else "them"))
         # Additive — the same step text, nothing dropped.
         parts.append(prompts.fill(labels["step_again"], step=item))
         user = "\n\n".join(parts)

@@ -14,3 +14,4 @@ summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n
 # where the ruling happens.
 step_again = THE STEP YOU ARE RULING ON IS THE ONE AT THE TOP, RESTATED HERE — any step numbering inside the coder's summary is the CODER's own and is NOT what you judge:\n{{STEP}}
 summary_leak = (the coder's completion message was a malformed tool call, not a summary — judge from the evidence above)
+absent_literals = ON-DISK FACT, gathered by running the check — not a verdict, and not necessarily a failure: the step quotes {{LITERALS}}, and {{ARTIFACT}} does not contain {{THEM}} anywhere. Decide for yourself whether this step's goal needs them present. If the step asked for the artifact to USE those exact values, it does not yet.
