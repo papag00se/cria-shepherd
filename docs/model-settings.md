@@ -37,6 +37,51 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template, toggle UNVERIFIED |
 | **zaya1** (8.4B-A760M MoE) | Q6_K | `temp 0.6, top_p 0.95, top_k off` (agent/code; general `1.0`) — Zyphra | Zyphra card | ⚠ **EXPERIMENTAL — runs on a local DRAFT-PR build** (llama.cpp PR #23112 branch, built from source 2026-07-29 at `~/src/llama.cpp-zaya`; no release supports arch `zaya`). Service-verified: coherent output, prefill 377 / decode **59 t/s** direct, 46 t/s served; ctx_train 131K. Re-point at a release build when the PR merges |
 
+### Candidate — NOT in the fleet yet: **Moonlight-16B-A3B-Instruct** (added 2026-08-01)
+
+Requested by the operator, **conditional on TurboQuant working with it** — without a shrunk KV
+cache it does not fit, and that condition is the whole reason it is not already queued.
+
+| | |
+|---|---|
+| GGUF | [`mmnga/Moonlight-16B-A3B-Instruct-gguf`](https://huggingface.co/mmnga/Moonlight-16B-A3B-Instruct-gguf), **IQ4_XS = 8.74 GB** |
+| Base | [`moonshotai/Moonlight-16B-A3B-Instruct`](https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct) — 16B total / **3B active** MoE, Muon-trained on 5.7T tokens |
+| Architecture | **DeepSeek-V3 shape** (llama.cpp arch `deepseek2`) — Moonshot's own card says so |
+| Context | **8K native.** The fleet default is 48K; this model must override `ctx` down or it is being run past its training |
+| Reasoning | **None.** No thinking mode on the card ⇒ all roles `reasoning = "off"` |
+
+**The blocker, in numbers.** The 3080 has **10,240 MiB**. IQ4_XS weights are **8,740 MiB**, leaving
+~1.4 GB for KV cache *and* compute buffers. At the fleet's 48K that is impossible; even at its native
+8K it is marginal. TurboQuant `tbq3` KV — already the live `cache_type_k/v` for ternary-bonsai, and
+measured at ~3× smaller than q8 — is what would make the difference.
+
+**The open question, and it is a real one.** The TurboQuant build is a fork
+(`/home/jesse/src/llama.cpp-tq-prism/llama-v0.0.0/llama-server`,
+jarkevithwlad/turboquant-prismml-cuda v1.0.1). `models.toml` already records that stock, prism and
+turboquant binaries *reject* one arch outright. **Nobody has checked whether that fork loads
+`deepseek2`.** Check that FIRST — it is a one-command answer and it decides whether the rest matters:
+
+```bash
+/home/jesse/src/llama.cpp-tq-prism/llama-v0.0.0/llama-server   -m <the IQ4_XS file> --ctx-size 8192   --cache-type-k tbq3 --cache-type-v tbq3 --n-gpu-layers auto --no-warmup
+```
+
+**Sampling: no official values exist.** Neither Moonshot's card nor the GGUF repo states a
+temperature or top_p, and a search turned up none. Do **not** invent numbers into this table — that
+is the mistake this file exists to prevent, and 26 consecutive runs were once sent the wrong model's
+sampling. Start from the DeepSeek-V3-family convention and *measure*, recording what was verified:
+
+| role | starting point | why |
+|---|---|---|
+| coder | `temp 0.2–0.3, top_p 0.95` | DeepSeek-family coding convention; tighten if it drifts |
+| reasoner | `temp 0.6, top_p 0.95` | matches every other MoE in this table |
+| classifier / compactor | `temp 0` | greedy, as for the whole fleet |
+| all roles | `reasoning = "off"` | the model has no thinking mode to enable |
+
+**Second known issue:** the GGUF repo states *"chat-template is custom therefore removed"*, and the
+repo calls itself experimental. A missing template means `--jinja` has nothing to apply — a template
+must be supplied at launch or the wire format will be wrong. Settle this before a ladder run, not
+during one.
+
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
 > empirically before treating them as recommended.
 

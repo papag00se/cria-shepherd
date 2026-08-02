@@ -71,6 +71,12 @@ read — it is an LFM2.5-8B-A1B, 32 experts with 4 active. `docs/model-settings.
 other three MoEs and left fabliq unlabelled, which reads as dense by omission. The fleet is five
 dense and four MoE, not six and three.
 
+**Waiting in the wings — Moonlight-16B-A3B-Instruct** (`mmnga/...-gguf`, IQ4_XS, 8.74 GB). The
+operator asked for it **only if TurboQuant can be made to work with it**: the 3080 has 10,240 MiB and
+the weights alone are 8,740, so without a shrunk KV cache it does not fit. The unanswered question is
+whether the TurboQuant fork loads arch `deepseek2` at all — one command settles it. Full entry,
+including why its sampling table is deliberately empty, in `docs/model-settings.md`.
+
 `lfm25` is deliberately absent: its systemd unit exists but it has no entry in
 `~/.config/llama-fleet/models.toml`, so starting it cannot work. Put it back when that is fixed.
 
