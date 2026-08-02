@@ -2202,6 +2202,42 @@ does not decompose the three-value requirement on its own.
 
 ---
 
+## THE REGRESSION RUN, PROVEN — ada-handles_mellum2_codex_pon_1785678150
+
+The workspace held a **4/4 solution at 07:01, nineteen minutes in**. Demonstrated by restoring the
+two destroyed files from the capture and re-running the real verifier:
+
+| workspace | score |
+|:--|--:|
+| final, as the run left it | **1/4** |
+| final, with `live_test.py` + `README.md` reverted to their 07:01 versions | **3/4** |
+| `resolve_handle.py` + the 07:01 `live_test.py` + the 07:01 `README.md` | **4/4** |
+
+The 07:01 live test still passes today. **152 further coder calls destroyed two working deliverables.**
+
+**The moment it died — call 0240.** cria sent a prompt **byte-for-byte identical** to the previous
+one. Zero new bytes, no new instruction, immediately after a duplicate write it said nothing about.
+The model filled the silence by overwriting `live_test.py`. Fourteen seconds after the 45-minute
+snapshot read 3/4.
+
+**Then cria never once suggested the revert.** From 07:28 to 07:43 the checks showed
+`'resolved_addresses' not found in {…'ada_address'…}` fourteen times. Every steer told the coder to
+change `resolve_handle.py`. Nothing told it the *test file* was the newer, wrong thing.
+
+**And the write-nudge fired exactly backwards.** At 0264 it forced the BROKEN README to disk. At 0269
+the model produced a CORRECT README as prose — with `## Installation` and `pip install -r
+requirements.txt`, exactly what the check wants — and the nudge stayed silent. cria compacted
+instead, and the fix was discarded.
+
+**The compactor then reported the opposite of reality**, injected as `⟦ctx:rollup⟧`:
+
+> *"The unit tests pass… The live test for goose passes… The README is present and complete.
+> What remains to be done: Nothing. The task is complete."*
+
+This is the concrete form of the 57%-of-sessions regression signal. cria has no notion that the
+workspace was ever better, and under sustained pressure at the one failing check it will let the
+coder trade two passing deliverables for it.
+
 # SUPERSEDING NOTE — every mellum2 walk above was re-done properly (2026-08-02)
 
 **Read this before trusting any verdict above it.**
