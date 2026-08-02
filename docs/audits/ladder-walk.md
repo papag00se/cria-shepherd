@@ -1694,3 +1694,50 @@ live test. What has never happened is all four in the same run.
 
 **Model wall: possibly reached on this one deliverable.** The next walk should confirm or refute
 that rather than assume it — one strike is not five.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785670156
+
+**3/4 — sixth in eleven runs.** 479 calls, the full hour. Unit tests the only miss
+(4 failed, 1 passed).
+
+**cria fault: yes** — two, both partial and both mine to finish.
+
+### 1. The whole hour went to ONE step
+
+```
+coder calls by step:   s1: 5     s2: 370
+```
+
+370 of 375 coder calls on step 2. `_replan_if_thrashing` exists for exactly this and did not
+rescue the run. That is the single biggest lever left on this model: five 3/4s and a 3/4 here all
+end with the clock gone, not with the model out of ideas.
+
+### 2. My stdlib fix is better but still not complete
+
+Measured over this run's pytest SUMMARY lines — the one line cria tells the coder to act on:
+
+| | |
+|:--|--:|
+| pointing at the coder's own file | **56** |
+| pointing at stdlib / site-packages | **17** |
+
+`prefer_own_code` reorders findings so an own-code one leads, and falls back when *every* finding is
+foreign. Those 17 are the fallback firing. The open question — not answered here — is whether an
+own-code frame existed in those tracebacks and simply was never parsed out, in which case the parser
+is losing it before the ordering ever runs.
+
+Raw traceback text in the check block still contains stdlib lines, and that is correct: cria must
+never speak over a tool's own output. Only the actionable summary line is cria's to choose.
+
+### The eleven-run picture
+
+| | |
+|:--|--:|
+| 3/4 | **6** |
+| failures traced to a cria fault since fixed | 4 |
+| failures with no cria fault found | 1 |
+
+**Model wall: not reached.** Every deliverable has passed in some run; none has passed all four in
+one run. The next work is the stuck-step lever, not another parser fix.
