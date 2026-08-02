@@ -77,6 +77,13 @@ def rows(task):
         # skipped here.
         if r.get("aborted"):
             continue
+        # A row whose code state no longer exists is evidence, not an attempt. When a batch of cria
+        # fixes lands that directly targets how a model was failing, its earlier rows describe a
+        # system that is gone — counting them toward BLOCKED would retire a model for cria's old
+        # bugs. The row is KEPT on disk with the reason written into it (deleting evidence is worse
+        # than annotating it) and skipped here, exactly as an aborted row is.
+        if r.get("superseded"):
+            continue
         if str(r.get("note", "")).startswith(NOTE_PREFIX) and r.get("task") == task:
             out.append(r)
     return out

@@ -1030,3 +1030,97 @@ unparseable call is dropped, and the note only fires when calls were present.
 All five zaya1 rows are `pon`. Every failure has been a planner failure. Planner-off skips the
 planner entirely and would answer the question no run has answered yet — whether this model can code
 at all.
+
+---
+
+## ada-handles_zaya1_codex_pon_1785649909
+
+**0/4, killed at 15 minutes. 8 calls: 1 classifier, 7 planner, zero coder.** Fifth zaya1 attempt.
+Read call by call, prompt and reasoning, first to last.
+
+**cria fault: yes** — search results were never spilled, the compaction note repeated one identical
+error 89 times, and the digest had been rewriting text through a function-word stripper.
+
+### The ask-last fix WORKED — this is what changed
+
+Attempt 4's planner refused to plan and simulated its tool calls. This one, call 0002, in its own
+words:
+
+> *"We have to provide a short numbered list of steps another model will follow to do it."*
+> *"We **must not** produce the actual script or README; just the steps for another model to follow."*
+> *"We need to use a tool now — a real call. Which tool? Possibly web_fetch to get the API spec."*
+> *"We'll call web_fetch with url `https://api.handle.me`."*
+
+Reasoning fell from **27,089 characters to 2,641**, because it stopped writing the deliverable in its
+head. It emitted real calls instead of describing them. By rounds 5 and 6 it had settled to **one
+call per round**, which is the healthy median across all captures — the cut-off steer landed and it
+said so: *"We have to do one call at a time. Let's do that."*
+
+### What 119 tool calls actually were
+
+Counting said "119". Reading said:
+
+- **calls 0–5** — purposeful: `web_fetch https://api.handle.me`, then targeted searches, then `pwd`.
+- **calls 6–14** — fabricated: `read_file {"path":"/tmp/README.md (placeholder)"}`. It is putting the
+  word *(placeholder)* in the path and reading files it wishes existed.
+- **calls 26 onward** — one three-call cycle (`ADA-HANDLE_TO_TEST`, `handle_goose.ada`,
+  `papagoose.ada`) repeated ~30 times to the token cap. A degenerate loop, the same shape as the
+  `y8y8y8` character repetition one level up.
+
+It emits all 119 before seeing a single result, so nothing interrupts it. Call 0003 confirms it:
+*"**We haven't seen the result.** Let's assume the result is something like the Swagger/OpenAPI
+spec."*
+
+### Fault 1 — cria's compaction was rewriting the task
+
+Those calls blew the window. The compacted note that came back had been run through
+`content_reduce`'s prose tier, which **deletes function words**:
+
+| | |
+|:--|:--|
+| task, before | "I would like you **to** write **a** Python script that accepts **an** Ada Handle **as** input and resolves it **to the** Cardano address" |
+| task, as sent | "I would like you write Python script that accepts Ada Handle input and resolves it Cardano address" |
+| cria's own ask, before | "The request above **is** what the WORK **is** — **it is** not addressed **to** you" |
+| cria's own ask, as sent | "The request above what WORK — it not addressed you" |
+
+And one line was **inverted**, not merely degraded. cria's own fetch note *"no endpoints or field
+names could **be read from** it"* reached the model as *"could read it"* — turning "nothing was
+learned here" into a claim that something was.
+
+`strip_prose_text` calls these "certain-junk function words". They are not junk. The output reads as
+fluent English and is not, which is worse than truncation because truncation is visible.
+
+**Fixed** — the digest no longer word-strips.
+
+### Fault 2 — the note repeated one error 89 times
+
+The note ran to **22,149 characters across 117 bullets, of which 25 were distinct**.
+`{"error":"route_not_found","message":"Route not found: /info"}` appeared **89 times**; repeated
+bullets were **42% of the note's characters**. The model had emitted the same failing curl in a loop,
+and cria replayed the identical failure back at it 89 times.
+
+**Fixed** — consecutive identical digests collapse to one line with the count. Lossless: nothing
+reworded, nothing cut, and runs collapse separately so ordering still carries information.
+
+### Fault 3 — search results were never spilled
+
+The fetch path has saved oversized bodies to the scratchpad for a long time. `_web_search` returned
+its results **inline** and always had. One search for "README.md generation guide install run script
+tests" put **9,269 characters** into the planner's context — npm packages, Reddit threads, jest
+configs, valkey test docs — none of it about the task, and it survived verbatim into the compaction
+note and was still there at call 0004.
+
+**Fixed** — spilled like its sibling: the full list on disk, the pointer and the titles in context.
+
+### A fix of mine that was wrong, and was reverted
+
+Between this run and the next I added a digest that CUT prose to the cap and labelled the cut. Shown
+a real example it was cutting **mid-word** — `...ithub.com/matiassi` — out of exactly the
+search-result noise fault 3 removes. That is a truncation, and it was treating the symptom: reaching
+for a size fix before removing the redundancy and the noise. Reverted to keep-or-disclose.
+
+### Verdict
+
+**Model wall: not reached.** Five attempts, zero coder calls. Every one has been a planner failure,
+and every one has found a cria fault. Planner-OFF has still never been tried and remains the
+experiment that would answer whether this model can code at all.
