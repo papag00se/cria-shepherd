@@ -1531,3 +1531,51 @@ one message at it.
 
 Every 0/4 and the 1/4 trace to a cria fault since fixed. The 3/4s are converging on one thing: the
 unit-test step. **Model wall: not reached**, but the next walk should focus there.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785665296
+
+**1/4.** 144 calls, killed at the 30-minute floor. Unit tests **1 failed, 3 passed**; no live test,
+no README.
+
+**cria fault: yes — mine, introduced one run earlier.**
+
+The artifact protection I added to stop the noise judge deleting deliverables fired three times in
+this run, on the wrong step:
+
+```
+loop.replan_noise_refused
+  "Commit the three files (resolve.py, resolve_test.py, README.md) to a new repo, add a
+   .gitignore with __pycache__ and .pyc, push to a new GitHub repo."
+```
+
+That is git plumbing the task never asked for — precisely what the noise judge exists to delete —
+and my rule kept it in the plan, three times, while the live test and README never got written.
+
+**Intended firings across the whole ladder: 3. False firings in one run: 3.** The doctrine line is
+"an assist that fires on a clean signal is pure downside", and it landed on my own change within a
+single run of shipping it.
+
+**Cause:** the rule was "any authoring verb anywhere in the step + any filename anywhere in the
+step". `add a .gitignore` supplied the verb; `resolve.py` supplied the filename; they had nothing to
+do with each other.
+
+**Fixed** — the verb must GOVERN the filename:
+
+| step | now |
+|:--|:--|
+| "Write live_test.py: …" | protected |
+| "Add README.md documenting install" | protected |
+| "Create a new file utils.py with the helper" | protected |
+| "Commit the three files (resolve.py, …) to a new repo" | droppable |
+| "Add tests, then commit resolve.py" | droppable |
+| "grep -n 'resolve' spec.json" | droppable |
+
+Regression tests pin the false positive by name so the loose form cannot come back.
+
+**Lesson worth keeping:** the dropped-step logging added two runs ago is what made this visible
+within one run instead of three. Logging what a mechanism DID, not just how often it ran, is what
+turned both this bug and the one it was fixing from archaeology into measurement.
+
+**Model wall: not reached.**
