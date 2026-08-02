@@ -1781,3 +1781,53 @@ each one visible within a single run instead of three — logging what a mechani
 often it ran, is what turned this whole area from archaeology into measurement.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785675899
+
+**1/4.** 204 calls, killed at the 30-minute floor. README passed; nothing else.
+
+**cria fault: none — but the run is not valid evidence either.**
+
+### My noise-judge fix held
+
+```
+loop.replan_noise  dropped 0  kept 2
+loop.replan_noise  dropped 0  kept 1
+```
+
+Zero deliverables deleted, after three runs where that was the cause. The 40-character window is
+doing its job.
+
+### The API rate-limited us mid-run
+
+```
+$ python3 resolve_handle.py goose
+HTTP error 403 for https://api.handle.me/handles/goose
+Failed to fetch handle goose
+```
+
+Checked from my own shell immediately after: **HTTP 200**, goose resolves normally. The 403 was
+transient, during the run.
+
+Counted across every capture: **251 coder prompts show a 403 from the API, across 3 runs.**
+
+### This is a confounder and it needs handling before more runs
+
+Thirteen back-to-back runs, each making dozens of live calls to `api.handle.me`, is enough to get
+throttled. A throttled run fails for a reason that is neither cria's nor the model's, and it is
+scored exactly like a real failure — which quietly corrupts the ladder's evidence.
+
+**Recommended before continuing:**
+
+1. `preflight.py` should check `GET /handles/goose` returns 200 and REFUSE to start otherwise —
+   the same shape as its existing cold-cache and site-packages guards.
+2. A run whose captures show 403/429 should be marked `aborted` automatically. It is not an attempt;
+   it says nothing about the model.
+3. Space the runs, or the ladder measures our own request rate.
+
+**Not built here** — I am at the end of this session's context and will not ship a guard I cannot
+validate. It is the first thing to do next, ahead of any further mellum2 attempts.
+
+**Model wall: not reached.** This run proves nothing either way.
