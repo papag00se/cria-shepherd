@@ -894,6 +894,40 @@ def leaked_judge_tool(text: str) -> str:
     return name if name and name not in _JUDGE_TOOLS else ""
 
 
+# How much of a recovered judge verdict's reasoning is carried forward as the reason. A BOUND on a
+# prompt cria composes, which principle 5's counter-nuance allows — but it must never land mid-word.
+REASON_BUDGET_CHARS = 300
+# Above this a "sentence" is not one — it is unpunctuated text that re.split could not divide, and
+# letting it ride whole is how a judge's entire private essay became the coder's directive. Cut it on
+# a word instead. Twice the budget so a genuinely long single sentence still arrives intact.
+REASON_HARD_CEILING = 2 * REASON_BUDGET_CHARS
+
+
+def _first_sentences(sentences: list[str], budget: int) -> str:
+    """Whole sentences from the front, stopping before the budget is exceeded. The FIRST sentence is
+    always taken whole however long it is — a complete thought that overruns beats a cut one."""
+    picked: list[str] = []
+    for sn in sentences:
+        sn = sn.strip()
+        if not sn:
+            continue
+        if picked and len(" ".join(picked)) + 1 + len(sn) > budget:
+            break
+        picked.append(sn)
+    return " ".join(picked).strip()
+
+
+def _cut_on_a_word(text: str, budget: int) -> str:
+    """Last resort for text with no sentence punctuation at all: cut on whitespace, never mid-word,
+    and DISCLOSE the cut with an ellipsis so a reader knows the thought is unfinished."""
+    text = text.strip()
+    if len(text) <= budget:
+        return text
+    head = text[:budget]
+    sp = head.rfind(" ")
+    return (head[:sp] if sp > budget // 2 else head).rstrip() + "…"
+
+
 def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
     """A NOT-satisfied verdict recovered from a judge's thinking OR its prose answer, or None.
 
@@ -914,10 +948,15 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict 
     # recovery. Bounded because this is a prompt cria COMPOSES, not content the coder reads.
     sentences = re.split(r"(?<=[.!?])\s+", text)
     start = next((i for i, sn in enumerate(sentences) if _VERDICT_NEGATIVE.search(sn)), 0)
-    reason = " ".join(sn.strip() for sn in sentences[start:]).strip() or text
+    # WHOLE SENTENCES up to the budget, never a hard character slice. `reason[:300]` cut a judge's
+    # thinking mid-word and handed the fragment onward as the diagnosis the coder must act on — an
+    # instruction that stops mid-sentence is one the coder completes by guessing. The budget bounds
+    # how MANY sentences, so a single long sentence rides whole rather than being amputated.
+    reason = _cut_on_a_word(_first_sentences(sentences[start:], REASON_BUDGET_CHARS) or text,
+                            REASON_HARD_CEILING)
     rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase,
               matched=_clip(m.group(0), 60), reason=_clip(reason, 120))
-    return {flag: False, "reason": reason[:300], "proposed_fix": ""}
+    return {flag: False, "reason": reason, "proposed_fix": ""}
 
 
 def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:

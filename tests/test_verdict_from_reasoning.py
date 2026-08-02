@@ -132,3 +132,45 @@ class PhantomToolTests(unittest.TestCase):
     def test_the_parse_path_records_it_by_name(self):
         import inspect
         self.assertIn("loop.judge_phantom_tool", inspect.getsource(loop._satisfaction_verdict))
+
+
+class NeverCutMidWordTests(unittest.TestCase):
+    """The reason is the diagnosis the coder is handed and must act on. It was built from whole
+    sentences and then hard-sliced at 300 characters, so a long verdict arrived amputated —
+    an instruction that stops mid-sentence is one the coder finishes by guessing."""
+
+    LONG = ("The task is not done. " + " ".join(
+        f"Observation number {i} concerns the resolver and its handling of the holder field."
+        for i in range(1, 12)))
+
+    def test_the_reason_ends_on_a_sentence(self):
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        self.assertTrue(out["reason"].rstrip().endswith((".", "!", "?", "…")),
+                        f"cut mid-text: …{out['reason'][-60:]!r}")
+
+    def test_no_partial_word_survives_the_bound(self):
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        words = {w.strip(".!?…,") for w in self.LONG.split()}
+        self.assertIn(out["reason"].split()[-1].strip(".!?…,"), words)
+
+    def test_it_is_still_bounded(self):
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        self.assertLessEqual(len(out["reason"]), loop.REASON_HARD_CEILING)
+        self.assertLess(len(out["reason"]), len(self.LONG))
+
+    def test_a_single_long_sentence_rides_WHOLE_rather_than_amputated(self):
+        one = "The task is not done because " + "the resolver mishandles the holder field " * 12
+        out = loop.verdict_from_reasoning(one.strip() + ".", "satisfied", _Rlog(), "x")
+        self.assertTrue(out["reason"].endswith("."))
+        self.assertGreater(len(out["reason"]), loop.REASON_BUDGET_CHARS)
+
+    def test_text_with_no_punctuation_at_all_cuts_on_a_word_and_says_so(self):
+        run_on = "the task is not done " + "and the resolver still returns the wrong holder " * 20
+        out = loop.verdict_from_reasoning(run_on, "satisfied", _Rlog(), "x")
+        self.assertTrue(out["reason"].endswith("…"))          # the cut is DISCLOSED
+        self.assertNotIn("  ", out["reason"])
+        self.assertTrue(all(w in run_on.split() for w in out["reason"].rstrip("…").split()))
+
+    def test_the_short_real_case_is_untouched(self):
+        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x")
+        self.assertEqual(out["reason"], REAL)                 # fits the budget: carried whole
