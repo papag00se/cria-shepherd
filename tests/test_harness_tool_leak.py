@@ -89,3 +89,31 @@ class RefusalTests(unittest.TestCase):
         window = src[i:i + 300]
         for bad in (".replace(", "re.sub("):
             self.assertNotIn(bad, window, "cria must never author or edit a plan step")
+
+
+class NoiseDropVisibilityTests(unittest.TestCase):
+    """`loop.replan_noise` recorded counts, never WHICH steps went.
+
+    Measured across every log day: it fired 156 times, dropped at least one step 75 times, and left
+    ZERO steps kept 37 times. None of those events say what was deleted, so "did the noise judge
+    delete a deliverable?" could not be answered from the logs.
+
+    It has done exactly that twice in this ladder — run 1785625253 (unit tests, live test and README
+    removed) and run 1785659842, which ended the session at 1/4 with "unit tests" and "live test"
+    deleted from a plan the coverage judge had already approved. Both findings needed the raw
+    captures to reconstruct.
+    """
+
+    def test_the_event_now_carries_the_dropped_step_text(self):
+        src = inspect.getsource(loop)
+        i = src.index('rlog.emit("loop.replan_noise"')
+        window = src[i:i + 320]
+        self.assertIn("dropped_steps=", window)
+        self.assertIn("cleaned[i]", window, "log the step TEXT, not the index")
+
+    def test_it_still_reports_the_counts(self):
+        src = inspect.getsource(loop)
+        i = src.index('rlog.emit("loop.replan_noise"')
+        window = src[i:i + 320]
+        self.assertIn("dropped=len(drop)", window)
+        self.assertIn("kept=len(kept)", window)

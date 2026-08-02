@@ -571,7 +571,14 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # was re-derived twice (5→8, then 7→3) into a plan whose step 2 was `grep -n 'resolved_addresses'
     # <file>` and step 3 "Run unit tests": a bare command and plumbing, the two categories this judge
     # deletes. Nothing in the log said whether it ran, kept them, or dropped something else.
+    # LOG WHAT WENT, not just how many. Measured across every log day: this fired 156 times, dropped
+    # at least one step 75 times, and left ZERO steps 37 times — and none of those events record
+    # WHICH steps were deleted, so "did the noise judge delete a deliverable?" cannot be answered
+    # from the logs at all. It happened twice in this ladder (runs 1785625253 and 1785659842, the
+    # second ending the session at 1/4 with "unit tests" and "live test" deleted from the plan), and
+    # both times the finding needed the raw captures to reconstruct. A count is not a reading.
     rlog.emit("loop.replan_noise", dropped=len(drop), kept=len(kept),
+              dropped_steps=" | ".join(cleaned[i][:160] for i in sorted(drop)),
               level="warn" if not kept else "info")
     if not kept:
         return None
