@@ -212,9 +212,10 @@ def _compaction_transcript(messages: list) -> str:
              # "produce the corrected FULL file in a single write_file call". The model obeys the
              # last instruction it reads, and answered with a write_file (measured g8 0187/0188).
              and LOCAL_COMPACT_MARKER not in _text_of_msg(m)]
-    body = selfcompact.serialize(probegate.clean_gate_results(_drop_harness_frame(convo)))
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
-    return body + "\n\n" + prompts.load("compact_closing_ask")
+    # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
+    # cannot drift apart again; they already did once, and the sibling failed for months.
+    return selfcompact.compaction_request(_drop_harness_frame(convo))
 
 
 def _text_of_msg(m: dict) -> str:

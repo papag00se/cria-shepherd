@@ -28,7 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import prompts
+from . import probegate, prompts
 from .content_reduce import est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -142,6 +142,23 @@ def msg_digest(m: dict) -> str:
 def serialize(messages: list[dict]) -> str:
     """The transcript span → one string fed to the summarizer."""
     return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
+
+
+def compaction_request(messages: list[dict]) -> str:
+    """The compactor's user message: the cleaned transcript, then cria's ask LAST.
+
+    ONE owner, because having two was the bug. A model obeys the last instruction it reads, so a
+    transcript whose final line is the coder's live step ("produce the corrected FULL file in a
+    single write_file call") gets obeyed instead of summarized. `da35f4e` fixed that on the harness
+    path in server.py; the self-compaction path in loop.py kept the old order and kept failing, and
+    on run 20260801T161949 its compactor emitted `write_file({"path": …` and degenerated to
+    `v5v5v5…` until the token cap, after which cria adopted a hallucinated unittest file as the
+    session summary and the coder believed it.
+
+    Fixing the sibling by copying the two lines would have left a third place to forget. Both callers
+    now compose the request here."""
+    return (serialize(probegate.clean_gate_results(messages))
+            + "\n\n" + prompts.load("compact_closing_ask"))
 
 
 def _summary_msg(summary: str) -> dict:

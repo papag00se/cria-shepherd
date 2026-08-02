@@ -18,15 +18,26 @@ class SelfCompactionAskTests(unittest.TestCase):
     da35f4e fixed exactly this on the harness path and never reached the self-compaction sibling.
     """
 
-    def test_BOTH_paths_append_the_closing_ask(self):
-        from cria import server
-        self.assertIn("compact_closing_ask", inspect.getsource(server))
-        self.assertIn("compact_closing_ask", inspect.getsource(loop))
+    def test_exactly_ONE_place_composes_the_request(self):
+        # Fixing the sibling by copying the two lines would leave a third place to forget. It was
+        # the duplication that let the two paths drift apart in the first place.
+        from cria import selfcompact, server
+        owners = [m for m in (server, loop, selfcompact)
+                  if "compact_closing_ask" in inspect.getsource(m)]
+        self.assertEqual(owners, [selfcompact], "only selfcompact may name the ask")
 
-    def test_the_self_compaction_call_site_carries_it(self):
-        src = inspect.getsource(loop.Loop._self_compact)
-        self.assertIn("compact_closing_ask", src)
-        self.assertIn("selfcompact.serialize", src)   # the evidence still comes first
+    def test_both_paths_go_through_that_one_place(self):
+        from cria import server
+        self.assertIn("selfcompact.compaction_request(", inspect.getsource(server))
+        self.assertIn("selfcompact.compaction_request(", inspect.getsource(loop.Loop._self_compact))
+
+    def test_the_evidence_comes_first_and_the_ask_last(self):
+        from cria import prompts, selfcompact
+        out = selfcompact.compaction_request(
+            [{"role": "user", "content": "do ONLY this step, then stop: write the file"}])
+        ask = prompts.load("compact_closing_ask")
+        self.assertTrue(out.endswith(ask), "nothing may out-recency cria's ask")
+        self.assertLess(out.index("write the file"), out.index(ask))
 
     def test_the_ask_forbids_code_and_tool_calls(self):
         from cria import prompts

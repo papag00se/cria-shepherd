@@ -1729,8 +1729,7 @@ class Loop:
                                  # that is where unittest entered a pytest run.
                                  # This is the SAME fix as da35f4e, which landed on the harness path
                                  # (server.py) and never reached its sibling here.
-                                 selfcompact.serialize(probegate.clean_gate_results(mm))
-                                 + "\n\n" + prompts.load("compact_closing_ask"), rlog,
+                                 selfcompact.compaction_request(mm), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS) + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
