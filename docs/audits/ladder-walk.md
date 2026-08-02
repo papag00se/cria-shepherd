@@ -2027,7 +2027,9 @@ Planner-off removes that entire surface and has never been tried on this model. 
 
 ---
 
-## ada-handles_mellum2_codex_poff_1785685170 — the FIRST planner-off run
+## ada-handles_mellum2_codex_poff_1785685170
+
+**THE FIRST PLANNER-OFF RUN.**
 
 **3/4 in 231 seconds and 53 calls** — after sixteen planner-on attempts that peaked at 3/4 and
 routinely burned the full hour.
