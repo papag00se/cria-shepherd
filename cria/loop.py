@@ -563,6 +563,27 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # all-noise re-derivation → None (keep the prior plan), never an empty plan.
     _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
     drop = reasoned_noise_indices(_ask, task, cleaned)
+    # A step that names a FILE TO WRITE is not strategy noise. This judge exists to delete steps like
+    # "Error handling strategy" and "Run the tests"; a step naming a concrete artifact is the work.
+    #
+    # It has deleted deliverables three times in this ladder. The third is logged verbatim, one run
+    # after the dropped-text logging was added — `dropped 2 kept 1`:
+    #   "Write live_test.py: call GET /handles/goose, print resolved_address, holder_address, ..."
+    #   "Write README.md: install requirements (requests, pytest); run script; run tests; ..."
+    # That run scored 0/4 with no live test and no README on disk — precisely the two steps deleted.
+    # Earlier: run 1785659842 lost "Write unit tests" and "Write a live test script live_test_goose.py"
+    # and ENDED THE SESSION at 1/4 in 181 seconds, and run 1785625253 lost unit tests, the live test
+    # and the README together.
+    #
+    # missing_deliverables below is the reasoned brake for this and it does fire (34 times across
+    # every log day) — but it is a judge, and it missed all three. This is not a second judgment: a
+    # step naming a file is definitionally not noise, so it is settled deterministically before any
+    # judgment is applied (principle 8).
+    protected = {i for i, text in enumerate(cleaned) if step_authors_artifact(text)}
+    if drop & protected:
+        rlog.emit("loop.replan_noise_refused", level="warn",
+                  steps=" | ".join(cleaned[i][:160] for i in sorted(drop & protected)))
+        drop = drop - protected
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
     # SAY WHAT THE JUDGE DID. The initial plan reports this (plan.noise_dropped / plan.noise_all_kept);
     # the re-derivation ran the same judge and reported nothing, so a tail that came back carrying a
@@ -3089,6 +3110,35 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
 
 # A file-looking token in a step's text: `test_resolve_handle.py`, src/main.go, "README.md".
 _STEP_ARTIFACT = re.compile(r"[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})[`'\")]?")
+
+
+# A step that AUTHORS a file, as opposed to one that merely mentions a path. `grep -n 'x' spec.json`
+# names a file and is exactly the bare-shell-command noise this judge SHOULD delete; "Write
+# live_test.py: ..." names one and is the deliverable.
+_AUTHORING_VERB = re.compile(
+    r"\b(write|create|add|implement|generate|produce|author|document|build)\b", re.I)
+
+
+def step_authors_artifact(step: str) -> list[str]:
+    """File artifacts a step says to CREATE — [] when it only mentions a path."""
+    if not _AUTHORING_VERB.search(step or ""):
+        return []
+    return step_artifacts_named(step)
+
+
+def step_artifacts_named(step: str) -> list[str]:
+    """File artifacts a step NAMES — the plain token match, no disk access.
+
+    Distinct from :func:`step_artifacts_on_disk`, which asks whether they exist. Here the question is
+    only whether the step is about producing a file at all, which is what separates deliverable work
+    from the strategy/plumbing steps the noise judge is meant to delete."""
+    seen, out = set(), []
+    for m in _STEP_ARTIFACT.finditer(step or ""):
+        rel = m.group(1)
+        if rel not in seen:
+            seen.add(rel)
+            out.append(rel)
+    return out
 
 
 def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:
