@@ -105,12 +105,12 @@ a finding or dies.
 ```
 
 **Never two runs of a model without a walk between them.** A second run buries the first one's
-capture and you learn nothing from either. The oracle enforces this — it will refuse to hand you a
+capture and you learn nothing from either. `ladder_status.py` enforces this — it will refuse to print a
 run command while an unwalked failure exists.
 
 ### Running
 
-Take the command from the oracle. Do not compose it by hand.
+Take the command from `ladder_status.py`. Do not compose it by hand.
 
 ```bash
 python3 suite/ladder_status.py        # prints the exact next command
@@ -128,7 +128,7 @@ Read the run call by call in its capture directory, pairing:
 - `NNNN-<phase>.reasoning.txt` — what the model made of them
 
 Walk the crew calls too — reasoner, judges, compactor — not only the coder. Then write
-`## <run_id>` into `docs/audits/ladder-walk.md` with what you found. The oracle looks for that
+`## <run_id>` into `docs/audits/ladder-walk.md` with what you found. `ladder_status.py` looks for that
 heading; a walk that exists only in a chat message is invisible to it, and is exactly what a
 compaction deletes.
 
@@ -212,7 +212,7 @@ the four questions, the verdict, and the fix if there was one.
 
 ## When a model will not pass
 
-After **5 walked failures with no new cria fault found**, the oracle marks the model `BLOCKED` and
+After **5 walked failures with no new cria fault found**, `ladder_status.py` marks the model `BLOCKED` and
 moves to the next one. That is not a pass and the language does not complete — it exists so one
 wedged model cannot silently eat days. Everything about it stays on the record.
 

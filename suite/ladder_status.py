@@ -99,7 +99,7 @@ def in_flight():
     for line in ps.splitlines():
         parts = line.split()
         # argv[1] must BE the runner. Matching "suite/run.py" anywhere in the line also matches the
-        # shell asking the question, and this file while it is being edited — the oracle then reports
+        # shell asking the question, and this file while it is being edited — `ladder_status.py` then reports
         # a phantom run forever and blocks every action. Same self-match that makes `pkill -f` kill
         # its own caller.
         if len(parts) >= 4 and parts[1].endswith("suite/run.py") and "--model" in parts:
