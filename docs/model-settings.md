@@ -44,7 +44,7 @@ cache it does not fit, and that condition is the whole reason it is not already 
 
 | | |
 |---|---|
-| GGUF | [`mmnga/Moonlight-16B-A3B-Instruct-gguf`](https://huggingface.co/mmnga/Moonlight-16B-A3B-Instruct-gguf), **IQ4_XS = 8.74 GB** |
+| GGUF | **pick one — see the comparison below.** The originally-requested `mmnga` IQ4_XS is the smallest but ships **no chat template** |
 | Base | [`moonshotai/Moonlight-16B-A3B-Instruct`](https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct) — 16B total / **3B active** MoE, Muon-trained on 5.7T tokens |
 | Architecture | **DeepSeek-V3 shape** (llama.cpp arch `deepseek2`) — Moonshot's own card says so |
 | Context | **8K native.** The fleet default is 48K; this model must override `ctx` down or it is being run past its training |
@@ -76,6 +76,31 @@ sampling. Start from the DeepSeek-V3-family convention and *measure*, recording 
 | reasoner | `temp 0.6, top_p 0.95` | matches every other MoE in this table |
 | classifier / compactor | `temp 0` | greedy, as for the whole fleet |
 | all roles | `reasoning = "off"` | the model has no thinking mode to enable |
+
+**Instruct is the right variant — the base model is not usable here.** `moonshotai/Moonlight-16B-A3B`
+is a raw completion model: no instruction tuning and no chat template, so it cannot follow a tool
+protocol. Every other name on the Hub is a re-quant or a fine-tune of the Instruct weights. There is
+no coder-specific variant.
+
+**Which GGUF, though, is a real decision — and the chat template is the discriminator.**
+
+| repo | quant | size | chat template | headroom on a 10,240 MiB card |
+|---|---|--:|---|--:|
+| [`mmnga/…-gguf`](https://huggingface.co/mmnga/Moonlight-16B-A3B-Instruct-gguf) | IQ4_XS | **8.74 GB** | **removed** — the card says so outright | ~1.4 GB |
+| [`noctrex/…-MXFP4_MOE-GGUF`](https://huggingface.co/noctrex/Moonlight-16B-A3B-Instruct-MXFP4_MOE-GGUF) | MXFP4_MOE | 9.3 GB | **present** | ~0.9 GB |
+| [`gabriellarson/…-GGUF`](https://huggingface.co/gabriellarson/Moonlight-16B-A3B-Instruct-GGUF) | Q3_K_M | 8.29 GB | unconfirmed | ~1.9 GB |
+| | Q4_K_M | 10.5 GB | unconfirmed | **does not fit** |
+
+MXFP4 is the MoE-oriented 4-bit format (the one gpt-oss ships in) and is generally better
+quality-per-byte on an MoE than a legacy 4-bit — but it is the *largest* of the three that fit, which
+on this card is the binding constraint. `gabriellarson`'s Q3_K_M is the smallest and leaves the most
+room; its card demonstrates `llama serve -hf gabriellarson/…:Q4_K_M`, i.e. it loads on **stock**
+llama.cpp with no special build.
+
+**That last point downgrades the risk recorded above.** `deepseek2` is a mainline llama.cpp
+architecture, not an exotic one — DeepSeek-V2/V3 have been supported for a long time. So the fork
+almost certainly loads the weights; the genuine unknown is narrower than first written: whether
+**tbq3 KV** works on this arch, not whether the arch loads at all. Test in that order.
 
 **Second known issue:** the GGUF repo states *"chat-template is custom therefore removed"*, and the
 repo calls itself experimental. A missing template means `--jinja` has nothing to apply — a template
