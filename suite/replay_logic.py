@@ -83,17 +83,32 @@ def check_oscillation(row, cap, ws):
 
 
 def check_reattach(row, cap, ws):
-    """How many coder prompts carried NO correction — the population the reattach fix serves."""
-    total = absent = 0
+    """How often the reattach fix would ACTUALLY fire — not how big its pool is.
+
+    The first version of this check counted prompts carrying no correction, which is the population,
+    not the trigger, and reported 97% for a fix whose real rate is far lower. The trigger is BOTH
+    conditions together: the gate's findings are UNCHANGED since the last steer (so the old guard
+    would have suppressed), AND the checker's own first line is absent from the request (so nothing
+    else is carrying it). Mirrors loop._checks_already_visible exactly.
+    """
+    fires = 0
+    last_steered = None
     for f in sorted(cap.glob("*coder*.prompt.txt")):
         try:
             t = f.read_text(errors="replace")
         except OSError:
             continue
-        total += 1
-        if not STEER_RE.search(t):
-            absent += 1
-    return absent, f"{absent}/{total} prompts with no checks or steer attached"
+        bullets = BULLET_RE.findall(t)
+        if not bullets:
+            continue
+        checks = "\n".join(b.strip() for b in bullets[-6:])
+        if checks == last_steered:                      # the old guard would suppress here
+            first = bullets[-len(bullets)].strip().lstrip("•").strip()[:80]
+            body_wo_steer = STEER_RE.split(t)[0]        # what the prompt carries APART from the steer
+            if first and first not in body_wo_steer:    # ...and nothing else carries the finding
+                fires += 1
+        last_steered = checks
+    return fires, "findings unchanged AND not otherwise visible"
 
 
 def check_step_reframe(row, cap, ws):
