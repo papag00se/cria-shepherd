@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 19:48:07 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 20:28:57 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -44,6 +44,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+49b7262 docs: define WALK as reading everything, in all seven places it is instructed
 dc904ee fix(loop)+docs: recover prose verdicts, name phantom judge tools, record the reading rule
 926afe5 fix(loop): a judge's THINKING often holds the verdict its answer did not
 af3056f fix(suite): the idle watcher called a deliberate measurement 'idle'
@@ -58,7 +59,6 @@ e651951 docs(ladder): walk mellum2 attempt 5 — the fix worked and the run stil
 aa464fd fix(loop): an authoring step must stop saying "Write X" once X exists and is failing
 af69c12 docs(ladder)+fix(execcheck): walk mellum2 attempt 3; a test file is not a program
 c4d955c feat(suite): shout when the ladder is idle
-484d75d fix(suite,docs): a package named after cria's own tool poisoned a run for nine days
 ```
 
 ---

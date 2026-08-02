@@ -170,6 +170,26 @@ def _clean_step(text) -> str:
     if m:
         s = s[:m.start()]
     s = re.sub(r"^\s*\d+[.)]\s*", "", s)  # leading "1. " / "2) " embedded in a JSON list item
+    # ...and a step that NAMES ITS OWN NUMBER ("**Step 1: Resolve a handle…**"). cria's framing adds
+    # its own — "Do ONLY this step (2 of 6)" — and the two collide in front of the coder:
+    #
+    #   Completed so far:
+    #   1. Step 1: Resolve a handle to its Cardano address.
+    #   Do ONLY this step (2 of 6), then stop: GET /holders/{address}…
+    #
+    # Measured on ada-handles_mellum2_codex_pon_1785625253 turn 0023, in the coder's own words:
+    # "This is ambiguous… The 'Do ONLY this step (2 of 6)' is likely a copy-paste error in the
+    # prompt… Given the ambiguity, I should… ask for clarification." It spent the turn adjudicating
+    # cria's numbering instead of doing the step. A step is a PHRASE; its position is cria's to
+    # state, and stating it twice with different numbers is worse than not stating it at all.
+    # `**` may sit before the word, after the number, or both: "**Step 1:**", "**Step 1:", "Step 1:".
+    # A SEPARATOR IS REQUIRED — "Step 1:" / "Step 1." / "Step 1)" / "**Step 1:**". Making it optional
+    # also ate "Step 1 of the plan…", which is the step's real content.
+    s = re.sub(r"^\s*\**\s*step\s+\d+\s*(?:[:.\)-]\s*\**|\**\s*[:.\)-])\s*", "", s, flags=re.I)
+    # Stripping a leading "**" orphans its partner at the end; a dangling "**" is noise the coder
+    # reads as part of the instruction.
+    if s.rstrip().endswith("**") and "**" not in s.rstrip()[:-2]:
+        s = s.rstrip()[:-2].rstrip()
     s = _strip_trailing_junk(s).strip()
     # A bare ordinal is not a step. Stripping the leading "1." off the string "1." leaves nothing, and
     # an integer element stringifies to "1" — neither is an action the coder can carry out. Measured:
