@@ -1124,3 +1124,51 @@ for a size fix before removing the redundancy and the noise. Reverted to keep-or
 **Model wall: not reached.** Five attempts, zero coder calls. Every one has been a planner failure,
 and every one has found a cria fault. Planner-OFF has still never been tried and remains the
 experiment that would answer whether this model can code at all.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785651890
+
+**3/4 — mellum2's best ever, and its first run to clear the milestone floor.** 195 calls, 26 minutes,
+165 t/s. Previous best across five attempts was 2, and three of those scored 0.
+
+**cria fault: yes** — the unexecuted-write guard shipped this morning could not see a pasted README.
+
+### What it actually built
+
+| check | verdict |
+|:--|:--|
+| unit tests | **pass** — 4 passed in 1.24s |
+| live test | **pass** — "2 passed with network, fails without (provably live)" |
+| resolver CLI | **pass** — `resolve_handle_with_count.py goose` → address + holder + count |
+| README | **fail** — "covers install/run/tests: False" |
+
+The README on disk is genuinely good: it documents all three modules with usage examples and
+`python3 -m pytest`. What it lacks is the **install** section. The plan's own step 5 asked for it —
+*"Write README.md that explains the dependencies (requests), how to run the script, how to run the
+tests"* — so the plan was right and the deliverable was one section short.
+
+### The coder wrote that section. Three times. It never reached disk.
+
+Calls 0178, 0183 and 0187 each emit a complete README **with `## Installation` and
+`pip install requests pytest`** — as a fenced block in `content`, with no tool call.
+
+The guard shipped this morning exists exactly for that and did not fire. A pasted README is a
+` ```markdown ` block containing ` ```bash ` blocks, and the guard toggled an inside/outside flag on
+every fence line — so the inner CLOSING fence read as opening a new block and the run of lines never
+reached the threshold. Measured over this run's 12 tool-call-less turns carrying a fenced block: it
+caught 7 and **missed 5**, four of which were that README.
+
+**Fixed** — depth tracking rather than a toggle. Re-measured on the same captures: 11 of 12 fire, and
+the one that does not is a turn of prose complaining about the prompt, which is not a pasted file.
+
+### What worked, and is worth recording
+
+- Call 0186 attempted `edit_file` with a stale `old_string`; cria's edit recovery answered *"your
+  old_string is not in the file (likely a stale copy). Read the file to get its exact current text"* —
+  correct, and the model had in fact read the file four calls earlier and then edited against memory.
+- No false facts, no impossible instructions, no withheld ground truth found in this run.
+- The plan named the right endpoints from the spec cria surfaced, and the coder built to them.
+
+**Model wall: not reached.** One markdown section short of 4/4, and the model produced that section
+three times.

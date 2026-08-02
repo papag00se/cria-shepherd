@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 23:23:22 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 23:55:30 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_zaya1_codex_pon_1785649909` (capture `/home/jesse/.cria/calls/20260801T225200-019fc107-780c-70f3-b376-c6c37dda57a3`), then write `## ada-handles_zaya1_codex_pon_1785649909` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785651890` (capture `/home/jesse/.cria/calls/20260801T232511-019fc125-dd1a-7f41-bb0b-c1b6e07e74b9`), then write `## ada-handles_mellum2_codex_pon_1785651890` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -19,9 +19,9 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | 🔁 ready to rerun |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 1 | 3/4 | 📖 needs walk |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 5 | 0/4 | 📖 needs walk |
+| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
 
 ## Attempts
@@ -33,21 +33,14 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-01 12:14 | qwythos | 4/4 | exited | — | 108 | 71.9 | `ada-handles_qwythos_codex_poff_1785611662` |
 | 08-01 12:28 | qwopus | 4/4 | exited | — | 39 | 73.7 | `ada-handles_qwopus_codex_poff_1785612491` |
 | 08-01 12:36 | ornith | 4/4 | exited | — | 63 | 73.3 | `ada-handles_ornith_codex_poff_1785612980` |
-| 08-01 12:45 | mellum2 | 2/4 | exited | 15m:1✓ | 114 | 144.7 | `ada-handles_mellum2_codex_pon_1785613520` |
-| 08-01 14:41 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 81 | 160.4 | `ada-handles_mellum2_codex_pon_1785620496` |
-| 08-01 16:01 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 91 | 166.4 | `ada-handles_mellum2_codex_pon_1785625253` |
-| 08-01 16:19 | mellum2 | 1/4 | milestone-miss-30min | 15m:1✓ 30m:1✗ | 225 | 142.9 | `ada-handles_mellum2_codex_poff_1785626379` |
-| 08-01 16:55 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 101 | 145.6 | `ada-handles_mellum2_codex_pon_1785628543` |
 | 08-01 17:15 | nemotron-elastic | 4/4 | budget-killed | 15m:4✓ 30m:4✓ 45m:4✓ 60m:4✓ | 291 | 114.1 | `ada-handles_nemotron-elastic_codex_pon_1785629694` |
-| 08-01 18:17 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 7 | 38.6 | `ada-handles_zaya1_codex_pon_1785633412` |
-| 08-01 21:15 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 7 | 47.6 | `ada-handles_zaya1_codex_pon_1785644114` |
-| 08-01 21:37 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 5 | 46.4 | `ada-handles_zaya1_codex_pon_1785645441` |
-| 08-01 22:14 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 7 | 48.4 | `ada-handles_zaya1_codex_pon_1785647676` |
-| 08-01 22:51 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 8 | 45.6 | `ada-handles_zaya1_codex_pon_1785649909` |
+| 08-01 23:25 | mellum2 | 3/4 | exited | 15m:3✓ | 195 | 165.4 | `ada-handles_mellum2_codex_pon_1785651890` |
 
 ## Fixes landed during the ladder
 
 ```
+895651a fix(loop): the unexecuted-write guard could not see a pasted README
+a807a2d chore(ladder): reset mellum2 and zaya1 attempt counts; record the zaya1 a5 walk
 f974ed8 fix(planner,contextfloor): spill searches, collapse repeats, and stop cutting
 2b945b4 fix(contextfloor): the compaction digest was silently rewriting the task
 ea4b8c2 fix(prompts,ladder): stop cria knowing this task, and block the model the rule meant to block
@@ -61,8 +54,6 @@ dfcd83c refactor(selfcompact): ONE owner for the compaction request, not two tha
 04a346b fix(loop): a turn that PASTED the file is not a claim that the step is done
 c8692f7 fix(selfcompact): a briefing that quotes cria's own ask back is not a briefing
 e72a0e9 fix(webfetch,loop,rumination): four faults the mellum2 full walks exposed
-b8f6892 fix(urlgrounding): a path template's VARIABLE NAME is not part of the route
-4b9c203 fix(planner): a plan step must not carry its own number — cria's framing states the position
 ```
 
 ---
