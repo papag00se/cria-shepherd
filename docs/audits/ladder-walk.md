@@ -194,6 +194,56 @@ only attempting JSON-RPC because the plan sent it there.
 
 ---
 
+### FULL READ (2026-08-01) — all 46 coder turns, end to end
+
+The two earlier passes each read a slice and stopped at the first plausible cause. Reading every
+turn changes the picture again. What the run actually contains:
+
+**The curl was a SHELL SYNTAX ERROR, and cria's steer misdiagnosed it as a payload problem.**
+Five identical commands, turns 44/46/48/50/63, each ending:
+
+```
+... -d '{"jsonrpc":"2025-11-25",...}' https://api.handle.me/mcp'
+                                                              ^ unbalanced quote
+```
+
+`shlex.split` refuses it — "No closing quotation". The command never executed, not once. The
+JSON-RPC payload was correct the whole time. cria's steer told it the payload was malformed, and
+the coder recorded that verbatim at turn 50: *"The user is giving me a redirect that explains
+exactly what was wrong — the curl payload was malformed."* It then rewrote the payload five times,
+re-emitting the same broken quote each time. Five turns of a fifteen-minute budget, spent on a
+false diagnosis cria supplied.
+
+**It emits code as PROSE instead of calling a tool.** Turns 51, 67, 73, 79, 92, 103, 106 print a
+fenced file into the reply and call nothing. Turn 67 is the sharpest: 12,676 characters that
+correctly diagnose its own bug — *"get_total_handles calls _call_mcp('get_holder', …) which is
+WRONG… So I wrote resolve_handle.py incorrectly. This is a bug"* — and then print the fix instead
+of writing it. Measured fleet-wide: **75 of 653 mellum2 coder turns (11.5%) produce a fenced code
+block and no tool call. Every other model is at 0%** except nemotron-elastic at 1.8%.
+
+**It writes to a workspace path that does not exist.** Turns 70 and 71 target
+`/tmp/suite_ada_handles_…` — underscores where the real directory has hyphens. Fleet-wide: 26 of
+221 mellum2 write/edit calls (11.8%) address a `/tmp/suite…` path that is not that run's workspace;
+gemma4 0.3%, everyone else 0%.
+
+**It issues no-op edits.** Turn 68's `edit_file` has `old_string` identical to `new_string`.
+Fleet-wide: 27 of 169 mellum2 edits (16%) change nothing.
+
+**It escapes newlines into edits that can never match.** Turn 88's `old_string` carries literal
+`\n` two-character sequences and no real newline, so no file can match it. 4 of 125 (3.2%).
+
+**Rumination guard aborted a CORRECT stream.** Turn 45 was cut mid-sentence while writing a working
+MCP client.
+
+**It reconstructs an imagined history.** Turn 67 spends thousands of characters enumerating
+"Turn 1: User gives plan… Turn 9: Assistant writes test_resolve_handle.py" to work out whether it
+had already written a file, and reaches no conclusion.
+
+**Verdict.** The plan defects named below are real but were not decisive — this run scored the
+HIGHEST of mellum2's five. What actually consumed it: five turns on a shell quote cria misdiagnosed,
+seven turns printing code that never reached disk, two writing to a nonexistent path, and one
+no-op edit. The model's reasoning is largely sound throughout; its EMISSION is what fails.
+
 ### The original (superseded) walk
 
 
