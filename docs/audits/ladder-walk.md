@@ -1741,3 +1741,43 @@ never speak over a tool's own output. Only the actionable summary line is cria's
 
 **Model wall: not reached.** Every deliverable has passed in some run; none has passed all four in
 one run. The next work is the stuck-step lever, not another parser fix.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785673911
+
+**1/4.** 156 calls, killed at the 30-minute floor. Only the CLI passed.
+
+**cria fault: yes** — the noise judge deleted the live test again, and my own protection was too
+tight to catch it.
+
+```
+loop.replan_noise  dropped 1  kept 1
+  "Write a live test file (e.g., test_live_resolve.py) that calls the real API for 'goose'
+   and asserts the response contains resolved..."
+```
+
+Verifier: `no live-test file found`, `no README`.
+
+### Both of my versions were wrong, one run apart
+
+| version | behaviour | consequence |
+|:--|:--|:--|
+| verb anywhere + filename anywhere | protected `"Commit the three files (resolve.py, …) to a new repo, add a .gitignore …"` | junk kept in the plan 3× in run 20260802T024816 |
+| verb directly against the filename | missed `"Write a live test file (e.g., test_live_resolve.py) …"` | live test and README deleted, this run |
+
+**Fixed** — a 40-character window that never crosses a sentence boundary. Correct on every measured
+case in both directions: all three logged deletions protected; the git-plumbing step and
+`grep -n 'resolve' spec.json` still droppable.
+
+I also removed a test assertion of my own. I had written that `"Add tests, then commit resolve.py"`
+must be droppable — I invented that example, and it is not a false positive: "Add tests" is authoring
+work. The reasoning now sits in its place so it is not reintroduced from memory.
+
+### The pattern worth naming
+
+Three consecutive runs where the fix itself was the finding. The dropped-step logging is what made
+each one visible within a single run instead of three — logging what a mechanism DID, not just how
+often it ran, is what turned this whole area from archaeology into measurement.
+
+**Model wall: not reached.**
