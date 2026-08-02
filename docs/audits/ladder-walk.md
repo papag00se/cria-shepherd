@@ -40,12 +40,10 @@ disagree, the command is right and this table is stale.
 
 ## Notes — findings that are not a single run's walk
 
-**P4 KILLED BY ITS OWN MEASUREMENT (2026-08-01).** The completion brake asks one yes/no about a
-four-deliverable task, and it approves incomplete runs 41% of the time — 17 verdicts, 7 wrong. The
-obvious fix was to ask per-deliverable instead, using the decomposer cria already owns. It looked
-certain.
+**P4 — THREE HYPOTHESES, ALL WRONG, AND THE DOCTRINE ALREADY HAD THE ANSWER (2026-08-01).**
 
-Measured where the bug actually lives. False "done" verdicts by model:
+The completion brake approves incomplete runs 41% of the time (17 verdicts, 7 wrong). Measured by
+model, the failure is not spread evenly:
 
 | model | false done | verdicts | |
 |:--|--:|--:|:--|
@@ -54,29 +52,41 @@ Measured where the bug actually lives. False "done" verdicts by model:
 | qwythos | 2 | 14 | 14% |
 | ternary-bonsai / qwopus / ornith | 0 | 4 | — |
 
-Replayed both asks against 8 real archived workspaces, judged by gemma4 on gemma4's own sampling:
+Three attempts to fix it, each measured on gemma4 — the model carrying the failure — against 8 real
+archived workspaces on gemma4's own sampling:
 
 ```
-fused ask correct : 3/8
-split ask correct : 1/8
+1. ask per-deliverable instead of one fused question   split 1/8  vs  fused 3/8   WORSE
+2. show what the code DOES instead of its filenames    runtime 2/8 vs  names 5/8   WORSE
+3. ...and "names 5/8" is not a score at all
 ```
 
-**The proposed fix is WORSE.** Not shipped. This is the same shape as the earlier critic change that
-went 8/8 → 1/8, and it is the second time this cycle that a well-evidenced, obvious-looking
-improvement turned out to make things worse when actually run.
+The third line is the finding. The filename arm answered **"not done" on all eight cases** — a
+constant, not a judgment. Its 5/8 is the class balance (five of eight runs were incomplete), nothing
+more. The other arm varied and did worse than the constant.
 
-Two method errors worth keeping, both mine:
+So gemma4 cannot make this call on any evidence given to it. That is consistent with what was
+already recorded: it reads the confirm verdict **0/6**. It carries 4 of the 5 false verdicts because
+it cannot do the judgment, not because cria phrased it badly.
 
-* I first ran this on whichever model happened to be loaded (zaya1, which timed out), then on the
-  fastest good judge (qwythos, where the bug appears in 14% of verdicts). The operator pointed out
-  that the test belongs on the model with the most failures. Convenience is not a sampling strategy.
-* The ground-truth label was "a live test or README is missing", not "the run scored below full
-  marks". Those differ, and at least one case is mislabelled. The *comparison* survives — both arms
-  were scored against the same label — but the absolute numbers are not trustworthy and a cleaner
-  rerun needs a better label.
+**The mistake underneath all three attempts was the same** — searching for a prompt that would make
+a weak judge work. Principle 8 is explicit: deterministic code gathers FACTS, a reasoner JUDGES.
+"Does this program run and produce the right thing" is a fact. The live-execution check answers it
+by running the program and reading the exit code, with no opinion involved, and it is already wired.
 
-The 41% prevalence remains real. The brake is still wrong 41% of the time. What is now known is that
-decomposing the question is not the answer.
+**Not shipped, and nothing further to ship here.** The recommendation is to stop asking a judge a
+question a deterministic check can answer, on the models measurably unable to answer it.
+
+Method errors worth keeping, all mine:
+
+* I ran the first arm on whichever model happened to be loaded (zaya1 — it timed out), then on the
+  fastest good judge (qwythos, 14% failure). The operator pointed out the test belongs on the model
+  with the most failures. Convenience is not a sampling strategy.
+* My first ground-truth label was "a live test or README is missing" rather than "scored below full
+  marks". Both arms shared it so the comparison held, but the absolute numbers did not.
+* I nearly recorded "decomposition is worse" as the conclusion. The test could not support it —
+  both arms saw only filenames, which cannot distinguish a working file from a broken one.
+
 
 **ALL FIVE DENSE MODELS PASSED, planner OFF, first attempt (2026-08-01).** 27B → 9B, 26.2 / 28.4 /
 12.7 / 6.5 / 7.6 minutes. The dense half of the operator's hypothesis — that dense models cope with
