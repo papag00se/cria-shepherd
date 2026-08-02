@@ -70,10 +70,36 @@ class RepairNoteTests(unittest.TestCase):
     def test_singular_and_plural_read_correctly(self):
         one = self.note("Write `a.py`", ws(**{"a.py": "x\n"}), True)
         two = self.note("Write `a.py` and `b.py`", ws(**{"a.py": "x\n", "b.py": "y\n"}), True)
-        self.assertIn("exists on disk", one)
-        self.assertIn("it is already written", one.replace("but it is", "it is"))
-        self.assertIn("exist on disk", two)
-        self.assertIn("them", two)
+        self.assertIn("The file named in this step already exists on disk", one)
+        self.assertIn("The files named in this step already exist on disk", two)
+
+    def test_it_claims_nothing_about_what_the_step_ASKED_FOR(self):
+        # step_artifacts_on_disk matches EVERY filename token, so the list is "names that appear",
+        # not "files this step authors". 14% of 1,052 delivered notes named more than one file.
+        # The old wording asserted "this step's wording asks you to WRITE them" over that list.
+        note = self.note("Write `a.py` documenting how to run `b.py`",
+                         ws(**{"a.py": "x\n", "b.py": "y\n"}), True)
+        self.assertNotIn("asks you to WRITE", note)
+
+    def test_it_OVERRIDES_a_contradicting_claim_rather_than_sitting_beside_it(self):
+        # Live, run 20260801T232511 call 0097: the step was a critic's essay asserting the files
+        # "are not in the workspace", and three lines below cria listed them as present. Both
+        # claims stood. cria's disk read is the ground truth and now says so.
+        step = ("So the task is NOT satisfied because: 1. a.py and b.py are not in the workspace "
+                "2. No README.md exists")
+        note = self.note(step, ws(**{"a.py": "x\n", "b.py": "y\n", "README.md": "z\n"}), True)
+        self.assertIn("GROUND TRUTH", note)
+        self.assertIn("trust it over anything above that says otherwise", note)
+
+    def test_no_broken_grammar_in_any_arity(self):
+        # "but them are already written" shipped in 145 captured prompts.
+        for files in ({"a.py": "x\n"}, {"a.py": "x\n", "b.py": "y\n"},
+                      {"a.py": "x\n", "b.py": "y\n", "c.py": "z\n"}):
+            note = self.note(" ".join(f"`{n}`" for n in files), ws(**files), True)
+            with self.subTest(n=len(files)):
+                self.assertNotIn("them are", note)
+                self.assertNotIn("it are", note)
+                self.assertNotIn("them is", note)
 
 
 class ItemPromptTests(unittest.TestCase):

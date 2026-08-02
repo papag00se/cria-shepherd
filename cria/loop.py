@@ -3213,11 +3213,19 @@ def _repair_note(item: str, workspace_root: str | None, gate_red: bool) -> str:
     files = step_artifacts_on_disk(item, workspace_root)
     if not files:
         return ""
+    # The note states a FACT and stops. It used to add "this step's wording asks you to WRITE them",
+    # which is a claim about the step's INTENT that the file list cannot support: step_artifacts_on_disk
+    # matches every filename token, and 14% of the 1,052 delivered notes named more than one — including
+    # files a step only MENTIONED. Live (run 20260801T232511 call 0097) the step was a critic's essay
+    # asserting "resolve_handle.py and get_holder_handle_count.py are not in the workspace / No README.md
+    # exists", and three lines below it cria listed all three as present. Both claims stood, unresolved,
+    # in one prompt. Restating the note as a direct disk read that OVERRIDES anything above is true
+    # whichever way the step meant those names, and it settles the contradiction instead of adding to it.
+    # (The old wording also read "but them are already written" — shipped 145 times.)
     many = len(files) > 1
     return "\n\n" + prompts.render(
         "step_repair_note", files=", ".join(f"`{f}`" for f in files),
-        plural="s" if many else "", verb="" if many else "s",
-        pronoun="them" if many else "it", are="are" if many else "is")
+        plural="s" if many else "", verb="" if many else "s")
 
 
 def _item_prompt(item: str, summary: str, idx: int, total: int,
