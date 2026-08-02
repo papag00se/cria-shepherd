@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import threading
 import urllib.parse
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from . import groundtruth, massage, planner_tools, prompts, urlgrounding
@@ -1011,6 +1012,33 @@ class Planner:
         return None
 
     def _reason(self, messages: list[dict], rlog, *, research: bool = False, plan_only: bool = False) -> dict | None:
+        """One planner call. A round that spends its whole output budget THINKING and emits nothing
+        is retried with reasoning forced OFF — the same contract `_verdict` has enforced on the
+        critic for the same reason, and which the planner never got.
+
+        The critic's own note describes this exactly: "a reasoning model under the max_tokens cap can
+        burn its whole budget THINKING and never emit the closing JSON". Measured over every captured
+        planner round (n=499): 15 were cut off at the cap and **5 of those produced nothing usable at
+        all** — no tool call, no content — behind 26,337 / 28,936 / 31,248 / 31,475 and 106,829
+        characters of reasoning. On zaya1 it is the dominant failure, not a tail case: run
+        20260801T221447 lost 2 of its 7 planner rounds this way and never reached the coder in 15
+        minutes.
+
+        Bounded to one retry, and only when the round produced NOTHING — a cut-off round that still
+        emitted usable calls or text is kept as-is (see _last_call_truncated)."""
+        msg = self._reason_once(messages, rlog, research=research, plan_only=plan_only)
+        if (msg is not None and msg.get(FINISH_KEY) == "length"
+                and not (msg.get("tool_calls") or []) and not (msg.get("content") or "").strip()):
+            rlog.emit("plan.think_burn_retry", phase="research" if research else "draft")
+            retry = self._reason_once(messages, rlog, research=research, plan_only=plan_only,
+                                      think_off=True)
+            if retry is not None and ((retry.get("tool_calls") or [])
+                                      or (retry.get("content") or "").strip()):
+                return retry
+        return msg
+
+    def _reason_once(self, messages: list[dict], rlog, *, research: bool = False,
+                     plan_only: bool = False, think_off: bool = False) -> dict | None:
         body: dict = {
             "stream": False,
             "temperature": 0,  # default; the reasoner role's config (cria.toml) overrides below
@@ -1021,7 +1049,8 @@ class Planner:
             "messages": [{"role": "system", "content": prompts.load("plan")}] + messages,
         }
         if self._role is not None:
-            self._role.apply(body, internal=True, rlog=rlog)
+            role = replace(self._role, reasoning="off") if think_off else self._role
+            role.apply(body, internal=True, rlog=rlog)
         if research:
             # RESEARCH phase: the read-only tools ONLY — `submit_plan` is deliberately absent, so the
             # planner cannot draft before it has looked. The tool menu is the enforcement; the prose
