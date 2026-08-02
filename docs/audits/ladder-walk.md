@@ -2238,6 +2238,55 @@ This is the concrete form of the 57%-of-sessions regression signal. cria has no 
 workspace was ever better, and under sustained pressure at the one failing check it will let the
 coder trade two passing deliverables for it.
 
+# FINAL TALLY — all 18 mellum2 runs walked properly (2026-08-02)
+
+**Eighteen readers, one run each, ~3,400 calls. Eighteen `cria fault: yes`. Zero exceptions.**
+
+Every one read every call in order, quoted verbatim with call numbers, and RAN the code the steers
+contained. Where their verdicts disagreed with mine, mine were wrong — every time, and always in the
+direction that flattered cria.
+
+## The four defects verified STILL LIVE in current code
+
+1. **`probegate.py:251`** — `s = ln.strip()` then a global `if s not in seen` de-indents and
+   de-duplicates check output that cria ships under *"each is the checker's OWN message"*. In a
+   traceback's source echo this deletes closing braces, block structure, and — measured — an entire
+   `E KeyError` line. **Doctrine 5 violation: cria substituting its own text for the tool's.** Two
+   independent walks named this their top fix; in one, the coder was shown the RAW output once and
+   solved it in a single turn after ~40 calls of the mangled version.
+2. **`server.py` `_harden_compaction_reply`** — retries on empty or tool-call-leak but NOT on
+   truncation, while `loop.summarize()` (line 3708) does. Its own docstring claims it is "the same"
+   hardening. A 63,370-char briefing containing *"I closed the issue"* ×148 rode 49 prompts. Another
+   run took three such briefings with 226 / 245 / 216 verbatim repeats, inflating prompts to 116 KB.
+3. **`probeparse._failing_frame`** — takes the DEEPEST own-code frame. When a TEST's mock is wrong,
+   that is always the production file. ~40 steers in one run pointed at `unittest/mock.py:1193`, the
+   line where the mock raises — turning the one piece of evidence that names the bug into a place to
+   go edit. **This is a flaw in a fix landed the same day; fixing the stdlib pointer was right,
+   taking the deepest frame was not.**
+4. **`verdict_from_reasoning`** — makes a plan step out of a hard 300-character slice of a judge's
+   private thinking, cut mid-word. One such essay drove ~40 turns.
+
+Also recorded, unverified by me: a dirguard refusal returning `Process exited with code 0`, so a
+refused command reads as a passing check. Worth checking first next session — a guard that reports
+success is the worst possible failure shape.
+
+## What this is, in one sentence
+
+**cria is not failing to help. It is confidently supplying false facts, deleting its own correct
+instructions, and mangling the tool output it labels verbatim** — and the model reached the right
+answer unaided in nearly every run and was steered off it.
+
+The proof case: run 1785678150 held a solution scoring **4/4 at minute 19** and finished at **1/4**.
+Restoring two files from the capture and re-running the real verifier demonstrates it.
+
+## The meta-lesson, for whoever fixes this
+
+Four times today a mechanism was landed on one path and never reached its twin — the compaction
+closing-ask (three paths), and now the truncation guard. **Before shipping any fix below, grep for
+its sibling.** And five of today's fixes were corrections to earlier fixes of mine; the one that
+needed four revisions was a regex doing a judgment's job, which principle 9's new corollary now
+forbids.
+
 # SUPERSEDING NOTE — every mellum2 walk above was re-done properly (2026-08-02)
 
 **Read this before trusting any verdict above it.**
