@@ -1226,3 +1226,68 @@ fires **once**, on exactly that verdict, with no false positives. One occurrence
 a hard gate — which is why it is evidence, not a block.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785654712
+
+**0/4** after two consecutive 3/4 runs. 145 calls, killed at the 15-minute floor.
+
+**cria fault: yes** — the living replanner wrote one of cria's own tool names into the deliverable's
+design, and the coder built to it.
+
+| check | detail |
+|:--|:--|
+| unit tests | fail — **9 errors in 0.01s**, all at collection |
+| live test | fail — no live-test file |
+| resolver CLI | fail — `cli.py goose: exit=1` |
+| README | fail — none written |
+
+### The surface error is not the cause
+
+All nine errors are `fixture 'mocker' not found` — the model wrote `pytest-mock` tests in an
+environment without it. But running the workspace shows the deeper break: `resolve_handle.py` ships
+
+```python
+resp_text = web_fetch(url=url)
+```
+
+with no import and no such function anywhere. pyflakes says `undefined name 'web_fetch'`. Every unit
+test mocks a function that does not exist, so they error before they run.
+
+**`web_fetch` is one of cria's own tool names.**
+
+### Where it came from — cria, not the model
+
+The INITIAL plan is clean. Step 4: *"Write unit tests that mock the API call ..."*
+
+The living re-derivation at **call 0064** rewrote it:
+
+> *"Write unit tests for resolve_handle and total_handles_for_holder with fixtures for a known handle
+> (**mock web_fetch** to return a successful response), a not-found handle (**mock web_fetch** to
+> raise an exception) ..."*
+
+That step reached the coder from call 0068 onward and was judged four times. The coder read it and
+built production code around a harness tool. Its reasoning at 0108 shows it trying to rationalise the
+step it was given: *"The import should be something like `from unittest.mock import patch` or
+`from pytest_mock import mocker`... `undefined name 'web_fetch'` suggests the line is
+`from web_fetch import web_fetch` and that module doesn't exist."*
+
+The replanner's own system prompt already forbids this: *"Any tool list you are shown belongs to the
+coder, so the steps you write are things IT can do."* A prompt is a request, not an enforcement —
+which is the sentence `urlgrounding` was written for.
+
+### What cria got RIGHT here
+
+The gate ran, and the exact error text reached **27 coder prompts**. cria did not hide the failure or
+speak over the tool. The coder simply could not satisfy a step that was impossible as written.
+
+**Fixed** — a re-derived tail naming a coder tool as code the deliverable calls/mocks is REFUSED, and
+the step that was already correct stands. Framing is the discriminator and it is the model's own:
+"web_fetch the spec" is an instruction to the agent and passes; "mock web_fetch" describes the
+product and does not. Base-rated over every captured judged step (n=372): 4 hits, all this run, all
+this one step. cria never rewrites a plan step — it declines the bad tail, exactly as it already
+declines a tail that drops deliverables.
+
+**Model wall: not reached.** Score variance across three runs on near-identical code — 3, 3, 0 — is
+also a reminder that one number is not signal.
