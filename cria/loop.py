@@ -4269,6 +4269,10 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           truth=(truth or "(no check results for this steer)"),
                           reasoning=(reasoning or "(not captured for this trigger)"))
     coder_tools = _coder_tools_summary(body.get("tools"))
+    # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
+    # visible in the captures as its own call, never mistaken for the authoring pass.
+    def _steer_ask(system: str, _user: str) -> str:
+        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-code") or ""
     if workspace_root and os.path.isdir(workspace_root):
         # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
         # lists names/sizes only, and the author holds the same read-only tools the judges hold —
@@ -4287,10 +4291,10 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         text = strip_think(text or "").strip()
         evidence = user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog)
+        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog, ask=_steer_ask)
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner", coder_tools=coder_tools) or "").strip()
-    return _grounded_steer_or_none(_steer_or_none(text), user, rlog)
+    return _grounded_steer_or_none(_steer_or_none(text), user, rlog, ask=_steer_ask)
 
 
 def _steer_or_none(text: str) -> str | None:
@@ -4376,19 +4380,49 @@ def _dedupe_doubled(text: str) -> str:
 # right" opened 14 of one run's post-steer reasonings). The steer contract is already "name the
 # file:line and describe the change in words" — this enforces it: a directive carrying a multi-line
 # code block, or a shell command line, is dropped. Prose that merely NAMES an identifier is fine.
-_CODE_DICTATION = re.compile(
+# A TRIGGER, not a verdict. It is deliberately allowed to over-fire: its whole job is to decide
+# whether the focused question below is worth one call. Telling a QUOTE from a DICTATION is judgment
+# — the author's own prompt permits "quoting the real error text or an existing line you have read"
+# and forbids "inventing the replacement", and no pattern can separate those. Measured over 1,692
+# distinct steers actually delivered to a coder, 264 (16%) are code-shaped, and reading them shows
+# most are legitimate quotes of the coder's own failing line.
+#
+# The old regex WAS the verdict, and it was wrong in both directions. It dropped whole steers on a
+# leading `import ` (a quote of the file being discussed), and it fired only twice in the entire
+# capture history — while the directive that told the coder to call `pytest.register_pytest_mark("live")`
+# (not a real function) sailed through, because that code was inline in prose with no fence and no
+# line-leading keyword. Chasing inline code with more pattern is the deterministic-code-doing-a-
+# judgment's-job that principle 9's corollary forbids.
+_CODE_SHAPED = re.compile(
     r"```"                                              # a fenced block of any kind
     r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # a code LINE
-    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )",     # a command LINE
+    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )"      # a command LINE
+    r"|\b\w+(?:\.\w+)+\([^)\n]*\)",                    # an inline dotted CALL: `pkg.fn(arg)`
     re.M)
 
-
-def _dictates_code(directive: str) -> bool:
-    """True when the directive hands the coder code/commands to copy rather than an instruction."""
-    return bool(_CODE_DICTATION.search(directive))
+_DICTATES = "DICTATES"
 
 
-def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str | None:
+def _dictates_code(directive: str, ask=None) -> bool:
+    """True when the directive hands the coder CODE TO COPY rather than a description of the change.
+
+    Deterministic pre-filter, then ONE focused question — the pattern the operator's policy calls for:
+    a single purposeful model call is not extra inference when it stops the coder thrashing against
+    unverified code. Code-shaped text is a cheap fact; whether it is a quote or a dictation is not.
+
+    ``ask(system, user) -> str`` is the caller's one-shot reasoner. With no reasoner (or an answer
+    that is not one of the two words) the pre-filter's verdict stands — which is exactly today's
+    behaviour, so this can only move steers from dropped to delivered, never the other way."""
+    if not _CODE_SHAPED.search(directive):
+        return False
+    if ask is None:
+        return True
+    ans = strip_think(ask(prompts.render("steer_dictates_code", directive=directive), "") or "").strip()
+    head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
+    return head != "DESCRIBES"        # DICTATES, or anything unreadable → the pre-filter stands
+
+
+def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
     The steer author's own system prompt already says "NEVER invent a file path, directory, command,
@@ -4411,7 +4445,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog) -> str |
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
         return None
-    if _dictates_code(directive):
+    if _dictates_code(directive, ask):
         rlog.emit("loop.steer_dictated_code", level="warn", head=_clip(directive, 120))
         return None
     cite = _false_line_citation(directive, evidence)

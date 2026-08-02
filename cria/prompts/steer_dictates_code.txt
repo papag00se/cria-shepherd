@@ -1,0 +1,14 @@
+You are checking ONE thing about a short directive that is about to be sent to a coding model. Answer with a single word.
+
+The directive is allowed to QUOTE reality: the exact error a checker printed, a line that already exists in a file, a value a tool returned, the name of a file or a function that is already there. Quoting what IS is how a diagnosis is stated, and it is fine.
+
+The directive is NOT allowed to WRITE THE CODE. Not a corrected line to paste, not a replacement function, not a file's contents, not a call for the coder to add, not a command to run verbatim. Whoever wrote this directive could not run, test, or type-check anything, so any code in it is unverified — and the coder pastes it verbatim because it arrives as an instruction. Measured: one such directive told the coder to add `pytest.register_pytest_mark("live")`, which is not a real function, and another shipped a test decorated in a way that raises TypeError before it runs.
+
+So: does this directive hand the coder code to copy, or does it describe in words what must become true and leave the writing to the coder?
+
+Answer EXACTLY one word:
+DICTATES — it gives code, a call, a line, a file's contents, or a command for the coder to copy.
+DESCRIBES — it only names things and quotes what already exists or what the tools reported.
+
+DIRECTIVE:
+{{DIRECTIVE}}
