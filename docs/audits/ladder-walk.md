@@ -812,3 +812,74 @@ gate exactly as before. Landed in BOTH halves, with a test asserting it.
   anchored the model back onto an endpoint it had disproved one turn earlier.
 - The bullet fallback in `planner.py` drops each bullet's indented detail lines; the numbered path
   (`_numbered_with_details`) preserves them. That is where a step lost its endpoint and field names.
+
+---
+
+## ada-handles_zaya1_codex_pon_1785644114
+
+**0/4, killed at the 15-minute floor. 8 model calls total: 1 classifier, 7 planner, and
+zero coder.** The run never reached the coding model at all. Every call read in full.
+
+| call | finish | completion tokens | what it did |
+|:--|:--|--:|:--|
+| 0001 classifier | stop | 675 | correct — `{"engagement":"task","task_type":"coding"}` with an accurate restatement |
+| 0002 planner | **length** | 8,192 | pure reasoning, no tool call, no content — the whole budget burned thinking |
+| 0003 planner | **length** | 8,192 | **138 tool calls**, 32 distinct |
+| 0004 planner | **length** | 8,192 | **134 tool calls**, 16 distinct |
+| 0005 planner | stop | 570 | no calls, no content |
+| 0006 planner | stop | 6,583 | finally drafted a plan |
+| 0007 planner | stop | 3,245 | coverage judge: `{"missing": []}` |
+
+Prompt sizes tell the same story: 6 KB, 7 KB, **56 KB**, **105 KB**, **105 KB**.
+
+### Question 3 — did cria WITHHOLD something it already held? **Yes. This is the run.**
+
+cria gives the planner `read_file` and `exec_command`, resolves every one of those calls against
+`cwd` internally, and **never tells the planner what `cwd` is**. No path, no cwd tag, no listing —
+I read the entire 0002 prompt to confirm it, system message to final token.
+
+So the model guessed. It invented `/workspace/dumps/workspace` and read, under it, `README.md`,
+`requirements.txt`, `setup.py`, `pyproject.toml`, `Dockerfile`, `package.json` and
+`.github/workflows/test.yml` — over and over, in blocks of six, for two entire rounds.
+
+Measured across every captured prompt in `~/.cria/calls`:
+
+| prompt | names the workspace | share |
+|:--|--:|--:|
+| critic | 292 of 331 | **88%** |
+| planner | 31 of 481 | **6%** |
+
+cria renders that exact ground truth for the critic on nearly every call and withholds it from the
+one role it hands a filesystem to.
+
+**Fixed** — the planner now gets the critic's own inventory. `workspace_inventory` moved from
+`loop.py` to `groundtruth.py` so both can import it (loop imports planner, so planner cannot import
+loop); one owner, not a copy. No cwd still means no section — cria must not invent a root either.
+
+### Second fault — rounds were bounded, calls per round were not
+
+Measured over every captured planner round (n=328, 719 calls issued): **236 — 32.8% — are exact
+duplicates of another call in the same round.** This run is the extreme: 138 calls of which 32 were
+distinct, then 134 of which 16 were. Four of them were `curl` against the live API with the identical
+request.
+
+**Fixed** — each distinct call executes once. Nothing is withheld: every distinct call still runs in
+full and every `tool_call_id` still receives its own complete result, so the protocol stays
+well-formed and the model sees exactly what it asked for. Only the re-execution goes.
+
+### Not fixed, and recorded rather than guessed at
+
+Three of the seven planner responses ended at `finish_reason: length`, and cria executed a tool-call
+list the model had not finished emitting. That is a real gap — the coder has `guard_truncation` and
+the planner has no equivalent — but the right handling is not obvious (re-ask, or execute what
+parsed and disclose the cut), and with the two causes above removed the flail that produced those
+8,192-token responses may not recur. Re-measure on the next zaya1 attempt before building anything.
+
+### Questions 1, 2 and 4
+
+- **False or stale?** No. The planner prompt states nothing untrue; its fault is silence, not error.
+- **Impossible?** No.
+- **Wording?** Not the wording — the omission.
+
+**Model wall: not reached.** zaya1 planned a reasonable 6-step plan at 0006 once it stopped
+thrashing, and the coverage judge passed it. It never got to code.
