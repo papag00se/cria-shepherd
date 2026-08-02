@@ -1291,3 +1291,62 @@ declines a tail that drops deliverables.
 
 **Model wall: not reached.** Score variance across three runs on near-identical code — 3, 3, 0 — is
 also a reminder that one number is not signal.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785656001
+
+**3/4 — third 3/4 in four runs, and the miss moved a third time.** 375 calls, the FULL hour (it
+earned every 15-minute interval by delivering), killed at 60 minutes.
+
+**cria fault: yes** — cria spent the run pointing the coder at a line inside Python's standard library.
+
+| check | a1 | a2 | a4 |
+|:--|:--|:--|:--|
+| resolver CLI | pass | pass | pass |
+| README | fail | pass | pass |
+| live test | pass | fail | pass |
+| unit tests | pass | pass | **fail** |
+
+Three runs, three different single misses. This model can produce all four.
+
+### What failed, run rather than read
+
+```
+FAILED test_resolve.py::test_resolve_valid_handle  - AssertionError: assert 'N/A' == 'addr1'
+FAILED test_resolve.py::test_resolve_404_returns_na - Exception: 404
+FAILED test_resolve.py::test_resolve_network_error  - Exception: Network error
+```
+
+The tests mock `raise_for_status` to raise; the resolver never catches it, so the exception escapes
+instead of returning the `'N/A'` the tests expect. A real, small, fixable mismatch.
+
+### cria told it to fix the standard library
+
+The last steer of the run, verbatim:
+
+> `• /usr/lib/python3.12/unittest/mock.py:1193: Exception: 404`
+> `• /usr/lib/python3.12/unittest/mock.py:1193: Exception: Network error`
+
+`parse_pytest` took `locs[-1]` — the last traceback frame — while its own docstring claimed that
+"gets the real test-file location". When a mock raises, the deepest frame is inside the interpreter.
+
+Base-rated over every captured coder prompt carrying a check block (n=2,836): a stdlib or
+site-packages `file:line` appears **7,888 times across 48 runs** — `mock.py` alone 2,680, then
+`__init__.py` 1,461, `rewrite.py` 825, `ast.py` 549. This is systemic, not a quirk of one run.
+
+It was also **already recorded as an open finding** from the mellum2 attempt-4 walk — *"forty turns
+of fixes were pointed at the standard library"* — and had not been acted on until now.
+
+**Fixed** — the finding now names the deepest frame in the coder's OWN code, falling back to the last
+frame only when none qualify (the failure is then genuinely outside the workspace, and saying so
+beats inventing a location).
+
+### Also seen, not yet acted on
+
+The workspace holds **both** `resolve-handle.py` and `resolve_handle.py`. The hyphenated one is not
+importable in Python, and the last steer records the coder repeatedly reading it
+(`read_file {"path": "resolve-handle.py"}`). mellum2's self-corrupted-path habit is recorded from
+earlier walks; measure it before building anything.
+
+**Model wall: not reached.**
