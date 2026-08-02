@@ -1,0 +1,8 @@
+# The research ledger shown to a plan judge (prompts.load_map).
+#
+# Only ever rendered when cria HAS fetched something. An empty ledger means cria knows nothing about
+# the API, not that a name in a step is invented — showing an empty block would turn every named
+# field into "unverified" and delete correct steps.
+head = WHAT WAS ACTUALLY READ FROM THE REAL SOURCE THIS SESSION (fetched documents, not anyone's claim). A name that appears below is REAL — a step using it is not guessing. A name that does NOT appear may still be real; this list is only what has been read so far, so absence is not evidence of a guess.
+routes = Endpoints read: {{ROUTES}}
+shapes = Response fields read: {{SHAPES}}

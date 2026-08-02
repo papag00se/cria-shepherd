@@ -528,7 +528,7 @@ def _tool_names(coder_tools: str) -> list[str]:
 
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
                        evidence: str, rlog, coder_tools: str = "",
-                       trigger: str = REPLAN_TRIGGER_ADVANCE) -> list[str] | None:
+                       trigger: str = REPLAN_TRIGGER_ADVANCE, facts: str = "") -> list[str] | None:
     """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
     ACTUALLY done (real tool evidence), so the plan adjusts to reality at each verification instead of
     marching a stale guess. Returns the refined remaining step-text list (may be shorter/reworded/
@@ -562,7 +562,7 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # replan.txt already tells the reasoner to avoid these; this is the focused safety judgment. An
     # all-noise re-derivation → None (keep the prior plan), never an empty plan.
     _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
-    drop = reasoned_noise_indices(_ask, task, cleaned)
+    drop = reasoned_noise_indices(_ask, task, cleaned, facts=facts)
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
     # SAY WHAT THE JUDGE DID. The initial plan reports this (plan.noise_dropped / plan.noise_all_kept);
     # the re-derivation ran the same judge and reported nothing, so a tail that came back carrying a
@@ -1596,7 +1596,8 @@ class Loop:
             noisy = reasoned_noise_indices(
                 lambda sysm, userm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                               sysm, userm, rlog, phase="reasoner") or "",
-                task, [step_text])
+                task, [step_text],
+                facts=session_research_facts(body.get("messages", []), sess))
         except Exception:  # noqa: BLE001 — the scrub is advisory; never lose the corrective step to a crash
             noisy = set()
         if 0 in noisy:
@@ -2001,7 +2002,7 @@ class Loop:
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
             "\n".join(f"- {it.text}" for it in done_items),
             "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools,
-            trigger=trigger)
+            trigger=trigger, facts=session_research_facts(body.get("messages", []), sess))
         if steps is None:  # declined / unparseable → keep the plan untouched
             rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
             return
@@ -3997,10 +3998,9 @@ def _marker_block(text: str, start: int, marker: str) -> str:
     return block[:-1].rstrip() if block.endswith("]") and not block.endswith("[]") else block
 
 
-def _fetch_facts(entry) -> tuple:
-    """A ledger entry as ``(status, routes, shapes, catalog)``, accepting every older/shorter form."""
-    status, routes, shapes, catalog = (tuple(entry) + ("", "", ""))[:4]
-    return status, routes or "", shapes or "", catalog or ""
+# ONE reader for the ledger tuple, in groundtruth — planner cannot import loop, and both plan
+# judges need it. Kept as a module-level name here because a dozen call sites read it.
+_fetch_facts = groundtruth.fetch_facts
 
 
 def _extract_fetches(messages: list[dict]) -> dict:
@@ -5135,6 +5135,17 @@ def known_routes(messages: list, sess=None) -> str:
     — not evidence that a route is invented. The caller must abstain, never delete, on empty."""
     merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
     return " ".join(r for r in (_fetch_facts(e)[1] for e in merged.values()) if r)
+
+
+def session_research_facts(messages: list, sess=None) -> str:
+    """The routes AND response field names cria really read from a 2xx document this session, as one
+    block for a plan judge — "" when nothing spec-shaped has been fetched.
+
+    Same ledger, same merge and the same abstain-on-empty contract as :func:`known_routes`; that one
+    yields routes alone for the route CHECK, this one carries the field names too, because the judges
+    are also asked to spot a guessed FIELD name and could not."""
+    merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
+    return groundtruth.researched_facts(merged)
 
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:

@@ -233,3 +233,49 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
     lines.append(labels["complete"])
     return "\n".join(lines)
+
+
+# --- the RESEARCH ledger, rendered for a judge ------------------------------------------------
+#
+# Lives here, not in loop.py, for the same reason workspace_inventory does: loop imports planner, so
+# planner cannot import loop, and BOTH plan judges need this. Landing a mechanism on one path and
+# never reaching its twin is the failure mode that cost six fixes this week.
+
+def fetch_facts(entry) -> tuple:
+    """A fetch-ledger entry as ``(status, routes, shapes, catalog)``, accepting every older/shorter
+    form. One reader for a tuple that has grown twice."""
+    status, routes, shapes, catalog = (tuple(entry) + ("", "", ""))[:4]
+    return status, routes or "", shapes or "", catalog or ""
+
+
+def researched_facts(ledger: dict) -> str:
+    """The routes and response FIELD NAMES cria really read out of a 2xx document this session, as
+    one block for a judge — or "" when nothing spec-shaped was fetched.
+
+    The plan judges are asked to remove a step that "bakes in a guessed API endpoint/path or a guessed
+    field name". They were given the task and the plan and nothing else, so that rule was unusable:
+    a real endpoint and an invented one are the same string to a judge with no source to check
+    against. Measured over the recorded drops, 57% named a snake_case field and 17% named a URL path —
+    calls made blind, including one that deleted `/holders/{address} … total_handles` when both are
+    real and fetched.
+
+    EMPTY MEANS CRIA KNOWS NOTHING, never that a name is invented — so the caller must omit the block
+    entirely rather than show an empty one. A judge shown "KNOWN FACTS: (none)" would read every named
+    field as unverified and delete correct steps, which is the opposite of the point."""
+    routes: list[str] = []
+    shapes: list[str] = []
+    for entry in (ledger or {}).values():
+        _status, r, s, _catalog = fetch_facts(entry)
+        if r:
+            routes.append(r)
+        if s:
+            shapes.append(s)
+    if not routes and not shapes:
+        return ""
+    labels = prompts.load_map("researched_facts")
+    parts = [labels["head"]]
+    if routes:
+        parts.append(prompts.fill(labels["routes"], routes=" ".join(routes)))
+    if shapes:
+        parts.append(prompts.fill(labels["shapes"], shapes=" ".join(shapes)))
+    return "\n".join(parts)

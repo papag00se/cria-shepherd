@@ -479,7 +479,7 @@ def missing_deliverables(ask, task: str, steps: list[str]) -> list[str]:
     return _parse_missing_verdict(ans)
 
 
-def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
+def reasoned_noise_indices(ask, task: str, steps: list[str], facts: str = "") -> set:
     """Indices of NOISE steps to DROP from a plan — pure environment-plumbing, a bare shell command,
     dictated literal code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder
     should learn from the real source) — JUDGED by the reasoner (plan_noise_steps.txt). ONE reasoner
@@ -509,7 +509,17 @@ def reasoned_noise_indices(ask, task: str, steps: list[str]) -> set:
     # upstream, ground-truth handler — writeproxy appends prompts/pep668_remedy on the REAL
     # externally-managed-environment error — so this was a speculative pre-deletion in front of a fix that
     # already exists. A setup step is still dropped when the task-aware judge agrees it is one.
-    ans = strip_think(ask(prompts.load("plan_noise_steps"), f"TASK:\n{task}\n\nPLAN:\n{plan_text}") or "").strip()
+    # THE RESEARCH LEDGER, when there is one. The prompt tells this judge to drop a step that bakes in
+    # "a guessed API endpoint/path, a guessed field name" — and it was handed the task and the plan and
+    # nothing else, so it had no source to check a name against and was ruling on appearance. Over the
+    # recorded drops 57% named a snake_case field and 17% named a URL path; one deleted
+    # `/holders/{address} … total_handles`, where both names came out of the fetched spec.
+    # OMITTED when empty: cria knowing nothing is not evidence that a name is invented, and a judge
+    # shown an empty ledger would read every field as unverified and delete correct steps.
+    user = f"TASK:\n{task}\n\nPLAN:\n{plan_text}"
+    if facts.strip():
+        user = f"{facts.strip()}\n\n{user}"
+    ans = strip_think(ask(prompts.load("plan_noise_steps"), user) or "").strip()
     return _parse_step_numbers(ans, len(steps))
 
 
@@ -728,10 +738,16 @@ class Planner:
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
         reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
-        without a reasoner to judge them."""
+        without a reasoner to judge them.
+
+        The gather's OWN research ledger rides along: this judge is asked to spot a guessed endpoint or
+        field name, and ``_gather_facts`` is what the research phase actually read. It is populated by
+        the time this runs (``_gather_and_plan`` sets it before returning the steps)."""
         if self._role is None:
             return set()
-        return reasoned_noise_indices(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
+        return reasoned_noise_indices(
+            lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps,
+            facts=groundtruth.researched_facts(getattr(self, "_gather_facts", None) or {}))
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",
                          rewrite_summary: str = "") -> list[str] | None:
