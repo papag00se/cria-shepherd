@@ -22,6 +22,7 @@ Usage: run.py --task ada-handles --model ternary-bonsai --harness codex --planne
 
 import argparse
 import json
+import pathlib
 import os
 import re
 import site
@@ -36,6 +37,9 @@ import sampling
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
+# One stray 403 is a blip; a run peppered with them was throttled. Measured: the affected
+# runs carried dozens, the healthy ones none.
+THROTTLE_PROMPTS = 5
 CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
@@ -217,6 +221,33 @@ def score_snapshot(ws: Path, task_dir: Path) -> tuple[float, float, dict]:
         sh("rm", "-rf", str(snap), timeout=120)
 
 
+def throttled_mid_run(session_dir) -> str:
+    """A 403/429 from the task's live service, seen in the run's own captures.
+
+    Thirteen back-to-back ladder runs, each making dozens of live calls, got api.handle.me to start
+    refusing us: run 1785675899's CLI reported `HTTP error 403 for .../handles/goose` while the same
+    request from a shell seconds later returned 200. Counted across every capture at the time: 251
+    coder prompts carrying a 403, in 3 runs.
+
+    Such a run fails for a reason that is neither cria's nor the model's, and it is scored exactly
+    like a real failure — which corrupts the ladder's evidence. It is annotated, not deleted, and the
+    oracle skips it the way it skips any aborted row."""
+    if not session_dir:
+        return ""
+    hits = 0
+    for p in pathlib.Path(session_dir).glob("*coder*.prompt.txt"):
+        try:
+            body = p.read_text(errors="replace")
+        except OSError:
+            continue
+        if "HTTP error 403" in body or "403 Client Error" in body or "429 Client Error" in body:
+            hits += 1
+    if hits < THROTTLE_PROMPTS:
+        return ""
+    return (f"the task's live service refused us mid-run — {hits} coder prompts carry a 403/429. "
+            "Not the model's failure and not cria's; excluded from the ladder.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
@@ -360,6 +391,10 @@ def main() -> None:
         "capture_dir": str(session_dir) if session_dir else None,
         "harness_log": str(log_path),
     }
+    throttled = throttled_mid_run(session_dir)
+    if throttled:
+        row["aborted"] = throttled
+        print(f"[throttled] {throttled}")
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTS, "a") as fh:
         fh.write(json.dumps(row) + "\n")

@@ -23,6 +23,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+SUITE = Path(__file__).resolve().parent
+
 # tool -> (version probe, what it is needed for)
 TOOLS = {
     "python3": (["python3", "--version"], "ada-handles, sqlite-inventory, the seeded Python tasks"),
@@ -142,6 +144,35 @@ def warm():
     return out
 
 
+def live_services():
+    """[(task, url, status)] for every task that declares a `live_probe` in its meta.
+
+    A task whose deliverable must talk to a real service cannot be judged when that service is not
+    answering. Measured need: thirteen back-to-back ladder runs got api.handle.me to start returning
+    403 mid-run, and those runs were scored as ordinary failures — the model and cria both blamed
+    for a throttle. The URL is declared in the TASK's meta, never in cria: cria must not know what
+    api.handle.me is."""
+    import urllib.error
+    import urllib.request
+    out = []
+    for meta in sorted((SUITE / "tasks").glob("*/meta.toml")):
+        url = ""
+        for line in meta.read_text().splitlines():
+            if line.strip().startswith("live_probe"):
+                url = line.split("=", 1)[1].strip().strip('"\'')
+        if not url:
+            continue
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                status = r.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+        except Exception:  # noqa: BLE001 — offline / DNS / TLS all mean "cannot judge this task"
+            status = 0
+        out.append((meta.parent.name, url, status))
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warm", action="store_true", help="also warm package caches (slow, once)")
@@ -179,6 +210,13 @@ def main() -> None:
             print("  A previous run installed itself into your real site-packages. It is on the\n"
                   "  path for every Python process, so the next cell's imports may resolve to it.\n"
                   "  Remove the .pth and its dist-info before running.\n")
+        live = live_services()
+        for task, url, status in live:
+            mark = "ok  " if status == 200 else "FAIL"
+            print(f"  {mark} live service for {task}: {url} -> HTTP {status or 'unreachable'}")
+        down = [t for t, _u, st in live if st != 200]
+        if down:
+            ready = False
         if ready:
             print("READY")
         else:
@@ -187,6 +225,9 @@ def main() -> None:
                 reasons.append(f"missing: {', '.join(missing)}")
             if stale:
                 reasons.append(f"{len(stale)} leaked install(s) on sys.path")
+            if down:
+                reasons.append("live service not answering for: " + ", ".join(down)
+                               + " — a task that must call it cannot be judged; wait and retry")
             print(f"NOT READY — {'; '.join(reasons)}")
 
     if args.warm:

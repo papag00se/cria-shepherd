@@ -2,3 +2,8 @@ name = "ada-handles"
 language = "python"
 shape = "api-integration"   # HTTP API research + client + tests + live test + docs
 deliverables = ["resolver script", "unit tests", "live test", "README"]
+
+# The live service this task depends on. preflight refuses to start when it is not answering,
+# and run.py marks a run ABORTED when the captures show it throttling us mid-run.
+# Declared HERE, in the task, so cria never learns what api.handle.me is.
+live_probe = "https://api.handle.me/handles/goose"
