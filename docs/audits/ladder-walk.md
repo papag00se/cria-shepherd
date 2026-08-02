@@ -1350,3 +1350,77 @@ importable in Python, and the last steer records the coder repeatedly reading it
 earlier walks; measure it before building anything.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785659842
+
+**1/4, and the session EXITED after 181 seconds / 40 calls.** An early exit is the failure class this
+project has fought hardest, so this one is worth reading closely.
+
+**cria fault: yes** — cria deleted the unit-test and live-test steps from its own plan, then ended
+the session because the plan it had left was finished.
+
+### The chain, in order
+
+1. The planner drafted a **four**-step plan. The coverage judge saw it at call 0008 and approved:
+
+   ```
+   1. Write resolve_handle(...)                                  ← built
+   2. Write unit tests for resolve_handle with 3-4 test cases     ← DELETED
+   3. Write a live test script live_test_goose.py ...             ← DELETED
+   4. Write README.md that documents (a) install (b) run (c) tests ← built
+   ```
+
+2. The living replan's **noise judge** (call 0025) answered `1, 2, 4` and cria dropped those
+   indices — `loop.replan_noise dropped=2 kept=1`. Unit tests and the live test were gone.
+
+3. `missing_deliverables`, the reasoner brake that exists precisely to refuse a tail that drops
+   deliverables, said nothing was missing. It did not fire.
+
+4. Both surviving steps completed and verified. The plan mirror ends:
+
+   ```
+   - [x] Write resolve_handle(...)   > verified
+   - [x] Write README.md             > verified
+   ```
+
+5. The satisfaction judge was then asked whether the task was done — and with an empty plan it said
+   yes, inventing the missing work in its reason: *"unit tests for goose and papagoose are written;
+   README includes installation, usage, and a live test for the specified handles."*
+
+6. The confirm brake **called `list_dir` and saw the disproof**:
+
+   ```
+   .git/   README.md (859 B)   __pycache__/   resolve_handle.py (1419 B)   tmp/
+   ```
+
+   No test file. No live test. It answered `{"consistent": true, "why": ""}`.
+
+The task text is unambiguous — *"Unit tests are required. Separately, create a live test…"* — and
+this is the SECOND time in this ladder that the noise judge has deleted deliverable steps (see
+`ada-handles_mellum2_codex_pon_1785625253`, where it removed unit tests, the live test and the
+README).
+
+### Measured before proposing anything
+
+Across every log day:
+
+| event | count |
+|:--|--:|
+| `loop.replan_noise` | 156 |
+| …that dropped at least one step | 75 |
+| …that left **zero** steps kept | **37** |
+| `loop.replan_uncovered` (the deliverables brake FIRING) | 34 |
+
+So the brake does work, and often. It failed on this instance. That is a judge miss, not a missing
+mechanism — and adding a second heuristic layer on one data point is the footgun this project's
+doctrine exists to prevent.
+
+**Not fixed yet, deliberately.** What is needed first is the DROPPED STEP TEXTS, which the logs do
+not currently carry — `loop.replan_noise` records counts, not what went. The next step is to log the
+dropped text and then base-rate how often a deleted "noise" step names a deliverable. A step naming a
+concrete file artifact (`live_test_goose.py`) is definitionally not strategy noise, and that is the
+candidate rule — but it should be measured, not assumed.
+
+**Model wall: not reached.** The model built what it was asked to build; it was asked for half the task.
