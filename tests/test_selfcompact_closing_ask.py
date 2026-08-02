@@ -77,3 +77,24 @@ class DegenerateUnitTests(unittest.TestCase):
 
     def test_short_input_is_never_flagged(self):
         self.assertFalse(rumination.degenerate_tail("y8" * 10))
+
+
+class NoHandComposedTranscriptTests(unittest.TestCase):
+    """There were THREE compaction paths, not two. The third — plan-off's _summarize_single — was
+    found only because the other two were unified, and it shipped no closing ask at all.
+    Every path must go through the one composer."""
+
+    def test_no_caller_composes_the_transcript_by_hand(self):
+        from cria import selfcompact, server
+        for mod in (loop, server):
+            src = inspect.getsource(mod)
+            with self.subTest(module=mod.__name__):
+                self.assertNotIn("selfcompact.serialize(probegate.clean_gate_results(", src,
+                                 "compose via selfcompact.compaction_request, not by hand")
+        # the composer itself is the one legitimate site
+        self.assertIn("serialize(probegate.clean_gate_results(messages))",
+                      inspect.getsource(selfcompact.compaction_request))
+
+    def test_the_plan_off_fold_goes_through_it(self):
+        self.assertIn("selfcompact.compaction_request(messages)",
+                      inspect.getsource(loop.Loop._summarize_single))

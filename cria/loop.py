@@ -2570,7 +2570,11 @@ class Loop:
         text = summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
                          self._ctx.compactor_role or self._ctx.reasoner_role,
                          prompts.load("selfcompact_summary"),
-                         selfcompact.serialize(probegate.clean_gate_results(messages)), rlog,
+                         # THIRD sibling of the same compaction request — found only because the other
+                         # two were unified. It composed the transcript by hand and shipped no closing
+                         # ask at all, so the plan-off fold had the exact defect da35f4e fixed on the
+                         # harness path and e72a0e9 fixed on the plan-on path.
+                         selfcompact.compaction_request(messages), rlog,
                          phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS)
         return text or "(earlier work this session)"
 
