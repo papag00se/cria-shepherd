@@ -47,12 +47,29 @@ DEFAULT_REASONING_BUDGET = 4096
 DEGENERATE_RUN_CHARS = 2048
 
 
+# Longest repeating unit treated as a stuck stream. Two characters covers the measured
+# cases (`y8`, `v5`); eight leaves room for a short token loop without reaching prose.
+MAX_DEGENERATE_UNIT = 8
+
+
 def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
     """True when the last ``window`` characters of ``text`` are a single repeated character — a stuck
     single-token stream. Cheap (inspects only the tail), so it can run per streaming stride."""
     if len(text) < window:
         return False
-    return len(set(text[-window:])) == 1
+    tail = text[-window:]
+    if len(set(tail)) == 1:
+        return True
+    # ...or a short repeating UNIT. The real streams were two characters wide — `y8y8y8…` for 40,759
+    # tokens (five minutes of a fifteen-minute run) and `v5v5v5…` inside the compactor, both on
+    # ada-handles_mellum2_codex_pon_1785628543. A single-character test cannot see either. Bounded to
+    # short units: a genuinely repeating 8-character block is degenerate, a repeating paragraph is
+    # rumination and belongs to the detector above, not here.
+    for size in range(2, MAX_DEGENERATE_UNIT + 1):
+        unit = tail[:size]
+        if unit * (len(tail) // size) == tail[:len(tail) // size * size]:
+            return True
+    return False
 
 
 # Longest-first so a multi-word marker ("but wait") is preferred over its substring ("wait") at

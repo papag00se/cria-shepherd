@@ -704,6 +704,42 @@ def _consistent_word(text: str) -> bool | None:
     return None
 
 
+def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
+    """The file this step names, when the workspace is EMPTY — else "".
+
+    Ground truth, not judgment (principle 8): there is nothing here for a reasoner to weigh. If the
+    workspace holds no files at all, then every file the step names is absent — whether the step was
+    to WRITE it, read it, or document it — so the step cannot be complete. The reasoned brake below
+    is asked only about cases this cannot settle.
+
+    MEASURED across every captured critic verdict (n=135 with an inventory, 92 approvals): 7 approvals
+    named a file that was not on disk. Three of them are this exact shape — run 20260801T160104, calls
+    0034/0038/0041, step "Write a CLI script `resolve_handle.py`", inventory "the workspace has no
+    files at judging time". Call 0038's verdict refutes itself in its own reason and cria still
+    advanced: {"done": true, "reason": "workspace has no files, so the claimed resolve_handle.py does
+    not exist ... I default to DONE per instructions."} The reasoned brake caught it twice and then,
+    on the third attempt, ruled `consistent: true` against the identical listing. cria moved to step 4
+    — write unit tests importing a module that was never written — and the run's remaining 40 turns
+    were spent on `ModuleNotFoundError: No module named 'resolve_handle'`.
+
+    Deliberately narrow. The other 4 approvals had a NON-empty workspace, where a named file may be
+    one the step merely mentions (a README step naming the module it documents), and blocking those
+    would be a guess. An empty workspace admits no such reading."""
+    if not workspace_root or not os.path.isdir(workspace_root):
+        return ""
+    try:
+        if any(not e.name.startswith(".") for e in os.scandir(workspace_root)):
+            return ""
+    except OSError:
+        return ""   # unreadable → say nothing; the reasoned brake still runs
+    for m in _STEP_ARTIFACT.finditer(claim or ""):
+        at = m.start()
+        if "://" in claim[max(0, at - 60):at]:   # a URL's path is not a workspace artifact
+            continue
+        return m.group(1)
+    return ""
+
+
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
                         rlog, *, phase: str) -> tuple[bool, str]:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
@@ -730,6 +766,10 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     work turns cria had already paid for; confirming on nothing ends the run."""
     if not workspace_root or not os.path.isdir(workspace_root):
         return True, ""
+    absent = step_names_absent_artifact(claim, workspace_root)
+    if absent:
+        rlog.emit("loop.confirm_absent_artifact", level="info", phase=phase, artifact=absent)
+        return False, prompts.render("confirm_absent_artifact", artifact=absent)
     labels = prompts.load_map("verify_confirm")
     user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
@@ -1668,7 +1708,20 @@ class Loop:
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
             lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
-                                 selfcompact.serialize(probegate.clean_gate_results(mm)), rlog,
+                                 # CRIA'S ASK GOES LAST. Without it the transcript ends on the
+                                 # coder's own step ("Do ONLY this step (2 of 4)... Write
+                                 # test_resolve_handle.py") and the compactor obeys THAT instead of
+                                 # summarizing: on ada-handles_mellum2_codex_pon_1785628543 call 25 it
+                                 # emitted `write_file({"path": ...` and degenerated to `v5v5v5…`
+                                 # until the cap, and call 26 produced a whole unittest file. cria
+                                 # adopted it as "⟦ctx:rollup⟧ Summary of your earlier turns this
+                                 # session" — a file that had never been written and was not on disk.
+                                 # The coder believed it ("The user has given me a test suite"), and
+                                 # that is where unittest entered a pytest run.
+                                 # This is the SAME fix as da35f4e, which landed on the harness path
+                                 # (server.py) and never reached its sibling here.
+                                 selfcompact.serialize(probegate.clean_gate_results(mm))
+                                 + "\n\n" + prompts.load("compact_closing_ask"), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS) + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system

@@ -863,7 +863,13 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     # advertises an MCP endpoint; it sat in cria's route list and taught the model nothing). Probed
     # only for a URL the model itself asked for, only when it answers like one of those protocols, and
     # only with the two fixed read-only payloads in cria.apidiscovery.
-    if not raw and not find and not cursor:
+    # The probe used to be gated on `not find and not cursor` — switched OFF exactly when the model
+    # is digging hardest at an endpoint. Measured on ada-handles_mellum2_codex_poff_1785626379: every
+    # /mcp fetch from call 19 to 34 carried find= or raw=, so the JSON-RPC contract ("method
+    # tools/call, params {name, arguments}") that the run needed was never probed. It finally
+    # surfaced at call 209, sixteen calls before the kill, from a plain fetch. `raw` still opts out —
+    # that is the model explicitly asking for untouched bytes.
+    if not raw:
         found = apidiscovery.discover(url, status, reduced, ct)
         if found:
             return _render_discovery(url, status, ct, found), status, True
@@ -877,7 +883,16 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         # window it and tell the model to narrow, so a "filtered" fetch never dumps an unusable wall.
         if len(slice_) > OVERSIZE_CHARS:
             body, nxt, total = page_from(slice_, 0, cap_tokens)
-            slice_ = body + _guard_msg("find_large", find=find, chars=f"{total:,}")
+            # The message tells the model to "grep the saved ./tmp file". On this branch nothing was
+            # ever saved — the spill lives on the no-find path — so cria was naming a file that did
+            # not exist (principle 5b). Worse, the same branch skipped the route outline the plain
+            # fetch emits: on ada-handles_mellum2_codex_poff_1785626379 a find="paths" against a
+            # 186,444-char OpenAPI spec returned 2 of 33 endpoints — "/" and "/mcp" — and the model
+            # built a JSON-RPC client because those were the only routes it had ever been shown. The
+            # real GET /handles/{handle} did not reach it until call 152 of 225.
+            spill = oversized_spill(url)
+            target = spill[1] if spill else "the saved ./tmp file"
+            slice_ = body + _guard_msg("find_large", find=find, chars=f"{total:,}", target=target)
         # A find MISS on a truncated doc is the Ada-handle lie: the target may lie beyond the cut,
         # not be absent. Disclose so a miss isn't mistaken for "doesn't exist" (final-page parity).
         if truncated and ": no match" in slice_:

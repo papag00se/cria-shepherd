@@ -1,0 +1,1 @@
+This step is NOT complete: it names {{ARTIFACT}}, and the workspace contains no files at all. Create the file with a write tool, then verify it is on disk before moving on.
