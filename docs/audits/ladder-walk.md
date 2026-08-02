@@ -1579,3 +1579,63 @@ within one run instead of three. Logging what a mechanism DID, not just how ofte
 turned both this bug and the one it was fixing from archaeology into measurement.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785667319
+
+**0/4.** 111 calls, killed at the 15-minute floor. All four artifacts exist; none works.
+
+**cria fault: yes** — cria told the coder the wrong API field, in every one of its 63 prompts.
+
+### Running the CLI gives it away in one line
+
+```
+$ python3 resolve_handle.py goose
+Error: 404 Client Error: Not Found for url:
+  https://api.handle.me/holders/addr1qxsfzsmy6y2seduagp6fx9pht4yz9nspxvzyldtv36p2uz0gzxzwvk47q...
+```
+
+It is passing the **ada** address (`addr1…`) to `/holders/{address}`, which wants the **holder's
+stake** address (`stake1…`).
+
+### The initial plan was clean
+
+```
+1. Read the OpenAPI spec ... noting that /handles/{handle} returns resolved_addresses.ada AND
+   holder, and /holders/{address} returns total_handles.
+2. Write resolve_handle.py that ... calls /handles/{handle} and /holders/{address} ...
+```
+
+Both fields named correctly; step 2 says `{address}` generically.
+
+### What actually reached the coder
+
+Counted over the run: **63 of 63 coder prompts** carried
+
+> `/holders/{address}` *(api.handle.me/holders/{address} where **address = resolved_addresses.ada
+> from the first response**); return dict with keys: resolved_address, holder_address,
+> total_handles*
+
+A re-derived step baked in the wrong field as a concrete fact, and the coder built exactly what it
+was told. Every request 404s.
+
+The replanner's own prompt forbids precisely this: *"DON'T CODIFY A GUESS: never bake into a step a
+concrete external detail the coder has NOT confirmed from the real source."* Same class as the
+`web_fetch` leak in attempt 3 — a re-derivation inventing a concrete external detail — and a
+**recurrence**: the mellum2 walk of run 1785625253 recorded the identical wrong mandate
+(*"The script GETs /handles/{handle} then GETs /holders/{resolved_addresses.ada}"*), where cria also
+contradicted its own facts block in the same prompt.
+
+### Candidate fix, NOT built yet
+
+cria's shape ledger already holds the real parameter description for `/holders/{address}` — *"the
+stake/enterprise/script/other address of the Holder"*. A step that asserts `where <param> = <field>`
+about a route cria has fetched is checkable against that ledger, deterministically, the way
+`urlgrounding` checks that a route exists. That is the shape of the fix.
+
+It is **not** built here, deliberately: the last two runs are a lesson in shipping a rule before the
+false-positive surface is understood (see attempt 8, where a protection I added kept a junk step
+alive three times in one run). This one needs its prevalence measured across the ledger first.
+
+**Model wall: not reached.** The model implemented what cria asserted.
