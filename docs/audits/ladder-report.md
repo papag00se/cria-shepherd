@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 02:04:05 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-02 03:06:17 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785660278` (capture `/home/jesse/.cria/calls/20260802T014448-019fc1a5-aee9-7e70-9d47-981d22544edf`), then write `## ada-handles_mellum2_codex_pon_1785660278` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785661463` (capture `/home/jesse/.cria/calls/20260802T020433-019fc1b7-c374-7551-b4e4-e0e6414c4b32`), then write `## ada-handles_mellum2_codex_pon_1785661463` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -19,7 +19,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 6 | 3/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 7 | 3/4 | 📖 needs walk |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
@@ -40,6 +40,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-02 00:33 | mellum2 | 3/4 | milestone-miss-60min | 15m:1✓ 30m:2✓ 45m:3✓ 60m:3✗ | 375 | 156.8 | `ada-handles_mellum2_codex_pon_1785656001` |
 | 08-02 01:37 | mellum2 | 1/4 | exited | — | 40 | 186.4 | `ada-handles_mellum2_codex_pon_1785659842` |
 | 08-02 01:44 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 68 | 160.3 | `ada-handles_mellum2_codex_pon_1785660278` |
+| 08-02 02:04 | mellum2 | 3/4 | milestone-miss-60min | 15m:3✓ 30m:3✓ 45m:3✓ 60m:3✗ | 219 | 159.4 | `ada-handles_mellum2_codex_pon_1785661463` |
 
 ## Fixes landed during the ladder
 

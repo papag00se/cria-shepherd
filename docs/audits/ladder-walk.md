@@ -1470,3 +1470,64 @@ test cases"* names no file and is NOT protected. Two of the three cases above ar
 that one is not, and a test asserts the gap so it cannot be quietly assumed away.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785661463
+
+**3/4 — fourth 3/4 in seven runs.** 219 calls, the full hour. Unit tests the only miss.
+
+**cria fault: yes** — my own previous fix was incomplete, and this run proved it.
+
+### The good news first
+
+The noise judge did NOT delete a deliverable this run, and the pytest steer named a real workspace
+line — `test_resolve_handle.py:105: AssertionError: assert '' == 'holder2'` — not a stdlib frame.
+Both fixes from the previous two runs held where they applied.
+
+### Where my fix did not reach
+
+I reported the stdlib-frame fix as working. It was only partly working. This run still showed the
+coder:
+
+```
+/usr/lib/python3.12/json/decoder.py:355    x13
+/usr/lib/python3.12/json/decoder.py:337    x13
+/usr/lib/python3.12/json/__init__.py:346   x13
+```
+
+`_failing_frame` fixed the frame CHOICE inside `parse_pytest`. A JSONDecodeError traceback is not
+something `parse_pytest` touches, and every other parser still reported whatever `file:line` it
+found. `summarize()` shows the FIRST finding, and that is the line the coder goes and edits.
+
+**Fixed properly** — `prefer_own_code()` at that one choke point, covering every parser. ORDER, not
+deletion: a failure genuinely inside a library is still a failure the coder must know about, it just
+must never be the first thing handed over. An all-foreign list is left exactly as it is.
+
+### The remaining failures are the model's own
+
+```
+FAILED test_resolve_handle.py::test_resolve_handle_missing_ada
+FAILED test_resolve_handle.py::test_resolve_handle_missing_holder
+FAILED test_resolve_handle.py::test_resolve_handle_from_stdin
+ERROR  test_resolve_handle.py::test_resolve_handle_success
+```
+
+Real assertion mismatches between the tests and the resolver, with accurate steers naming the right
+lines. 79 of the run's prompts carried a steer, across 20 distinct steers — cria was not repeating
+one message at it.
+
+### The running picture for mellum2
+
+| run | score | miss |
+|:--|:--|:--|
+| a1 | 3/4 | README |
+| a2 | 3/4 | live test |
+| a3 | 0/4 | cria wrote `web_fetch` into the plan |
+| a4 | 3/4 | unit tests |
+| a5 | 1/4 | cria deleted test steps; session ended in 181 s |
+| a6 | 0/4 | cria deleted live test + README |
+| a7 | 3/4 | unit tests |
+
+Every 0/4 and the 1/4 trace to a cria fault since fixed. The 3/4s are converging on one thing: the
+unit-test step. **Model wall: not reached**, but the next walk should focus there.
