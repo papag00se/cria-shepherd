@@ -2722,3 +2722,128 @@ Defects 2, 3, 4, 5, 6 (the deepest-own-frame choice sitting on top of the patter
 11 — each with its file, line and a reproduction in the sections above. **Defect 8 is the cheapest
 and one of the most costly**: a path-normalisation mismatch deleted the one file in the run that
 named the real API.
+
+---
+
+## ada-handles_mellum2_codex_poff_1785693138
+
+**Score 2/4, verified by hand.** Unit tests PASS (2), README PASS, live test FAIL (no live-test file
+delivered at all), resolver CLI FAIL. 166 calls, 19 minutes, planner off, model exited on its own.
+
+Walked by four readers over contiguous slices of all 166 calls. All reported `cria fault: yes`.
+Three of the four, working different slices, independently arrived at the same root cause.
+
+**cria fault: yes**
+
+### The run in one line
+
+**cria's own gate demanded the change that broke the program, then certified the result clean.**
+
+The delivered `resolve_handle.py` crashes with `NameError: name 'json' is not defined` at line 87.
+`json` is imported at line 124 — inside a function. Two unit tests pass. cria's gate on that exact
+state: `compileall` exit 0, `pyflakes` exit 0, `pytest` 2 passed. **Fully green on a program that
+cannot run.**
+
+### Defect 1 — a cleanliness warning shipped as a failing check (FIXED)
+
+pyflakes emits `redefinition of unused 'json' from line 11` when a name is bound twice and the first
+binding went unused. `probeparse._ADVISORY_PHRASES` covers its sibling `imported but unused` and five
+others, and had no entry for this; pyflakes prints no code, so `_STYLE_CODE` could not catch it
+either. `is_advisory()` returned **False**, so it shipped as error-class under
+`[GROUND TRUTH — the repo's own checks fail]` with *"make the smallest change that clears it"*.
+
+From call 0027 it was, for roughly 25 consecutive calls, the **only** thing the gate reported —
+present in 22 of 30 coder prompts in one reader's slice alone. The coder emitted
+`edit_file {"old_string": "import json", "new_string": ""}` at 0115, 0120, 0121, 0122, and again at
+0128, 0130, 0141, 0153, 0156. A reader ran both edits that clear the finding: deleting the
+**line-11** import clears it *and* produces the exact delivered crash.
+
+It also taught the model to disbelieve the gate. When pyflakes later reported a real error —
+`undefined name '_test'` — the model wrote: *"The flags are false positives … The project's own
+checks are wrong."* The supervisor agreed: *"The checker is completely wrong… This is a false
+positive."*
+
+**Fixed:** `redefinition of unused` and `f-string is missing placeholders` are advisory. Real
+pyflakes errors — undefined name, referenced-before-assignment, duplicate dict key — still gate,
+with a test that says so.
+
+### Defect 2 — the durable fetch ledger reaches only the plan-ON driver (FIXED)
+
+`_fetched_facts_anchor` re-injects cria's own record of every endpoint and field shape it fetched,
+every turn, so the real routes survive a harness compaction cria cannot anchor against. It was called
+from `_work_item` only. **Planner off is how every dense model on the ladder runs.** The `⟦ctx:facts⟧`
+marker appears in **0 of all 166 prompts**.
+
+At call 0102 a compaction took the `/handles/{handle}` and `/holders/{address}` field shapes out of
+the coder's view. They never came back — 25 consecutive prompts to the end of the run — while the
+REASONER kept being handed them. cria held those facts the whole time, under a coder prompt that says
+*"DO NOT GUESS URLs, FORMATS, OR OBJECT STRUCTURE"*. **Ninth mechanism this week live on one path and
+missing from its twin.**
+
+### Defect 3 — nothing ran the deliverable, again (FIXED)
+
+`loop.satisfaction_check` fired twice; `loop.exec_check` fired **zero** times. The live-execution
+check sat past `if not satisfied: return None`, so it could only decorate a completion the judge had
+already approved and never inform one. Both verdicts were not-satisfied. **Fixed:** it runs before
+the verdict and its result is evidence; the closing note reuses it, so nothing runs twice.
+
+### Defect 4 — the coder's read_file did not number lines (FIXED)
+
+`verifytools` renders `f"{i}: {line}"` for the crew; `writeproxy` lowered the coder's ranged read to a
+bare `sed -n 'a,b p'`. Same tool name, two views, and only the model that must EDIT by line number
+got the one without numbers. A check flagged line 63; the coder asked for 55-68, counted from the top
+of the block, and burned **8,234 reasoning tokens** insisting a valid f-string was valid before the
+rumination guard aborted the pass. Three more calls went to finding that one line. **Fixed**, with a
+test asserting the two implementations agree.
+
+### Still open, each with its file and a reproduction
+
+1. **cria told the coder to break working code.** At 0042 it authored, and at 0043 delivered:
+   *"The holder_url uses /holders/{holder_address} but the API returns resolved_addresses under
+   /holders/{handle}; change the URL to /holders/{handle}"* — while the same prompt carried cria's own
+   extract `GET /holders/{address} … the stake/enterprise/script/other address of the Holder`. Run
+   live during the walk: `/holders/goose` → **404 holder_not_found**; `/holders/stake1u85prp8…` →
+   **200 with total_handles**. The coder obeyed in one turn, and cria deleted the steer from history
+   at 0044 — so its own false claim became the model's belief with no trace.
+2. **The steer grounding guard cannot see a bare route.** `urlgrounding.ungrounded_urls` requires
+   `https?://`, so `/holders/{handle}` is never checked at all; and `_PATH_TEMPLATE` normalises the
+   variable name away, so even the full URL tests as grounded against `/holders/{address}`. Both forms
+   verified to return `[]`. This is what let defect 1 above through.
+3. **Fail-open on a corrupted edit-recovery payload.** The report is shipped base64 over the shell;
+   the harness's output cap splices `…437 tokens truncated…` into the middle of it, `b64decode`
+   raises, and `editrecovery.recover()` returns the raw blob. Five 10,017-character blobs reached the
+   coder; at 0100 **30,051 of 62,638 prompt characters (47%) were undecodable base64**. It landed at
+   the moment the model most needed the file's real bytes; at 0083 it rewrote the file from memory,
+   without a module-level `import json`.
+4. **A fabricated diagnosis promoted to context and re-hardened.** The compaction at 0086 ran to the
+   token ceiling (no `max_tokens`, `finish_reason: length`) and the retry was **byte-identical at
+   temperature 0.0**. Its briefing asserted *"the handles simply do not exist. The script is working
+   correctly."* cria shipped that verbatim as `⟦ctx:continuation⟧ … Your summary of the work so far`,
+   including a stray `</think>` and the sentence *"I will now write the README."* The model read it as
+   the user speaking and stopped: *"The user says they have already written the README… I should not
+   write a new README."* cria then fed its own briefing back into the next compaction, so it hardened.
+5. **The same prompt says the README is and is not written.** 0088: *"**The README is not yet
+   written**"* and, eighteen lines later, *"FILES ALREADY IN THIS WORKSPACE (on disk right now — do
+   not re-create them): README.md"*.
+6. **Stale check output asserted as current.** 0088's steer said *"unchanged since you were last
+   shown them — you have not cleared them yet"* and listed four findings. A reader extracted the exact
+   file bytes and ran the real checker: **three of four line numbers were wrong and one finding no
+   longer existed.** Same defect at 0037 and 0045. `last_checks_text` is refreshed only by cria's own
+   gate; nothing invalidates it when the coder runs the checker itself or edits the file.
+7. **A steer that cannot execute.** 0094: *"run `python -m unittest test_resolve_handle.py`… then run
+   `python -m resolve_handle.py --live-test`"*. Run during the walk: `ModuleNotFoundError: No module
+   named 'test_resolve_handle'` (the file did not exist, and cria's own file list in that same prompt
+   named only `resolve_handle.py`), and `python: command not found`.
+8. **The reasoner is told the coder was given a fix it was not.** 0094 carried
+   *"[edit_file did not apply; cria gave the coder the fix]"* — the coder had received raw base64.
+9. **The UA hazard is in the coder's prompt and not the reasoner's.** The live failure was
+   `HTTP 403` from python-urllib's default User-Agent; with a browser UA the same URL returns 200 and
+   `total_handles: 15`. cria's coder tool list states this exact hazard. The reasoner, which never
+   sees it, shipped *"the API is returning 404… the upstream fix is outside the repo"*.
+10. **`⟦ctx:steer⟧ [REDIRECT]`** — an internal label built in an inline f-string, meaningless to the
+    model, and a violation of prompts-live-in-files.
+11. **Five supervisor calls, five `ON_TRACK`**, one of which reasoned *"So it is stuck. I must reply
+    with a short directive… and do not use ON_TRACK"* and then emitted `ON_TRACK`. Fourth instance of
+    that one-bit channel discarding the diagnosis that produced it.
+
+*(One reader's slice, 0127-0166, was still running when this was written.)*
