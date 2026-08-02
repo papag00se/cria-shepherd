@@ -1929,3 +1929,56 @@ known, and it is high.
 
 **This is the highest-value open finding in the ladder.** Six 3/4s and now a 3/4 held for thirty
 minutes and thrown away — mellum2's problem is no longer reaching four, it is keeping three.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785681911
+
+**2/4, and the session EXITED after 4.4 minutes** — 63 calls, before the first milestone.
+
+**cria fault: yes** — the plan never contained a live-test step, and the coverage judge passed it.
+
+### The plan as executed, all four steps verified
+
+```
+- [x] Write a Python module `ada_handle_lookup.py` ... resolve_handle(handle) -> dict
+- [x] Write README.md with venv/pip/usage/pytest instructions
+- [x] Add a .gitignore entry for `venv/`
+- [x] Add a requirements.txt entry for `requests`
+```
+
+The task says *"Separately, create a live test that resolves the handle goose or papagoose."* No step
+covers it. Two of the four steps are environment plumbing — `.gitignore` and `requirements.txt` —
+which the task never asked for and which `plan.txt` explicitly forbids as steps ("nor should a step be
+pure environment plumbing").
+
+`unit_tests` passed anyway (3 passed) because the model wrote tests it was never asked to write; the
+live test, which it WAS asked for, has no step and does not exist. The session then correctly ended,
+because the plan it had was finished. Same shape as attempt 5.
+
+### And my noise-protection rule has a third false positive
+
+```
+step_authors_artifact("Add a .gitignore entry for `venv/`")        -> []            (correct)
+step_authors_artifact("Add a requirements.txt entry for `requests`") -> ['requirements.txt']
+```
+
+So the plumbing step the noise judge should delete is now protected by my rule. That is the third
+distinct false positive in four revisions:
+
+| revision | protected wrongly | missed wrongly |
+|:--|:--|:--|
+| verb anywhere + file anywhere | "Commit the three files (…), add a .gitignore …" | — |
+| verb adjacent to file | — | "Write a live test file (e.g., test_live_resolve.py)" |
+| 40-char window | "Add a requirements.txt entry for `requests`" | — |
+
+**I am not shipping a fourth revision of this rule under context pressure.** Each of the three cost a
+run, and the pattern is that a lexical rule cannot separate "authoring a deliverable" from "authoring
+plumbing" — because the difference is not in the sentence, it is in whether the TASK asked for it.
+
+The honest next step is to stop trying to make the noise judge safe with a regex and instead give it
+the thing it lacks: `plan.txt` already tells the DRAFTER that plumbing steps are forbidden, but the
+noise judge that deletes steps is never told which steps the task's own deliverables require. That is
+a prompt-level fix in the judge that already exists, not a fifth pattern.
+
+**Model wall: not reached.**
