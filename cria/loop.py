@@ -3169,17 +3169,30 @@ def unexecuted_write(content: str) -> bool:
     So this is not a new assist — it is refusing to draw a conclusion the evidence contradicts. The
     nudge is the one cria already sends, and it is bounded (MAX_UNEXECUTED_NUDGES) so a model that
     keeps printing code still reaches the gate."""
+    # DEPTH, not a toggle. A pasted README is a ```markdown block containing ```bash blocks, and a
+    # toggle reads the inner CLOSING fence as opening a new one — so the run of lines never reaches
+    # the threshold and the whole file slips through. Measured on run 20260801T232511 (mellum2,
+    # ada-handles, 3/4): of 12 tool-call-less turns carrying a fenced block, the toggle caught 7 and
+    # missed 5. Four of the five were the complete README, WITH its `## Installation` /
+    # `pip install requests pytest` section — the exact content whose absence cost the run its
+    # fourth point. The coder wrote it three times and never called a write tool.
     body = content or ""
-    inside, run = False, 0
+    depth, run = 0, 0
     for line in body.splitlines():
-        if line.lstrip().startswith("```"):
-            if inside and run >= UNEXECUTED_WRITE_LINES:
-                return True
-            inside, run = not inside, 0
+        t = line.lstrip()
+        if t.startswith("```"):
+            if t[3:].strip():              # ```lang → opening (the tag, not the fence)
+                depth += 1
+            elif depth > 0:                # bare ``` → closing
+                if depth == 1 and run >= UNEXECUTED_WRITE_LINES:
+                    return True
+                depth -= 1
+            else:                          # bare ``` with nothing open → an opening fence
+                depth = 1
             continue
-        if inside and line.strip():
+        if depth > 0 and line.strip():
             run += 1
-    return False
+    return depth > 0 and run >= UNEXECUTED_WRITE_LINES   # unclosed fence, e.g. cut off mid-file
 
 
 def _has_tool_calls(completion: dict) -> bool:

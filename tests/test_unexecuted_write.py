@@ -77,3 +77,82 @@ class BothPathsTests(unittest.TestCase):
                 src = inspect.getsource(fn)
                 self.assertIn("unexecuted_write(", src)
                 self.assertIn("MAX_UNEXECUTED_NUDGES", src)
+
+
+class NestedFenceTests(unittest.TestCase):
+    """A pasted README is a ```markdown block containing ```bash blocks.
+
+    The original toggle read the inner CLOSING fence as opening a new block, so the run of lines
+    never reached the threshold and the whole file slipped through. Measured on run 20260801T232511
+    (mellum2, ada-handles, 3/4): of 12 tool-call-less turns carrying a fenced block, the toggle
+    caught 7 and missed 5. Four of the five were the complete README WITH its `## Installation` /
+    `pip install requests pytest` section — the one thing whose absence cost that run its fourth
+    point. The coder wrote it three times and never called a write tool.
+    """
+
+    README = (
+        "```markdown\n"
+        "# Ada Handle Resolver\n\n"
+        "Resolves handles to addresses.\n\n"
+        "## Installation\n\n"
+        "```bash\n"
+        "pip install requests pytest\n"
+        "```\n\n"
+        "## Running Tests\n\n"
+        "```bash\n"
+        "python3 -m pytest\n"
+        "```\n\n"
+        "## Usage\n\n"
+        "```python\n"
+        "from resolve_handle import resolve_handle\n"
+        "result = resolve_handle('goose')\n"
+        "print(result['resolved_ada_address'])\n"
+        "print(result['holder_address'])\n"
+        "print(result['total_handles'])\n"
+        "```\n\n"
+        "## Notes\n\n"
+        "The live test requires network access.\n"
+        "Unit tests mock the API and need none.\n"
+        "Exit code is non-zero when the handle does not resolve.\n"
+        "```\n"
+    )
+
+    def test_a_nested_fence_document_is_caught(self):
+        self.assertTrue(loop.unexecuted_write(self.README))
+
+    def test_the_real_run_now_fires_on_the_pasted_readmes(self):
+        import glob
+        import json
+        d = ("/home/jesse/.cria/calls/"
+             "20260801T232511-019fc125-dd1a-7f41-bb0b-c1b6e07e74b9/")
+        files = sorted(glob.glob(d + "*coder-s*.response.json"))
+        if not files:
+            self.skipTest("captures not present on this machine")
+        fired = total = 0
+        for x in files:
+            m = json.load(open(x))["choices"][0]["message"]
+            if m.get("tool_calls"):
+                continue
+            c = (m.get("content") or "").strip()
+            if c.count("```") < 2:
+                continue
+            total += 1
+            fired += bool(loop.unexecuted_write(c))
+        self.assertGreaterEqual(fired, total - 1,
+                                "at most the one prose-complaint turn may be missed")
+
+    def test_a_short_snippet_with_a_nested_fence_is_still_NOT_caught(self):
+        self.assertFalse(loop.unexecuted_write("Try:\n\n```md\n## Hi\n\n```sh\nls\n```\n```\n"))
+
+    def test_an_unclosed_pasted_file_is_caught(self):
+        # A paste cut off by the token cap never emits its closing fence.
+        body = "```python\n" + "\n".join(f"line_{i} = {i}" for i in range(20))
+        self.assertTrue(loop.unexecuted_write(body))
+
+    def test_a_bare_fence_opener_still_works(self):
+        body = "```\n" + "\n".join(f"row {i}" for i in range(20)) + "\n```\n"
+        self.assertTrue(loop.unexecuted_write(body))
+
+    def test_prose_with_inline_backticks_is_not_a_paste(self):
+        self.assertFalse(loop.unexecuted_write(
+            "The `old_string` is not in `README.md`; re-read it and try `edit_file` again."))
