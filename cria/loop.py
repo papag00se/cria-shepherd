@@ -1384,6 +1384,18 @@ class Loop:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
+        # PERIODIC SATISFACTION CHECK on the PLAN-ON path. It lived only on the single-item driver
+        # until 2026-08-01, which is the path that needed it least: plan-off already ends the moment
+        # the coder says done. With a plan, the session ends only when every STEP verifies — so a
+        # plan naming files the task never asked for can hold a FINISHED task open for its whole
+        # budget. Measured on ada-handles_nemotron-elastic_codex_pon_1785629694: 145 driven turns,
+        # all four deliverables complete and hand-verified at 15 minutes, 15 step_incomplete events,
+        # and zero satisfaction checks where four were due.
+        done_now = self._periodic_satisfaction(
+            sess, body, rlog, plan_off=False,
+            blocked=bool(sess.nudge_reason or sess.done_probe or sess.last_gate_red))
+        if done_now is not None:
+            return done_now
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
@@ -2060,6 +2072,48 @@ class Loop:
     # et al.): the SAME shared guard/gate/author/summarize primitives, rewired onto the loop's OWN
     # LoopContext so ONE driver serves both producers. Reached only via ``sess.synthetic`` in _drive_locked.
 
+    def _periodic_satisfaction(self, sess, body: dict, rlog, *, plan_off: bool, blocked: bool):
+        """The off-ramp for a session that has FINISHED the work but cannot stop. Returns a
+        completion to send, or None to carry on.
+
+        Ran on the plan-OFF path only until 2026-08-01, which is where it was needed least. Measured
+        on ada-handles_nemotron-elastic_codex_pon_1785629694 (planner ON): 145 driven turns, all four
+        deliverables verified complete and hand-checked at the 15-minute mark, and **zero**
+        satisfaction checks — it should have fired at drives 80, 100, 120 and 140. With the planner
+        on, a session ends only when every plan STEP verifies, so a plan that named files the task
+        never asked for held a finished task open for the rest of its budget (15 step_incomplete
+        events on work that was already done).
+
+        `blocked` is the caller's own reason to stay quiet this turn — a steer is pending, the
+        history was just rewritten, a done-probe is already in flight, or the gate is red. Gated on
+        GREEN either way: cria never proposes ending a task while the repo's own checks fail.
+        """
+        if blocked or not satisfaction_check_due(
+                sess.drive_count, self._ctx.satisfaction_check_start, self._ctx.satisfaction_check_every):
+            return None
+        task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
+                else _history_root(body.get("messages", []))[0])
+        evidence = _satisfaction_evidence(body.get("messages", []))
+        evidence += _gate_notes(sess)
+        satisfied, reason, _fix = judge_satisfaction(
+            task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
+            coder_tools=_coder_tools_summary(body.get("tools")),
+            workspace_root=sess.workspace_root or "",
+            routes=known_routes(body.get("messages", []), sess))
+        rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
+                  satisfied=satisfied)
+        if not satisfied:
+            return None   # do NOT steer — the reason is judgment, not ground truth. Log only.
+        probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+        if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
+            sess.done_probe = True
+            sess.probe_call_id = probe_tc["id"]
+            sess.pending_done = satisfaction_done_note(reason)
+            sess.steer_source = "completion check (task satisfied)"
+            return _completion_toolcalls([probe_tc],
+                                         note="cria completion check: the task looks done — verifying the repo's checks")
+        return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
+
     def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False) -> dict | None:
         """The single-item coder turn with the SAME protections the loop gives its coder: the
         repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify the
@@ -2149,32 +2203,12 @@ class Loop:
             if diag:
                 steer, sess.steer_source = diag, "reasoning appears to be circling"
                 rlog.emit("loop.flail_steer", plan_off=True, drive=sess.drive_count)
-        # PERIODIC SATISFACTION CHECK (the off-ramp for a session that finished the work but can't STOP):
-        # on a long session the reasoner judges whether the USER'S WHOLE TASK is satisfied; if yes, cria
-        # initiates the done-gate (verify the repo's checks) and ends next turn. GATED ON GREEN.
-        if steer is None and not rewritten and not sess.done_probe and not sess.last_gate_red \
-                and satisfaction_check_due(
-                sess.drive_count, self._ctx.satisfaction_check_start, self._ctx.satisfaction_check_every):
-            task = _history_root(body.get("messages", []))[0]
-            evidence = _satisfaction_evidence(body.get("messages", []))
-            evidence += _gate_notes(sess)
-            satisfied, reason, _fix = judge_satisfaction(
-                task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-                coder_tools=_coder_tools_summary(body.get("tools")),
-                workspace_root=sess.workspace_root or "",
-                routes=known_routes(body.get("messages", []), sess))
-            rlog.emit("loop.satisfaction_check", plan_off=True, drive=sess.drive_count, satisfied=satisfied)
-            if satisfied:
-                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
-                if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
-                    sess.done_probe = True
-                    sess.probe_call_id = probe_tc["id"]
-                    sess.pending_done = satisfaction_done_note(reason)
-                    sess.steer_source = "completion check (task satisfied)"
-                    return _completion_toolcalls([probe_tc],
-                                                 note="cria completion check: the task looks done — verifying the repo's checks")
-                return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
-            # NOT satisfied → do NOT steer (the reason is judgment, not ground truth). Just log the verdict.
+        # PERIODIC SATISFACTION CHECK — the off-ramp for a session that finished but cannot stop.
+        done_now = self._periodic_satisfaction(
+            sess, body, rlog, plan_off=True,
+            blocked=bool(steer is not None or rewritten or sess.done_probe or sess.last_gate_red))
+        if done_now is not None:
+            return done_now
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
         if steer is None and not rewritten:
