@@ -33,6 +33,28 @@ def run(cmd, cwd, timeout=TIMEOUT):
         return -2, f"VERIFIER-EXEC-ERROR: {e}"
 
 
+def positive_count(out: str) -> bool:
+    """Is there a real handle COUNT in the output — not a digit borrowed from an address?
+
+    The check here was `re.search(r"\\d+", out)`, which can never fail: a Cardano address
+    (`addr1qxsfzsmy6y2seduagp6...`) and a stake address are both full of digits, so any run that
+    printed an address scored the count for free.
+
+    Caught on run 1785685170, which scored 4/4 while printing
+
+        {"resolved_address": "addr1qxsf...", "holder_address": "stake1u85...", "total_handles": 0}
+
+    The real value is 15 — the script read `total_handles` from the /handles/{handle} response, which
+    does not carry it, and never called /holders/{address} at all. A third of the deliverable was
+    wrong and the verifier said PASS.
+
+    Strips the address-shaped tokens first, then requires a POSITIVE integer in what remains. Not the
+    exact value: a holder can buy or sell handles, and pinning 15 would make this fail for a reason
+    that has nothing to do with the code."""
+    stripped = re.sub(r"\b(?:addr|stake|addr_test|stake_test)1[0-9a-z]+", " ", out)
+    return any(int(n) > 0 for n in re.findall(r"\b\d+\b", stripped))
+
+
 def main(ws: Path) -> dict:
     r = {"task": "ada-handles", "score": 0.0, "max_score": 4.0, "success": False, "parts": {}}
 
@@ -112,7 +134,7 @@ def main(ws: Path) -> dict:
     for cmd in cmds:
         code, out = run(cmd, ws)
         shown = " ".join(cmd[1:])
-        if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and re.search(r"\d+", out):
+        if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and positive_count(out):
             cli_ok, cli_detail = True, f"{shown} → address+holder+count"
             break
         if code == 0 and ADDR_RE.search(out):   # it RAN and resolved, but is missing holder/count
