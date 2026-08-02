@@ -2024,3 +2024,63 @@ plan with no live-test step, a re-derived step asserting the wrong API field in 
 Planner-off removes that entire surface and has never been tried on this model. That is the next run.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_poff_1785685170 — the FIRST planner-off run
+
+**3/4 in 231 seconds and 53 calls** — after sixteen planner-on attempts that peaked at 3/4 and
+routinely burned the full hour.
+
+**cria fault: none.** The failure is the model's, and the run exposed a fault in the VERIFIER instead.
+
+| check | verdict |
+|:--|:--|
+| unit tests | pass — 6 passed |
+| live test | pass — **provably live**: fails under `unshare -rn`, verified by hand |
+| README | pass |
+| resolver CLI | **fail** — prints `total_handles: 0`; the real value is 15 |
+
+The script reads `total_handles` from the `/handles/{handle}` response, which does not carry that
+field, and never calls `/holders/{address}` at all.
+
+### It was recorded as 4/4, and that was the verifier's fault
+
+```python
+if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and re.search(r"\d+", out):
+```
+
+`re.search(r"\d+", out)` can never fail. A Cardano address — `addr1qxsfzsmy6y2seduagp6…` — is full of
+digits, so any run that printed an address scored the "count" for free. This check has been passing
+address-only output for the entire ladder.
+
+**Fixed** — strip the address-shaped tokens, then require a positive integer in what remains. Not the
+exact value: a holder can buy or sell handles, and pinning 15 would fail for a reason unrelated to
+the code.
+
+**Re-scored every archived ada-handles 4/4: 7 of 9 unaffected.** This run drops to 3/4. One old
+qwythos row also drops, but its `resolver_cli` still passes, so two other checks moved for reasons
+not isolated — flagged, not concluded. The results row for this run is corrected on disk with the
+reason recorded.
+
+*(My first re-score pointed `verify.py` at the archive ROOT instead of `<archive>/workspace` and
+briefly showed all nine as broken. That was my path error. It was caught because the output
+contradicted itself — the CLI check passing while the score fell.)*
+
+### The planner-off signal stands, and it is large
+
+Score aside, the shape of this run is unlike all sixteen before it:
+
+| | planner ON (16 runs) | planner OFF (1 run) |
+|:--|:--|:--|
+| best | 3/4 | 3/4 |
+| calls to get there | 155–479 | **53** |
+| wall clock | 27–60 min | **3.9 min** |
+| deliverables lost to cria's own plan handling | many (tool name in a step, deleted steps, missing live-test step, wrong API field ×63) | none — there is no plan |
+
+Sixteen planner-on runs never produced a clean unit-test + live-test + README set in one workspace.
+The first planner-off run did, in under four minutes, and missed only on a wrong field value.
+
+**The ladder's planner column is a hypothesis** ("MoEs need the planner on"). This is the first real
+evidence on the other side of it, and it points the opposite way for this model. One run is not a
+finding — but it earns the next several runs at this setting.

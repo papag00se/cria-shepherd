@@ -235,7 +235,11 @@ that leak once shadowed an import for every Python process on the box for two da
 
 ## Traps that have already cost real time
 
-- **`verify.py` is the only judge.** Never a model's claim, never a green gate.
+- **`verify.py` is the only judge — so audit the judge.** Never a model's claim, never a green gate.
+  And the judge itself can be wrong in a way nothing else will catch: its handle-count check was
+  `re.search(r"\d+", out)`, which a Cardano address satisfies on its own digits, so it passed
+  address-only output for the whole ladder until a run was verified BY HAND. When a score looks too
+  good, run the deliverable yourself before believing it.
 - **`go test` replays a cached pass without running anything** — `-count=1` everywhere. This trap was
   found and fixed in the suite's verifier and then found again, unfixed, in cria's gate.
 - **A single score is not signal.** Ten runs on identical code scored 2, 0, 2, 2, 1, 2, 1, 3, 2, 0.
