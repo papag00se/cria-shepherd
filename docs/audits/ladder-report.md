@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 19:16:47 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 19:32:25 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 

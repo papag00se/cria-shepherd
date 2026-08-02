@@ -399,7 +399,14 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         vtext = _completion_text(comp)
         if reasoner_role is not None:
             vtext = reasoner_role.clean_content(vtext)  # drop leaked reasoning when off
-        return extract_json_object(vtext)
+        obj = extract_json_object(vtext)
+        if obj is not None:
+            return obj
+        # The answer was not a verdict — but the judge's own THINKING may carry one. Recovers a
+        # NOT-satisfied ruling only (see verdict_from_reasoning): 20 of 46 unparseable replies on
+        # this box held a clear, specific judgment that was being thrown away.
+        return verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog,
+                                      "satisfaction" + ("-noreason" if reasoning_off else ""))
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
         return None
@@ -762,6 +769,62 @@ def _claims_impossible_action(obj: dict | None, rlog, phase: str) -> bool:
                   head=_clip(reason, 120))
         return True
     return False
+
+
+# A judge's own THINKING, when its final answer was not a verdict. Recovers ONLY a NOT-satisfied
+# ruling — never an approval.
+#
+# Measured 2026-08-01 over every gemma4 satisfaction/confirm response on the box: of 46 replies cria
+# could not parse, **20 carry a clear verdict in reasoning_content**. One example, verbatim, after a
+# prompt whose last line was "Answer NOW with ONLY the JSON verdict" — the content field held a
+# leaked `<|tool_call>call:read_file{...}` and the thinking held this:
+#
+#   "The task is not done. The live test output shows Holder: unknown and Total Handles: 0 for
+#    papagoose, while the real data has holder='stake1...' and a non-zero total. This means
+#    resolve_handle is not correctly extracting the holder."
+#
+# Correct, specific, actionable, discarded. cria already holds this rule for the CODER — read the
+# reasoning before concluding the model failed; "found it then lost it" is not "never found it" —
+# and did not apply it to its own judges.
+#
+# ONE DIRECTION ONLY. An approval recovered from prose would be failing OPEN on completion, which
+# principle 13 forbids outright. A recovered NOT-satisfied can only ever mean "keep working", so a
+# false positive costs a turn and never a false finish. That asymmetry is what makes a lexical read
+# acceptable here at all.
+_VERDICT_NEGATIVE = re.compile(
+    r"\b(?:"
+    r"task is not (?:done|complete|finished|satisfied)"
+    r"|(?:is|are) not (?:yet )?(?:done|complete|finished|satisfied)"
+    r"|not (?:fully )?satisfied"
+    r"|(?:remains?|still) (?:incomplete|unfinished|missing)"
+    r"|no (?:live[- ]?test|readme|tests?) (?:file )?(?:was )?(?:exists?|found|written|created)"
+    r")\b", re.I)
+
+
+def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
+    """A NOT-satisfied verdict recovered from a judge's thinking, or None.
+
+    `flag` is the phase's own key — "satisfied", "done" or "consistent" — so the caller's existing
+    reading path is untouched.
+    """
+    text = (reasoning or "").strip()
+    if not text:
+        return None
+    m = _VERDICT_NEGATIVE.search(text)
+    if not m:
+        return None
+    # The sentence carrying the ruling IS the reason — the coder needs the diagnosis, not "the judge
+    # said no". Bounded because this is a prompt cria COMPOSES, not content the coder reads.
+    # From the ruling sentence ONWARD, not the ruling alone. "The task is not done." tells the coder
+    # nothing; the sentences after it carry the diagnosis ("Holder: unknown and Total Handles: 0 ...
+    # resolve_handle is not correctly extracting the holder"), which is the whole value of the
+    # recovery. Bounded because this is a prompt cria COMPOSES, not content the coder reads.
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    start = next((i for i, sn in enumerate(sentences) if _VERDICT_NEGATIVE.search(sn)), 0)
+    reason = " ".join(sn.strip() for sn in sentences[start:]).strip() or text
+    rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase,
+              matched=_clip(m.group(0), 60), reason=_clip(reason, 120))
+    return {flag: False, "reason": reason[:300], "proposed_fix": ""}
 
 
 def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:
