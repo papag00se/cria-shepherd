@@ -49,6 +49,21 @@ _LIST_NAMES = {"list_dir"}
 # The cria-home refusal (prompts/cria_home_refusal.txt) and the malformed-fused-call refusal
 # (prompts/malformed_call_refusal.txt) are loaded per call at their use sites in translate_outbound.
 
+# A REFUSED call did not run, so it must not report success. Every refusal cria lowers is a
+# `printf`, and printf exits 0 — so the harness stamped `Process exited with code 0` directly above
+# text saying "Nothing was run". Measured: 331 captured prompts carry that pair for the malformed-call
+# refusal alone, and the same shape reaches the external-dir guard, the cria-home guard, the read-only
+# spill guard and the repeat-search gate. A guard that reports success is the worst failure shape
+# there is, and the contradiction sat inside a single tool result.
+REFUSED_EXIT_CODE = 1
+
+
+def _refusal_command(text: str) -> str:
+    """The one way cria lowers a refusal: print it, then exit non-zero. ONE owner — the five call
+    sites each hand-rolled `printf %s …` and all five inherited printf's exit 0."""
+    return f"printf %s {_qbash(text)}; exit {REFUSED_EXIT_CODE}"
+
+
 # Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
 # calls into one turn (gemma live: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:write_file{…`).
 # massage._recover_fused_call already RECOVERS the real first call for the ~83% that's cleanly parseable
@@ -668,21 +683,21 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
             # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
             if name in SHELL_TOOL_NAMES and _has_tc_debris(fn.get("arguments")):
-                cmd = f"printf %s {_qbash(prompts.load('malformed_call_refusal'))}"
+                cmd = _refusal_command(prompts.load('malformed_call_refusal'))
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_malformed_call", tool=name)
             # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
             # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
             # tool or raw shell command reaching outside the workspace beyond [safety] permission.
             elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
-                cmd = f"printf %s {_qbash(reason)}"
+                cmd = _refusal_command(reason)
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_external", tool=name, level=external_dir_permission)
             # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
             # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
             # stray write corrupt its state. The refusal is a normal tool result the model reads.
             elif name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
-                cmd = f"printf %s {_qbash(prompts.load('cria_home_refusal'))}"
+                cmd = _refusal_command(prompts.load('cria_home_refusal'))
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
             # cria's read-only SPILL scratch (./tmp/cria): a big doc cria saved as REFERENCE. Refuse an
@@ -693,7 +708,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                   and (sp := _tool_path(args)) and _under_spill_dir(str(sp))
                   and not (name in _READ_NAMES and (args.get("start_line") or args.get("end_line")))):
                 key = "spill_read_steer" if name in _READ_NAMES else "spill_edit_refusal"
-                cmd = f"printf %s {_qbash(prompts.render(key, path=str(sp)))}"
+                cmd = _refusal_command(prompts.render(key, path=str(sp)))
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:
@@ -713,7 +728,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif name == "web_search":
                 refusal = webfetch.gate_search(session, str(args.get("query") or ""))
                 if refusal is not None:  # exact-repeat search this session → refuse, don't burn a call
-                    cmd = f"printf %s {_qbash(refusal)}"
+                    cmd = _refusal_command(refusal)
                 elif "web_search" in injected and brave_key:  # synthetic → Brave curl
                     cmd = _search_command(args, brave_key)
                     # ONLY this path writes the spill file, so only this path earns the later
