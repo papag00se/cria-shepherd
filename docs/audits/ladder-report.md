@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 22:57:54 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 23:01:06 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — zaya1**, 6 min elapsed.
+**RUNNING — zaya1**, 9 min elapsed.
 
 | next checkpoint | at | must hold |
 |:--|--:|:--|
