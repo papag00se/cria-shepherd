@@ -237,6 +237,7 @@ class PlanSession(GuardState):
     # coder's in-flight test work was then failed as "unrelated" against a goal it was never given.
     critic_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
+    unexecuted_nudges: int = 0  # bounded pushes for a turn that PASTED the file instead of writing it
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
@@ -1617,6 +1618,13 @@ class Loop:
         # step did nothing — nudge it to act before spending probe round-trips. (codex-local's
         # leg counts FILES MODIFIED in the active turn; cria's steps legitimately include
         # verification-only work, so the cria adaptation counts ANY tool activity this step.)
+        # BEFORE reading this as a completion claim: a turn that pasted a whole file did not finish
+        # the step, it failed to emit the call. See unexecuted_write().
+        if (unexecuted_write(_completion_text(coder))
+                and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
+            sess.unexecuted_nudges += 1
+            rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
+            return self._renudge(sess, key, body, prompts.load("unexecuted_write_nudge"), rlog)
         if sess.step_tool_calls == 0 and not sess.leg0_nudged:
             sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
             sess.verify_fails += 1
@@ -1867,6 +1875,7 @@ class Loop:
         sess.verify_fails = sess.critic_fails = 0
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
+        sess.unexecuted_nudges = 0
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
         sess.flail_steers_this_step = 0  # ...and a fresh flail-steer budget
@@ -2466,6 +2475,17 @@ class Loop:
         acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
         checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
         tags from ``framed``)."""
+        # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
+        # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
+        if (unexecuted_write(_completion_text(comp))
+                and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
+            sess.unexecuted_nudges += 1
+            rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
+            conv = framed["messages"] + [{"role": "user", "content": prompts.render(
+                "nudge", reason=prompts.load("unexecuted_write_nudge"))}]
+            comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
+            if _has_tool_calls(comp):
+                return comp  # it emitted the write after the nudge
         if sess.action_seq == 0 and not sess.leg0_nudged:  # the session never acted at all
             sess.leg0_nudged = True
             rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
@@ -3120,6 +3140,42 @@ def _parse_completion(raw: bytes) -> dict:
         return obj if isinstance(obj, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+# A fenced block this long is a FILE the model typed into chat, not a snippet illustrating a point.
+UNEXECUTED_WRITE_LINES = 12
+MAX_UNEXECUTED_NUDGES = 2   # bounded: after this the turn falls through to the completion gate
+
+
+def unexecuted_write(content: str) -> bool:
+    """Did this tool-call-less turn CONTAIN the work instead of doing it?
+
+    The branch below reads a coder turn with no tool call as "it thinks the step is done". That
+    inference is a model-trait bet, and it loses badly on some models. Measured over every captured
+    coder turn: gemma4 0.0% tool-call-less turns (n=3,955), qwopus 3.4%, qwythos 4.5% — and mellum2
+    **29.4%** (192 of 653). Nearly a third of one model's turns were being read as completion claims
+    and sent through a probe round-trip and a critic call.
+
+    They are not completion claims. Read in full, run 20260801T160104: call 0012 is the complete
+    resolver typed into chat, and call 0033 is a polished rewrite of it — correct base URL, correct
+    `GET /handles/{handle}`, argparse CLI, typed dataclass — with no write_file call. That run scored
+    0/4 with its own finished deliverable sitting in the transcript. A summary of finished work does
+    not paste the file; a model that failed to emit the call does.
+
+    So this is not a new assist — it is refusing to draw a conclusion the evidence contradicts. The
+    nudge is the one cria already sends, and it is bounded (MAX_UNEXECUTED_NUDGES) so a model that
+    keeps printing code still reaches the gate."""
+    body = content or ""
+    inside, run = False, 0
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            if inside and run >= UNEXECUTED_WRITE_LINES:
+                return True
+            inside, run = not inside, 0
+            continue
+        if inside and line.strip():
+            run += 1
+    return False
 
 
 def _has_tool_calls(completion: dict) -> bool:
