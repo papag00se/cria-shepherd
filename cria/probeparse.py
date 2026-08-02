@@ -735,16 +735,28 @@ def parse_output(command: str, family: str, exit_code: Optional[int],
     """The public entry point: raw streams -> deduped findings + one-line summary."""
     combined = stdout + "\n" + stderr  # exactly one \n between, no strip
     findings = _FAMILY_PARSERS.get(family, lambda s: [])(combined)
-    if not findings:
-        # upstream quirk, preserved: when family was "cargo" and found nothing,
-        # parse_rustc runs a second time here — harmless, structure kept.
-        findings = parse_rustc(combined)
-    if not findings:
-        findings = parse_generic(combined)
-    if not findings:
-        # tier-0 config-syntax floor: tomllib/json decode errors report location as prose
-        # (`(at line N, column M)` / `line N column M`), not `file:line:col:`.
-        findings = parse_config_syntax(combined)
+    # The fallbacks below are SHAPE scrapers: they know `file:line: text` and nothing about the tool
+    # that printed it. That shape occurs in output which is not a failure at all — pytest's own
+    # "warnings summary" section prints it for every warning of a run that PASSED. So they may only
+    # run when the tool itself reported failure. A family parser knows its tool's contract and is
+    # unaffected; `exit_code is None` means UNKNOWN, not zero, and still scrapes.
+    #
+    # MEASURED in the captures: a run whose tests passed (exit 0, "1 passed") emitted
+    # `test_resolve_handle.py:95: PytestUnknownMarkWarning: Unknown pytest.mark.live` as a Finding,
+    # which cria shipped under "[GROUND TRUTH — the repo's own checks fail]" in 40 consecutive
+    # prompts. parse_pytest had correctly returned nothing; parse_generic manufactured it. cria
+    # stating a false fact about the repo's own checks is the worst thing this module can do.
+    if exit_code != 0:
+        if not findings:
+            # upstream quirk, preserved: when family was "cargo" and found nothing,
+            # parse_rustc runs a second time here — harmless, structure kept.
+            findings = parse_rustc(combined)
+        if not findings:
+            findings = parse_generic(combined)
+        if not findings:
+            # tier-0 config-syntax floor: tomllib/json decode errors report location as prose
+            # (`(at line N, column M)` / `line N column M`), not `file:line:col:`.
+            findings = parse_config_syntax(combined)
     findings = _error_class_only(findings)
     dedup(findings)
     summary = summarize(findings, exit_code, combined)

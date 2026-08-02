@@ -656,3 +656,46 @@ class RunnerLocationTests(unittest.TestCase):
         f = probeparse.parse_generic(mixed)
         self.assertEqual(f[0].line, 4)
         self.assertIn("cannot find value", f[0].message)
+
+
+class SucceededCommandsHaveNoFailures(unittest.TestCase):
+    """A shape scraper must never manufacture a failure out of the output of a command that
+    exited 0. Captured live (run 20260728T000013, calls 0165-0205): the tests PASSED and cria
+    told the coder "the repo's own checks fail" 40 times, pointing at a warning about a typo'd
+    pytest mark. parse_pytest had correctly found nothing; parse_generic invented it."""
+
+    PASSED_WITH_WARNING = (
+        "============================= test session starts ==============================\n"
+        "collected 1 item\n\n"
+        "test_resolve_handle.py .                                                 [100%]\n\n"
+        "=============================== warnings summary ===============================\n"
+        "test_resolve_handle.py:95\n"
+        "  /w/test_resolve_handle.py:95: PytestUnknownMarkWarning: Unknown pytest.mark.live"
+        " - is this a typo?\n"
+        "    @pytest.mark.live\n\n"
+        "========================= 1 passed, 1 warning in 0.42s =========================\n"
+    )
+
+    def test_passing_pytest_run_with_a_warning_reports_nothing(self):
+        r = probeparse.parse_output("python3 -m pytest -q", "pytest", 0,
+                                    self.PASSED_WITH_WARNING, "")
+        self.assertEqual(r.findings, [])
+        self.assertNotIn("PytestUnknownMarkWarning", r.summary)
+
+    def test_the_same_output_from_a_FAILING_command_is_still_read(self):
+        # The guard is the exit code, not the text — a non-zero exit still scrapes.
+        r = probeparse.parse_output("python3 -m pytest -q", "pytest", 1,
+                                    self.PASSED_WITH_WARNING, "")
+        self.assertTrue(r.findings)
+
+    def test_unknown_exit_code_still_scrapes(self):
+        # None means UNKNOWN, not zero. Refusing to look would hide a real failure.
+        r = probeparse.parse_output("some-tool", "", None,
+                                    "src/a.py:3: SyntaxError: bad\n", "")
+        self.assertTrue(r.findings)
+
+    def test_a_familys_own_parser_is_unaffected_by_the_guard(self):
+        # The family parser knows its tool's contract; only the shape scrapers are gated.
+        r = probeparse.parse_output("python3 -m pytest -q", "pytest", 1,
+                                    "FAILED test_x.py::test_a - AssertionError: nope\n", "")
+        self.assertTrue(r.findings)
