@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 18:36:04 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 18:45:29 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_zaya1_codex_pon_1785633412` (capture `/home/jesse/.cria/calls/20260801T181725-019fc00c-1773-7ea0-831d-84ae0a44c9be`), then write `## ada-handles_zaya1_codex_pon_1785633412` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **run** `zaya1` (attempt 2).
 
 ## Ladder
 
@@ -21,7 +21,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | ⛔ BLOCKED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 1 | 0/4 | 📖 needs walk |
+| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 1 | 0/4 | 🔁 ready to rerun |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
 
 ## Attempts
@@ -44,6 +44,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+f732f69 fix(suite): correct the reattach measurement, and measure P1 and P4 offline
 2172e77 feat(loop)+test: wire the live execution check, and audit today's fixes against the doctrine
 bcecf45 feat(suite): replay captured runs through cria's deterministic logic — no GPU
 1843570 feat(loop): detect the gate ALTERNATING between two finding-sets
@@ -58,7 +59,6 @@ c4d955c feat(suite): shout when the ladder is idle
 05b01a7 feat(execcheck): live execution check — corroborate three sources, run, never block
 b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused question
 81ab891 docs(ladder): ornith 4/4 — five for five on dense, planner off
-051dc13 docs(ladder): qwopus 4/4 in 6.5 min — four dense passes, all first attempt
 ```
 
 ---

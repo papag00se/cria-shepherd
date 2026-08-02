@@ -71,6 +71,12 @@ def rows(task):
             r = json.loads(line)
         except ValueError:
             continue
+        # An ABORTED run is evidence, not an attempt. A row killed by hand — to ship a fix, to free
+        # the GPU, to correct a sequencing mistake — says nothing about the model and must not count
+        # toward BLOCKED_AFTER. The row is KEPT (deleting evidence is worse than annotating it) and
+        # skipped here.
+        if r.get("aborted"):
+            continue
         if str(r.get("note", "")).startswith(NOTE_PREFIX) and r.get("task") == task:
             out.append(r)
     return out
