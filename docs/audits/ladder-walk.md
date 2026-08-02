@@ -1429,6 +1429,26 @@ candidate rule — but it should be measured, not assumed.
 
 ## ada-handles_mellum2_codex_pon_1785660278
 
+> **CORRECTED by the full read (2026-08-02).** I wrote below that the noise judge deleted the live
+> test and README and that this is why they are missing. The deletion happened, but cria then
+> **rejected** the replan — `loop.replan_uncovered` fired, every later step frame still says
+> "(2 of 5)", and the plan mirror still lists all five steps. They are missing because the run never
+> left step 2. My stated cause was wrong.
+>
+> The real cause is a fix I shipped earlier the same day. `probeparse._failing_frame` takes the
+> DEEPEST frame in the coder's own code — and when a TEST's mock setup is wrong, the deepest own
+> frame is always the production file. The steer therefore read
+> `resolve_handle.py:17: KeyError: 'resolved_addresses'` and dropped the
+> `test_resolve_handle.py:35` frame that held the actual defect (`mock_get.return_value` assigned
+> twice, the second overwriting the first). The coder concluded the production file was wrong and
+> broke the one correct field name. That single line caused a 40-call loop.
+>
+> Proof it was load-bearing: at call 0053 the coder was shown the RAW pytest output and solved it in
+> one turn. `probegate` strips indentation and dedupes identical lines across the whole gate output,
+> which had been deleting a closing brace, the block structure, and — at call 0031 — the entire
+> `E KeyError` line from the second failure block.
+
+
 **0/4.** 68 calls, killed at the 15-minute floor.
 
 **cria fault: yes** — the noise judge deleted the live test and the README from the plan, and this
