@@ -166,7 +166,9 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
                 continue  # vanished mid-walk (the coder is live) — a missing entry, never a crash
             entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
     if not entries:
-        return prompts.fill(labels["empty"], root=root)
+        # "at judging time" is the CRITIC's wording. The planner is not judging anything, and it read
+        # that phrase on every run once the inventory was shared with it.
+        return prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
     entries.sort(key=lambda e: (-e[0], e[1]))
     if flavor == "coder":
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
@@ -175,7 +177,7 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
         lines.append(labels["coder_note"])
         return "\n".join(lines)
-    lines = [prompts.fill(labels["header"], root=root)]
+    lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
     lines.append(labels["complete"])
     return "\n".join(lines)

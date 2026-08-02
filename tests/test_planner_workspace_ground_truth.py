@@ -37,13 +37,13 @@ class SharedInventoryTests(unittest.TestCase):
 class PlannerSeedTests(unittest.TestCase):
     def test_the_gather_seeds_the_inventory_when_cwd_is_known(self):
         src = inspect.getsource(planner.Planner._gather_and_plan)
-        self.assertIn("groundtruth.workspace_inventory(cwd)", src)
-        self.assertIn("if inventory else seed", src)
+        self.assertIn('groundtruth.workspace_inventory(cwd, flavor="planner")', src)
+        self.assertIn("part for part in (inventory, seed,", src)
 
     def test_an_unknown_cwd_changes_nothing(self):
         # cria must never invent a root either — no cwd, no section.
         src = inspect.getsource(planner.Planner._gather_and_plan)
-        self.assertIn('inventory = groundtruth.workspace_inventory(cwd) if cwd else ""', src)
+        self.assertIn('if cwd else ""', src)
 
     def test_the_planner_resolves_its_tools_against_the_same_cwd_it_is_told(self):
         src = inspect.getsource(planner.Planner._gather_and_plan)

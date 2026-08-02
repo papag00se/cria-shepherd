@@ -764,9 +764,24 @@ class Planner:
         # a single response, three rounds running, each cut off at the token cap. The run spent all
         # fifteen minutes in the planner and never reached the coder once.
         # Same function, same ground truth the critic already gets — one more caller, no new mechanism.
-        inventory = groundtruth.workspace_inventory(cwd) if cwd else ""
-        messages: list[dict] = [{"role": "user",
-                                 "content": (inventory + "\n\n" + seed) if inventory else seed}]
+        inventory = groundtruth.workspace_inventory(cwd, flavor="planner") if cwd else ""
+        # cria's ask goes LAST, after the task — the same ordering bug, in a third place.
+        #
+        # The seed ENDS with the user's own request, which for a coding task is literally "write a
+        # Python script ... add a README". The planner instruction lives in the system message, far
+        # above it. A model obeys the last instruction it reads, and zaya1 says so in its own
+        # reasoning on run 20260801T221447 call 0002 — 27,089 characters of it, zero tool calls:
+        #   "We can place everything in a single response."
+        #   "We'll call web_search with query ... Let's simulate in our mind."
+        #   "We'll use web_fetch. But we might not have internet access. However, we can simulate."
+        #   "We must be careful not to include any extraneous text like 'Step 1: ...'. The answer is
+        #    just the deliverables."
+        # It was actively AVOIDING a plan and writing the deliverable instead. Word counts in that
+        # reasoning: "script" 86, "readme" 35, "plan" 4. Three attempts, three runs, zero coder calls.
+        # da35f4e fixed this ordering for harness compaction and e72a0e9/5d2b119 for the two
+        # self-compaction paths; the planner is the same defect in the same shape.
+        messages: list[dict] = [{"role": "user", "content": "\n\n".join(
+            part for part in (inventory, seed, prompts.load("plan_closing_ask")) if part)}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
         seen_sigs: set[str] = set()
         facts: dict = {}      # url -> (status, routes, fields) the RESEARCH really read (Plan.gather_facts)
