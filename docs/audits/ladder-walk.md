@@ -1634,8 +1634,15 @@ stake/enterprise/script/other address of the Holder"*. A step that asserts `wher
 about a route cria has fetched is checkable against that ledger, deterministically, the way
 `urlgrounding` checks that a route exists. That is the shape of the fix.
 
-It is **not** built here, deliberately: the last two runs are a lesson in shipping a rule before the
-false-positive surface is understood (see attempt 8, where a protection I added kept a junk step
-alive three times in one run). This one needs its prevalence measured across the ledger first.
+It is **not** built here, and the measurement says do not build it in that shape: across every
+captured judged step (**n=404**), a step asserting `where <param> = <field>` about a route appears
+**once** — this one. Keying a rule on that phrasing would be fitting to a single string, which is
+exactly attempt 8's mistake one run earlier.
+
+The real class is broader: a re-derivation baking in a concrete external detail the coder never
+confirmed. `urlgrounding` already enforces that for ROUTES; the gap is parameter-to-field bindings,
+and closing it properly means grounding the binding against the fetched spec rather than
+pattern-matching the sentence. That is a real piece of work, not a regex, and it should be measured
+against the shape ledger before anything ships.
 
 **Model wall: not reached.** The model implemented what cria asserted.
