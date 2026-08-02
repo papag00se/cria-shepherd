@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 18:20:20 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 18:32:55 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,17 +8,17 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — zaya1**, 3 min elapsed.
+**RUNNING — zaya1**, 15 min elapsed.
 
 | next checkpoint | at | must hold |
 |:--|--:|:--|
-| milestone 1 | 15 min | 1/4 |
+| milestone 2 | 30 min | 2/4 |
 
 **Measured just now** (verifier run against a copy of the live workspace): **0/4**
 
 | deliverable | | detail |
 |:--|:--:|:--|
-| unit_tests | 🔴 | no tests ran in 0.01s |
+| unit_tests | 🔴 | no tests ran in 0.00s |
 | live_test | 🔴 | no live-test file found |
 | resolver_cli | 🔴 | no candidate resolver script |
 | readme | 🔴 | no README |
@@ -56,6 +56,8 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+bcecf45 feat(suite): replay captured runs through cria's deterministic logic — no GPU
+1843570 feat(loop): detect the gate ALTERNATING between two finding-sets
 a91d193 fix(loop): the "task is finished but I can't stop" off-ramp never ran with a plan
 e651951 docs(ladder): walk mellum2 attempt 5 — the fix worked and the run still failed
 9b52224 fix(loop): cria withheld its correction on a premise false 73% of the time
@@ -69,8 +71,6 @@ b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused q
 81ab891 docs(ladder): ornith 4/4 — five for five on dense, planner off
 051dc13 docs(ladder): qwopus 4/4 in 6.5 min — four dense passes, all first attempt
 2d984fd docs(ladder): qwythos 4/4 in 12.7 min — third dense pass, first attempt
-3897a8d docs(ladder): ternary-bonsai and gemma4 both 4/4; record the sampling finding as untested
-7259203 fix(suite): the runner sets each model's sampling — it was missed 26 times running
 ```
 
 ---

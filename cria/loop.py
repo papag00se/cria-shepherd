@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, editrecovery, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
@@ -860,9 +860,39 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     return False, _verdict_nudge(retry, False, routes), str(retry.get("proposed_fix") or "").strip()
 
 
-def satisfaction_done_note(reason: str) -> str:
-    """The completion text forwarded when the satisfaction check + repo checks agree the task is done."""
-    return f"Task complete — verified by the completion check and the repo's own checks. {reason}".strip()
+def satisfaction_done_note(reason: str, exec_marker: str = "") -> str:
+    """The completion text forwarded when the satisfaction check + repo checks agree the task is done.
+
+    `exec_marker` is the LIVE EXECUTION result (cria/execcheck.py) and is APPENDED, never gating:
+    the repo's own checks prove a workspace compiles, lints and passes its tests, and none of that
+    can tell you the delivered program does anything. Measured across 51 archived runs: 13 (25%)
+    contained no entry point at all and not one of those ever scored full marks. The marker is empty
+    on a confirmed run and on a task that needs no run, so a clean signal stays silent."""
+    note = f"Task complete — verified by the completion check and the repo's own checks. {reason}".strip()
+    return f"{note}\n\n{exec_marker}".strip() if exec_marker else note
+
+
+def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_role, rlog) -> str:
+    """Ask the model what to run, corroborate it against the README and the files on disk, run it if
+    all three agree, and return the marker. NEVER blocks — returns "" on anything unclear.
+
+    The whole call is skipped when there is no workspace to inspect, so a session with nothing on
+    disk pays nothing.
+    """
+    root = getattr(sess, "workspace_root", "") or ""
+    if not root or not task.strip():
+        return ""
+    try:
+        system, user = execcheck.intent_prompt(task)
+        comp = _judge_completion(reasoner_chat, reasoner_role, system, user, rlog,
+                                 phase="exec-intent", workspace_root="")
+        result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""))
+        rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
+                  exit_code=result.exit_code)
+        return result.marker
+    except Exception as e:  # noqa: BLE001
+        rlog.emit("loop.exec_check_error", level="warn", error=f"{type(e).__name__}: {e}")
+        return ""   # a check that cannot run must never affect a completion
 
 
 # The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
@@ -2142,7 +2172,9 @@ class Loop:
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
             sess.probe_call_id = probe_tc["id"]
-            sess.pending_done = satisfaction_done_note(reason)
+            sess.pending_done = satisfaction_done_note(
+                reason, live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
+                                              self._ctx.reasoner_role, rlog))
             sess.steer_source = "completion check (task satisfied)"
             return _completion_toolcalls([probe_tc],
                                          note="cria completion check: the task looks done — verifying the repo's checks")
