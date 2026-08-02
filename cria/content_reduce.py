@@ -19,6 +19,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 
+# Disclosure for a digest cut short — the loss is STATED, never silent.
+_DIGEST_CUT = "\n[… {n:,} characters of this turn omitted]"
+
+
 def est_tokens(s: str) -> int:
     """chars/4 token estimate (the same crude estimate the trimmer uses)."""
     return len(s) // 4
@@ -53,6 +57,47 @@ def binary_note(byte_len: int, kind: str | None) -> str:
     """The fact line that stands in for stripped binary content — true everywhere it is used."""
     k = f", {kind}" if kind else ""
     return f"[binary content: {byte_len:,} bytes{k} — not shown; binary data cannot be read as text]"
+
+
+def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:
+    """:func:`content_reduce` for text a model must READ AS INSTRUCTION, never as raw evidence.
+
+    Identical for structured content, but for prose it CUTS AND SAYS SO instead of running
+    :func:`strip_prose_text`. That stripper deletes function words, and its docstring's claim that
+    they are "certain-junk" is wrong: `is`, `to`, `of`, `for`, `be` carry the grammatical relations
+    that decide meaning. The result reads as fluent English and is not — which makes it a worse
+    failure than truncation, because truncation is visible.
+
+    Measured on run 20260801T225200 (zaya1). A compaction digest rewrote the user's own task —
+
+        "I would like you to write a Python script that accepts an Ada Handle as input and
+         resolves it to the Cardano address"
+      → "I would like you write Python script that accepts Ada Handle input and resolves it
+         Cardano address"
+
+    — and cria's own planner instruction with it ("The request above **is** what the WORK **is**"
+    → "The request above what WORK"). One line was not merely degraded but INVERTED: cria's note
+    "no endpoints or field names could **be read from** it" became "could read it", turning a
+    statement that nothing was learned into a claim that something was.
+
+    Honest, labelled loss beats invisible corruption (principle 5: never destroy information the
+    model reads; any reduction cria does make is LABELLED)."""
+    if est_tokens(content) <= cap_tokens:
+        return content
+    ct = (content_type or "").lower()
+    if "html" in ct or "xml" in ct:
+        content, ct = html_to_text(content), ""
+    elif "json" in ct:
+        reduced = reduce_json(content, cap_tokens)
+        if reduced is not None and est_tokens(reduced) <= cap_tokens:
+            return reduced
+        content = reduced if reduced is not None else content
+    if est_tokens(content) <= cap_tokens:
+        return content
+    keep = max(1, cap_tokens * 4)          # est_tokens is ~4 chars/token
+    if len(content) <= keep:
+        return content
+    return content[:keep].rstrip() + _DIGEST_CUT.format(n=len(content) - keep)
 
 
 def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:

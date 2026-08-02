@@ -35,7 +35,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import toolargs
-from .content_reduce import content_reduce, est_tokens
+from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
 # silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
@@ -553,7 +553,9 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
         if spent >= note_budget:
             omitted += 1
             continue
-        digest = content_reduce(text, _sniff_content_type(text), per_turn).strip()
+        # digest_reduce, NOT content_reduce: a dropped turn can be the TASK or cria's own
+        # instruction, and the prose tier deletes function words. See digest_reduce.
+        digest = digest_reduce(text, _sniff_content_type(text), per_turn).strip()
         # Keep the digest only if it FITS the remaining note budget. content_reduce is lossless-first:
         # asked for `per_turn` it returns the best it can honestly do, which for ordinary prose is the
         # text nearly unchanged — so a cap it merely aims at is not a cap. The budget check is the

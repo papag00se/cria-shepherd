@@ -394,10 +394,19 @@ class FloorSynthesisTests(unittest.TestCase):
         self.assertLess(est_tokens(note["content"]), est_tokens(blob))   # summarized, not carried whole
 
     def test_output_that_will_not_compress_is_disclosed_not_carried_whole(self):
-        # content_reduce is lossless-first: ordinary prose comes back near its original size. Carrying
-        # THAT as the "summary" is what made a drop net zero (measured in g16: 1,215 tokens dropped,
-        # 1,244-token note inserted). The honest outcome is to say the turn was compacted and could not
-        # be summarized — the model can re-read the file; it cannot un-corrupt a window.
+        # WHAT THIS PINS CHANGED, 2026-08-01. The goal is unchanged and still asserted below: the note
+        # must cost far less than the turns it replaces (g16: 1,215 tokens dropped, 1,244-token note
+        # inserted — a net-zero drop). What changed is HOW that is achieved.
+        #
+        # It used to be achieved by accident: content_reduce returned prose near its original size, the
+        # oversized digest failed the budget check, and the turn was disclosed as unsummarizable. The
+        # model got a count and nothing else.
+        #
+        # The digest now uses digest_reduce, which CUTS prose to the cap and states the cut, so it fits
+        # honestly rather than being discarded. Either outcome is acceptable and both are disclosed —
+        # what must never happen is the third one, which is what actually shipped: content_reduce's
+        # prose tier deleting function words throughout, silently, turning "no field names could BE
+        # READ FROM it" into "could read it". See tests/test_digest_never_word_strips.py.
         prose = ("The test suite failed because the resolver returned None for the Ada handle "
                  "and the assertion did not hold on the second row. ") * 30
         msgs = [
@@ -410,8 +419,16 @@ class FloorSynthesisTests(unittest.TestCase):
         out, dropped = contextfloor._drop_oldest(msgs, msg_budget=400)
         self.assertGreater(dropped, 0)
         note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
-        self.assertIn("could not be summarized", note["content"])          # disclosed, never silent
-        self.assertLess(est_tokens(note["content"]), est_tokens(prose) * 0.5)
+        # Disclosed either way — as unsummarizable, or as carried-and-cut. Never silently reworded.
+        self.assertTrue("could not be summarized" in note["content"]
+                        or "characters of this turn omitted" in note["content"],
+                        "a compacted turn must say what happened to it")
+        self.assertLess(est_tokens(note["content"]), est_tokens(prose) * 0.5)   # the original goal
+        # And whatever IS carried must be the real words, not a reworded version of them.
+        if "characters of this turn omitted" in note["content"]:
+            kept = note["content"].split("[…")[0]
+            tail = kept.strip().split("\n")[-1].lstrip("• ").strip()   # the note bullets each digest
+            self.assertIn(tail[:40], prose, "the carried text must be verbatim")
 
     def test_drop_oldest_lists_all_modified_files_no_cap(self):
         # No 30-file cap: every file the dropped turns modified is listed, however many.
