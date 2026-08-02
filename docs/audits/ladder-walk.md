@@ -680,3 +680,135 @@ worst single response           :   292 calls
 Two events in nearly ten thousand. Principle 15 is explicit that a detector built for a one-off is
 dead weight that can itself misfire, so this stays unbuilt and recorded. If a third appears, the
 base rate changes and so does the answer.
+
+---
+
+## Fix batch — 2026-08-01, from the full-read walks of mellum2 attempts 3, 4 and 5
+
+Six defects, every one verified against the captures before it was touched. Where an agent's report
+is quoted, the quote was re-checked against the file; two of my own measurements were wrong first
+time and are recorded as such, because that is the point of 23b.
+
+### 1. A filtered fetch and a plain fetch answered the same document differently
+
+`cria/webfetch.py::_fetch_and_render`. The `find=` branch windowed the match and appended
+*"grep the saved ./tmp file"* — a file **that branch never saves**. The spill and the route outline
+live only on the no-`find` path.
+
+Measured, run `ada-handles_mellum2_codex_poff_1785626379` call 0016: `find="paths"` against a
+186,444-character OpenAPI spec returned **2 of 33 endpoints**, `"/"` and `"/mcp"`. `handles/{handle}`
+appears **0 times** in that prompt; the first prompt in the run containing it is **0152**, of 225.
+The model built a JSON-RPC MCP client because those two were the only routes it had ever been shown.
+
+Three faults in one branch: a false fact (a file that does not exist), a withheld fact (31 endpoints),
+and a silent divergence between two spellings of the same request. Fixed: the find path spills too,
+and the message names the real file and offers the outline.
+
+### 2. The protocol probe was switched off exactly when the model dug hardest
+
+`apidiscovery.discover` was gated `if not raw and not find and not cursor`. Every `/mcp` fetch from
+call 0019 to 0034 carried `find=` or `raw=`, so the JSON-RPC contract the run needed — *method
+`tools/call`, params `{name, arguments}`* — was never probed. It surfaced at **0209**, sixteen calls
+before the kill, from a plain fetch. Now gated on `raw` alone; `raw` is the model asking for
+untouched bytes and still opts out.
+
+### 3. Self-compaction put cria's ask FIRST
+
+So the transcript ended on the coder's live step. All five compactor calls in run `…1785625253`
+obeyed it and wrote code instead of a briefing. In `…1785628543` one degenerated to `v5v5v5…` and
+cria adopted a hallucinated `unittest` file as `⟦ctx:rollup⟧ Summary of your earlier turns this
+session`; the coder believed it — *"The user has given me a test suite"* — and that is how
+`unittest` entered a pytest run. `da35f4e` fixed exactly this on the harness path and never reached
+its sibling.
+
+### 4. A briefing that quotes cria's own ask back is not a briefing
+
+Counted in the coder's prompt at call 0063 of `…1785626379` — 68,914 characters, of which the
+injected continuation block was 54,274 (**79%**):
+
+```
+"Do not emit a tool/function call"   x145
+"What you should say instead"        x47
+```
+
+Both are cria's words, from `selfcompact_summary.txt`. The coder read them and said so — *"This is
+contradictory. The continuation says 'fix search_handles' which IS writing code. The continuation
+also says 'Do not write code.'"* — and emitted no tool call. It never recovered: at **0084**, twenty
+calls later, the coder's own answer to the user still ENDED with that block, and it reappears
+verbatim at 0089 and 0207. Every compaction after the first collapsed identically.
+
+`strip_frame_echo` already dropped lines echoing cria's serialization FRAME and already failed safe
+when everything was echo. It now also drops lines echoing cria's INSTRUCTION — which needs no
+judgment, because cria composed it.
+
+### 5. `degenerate_tail` only recognised a repeated CHARACTER
+
+The real streams were two wide: `y8y8y8…` for **40,759 tokens** — five minutes of a fifteen-minute
+run — and `v5v5v5…` inside the compactor. Now catches repeating units up to 8 characters.
+
+### 6. A step naming an artifact was approved against an EMPTY workspace
+
+The one that killed attempt 3. Run `…1785625253` calls 0034 / 0038 / 0041, step *"Write a CLI script
+`resolve_handle.py`"*, inventory *"the workspace has no files at judging time"*. Call 0038's verdict
+refutes itself in its own reason:
+
+> `{"done": true, "reason": "workspace has no files, so the claimed resolve_handle.py does not exist … I default to DONE per instructions."}`
+
+The reasoned brake rejected it twice, then ruled `consistent: true` on the third identical listing.
+cria advanced to *"write unit tests importing resolve_handle"* and the last 40 turns of the run were
+`ModuleNotFoundError: No module named 'resolve_handle'`.
+
+An empty workspace is **ground truth, not a judgment call** (principle 8): every file the step names
+is absent, whichever way you read the step. So it is settled before the reasoner is asked, and cannot
+be talked out of.
+
+Base-rated over all 135 captured critic verdicts with an inventory: 92 approvals, **7** named a file
+not on disk. Only the 3 empty-workspace ones are blocked. The other 4 had files present, where a
+named file may be one the step merely *mentions* (a README step naming the module it documents), and
+blocking those would be a guess.
+
+*My first base-rate of this returned 0 of 125 — my scorer looked for `THE STEP`, and cria's label is
+`STEP:`. The measurement was of my regex, not of cria. 23b, again, on the same day it was written.*
+
+### 7. A turn that PASTED the file is not a claim that the step is done
+
+Both driver halves read a coder turn with no tool call as *"it thinks the step is done"*. That is a
+bet on a model trait. Measured over **every captured coder turn**:
+
+| model | prose-only turns | total | rate |
+|:--|--:|--:|--:|
+| gemma4 | 0 | 3,955 | **0.0%** |
+| qwopus | 1 | 29 | 3.4% |
+| qwythos | 36 | 795 | 4.5% |
+| **mellum2** | **192** | **653** | **29.4%** |
+
+Nearly a third of mellum2's turns were being read as completion claims and spent on a probe
+round-trip plus a critic call. They are not completion claims. Read in full, run `…1785625253`:
+**call 0012 is the complete resolver typed into chat**, and **call 0033 is a polished rewrite of it**
+— correct base URL, correct `GET /handles/{handle}`, argparse CLI, typed dataclass — with no
+`write_file` call anywhere. That run scored **0/4 with its own finished deliverable sitting in the
+transcript**.
+
+A summary of finished work does not paste the file; a model that failed to emit the call does. Not a
+new assist — a wrong inference removed. Bounded at 2 nudges per step, then it falls through to the
+gate exactly as before. Landed in BOTH halves, with a test asserting it.
+
+### Still open from these walks
+
+- A steer may name an API symbol that appears in no captured tool result. `get_holders` (real name
+  `get_holder`), `my.handle` (the spec's placeholder, offered as a handle "you know resolves"), and
+  `get_handle(…)` (no such function) were all invented and all obeyed. `urlgrounding` enforces this
+  for URLs and routes; method and field names have no equivalent.
+- cria told the coder *"'goose' does not resolve to an address"* at 0056 and repeated it six times.
+  It resolves — `GET /handles/goose` → 200, holder `stake1u85prp8…`. The coder obeyed instantly and
+  rewrote every test to a placeholder handle, deleting the task's own word from the test file.
+- The check summariser reports the LAST traceback frame, which for a mock failure is
+  `/usr/lib/python3.12/unittest/mock.py:1193`. Forty turns of fixes were pointed at the standard
+  library. It should walk back to the last frame inside the workspace.
+- The planner's spill note offers `read_file` with a `start_line`/`end_line` range; the planner's
+  `read_file` takes a path only. The planner reasoned *"Read it with a line range: roughly lines
+  70-120"*, called it with a path, and cria dumped 96,538 characters into its window.
+- The whole-file-rewrite recovery pastes the disk bytes without the newest evidence. At 0198 it
+  anchored the model back onto an endpoint it had disproved one turn earlier.
+- The bullet fallback in `planner.py` drops each bullet's indented detail lines; the numbered path
+  (`_numbered_with_details`) preserves them. That is where a step lost its endpoint and field names.

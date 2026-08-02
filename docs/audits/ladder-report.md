@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 20:54:09 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 21:16:14 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **run** `zaya1` (attempt 2).
+**RUNNING — zaya1**, 1 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **0/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🔴 | no tests ran in 0.00s |
+| live_test | 🔴 | no live-test file found |
+| resolver_cli | 🔴 | no candidate resolver script |
+| readme | 🔴 | no README |
 
 ## Ladder
 
@@ -21,7 +34,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | ⛔ BLOCKED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 1 | 0/4 | 🔁 ready to rerun |
+| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 1 | 0/4 | 🔵 RUNNING |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
 
 ## Attempts
@@ -44,6 +57,10 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+04a346b fix(loop): a turn that PASTED the file is not a claim that the step is done
+c8692f7 fix(selfcompact): a briefing that quotes cria's own ask back is not a briefing
+e72a0e9 fix(webfetch,loop,rumination): four faults the mellum2 full walks exposed
+b8f6892 fix(urlgrounding): a path template's VARIABLE NAME is not part of the route
 4b9c203 fix(planner): a plan step must not carry its own number — cria's framing states the position
 49b7262 docs: define WALK as reading everything, in all seven places it is instructed
 dc904ee fix(loop)+docs: recover prose verdicts, name phantom judge tools, record the reading rule
@@ -55,10 +72,6 @@ f732f69 fix(suite): correct the reattach measurement, and measure P1 and P4 offl
 bcecf45 feat(suite): replay captured runs through cria's deterministic logic — no GPU
 1843570 feat(loop): detect the gate ALTERNATING between two finding-sets
 a91d193 fix(loop): the "task is finished but I can't stop" off-ramp never ran with a plan
-e651951 docs(ladder): walk mellum2 attempt 5 — the fix worked and the run still failed
-9b52224 fix(loop): cria withheld its correction on a premise false 73% of the time
-aa464fd fix(loop): an authoring step must stop saying "Write X" once X exists and is failing
-af69c12 docs(ladder)+fix(execcheck): walk mellum2 attempt 3; a test file is not a program
 ```
 
 ---
