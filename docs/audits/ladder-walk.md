@@ -2491,3 +2491,234 @@ reproduction is not a base rate. Left alone, per "do not manufacture a finding t
 Every fix above was grepped for its twin before shipping. Three of the eleven ARE sibling fixes
 (the truncation guard, the deliverable run, the research facts across all three plan judges), which
 is the failure mode that cost six fixes earlier in the week.
+
+---
+
+## ada-handles_mellum2_codex_poff_1785686596
+
+**Score 2/4, verified by hand** (copied the workspace, ran the real verifier): unit tests PASS,
+README PASS, live test FAIL ("mocked, not live"), resolver CLI FAIL (exit 1).
+
+Walked by five readers over contiguous slices of all 88 calls — every prompt and every reasoning,
+in order, no grep. Four have reported; all four `cria fault: yes`. Every defect below I then
+reproduced myself by running cria's own code.
+
+**cria fault: yes**
+
+### The run in one line
+
+The delivered resolver calls `https://api.handle.me/{handle}`. The real route is `/handles/{handle}`.
+That one wrong path 404'd, the model generalised it to "the API is dead", and cria then **certified
+that belief as ground truth** — after which two deliverables were lost. I checked the API three ways
+during this walk (curl, cria's own `webfetch.fetch`, and the delivered script): `/handles/goose`
+returns **HTTP 200** with `holder: stake1u85prp8xt2lqxfkshjmtxvpa8w0g5galkdznlryhnlvzv0qk9z7h9`.
+`/goose` returns 404. cria's User-Agent is correct and the fetch was never the problem.
+
+The shipped README says, in a graded deliverable:
+
+> The API is a documentation landing page and does not currently serve a live handle resolution
+> service. All live test calls return 404.
+
+### Defect 1 — cria labels a successful data fetch "nothing could be read from it" (THE root)
+
+`loop._format_fetches` attaches `fetched_facts_sections.no_structure` when a 2xx yielded no OpenAPI
+routes, shapes or catalog:
+
+    if _fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip():
+
+A plain JSON **data** response satisfies that condition. So cria wrote, at calls 0016, 0018 and 0036:
+
+> `- https://api.handle.me/handles/goose → HTTP 200 (this page answered, but no endpoints or field
+> names could be read from it … the source that DEFINES them is still unread)`
+
+…while line 87 of that same prompt prints that page's full body, `holder` and
+`resolved_addresses.ada` included, and line 92 prints `{"total_handles":265912,"total_holders":67515}`.
+The block is headed GROUND TRUTH and the reader is told to trust it over the transcript. It fired at
+the exact turn the coder was lost about where `total_handles` lives.
+
+The reasoner believed it, and cria delivered this **verbatim** at 0037:
+
+> `⟦ctx:steer⟧ You are stuck on an API that is currently a documentation landing page and returns 404
+> for every request. … Stop trying to resolve handles against this endpoint — it is not a working
+> service. Decide what to do: (a) wait for the API to come back online, (b) switch to a different API
+> endpoint, or (c) remove the live test from the suite entirely. The unit tests pass against the
+> code; the live test is the only thing failing…`
+
+Four HTTP 200s are listed 340 lines above it. `2 failed, 1 passed` is 320 lines above it. Option (c)
+tells the coder to **delete one of the four graded deliverables**. The reasoner's own system prompt,
+in that same file, forbids exactly this: *"NEVER attribute the failure to an outside cause … that the
+working access disproves."* cria holds both halves of the answer — `/goose → 404` beside
+`/handles/goose → 200` — prints them in two separate sections, and never pairs them.
+
+At 0074 cria said it again in its own voice, and the model's next turn was a verbatim echo with no
+tool call. By 0084 the model was quoting cria's sentence back as if it were the user's task.
+
+### Defect 2 — the session-ending judge is promised a fetch record it is never given
+
+`_bound_evidence`'s disclosure, which the satisfaction judge reads at 0073, 0075 and 0086:
+
+> `[8,619 characters of EARLIER actions elided … the durable fetch facts below are complete and
+> unaffected]`
+
+**No fetch-facts section ever follows.** `_grounded_evidence` (the step critic) appends
+`_fetch_ground_truth`; `_satisfaction_evidence` calls the same `_bound_evidence` and returns the log
+alone. The elided 8,619 characters are precisely the four fetches that carry the truth, including
+`web_fetch {"url": ".../handles/goose"} → HTTP 200 OK`. The judge is left with a headless JSON blob
+and three visible 404s. At 0086 the elision had grown to 9,440 characters and swallowed the `holder`
+field too, repeating the same promise. **Seventh instance of a mechanism landing on one path and
+missing its twin** — and the step-critic docstring names this exact failure as the reason it was
+built.
+
+### Defect 3 — the repetition detector fires on the constant workdir
+
+At 0018 cria told the reasoner:
+
+> `It keeps repeating the SAME action 3× without the outcome changing: exec_command {"cmd": "python3
+> live_test.py", …}`
+
+That command appears **once** in the transcript attached to the same message. Reproduced by running
+cria's real `_action_signature` / `_actions_match` on the three captured calls:
+
+    python live_test.py   -> {live_test.py, python,  suite-ada-handles_…, tmp}
+    python3 --version     -> {--version,    python3, suite-ada-handles_…, tmp}
+    python3 live_test.py  -> {live_test.py, python3, suite-ada-handles_…, tmp}
+    match(--version, live_test.py) = True
+
+The `workdir` argument is identical on every `exec_command`, so `tmp` and the workspace name are two
+**permanent free shared words**; `shared >= 2 and jitter <= 2` then matches any two commands differing
+by two words. It merged three genuinely progressing commands — including `python3 --version`, the
+call that found the fix, and the run that first exposed the real bug — and the falsehood reached the
+coder verbatim at 0019.
+
+### Defect 4 — the degenerate-write abort speaks in the rumination guard's words
+
+`upstream.py` sets `{"degenerate": True, "hits": 0, "reasoning_tokens": len(gen_tail)}` and
+`loop.py:4765` renders `rumination_guard.txt` for it. Delivered at 0004:
+
+> `[RUMINATION GUARD] Your last reasoning pass hit 0 second-guessing phrases ("actually", "wait",
+> "let me reconsider", etc.) after ~2048 reasoning tokens and was aborted before it produced any
+> output.`
+
+Three false things: it reports **zero** instances of the behaviour it is scolding; **2048** is
+`DEGENERATE_RUN_CHARS`, a character cap, rendered into a slot labelled tokens; and the turn **did**
+produce output — a full `write_file` call cria discarded. The real event was a repeating string
+inside a tool argument, which nothing in the message mentions. `rumination.py`'s own docstring says
+these are *"a DIFFERENT footgun"*; they share one message written for the other one.
+
+### Defect 5 — the crew has no runaway guard
+
+At 0010 the reasoner produced ~7,000 tokens over 39.5 s of pure invention — roughly 200 repetitions
+of one sentence describing a session that never happened — then emitted `ON_TRACK`, which cria
+accepted. `server.py:410` routes only the coder through `chat_watched(..., watch=_det.check)`;
+`server.py:420` wires `reasoner_chat=_ep("reasoner").chat`, the unwatched path. cria's own
+`rumination.Detector`, run over that captured reasoning, fires at 58% of the way through. It was
+never asked.
+
+### Defect 6 — the edit matcher forgives indentation on the match side and never restores it
+
+`writeproxy`'s flexible fallback joins the old string's tokens with `\s+`, so a match starting at
+`return` swallows the file's leading indentation; the splice then uses the replacement's own
+indentation. Reproduced against the delivered `resolve_handle.py` with the edit the model actually
+needed:
+
+            return {
+        "address": data.get("resolved_addresses", {}).get("ada"),
+
+`return {` at eight spaces, its keys at four. This shape survived by luck (bracket continuation); a
+statement-level replacement breaks outright, and cria reports the break as the model's error
+(`your edit would break resolve_handle.py — unexpected indent`). The model's replacement content was
+correct.
+
+### Smaller, each confirmed in source
+
+- **The confirm gate is a prose filter.** 0083 rejected and 0088 accepted a **byte-identical**
+  workspace (same `list_dir` output; no file written between them). Only the wording of the claim
+  changed. It holds `read_file` and never opened the 527-byte `live_test.py`.
+- **Wrong verdict key on the forced answer.** `satisfaction.txt` asks for `{"satisfied": …}`;
+  `verify_tools.answer_now` — the step critic's line, reused — demands `{"done": …}`. At 0081 the
+  judge obeyed the last instruction, and `_fill_missing_verdict_flag` inferred approval from an empty
+  `proposed_fix`. The approval that ended this run came from a key mismatch cria created.
+- **A steer whose fix cannot execute** (0027 → delivered 0028): it told the coder to change
+  `'__main__:'` to `'__main__'`. That string occurs **zero** times in the file; applying the change
+  as written leaves the SyntaxError, and making line 13 read what the steer says produces a *new*
+  one. Only deleting the trailing quote compiles. Run, not read.
+- **A path that does not exist**, in a steer: `suite-ada_handles_…` (underscore) where the real cwd,
+  stated in the same prompt, is `suite-ada-handles_…`. cria validates URLs and line citations in
+  steers, not paths, though it holds the cwd.
+- **The identical-edit rejection withholds the line it holds.** "you cannot pin the exact current
+  text. Read the file" — while the flagged line is verbatim in the `⟦ctx:checks⟧` block above. Seven
+  turns went to re-reading. What finally worked was a **one-line** `read_file(13, 13)`.
+- **cria's own gate script leaked into the coder's history** as an assistant turn; at 0031 the model
+  spent a whole turn (934 tokens) reproducing cria's ~2,000-character plumbing command.
+
+### What cria did right — do not "fix" these
+
+Rejected the no-op edit instead of reporting `Wrote …` (0020); deduped repeated check output
+(0021/0023); dropped a steer containing a literal no-op `edit_file` call and a false "the checker is
+wrong" cause (0030); refused `task_complete` with the real pytest output (0035).
+
+*(Calls 0055–0072 were still being read when this section was written; findings from that slice are
+appended below if any.)*
+
+### Calls 0055–0072 and 0037–0054 — the remaining two slices
+
+Both reported `cria fault: yes`. They add five defects and one very large fact.
+
+**The task was fully achievable with two GETs against the exact API the task names.** A reader wrote
+and ran it during the walk:
+
+    {"address": "addr1qxsfzsmy6y2sedua…7cyc7qfskjcn",
+     "holder":  "stake1u85prp8xt2lqxfkshjmtxvpa8w0g5galkdznlryhnlvzv0qk9z7h9",
+     "total_handles": 15}
+
+Including the `total_handles` that cria's own steer at 0064 ordered **deleted**:
+
+> `The README correctly notes the API is a documentation landing page that returns 404… Proposed fix:
+> … remove 'total_handles' (not available per-handle).`
+
+The coder complied on the next tool call. `GET /holders/{address} → total_handles` was in cria's own
+openapi digest in that same prompt.
+
+- **Defect 7 — cria says the checks still fail, over a passing result.** At 0053, line 758 is
+  `3 passed in 0.13s` / `EXIT:0`. Line 780 is `steer_checks_repeat`: *"These are the repo's own
+  checks, unchanged since you were last shown them — you have not cleared them yet."* The model's
+  reaction, verbatim: *"So the tests are PASSING. … The user is probably confused."*
+- **Defect 8 — the search-query judge is asked about a query cria withheld.** `q_of` is keyed on the
+  pointer's path (`./tmp/read-only/…`) and looked up with the model's path (`/tmp/read-only/…`), so
+  the judge was told `THE SEARCH QUERY THE AGENT USED: (none)` and reasoned *"That's not a query at
+  all… the search was effectively a null query and the results were noise"* → both flags false → cria
+  **permanently deleted the file**. That file held `github.com/koralabs/handles-public-api` (the API
+  behind api.handle.me) and `docs.adahandle.com/reference/api-reference/…` (*"how to resolve handles
+  to addresses and get all handles by address"*). The model gave up in the same turn.
+- **Defect 9 — a `false` satisfaction verdict has no brake.** `_confirm_completion` runs only when
+  the verdict is `satisfied: true`. A `false` verdict's `reason` and `proposed_fix` go straight to the
+  coder as a `user` message ending *"finish exactly what is called out above"* — indistinguishable
+  from the task. By 0084 the model was quoting cria's sentences back as the user's requirements.
+- **Defect 10 — the judge's correct diagnosis is thrown away.** At 0063 the satisfaction judge's
+  private reasoning holds the whole answer: *"the API response does NOT have a top-level `address`
+  field. It has `resolved_addresses.ada`"* and *"resolve_handle.py should: 1. GET
+  `https://api.handle.me/handles/{handle}`"*. cria forwards only `reason` + `proposed_fix`; the
+  emitted fix dropped the URL correction and added the instruction to delete `total_handles`.
+- **Defect 11 — the search-query judge invents URLs.** Asked to propose a source, it returned
+  `https://ada-handles.readthedocs.io/en/latest/` (0060) and `https://api.handle.me/v1/docs` (0068).
+  Both fetched during the walk: **404 each**, the second returning `{"error":"route_not_found"}`.
+  cria's own coder prompt says *"DO NOT GUESS URLs"*.
+
+Also: an identical prompt (md5 `67419ac6…`) produced opposite satisfaction verdicts at 0055 and 0058.
+
+### Fixed in this pass
+
+- **Defect 1** — the note now says only what is true of the URL it is attached to, and the clause
+  "nothing read so far DEFINES the API's routes" is dropped when another fetch this session yielded
+  routes (cria composed the ledger, so this is exact). The swagger-shell case it was built for is
+  untouched.
+- **Defect 6 groundwork** — `_PYTEST_LOC_LINE` now matches a frame line with an empty tail, which is
+  what pytest prints for the frame that raised when a test's own mock supplies the exception. That
+  frame was invisible to every consumer of the pattern.
+
+### Still open, with the mechanism now known
+
+Defects 2, 3, 4, 5, 6 (the deepest-own-frame choice sitting on top of the pattern fix), 7, 8, 9, 10,
+11 — each with its file, line and a reproduction in the sections above. **Defect 8 is the cheapest
+and one of the most costly**: a path-normalisation mismatch deleted the one file in the run that
+named the real API.
