@@ -3125,9 +3125,19 @@ _STEP_ARTIFACT = re.compile(r"[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})[`
 # rule kept alive. Intended firings across the whole ladder: 3. False firings in ONE run: 3. An
 # assist that fires on a clean signal is pure downside, so the rule is narrowed to the shape the
 # real cases actually have: the verb, then the file.
+# A BOUNDED WINDOW, not adjacency and not the whole sentence. Both extremes were shipped and both
+# were wrong within one run:
+#   * "any verb anywhere + any filename anywhere" protected
+#         "Commit the three files (resolve.py, ...) to a new repo, add a .gitignore ..."
+#     — git plumbing the task never asked for, three times in run 20260802T024816;
+#   * requiring the verb to sit directly against the filename then MISSED the real thing, in run
+#     20260802T045151:
+#         "Write a live test file (e.g., test_live_resolve.py) that calls the real API for 'goose'"
+#     — deleted as noise, and that run finished with no live test and no README.
+# 40 characters, and never across a sentence boundary, covers every measured case in both directions.
 _AUTHORS_FILE = re.compile(
-    r"\b(?:write|create|add|implement|generate|produce|author|document|build)\s+"
-    r"(?:a\s+|an\s+|the\s+|new\s+|file\s+|script\s+)*[`'\"]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})", re.I)
+    r"\b(?:write|create|add|implement|generate|produce|author|document|build)\b"
+    r"[^.;]{0,40}?[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})", re.I)
 
 
 def step_authors_artifact(step: str) -> list[str]:

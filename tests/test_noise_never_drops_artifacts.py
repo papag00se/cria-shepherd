@@ -36,7 +36,9 @@ class ArtifactNamingTests(unittest.TestCase):
             ".gitignore with __pycache__ and .pyc, push to a new GitHub repo."), [])
 
     def test_the_verb_must_GOVERN_the_file_not_merely_co_occur(self):
-        self.assertEqual(loop.step_authors_artifact("Add tests, then commit resolve.py"), [])
+        # NOTE: "Add tests, then commit resolve.py" is deliberately NOT asserted droppable. I
+        # invented it as a false-positive example and it is not one — "Add tests" is authoring work,
+        # so protecting that step is correct. The measured junk case is the git-plumbing step above.
         self.assertEqual(loop.step_authors_artifact("Create a new file utils.py with the helper"),
                          ["utils.py"])
         self.assertEqual(loop.step_authors_artifact("Write a script live_test.py that resolves"),
@@ -49,9 +51,13 @@ class ArtifactNamingTests(unittest.TestCase):
             "grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json"), [])
         self.assertEqual(loop.step_authors_artifact("Run pytest on test_x.py"), [])
 
-    def test_the_two_logged_deletions_are_recognised_as_deliverables(self):
+    def test_the_THREE_logged_deletions_are_recognised_as_deliverables(self):
         for step in ("Write live_test.py: call GET /handles/goose, print resolved_address, "
                      "holder_address, total_handles",
+                     # run 20260802T045151 — missed by the too-tight version, deleted as noise, and
+                     # that run ended with no live test and no README.
+                     "Write a live test file (e.g., test_live_resolve.py) that calls the real API "
+                     "for 'goose' and asserts the response contains resolved_address",
                      "Write README.md: install requirements (requests, pytest); run script; "
                      "run tests; explain two-step resolution"):
             with self.subTest(step=step[:40]):
