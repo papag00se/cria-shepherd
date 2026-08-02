@@ -2847,3 +2847,60 @@ test asserting the two implementations agree.
     that one-bit channel discarding the diagnosis that produced it.
 
 *(One reader's slice, 0127-0166, was still running when this was written.)*
+
+### Calls 0127–0166 — the end of the run
+
+`cria fault: yes`. This slice answers the question the other three raised and corrects two of the day's
+own fixes.
+
+**Why nothing ever ran the deliverable.** `judge_satisfaction` has **three** callers, not two. The two
+that got the live-execution marker earlier today were `_periodic_satisfaction` and
+`_reopen_if_unsatisfied`. The path that actually fires on a plan-OFF run is the third —
+`_done_critic_reason`, reached when the coder hits a green gate and calls `task_complete`.
+`loop.done_critic` fired at 0158 and 0164; `loop.satisfaction_check` fired **zero** times, because
+`_periodic_satisfaction` is `blocked` by exactly the conditions that precede a finish. **Both of
+today's fixes missed the run they were written for.** Now fixed on all three, with a test that
+enumerates every caller so a fourth cannot be added without one.
+
+**A scrub that inverted the rescue.** The verdict-sentinel strip used `not[_ ]stuck`, so the space
+form ate ordinary English. At call 0138 the reasoner wrote *"You are making genuine progress… This is
+not stuck."* and the coder was handed **"This is ."** as its rescue. The same regex turns *"You are
+not stuck on the import, you are stuck on the missing live test"* into *"You are on the import, …"* —
+cria asserting the opposite of what its own reasoner ruled. Now underscore-only; `on[_ ]track` keeps
+the space form because "on track" is only ever the verdict.
+
+**More of the same defect class, each verified:**
+
+- **0158** the satisfaction judge approved with reasoning claiming *"test_resolve_handle.py: yes, has
+  live test that resolves 'goose' and 'papagoose'"* — that file's full contents were in its prompt and
+  contain no such thing. Zero tool calls, holding `list_dir`/`read_file`.
+- **0164** approved again, reasoning opening *"I have read the workspace with list_dir and read_file"*
+  — **no tool calls were made.** `_claims_impossible_action` inspects only the verdict's `reason`
+  field, never `reasoning_content`. cria already reads that field to RECOVER a rejection; it does not
+  read it to INVALIDATE an approval built on fabricated inspection.
+- **0155** the reasoner's private reasoning held the exact fix — *"Import json inside main() where it
+  is used"* — and emitted `ON_TRACK`, so cria injected nothing. Same prompt: the block headed
+  "GROUND TRUTH FROM THE REPO'S CHECKS" carried pre-0150 findings while the fresher result sat at line
+  279 of that same prompt, under instructions calling the block "fresher than anything in the
+  transcript".
+- **0135** the unstick reasoner shipped a ```diff``` block plus *"the import is already on the file.
+  the checker is wrong… don't rewrite anything else — the code is working."* The file did not import.
+  The coder adopted it verbatim at 0136.
+- **0142** a compaction whose output is **99.4% identical** to its own input, still asserting *"The
+  README is not yet written"* with README.md 2,640 bytes on disk, and dropping the live `NameError`.
+- **0161/0163** the only two attempts to execute the deliverable in the whole run, both blocked by the
+  directory guard over a one-character typo. Nothing else ever ran it.
+- **0157** `⟦cria⟧ the repo's own checks that ran reported no error-class problems` — green, over a
+  program that cannot run.
+
+**A cost I accepted knowingly.** Suppressing F811 also suppresses it for two FUNCTIONS with the same
+name, where the second silently wins — a real bug. The message text is identical, so nothing in
+`probeparse` can separate them. The discriminator exists one layer up: pyflakes reports the line of
+the second binding and cria holds the file, so reading that line says whether it is an `import` or a
+`def`. That is the right fix and is recorded in the code. Until then: a rare missed shadow against a
+measured destroyed run.
+
+**Also open:** whole-file `read_file` is still an unnumbered `cat` (only ranged reads were numbered
+today), and the deliberate hazard is real — a model may copy `124: import json` into an `old_string`.
+And the confirm judge, whose entire job is "does the artifact exist", is handed prose with no
+directory listing and reasoning prefilled off.

@@ -731,6 +731,13 @@ _ADVISORY_PHRASES = (
     # the program and then certified the result clean. It also taught the model to disbelieve the
     # gate: when pyflakes later reported a REAL error (`undefined name '_test'`) the model wrote
     # "The flags are false positives … The project's own checks are wrong."
+    # KNOWN COST, accepted deliberately: F811 also fires on two FUNCTIONS with the same name, where
+    # the second silently wins — a real bug this now suppresses. The message text is identical, so
+    # nothing here can tell the two apart. The discriminator exists but not at this layer: pyflakes
+    # reports the line of the second binding, and cria holds the file, so reading that line would say
+    # whether it is an `import` (cleanliness) or a `def`/`class` (a real shadow). That is the right
+    # fix and it needs a Finding with file access; this module is pure. Until then the trade is a
+    # rare missed shadow against a measured destroyed run, made with eyes open.
     "redefinition of unused",                # pyflakes F811
     "f-string is missing placeholders",      # pyflakes F541 · a cosmetic slip, runs fine
 )
