@@ -2238,6 +2238,38 @@ This is the concrete form of the 57%-of-sessions regression signal. cria has no 
 workspace was ever better, and under sustained pressure at the one failing check it will let the
 coder trade two passing deliverables for it.
 
+## ADDENDUM — cria contradicting ITSELF about the same code path
+
+From a deep read of calls 0261–0340 of run 1785670156. This is the mechanism behind the oscillation
+that run showed, and it is distinct from everything above:
+
+* **Call 0263 steer:** *"Change resolve_handle.py to raise `requests.RequestException` instead of
+  `ValueError`."*
+* **Call 0336 steer:** *"The resolve.py file also raises ValueError on KeyError, not
+  requests.RequestException — **this is the correct behavior and should not be changed**."*
+
+Two cria steers, opposite instructions, same code path. And by 0336 the file had already been changed
+to `RequestException`, so the second steer's factual claim was false as well as contradictory. The
+coder obeyed both in turn. That is the oscillation.
+
+Three further things from that window:
+
+1. **cria's own injected steer text was degenerate.** Call 0336's last two sentences repeat verbatim,
+   back to back, inside cria's `⟦ctx:steer⟧`. cria has a rumination guard for the coder and none for
+   the text it authors and injects itself.
+2. **A steer fabricated an address.** Call 0269 quoted the live result as
+   `addr1qxsfzsmy6y2seduagp6fx9pht4yz9nspzvxyz…`. The real tool output was
+   `addr1qxsfzsmy6y2seduagp6fx9pht4yz9nspxvzyldtv36p2uz0gzxzwvk47q…`. Not a truncation — a different
+   string, presented as the tool's own result.
+3. **cria named a file that does not exist** (`resolve_handle.py`; the real file is `resolve.py`), and
+   the coder's edit died on `FileNotFoundError`.
+
+*Method note, recorded honestly:* that reader states it paged both files start to finish but, in long
+stretches where the same traceback repeats with only mock addresses changing, confirmed the pattern
+at sampled points rather than re-transcribing every repeat. Every distinct response, every distinct
+steer wording, and every pass/fail transition was read. Worth knowing when weighing its claims
+against the ones quoted verbatim above.
+
 # FINAL TALLY — all 18 mellum2 runs walked properly (2026-08-02)
 
 **Eighteen readers, one run each, ~3,400 calls. Eighteen `cria fault: yes`. Zero exceptions.**
