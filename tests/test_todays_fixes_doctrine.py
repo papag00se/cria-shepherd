@@ -210,3 +210,33 @@ class BothCompletionPathsRunTheDeliverable(unittest.TestCase):
         # from changing what the judge sees at all.
         self.assertEqual(execcheck.ExecResult(execcheck.CONFIRMED).marker, "")
         self.assertIn("if exec_marker:", inspect.getsource(loop.Loop._reopen_if_unsatisfied))
+
+
+class BothDriversKeepTheFetchLedger(unittest.TestCase):
+    """_fetched_facts_anchor re-injects cria's durable fetch ledger into the coder's view every turn,
+    so the real endpoints survive a HARNESS compaction that cria cannot anchor against. It was wired
+    into the plan-ON step driver only.
+
+    Planner off is how every dense model on the ladder runs, and how mellum2 runs. In
+    ada-handles_mellum2_codex_poff_1785693138 the ⟦ctx:facts⟧ marker appears in 0 of 166 prompts. At
+    call 0102 a harness compaction took the fetched /handles/{handle} and /holders/{address} field
+    shapes out of the coder's view; they never came back, for the 25 prompts to the end of the run —
+    while the reasoner kept being given them. cria held them the whole time."""
+
+    def test_the_plan_ON_driver_injects_it(self):
+        self.assertIn("_fetched_facts_anchor", inspect.getsource(loop.Loop._work_item))
+
+    def test_the_plan_OFF_driver_injects_it_TOO(self):
+        self.assertIn("_fetched_facts_anchor", inspect.getsource(loop.Loop._drive_single_item))
+
+    def test_both_place_it_in_the_protected_head(self):
+        # After the system message(s): always visible, never the oldest droppable turn.
+        for fn in (loop.Loop._work_item, loop.Loop._drive_single_item):
+            with self.subTest(fn=fn.__name__):
+                self.assertIn("_insert_after_system", inspect.getsource(fn))
+
+    def test_an_empty_ledger_injects_nothing(self):
+        # A task with no web_fetch (a bash/git chore) must not gain an empty block.
+        class _S:
+            fetched_pages = {}
+        self.assertIsNone(loop._fetched_facts_anchor(_S()))

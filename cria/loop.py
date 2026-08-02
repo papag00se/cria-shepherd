@@ -2542,6 +2542,18 @@ class Loop:
             gate_plan=getattr(sess, "gate_plan", None),
             workspace_root=sess.workspace_root,
             gate_red=bool(getattr(sess, "last_gate_red", False)))}
+        # THE DURABLE FETCH LEDGER — the same anchor the plan-ON driver has always injected. It was
+        # wired into _work_item only, so on THIS path (planner off — which is how every dense model on
+        # the ladder runs, and mellum2) the coder never got it: the ⟦ctx:facts⟧ marker appears in 0 of
+        # the 166 prompts of ada-handles_mellum2_codex_poff_1785693138. Its docstring names precisely
+        # the failure that then happened — at call 0102 a harness compaction took the fetched
+        # /handles/{handle} and /holders/{address} field shapes out of the coder's view and they never
+        # came back, for the 25 prompts to the end of the run, while the reasoner kept being given
+        # them. cria held those facts in its own memory the whole time and re-injected them on one
+        # path only.
+        facts = _fetched_facts_anchor(sess)
+        if facts is not None:
+            framed = {**framed, "messages": _insert_after_system(framed["messages"], facts)}
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
