@@ -550,8 +550,25 @@ def dedup(findings: list[Finding]) -> None:
     findings[:] = kept
 
 
+def prefer_own_code(findings: list["Finding"]) -> list["Finding"]:
+    """Findings in the coder's OWN files first — foreign frames last, never dropped.
+
+    _failing_frame fixed this inside parse_pytest, but every OTHER parser still reported whatever
+    file:line it found, and the very next run proved the fix incomplete: run 20260802T014434 still
+    showed the coder `/usr/lib/python3.12/json/decoder.py:355`, `json/decoder.py:337` and
+    `json/__init__.py:346`, thirteen times each, from a JSONDecodeError traceback that parse_pytest
+    never touched. One choke point covers all of them.
+
+    ORDER, not deletion. A failure genuinely inside a library is still a failure the coder must know
+    about; it is just never the FIRST thing to hand it, because `summarize` shows the first finding
+    and that is the line the coder goes and edits."""
+    own = [f for f in findings if _own_code(f.file)]
+    return own + [f for f in findings if not _own_code(f.file)] if own else findings
+
+
 def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) -> str:
     """One line the model can act on: first finding, or the last error-ish output line."""
+    findings = prefer_own_code(findings)
     if findings:
         f = findings[0]
         if f.line is not None and f.file != "":

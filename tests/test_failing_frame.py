@@ -84,3 +84,36 @@ FAILED test_resolve.py::test_resolve_404_returns_na - Exception: 404
     def test_the_error_message_still_arrives_whole(self):
         findings = probeparse.parse_pytest(self.PYTEST_OUTPUT)
         self.assertTrue(any("404" in (f.message or "") for f in findings))
+
+
+class SummarizeOrderingTests(unittest.TestCase):
+    """_failing_frame fixed parse_pytest only. Every other parser still reported whatever file:line
+    it found, and the next run proved it: run 20260802T014434 showed the coder
+    /usr/lib/python3.12/json/decoder.py:355, json/decoder.py:337 and json/__init__.py:346, thirteen
+    times each, from a JSONDecodeError traceback parse_pytest never touches."""
+
+    def _f(self, file, line, msg):
+        return probeparse.Finding(file, line, None, msg)
+
+    def test_the_coders_own_file_is_summarised_first(self):
+        findings = [self._f("/usr/lib/python3.12/json/decoder.py", 355, "JSONDecodeError"),
+                    self._f("resolve_handle.py", 22, "JSONDecodeError")]
+        out = probeparse.summarize(findings, 1, "")
+        self.assertTrue(out.startswith("resolve_handle.py:22"), out)
+
+    def test_the_foreign_finding_is_NOT_deleted(self):
+        findings = [self._f("/usr/lib/python3.12/json/decoder.py", 355, "JSONDecodeError"),
+                    self._f("resolve_handle.py", 22, "boom")]
+        self.assertEqual(len(probeparse.prefer_own_code(findings)), 2)
+
+    def test_an_all_foreign_list_is_left_alone(self):
+        findings = [self._f("/usr/lib/python3.12/json/decoder.py", 355, "JSONDecodeError")]
+        self.assertEqual(probeparse.prefer_own_code(findings), findings)
+        self.assertIn("decoder.py:355", probeparse.summarize(findings, 1, ""))
+
+    def test_order_among_own_files_is_preserved(self):
+        a, b = self._f("a.py", 1, "first"), self._f("b.py", 2, "second")
+        self.assertEqual(probeparse.prefer_own_code([a, b]), [a, b])
+
+    def test_an_empty_list_is_safe(self):
+        self.assertEqual(probeparse.prefer_own_code([]), [])
