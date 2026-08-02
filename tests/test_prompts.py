@@ -296,3 +296,47 @@ class WebFetchFindDescriptionTests(unittest.TestCase):
         desc = prompts.load_map("tool_descs")["web_fetch"]
         self.assertIn("|", desc.split("find=")[1][:120],
                       "the description does not tell the model it can ask for several terms")
+
+
+class NoDevTaskLeakTests(unittest.TestCase):
+    """No prompt may name the DEV TASK cria was built against.
+
+    cria must not know what `ada-handles` is (docs/principles.md). The risk is not only a pinned
+    instruction — an `e.g.` naming that task's own API is read by a model working on something
+    completely different, and a small model takes the example as a hint. Two prompts carried
+    `api.handle.me` / `cardano-wallet` illustrations for exactly that reason; both now teach the same
+    lesson generically.
+
+    Added after `plan_closing_ask` shipped naming this task's deliverables outright — "do not write
+    the script, the tests, or the README" — which the operator caught on sight.
+    """
+
+    import re as _re
+    DEV_TASK = _re.compile(r"api\.handle\.me|papagoose|\bada handle|resolved_addresses|\bgoose\b|cardano",
+                           _re.I)
+
+    def test_no_prompt_body_names_the_dev_task(self):
+        import pathlib
+        offenders = []
+        for f in sorted(pathlib.Path("cria/prompts").glob("*.txt")):
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                if line.lstrip().startswith("#"):   # a comment to humans, never sent to the model
+                    continue
+                if self.DEV_TASK.search(line):
+                    offenders.append(f"{f.name}:{i}: {line.strip()[:90]}")
+        self.assertEqual(offenders, [], "prompts must not name the task cria was developed against")
+
+    def test_the_planner_closing_ask_names_no_concrete_deliverable(self):
+        # Word boundaries, not substrings: "description" contains "script", which is how the first
+        # version of this test failed on a prompt that was already correct. A match is not a meaning.
+        ask = prompts.load("plan_closing_ask")
+        for word in ("script", "README", "unit test", "documentation"):
+            with self.subTest(word=word):
+                self.assertIsNone(self._re.search(rf"\b{word}s?\b", ask, self._re.I),
+                                  f"the ask names {word!r} — a deliverable of one particular task")
+
+    def test_it_still_says_the_thing_that_matters(self):
+        ask = prompts.load("plan_closing_ask")
+        self.assertIn("must not carry it out", ask)
+        self.assertIn("a real call, not a description of one", ask)
+        self.assertIn("numbered list", ask)

@@ -33,11 +33,13 @@ class AskLastTests(unittest.TestCase):
         self.assertLess(parts.index("inventory"), parts.index("seed"))
         self.assertLess(parts.index("seed"), parts.index("plan_closing_ask"))
 
-    def test_the_ask_forbids_doing_the_work(self):
-        t = prompts.load("plan_closing_ask")
-        low = t.lower()
+    def test_the_ask_forbids_doing_the_work_WITHOUT_naming_the_work(self):
+        # It must forbid producing the deliverables generically. Naming them — "the script, the
+        # tests, the README" — is this task's shape leaking into cria, which the operator caught
+        # on sight. See tests/test_prompts.py::NoDevTaskLeakTests.
+        low = prompts.load("plan_closing_ask").lower()
         self.assertIn("must not carry it out", low)
-        self.assertIn("do not write the script", low)
+        self.assertIn("do not produce any of the things it asks for", low)
         self.assertNotIn("cria", low)
 
     def test_the_ask_forbids_SIMULATING_a_tool_call(self):

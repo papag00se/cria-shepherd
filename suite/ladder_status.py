@@ -100,18 +100,58 @@ def in_flight():
     return None
 
 
-def walked_runs():
-    """Run ids whose walk has been WRITTEN DOWN. A walk that exists only in a chat message is not a
-    walk anyone can check later, and is exactly what a compaction deletes."""
+# A walk section must DECLARE what it found, in one machine-readable line, so the block rule can be
+# the rule the goal doc actually states. Written by the walker, in the run's own section.
+FAULT_YES = "cria fault: yes"
+FAULT_NONE = "cria fault: none"
+
+
+def _walk_sections():
+    """{run_id: section text} for every walk written down. A walk that exists only in a chat message
+    is not a walk anyone can check later, and is exactly what a compaction deletes."""
     if not WALK.exists():
-        return set()
-    text = WALK.read_text()
-    return {line.split("## ", 1)[1].strip()
-            for line in text.splitlines() if line.startswith("## ")}
+        return {}
+    out, cur, buf = {}, None, []
+    for line in WALK.read_text().splitlines():
+        if line.startswith("## "):
+            if cur:
+                out[cur] = "\n".join(buf)
+            cur, buf = line.split("## ", 1)[1].strip(), []
+        elif cur:
+            buf.append(line)
+    if cur:
+        out[cur] = "\n".join(buf)
+    return out
+
+
+def walked_runs():
+    return set(_walk_sections())
+
+
+def strikes(rs, sections):
+    """Failures that count toward BLOCKED: the ones whose walk found NO new cria fault.
+
+    The goal doc's rule has always been "5 walked failures WITH NO NEW CRIA FAULT FOUND", and the
+    constant's own comment says so — but the code counted every failure. That blocks whichever model
+    is teaching us the most, which is precisely backwards: it marked mellum2 BLOCKED after five walks
+    that between them produced the compaction ordering fix, the find=/spill divergence, the API-probe
+    gate, the multi-character degeneracy guard and the empty-workspace completion gate.
+
+    A failure whose walk found a cria fault is EVIDENCE, and cria has changed since. A failure whose
+    walk found none is a strike. A walk that declares neither is treated as a strike, so the bound
+    still holds and the walker is pushed to say which it was."""
+    n = 0
+    for r in rs:
+        if (r.get("score") or 0) >= (r.get("max_score") or 4):
+            continue
+        if FAULT_YES not in sections.get(r["run_id"], "").lower():
+            n += 1
+    return n
 
 
 def state_for(task):
-    walked = walked_runs()
+    sections = _walk_sections()
+    walked = set(sections)
     running = in_flight()
     by_model = {}
     for r in rows(task):
@@ -135,7 +175,8 @@ def state_for(task):
             "needs_walk": bool(unwalked) and not passed,
             "next_walk": unwalked[0]["run_id"] if unwalked else None,
             "next_walk_capture": (unwalked[0].get("capture_dir") if unwalked else None),
-            "blocked": (not passed) and len(rs) >= BLOCKED_AFTER and not unwalked,
+            "strikes": strikes(rs, sections),
+            "blocked": (not passed) and strikes(rs, sections) >= BLOCKED_AFTER and not unwalked,
             "running": running == name,
         })
     return out, running

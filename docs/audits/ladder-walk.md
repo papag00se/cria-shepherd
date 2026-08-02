@@ -153,6 +153,8 @@ same day in `53cae4a`.
 
 ## ada-handles_mellum2_codex_pon_1785613520
 
+**cria fault: yes** — the plan mandated a JSON-RPC endpoint the task never named and invented a `--live` flag that scored the CLI zero.
+
 > **RE-WALKED 2026-08-01, and the original walk below was WRONG on the central point.** The first
 > pass read the workspace and the steers and concluded "it wrote a library, not a program" — a
 > model failure. Reading the run properly, every call start to finish, shows cria's own plan caused
@@ -322,6 +324,8 @@ sharper question rescues a weak judge, which is exactly what the replay will say
 
 ## ada-handles_mellum2_codex_pon_1785620496
 
+**cria fault: yes** — same mandated-endpoint plan, plus steers whose prescribed fixes did not execute.
+
 ### FULL READ (2026-08-01) — the model reasons well and does nothing
 
 Read end to end. The earlier walk called this a model wall over async mocks. The async diagnosis
@@ -450,6 +454,8 @@ the live-execution check.
 
 ## ada-handles_mellum2_codex_pon_1785625253
 
+**cria fault: yes** — cria deleted the unit-test, live-test and README steps from its own plan (two numbering systems in one list), approved a step against an empty workspace, and shipped two steers stating things that were false.
+
 **0/4** · planner ON · killed at 15 min (re-checked, confirmed) · 91 calls · 166.4 tok/s
 · capture `~/.cria/calls/20260801T160104-019fbf8f-40be-7f53-a1c0-881700caf8e7`
 
@@ -511,6 +517,8 @@ need it on) finally getting an arm that can disconfirm it. Attempt 4 runs `--pla
 
 ## ada-handles_mellum2_codex_poff_1785626379
 
+**cria fault: yes** — a filtered fetch showed 2 of 33 endpoints and pointed at a file it never saved; the compaction briefing was 79% of one coder prompt and told it 145 times not to act.
+
 **1/4** · planner **OFF** (the sanctioned experiment after three stalls) · killed at 30 min ·
 225 calls · 142.9 tok/s · capture `~/.cria/calls/20260801T161949-019fbfa0-6dd0-7710-b67f-127f4a2fe40a`
 
@@ -556,6 +564,8 @@ whole fix. A third case neither covered (checks visible → still silent) was ad
 
 
 ## ada-handles_mellum2_codex_pon_1785628543
+
+**cria fault: yes** — self-compaction had no closing ask, so the compactor obeyed the coder's step and cria adopted a hallucinated test file as the session summary.
 
 **0/4** · planner ON · killed at 15 min · 101 calls · 145.6 tok/s · the FIRST run carrying both of
 today's correction fixes · capture `~/.cria/calls/20260801T165554-019fbfc1-741b-7ea0-a7f8-1dc1054309f3`
@@ -628,6 +638,8 @@ is recorded **BLOCKED** — not a pass, the language does not complete, and the 
 
 
 ## ada-handles_zaya1_codex_pon_1785633412
+
+**cria fault: yes** — the URL grounding check truncated path templates and produced false UNVERIFIED steers.
 
 **0/4** · planner ON · killed at 15 min · **7 calls total** · 38.6 tok/s
 · capture `~/.cria/calls/20260801T181725-019fc00c-1773-7ea0-831d-84ae0a44c9be`
@@ -817,6 +829,8 @@ gate exactly as before. Landed in BOTH halves, with a test asserting it.
 
 ## ada-handles_zaya1_codex_pon_1785644114
 
+**cria fault: yes** — cria never told the planner where the workspace was, so it invented a path and read five imaginary files 140 times.
+
 **0/4, killed at the 15-minute floor. 8 model calls total: 1 classifier, 7 planner, and
 zero coder.** The run never reached the coding model at all. Every call read in full.
 
@@ -888,6 +902,8 @@ thrashing, and the coverage judge passed it. It never got to code.
 
 ## ada-handles_zaya1_codex_pon_1785645441
 
+**cria fault: yes** — cria executed tool-call lists from replies the model never finished emitting.
+
 **0/4, killed at 15 minutes. 5 model calls: 1 classifier, 4 planner, zero coder.** Every call read.
 
 The previous run's workspace fix **worked** — the planner now reads the real path
@@ -948,3 +964,69 @@ the cut-off refusal removes the runaway that produced it.
 
 **Model wall: not reached.** zaya1 has never been given a chance to code. Three attempts, zero coder
 calls in all three.
+
+---
+
+## ada-handles_zaya1_codex_pon_1785647676
+
+**0/4, killed at 15 minutes. 8 calls: 1 classifier, 7 planner, zero coder.** Fourth zaya1 attempt,
+fourth run that never handed anything to the coding model.
+
+**cria fault: yes** — three of them, one of which had been sitting in cria since the beginning.
+
+The previous run's fixes held: the planner reads the real workspace path, and the runaway 90-to-138
+call rounds are gone. What replaced them was worse and more revealing.
+
+| call | finish | tool calls | content | reasoning |
+|:--|:--|--:|--:|--:|
+| 0002 | length | **0** | 3,838 | **27,089 chars** |
+| 0006 | length | **0** | 0 | **31,475 chars** |
+| 0008 | tool_calls | 2 | 0 | 2,600 |
+
+### The prompt, read in full
+
+The user turn zaya1 receives is, in order: the workspace inventory, then the task verbatim —
+*"I would like you to write a Python script … When you're done, add a README"* — then
+`<|im_start|>assistant`. **cria's planning instruction is in the SYSTEM message, far above it.**
+
+### The reasoning, read in full — it is not failing to plan, it is refusing to
+
+Its own words, call 0002:
+
+> *"We can place everything in a single response."*
+> *"We'll call web_search with query … **Let's simulate in our mind**."*
+> *"We'll use web_fetch. But we might not have internet access. **However, we can simulate.**"*
+> *"We must be careful not to include any extraneous text like **'Step 1: …'**. The answer is just
+> the deliverables."*
+
+It decided its job was to deliver the finished files, and it **simulated** its tool calls instead of
+emitting them — which is the entire explanation for four runs of near-zero tool calls. Word counts in
+that one reasoning block: `script` 86, `readme` 35, **`plan` 4**.
+
+**Fault 1 — cria's ask is not last.** The model obeys the last instruction it reads, and the last
+instruction it reads is "write a Python script". This is the SAME defect as `da35f4e` (harness
+compaction), `e72a0e9` and `5d2b119` (the two self-compaction paths) — a fourth instance of one
+ordering bug. Fixed: the seed now ends with cria's ask, stated generically.
+
+**Fault 2 — no reasoning-off retry on the planner.** A round that spends its whole budget thinking
+and emits nothing is retried thinking-off on the CRITIC — 21 uses in `loop.py`, and the critic's own
+note says exactly why. In `planner.py`: zero. Measured across all 499 captured planner rounds, 15
+were cut off at the cap and 5 produced nothing at all, behind 26,337 / 28,936 / 31,248 / 31,475 and
+106,829 characters of reasoning. Fixed.
+
+**Fault 3 — mine, from the previous fix.** Sharing the critic's inventory with the planner also
+shared its wording: *"on-disk ground truth **at judging time**"*. The planner judges nothing and read
+that on every round. Fixed with a planner flavor.
+
+**Also corrected here:** the cut-off guard I shipped one run earlier was wrong twice — it refused
+rounds whose calls had all arrived intact (5 of 8 in the captures), and on rounds with no calls at all
+it told the model *"none of its tool calls were run"*, which was untrue. Now only a trailing
+unparseable call is dropped, and the note only fires when calls were present.
+
+**Model wall: not reached.** zaya1 has never been given the chance to write a line of code.
+
+### Not yet tried: planner OFF
+
+All five zaya1 rows are `pon`. Every failure has been a planner failure. Planner-off skips the
+planner entirely and would answer the question no run has answered yet — whether this model can code
+at all.
