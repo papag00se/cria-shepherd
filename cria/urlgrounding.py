@@ -25,7 +25,22 @@ from __future__ import annotations
 import re
 import urllib.parse
 
-URL_RE = re.compile(r"https?://[^\s\"'<>)\]},;]+")
+# `}` stays excluded so a URL inside prose or JSON ends cleanly — but a BALANCED `{…}` is a path
+# TEMPLATE and part of the route: `https://api.handle.me/holders/{address}`. Truncating at the brace
+# left `/holders/{address` and `/holders/{holder_address`, which can never match each other.
+URL_RE = re.compile(r"https?://(?:\{[^{}\s]*\}|[^\s\"'<>)\]},;])+")
+
+# A path template's VARIABLE NAME is not part of the route. `/holders/{address}` and
+# `/holders/{holder_address}` are the same endpoint; comparing them literally declared a route the
+# session had genuinely fetched "UNVERIFIED", and the resulting steer told the model to go and fetch
+# it — in a phase whose only tool was submit_plan. Measured on both zaya1 runs (2026-08-01), one
+# wasted planner round each, on a model decoding at 40 tok/s against a 15-minute wall.
+_PATH_TEMPLATE = re.compile(r"\{[^{}/]*\}")
+
+
+def _normalize_template(url: str) -> str:
+    """A URL with every path variable's NAME erased, so two spellings of one route compare equal."""
+    return _PATH_TEMPLATE.sub("{}", url)
 _TRAIL = "`\\.,:;'\"*)]}> "
 
 
@@ -108,7 +123,9 @@ def ungrounded_urls(text: str, evidence: str) -> list[str]:
     """
     bad = []
     for raw in URL_RE.findall(text or ""):
-        url = raw.rstrip(_TRAIL)
+        # `}` is in _TRAIL so a URL inside JSON/prose ends cleanly — but stripping it off a BALANCED
+        # path template re-creates the truncation this regex was just fixed to avoid.
+        url = raw if raw.endswith("}") and raw.count("{") == raw.count("}") else raw.rstrip(_TRAIL)
         try:
             parts = urllib.parse.urlsplit(url)
         except ValueError:
@@ -116,8 +133,16 @@ def ungrounded_urls(text: str, evidence: str) -> list[str]:
         host, path = parts.netloc, parts.path
         if host and host.lower() not in evidence.lower():
             bad.append(url)
-        elif path.strip("/") and not (
-                _seen_bounded(host + path, evidence)
-                or _seen_bounded(path, URL_RE.sub(" ", evidence))):
+            continue
+        if not path.strip("/"):
+            continue
+        # Compare the route with path-variable NAMES erased on both sides, so `/holders/{address}`
+        # and `/holders/{holder_address}` are recognised as one endpoint.
+        ev_norm = _normalize_template(evidence)
+        n_host_path, n_path = _normalize_template(host + path), _normalize_template(path)
+        if not (_seen_bounded(host + path, evidence)
+                or _seen_bounded(path, URL_RE.sub(" ", evidence))
+                or _seen_bounded(n_host_path, ev_norm)
+                or _seen_bounded(n_path, URL_RE.sub(" ", ev_norm))):
             bad.append(url)
     return bad
