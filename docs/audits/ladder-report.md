@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 16:52:26 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 17:14:34 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_poff_1785626379` (capture `/home/jesse/.cria/calls/20260801T161949-019fbfa0-6dd0-7710-b67f-127f4a2fe40a`), then write `## ada-handles_mellum2_codex_poff_1785626379` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **run** `nemotron-elastic` (attempt 1).
 
 ## Ladder
 
@@ -19,7 +19,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 4 | 2/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | ⛔ BLOCKED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 0 | — | ⬜ not started |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
@@ -37,10 +37,12 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-01 14:41 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 81 | 160.4 | `ada-handles_mellum2_codex_pon_1785620496` |
 | 08-01 16:01 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 91 | 166.4 | `ada-handles_mellum2_codex_pon_1785625253` |
 | 08-01 16:19 | mellum2 | 1/4 | milestone-miss-30min | 15m:1✓ 30m:1✗ | 225 | 142.9 | `ada-handles_mellum2_codex_poff_1785626379` |
+| 08-01 16:55 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 101 | 145.6 | `ada-handles_mellum2_codex_pon_1785628543` |
 
 ## Fixes landed during the ladder
 
 ```
+9b52224 fix(loop): cria withheld its correction on a premise false 73% of the time
 aa464fd fix(loop): an authoring step must stop saying "Write X" once X exists and is failing
 af69c12 docs(ladder)+fix(execcheck): walk mellum2 attempt 3; a test file is not a program
 c4d955c feat(suite): shout when the ladder is idle
@@ -55,7 +57,6 @@ b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused q
 7259203 fix(suite): the runner sets each model's sampling — it was missed 26 times running
 91d44ba feat(suite): ladder-report.md — a GENERATED follow-along report
 4379943 fix(suite,docs): fabliq is an MoE — the ladder's kinds now come from the GGUF headers
-bc29023 feat(suite): the language ladder — one model at a time, 15 min per deliverable
 ```
 
 ---

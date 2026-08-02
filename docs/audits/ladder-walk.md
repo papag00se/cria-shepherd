@@ -28,7 +28,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (12.7 min, no walk needed) |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (6.5 min, no walk needed) |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
-| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 4 | 2/4 | 📖 all walked — 1 attempt from BLOCKED |
+| 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 5 | 2/4 | ⛔ BLOCKED — five walked failures, not a pass |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
 | 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
@@ -350,3 +350,75 @@ When the checks ARE already visible, the guard suppresses exactly as before.
 Two existing tests asserted the old shape and were updated to assert the INVARIANT instead of the
 exact output — "no second reasoner diagnosis" rather than "returns None". The distinction is the
 whole fix. A third case neither covered (checks visible → still silent) was added.
+
+
+## ada-handles_mellum2_codex_pon_1785628543
+
+**0/4** · planner ON · killed at 15 min · 101 calls · 145.6 tok/s · the FIRST run carrying both of
+today's correction fixes · capture `~/.cria/calls/20260801T165554-019fbfc1-741b-7ea0-a7f8-1dc1054309f3`
+
+### The step-reframe fix WORKED, mechanically
+
+It fired in **53 of 62** coder prompts (85%), and the behaviour it was built to stop, stopped:
+
+| | attempt 3 (no fix) | attempt 5 (fix live) |
+|:--|--:|--:|
+| whole-file rewrites | 8 | **2** |
+| targeted edits | 4 | **18** |
+| rewrites of `test_resolve_handle.py` | 6 | **1** |
+
+The rewrite loop is gone. The score did not move.
+
+### What replaced it: an OSCILLATION between two errors that are each other's cause
+
+The model alternated between two test styles, and **each individual fix was correct for the error it
+was shown**:
+
+| turn | gate said | model did | correct? |
+|:--|:--|:--|:--|
+| 0036 | `fixture 'self' not found` | removed `self` from the signature → pytest style | **yes** |
+| 0052 | `undefined name 'self'` | wrapped in `class TestResolveHandle(unittest.TestCase)` | **yes** |
+| 0070 | `undefined name 'self'` | wrapped in a class **again** | **yes** |
+
+Removing `self` from the signature leaves the body's `self.assertEqual(...)` undefined → error B.
+Adding the class back makes the standalone function form wrong → error A. It also stripped `self.`
+from assertions one at a time across turns 0061, 0078, 0081, 0086, 0093, 0096, 0098, 0099 — while
+re-wrapping in a class that requires `self`.
+
+Ping-pong. Eighteen targeted edits, each locally right, that undo one another.
+
+### The uncomfortable part: my own wording enforced it
+
+The reframe note ends *"make the smallest change that clears the failures reported below."* The
+model quoted it back at turn 0070:
+
+> *"This is a hard constraint. The user has been clear about the 'small change' principle for
+> several turns and is now explicitly telling me to obey it."*
+
+The smallest change that clears `undefined name 'self'` **is** to add the class. The smallest change
+that clears `fixture 'self' not found` **is** to remove `self`. Both are locally minimal and the pair
+is a cycle. What the file actually needed was to commit to ONE framework and become coherent — which
+is not a small change.
+
+So the fix traded a rewrite loop for an oscillation loop, and the "smallest change" clause actively
+held the model inside it. That is a real cost and it belongs in the record next to the win.
+
+### The cria gap this exposes — and it is NOT the one I already built for
+
+cria detects **repetition** — `gate_stalled` (the same block twice) and `steer_same_checks` (findings
+unchanged since the last steer). Both are "same as last time" tests. An **alternation** A→B→A→B
+defeats both by construction: the findings really did change every turn. `steer_same_checks` fired
+**0 times** this run; `gate_stalled` only 4.
+
+cria has no notion of "you have been in this state before, two states ago". The model cannot see it
+either, because the gate only ever shows the CURRENT findings — never that this exact finding set
+already appeared and was already fixed.
+
+**Not building it yet: n = 1.** I shipped the reframe on a measured 33-vs-15 prevalence from attempt
+3, which was grounded. This oscillation is one run, and today already contains an example of a
+locally-sensible change making things worse. It needs a base rate across the captures first.
+
+### Verdict
+
+Model wall, with a cria-side aggravation of my own making. mellum2 reaches five walked failures and
+is recorded **BLOCKED** — not a pass, the language does not complete, and the ladder moves on.
