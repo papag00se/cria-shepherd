@@ -11,7 +11,11 @@
 cd /home/jesse/src/cria-shepherd || exit 1
 while true; do
   python3 suite/ladder_status.py >/dev/null 2>&1; code=$?
-  running=$(ps -eo args | awk '$2 ~ /suite\/run\.py$/' | head -1)
+  # A ladder run is not the only legitimate use of the box. An offline measurement or a replay A/B
+  # is deliberate GPU work, and calling that "idle" trains the reader to ignore the alarm — the one
+  # failure mode a watchdog cannot afford. Anything python is holding against the model server
+  # counts as busy.
+  running=$(ps -eo args | awk '$2 ~ /suite\/run\.py$/ || /_ab\.py|replay|sampling_probe|ask_shape/' | head -1)
   if [ "$code" = "1" ] && [ -z "$running" ]; then
     echo "IDLE — ladder has work remaining and NO run is in flight: $(python3 suite/ladder_status.py 2>/dev/null | tail -2 | head -1)"
   fi
