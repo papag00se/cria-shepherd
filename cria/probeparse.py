@@ -322,6 +322,43 @@ def _pytest_collect_errors(s: str) -> dict:
     return out
 
 
+# A frame that is NOT the workspace's code: the interpreter's own library, an installed package, or
+# a virtualenv. A failure's LAST frame is routinely one of these — `mock.py` when a mock raises,
+# `ast.py` under a rewriting assertion, `pathlib.py` inside a helper — and the coder cannot edit any
+# of them.
+_FOREIGN_FRAME = re.compile(
+    r"(?:^|/)(?:usr/lib(?:64)?/python\d[\d.]*|site-packages|dist-packages|"
+    r"lib/python\d[\d.]*|\.venv|venv/lib|/opt/hostedtoolcache)/", re.I)
+
+
+def _own_code(path: str) -> bool:
+    """Is this traceback frame a file the CODER can actually edit?"""
+    return not _FOREIGN_FRAME.search(path or "")
+
+
+def _failing_frame(locs):
+    """The last frame in the workspace's OWN code, else the last frame there is.
+
+    ``locs[-1]`` — the last frame, full stop — is what this used to take, and its docstring claimed it
+    "gets the real test-file location". It does not. When a test mocks something and the mock raises,
+    the deepest frame is inside the interpreter's own library, and cria then handed the coder a
+    file:line it has no ability to edit.
+
+    MEASURED across every captured coder prompt carrying a check block (n=2,836): a stdlib or
+    site-packages `file:line` appears **7,888 times, across 48 runs** — `mock.py` alone 2,680 times.
+    Live example, run 20260802T003331 (mellum2, ada-handles, 3/4), the last steer of the run:
+
+        • /usr/lib/python3.12/unittest/mock.py:1193: Exception: 404
+        • /usr/lib/python3.12/unittest/mock.py:1193: Exception: Network error
+
+    Falling back to the last frame when NONE are the coder's own is deliberate: the location is then
+    genuinely outside the workspace, and saying so beats inventing one."""
+    for f, ln, tail in reversed(locs):
+        if _own_code(f):
+            return f, ln, tail
+    return locs[-1]
+
+
 def parse_pytest(s: str) -> list[Finding]:
     """Prefer the per-failure TRACEBACK BLOCKS: each ends with the failing ``path:line: ErrorType`` and
     carries the FULL error on ``E   …`` — so the finding gets the real test-file location and the
@@ -335,7 +372,8 @@ def parse_pytest(s: str) -> list[Finding]:
         errs = _PYTEST_ERR_LINE.findall(block)   # every E-line — the FULL error (multi-line assertions too)
         if not locs:
             continue
-        file, line, tail = locs[-1]
+        # The last frame in the coder's OWN code — not simply the last frame. See _failing_frame.
+        file, line, tail = _failing_frame(locs)
         # Join ALL E-lines, not just one: a multi-line assertion (`E AssertionError: …` + diff rows) must
         # arrive whole — taking a single row would drop either the header or the diff. Never clipped.
         msg = "\n".join(e.strip() for e in errs) if errs else tail.strip()
