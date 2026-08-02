@@ -1861,3 +1861,53 @@ Both were built, and the first one was wrong — see the correction above. What 
 The URL is declared in the task's `meta.toml`, never in cria.
 
 **Model wall: not reached.** This run proves nothing either way.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785678150
+
+**1/4 — after holding 3/4 for half an hour.** 279 calls, the full sixty minutes.
+
+**cria fault: yes** — cria kept driving at the one failing check until the model destroyed two
+deliverables that were already passing.
+
+### The model peaked at 3/4 and then took it apart
+
+| at | unit tests | live test | CLI | README | score |
+|:--|:--|:--|:--|:--|--:|
+| 15 min | ✗ | ✗ | ✓ | ✗ | 1 |
+| 30 min | ✗ | **✓** | ✓ | **✓** | **3** |
+| 45 min | ✗ | **✓** | ✓ | **✓** | **3** |
+| 60 min | ✗ | **✗** | ✓ | **✗** | **1** |
+
+A **provably live** live test and a **complete** README, both held for thirty minutes, both gone by
+the end. The only check that never passed is the one cria spent the hour steering toward.
+
+This is the first run in this ladder with milestone history dense enough to see it: **1 of the 9 runs
+carrying more than one milestone finished BELOW its own peak.** Every other run ended at its high
+water mark. It is one instance — but it is an instance of the exact thing the doctrine's
+"additive / regression-only — never delete correct content" rule exists to prevent, happening at the
+level of the run rather than the intervention.
+
+### Why this is cria's, not the model's
+
+cria has no notion that the workspace was ever in a better state. Its loop is: checks fail → steer →
+coder edits → re-check. Nothing in it is monotonic. A coder that rewrites a working file while
+chasing an unrelated failing test looks identical, to cria, to one making progress.
+
+The suite's own milestone snapshots are the proof it is knowable — cria simply never asks. cria does
+have a cheap, model-free equivalent already in the loop: the gate. **A step that turns a green gate
+red is a regression, and cria currently steers straight through it.**
+
+### The candidate fix, and why it is not built here
+
+A "did my last change break something that was working" check belongs in the loop, driven by the
+gate cria already runs — not by the suite's verifier, which cria must never see. That is a real
+mechanism, and it must be measured across the captures first: how often does a gate go green→red
+within a step, and does the coder recover on its own?
+
+Recorded rather than built, because the last four runs are a sustained lesson in what shipping a
+mechanism before its false-positive surface is understood actually costs.
+
+**This is the highest-value open finding in the ladder.** Six 3/4s and now a 3/4 held for thirty
+minutes and thrown away — mellum2's problem is no longer reaching four, it is keeping three.
