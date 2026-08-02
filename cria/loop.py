@@ -1757,14 +1757,14 @@ class Loop:
         q_of: dict = {}               # search file -> the query that produced it (from the pointer)
         for m in msgs:
             for mm in _SEARCH_POINTER_RE.finditer(_content_text(m.get("content")) if isinstance(m, dict) else ""):
-                q_of[mm.group(2)] = mm.group(1)
+                q_of[_search_key(mm.group(2))] = mm.group(1)
         out: list[dict] = []
         for m in msgs:
             if isinstance(m, dict) and m.get("role") == "tool" and read_file_of.get(m.get("tool_call_id")):
                 f = read_file_of[m.get("tool_call_id")]
                 key = "content" if m.get("content") is not None else "output"
-                if f not in sess.judged_search_files:
-                    sess.judged_search_files.add(f)
+                if _search_key(f) not in sess.judged_search_files:
+                    sess.judged_search_files.add(_search_key(f))
                     # Judge the REAL results off disk — NOT the tool result, which for a spilled file is
                     # cria's own "grep this instead" steer. Handing the judge that envelope and asking
                     # "are the RESULTS on target?" gets a false for a search that was perfectly on target,
@@ -1772,13 +1772,13 @@ class Loop:
                     # stays marked judged, so this can never become a per-turn reasoner call either).
                     results = search_file_text(sess.workspace_root, f)
                     _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                 latest_user_text(msgs), q_of.get(f, ""), results, rlog,
+                                                 latest_user_text(msgs), q_of.get(_search_key(f), ""), results, rlog,
                                                  coder_tools=_coder_tools_summary(body.get("tools")))
                     if not r_ok:
-                        sess.poisoned_search_files.add(f)
+                        sess.poisoned_search_files.add(_search_key(f))
                         sess.search_recommend = rec
                         rlog.emit("loop.search_read_poison", file=f, rec=rec)
-                if f in sess.poisoned_search_files:
+                if _search_key(f) in sess.poisoned_search_files:
                     # Marker-tagged and prompt-file-sourced: this note is cria's OWN voice written back
                     # into the message stream, so it must be identifiable — the work log and the critic
                     # were reading it as something the coder's tool returned.
@@ -4608,6 +4608,22 @@ _URL_LIKE = re.compile(r"^(https?://\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*)$", re.I)
 # POINTER that names (query, file) — cria controls this filename, so a read of it is unambiguously the
 # model consuming a search's results, which the read-judge then checks for relevance.
 _SEARCH_FILE_RE = re.compile(r"\.?/?tmp/read-only/search-[\w.\-]+\.txt")
+
+
+def _search_key(path: str) -> str:
+    """ONE canonical key for a spill search file. Both patterns above accept `./tmp/…`, `/tmp/…` and
+    `tmp/…`, and the same file arrives spelled differently from the two places it is read: cria writes
+    the pointer as `./tmp/read-only/x.txt` and the model calls read_file with `/tmp/read-only/x.txt`.
+    Keying a dict on the raw capture made those two different files.
+
+    Walked on ada-handles_mellum2_codex_poff_1785686596: the query lookup missed, so cria told the
+    relevance judge `THE SEARCH QUERY THE AGENT USED: (none)`. The judge reasoned "That's not a query
+    at all… the search was effectively a null query and the results were noise", ruled it off-target,
+    and cria PERMANENTLY DELETED the file — which held github.com/koralabs/handles-public-api, the
+    API behind the host the task named, and the docs page on resolving handles to addresses. The
+    model gave up in the same turn. cria withheld a query it was holding, then destroyed the answer
+    on the strength of the judge's reply to the question it had mangled."""
+    return "/" + (path or "").lstrip("./").lstrip("/")
 _SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?tmp/read-only/search-[\w.\-]+\.txt)')
 
 
