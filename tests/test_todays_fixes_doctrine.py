@@ -158,6 +158,27 @@ class BothCompletionPathsRunTheDeliverable(unittest.TestCase):
         src = inspect.getsource(loop.Loop._periodic_satisfaction)
         self.assertIn("live_execution_marker", src)
 
+    def test_the_plan_OFF_path_runs_it_BEFORE_the_verdict_too(self):
+        """It was on this path already — but past `if not satisfied: return None`, so it could only
+        decorate a completion the judge had already approved, never inform one.
+
+        Measured on ada-handles_mellum2_codex_poff_1785693138 (planner off, 166 calls, 2/4):
+        `loop.satisfaction_check` fired twice, `loop.exec_check` fired ZERO times. The delivered CLI
+        crashes with `NameError: name 'json' is not defined`, the unit tests pass, and cria's lint
+        floor says "no problems reported" — a green gate over a program that cannot run, and the one
+        mechanism built to catch that was never asked."""
+        src = inspect.getsource(loop.Loop._periodic_satisfaction)
+        marker_at = src.index("exec_marker = live_execution_marker")
+        judge_at = src.index("judge_satisfaction(")
+        bail_at = src.index("if not satisfied:")
+        self.assertLess(marker_at, judge_at, "the run happens after the verdict it should inform")
+        self.assertLess(marker_at, bail_at, "a not-satisfied verdict returns before the run")
+
+    def test_the_deliverable_is_never_run_TWICE_in_one_check(self):
+        # The completion note reuses the marker rather than re-running the program.
+        src = inspect.getsource(loop.Loop._periodic_satisfaction)
+        self.assertEqual(src.count("live_execution_marker("), 1)
+
     def test_the_result_reaches_the_JUDGE_as_evidence_not_just_a_closing_note(self):
         # Appending it to the closing message tells nobody who can act. The completion critic is
         # what decides whether to re-open the plan, so that is what must see it.

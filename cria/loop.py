@@ -2403,6 +2403,19 @@ class Loop:
                 else _history_root(body.get("messages", []))[0])
         evidence = _satisfaction_evidence(body.get("messages", []))
         evidence += _gate_notes(sess)
+        # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
+        # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
+        # one. Measured on ada-handles_mellum2_codex_poff_1785693138 (planner off, 166 calls, 2/4):
+        # `loop.satisfaction_check` fired twice and `loop.exec_check` fired ZERO times, because both
+        # verdicts were not-satisfied and the marker sits past that return. The delivered CLI crashes
+        # with `NameError: name 'json' is not defined` — json is imported inside a function at line
+        # 124 and used in main() at line 87 — while the unit tests pass and cria's own lint floor
+        # reports "no problems reported". A green gate over a program that cannot run, and the one
+        # mechanism built to catch exactly that was never asked.
+        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
+                                            self._ctx.reasoner_role, rlog)
+        if exec_marker:
+            evidence += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
@@ -2416,9 +2429,7 @@ class Loop:
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
             sess.probe_call_id = probe_tc["id"]
-            sess.pending_done = satisfaction_done_note(
-                reason, live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
-                                              self._ctx.reasoner_role, rlog))
+            sess.pending_done = satisfaction_done_note(reason, exec_marker)   # reuse; never run twice
             sess.steer_source = "completion check (task satisfied)"
             return _completion_toolcalls([probe_tc],
                                          note="cria completion check: the task looks done — verifying the repo's checks")
