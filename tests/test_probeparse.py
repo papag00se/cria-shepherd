@@ -728,3 +728,37 @@ class MockedFrameVisibilityTests(unittest.TestCase):
         out = probeparse.parse_pytest(s)
         self.assertEqual(out[0].file, "resolve_handle_test.py")
         self.assertIn("Network error", out[0].message)
+
+
+class UnusedNameWarningsNeverGateTests(unittest.TestCase):
+    """The gate is ERROR-CLASS only: a cleanliness warning must never reach the model as
+    "[GROUND TRUTH — the repo's own checks fail]". `redefinition of unused 'x' from line N` is the
+    unused-import warning wearing different words, and it was missing from the list.
+
+    Walked on ada-handles_mellum2_codex_poff_1785693138: for ~25 consecutive calls it was the ONLY
+    thing the gate reported. The edit that cleared it deleted the module-level `import json`;
+    pyflakes then reported nothing, and the delivered program crashes with
+    `NameError: name 'json' is not defined`. The gate demanded a change that broke the program and
+    certified the result clean."""
+
+    def test_redefinition_of_unused_is_advisory(self):
+        self.assertTrue(probeparse.is_advisory("redefinition of unused 'json' from line 14"))
+
+    def test_it_never_reaches_the_model_as_a_failing_check(self):
+        out = ("x.py:1:1: 'json' imported but unused\n"
+               "x.py:5:5: redefinition of unused 'json' from line 1\n")
+        r = probeparse.parse_output("python3 -m pyflakes .", "", 1, out, "")
+        self.assertEqual(r.findings, [], f"a cleanliness warning still gates: {r.summary}")
+
+    def test_an_f_string_with_no_placeholders_is_advisory(self):
+        self.assertTrue(probeparse.is_advisory("f-string is missing placeholders"))
+
+    def test_a_REAL_pyflakes_error_still_gates(self):
+        # The whole point of the filter is that error-class findings survive it.
+        for msg in ("undefined name '_test'",
+                    "local variable 'x' referenced before assignment",
+                    "dictionary key 'a' repeated with different values"):
+            with self.subTest(msg=msg):
+                self.assertFalse(probeparse.is_advisory(msg))
+                r = probeparse.parse_output("python3 -m pyflakes .", "", 1, f"x.py:3:1: {msg}\n", "")
+                self.assertTrue(r.findings, f"a real error was dropped: {msg}")

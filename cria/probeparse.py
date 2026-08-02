@@ -717,6 +717,22 @@ _ADVISORY_PHRASES = (
     "defined but never used",                # eslint no-unused-vars
     "declared but its value is never read",  # tsc TS6133 (unused local)
     "declared but never used",               # tsc TS6196 (unused type)
+    # THE SAME CLASS, and its absence cost a whole run. pyflakes emits
+    # `redefinition of unused 'json' from line 14` when a name is bound twice and the first binding
+    # went unused. It changes nothing at runtime — it is the unused-import warning wearing different
+    # words, and the word "unused" is right there in it. pyflakes prints no code, so _STYLE_CODE
+    # cannot catch it either, and it sailed through as an ERROR.
+    #
+    # Walked on ada-handles_mellum2_codex_poff_1785693138: for roughly 25 consecutive calls this was
+    # the ONLY thing cria's gate reported, shipped under "[GROUND TRUTH — the repo's own checks
+    # fail]". The edit that finally cleared it deleted the module-level `import json`. pyflakes then
+    # reported nothing — the function-local `import json` satisfies it — and the delivered program
+    # crashes with `NameError: name 'json' is not defined`. cria's gate demanded a change that broke
+    # the program and then certified the result clean. It also taught the model to disbelieve the
+    # gate: when pyflakes later reported a REAL error (`undefined name '_test'`) the model wrote
+    # "The flags are false positives … The project's own checks are wrong."
+    "redefinition of unused",                # pyflakes F811
+    "f-string is missing placeholders",      # pyflakes F541 · a cosmetic slip, runs fine
 )
 
 
