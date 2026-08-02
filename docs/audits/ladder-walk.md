@@ -1172,3 +1172,57 @@ the one that does not is a turn of prose complaining about the prompt, which is 
 
 **Model wall: not reached.** One markdown section short of 4/4, and the model produced that section
 three times.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785653778
+
+**3/4 again — and a DIFFERENT deliverable.** 111 calls, 12 minutes, 178 t/s.
+
+**cria fault: yes** — the critic approved a step against evidence that disproved it, in its own reason.
+
+| check | attempt 1 | attempt 2 |
+|:--|:--|:--|
+| unit tests | pass | pass |
+| resolver CLI | pass | pass |
+| README | **fail** | **pass** ← the depth fix worked |
+| live test | pass (provably live) | **fail** |
+
+The README fix landed: `README.md covers install/run/tests: True`. Two consecutive 3/4s with
+non-overlapping misses means this model can produce all four — just not yet in one run.
+
+### The live test works. It just is not a test.
+
+I ran it, both ways:
+
+```
+$ python3 live_test.py            → {"error": "Usage: live_test.py <handle1> ..."}   exit=1
+$ python3 live_test.py goose      → goose's real address, holder stake1u85prp8…, 15 handles   exit=0
+```
+
+Real network, real data, correct code. But the deliverable is scored by running it, and run with no
+arguments it exits 1.
+
+### The plan was right; the critic was not
+
+Plan step 3: *"Write live_test.py: a standalone script that calls the real API ... to resolve the
+handle **'goose' and 'papagoose'** and prints the results."* Step 4 even says how it is run —
+*"how to run the live test (**python live_test.py**)"*, no arguments. The coder built something that
+contradicts both.
+
+cria's critic ruled `done: true`, and its own reason contains the disproof:
+
+> *"live_test.py exists and calls the real API to resolve handles ... **and prints a usage message
+> when no handle is provided**. The step is fully satisfied."*
+
+It observed that the file does not resolve those handles by itself, and called the step satisfied.
+
+**Fixed** — cria now gathers the fact and puts it in the critic's evidence: *the step quotes 'goose',
+'papagoose'; live_test.py contains neither.* Deterministic code gathers, the reasoner judges
+(principle 8); the note states in as many words that it is not a verdict and the critic decides.
+
+Base-rated across every captured critic approval (n=106 with a workspace and a parseable verdict) it
+fires **once**, on exactly that verdict, with no false positives. One occurrence in 106 does not earn
+a hard gate — which is why it is evidence, not a block.
+
+**Model wall: not reached.**
