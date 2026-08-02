@@ -883,3 +883,68 @@ parsed and disclose the cut), and with the two causes above removed the flail th
 
 **Model wall: not reached.** zaya1 planned a reasonable 6-step plan at 0006 once it stopped
 thrashing, and the coverage judge passed it. It never got to code.
+
+---
+
+## ada-handles_zaya1_codex_pon_1785645441
+
+**0/4, killed at 15 minutes. 5 model calls: 1 classifier, 4 planner, zero coder.** Every call read.
+
+The previous run's workspace fix **worked** — the planner now reads the real path
+(`/tmp/suite-ada-handles_zaya1_codex_pon_1785645441-d6s14rvf/`) instead of an invented one. That
+cause is closed. The run still died, of a second cause the first was masking.
+
+| call | finish | tokens | calls | distinct |
+|:--|:--|--:|--:|--:|
+| 0002 planner | **length** | 8,192 | 95 | 13 |
+| 0003 planner | **length** | 8,192 | 100 | **6** |
+| 0004 planner | **length** | 8,192 | 92 | 92 |
+| 0005 planner | **length** | 8,192 | 93 | 93 |
+
+Every reply filled the entire output budget with tool calls and was cut off mid-emission. cria ran
+them anyway. 0003 is 98 `exec_command`s of which nearly all are the same `curl` against the live API;
+0004 and 0005 are "distinct" only by string equality — the same command wearing different tails
+(`|| echo "not found"` vs `|| echo "error"`). One call in 0005 is not a command at all, it is the
+model's reasoning leaking into the argument and sliced mid-sentence:
+
+> `{"cmd":"shamefully I cannot make HTTP requests directly via exec_command? Actually exec_command can run shell commands, including`
+
+### The signal is `finish_reason`, and it is clean
+
+Measured over every captured planner round in `~/.cria/calls` (n=333 rounds with tool calls):
+
+| | |
+|:--|--:|
+| rounds with `finish_reason: length` | **8** |
+| rounds emitting more than 12 distinct calls | **7** |
+| of those 7, how many are cut off | **7 — all of them** |
+| median distinct calls in a healthy round | **1** |
+| p90 distinct calls in a healthy round | **1** |
+
+A healthy planner round makes one call. Every runaway round is a cut-off round. No threshold on call
+count is needed and none was added — the model telling you it did not finish is the whole signal.
+
+`_reason` was **discarding `finish_reason` entirely**, so cria could not distinguish a finished reply
+from a truncated one and executed tool-call lists the model never finished emitting.
+
+**Fixed** — the finish reason is now carried out of `_reason` on a private key the gather never puts
+on the wire, and a cut-off research round is refused rather than executed: re-ask once, plainly
+("your last reply was cut off, so none of its tool calls were run — make a few at a time"), then take
+what parses. Exactly the contract `guard_truncation` has enforced on the coder's partial writes since
+the file-corruption loop.
+
+### The dedup from the last fix did fire
+
+0003 went from 100 executions to 6. It was not enough on its own, because 0004 and 0005 varied their
+commands just enough to defeat exact-match dedup. That is the right division: dedup removes waste,
+the cut-off refusal removes the runaway that produced it.
+
+### Questions
+
+- **False or stale?** No.
+- **Impossible?** No.
+- **Withheld?** Not this time — the inventory fix closed that.
+- **Wording?** No. cria's fault here is *acting on* a reply the model never finished.
+
+**Model wall: not reached.** zaya1 has never been given a chance to code. Three attempts, zero coder
+calls in all three.
