@@ -2179,3 +2179,78 @@ wall on one specific behaviour**: with no plan telling it "then call /holders/{a
 does not decompose the three-value requirement on its own.
 
 **Model wall: reached, on this deliverable.** Recorded as a strike, not talked around.
+
+---
+
+# SUPERSEDING NOTE — every mellum2 walk above was re-done properly (2026-08-02)
+
+**Read this before trusting any verdict above it.**
+
+The walks above were written by me, and most were done by grepping the captures rather than reading
+them. Eighteen readers were then given one run each with strict instructions: read every call in
+order, prompt bytes and reasoning, no grep, no counting, quote verbatim, and RUN any code a steer
+contains.
+
+**Twelve reported so far. Twelve `cria fault: yes`.** Including both runs I had personally cleared as
+`cria fault: none` — and both of those verdicts were wrong in the direction that flattered cria.
+
+## It is ONE defect, not thirty
+
+**cria asserts things it holds the disproof for, in the same prompt.** Verbatim, each with the
+contradiction sitting in that same prompt:
+
+| cria said | what was in the same prompt |
+|:--|:--|
+| "the source that DEFINES them is still unread" | a fetch that returned 186,444 chars of spec |
+| "the API is not available… remove the live test entirely" | `/handles/goose → HTTP 200` |
+| "the unit test file is missing" | `FILE test_resolve_handle.py — 7,237 bytes, 199 lines` |
+| "the dead requests.get branch" | that branch was the only one that worked |
+| "Both are on disk" | `does NOT exist on disk`, six lines above |
+| "'goose' is rate-limited or temporarily blocked" | its own coder prompt explains python-urllib's UA gets refused |
+| "this step IS done" | the step named the binding the code got wrong |
+| "Task complete. Done." | "Do ONLY this step (4 of 4)" |
+
+And repeatedly it **authored the bug**, against its own rule *"never write code for the coder"*:
+a mock payload with `total_handles: 5` for an endpoint that does not return it; `pip install
+web_fetch` (cria's own tool name); `from tools import web_fetch` (no such module);
+`requests_mock.get` (raises AttributeError — verified by running it); `pytest.register_pytest_mark`
+(does not exist); `@pytest.mark.import_test` (does not exist).
+
+## The upstream cause of the biggest cluster
+
+`_schema_field_summary` (`cria/webfetch.py:429`) renders response fields as `name(type)` and **drops
+the spec's `description` and `example`**. The Ada Handles spec says `holder` is *"Current Holder of
+the Handle (see the Holder endpoints for more information)"*, example `stake1uxxxx…`. That line never
+reaches any model. cria therefore says *where* a stake address is needed and never *which returned
+field is one* — so `holder(string)` and `resolved_addresses{ada(string)}` are indistinguishable, and
+run after run chained the payment address into `/holders/` and got a 404.
+
+## Four structural holes behind the rest
+
+1. **The judge that ENDS the session is the only one with no file listing.** Its evidence opens
+   `[23,021 characters of EARLIER actions elided]` — including the writes that created the files it
+   then declared missing.
+2. **Fail-closed is re-rollable.** A refusal becomes cria's own status sentence, which is fed to the
+   *step-quality* judge, deleted for not being a step, and re-rolled until a judge says yes.
+3. **Nothing ever runs the deliverable.** The check that executes it is wired only into the plan-off
+   path. Judges twice wrote *"Let me run it"* and structurally cannot.
+4. **Plan judges get no research facts**, so their "guessed field name" rule is unusable — they
+   cannot compare against a source they were never given.
+
+## Still live in current code, verified this session
+
+- A **passing** pytest run (exit 0, "1 passed") with a warning produces a Finding, which cria ships
+  under `[GROUND TRUTH — the repo's own checks fail]`. Cost one run ~40 turns.
+- `verdict_from_reasoning` makes a plan step out of a hard 300-character slice of a judge's private
+  thinking, cut mid-word. One such essay drove ~40 turns.
+- `step_artifacts_on_disk` matches every filename token in a step, so a README step that merely
+  *documents* three commands is told those three files "are already written and failing". Delivered
+  28 times, byte-identical, in broken English (*"but them are already written"*).
+- An empty compaction summary still ships a `⟦ctx:rollup⟧` header with nothing under it, deleting the
+  session's history.
+
+## How to use this record
+
+Treat the per-run sections above as **superseded** where they conflict with the agent reports. My
+verdicts there were reached by counting; the agent verdicts were reached by reading and by running
+the code. Every time those two disagreed this session, reading was right.
