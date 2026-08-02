@@ -886,3 +886,61 @@ class PathParamNotesTests(unittest.TestCase):
                 "type": "object", "properties": {"ok": {"type": "boolean"}}}}}}}}}}}
         line = _endpoint_response_fields(spec)[0]
         self.assertIn("{id} = e.g. stake1u...", line)
+
+
+class FieldExamplesTests(unittest.TestCase):
+    """A type alone cannot tell two string fields apart, and the biggest measured cluster in the
+    mellum2 walks turned on exactly that: the spec says `holder` is a STAKE address (`stake1u…`)
+    and `resolved_addresses.ada` is a payment address (`addr1e…`), and cria rendered both as
+    `(string)`. Run after run chained the payment address into `/holders/{address}` and got a 404,
+    with the answer sitting in a document cria had fetched, parsed, and dropped this line from."""
+
+    SPEC = {
+        "components": {"schemas": {"H": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "example": "my.handle"},
+                "holder": {"type": "string",
+                           "example": "stake1uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+                "hex": {"type": "string"},
+                "length": {"type": "integer", "example": 9},
+                "resolved_addresses": {"type": "object", "properties": {
+                    "ada": {"type": "string", "example": "addr1e0000000000000000000000000000"}}},
+                "tags": {"type": "array", "example": ["a", "b"]},
+            }}}}}
+
+    def summary(self, max_fields=10):
+        return wf._schema_field_summary(
+            {"$ref": "#/components/schemas/H"}, self.SPEC["components"]["schemas"], max_fields)
+
+    def test_the_two_fields_that_mattered_are_now_distinguishable(self):
+        out = " | ".join(self.summary())
+        self.assertIn("holder(string, e.g. stake1u", out)
+        self.assertIn("ada(string, e.g. addr1e", out)
+
+    def test_a_field_with_no_example_is_unchanged(self):
+        self.assertIn("hex(string)", self.summary())
+
+    def test_a_non_string_example_still_rides(self):
+        self.assertIn("length(integer, e.g. 9)", self.summary())
+
+    def test_the_example_is_bounded_and_the_cut_is_disclosed(self):
+        holder = next(f for f in self.summary() if f.startswith("holder("))
+        self.assertTrue(holder.endswith("…)"))
+        self.assertLess(len(holder), 80)
+
+    def test_a_structural_example_is_dropped(self):
+        # A list/dict example restates the shape; it is not a discriminating value.
+        self.assertIn("tags[]", self.summary())
+        self.assertNotIn("e.g. ['a'", " ".join(self.summary()))
+
+    def test_a_multiline_example_never_breaks_the_field_list(self):
+        sch = {"type": "object", "properties": {
+            "k": {"type": "string", "example": "line one\nline two"}}}
+        out = wf._schema_field_summary(sch, {}, 5)
+        self.assertEqual(len(out), 1)
+        self.assertNotIn("\n", out[0])
+
+    def test_the_field_cap_disclosure_still_works_alongside_examples(self):
+        out = self.summary(max_fields=2)
+        self.assertTrue(out[-1].startswith("…+"))

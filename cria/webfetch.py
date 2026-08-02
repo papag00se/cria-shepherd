@@ -426,6 +426,33 @@ def _deref(sch: Any, schemas: dict) -> dict:
     return sch if isinstance(sch, dict) else {}
 
 
+# How much of a field's declared example rides along. Long enough to carry a distinguishing PREFIX
+# (`stake1u…` vs `addr1…`, `ipfs://…`), short enough that the block roughly doubles rather than
+# quadrupling. Measured on the Ada Handles spec, 24 fields: names+types 471 chars, +examples 997,
+# +descriptions 2,072. Descriptions were measured and deliberately left out — in that spec they
+# mostly restate the field name ("Current Holder of the Handle" for `holder`), so they cost 4.4×
+# for prose the name already carries, while the example is the one thing the name cannot say.
+EXAMPLE_CHARS = 32
+
+
+def _example_hint(v: dict) -> str:
+    """`, e.g. <value>` from a field's declared example, or "" when the spec gives none.
+
+    THE fix for the biggest measured cluster in the mellum2 walks. A type alone cannot distinguish
+    two string fields, and the whole task turned on which one held a STAKE address: the spec says
+    `holder` is `stake1uxxxx…` and `resolved_addresses.ada` is `addr1e00…`, and cria rendered both as
+    `(string)`. Run after run chained the payment address into `/holders/{address}` and got a 404 —
+    with the answer sitting in a document cria had fetched, parsed, and dropped this line from.
+    25 of that spec's 34 response fields carry one."""
+    ex = v.get("example")
+    if ex is None or isinstance(ex, (dict, list)):
+        return ""    # a structural example is the shape again, not a discriminating value
+    s = " ".join(str(ex).split())     # one line: a multi-line example would break the field list
+    if not s:
+        return ""
+    return f", e.g. {s[:EXAMPLE_CHARS]}…" if len(s) > EXAMPLE_CHARS else f", e.g. {s}"
+
+
 def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> list[str]:
     """Top-level property names of an OpenAPI object schema, dereferencing a ``$ref`` into
     ``components/schemas``. A nested object is expanded ONE level (``resolved_addresses{ada, eth, btc}``)
@@ -461,7 +488,7 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
         elif v.get("type") == "array":
             out.append(f"{k}[]")
         elif v.get("type"):
-            out.append(f"{k}({v['type']})")
+            out.append(f"{k}({v['type']}{_example_hint(v)})")
         else:
             out.append(str(k))   # the spec itself declares no type — say nothing rather than guess
     # DISCLOSE the cap. A silently-cut field list reads as the complete set, so a coder looking for a
