@@ -96,5 +96,24 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
                       inspect.getsource(selfcompact.compaction_request))
 
     def test_the_plan_off_fold_goes_through_it(self):
-        self.assertIn("selfcompact.compaction_request(messages)",
-                      inspect.getsource(loop.Loop._summarize_single))
+        # `_summarize_single` is gone. The plan-off driver had a whole second copy of the compaction —
+        # its own summarizer, its own refold, its own pinned task — and the two copies had each drifted
+        # to hold something the other needed. There is ONE now, and the plan-off adapter delegates to
+        # it, so "does the plan-off fold use the composer" is answered by there being only one fold.
+        self.assertFalse(hasattr(loop.Loop, "_summarize_single"))
+        self.assertIn("self._self_compact(", inspect.getsource(loop.Loop._self_compact_single))
+        self.assertIn("selfcompact.compaction_request(mm)",
+                      inspect.getsource(loop.Loop._self_compact))
+
+    def test_the_one_fold_uses_the_compactor_ENDPOINT_not_just_its_role(self):
+        # The plan-ON copy selected the compactor ROLE and then sent the call to `reasoner_chat`, so a
+        # configured compactor endpoint was ignored on that path. The plan-OFF copy had this right.
+        src = inspect.getsource(loop.Loop._self_compact)
+        self.assertIn("self._ctx.compactor_chat or self._ctx.reasoner_chat", src)
+        self.assertNotIn("summarize(self._ctx.reasoner_chat,", src)
+
+    def test_the_one_fold_keeps_the_gate_ground_truth_override(self):
+        # The plan-OFF copy never appended this — the override that stops a rollup laundering an
+        # unverified "the tests pass" past cria's real last check state.
+        self.assertIn("_briefing_gate_ground_truth(sess)",
+                      inspect.getsource(loop.Loop._self_compact))

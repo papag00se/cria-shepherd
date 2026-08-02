@@ -1789,16 +1789,27 @@ class Loop:
             out.append(m)
         return out
 
-    def _self_compact(self, msgs: list[dict], sess: PlanSession, idx: int, rlog, *, force: bool = False) -> list[dict]:
-        """Adopt the SAME self-compaction the plan-off path uses — roll the old work-history middle
-        into a ⟦ctx:rollup⟧ summary via the SHARED summarize primitive (reasoner). Orthogonal to
-        sess.summary (that's the cheap completed-STEP axis in the protected system message). ``force``
-        (set at a step boundary) compacts now even below the size trigger, to clear the prior step's signals."""
+    def _self_compact(self, msgs: list[dict], sess: PlanSession, idx, rlog, *, force: bool = False,
+                      pinned_task: str | None = None) -> list[dict]:
+        """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
+        ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
+        completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
+        compacts now even below the size trigger, to clear the prior step's signals. ``pinned_task``
+        overrides the plan's task — the plan-off driver pins the conversation ROOT task, detected from
+        the raw body where env-context detection still works.
+
+        There were two of these, and merging them fixed two more sibling misses on the spot: the
+        plan-ON copy sent its summarize to ``reasoner_chat`` while selecting the COMPACTOR role (so a
+        configured compactor endpoint was ignored on that path), and the plan-OFF copy never appended
+        ``_briefing_gate_ground_truth`` — the override that stops a rollup laundering an unverified
+        "the tests pass" past cria's real last check state. Each had a piece the other needed. That is
+        what having two of something costs, every time."""
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
-            lambda mm: summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
+            lambda mm: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
+                                 self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
                                  # CRIA'S ASK GOES LAST. Without it the transcript ends on the
                                  # coder's own step ("Do ONLY this step (2 of 4)... Write
@@ -1818,12 +1829,12 @@ class Loop:
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
             # can't summarize the original requirements away.
-            pinned_task=(getattr(sess.plan, "task", "") or ""),
+            pinned_task=(pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")),
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
             files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),
             # The RARE fold-of-the-accumulated-summary (see selfcompact REFOLD_TOKENS).
-            refold=lambda text: summarize(self._ctx.reasoner_chat,
+            refold=lambda text: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
                                           self._ctx.compactor_role or self._ctx.reasoner_role,
                                           prompts.load("selfcompact_refold"), text, rlog,
                                           phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS))
@@ -2672,41 +2683,14 @@ class Loop:
         return text or canned
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
-        """Roll the OLD middle of a long single-item coder history into a compactor summary (info-
-        preserving) instead of letting the floor drop-oldest lose it. Uses ``sess.compact_state`` (per-
-        session), so it can't leak across conversations — an unstable-key session is ephemeral anyway.
-        ``root_task`` is pinned verbatim so it can't erode across compaction rounds. Runs BEFORE the floor."""
+        """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
+        copy of the whole compaction and its own summarizer; both are gone. ``root_task`` is pinned
+        verbatim so it cannot erode across rounds."""
         if not self._ctx.self_compact:
             return framed
         msgs = framed.get("messages") or []
-        out, sess.compact_state, applied = selfcompact.compact(
-            msgs, lambda mm: self._summarize_single(mm, rlog), sess.compact_state,
-            trigger_tokens=self._ctx.trigger_compaction, pinned_task=root_task,
-            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),
-            refold=lambda text: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
-                                          self._ctx.compactor_role or self._ctx.reasoner_role,
-                                          prompts.load("selfcompact_refold"), text, rlog,
-                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS))
-        if not applied:
-            return framed
-        rlog.emit("context.self_compact", before=len(msgs), after=len(out), covered=sess.compact_state.covered)
-        return {**framed, "messages": out}
-
-    def _summarize_single(self, messages: list[dict], rlog) -> str:
-        """Fold a span of the single-item coder transcript into a factual briefing — via the SHARED
-        summarize primitive on the COMPACTOR endpoint (``compactor_chat``, falling back to the reasoner
-        endpoint), same mechanism the loop's completion compaction uses, so the two can't diverge."""
-        text = summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
-                         self._ctx.compactor_role or self._ctx.reasoner_role,
-                         prompts.load("selfcompact_summary"),
-                         # THIRD sibling of the same compaction request — found only because the other
-                         # two were unified. It composed the transcript by hand and shipped no closing
-                         # ask at all, so the plan-off fold had the exact defect da35f4e fixed on the
-                         # harness path and e72a0e9 fixed on the plan-on path.
-                         selfcompact.compaction_request(messages), rlog,
-                         phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS)
-        return text or "(earlier work this session)"
-
+        out = self._self_compact(msgs, sess, None, rlog, pinned_task=root_task)
+        return framed if out is msgs else {**framed, "messages": out}
 
 # ------------------------------------------------------------------ module functions
 
