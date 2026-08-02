@@ -412,7 +412,14 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
         f'if [ {start} -gt "$__n" ]; then '
         f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
-        f'else __s=$(sed -n \'{sed_end}p\' {q}); '
+        # NUMBER THE LINES. The crew's read_file has always numbered them (verifytools: `f"{i}: {line}"`)
+        # and the coder's never did — the same tool name, two different views, and only the model that
+        # has to EDIT by line number got the one without them. Walked on
+        # ada-handles_mellum2_codex_poff_1785693138: the coder asked for lines 55-68 to see the line a
+        # check flagged at 63, got the text naked, counted from the top of the block, and burned 8,234
+        # reasoning tokens insisting a valid f-string was valid — then took three more calls to find
+        # one line. Numbering is why the crew never has that problem.
+        f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
         f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then printf %s {_qbash(steer)}; '
         f'else printf \'%s\\n\' "$__s"; fi; fi'
     )
