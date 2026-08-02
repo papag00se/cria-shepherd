@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 08:49:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-02 09:03:04 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,20 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — mellum2**, 0 min elapsed.
-
-| next checkpoint | at | must hold |
-|:--|--:|:--|
-| milestone 1 | 15 min | 1/4 |
-
-**Measured just now** (verifier run against a copy of the live workspace): **2/4**
-
-| deliverable | | detail |
-|:--|:--:|:--|
-| unit_tests | 🟢 | 3 passed in 0.01s |
-| live_test | 🔴 | no live-test file found |
-| resolver_cli | 🔴 | resolve_handle.py goose: exit=1 |
-| readme | 🟢 | README.md covers install/run/tests: True |
+**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_poff_1785685763` (capture `/home/jesse/.cria/calls/20260802T084933-019fc32a-8df4-7d12-b5ed-34a8371283f2`), then write `## ada-handles_mellum2_codex_poff_1785685763` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -32,7 +19,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 17 | 3/4 | 🔵 RUNNING |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 18 | 3/4 | 📖 needs walk |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
@@ -64,10 +51,12 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-02 07:45 | mellum2 | 2/4 | exited | — | 63 | 189.4 | `ada-handles_mellum2_codex_pon_1785681911` |
 | 08-02 07:51 | mellum2 | 2/4 | milestone-miss-45min | 15m:2✓ 30m:2✓ 45m:2✗ | 155 | 149.6 | `ada-handles_mellum2_codex_pon_1785682267` |
 | 08-02 08:39 | mellum2 | 3/4 | exited | — | 53 | 175.0 | `ada-handles_mellum2_codex_poff_1785685170` |
+| 08-02 08:49 | mellum2 | 3/4 | exited | — | 161 | 168.0 | `ada-handles_mellum2_codex_poff_1785685763` |
 
 ## Fixes landed during the ladder
 
 ```
+ee13db6 docs: drop the invented word 'oracle' — it is just suite/ladder_status.py
 782479e ladder: flip mellum2 to planner OFF — the hypothesis loses on this model
 f258a83 fix(verify): the resolver's COUNT check could never fail
 d466769 fix(replan): delete the regex guard; tell the judge the invariant it was breaking
@@ -82,7 +71,6 @@ eb9a1fe fix(probeparse): my stdlib fix was incomplete — cover every parser, no
 78d5d05 fix(replan): refuse a re-derived step that names a CRIA TOOL as the product's code
 7bbf886 feat(verify): show the critic when a step's quoted values are absent from the file
 895651a fix(loop): the unexecuted-write guard could not see a pasted README
-a807a2d chore(ladder): reset mellum2 and zaya1 attempt counts; record the zaya1 a5 walk
 ```
 
 ---

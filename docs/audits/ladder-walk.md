@@ -2086,3 +2086,65 @@ The first planner-off run did, in under four minutes, and missed only on a wrong
 **The ladder's planner column is a hypothesis** ("MoEs need the planner on"). This is the first real
 evidence on the other side of it, and it points the opposite way for this model. One run is not a
 finding — but it earns the next several runs at this setting.
+
+---
+
+## ada-handles_mellum2_codex_poff_1785685763
+
+**3/4, planner off** — 161 calls, 741 seconds. Second planner-off run, and the **same miss as the
+first**.
+
+**cria fault: none.** cria surfaced the facts; the model did not use them.
+
+| check | verdict |
+|:--|:--|
+| unit tests | pass — 5 passed |
+| live test | pass — provably live |
+| README | pass |
+| resolver CLI | **fail** |
+
+### Run by hand, the failure is unambiguous
+
+```
+$ python3 -m resolve_handle goose
+Handle: goose
+Resolved address: addr1qxsfzsmy6y2seduagp6fx9pht4yz9nspxvzyldtv36p2uz0gzxzwvk47q...
+Holder address: None
+Total handles: 0
+```
+
+Two of the three required values missing. `holder` is present in the very `/handles/goose` response
+the script already fetches — it simply never reads it — and `total_handles` needs the second call to
+`/holders/{address}`, which it never makes.
+
+### cria did surface both fields
+
+Counted over the run's 125 coder prompts:
+
+| | |
+|:--|--:|
+| prompts naming the `holder` field | 66 |
+| prompts naming `total_handles` | 122 |
+
+So this is not withheld ground truth. Questions 1–4 all fail: nothing false, nothing impossible,
+nothing withheld, and the wording carried the fields.
+
+### The planner-off pattern, after two runs
+
+| | run 1 | run 2 |
+|:--|:--|:--|
+| score | 3/4 | 3/4 |
+| unit tests / live test / README | all pass | all pass |
+| resolver CLI | `total_handles: 0` | `Holder address: None`, `Total handles: 0` |
+| calls | 53 | 161 |
+| wall clock | 3.9 min | 12.4 min |
+
+Both planner-off runs produce a clean unit-test + live-test + README set — something **sixteen
+planner-on runs never did once** — and both fail on the same deliverable, for the same reason: the
+script reports one of the three values the task asks for.
+
+That is a sharper and more useful failure than anything planner-on produced. It is also a **model
+wall on one specific behaviour**: with no plan telling it "then call /holders/{address}", the model
+does not decompose the three-value requirement on its own.
+
+**Model wall: reached, on this deliverable.** Recorded as a strike, not talked around.
