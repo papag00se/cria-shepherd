@@ -30,7 +30,7 @@ execute; that is how phase 1's Python cell was cleared wrongly the first time.
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | **4/4** | ✅ PASSED (7.6 min, no walk needed) |
 | 6 | mellum2 | 12B / A2.5B | `mellum` 64/8 | MoE | on | 5 | 2/4 | ⛔ BLOCKED — five walked failures, not a pass |
 | 7 | nemotron-elastic | 12B / A2B | `nemotron_h_moe` 128/6 | MoE | on | 0 | — | not started |
-| 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 0 | — | not started |
+| 8 | zaya1 | 8.4B / A760M | `zaya` 16/1 | MoE | on | 1 | 0/4 | 📖 walked — rerun pending |
 | 9 | fabliq | 8B / A1B | `lfm2moe` 32/4 | MoE | on | 0 | — | not started |
 
 This table is a human-readable mirror. `python3 suite/ladder_status.py` is the authority; when they
@@ -422,3 +422,58 @@ locally-sensible change making things worse. It needs a base rate across the cap
 
 Model wall, with a cria-side aggravation of my own making. mellum2 reaches five walked failures and
 is recorded **BLOCKED** — not a pass, the language does not complete, and the ladder moves on.
+
+
+## ada-handles_zaya1_codex_pon_1785633412
+
+**0/4** · planner ON · killed at 15 min · **7 calls total** · 38.6 tok/s
+· capture `~/.cria/calls/20260801T181725-019fc00c-1773-7ea0-831d-84ae0a44c9be`
+
+One classifier, six planner, **one coder**. It never wrote a line of code.
+
+```
+0001 classifier    17s
+0002 planner      207s   116 TOOL CALLS in one response
+0003 planner      218s   empty — no tools, no content
+0004 planner      123s   plan text
+0005 planner      108s   submit_plan
+0006 planner      119s   coverage check
+0007 planner       51s
+0008 coder-s1      50s   ← first and only coder turn, ~13 minutes in
+```
+
+The planner consumed **13 of the 15 minutes**. The coder got one turn before the wall.
+
+### The 116-call response
+
+Not repetition — **104 of the 116 arguments are distinct**, and they reference files that never
+existed (`/tmp/README.md_before`, `/tmp/README.md_after`). The model generated an entire imagined
+session's worth of actions in a single turn, and the harness would have executed all of them.
+
+### The four questions
+
+| | |
+|:--|:--|
+| false or stale? | No. |
+| impossible? | No. |
+| withheld? | No. |
+| wording? | No. |
+
+**Verdict: model wall.** zaya1 is the fleet's experimental entry — it runs on a local draft-PR
+llama.cpp build, and 38.6 tok/s is below its own service-verified 46 t/s. A degenerate first planner
+turn plus an empty 218-second second turn is the model, not the harness.
+
+### A guard NOT built, and why
+
+A bound on tool calls per response is the obvious reaction. Base-rated across every capture on the
+box first:
+
+```
+responses containing tool calls : 9,873
+...with 10 or more              :     2   (0.02%)
+worst single response           :   292 calls
+```
+
+Two events in nearly ten thousand. Principle 15 is explicit that a detector built for a one-off is
+dead weight that can itself misfire, so this stays unbuilt and recorded. If a third appears, the
+base rate changes and so does the answer.

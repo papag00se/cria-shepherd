@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 18:32:55 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 18:36:04 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,20 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — zaya1**, 15 min elapsed.
-
-| next checkpoint | at | must hold |
-|:--|--:|:--|
-| milestone 2 | 30 min | 2/4 |
-
-**Measured just now** (verifier run against a copy of the live workspace): **0/4**
-
-| deliverable | | detail |
-|:--|:--:|:--|
-| unit_tests | 🔴 | no tests ran in 0.00s |
-| live_test | 🔴 | no live-test file found |
-| resolver_cli | 🔴 | no candidate resolver script |
-| readme | 🔴 | no README |
+**Nothing running.** Next action: **walk** `ada-handles_zaya1_codex_pon_1785633412` (capture `/home/jesse/.cria/calls/20260801T181725-019fc00c-1773-7ea0-831d-84ae0a44c9be`), then write `## ada-handles_zaya1_codex_pon_1785633412` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -34,7 +21,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | ⛔ BLOCKED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | 🔵 RUNNING |
+| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 1 | 0/4 | 📖 needs walk |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
 
 ## Attempts
@@ -52,10 +39,12 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-01 16:19 | mellum2 | 1/4 | milestone-miss-30min | 15m:1✓ 30m:1✗ | 225 | 142.9 | `ada-handles_mellum2_codex_poff_1785626379` |
 | 08-01 16:55 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 101 | 145.6 | `ada-handles_mellum2_codex_pon_1785628543` |
 | 08-01 17:15 | nemotron-elastic | 4/4 | budget-killed | 15m:4✓ 30m:4✓ 45m:4✓ 60m:4✓ | 291 | 114.1 | `ada-handles_nemotron-elastic_codex_pon_1785629694` |
+| 08-01 18:17 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 7 | 38.6 | `ada-handles_zaya1_codex_pon_1785633412` |
 
 ## Fixes landed during the ladder
 
 ```
+2172e77 feat(loop)+test: wire the live execution check, and audit today's fixes against the doctrine
 bcecf45 feat(suite): replay captured runs through cria's deterministic logic — no GPU
 1843570 feat(loop): detect the gate ALTERNATING between two finding-sets
 a91d193 fix(loop): the "task is finished but I can't stop" off-ramp never ran with a plan
@@ -70,7 +59,6 @@ c4d955c feat(suite): shout when the ladder is idle
 b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused question
 81ab891 docs(ladder): ornith 4/4 — five for five on dense, planner off
 051dc13 docs(ladder): qwopus 4/4 in 6.5 min — four dense passes, all first attempt
-2d984fd docs(ladder): qwythos 4/4 in 12.7 min — third dense pass, first attempt
 ```
 
 ---
