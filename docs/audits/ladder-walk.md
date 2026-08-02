@@ -2270,6 +2270,41 @@ at sampled points rather than re-transcribing every repeat. Every distinct respo
 steer wording, and every pass/fail transition was read. Worth knowing when weighing its claims
 against the ones quoted verbatim above.
 
+## ADDENDUM 2 — the loop closed, and the working code was ignored
+
+Calls 0341–0420 of run 1785670156, read in full.
+
+**cria's steer at call 0344 and call 0365 is byte-for-byte identical** — same four failures, same
+line numbers, same trailing "you've taken several very similar actions in a row" nudge. Only the
+`MagicMock` object ids differ. The session returned to its exact starting state 24 calls later, and
+the `4 failed, 1 passed` signature held unchanged for roughly **50 consecutive calls**.
+
+**Meanwhile the code worked.** Twice, near the end, the coder proved it:
+
+* call 0413 — `python3 -m pytest resolve_live_test.py -q` → **`1 passed`**, live against the real API
+* call 0416 — `resolve_handle('goose')` → `('addr1qxsfzsmy…', 'stake1u85prp8…', 15)` — correct on all
+  three values
+
+Both times its very next turn discarded the result and went back to re-reading a file already known
+to be fine. Nothing in cria noticed that a passing live run had just happened.
+
+**cria's own reasoner, call 0369, reasoned to the opposite of what it emitted:**
+
+> *"This is not progress. It's a coder who keeps rewriting files while tests fail. **I should not say
+> ON_TRACK.** I should diagnose and give ONE concrete next action."*
+
+Emitted content: `ON_TRACK`. That is the sentinel channel throwing away the diagnosis that produced
+it — the third instance recorded today.
+
+**And one steer got it exactly right and was ignored** (call 0409): *"You have been at this exact set
+of check results before… You are alternating between two states, not converging on one… A smaller
+change will not break the cycle, because a smaller change is what is holding it."* Accurate,
+well-designed, and the coder read another file.
+
+The three contradictory framings of the SAME four failures, across three reasoner calls: exception
+types are wrong (0344) / the second except block raises ValueError (0378) / *"type-hint issues… do
+not require new code"* (0397).
+
 # FINAL TALLY — all 18 mellum2 runs walked properly (2026-08-02)
 
 **Eighteen readers, one run each, ~3,400 calls. Eighteen `cria fault: yes`. Zero exceptions.**
