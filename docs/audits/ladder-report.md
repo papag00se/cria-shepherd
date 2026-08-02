@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 18:45:29 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 19:01:08 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -44,6 +44,8 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+af3056f fix(suite): the idle watcher called a deliberate measurement 'idle'
+087cab5 fix(prompts,suite): P1 — the plan must not invent filenames or a human's workflow
 f732f69 fix(suite): correct the reattach measurement, and measure P1 and P4 offline
 2172e77 feat(loop)+test: wire the live execution check, and audit today's fixes against the doctrine
 bcecf45 feat(suite): replay captured runs through cria's deterministic logic — no GPU
@@ -57,8 +59,6 @@ c4d955c feat(suite): shout when the ladder is idle
 484d75d fix(suite,docs): a package named after cria's own tool poisoned a run for nine days
 0c0a6d1 docs(ladder): walk mellum2 attempt 2 — 0/4, model wall, and a correction
 05b01a7 feat(execcheck): live execution check — corroborate three sources, run, never block
-b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused question
-81ab891 docs(ladder): ornith 4/4 — five for five on dense, planner off
 ```
 
 ---

@@ -40,6 +40,44 @@ disagree, the command is right and this table is stale.
 
 ## Notes — findings that are not a single run's walk
 
+**P4 KILLED BY ITS OWN MEASUREMENT (2026-08-01).** The completion brake asks one yes/no about a
+four-deliverable task, and it approves incomplete runs 41% of the time — 17 verdicts, 7 wrong. The
+obvious fix was to ask per-deliverable instead, using the decomposer cria already owns. It looked
+certain.
+
+Measured where the bug actually lives. False "done" verdicts by model:
+
+| model | false done | verdicts | |
+|:--|--:|--:|:--|
+| gemma4 | 4 | 5 | **80%** |
+| mellum2 | 1 | 5 | 20% |
+| qwythos | 2 | 14 | 14% |
+| ternary-bonsai / qwopus / ornith | 0 | 4 | — |
+
+Replayed both asks against 8 real archived workspaces, judged by gemma4 on gemma4's own sampling:
+
+```
+fused ask correct : 3/8
+split ask correct : 1/8
+```
+
+**The proposed fix is WORSE.** Not shipped. This is the same shape as the earlier critic change that
+went 8/8 → 1/8, and it is the second time this cycle that a well-evidenced, obvious-looking
+improvement turned out to make things worse when actually run.
+
+Two method errors worth keeping, both mine:
+
+* I first ran this on whichever model happened to be loaded (zaya1, which timed out), then on the
+  fastest good judge (qwythos, where the bug appears in 14% of verdicts). The operator pointed out
+  that the test belongs on the model with the most failures. Convenience is not a sampling strategy.
+* The ground-truth label was "a live test or README is missing", not "the run scored below full
+  marks". Those differ, and at least one case is mislabelled. The *comparison* survives — both arms
+  were scored against the same label — but the absolute numbers are not trustworthy and a cleaner
+  rerun needs a better label.
+
+The 41% prevalence remains real. The brake is still wrong 41% of the time. What is now known is that
+decomposing the question is not the answer.
+
 **ALL FIVE DENSE MODELS PASSED, planner OFF, first attempt (2026-08-01).** 27B → 9B, 26.2 / 28.4 /
 12.7 / 6.5 / 7.6 minutes. The dense half of the operator's hypothesis — that dense models cope with
 the planner off — is now supported by 5 for 5.
