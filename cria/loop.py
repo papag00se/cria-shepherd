@@ -520,6 +520,12 @@ REPLAN_TRIGGER_STALLED = ("Progress has STALLED on the current step — the plan
                           "mis-scoped. No step was just verified.")
 
 
+def _tool_names(coder_tools: str) -> list[str]:
+    """The bare tool names out of the coder-tools summary cria renders for a reasoner."""
+    return re.findall(r"\b([a-z_][a-z0-9_]{2,})\b(?=\s*[(:\u2014-]|\s*$)", coder_tools or "", re.M) \
+        or re.findall(r"\b([a-z_][a-z0-9_]{2,})\b", coder_tools or "")
+
+
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
                        evidence: str, rlog, coder_tools: str = "",
                        trigger: str = REPLAN_TRIGGER_ADVANCE) -> list[str] | None:
@@ -581,6 +587,16 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     missing = missing_deliverables(_ask, task, done_texts + kept)
     if missing:
         rlog.emit("loop.replan_uncovered", level="warn", missing=", ".join(missing))
+        return None
+    # A re-derived step must not name a CODER TOOL as code the deliverable calls or mocks. cria's
+    # harness is not a library the product may import. See urlgrounding.harness_tool_leaks: the
+    # initial plan said "mock the API call" and the re-derivation rewrote it to "mock web_fetch",
+    # after which the coder shipped `resp_text = web_fetch(url=url)` — an undefined name — and the
+    # run scored 0/4. REFUSE the tail; the step that was already correct stands. cria never rewrites
+    # a plan step.
+    leaked = urlgrounding.harness_tool_leaks("\n".join(kept), _tool_names(coder_tools))
+    if leaked:
+        rlog.emit("loop.replan_tool_leak", level="warn", tools=",".join(leaked))
         return None
     # NO research-first re-prepend here — and none at plan time either. cria does not AUTHOR plan steps:
     # injecting "web_fetch the named source" was cria planning, and pinning it made a possibly-wrong step

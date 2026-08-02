@@ -71,6 +71,47 @@ def host_is_grounded(url: str, evidence: str) -> bool:
 _METHOD_ROUTE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^\s\"'`,;)\]}]*)")
 
 
+# A step that treats one of the CODER'S OWN TOOL NAMES as code the deliverable calls, imports or
+# mocks. "web_fetch the spec" is an instruction to the agent and is fine; "mock web_fetch" describes
+# the product's internals and is cria's harness leaking into the thing being built.
+_TOOL_AS_LIBRARY = r"\b(?:mock|mocks|mocking|patch|patches|patching|import|imports|from|call|calls|calling|stub|stubs|monkeypatch)\s+(?:the\s+)?[`'\"]?({tools})\b"
+
+
+def harness_tool_leaks(text: str, tool_names) -> list[str]:
+    """Coder TOOL names that ``text`` treats as a library the DELIVERABLE uses.
+
+    Same enforcement rationale as the rest of this module: the living replanner's own system prompt
+    already says "Any tool list you are shown belongs to the coder, so the steps you write are things
+    IT can do" — and a prompt is a request, not an enforcement.
+
+    MEASURED, run 20260802T001204 (mellum2, ada-handles, 0/4 after two consecutive 3/4 runs). The
+    INITIAL plan was clean: "Write unit tests that mock the API call". The living re-derivation at
+    call 0064 rewrote that step as
+
+        "Write unit tests for resolve_handle and total_handles_for_holder with fixtures for a known
+         handle (mock web_fetch to return a successful response) ..."
+
+    `web_fetch` is one of cria's own tools. The coder built to it: `resolve_handle.py` shipped
+    `resp_text = web_fetch(url=url)` with no import and no such function, pyflakes reported
+    "undefined name 'web_fetch'", and every unit test mocked something that does not exist. The run
+    scored 0/4 having produced code that cannot run, and 27 coder prompts carried the resulting
+    errors.
+
+    Base-rated over every captured step a critic judged (n=372): 4 hits, all in that run, all the
+    same corrupted step. Rare — which is why the response is to REFUSE the re-derived tail and keep
+    the plan that was already correct, never to rewrite it (cria does not author plan steps)."""
+    names = [n for n in (tool_names or []) if n]
+    if not names or not (text or "").strip():
+        return []
+    pat = re.compile(_TOOL_AS_LIBRARY.format(tools="|".join(re.escape(n) for n in names)), re.I)
+    seen, out = set(), []
+    for m in pat.finditer(text):
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
 def ungrounded_routes(text: str, evidence: str) -> list[str]:
     """API routes written as ``METHOD /path`` that the evidence never showed.
 
