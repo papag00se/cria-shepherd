@@ -1,103 +1,73 @@
-"""A step that names a FILE TO WRITE is not strategy noise.
+"""The noise judge must never delete a step that produces something the task asked for.
 
-The noise judge exists to delete steps like "Error handling strategy." and "Run the tests". It has
-deleted DELIVERABLES three times in this ladder:
+Measured across this ladder, it did exactly that four times:
 
   * run 1785625253 — unit tests, live test and README removed together;
-  * run 1785659842 — "Write unit tests" and "Write a live test script live_test_goose.py" removed;
-    the session then ENDED at 1/4 in 181 seconds because the plan it had left was finished;
-  * run 1785660278 — logged verbatim, one run after the dropped-text logging landed:
-        dropped 2 kept 1
-          "Write live_test.py: call GET /handles/goose, print resolved_address, holder_address, ..."
-          "Write README.md: install requirements (requests, pytest); run script; run tests; ..."
-    That run scored 0/4 with no live test and no README on disk — exactly the two deleted steps.
+  * run 1785659842 — "Write unit tests" and "Write a live test script live_test_goose.py"; the
+    session then ENDED at 1/4 in 181 seconds because the plan it had left was finished;
+  * run 1785660278 — "Write live_test.py ..." and "Write README.md ...", logged verbatim;
+  * run 1785682267 — "Write unit tests for resolve_handle covering (a) success ...".
 
-missing_deliverables is the reasoned brake for this and it does fire (34 times across every log day)
-— but it is a judge, and it missed all three. A step naming a file is definitionally not noise, so it
-is settled deterministically before any judgment.
+WHAT WAS TRIED FIRST, AND WHY IT IS GONE. A deterministic guard protected any step whose text
+matched an authoring verb near a filename. It went through FOUR revisions in four runs and produced
+THREE distinct false positives:
 
-KNOWN LIMIT, stated rather than papered over: "Write unit tests for resolve_handle with 3-4 test
-cases" names no file and is NOT protected by this rule. Two of the three measured cases are covered
-in full; that one is not.
+    verb anywhere + file anywhere -> protected "Commit the three files (...), add a .gitignore ..."
+    verb adjacent to file         -> MISSED "Write a live test file (e.g., test_live_resolve.py)"
+    40-character window           -> protected "Add a requirements.txt entry for requests"
+
+The last one was not even a false positive in the way it looked: plan_noise_steps.txt explicitly
+lists "adding a requirements entry" as removable, so the judge was RIGHT and the guard was blocking a
+correct deletion.
+
+The tell was in the diagnosis from the first walk: the difference between authoring a deliverable and
+authoring plumbing is not in the sentence — it is in whether the TASK asked for it. No window over
+the sentence can recover information the sentence does not contain, and reasoned_noise_indices'
+own docstring already says "ONE reasoner question replaces the whole pile of keyword/shape regexes
+that used to read intent out of prose and drive deletions". A regex was bolted onto the function that
+had already replaced regexes.
+
+The fix is the question, not a fifth pattern: the judge is now told the invariant it was breaking.
+See docs/principles.md #9, corollary.
 """
 import inspect
 import unittest
 
-from cria import loop
+from cria import loop, prompts
 
 
-class ArtifactNamingTests(unittest.TestCase):
-    def test_the_git_plumbing_step_my_first_version_PROTECTED_is_droppable(self):
-        # The looser "any verb + any filename" rule shipped and fired three times in ONE run on this
-        # step — git plumbing the task never asked for, which the noise judge was right to delete.
-        # Intended firings across the whole ladder: 3. False firings in one run: 3.
-        self.assertEqual(loop.step_authors_artifact(
-            "Commit the three files (resolve.py, resolve_test.py, README.md) to a new repo, add a "
-            ".gitignore with __pycache__ and .pyc, push to a new GitHub repo."), [])
+class TheInvariantIsStatedToTheJudge(unittest.TestCase):
+    TEXT = prompts.load("plan_noise_steps")
 
-    def test_the_verb_must_GOVERN_the_file_not_merely_co_occur(self):
-        # NOTE: "Add tests, then commit resolve.py" is deliberately NOT asserted droppable. I
-        # invented it as a false-positive example and it is not one — "Add tests" is authoring work,
-        # so protecting that step is correct. The measured junk case is the git-plumbing step above.
-        self.assertEqual(loop.step_authors_artifact("Create a new file utils.py with the helper"),
-                         ["utils.py"])
-        self.assertEqual(loop.step_authors_artifact("Write a script live_test.py that resolves"),
-                         ["live_test.py"])
+    def test_the_judge_is_told_deliverables_must_survive(self):
+        low = self.TEXT.lower()
+        self.assertIn("if removing a step would leave something the task asked for", low)
+        self.assertIn("that step stays", low)
 
-    def test_a_shell_command_that_merely_names_a_path_is_still_droppable(self):
-        # `grep -n 'x' spec.json` names a file and IS the bare-command noise this judge should
-        # delete. Authoring intent is the discriminator, not the presence of a filename.
-        self.assertEqual(loop.step_authors_artifact(
-            "grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json"), [])
-        self.assertEqual(loop.step_authors_artifact("Run pytest on test_x.py"), [])
+    def test_it_is_stated_FIRST_not_buried(self):
+        self.assertLess(self.TEXT.index("BEFORE ANYTHING ELSE"),
+                        self.TEXT.index("Mark a step for REMOVAL"))
 
-    def test_the_THREE_logged_deletions_are_recognised_as_deliverables(self):
-        for step in ("Write live_test.py: call GET /handles/goose, print resolved_address, "
-                     "holder_address, total_handles",
-                     # run 20260802T045151 — missed by the too-tight version, deleted as noise, and
-                     # that run ended with no live test and no README.
-                     "Write a live test file (e.g., test_live_resolve.py) that calls the real API "
-                     "for 'goose' and asserts the response contains resolved_address",
-                     "Write README.md: install requirements (requests, pytest); run script; "
-                     "run tests; explain two-step resolution"):
-            with self.subTest(step=step[:40]):
-                self.assertTrue(loop.step_authors_artifact(step))
+    def test_the_judge_is_told_to_check_its_removals_against_the_list(self):
+        self.assertIn("check your removals against that list", self.TEXT)
 
-    def test_real_noise_steps_are_still_droppable(self):
-        for step in ("Error handling strategy.", "Code style strategy.", "Testing strategy.",
-                     "Run the unit tests", "Set up the development environment",
-                     "Verify the tests pass"):
-            with self.subTest(step=step):
-                self.assertEqual(loop.step_authors_artifact(step), [])
-
-    def test_the_KNOWN_LIMIT_is_real_and_documented(self):
-        # Not protected — stated in the module docstring rather than hidden.
-        self.assertEqual(
-            loop.step_authors_artifact("Write unit tests for resolve_handle with 3-4 test cases"), [])
-
-    def test_each_artifact_once(self):
-        self.assertEqual(
-            loop.step_authors_artifact("Add README.md, then check README.md again"), ["README.md"])
+    def test_it_says_WHY_so_the_rule_survives_paraphrase(self):
+        self.assertIn("the work simply never happens", self.TEXT)
 
 
-class RefusalWiringTests(unittest.TestCase):
-    def test_the_drop_set_excludes_protected_steps(self):
+class NoRegexGuardRemains(unittest.TestCase):
+    def test_the_deterministic_protection_is_GONE(self):
+        self.assertFalse(hasattr(loop, "_AUTHORS_FILE"))
+        self.assertFalse(hasattr(loop, "step_authors_artifact"))
+
+    def test_reassess_does_not_second_guess_the_judge_with_a_pattern(self):
         src = inspect.getsource(loop.reassess_remaining)
-        self.assertIn("protected = {i for i, text in enumerate(cleaned) if step_authors_artifact(text)}", src)
-        self.assertIn("drop = drop - protected", src)
+        self.assertNotIn("step_authors_artifact", src)
+        self.assertNotIn("protected", src)
 
-    def test_the_refusal_is_announced_not_silent(self):
-        src = inspect.getsource(loop.reassess_remaining)
-        self.assertIn("loop.replan_noise_refused", src)
-        i = src.index("loop.replan_noise_refused")
-        self.assertIn("cleaned[i]", src[i:i + 220], "say WHICH steps were protected")
+    def test_the_reasoned_deliverables_brake_still_backs_it_up(self):
+        self.assertIn("missing_deliverables(", inspect.getsource(loop.reassess_remaining))
 
-    def test_it_happens_BEFORE_kept_is_built(self):
-        src = inspect.getsource(loop.reassess_remaining)
-        self.assertLess(src.index("drop = drop - protected"),
-                        src.index("kept = [s for i, s in enumerate(cleaned)"))
-
-    def test_the_reasoned_brake_still_runs_after(self):
-        # This is additive: missing_deliverables remains the backstop it always was.
-        src = inspect.getsource(loop.reassess_remaining)
-        self.assertIn("missing_deliverables(", src)
+    def test_the_dropped_step_logging_stays(self):
+        # It is what made every one of these findings measurable within a single run.
+        self.assertIn("dropped_steps=", inspect.getsource(loop))
