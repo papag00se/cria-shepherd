@@ -160,8 +160,9 @@ def _text(s):
     return {"choices": [{"message": {"content": s}}]}
 
 
-def _sat(satisfied, reason="r"):
-    return {"choices": [{"message": {"content": json.dumps({"satisfied": satisfied, "reason": reason})}}]}
+def _sat(satisfied, reason="r", fix=""):
+    return {"choices": [{"message": {"content": json.dumps(
+        {"satisfied": satisfied, "reason": reason, "proposed_fix": fix})}}]}
 
 
 class CompletionCriticTests(unittest.TestCase):
@@ -186,15 +187,41 @@ class CompletionCriticTests(unittest.TestCase):
 
     def test_reopens_with_a_corrective_step_when_not_satisfied(self):
         from cria.loop import _COMPLETION_FIX_PREFIX
-        loop = self._loop(_Scripted([_sat(False, "the resolver 404s on the wrong endpoint")]))
+        loop = self._loop(_Scripted([_sat(False, "the resolver 404s on the wrong endpoint",
+                                          fix="point the client at the fetched /handles route")]))
         sess = self._done_sess()
         reason = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
         self.assertIsNotNone(reason)                          # not None → caller re-drives, doesn't complete
         self.assertIn("404", reason)
         self.assertEqual(sess.plan.status, "in_progress")
         self.assertTrue(sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX))
+        self.assertIn("point the client at", sess.plan.items[-1].text)   # the ACTION, not the essay
         self.assertIsNotNone(sess.plan.current())             # a step to drive again
         self.assertEqual(sess.completion_checks, 1)
+
+    def test_a_verdict_with_NO_proposed_action_appends_no_step(self):
+        """`step_text = fix_action or reason` promoted the judge's verdict ESSAY to a plan step —
+        the shape the code's own comment says pinned a run for 118 calls. Measured over the 19
+        distinct corrective steps in the captures, 2 are essays; one reads "So the task is NOT
+        satisfied because: 1. resolve_handle.py … are not in the workspace", appended as a step in
+        the same prompt where cria's disk read listed those files as present."""
+        from cria.loop import _COMPLETION_FIX_PREFIX
+        loop = self._loop(_Scripted([_sat(False, "So the task is NOT satisfied because the files "
+                                                 "are not in the workspace")]))
+        sess = self._done_sess()
+        before = len(sess.plan.items)
+        reason = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
+        self.assertIsNotNone(reason)                          # still re-opens, still not "done"
+        self.assertEqual(len(sess.plan.items), before)        # ...but the plan gained no essay
+        self.assertFalse(any(i.text.startswith(_COMPLETION_FIX_PREFIX) for i in sess.plan.items))
+        self.assertIn("not in the workspace", sess.nudge_reason)   # the essay's real channel
+
+    def test_no_step_means_no_step_quality_judge_is_called(self):
+        # A judge asked to rate the quality of nothing is a wasted call.
+        reasoner = _Scripted([_sat(False, "not done")])
+        loop = self._loop(reasoner)
+        loop._reopen_if_unsatisfied(self._done_sess(), _body(), _Rlog())
+        self.assertEqual(reasoner.calls, 1, "only the satisfaction judge should have been called")
 
     def test_completes_when_satisfied(self):
         loop = self._loop(_Scripted([_sat(True)]))
@@ -212,7 +239,8 @@ class CompletionCriticTests(unittest.TestCase):
 
     def test_corrective_step_is_reused_not_grown(self):
         from cria.loop import _COMPLETION_FIX_PREFIX
-        loop = self._loop(_Scripted([_sat(False, "broken A"), _sat(False, "broken B")]))
+        loop = self._loop(_Scripted([_sat(False, "broken A", fix="fix the A path"),
+                                     _sat(False, "broken B", fix="fix the B path")]))
         sess = self._done_sess()
         loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # adds one corrective step
         sess.plan.items[-1].done = True                       # simulate it got verified, then re-check

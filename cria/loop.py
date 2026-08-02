@@ -1591,16 +1591,26 @@ class Loop:
         # still reaches the coder through the nudge below; the plan gets only something DOABLE. And
         # a judge-authored step is NOT exempt from the noise scrub every other authored step passes
         # (operator: the model may author steps; cria's routing must apply the same quality bar).
-        step_text = fix_action or reason
+        # NO ACTION, NO STEP. The comment above states the rule — "the plan gets only something
+        # DOABLE" — and `or reason` broke it: with no proposed_fix, the judge's VERDICT ESSAY became
+        # the plan step, which is the exact shape that pinned a run for 118 calls. Measured over the
+        # 19 distinct corrective steps in the captures, 2 are essays; one of them is
+        # "So the task is NOT satisfied because: 1. resolve_handle.py … are not in the workspace",
+        # appended as a step in the same prompt where cria's own disk read listed those files as
+        # present. The essay still reaches the coder — through `nudge_reason` below, which is the
+        # channel built for it.
+        step_text = fix_action
         try:
             noisy = reasoned_noise_indices(
                 lambda sysm, userm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                               sysm, userm, rlog, phase="reasoner") or "",
-                task, [step_text],
+                task, [step_text] if step_text else [],
                 facts=session_research_facts(body.get("messages", []), sess))
         except Exception:  # noqa: BLE001 — the scrub is advisory; never lose the corrective step to a crash
             noisy = set()
-        if 0 in noisy:
+        if not step_text:
+            rlog.emit("loop.completion_fix_absent", level="info", head=_clip(reason, 120))
+        elif 0 in noisy:
             rlog.emit("loop.completion_fix_noise", level="info", head=_clip(step_text, 120))
         else:
             fix = PlanItem(text=_COMPLETION_FIX_PREFIX + step_text)
