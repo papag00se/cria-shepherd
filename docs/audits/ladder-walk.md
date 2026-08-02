@@ -1982,3 +1982,45 @@ noise judge that deletes steps is never told which steps the task's own delivera
 a prompt-level fix in the judge that already exists, not a fifth pattern.
 
 **Model wall: not reached.**
+
+---
+
+## ada-handles_mellum2_codex_pon_1785682267
+
+**2/4.** 155 calls, killed at the 45-minute floor. No live-test file, again — the third run running.
+
+**cria fault: yes** — the noise judge deleted the unit-test step, and my guard against that was the
+wrong kind of fix.
+
+```
+loop.replan_noise  dropped 4
+  "Write unit tests for resolve_handle covering: (a) success — a valid handle that returns all
+   fields, (b) not-found — a handle that returns 404 or no re..."
+```
+
+### The guard is gone, and the reason matters more than the run
+
+Asked whether any of the session's fixes used deterministic code trying to be fuzzy, the answer was
+this one. It protected any step matching an authoring verb near a filename — **four revisions in four
+runs, three distinct false positives** — and the third was not a false positive in the way it looked:
+`plan_noise_steps.txt` explicitly lists *"adding a `requirements` entry"* as removable, so the judge
+was RIGHT and my guard was blocking a correct deletion.
+
+`reasoned_noise_indices`' own docstring says *"ONE reasoner question replaces the whole pile of
+keyword/shape regexes that used to read intent out of prose and drive deletions."* I bolted a regex
+onto the function that had already replaced regexes.
+
+**Replaced with the question.** The judge is now told, first and with its reason, the invariant it
+was actually breaking: *if removing a step would leave something the task asked for with no step that
+produces it, that step stays.* Recorded as a corollary to principle 9 — a single focused question is
+a first-class tool, and is the correct answer to anything a regex is being asked to decide
+semantically.
+
+### Fifteen attempts, one setting
+
+Every mellum2 attempt since the reset ran **planner ON** — 15 of 15. A large share of the failures
+have been plan-side: cria writing `web_fetch` into a step, the noise judge deleting deliverables, a
+plan with no live-test step, a re-derived step asserting the wrong API field in 63 of 63 prompts.
+Planner-off removes that entire surface and has never been tried on this model. That is the next run.
+
+**Model wall: not reached.**
