@@ -27,6 +27,21 @@ from cria import loop
 
 
 class ArtifactNamingTests(unittest.TestCase):
+    def test_the_git_plumbing_step_my_first_version_PROTECTED_is_droppable(self):
+        # The looser "any verb + any filename" rule shipped and fired three times in ONE run on this
+        # step — git plumbing the task never asked for, which the noise judge was right to delete.
+        # Intended firings across the whole ladder: 3. False firings in one run: 3.
+        self.assertEqual(loop.step_authors_artifact(
+            "Commit the three files (resolve.py, resolve_test.py, README.md) to a new repo, add a "
+            ".gitignore with __pycache__ and .pyc, push to a new GitHub repo."), [])
+
+    def test_the_verb_must_GOVERN_the_file_not_merely_co_occur(self):
+        self.assertEqual(loop.step_authors_artifact("Add tests, then commit resolve.py"), [])
+        self.assertEqual(loop.step_authors_artifact("Create a new file utils.py with the helper"),
+                         ["utils.py"])
+        self.assertEqual(loop.step_authors_artifact("Write a script live_test.py that resolves"),
+                         ["live_test.py"])
+
     def test_a_shell_command_that_merely_names_a_path_is_still_droppable(self):
         # `grep -n 'x' spec.json` names a file and IS the bare-command noise this judge should
         # delete. Authoring intent is the discriminator, not the presence of a filename.
