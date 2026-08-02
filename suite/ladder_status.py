@@ -190,8 +190,10 @@ def main() -> None:
                   f"not a pass, and the language is NOT finished")
         elif action == "walk":
             print(f"NEXT: WALK {target['next_walk']}")
-            print(f"  read {target['next_walk_capture']} call by call — pair NNNN-*.prompt.txt "
-                  f"(what was sent) with NNNN-*.reasoning.txt (what it made of it)")
+            print(f"  read {target['next_walk_capture']} — EVERY call, start to finish, pairing "
+                  f"NNNN-*.prompt.txt (what was sent) with NNNN-*.reasoning.txt (what it made of it)")
+            print("  A walk is READING, not searching. No grep, no sampling, no counting over the "
+                  "files — those have all produced confident wrong answers here.")
             print(f"  then write '## {target['next_walk']}' into docs/audits/ladder-walk.md")
             print("  RUN any code a steer contains. A diagnosis that reads correct can still ship "
                   "a fix that cannot execute — that is how C1 was cleared wrongly.")

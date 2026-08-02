@@ -14,6 +14,29 @@ For every wrong turn, four questions in order — only when all four fail is it 
 > 3. Did cria **withhold** something it already held?
 > 4. Did cria's **wording** cause it?
 
+## What a WALK is
+
+A walk is **reading every call in the run, start to finish** — the whole prompt cria sent and the
+whole reasoning the model produced, in order, until you understand the turn. That is the entire
+method. There is no faster version of it.
+
+It is **not**:
+
+- a `grep` for a keyword across the capture
+- a count, a rate, or an "N of M" over the files
+- opening the first and last few and inferring the middle
+- reading the verdicts and skipping the reasoning
+- re-implementing a check cria already owns and scoring against your version of it
+
+Every one of those has produced a confident wrong answer here. Reading all 46 replies in one set
+surfaced four defects that every count over the same files had missed. Reading a plan in full showed
+that cria's own plan had mandated a JSON-RPC API the task never mentioned, contradicted itself two
+steps later by testing REST, and invented the `--live` flag that made the deliverable score zero —
+after two earlier walks of the same run had blamed the model.
+
+If you are about to report what a run did and cannot name the turn numbers you read, you have not
+walked it.
+
 **RUN any code a steer contains.** A diagnosis that reads correct can still ship a fix that cannot
 execute; that is how phase 1's Python cell was cleared wrongly the first time.
 
@@ -129,6 +152,50 @@ same day in `53cae4a`.
 
 
 ## ada-handles_mellum2_codex_pon_1785613520
+
+> **RE-WALKED 2026-08-01, and the original walk below was WRONG on the central point.** The first
+> pass read the workspace and the steers and concluded "it wrote a library, not a program" — a
+> model failure. Reading the run properly, every call start to finish, shows cria's own plan caused
+> three of the four losses. The original text is kept beneath this note because a walk that was
+> wrong is part of the record, not something to quietly overwrite.
+
+### What the re-walk found: the PLAN did it
+
+Every step cria sent, verbatim:
+
+```
+[1]  Fetch the API discovery at https://api.handle.me/mcp and read the OpenAPI spec ...
+[·]  Write resolve_handle.py ... The script should use requests to call the MCP endpoint
+     at https://api.handle.me/mcp with JSON-RPC method get_handle, get_holder, get_stats
+[2]  Write test_resolve_handle.py ... Use the /handles/{handle}, /holders/{address}, and
+     /stats endpoints with the exact field names from the OpenAPI spec
+[3]  Add a CLI option --live to resolve_handle.py that takes handles as arguments
+[4]  Write README.md ... how to run the live test (python resolve_handle.py --live goose papagoose)
+```
+
+**1. The plan contradicts itself.** The script step mandates MCP/JSON-RPC; the very next step tests
+against REST paths. The model built a JSON-RPC client and wrote tests for REST — which is why its
+code and its tests never matched.
+
+**2. The plan chose the hard path.** Every model that passed used `GET /handles/goose`. The plan
+required JSON-RPC over `/mcp`, and mellum2 spent roughly twenty turns on `curl -X POST` failing to
+format the payload. That is where the run died.
+
+**3. The plan invented `--live`.** The task says "create a live test". The plan made it a flag on
+the resolver, so `resolve_handle.py goose` prints nothing. The original walk called that "a library,
+not a program" and blamed the model. It was cria's instruction. Same shape as the note already on
+file: *g25 rewrote a working positional CLI into `--handle` — with cria's help.*
+
+**4. Step 1 never advanced.** The model reported it complete at turns 21, 26, 31, 33 and 38; cria
+re-sent it each time. Turn 45 shows the rumination guard aborting mid-stream.
+
+What was genuinely the model: it never once formatted the JSON-RPC payload correctly. But it was
+only attempting JSON-RPC because the plan sent it there.
+
+---
+
+### The original (superseded) walk
+
 
 **2/4** · planner ON · 16.3 min · 114 calls · 144.7 tok/s · `exited` (the model believed it was done)
 · capture `~/.cria/calls/20260801T124541-019fbedc-5f1b-7812-b2f9-9da30b0575e4`

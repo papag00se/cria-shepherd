@@ -63,12 +63,12 @@ holds the previous model's numbers. Server-side settings (ctx, KV, template) liv
 
 ## How to find cria's faults (the part that matters)
 
-Walk every run call by call in `~/.cria/calls/<session>/`, pairing:
+Walk every run call by call in `~/.cria/calls/<session>/` — **every call, start to finish**, not a grep, not a sample, not a count over the files. Pair:
 
 - `NNNN-<phase>.prompt.txt` — the exact bytes cria sent
 - `NNNN-<phase>.reasoning.txt` — what the model thought about them
 
-The reasoning prose is the evidence; a verdict alone is not. Walk the crew calls too — reasoner,
+The reasoning prose is the evidence; a verdict alone is not. Reading the verdicts and skipping the reasoning misses the commonest shape in this project — the model finding the answer and then talking itself out of it. A count over the captures is not a walk and has repeatedly produced confident wrong answers; open the files. Walk the crew calls too — reasoner,
 judges, compactor — not just the coder.
 
 For every wrong turn, ask in this order:

@@ -126,7 +126,8 @@ def main() -> None:
             t = to_walk[0]
             cap = (done[t] or {}).get("capture_dir", "(see results.jsonl)")
             print(f"WORK REMAINS — walk {len(to_walk)}, run {len(to_run)}")
-            print(f"NEXT: WALK {t} — read {cap} call by call, then write "
+            print(f"NEXT: WALK {t} — read {cap} EVERY call start to finish (a walk is reading, "
+                  f"not grepping/sampling/counting), then write "
                   f"'## {t}' into docs/audits/phase1-walk.md")
         else:
             t = to_run[0]

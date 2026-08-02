@@ -143,27 +143,32 @@ the most. Phase 1's C1 was walked, its steers were read, their diagnoses were co
 was written up as "the advice was right." It was not: one steer's snippet reproduced the exact error
 it was explaining, and the other's referenced an undefined name. Reading a fix is not checking it.
 
-### Reading a run means reading it
+### Reading a run means reading EVERY call in it
 
-The walk is not a search. You are not looking for a keyword — you are reading what cria said and
-what the model made of it, in order, until you understand the turn. That takes as long as it takes.
+A walk is reading the whole run — every prompt cria sent and every reasoning the model returned, in
+order, from the first call to the last. Not a search. Not a sample. Not a count.
 
-Three habits that produced wrong answers here, all in one evening:
+**Nothing here is a substitute for opening the file:**
 
-- **Counting instead of reading.** "20 of 46 have X" is worth nothing if you have not opened one of
-  the 46. Four separate findings in that set — a judge calling another harness's tools, a read-only
-  judge editing code, retries ruling opposite ways, verdicts written in prose — were invisible to
-  every count run over them, and obvious on the first full read.
-- **Re-implementing a check cria owns.** A scorer that greps for `"satisfied"` is not cria's parser:
-  cria recovers a `done` key, fenced JSON, and a missing flag inferred from `proposed_fix`. Import
-  the real one. A phase has its own key — `satisfaction` rules on `satisfied`, `satisfaction-confirm`
-  on `consistent` — and scoring one against the other invents failures that are not there.
-- **Writing your own prompt instead of replaying the captured one.** The captured body already holds
-  the right task, the judge fence, the assembled evidence and the role's sampling. Hand-writing a
-  substitute drops all four silently, and then measures the substitute.
+- `grep` tells you a string's frequency, never what happened.
+- "20 of 46 have X" is worth nothing until you have read one of the 46.
+- Reading verdicts and skipping reasoning misses the case where the model found the answer and
+  then talked itself out of it — which is the single most common shape in this project.
+- A scorer that re-implements cria's parser measures your scorer. Import cria's.
+- A prompt you wrote yourself is not the prompt cria sent. Replay the captured body.
 
-If you are about to report a rate and cannot name a specific file you read end to end, you have not
-finished the walk.
+**What full reading found that counting did not.** One set of 46 judge replies, read end to end:
+a judge calling another harness's tool vocabulary, a read-only judge repeatedly trying to edit code,
+consecutive retries ruling opposite ways on identical evidence, and complete verdicts written in
+prose and discarded. Every count run over those same files had reported something else, and each
+number collapsed the moment a file was opened.
+
+**And it is how the mellum2 root cause was finally found** — after two walks of the same run had
+blamed the model. Reading the plan in full showed cria mandating a JSON-RPC endpoint the task never
+mentioned, contradicting itself two steps later by testing REST, and inventing the `--live` flag
+that made the CLI score zero.
+
+If you cannot name the turn numbers you read, you have not walked it.
 
 ### Fixing
 

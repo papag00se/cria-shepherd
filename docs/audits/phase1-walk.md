@@ -2,7 +2,9 @@
 
 **Model** ternary-bonsai 27B · **harness** codex, planner off · **wall** 30 min/cell · **1 Aug 2026**
 
-One problem in every language, so the language is the only variable. Each cell is read call by call
+One problem in every language, so the language is the only variable. A walk means reading
+EVERY call in the run end to end — never a grep, a sample or a count over the capture.
+Each cell is read call by call
 from `~/.cria/calls/<session>/`, pairing `NNNN-<phase>.prompt.txt` (what cria sent) with
 `NNNN-<phase>.reasoning.txt` (what the model made of it). Scores come from `verify.py`, which runs
 the deliverables — never from a claim.

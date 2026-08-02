@@ -343,6 +343,13 @@ are reaching for `grep -c` on a corpus of model output. Or your scorer re-implem
 already owns — that one has its own entry (rule 12) and this is the same disease at a larger scale.
 **Corollary.** "I read them" means the bytes passed in front of you. Thirty-seven seconds for
 forty-six files is not reading, and the resulting confidence is the dangerous part, not the error.
+**This is what the word WALK means in this project.** A walk is reading every call in a run from
+first to last — the whole prompt cria sent and the whole reasoning it produced — not a search
+through them, not a sample of them, and not a statistic over them. The distinction is not
+pedantic: two walks of one mellum2 run blamed the model, and the third, which actually read the
+plan cria sent, found that cria had mandated a JSON-RPC API the task never mentioned, contradicted
+itself two steps later by testing REST, and invented the CLI flag that made the deliverable score
+zero. Nothing short of reading would have reached that.
 **Embodied.** `docs/audits/ladder-walk.md` (the P4 thread, five corrections in sequence);
 `suite/replay_logic.py` (replays captured bodies, never invented ones);
 `cria/loop.py::verdict_from_reasoning` — the fix that only reading found.
