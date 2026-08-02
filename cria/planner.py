@@ -26,6 +26,10 @@ from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
 from .plan import Plan, PlanItem
 
 _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
+
+# Why generation stopped, attached to the message _reason returns. NEVER sent to the model —
+# the gather loop builds its own wire dicts. See _gather_and_plan.
+FINISH_KEY = "_cria_finish_reason"
 # When the gather runs to the round cap without the model submitting, offer submit_plan as its
 # ONLY tool and read the call — retried in place a couple of times if it calls something else.
 # (No "you've gathered enough, stop investigating" prose — that message was useless and jarring;
@@ -776,11 +780,30 @@ class Planner:
             # asking. (Prose asking for research-first was already in plan.txt and was ignored: 3 of
             # 4 measured runs planned having read no real source.) Ends when it stops calling tools.
             rounds = 0
+            cut_retried = False   # one re-ask for a cut-off reply, then take what parses
             while rounds < self._max_rounds:
                 msg = self._reason(messages, rlog, research=True)
                 if msg is None:
                     return None
                 calls = _tool_calls(msg)
+                # A reply CUT OFF at the output cap is not a finished turn, and its tool-call list is
+                # not a finished list — the final call is literally mid-token. Measured over every
+                # captured planner round (n=333): finish=length occurs in 8, and ALL SEVEN rounds
+                # that emitted more than 12 distinct calls are among them. Healthy rounds sit at a
+                # median and p90 of ONE distinct call. Run 20260801T213731 (zaya1, 0/4) produced 95,
+                # 100, 92 and 93 calls in four consecutive cut-off rounds — one of them an
+                # exec_command whose `cmd` was the model's own leaked reasoning, sliced mid-sentence:
+                #     {"cmd":"shamefully I cannot make HTTP requests directly via exec_command? …
+                # cria ran those lists, including dozens of curls against a live API, and spent the
+                # entire 15-minute wall in the planner without ever reaching the coder.
+                # Same contract as the coder's guard_truncation: refuse the partial, re-ask once,
+                # bounded. Nothing is truncated — the round is simply not treated as complete.
+                if msg.get(FINISH_KEY) == "length" and not cut_retried:
+                    cut_retried = True
+                    rlog.emit("plan.gather_cut_off", calls=len(calls))
+                    messages.append({"role": "user",
+                                     "content": prompts.load_map("planner_steers")["reply_cut_off"]})
+                    continue
                 if not calls:
                     if looked or nudged:
                         break            # done looking → draft from what it found
@@ -1007,7 +1030,16 @@ class Planner:
             # syntax, so without this a quirky reasoner's gather (or submit_plan) call lands in
             # content and the parse fails.
             completion = massage.recover_leaked_tool_calls(completion, body.get("tools"), rlog)
-            return _assistant_message_obj(completion)
+            msg = _assistant_message_obj(completion)
+            if msg is not None:
+                # Carry WHY generation stopped. Without it cria could not tell a finished reply from
+                # one cut off at max_tokens, and executed tool-call lists the model never finished
+                # emitting. Private key: the gather composes its own dicts for the wire.
+                try:
+                    msg[FINISH_KEY] = (completion.get("choices") or [{}])[0].get("finish_reason")
+                except (AttributeError, IndexError, TypeError):
+                    pass
+            return msg
         except Exception as e:
             # An INFRA failure (upstream error, parse crash) — distinct from a genuine no-plan
             # verdict (that returns None from _parse with a plan.unparsed warn). Log at ERROR so a
