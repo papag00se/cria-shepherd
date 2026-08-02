@@ -1646,3 +1646,51 @@ pattern-matching the sentence. That is a real piece of work, not a regex, and it
 against the shape ledger before anything ships.
 
 **Model wall: not reached.** The model implemented what cria asserted.
+
+---
+
+## ada-handles_mellum2_codex_pon_1785668419
+
+**3/4 — fifth 3/4 in ten runs.** 159 calls, 27 minutes. Unit tests **6 passed**, live test provably
+live, README passes. The CLI is the only miss.
+
+**cria fault: none.** This is the first mellum2 walk in this ladder where I could not find one.
+
+### The failure
+
+```
+$ python3 resolve_handle.py goose
+Error resolving goose: 404 Not Found: https://api.handle.me/holders/addr1qxsfzsmy6y2seduagp6...
+exit=1
+```
+
+The same wrong-address bug as attempt 9 — passing the ada address to `/holders/{address}`, which
+wants the holder's stake address.
+
+### But the cause is different, and it is not cria
+
+Attempt 9 failed because cria asserted the wrong binding in **63 of 63** coder prompts
+(*"where address = resolved_addresses.ada"*). Counted here: **0 of 65**. cria did not state it, and
+all 65 prompts carried the stake-address material the model needed.
+
+The model made the wrong choice itself, from correct information.
+
+### Why this matters for the ladder
+
+Under the block rule, a failure whose walk finds no new cria fault is a strike. This is one. That is
+the rule working as intended — it exists so a model that keeps failing on its own does not eat days,
+and it must not be dodged by manufacturing a finding.
+
+The honest summary of ten runs:
+
+| | |
+|:--|--:|
+| 3/4 | **5** (a1, a2, a4, a7, a10) |
+| 0/4 or 1/4 traced to a cria fault since fixed | 4 |
+| failures with NO cria fault found | **1** |
+
+Every deliverable has now passed in at least one run, and a10 passed three of four with a genuinely
+live test. What has never happened is all four in the same run.
+
+**Model wall: possibly reached on this one deliverable.** The next walk should confirm or refute
+that rather than assume it — one strike is not five.

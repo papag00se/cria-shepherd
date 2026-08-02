@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 03:58:28 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-02 04:27:50 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785667319` (capture `/home/jesse/.cria/calls/20260802T034209-019fc211-1d68-7e40-b077-7d1adeae2b25`), then write `## ada-handles_mellum2_codex_pon_1785667319` into `docs/audits/ladder-walk.md`.
+**RUNNING — mellum2**, 26 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 2 | 30 min | 2/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **3/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🟢 | 6 passed in 0.50s |
+| live_test | 🟢 | in-file live test: 2 passed with network, fails without (provably live) |
+| resolver_cli | 🔴 | resolve_handle.py goose: exit=1 |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
@@ -19,7 +32,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 9 | 3/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 9 | 3/4 | 🔵 RUNNING |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
