@@ -20,7 +20,7 @@ import threading
 import urllib.parse
 from datetime import datetime, timezone
 
-from . import massage, planner_tools, prompts, urlgrounding
+from . import groundtruth, massage, planner_tools, prompts, urlgrounding
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
 from .plan import Plan, PlanItem
@@ -749,7 +749,19 @@ class Planner:
             seed = prompts.render("plan_continuation", prior=prior_work, task=task)
         else:
             seed = task
-        messages: list[dict] = [{"role": "user", "content": seed}]
+        # SAY WHERE THE WORKSPACE IS. cria resolves every read_file/exec_command below against `cwd`
+        # (see execute_tool) and, until now, never told the planner what it was — so a model with
+        # filesystem tools and no location had to guess one. Measured across every captured prompt:
+        # the CRITIC is given the workspace root in 292 of 331 prompts (88%); the PLANNER, in 31 of
+        # 481 (6%). Run 20260801T211548 (zaya1, ada-handles, 0/4) is what that costs: the planner
+        # invented `/workspace/dumps/workspace` and read `setup.py`, `pyproject.toml`, `Dockerfile`,
+        # `package.json` and `.github/workflows/test.yml` under it over and over — 140+ tool calls in
+        # a single response, three rounds running, each cut off at the token cap. The run spent all
+        # fifteen minutes in the planner and never reached the coder once.
+        # Same function, same ground truth the critic already gets — one more caller, no new mechanism.
+        inventory = groundtruth.workspace_inventory(cwd) if cwd else ""
+        messages: list[dict] = [{"role": "user",
+                                 "content": (inventory + "\n\n" + seed) if inventory else seed}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
         seen_sigs: set[str] = set()
         facts: dict = {}      # url -> (status, routes, fields) the RESEARCH really read (Plan.gather_facts)
@@ -799,14 +811,32 @@ class Planner:
                                          "content": prompts.fill(prompts.load_map("planner_steers")["gather_repeat"], tool=name)})
                     continue
                 seen_sigs.add(sig)
+                # Execute each DISTINCT call once. A round is not bounded in how many calls it may
+                # contain, and a model that loops re-asks the same one many times: measured across
+                # every captured planner round (n=328, 719 calls), 236 — 32.8% — are exact duplicates
+                # of another call in the SAME round. Run 20260801T211548 (zaya1, 0/4) emitted 138
+                # calls in one response of which only 32 were distinct, and 134 in the next of which
+                # 16 were, re-reading setup.py / pyproject.toml / Dockerfile / package.json under an
+                # invented root and hitting a live API with the same request four times.
+                # Nothing is withheld: every distinct call still runs, in full, and every tool_call_id
+                # still gets its own complete result, so the protocol stays well-formed and the model
+                # sees exactly what it asked for. Only the re-execution is dropped — same bytes, and
+                # on a 15-minute wall at ~47 tok/s the time it gives back is the run.
+                done: dict[tuple[str, str], object] = {}
                 for cid, name, args in calls:
-                    result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches,
-                                                        rlog, scratch=scratch, facts=facts)
+                    ckey = (name, json.dumps(args, sort_keys=True, default=str))
+                    result = done.get(ckey)
+                    if result is None:
+                        result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches,
+                                                            rlog, scratch=scratch, facts=facts)
+                        done[ckey] = result
+                        rlog.emit("plan.gather", tool=name)
+                    else:
+                        rlog.emit("plan.gather_dedup", tool=name)
                     # "Looked" means something came BACK, not that a call was made: in an empty
                     # workspace `ls`/`find` return nothing, and counting those as research let the
                     # planner draft from memory and invent an endpoint.
                     looked = looked or result.learned
-                    rlog.emit("plan.gather", tool=name)
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result.text})
             if rounds >= self._max_rounds:
                 rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap

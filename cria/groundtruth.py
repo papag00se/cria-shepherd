@@ -29,6 +29,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+from . import prompts
 from .content_reduce import content_reduce, est_tokens
 from .linterprobe import Runner, run_linter_probe
 
@@ -132,3 +133,49 @@ def lint_digest(root: str, runner: Runner) -> Optional[str]:
     "a clean probe is NOT signal": clean → None, and None never reaches the reasoner."""
     report = run_linter_probe(root, runner)
     return None if report.is_clean() else report.probe_digest()
+
+
+# --- workspace inventory (moved here from loop.py so the PLANNER can use the same ground
+# truth the critic gets; loop imports planner, so planner cannot import loop) ------------------
+
+_INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache",
+                                ".ruff_cache", "node_modules", "venv", ".venv", "site-packages",
+                                ".tox", ".eggs"})
+
+
+def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
+    """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
+    evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
+    blind spot on artifact steps: without it, a "write README.md" step was passed on FEASIBILITY with
+    zero write actions in evidence and no README on disk, and a FileNotFoundError naming one file was
+    read as "the directory does not exist" while the workspace held files. The listing is COMPLETE —
+    never truncated (operator's call: a bounded list weakens the one clause that makes it decisive) —
+    so "not listed = does not exist" always holds. Empty string when there is no workspace root to
+    inspect (evidence composition drops the section, as with the fetch facts)."""
+    if not root or not os.path.isdir(root):
+        return ""
+    labels = prompts.load_map("workspace_inventory")
+    entries: list[tuple[float, str, int]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _INVENTORY_EXCLUDE)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue  # vanished mid-walk (the coder is live) — a missing entry, never a crash
+            entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
+    if not entries:
+        return prompts.fill(labels["empty"], root=root)
+    entries.sort(key=lambda e: (-e[0], e[1]))
+    if flavor == "coder":
+        # The post-compaction files list for the CODER (operator's design: content lives on disk +
+        # in read_file range; the compacted view carries the LIST, not the bytes).
+        lines = [labels["coder_header"]]
+        lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+        lines.append(labels["coder_note"])
+        return "\n".join(lines)
+    lines = [prompts.fill(labels["header"], root=root)]
+    lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+    lines.append(labels["complete"])
+    return "\n".join(lines)
