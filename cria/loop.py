@@ -1566,6 +1566,16 @@ class Loop:
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []))
         ev += _gate_notes(sess)
+        # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
+        # tests; none of that can tell you the delivered program does anything. This check existed and
+        # was wired only into _periodic_satisfaction — so the plan-ON path, where a session ends because
+        # every STEP verified, never ran what it was shipping. Judges twice wrote "Let me run it" into
+        # their reasoning and structurally could not. The marker is EVIDENCE, never a gate, and is empty
+        # on a confirmed run or a task that needs no run, so a clean signal stays silent.
+        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
+                                            self._ctx.reasoner_role, rlog)
+        if exec_marker:
+            ev += "\n\n" + exec_marker
         satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools")),
                                                workspace_root=sess.workspace_root or "",

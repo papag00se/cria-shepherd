@@ -139,3 +139,35 @@ class Rule22_PromptsLiveInFiles(unittest.TestCase):
         for name in TODAYS_PROMPTS:
             with self.subTest(prompt=name):
                 self.assertTrue(prompts.load(name).strip())
+
+
+class BothCompletionPathsRunTheDeliverable(unittest.TestCase):
+    """The repo's own checks prove a workspace compiles, lints and passes its tests. None of that
+    can tell you the delivered program does anything — so cria runs it. That check reached ONE of
+    the ways a session can end: _periodic_satisfaction. The plan-ON path ends because every STEP
+    verified individually, and shipped without ever running what it built. Two judges wrote
+    'Let me run it' into their reasoning and structurally could not.
+
+    'Before shipping any fix, grep for its sibling' — this IS the sibling."""
+
+    def test_the_plan_ON_completion_critic_runs_the_deliverable(self):
+        src = inspect.getsource(loop.Loop._reopen_if_unsatisfied)
+        self.assertIn("live_execution_marker", src)
+
+    def test_the_plan_OFF_completion_check_still_does(self):
+        src = inspect.getsource(loop.Loop._periodic_satisfaction)
+        self.assertIn("live_execution_marker", src)
+
+    def test_the_result_reaches_the_JUDGE_as_evidence_not_just_a_closing_note(self):
+        # Appending it to the closing message tells nobody who can act. The completion critic is
+        # what decides whether to re-open the plan, so that is what must see it.
+        src = inspect.getsource(loop.Loop._reopen_if_unsatisfied)
+        marker_at = src.index("live_execution_marker")
+        judge_at = src.index("judge_satisfaction(task")   # the CALL, not the docstring
+        self.assertLess(marker_at, judge_at, "the run happens after the verdict it should inform")
+
+    def test_it_stays_silent_on_a_clean_run(self):
+        # Empty marker adds nothing to the evidence — principle 3, and it keeps a confirmed run
+        # from changing what the judge sees at all.
+        self.assertEqual(execcheck.ExecResult(execcheck.CONFIRMED).marker, "")
+        self.assertIn("if exec_marker:", inspect.getsource(loop.Loop._reopen_if_unsatisfied))
