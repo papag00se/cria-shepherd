@@ -184,11 +184,54 @@ _FRAME_ECHO_RE = re.compile(
     r"|<\|im_start\|>|<\|im_end\|>)")          # raw template markers
 
 
-def strip_frame_echo(summary: str) -> str:
-    """Drop summarizer-output lines that echo cria's own serialization frame (see _FRAME_ECHO_RE).
-    Returns the cleaned summary; a summary that was ALL echo comes back empty, and compact() then
-    fails safe exactly as it does on an empty summary (fold nothing, keep every turn verbatim)."""
-    kept = [ln for ln in summary.splitlines() if not _FRAME_ECHO_RE.match(ln.strip())]
+# A line long enough that matching cria's own ask verbatim cannot be coincidence. Short lines
+# ("Do this.", a bare heading) can legitimately collide; a full sentence cannot.
+_ECHO_MIN_CHARS = 40
+
+
+def _ask_sentences(ask: str) -> list[str]:
+    """cria's own instruction, split into comparable sentences."""
+    out = []
+    for raw in re.split(r"(?<=[.!?])\s+|\n", ask or ""):
+        t = " ".join(raw.split())
+        if len(t) >= _ECHO_MIN_CHARS:
+            out.append(t)
+    return out
+
+
+def strip_frame_echo(summary: str, ask: str = "") -> str:
+    """Drop summarizer-output lines that echo cria's own serialization frame (see _FRAME_ECHO_RE) or,
+    when ``ask`` is given, cria's own INSTRUCTION text. Returns the cleaned summary; a summary that
+    was ALL echo comes back empty, and compact() then fails safe exactly as it does on an empty
+    summary (fold nothing, keep every turn verbatim).
+
+    The instruction clause is measured, not anticipated. Run 20260801T161949 (mellum2, ada-handles,
+    0/4): the compactor at call 0062 produced a briefing that was mostly cria's own ask quoted back
+    at itself, and cria injected it whole. Counted in the coder's prompt at 0063 — 68,914 characters,
+    of which the continuation block was 54,274 (79%):
+
+        "Do not emit a tool/function call"  x145
+        "What you should say instead"       x47
+
+    Both are cria's words, from selfcompact_summary.txt. The coder read them and said so — *"This is
+    contradictory. The continuation says 'fix search_handles' which IS writing code. The continuation
+    also says 'Do not write code.'"* — and emitted no tool call. It never fully recovered: at 0084,
+    twenty calls later, the coder's own answer to the user still ENDED with that block, and the same
+    text reappears verbatim at 0089 and 0207. Every compaction after the first collapsed the same
+    way (0087, 0118, 0161, 0204).
+
+    cria composed the ask, so this needs no judgment: a line of the "summary" that is cria's own
+    sentence is not a summary of anything."""
+    drop = _ask_sentences(ask)
+    kept = []
+    for ln in summary.splitlines():
+        t = ln.strip()
+        if _FRAME_ECHO_RE.match(t):
+            continue
+        flat = " ".join(t.split())
+        if len(flat) >= _ECHO_MIN_CHARS and any(d in flat or flat in d for d in drop):
+            continue
+        kept.append(ln)
     return "\n".join(kept).strip()
 
 
@@ -295,7 +338,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
         lo = state.covered if (state.summary and band_tokens is not None) else head_end
         summarizable = [m for m in messages[lo:tail_start] if not _has_anchor(m)]
         if summarizable:
-            fresh = strip_frame_echo(summarize(summarizable))
+            fresh = strip_frame_echo(summarize(summarizable), prompts.load("selfcompact_summary"))
             # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
             # call (it happens — a reasoning model can burn its budget thinking and emit no content), and
             # taking it would advance ``covered`` to tail_start: every folded turn replaced by a rollup
@@ -315,7 +358,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             # tokens, bounding degradation to a handful of generations across a whole session. A
             # failed/empty refold keeps the un-refolded text (fail-safe: too long beats gone).
             if refold is not None and est_tokens(combined) >= refold_tokens:
-                folded = strip_frame_echo(refold(combined))
+                folded = strip_frame_echo(refold(combined), prompts.load("selfcompact_refold"))
                 if folded.strip():
                     combined = folded
             state = CompactState(summary=combined, covered=tail_start)
