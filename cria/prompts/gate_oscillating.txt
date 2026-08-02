@@ -1,0 +1,5 @@
+⟦ctx:checks⟧ You have been at this exact set of check results before in this session, and a later change brought them back. You are alternating between two states, not converging on one.
+
+When that happens the two problems are usually each other's cause — the change that clears one re-creates the other, so every individual fix looks correct and the pair never resolves. A smaller change will not break the cycle, because a smaller change is what is holding it.
+
+Read the file as it stands now, decide which of the two shapes it should be, and make it consistent in one pass. Do not fix the error you were just shown in isolation.

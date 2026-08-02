@@ -79,6 +79,13 @@ WHEEL_SPIN_WRITES = 5
 # the window, so a healthy edit→test→edit→test cycle never trips on its repeated test runs);
 # everything else matches on a normalized word-set of its args, loosely, so `pytest -q` /
 # `pytest -q --tb=short` count as the same hunt.
+# How many DISTINCT gate finding-states to remember per step. `last_gate_flag` answers "same as last
+# time" and an ALTERNATION defeats it by construction — the findings genuinely change every turn.
+# Base-rated 2026-08-01 across 61 captured runs: 19 (31%) return to a finding-set they had left.
+# Long enough to see an A-B-A cycle and its variants, short enough that a converging run forgets its
+# early noise.
+GATE_SIGNATURE_WINDOW = 8
+
 REPEAT_FINGERPRINT_N = 3
 REPEAT_WINDOW = 12
 # Writes are counted over a window sized to five full write→read→test cycles (3 calls per
@@ -236,6 +243,12 @@ class PlanSession(GuardState):
     flail_cap_logged: bool = False    # the cap-reached notice is emitted ONCE per step, not per drive
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # Every DISTINCT gate finding-set this step has produced, oldest first. `last_gate_flag` answers
+    # "same as last time" and an ALTERNATION defeats it by construction — the findings genuinely
+    # change every turn. Base-rated 2026-08-01 across 61 captured runs: 19 of them (31%) return to a
+    # finding-set they had already left. Bounded; only the signatures are kept, never the text.
+    gate_signatures: list = field(default_factory=list)
+    oscillation_note: str = ""   # set when the gate returns to a finding-set it had left
     # The last check output as TEXT, for the steer author. The flail trigger carries no gate outcome,
     # so its author saw the header "GROUND TRUTH FROM THE REPO'S CHECKS:" with NOTHING under it — in
     # 6 of 6 gemma runs, on the MAJORITY of steers (57/57, 88/109, 87/117, 69/74, 79/109, 31/47).
@@ -1622,6 +1635,21 @@ class Loop:
         if nudge and nudge == sess.last_gate_flag:
             rlog.emit("loop.gate_stalled", level="warning", step=idx)
         sess.last_gate_flag = nudge or ""
+        # OSCILLATION: this exact finding-set has been here before, with a different one in between.
+        # Two errors that are each other's cause — clearing A re-creates B — and every individual fix
+        # is locally correct, so nothing else in cria can see it. Walked on
+        # ada-handles_mellum2_codex_pon_1785628543: "fixture 'self' not found" and "undefined name
+        # 'self'" traded places for 18 targeted edits, each right for the error it was shown.
+        sig = (nudge or "").strip()
+        if sig:
+            prior = sess.gate_signatures
+            if sig in prior and prior[-1] != sig:   # seen before, but NOT immediately before
+                rlog.emit("loop.gate_oscillating", level="warn", step=idx,
+                          states=len(set(prior)), head=_clip(sig, 100))
+                sess.oscillation_note = prompts.load("gate_oscillating")
+            if not prior or prior[-1] != sig:
+                prior.append(sig)
+                del prior[:-GATE_SIGNATURE_WINDOW]
         sess.gate_git = outcome.git_state
         # Mirror guard_gate_verdict's gate-state onto the plan-ON path — WITHOUT this, last_gate_red /
         # last_gate_testless are only ever set by the plan-off readers, so the anti-laundering rollup
@@ -1751,6 +1779,12 @@ class Loop:
         (a tool call) is forwarded, or — if it answers with prose — a fresh ground-truth
         probe is emitted. It NEVER returns a bare/prose completion, which would end the
         harness turn (stopping the session) and render as an empty ⟦cria⟧ line."""
+        # The oscillation note rides WITH the re-nudge, never instead of it: the checker's own
+        # findings stay first and whole, and this only adds the fact that they have recurred. It is
+        # consumed on use so it appears once per detection, not on every subsequent turn.
+        if getattr(sess, "oscillation_note", ""):
+            reason = reason + "\n\n" + sess.oscillation_note
+            sess.oscillation_note = ""
         sess.nudge_reason = reason
         return self._work(sess, key, body, rlog)
 

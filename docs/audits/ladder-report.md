@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-01 18:10:51 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-01 18:20:20 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,20 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — nemotron-elastic**, 54 min elapsed.
+**RUNNING — zaya1**, 3 min elapsed.
 
 | next checkpoint | at | must hold |
 |:--|--:|:--|
-| milestone 4 | 60 min | 4/4 |
+| milestone 1 | 15 min | 1/4 |
 
-**Measured just now** (verifier run against a copy of the live workspace): **4/4**
+**Measured just now** (verifier run against a copy of the live workspace): **0/4**
 
 | deliverable | | detail |
 |:--|:--:|:--|
-| unit_tests | 🟢 | 7 passed in 1.62s |
-| live_test | 🟢 | live_test.py: real resolution (addr1+stake1 present) |
-| resolver_cli | 🟢 | live_test.py goose → address+holder+count |
-| readme | 🟢 | README.md covers install/run/tests: True |
+| unit_tests | 🔴 | no tests ran in 0.01s |
+| live_test | 🔴 | no live-test file found |
+| resolver_cli | 🔴 | no candidate resolver script |
+| readme | 🔴 | no README |
 
 ## Ladder
 
@@ -33,8 +33,8 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 5 | 2/4 | ⛔ BLOCKED |
-| 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 0 | — | 🔵 RUNNING |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
+| 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
+| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | 🔵 RUNNING |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
 
 ## Attempts
@@ -51,10 +51,12 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-01 16:01 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 91 | 166.4 | `ada-handles_mellum2_codex_pon_1785625253` |
 | 08-01 16:19 | mellum2 | 1/4 | milestone-miss-30min | 15m:1✓ 30m:1✗ | 225 | 142.9 | `ada-handles_mellum2_codex_poff_1785626379` |
 | 08-01 16:55 | mellum2 | 0/4 | milestone-miss-15min | 15m:0✗ | 101 | 145.6 | `ada-handles_mellum2_codex_pon_1785628543` |
+| 08-01 17:15 | nemotron-elastic | 4/4 | budget-killed | 15m:4✓ 30m:4✓ 45m:4✓ 60m:4✓ | 291 | 114.1 | `ada-handles_nemotron-elastic_codex_pon_1785629694` |
 
 ## Fixes landed during the ladder
 
 ```
+a91d193 fix(loop): the "task is finished but I can't stop" off-ramp never ran with a plan
 e651951 docs(ladder): walk mellum2 attempt 5 — the fix worked and the run still failed
 9b52224 fix(loop): cria withheld its correction on a premise false 73% of the time
 aa464fd fix(loop): an authoring step must stop saying "Write X" once X exists and is failing
@@ -69,7 +71,6 @@ b46dedd docs(ladder): walk mellum2 2/4 — the completion brake asks one fused q
 2d984fd docs(ladder): qwythos 4/4 in 12.7 min — third dense pass, first attempt
 3897a8d docs(ladder): ternary-bonsai and gemma4 both 4/4; record the sampling finding as untested
 7259203 fix(suite): the runner sets each model's sampling — it was missed 26 times running
-91d44ba feat(suite): ladder-report.md — a GENERATED follow-along report
 ```
 
 ---
