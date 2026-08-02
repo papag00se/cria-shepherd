@@ -318,6 +318,36 @@ lexical negation of the trigger.
 
 ---
 
+### 23b. READ IT. A count is not a reading, and a match is not a meaning
+**Rule.** Before you report a number about model behavior, open one of the things you counted and
+read it end to end — the whole prompt cria sent, the whole reply, the whole reasoning. Aggregate
+after you have read, never instead. A regex over a corpus tells you how often a *string* occurs; it
+cannot tell you what happened, and it will confidently tell you the opposite.
+**Why.** In one evening, five consecutive measurements of the same subsystem were wrong, each
+because something adjacent to cria's real behavior was measured instead of the behavior:
+
+| claimed | actual | the shortcut |
+|:--|:--|:--|
+| "97% of verdicts unparseable" | 32 parse fine | grepped for a literal key instead of calling cria's own parser |
+| "6.5 wasted calls per check" | those were the judge inspecting with its tools | counted calls, never opened one |
+| "49 genuinely unreadable" | 46, and a third were recoverable | scored `-confirm` replies against the wrong phase's key |
+| "the judge emits a constant" | it was answering correctly on mismatched pairs | hand-wrote prompts instead of replaying captured ones |
+| "decomposition is worse" | untestable from that data | both arms saw evidence that could not settle the question |
+
+Every one collapsed the moment a single file was opened. The first *actual* reading — 46 replies,
+in full — produced four findings no count had surfaced: a judge calling tools from a different
+harness's vocabulary, a read-only judge repeatedly trying to edit code, consecutive retries ruling
+opposite ways on identical evidence, and complete verdicts written in prose and discarded.
+**The tell.** You are about to write a percentage and you have not opened a single example. Or you
+are reaching for `grep -c` on a corpus of model output. Or your scorer re-implements a check cria
+already owns — that one has its own entry (rule 12) and this is the same disease at a larger scale.
+**Corollary.** "I read them" means the bytes passed in front of you. Thirty-seven seconds for
+forty-six files is not reading, and the resulting confidence is the dangerous part, not the error.
+**Embodied.** `docs/audits/ladder-walk.md` (the P4 thread, five corrections in sequence);
+`suite/replay_logic.py` (replays captured bodies, never invented ones);
+`cria/loop.py::verdict_from_reasoning` — the fix that only reading found.
+
+
 ## F. Conventions that hardened into rules
 
 ### 22. Model-facing strings live in prompt files, never inline f-strings

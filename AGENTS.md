@@ -52,6 +52,13 @@ derails on its own.
   notes are stripped before the model re-reads.
 - **stdlib-first** — no third-party runtime deps; Python ≥ 3.11.
 - **Secrets** — `env_file` is `~/.cria/.env` only; config names the env var, never the key.
+- **Open the file before you quote a number about it.** Any claim about how a model behaves —
+  a rate, a count, a "N of M" — requires that you have read at least one of the underlying
+  captures **in full**: the prompt cria sent, the reply, the reasoning. `grep -c` over
+  `~/.cria/calls` measures string frequency, not behavior. If your scorer re-implements a check
+  cria already owns (a verdict parser, a phase's key, a tool-name match), it is wrong; import
+  cria's. Five measurements of one subsystem were reported wrong in a single evening this way,
+  each collapsing the instant a file was actually opened. See principle 23b.
 - **Every fix needs a fails-before / passes-after test**; run `python -m pytest` (stdlib-only, fake
   upstream, no GPU/network).
 - **Commits** — branch off `main` for changes; commit + push per unit of work; end commit messages

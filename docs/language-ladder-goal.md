@@ -143,6 +143,28 @@ the most. Phase 1's C1 was walked, its steers were read, their diagnoses were co
 was written up as "the advice was right." It was not: one steer's snippet reproduced the exact error
 it was explaining, and the other's referenced an undefined name. Reading a fix is not checking it.
 
+### Reading a run means reading it
+
+The walk is not a search. You are not looking for a keyword — you are reading what cria said and
+what the model made of it, in order, until you understand the turn. That takes as long as it takes.
+
+Three habits that produced wrong answers here, all in one evening:
+
+- **Counting instead of reading.** "20 of 46 have X" is worth nothing if you have not opened one of
+  the 46. Four separate findings in that set — a judge calling another harness's tools, a read-only
+  judge editing code, retries ruling opposite ways, verdicts written in prose — were invisible to
+  every count run over them, and obvious on the first full read.
+- **Re-implementing a check cria owns.** A scorer that greps for `"satisfied"` is not cria's parser:
+  cria recovers a `done` key, fenced JSON, and a missing flag inferred from `proposed_fix`. Import
+  the real one. A phase has its own key — `satisfaction` rules on `satisfied`, `satisfaction-confirm`
+  on `consistent` — and scoring one against the other invents failures that are not there.
+- **Writing your own prompt instead of replaying the captured one.** The captured body already holds
+  the right task, the judge fence, the assembled evidence and the role's sampling. Hand-writing a
+  substitute drops all four silently, and then measures the substitute.
+
+If you are about to report a rate and cannot name a specific file you read end to end, you have not
+finished the walk.
+
 ### Fixing
 
 The fix must obey `docs/principles.md`. In particular:

@@ -86,3 +86,49 @@ class WiringTests(unittest.TestCase):
         src = inspect.getsource(loop._satisfaction_verdict)
         self.assertIn("verdict_from_reasoning", src)
         self.assertIn("extract_json_object", src)   # the normal path is still tried FIRST
+
+
+class ProseVerdictTests(unittest.TestCase):
+    """4 of the 46 stated the ruling in plain prose in the CONTENT field, with no JSON at all."""
+
+    # Verbatim, run 20260730T210615/0451-satisfaction-confirm.
+    PROSE = ("The claim is inconsistent. The script's entry point is pyproject.toml -> src.models, "
+             "but there is no src/__init__.py, so the import will fail in any real install/run. "
+             "Fix: add src/__init__.py and rename tests' imports.")
+
+    def test_a_prose_ruling_is_recovered(self):
+        out = loop.verdict_from_reasoning(self.PROSE, "consistent", _Rlog(), "x")
+        self.assertIsNotNone(out)
+        self.assertIs(out["consistent"], False)
+
+    def test_prose_approval_is_still_never_recovered(self):
+        approve = ("All six tests pass and the real API resolves goose/papagoose correctly; "
+                   "the work is complete and the claim matches reality.")
+        self.assertIsNone(loop.verdict_from_reasoning(approve, "consistent", _Rlog(), "x"))
+
+
+class PhantomToolTests(unittest.TestCase):
+    """The judge holds exactly list_dir + read_file. Across 46 unparseable replies it called Bash,
+    Grep, Read, Edit, EditFile, Write, ReadAll, ReadMe, web_fetch — and once a tool named after
+    itself. Bash/Grep/Read/Edit/Write are another harness's vocabulary."""
+
+    def test_every_phantom_seen_in_the_captures_is_named(self):
+        for name in ("Bash", "Grep", "Read", "Edit", "EditFile", "Write", "ReadAll",
+                     "ReadMe", "Gemma4Judge", "web_fetch", "write_file", "edit_file"):
+            with self.subTest(tool=name):
+                self.assertEqual(
+                    loop.leaked_judge_tool('<|tool_call>call:%s{path:<|"|>x<|"|>}<tool_call|>' % name),
+                    name)
+
+    def test_the_judges_REAL_tools_are_not_flagged(self):
+        for name in ("list_dir", "read_file"):
+            with self.subTest(tool=name):
+                self.assertEqual(loop.leaked_judge_tool(f'<|tool_call>call:{name}{{}}<tool_call|>'), "")
+
+    def test_ordinary_text_flags_nothing(self):
+        self.assertEqual(loop.leaked_judge_tool('{"satisfied": true}'), "")
+        self.assertEqual(loop.leaked_judge_tool(""), "")
+
+    def test_the_parse_path_records_it_by_name(self):
+        import inspect
+        self.assertIn("loop.judge_phantom_tool", inspect.getsource(loop._satisfaction_verdict))

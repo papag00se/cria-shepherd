@@ -402,11 +402,18 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         obj = extract_json_object(vtext)
         if obj is not None:
             return obj
-        # The answer was not a verdict — but the judge's own THINKING may carry one. Recovers a
-        # NOT-satisfied ruling only (see verdict_from_reasoning): 20 of 46 unparseable replies on
-        # this box held a clear, specific judgment that was being thrown away.
-        return verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog,
-                                      "satisfaction" + ("-noreason" if reasoning_off else ""))
+        ph = "satisfaction" + ("-noreason" if reasoning_off else "")
+        bogus = leaked_judge_tool(vtext)
+        if bogus:
+            # Not "unparseable" — the judge called a tool it does not have. Recorded by name so the
+            # record says what actually happened.
+            rlog.emit("loop.judge_phantom_tool", level="warn", phase=ph, tool=bogus)
+        # The answer was not a verdict — but the judge's own THINKING, or its PROSE answer, may carry
+        # one. Recovers a NOT-satisfied ruling only: of 46 unparseable replies on this box, 20 held a
+        # clear judgment in the reasoning and 4 more stated one in plain prose ("The claim is
+        # inconsistent... Fix: add src/__init__.py"), all of it discarded.
+        return (verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
+                or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose"))
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
         return None
@@ -798,11 +805,32 @@ _VERDICT_NEGATIVE = re.compile(
     r"|not (?:fully )?satisfied"
     r"|(?:remains?|still) (?:incomplete|unfinished|missing)"
     r"|no (?:live[- ]?test|readme|tests?) (?:file )?(?:was )?(?:exists?|found|written|created)"
+    # The CONFIRM phase's own negative wording — it rules on `consistent`, not `satisfied`, and
+    # says so in prose: "The claim is inconsistent. ... Fix: add src/__init__.py".
+    r"|(?:claim|verdict|reason) is inconsistent"
+    r"|\bis inconsistent\b"
     r")\b", re.I)
 
 
+# Tool names a judge EMITS that it was never given. Its menu is exactly list_dir + read_file; across
+# 46 unparseable gemma4 verdicts it called Bash, Grep, Read, Edit, EditFile, Write, ReadAll, ReadMe,
+# web_fetch, write_file, edit_file — and once a tool named after itself ("Gemma4Judge"). Bash/Grep/
+# Read/Edit/Write are another harness's vocabulary entirely. Detecting this does not repair the turn;
+# it names the failure in the record instead of filing it under "unparseable", and lets the retry
+# tell the model the truth about what it holds.
+_JUDGE_TOOLS = ("list_dir", "read_file")
+_LEAKED_CALL_NAME = re.compile(r"<\|tool_call>\s*call:([A-Za-z_][\w.]*)")
+
+
+def leaked_judge_tool(text: str) -> str:
+    """The name of a tool the judge invoked but does not have, or ""."""
+    m = _LEAKED_CALL_NAME.search(text or "")
+    name = m.group(1) if m else ""
+    return name if name and name not in _JUDGE_TOOLS else ""
+
+
 def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
-    """A NOT-satisfied verdict recovered from a judge's thinking, or None.
+    """A NOT-satisfied verdict recovered from a judge's thinking OR its prose answer, or None.
 
     `flag` is the phase's own key — "satisfied", "done" or "consistent" — so the caller's existing
     reading path is untouched.
