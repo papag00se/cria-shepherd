@@ -2094,7 +2094,38 @@ finding — but it earns the next several runs at this setting.
 **3/4, planner off** — 161 calls, 741 seconds. Second planner-off run, and the **same miss as the
 first**.
 
-**cria fault: none.** cria surfaced the facts; the model did not use them.
+**cria fault: yes.** *(This section originally said "none". That verdict was reached by COUNTING how
+many prompts contained the field names — 66 of 125 for `holder`, 122 for `total_handles` — and
+declaring the facts surfaced. It was wrong, and reading the run call by call is what showed it. The
+original wording is left below with the correction, not edited away.)*
+
+### What the READING found that the count could not
+
+**Call 0005 — it tried to finish after four calls**, and its reasoning quotes the operator's own
+global instruction file back: *"The user gave a project instruction that says 'One rule to rule them
+all: Mitigations, fallbacks, and band-aids are strictly prohibited…'"* The coder is reading the
+human's private standing instructions as if they were the task.
+
+**Call 0010 — the model concluded `goose` does not exist.** *"The live tests failed because the
+handles 'goose' and 'papagoose' are not valid ADA handles."* False — it was calling
+`https://api.handle.me/{handle}` instead of `/handles/{handle}`. It then invented `ada-handle-me`,
+`ada-handle-alice`, and `ada-handle-bob` through `ada-handle-heidi`, and spent roughly forty calls
+chasing fictional handles.
+
+**Call 0029 — cria ENDORSED the invented handles.** Verbatim:
+
+> *"The coder wrote 'ada-handle-bob' through 'ada-handle-heidi' in the same file — **those are likely
+> the working handles**. … The coder should change the test to use working handles."*
+
+Every one of those is fabricated. cria read names out of the coder's own file and handed them back as
+probable ground truth — the exact failure `urlgrounding` exists to prevent, for URLs, and which has
+no equivalent for handle/identifier values. The task names `goose` and `papagoose`; cria pointed the
+coder away from them.
+
+The model only recovered at 0037 by fetching `openapi.json` itself and finding `/handles/{handle}`
+and `resolved_addresses.ada`.
+
+**Superseded original verdict:** ~~cria surfaced the facts; the model did not use them.~~
 
 | check | verdict |
 |:--|:--|
