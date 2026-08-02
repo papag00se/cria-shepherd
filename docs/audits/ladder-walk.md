@@ -1813,7 +1813,31 @@ transient, during the run.
 
 Counted across every capture: **251 coder prompts show a 403 from the API, across 3 runs.**
 
-### This is a confounder and it needs handling before more runs
+### CORRECTION (same session, after building the guard)
+
+The diagnosis above is **wrong** and is left standing only so the correction is visible.
+
+`api.handle.me` does not rate-limit us. It blocks `Python-urllib/3.x` **by name**. Verified on this
+box:
+
+| client | result |
+|:--|:--|
+| urllib default UA | **403** |
+| curl | 200 |
+| browser UA | 200 |
+| python-requests | 200 |
+
+I found this because the preflight probe I wrote to detect "throttling" used urllib's default UA and
+returned 403 every single time — a guard that would have refused to start **any** run, forever, while
+looking exactly like the problem it was written for.
+
+What this means for the run: the coder's generated code uses `requests` and is unaffected; cria's own
+`web_fetch` sets a User-Agent and is unaffected. Whatever produced 403s inside the run, "we hammered
+the API" is not supported by the evidence, and spacing the runs would have fixed nothing.
+
+### What was actually built
+
+
 
 Thirteen back-to-back runs, each making dozens of live calls to `api.handle.me`, is enough to get
 throttled. A throttled run fails for a reason that is neither cria's nor the model's, and it is
@@ -1827,7 +1851,13 @@ scored exactly like a real failure — which quietly corrupts the ladder's evide
    it says nothing about the model.
 3. Space the runs, or the ladder measures our own request rate.
 
-**Not built here** — I am at the end of this session's context and will not ship a guard I cannot
-validate. It is the first thing to do next, ahead of any further mellum2 attempts.
+Both were built, and the first one was wrong — see the correction above. What stands:
+
+* `preflight` probes any task declaring a `live_probe` and refuses READY on non-200, identifying
+  itself with a real User-Agent;
+* `run.py` marks a row `aborted` when five or more of its own coder prompts carry a 403/429. A run
+  peppered with them is not evidence about the model, whatever the cause.
+
+The URL is declared in the task's `meta.toml`, never in cria.
 
 **Model wall: not reached.** This run proves nothing either way.
