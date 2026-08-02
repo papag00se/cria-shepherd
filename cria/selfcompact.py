@@ -393,7 +393,14 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     working = band + messages[tail_start:]
     working = stub_old_write_args([m for m in working if not _is_files_msg(m)])
     anchors = [m for m in anchors if not _is_files_msg(m)]
-    out = messages[:head_end] + task + files + anchors + [_summary_msg(state.summary)] + working
+    # NO summary, NO rollup header. The empty-summary guard above covers the case where the compactor
+    # ANSWERED with nothing; this covers the other way in — a middle made entirely of anchored messages
+    # leaves nothing summarizable, `summarize` is never called, and `state.summary` is still "". The
+    # header was emitted anyway: a paragraph telling the coder this is its summary of earlier turns and
+    # to read the disk where the summary disagrees, followed by nothing. cria asserting a record exists
+    # when it holds none, in the message that IS the record.
+    rollup = [_summary_msg(state.summary)] if state.summary.strip() else []
+    out = messages[:head_end] + task + files + anchors + rollup + working
     return out, state, True
 
 

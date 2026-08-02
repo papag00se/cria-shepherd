@@ -419,3 +419,42 @@ class SummaryRefoldTests(unittest.TestCase):
         self.assertTrue(applied)
         self.assertIn("increment", st.summary)                     # too long beats gone
         self.assertIn("facts.", st.summary)
+
+
+class EmptyRollupHeaderTests(unittest.TestCase):
+    """A rollup header with nothing under it tells the coder it is reading a summary of its earlier
+    turns — and to prefer the disk where the summary disagrees — over an empty body. The existing
+    guard covers a compactor that ANSWERED with nothing; this is the other way in."""
+
+    @staticmethod
+    def _anchored(n):
+        big = selfcompact._SPEC_ROUTES_MARKER + " /handles/{handle} " + "x " * 400
+        return ([{"role": "system", "content": "sys"}]
+                + [{"role": "user", "content": big} for _ in range(n)])
+
+    def test_nothing_summarizable_ships_no_rollup_header(self):
+        calls = []
+
+        def summarize(ms):
+            calls.append(ms)
+            return "unreachable"
+
+        out, state, applied = selfcompact.compact(
+            self._anchored(4), summarize, selfcompact.CompactState(),
+            pinned_task="do the thing", force=True)
+        self.assertEqual(calls, [])                 # every message was anchored — nothing to fold
+        self.assertEqual(state.summary, "")
+        headers = [m for m in out
+                   if (m.get("content") or "").startswith(selfcompact.SUMMARY_MARKER)]
+        self.assertEqual(headers, [], "an empty ⟦ctx:rollup⟧ header was shipped")
+        self.assertTrue(applied)                    # the tail still shrank; that part is real
+
+    def test_a_real_summary_still_gets_its_header(self):
+        msgs = ([{"role": "system", "content": "sys"}]
+                + [{"role": "user", "content": "step " + "y " * 400} for _ in range(4)])
+        out, state, _ = selfcompact.compact(
+            msgs, lambda ms: "Built the resolver.", selfcompact.CompactState(),
+            pinned_task="do the thing", force=True)
+        self.assertEqual(state.summary, "Built the resolver.")
+        self.assertTrue(any((m.get("content") or "").startswith(selfcompact.SUMMARY_MARKER)
+                            for m in out))
