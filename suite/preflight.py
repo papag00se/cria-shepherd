@@ -25,6 +25,9 @@ from pathlib import Path
 
 SUITE = Path(__file__).resolve().parent
 
+# What a live-service probe identifies as. Never urllib's default — see live_services().
+PROBE_UA = "cria-suite-preflight/1.0 (+reachability check)"
+
 # tool -> (version probe, what it is needed for)
 TOOLS = {
     "python3": (["python3", "--version"], "ada-handles, sqlite-inventory, the seeded Python tasks"),
@@ -162,8 +165,14 @@ def live_services():
                 url = line.split("=", 1)[1].strip().strip('"\'')
         if not url:
             continue
+        # A REAL User-Agent. The first version of this probe used urllib's default and got 403 from
+        # api.handle.me every single time — the service blocks `Python-urllib/3.x` by name, while
+        # curl, a browser and `python-requests` all get 200. That guard would have refused to start
+        # ANY run, forever, and it would have looked exactly like the throttling it was written for.
+        # Verified on this box: urllib-default 403, curl 200, browser 200, python-requests 200.
+        req = urllib.request.Request(url, headers={"User-Agent": PROBE_UA})
         try:
-            with urllib.request.urlopen(url, timeout=15) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 status = r.status
         except urllib.error.HTTPError as e:
             status = e.code

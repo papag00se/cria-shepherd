@@ -82,3 +82,30 @@ class PreflightRefuses(unittest.TestCase):
         import importlib
         src = inspect.getsource(importlib.import_module("preflight").main)
         self.assertIn("wait and retry", src)
+
+
+class ProbeMustNotBlockEverything(unittest.TestCase):
+    """The first version of the live probe used urllib's DEFAULT User-Agent and got 403 from
+    api.handle.me every single time — the service blocks `Python-urllib/3.x` by name.
+
+    Verified on this box: urllib-default 403, curl 200, browser 200, python-requests 200.
+
+    That guard would have refused to start ANY run, forever, and it would have looked exactly like
+    the throttling it was written to detect. It also means my walk of run 1785675899 drew the wrong
+    conclusion from the same evidence: 'the API rate-limited us' was really 'this client is blocked
+    by name'.
+    """
+
+    def test_the_probe_sends_a_real_user_agent(self):
+        import importlib
+        import inspect
+        pf = importlib.import_module("preflight")
+        src = inspect.getsource(pf.live_services)
+        self.assertIn('headers={"User-Agent": PROBE_UA}', src)
+        self.assertNotIn("urlopen(url,", src)
+
+    def test_the_ua_is_not_urllibs_default(self):
+        import importlib
+        ua = importlib.import_module("preflight").PROBE_UA
+        self.assertTrue(ua)
+        self.assertNotIn("Python-urllib", ua)
