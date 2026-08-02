@@ -191,6 +191,33 @@ not repeat — so "more calls" never means "the same call in a loop".)
 author ([`project_unified_steer_author`] — one authored step per stuck detector); [`feedback_no_fallbacks`]
 (ask the reasoner a targeted question rather than guess with fuzzy code).
 
+**COROLLARY — a SINGLE QUESTION is a first-class tool, and it is the correct answer to any question
+a regex is being asked to answer semantically.** If deterministic code is reaching for a keyword
+list, a verb list, or a proximity window to decide something that is really a *judgment*, that is
+principle 8 inverted: fuzzy work done by code that cannot be fuzzy. Ask instead. One focused
+yes/no or which-of-these call is not "extra inference" under this principle — it is the cheaper
+half of the trade, and it is what stops the alternative, which is a pattern that must be retuned
+every time reality produces a sentence it did not anticipate.
+
+*Measured, 2026-08-02.* A rule was added to stop the noise judge deleting deliverable steps, keyed
+on `(write|create|add|implement|…)` within 40 characters of a filename. It went through **four
+revisions in four runs and produced three distinct false positives**:
+
+| revision | wrongly protected | wrongly missed |
+|:--|:--|:--|
+| verb anywhere + file anywhere | `"Commit the three files (…), add a .gitignore …"` | — |
+| verb adjacent to file | — | `"Write a live test file (e.g., test_live_resolve.py)"` |
+| 40-character window | `"Add a requirements.txt entry for requests"` | — |
+
+Each cost a run. The tell was in the diagnosis all along: *the difference between authoring a
+deliverable and authoring plumbing is not in the sentence — it is in whether the task asked for it.*
+No window over the sentence can recover information the sentence does not contain. One question to
+the judge that already exists — "which of these steps produce something the task asked for?" —
+answers it directly, and the judge is already being called on that exact list.
+
+**The test for this smell:** if you are tuning a pattern because a real sentence broke it, stop and
+ask whether a model call would have been right the first time.
+
 ### 10. Verify by doing, not by reading — cria makes its own read-only probes
 **Rule.** If cria can *act*, it gets ground truth on its own terms — it picks the command and
 the output format — rather than parsing the model's noisy claim. The syntax floor

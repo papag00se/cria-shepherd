@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 07:50:37 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-02 08:06:58 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,20 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_pon_1785681911` (capture `/home/jesse/.cria/calls/20260802T074522-019fc2ef-c7ff-7c30-a78d-351fa923113d`), then write `## ada-handles_mellum2_codex_pon_1785681911` into `docs/audits/ladder-walk.md`.
+**RUNNING — mellum2**, 15 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **2/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🔴 | 1 failed, 4 passed in 0.02s |
+| live_test | 🔴 | no live-test file found |
+| resolver_cli | 🟢 | resolve_handle.py goose → address+holder+count |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
@@ -19,7 +32,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 15 | 3/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | on | 15 | 3/4 | 🔵 RUNNING |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
 | 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |

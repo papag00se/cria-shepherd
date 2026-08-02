@@ -22,7 +22,12 @@ derails on its own.
   *doing* (cria runs its own read-only probes), not by reading the model's claim. Files alone are
   never signal. Surface every metric from the authoritative event, never a re-count or text-match.
   Don't fear an extra reasoner call that grounds the next action — a purposeful call is cheap next to
-  the coder churn (re-fetches, failed edits, gate loops) it prevents.
+  the coder churn (re-fetches, failed edits, gate loops) it prevents. **A single focused question is
+  a first-class tool**: when deterministic code reaches for a keyword/verb list or a proximity window
+  to settle what is really a judgment, ask instead. That is not extra inference — it is the cheaper
+  half of the trade, and it avoids a pattern that must be retuned every time reality writes a
+  sentence it did not anticipate (measured: one such rule took four revisions and three false
+  positives in four runs).
 - **Never destroy information the model reads** — truncation is a footgun (any clip is an
   undetectable lie); the context floor is the ONE lossless window-fit point, and any reduction it
   does make is LABELLED. Never cap output for latency. **Never speak over a tool**: cria may SELECT
