@@ -1,3 +1,4 @@
+import base64
 import json
 import pathlib
 import tempfile
@@ -124,6 +125,57 @@ class TranslateWriteTests(unittest.TestCase):
         echoed = f"os.replace failed\nprint('{_WROTE}')\nPermissionError: denied"
         hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": echoed}]
         self.assertEqual(represent_inbound(hist)[-1]["content"], echoed)   # untouched — the failure is shown
+
+
+class WriteWithNoContentTests(unittest.TestCase):
+    """`content` is a REQUIRED argument of write_file, and `args.get("content") or ""` turned its
+    absence — and its explicit `null` — into an empty string, which the byte-exact write then put on
+    disk. A working file truncated to zero bytes, reported back to the coder as a successful write,
+    and validate-before-lower cannot object because an empty file parses.
+
+    The same lesson as `new_string` on the edit path: a MISSING required argument is not an empty
+    one. Only absent/null is refused; an intentional empty string still writes."""
+
+    def _cmd(self, args):
+        comp = _call("write_file", args)
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        return _lowered_cmd(comp)
+
+    def test_an_absent_content_is_refused_not_written_as_empty(self):
+        cmd = self._cmd({"path": "keep.py"})
+        self.assertIn("content", cmd)
+        self.assertIn("cut off", cmd)
+        self.assertNotIn("write_bytes", cmd)      # nothing was lowered to disk
+
+    def test_a_null_content_is_refused_not_written_as_empty(self):
+        cmd = self._cmd({"path": "keep.py", "content": None})
+        self.assertIn("cut off", cmd)
+        self.assertNotIn("write_bytes", cmd)
+
+    def test_an_intentional_empty_string_still_writes(self):
+        cmd = self._cmd({"path": "keep.py", "content": ""})
+        self.assertIn("write_bytes", cmd)
+        self.assertNotIn("cut off", cmd)
+
+    def test_a_falsy_but_real_content_is_not_discarded(self):
+        """`content or contents or ""` also threw away a legitimate `0` — silently, as an empty
+        file. The lowered command carries the bytes base64-encoded, so assert on those."""
+        self.assertIn(base64.b64encode(b"0").decode(), self._cmd({"path": "n.txt", "content": 0}))
+
+    def test_the_contents_spelling_still_works(self):
+        cmd = self._cmd({"path": "a.py", "contents": "body"})
+        self.assertIn(base64.b64encode(b"body").decode(), cmd)
+
+    def test_the_refusal_is_traced(self):
+        events = []
+
+        class Rec:
+            def emit(self, kind, **fields):
+                events.append((kind, fields))
+
+        comp = _call("write_file", {"path": "keep.py"})
+        translate_outbound(comp, _CMD_SHELL, Rec(), injected={"write_file"})
+        self.assertIn("writeproxy.write_missing_arg", [k for k, _f in events])
 
 
 class MalformedFusedCallTests(unittest.TestCase):
@@ -962,7 +1014,7 @@ class WriteTempEscapesWorkspaceTests(unittest.TestCase):
 
     def _run_write(self, path: str, content: str = "print(1)\n"):
         """Execute the REAL generated write program — the same python cria lowers to the harness."""
-        import base64, re, subprocess
+        import re, subprocess
         from cria.writeproxy import _write_command
         cmd = _write_command(path, content)
         m = re.search(r"python3 - <<'__CRIA_PY_EOF__'\n(.*?)\n__CRIA_PY_EOF__", cmd, re.S)

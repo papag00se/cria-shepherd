@@ -738,7 +738,22 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif name in _WRITE_NAMES and name in injected:
                 path = _tool_path(args)
                 if path:
-                    cmd = _write_command(str(path), _repair_double_escaped(str(args.get("content") or args.get("contents") or "")))
+                    # The `new_string` lesson below, for the tool that carries whole files. `content`
+                    # is declared required, and `args.get("content") or ""` turned its ABSENCE — and
+                    # its explicit `null` — into an empty string, which the byte-exact write then put
+                    # on disk: a working file truncated to zero bytes, reported to the coder as a
+                    # successful write. Validate-before-lower does not catch it either, because an
+                    # empty file parses. Only a MISSING/NULL value is refused; an intentional empty
+                    # string still writes, and a falsy-but-real value (0) is no longer discarded.
+                    body = args.get("content")
+                    if body is None:
+                        body = args.get("contents")
+                    if body is None:
+                        cmd = _refusal_command(prompts.load("write_missing_content"))
+                        if rlog is not None:
+                            rlog.emit("writeproxy.write_missing_arg", tool=name, arg="content")
+                    else:
+                        cmd = _write_command(str(path), _repair_double_escaped(str(body)))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if path and args.get("old_string") is not None:

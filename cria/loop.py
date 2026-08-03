@@ -5484,12 +5484,7 @@ def _clean_completion(completion: dict, role) -> None:
             msg["content"] = role.clean_content(msg["content"])
 
 
-def _content_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
-    return ""
+_content_text = massage.content_text  # ONE owner for the string-or-parts-list content shape
 
 
 def _extend_summary(summary: str, idx: int, item: str) -> str:

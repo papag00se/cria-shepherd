@@ -1,0 +1,1 @@
+Your write_file call has no `content` value — the key is absent or null, not empty. Nothing was written and the file on disk is untouched. This usually means the call was cut off before it finished. Send the write again as one complete call with both `path` and `content`; if you really meant to create an EMPTY file, pass `content` explicitly as an empty string.
