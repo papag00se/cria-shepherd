@@ -3724,9 +3724,25 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> N
                 # it just fixed).
                 gs.recent_actions = []
                 gs.recent_writes = []
-                gs.repeat_action = f"{name} {args}"
+                # BOUND IT. This string is pasted into the coder's redirect verbatim, and for a
+                # write it carried the WHOLE file body. Walked on
+                # ada-handles_fabliq_codex_pon_1785732102 call 0079: cria re-sent the exact 3.2 KB of
+                # handle_resolver.py it was telling the model to stop producing, under the words
+                # "Choose a DIFFERENT next action". The model satisfied that literally — same 3.2 KB,
+                # new filename — and did it again three calls later. That is where test_handle.py and
+                # resolver.py came from: cria handed over the content and asked for something
+                # different, so the only thing left to vary was the name.
+                #
+                # The line below already clips this same string to 120 chars for cria's OWN log. It
+                # was bounded for the record and unbounded for the model.
+                gs.repeat_action = _clip(f"{name} {args}", REPEAT_ACTION_CHARS)
                 rlog.emit("loop.repetition", step=step, tool=name,
                           count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
+
+
+# How much of the repeated action the redirect quotes back. Enough to IDENTIFY it (tool + path +
+# the leading args); never enough to re-supply a file body the model would otherwise have to retype.
+REPEAT_ACTION_CHARS = 200
 
 
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
