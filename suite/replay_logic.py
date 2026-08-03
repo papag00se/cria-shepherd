@@ -92,6 +92,19 @@ def replies(cap):
             tools = None
         yield f, comp, tools
 
+class IntegrityError(RuntimeError):
+    """An assumption this harness measures THROUGH has stopped holding — a prompt anchor that moved,
+    a template that no longer has literal text around its placeholder.
+
+    Its own class because of what ``main`` used to do with it. The per-run ``except Exception``
+    turned any raise into ``n = 0``, and a zero is never printed (the detail rows only show runs
+    that fired), so the loudest failure this file can produce came out as
+    ``would fire on 0/96 runs (0%)`` with nothing else on the line — the exact reading
+    :func:`around` raises to prevent, printed as if it were a measurement. Reproduced by shortening
+    a prompt template: the check reported 0/86 (0%) and said nothing. Every offline number this
+    project quotes comes off these checks, so an integrity failure is never caught per-run: it
+    leaves ``main`` and takes the process's exit code with it."""
+
 
 def around(template, placeholder, width=40):
     """The literal text a prompt template puts immediately BEFORE and AFTER ``placeholder`` — so a
@@ -102,7 +115,7 @@ def around(template, placeholder, width=40):
     if any("{{" in a or "}}" in a for a in anchors):
         # A silent 0 is the one answer this harness must never give: it reads as "the guard never
         # fires" when it means "the anchor moved". Fail loudly instead.
-        raise ValueError(f"{template}: no literal anchor around {placeholder} — widen or re-anchor")
+        raise IntegrityError(f"{template}: no literal anchor around {placeholder} — widen or re-anchor")
     return anchors
 
 
@@ -871,7 +884,33 @@ CHECKS = {
 }
 
 
-def main() -> None:
+def run_check(name, data):
+    """(fired, answered, rows, errors) for one check over ``data``.
+
+    A run that RAISED did not answer the question — it is not a zero. It is kept out of both halves
+    of the rate and returned separately, because a rate whose denominator quietly includes runs that
+    never produced a number is the same silent under-count :func:`around` refuses to make.
+
+    :class:`IntegrityError` is not caught at all. It says the harness is measuring the wrong thing,
+    which is not a fact about one run, and swallowing it per-run is what turned "the anchor moved"
+    into "the guard never fires"."""
+    fired, answered, rows, errors = 0, 0, [], []
+    for row, cap, ws in data:
+        try:
+            n, why = CHECKS[name](row, cap, ws)
+        except IntegrityError:
+            raise
+        except Exception as e:  # noqa: BLE001 — one run's broken evidence, reported, never a zero
+            errors.append((cap.name, f"{type(e).__name__}: {e}"))
+            continue
+        answered += 1
+        if n:
+            fired += 1
+        rows.append((row.get("model", "?"), row.get("score"), n, why))
+    return fired, answered, rows, errors
+
+
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", choices=sorted(CHECKS), action="append")
     ap.add_argument("--detail", action="store_true")
@@ -881,27 +920,33 @@ def main() -> None:
     data = runs()
     print(f"replaying {len(data)} captured runs through cria's deterministic logic "
           f"— no model calls\n")
+    broke = 0
     for name in wanted:
-        fn = CHECKS[name]
-        fired = 0
-        rows = []
-        for row, cap, ws in data:
-            try:
-                n, why = fn(row, cap, ws)
-            except Exception as e:  # noqa: BLE001
-                n, why = 0, f"replay error: {type(e).__name__}"
-            if n:
-                fired += 1
-            rows.append((row.get("model", "?"), row.get("score"), n, why))
-        pct = 100 * fired / max(len(data), 1)
-        print(f"── {name}: would fire on {fired}/{len(data)} runs ({pct:.0f}%)")
+        fired, answered, rows, errors = run_check(name, data)
+        pct = 100 * fired / max(answered, 1)
+        of = f"{fired}/{answered} runs ({pct:.0f}%)" if answered else "NO run answered"
+        print(f"── {name}: would fire on {of}")
+        if errors:
+            # Printed unconditionally, above the detail rows. An errored run used to become a zero
+            # that nothing ever printed, so a check could report 0% while every single run had
+            # raised — and every offline number this project quotes comes off these checks.
+            broke += len(errors)
+            print(f"   !! {len(errors)} of {len(data)} run(s) RAISED and are in neither half of "
+                  f"that rate:")
+            for cap_name, msg in errors[:5]:
+                print(f"      · {cap_name}: {msg}")
+            if len(errors) > 5:
+                print(f"      · … {len(errors) - 5} more")
         if args.detail:
             for model, score, n, why in rows:
                 if n:
                     sc = f"{score:.0f}/4" if score is not None else "—"
                     print(f"     {model:17s} {sc:>5s}  x{n:<3d} {why}")
         print()
+    if broke:
+        print(f"!! {broke} check-run(s) raised — the rates above are over the runs that ANSWERED.")
+    return 1 if broke else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
