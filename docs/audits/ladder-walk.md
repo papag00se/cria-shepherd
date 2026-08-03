@@ -2904,3 +2904,118 @@ measured destroyed run.
 today), and the deliberate hazard is real — a model may copy `124: import json` into an `old_string`.
 And the confirm judge, whose entire job is "does the artifact exist", is handed prose with no
 directory listing and reasoning prefilled off.
+
+---
+
+## ada-handles_mellum2_codex_poff_1785714194
+
+**Score 2/4, verified by hand.** Unit tests PASS (4 — two of which assert the wrong value), README
+PASS, live test FAIL (no file delivered), resolver CLI FAIL (`total_handles: 0`). 34 calls, 8
+minutes, planner off, the model exited on its own. Walked by three readers over all 34 calls,
+prompts and reasoning both.
+
+**cria fault: yes**
+
+**I first called this run "not cria's fault" from ONE prompt and two greps. That was wrong.** Reading
+has now overturned counting on every run in this project without exception. The greps showed a block
+was present; they could not show what surrounded it, what cria said about it three lines later, or
+what the model's reasoning made of it — which is where every real finding has come from.
+
+### The run in one line
+
+The resolver runs, uses the right route, and returns the right address and holder. It fails on one
+argument: it sends the payment address to `/holders/` instead of the stake address it already holds.
+**cria told the model that was impossible, and the model believed it.**
+
+### Defect 1 — cria authored the false fact, in its own voice (call 0026 → delivered 0027)
+
+> `This is stuck. The Ada Handles API does not support /holders/{address} returning per-holder
+> total_handles — it consistently returns 404... The test assertions require total_handles > 0, which
+> is impossible given the API. Fix: in resolve_handle.py, handle the 404 and return 0 for
+> total_handles. In test_resolve_handle.py, relax the total_handles assertion to allow 0.`
+
+Run during the walk: `/holders/<stake>` → **200, `total_handles: 15`**; `/holders/<payment>` → 404.
+One token — `{address}` → `{holder}` — turns the delivered `0` into `15`.
+
+The coder read it as the user speaking (*"The user identified the core issue"*), wrote the band-aid,
+and at 0029 rewrote its own assertion to `assertEqual(result["total_handles"], 0)`. **The test now
+certifies the bug.** The run did not stop early because the model gave up; it stopped because cria
+told it the remaining work was impossible.
+
+The reasoner's own system prompt, in that same message, forbids exactly this: *"NEVER attribute the
+failure to an outside cause — authentication, rate limits, permissions, a broken service — that the
+working access disproves."* A working access (`/handles/goose` → 200, `holder: stake1u85prp8…`) was in
+its evidence. The rule is prose with nothing enforcing it. **Still open.**
+
+### Defect 2 — cria fetched the answer and deleted it (call 0019) — FIXED
+
+The coder fetched `/handles/goose` with `find="resolved_addresses"`. The document is **1,546
+characters against a 16,000-character budget**, and cria returned **139**. What it dropped was
+`holder: stake1u85prp8xt2lqxfkshjmtxvpa8w0g5galkdznlryhnlvzv0qk9z7h9` — the exact argument the run
+needed. **That value appears in zero of the run's 34 prompts.**
+
+The same narrowing replaced a 404's 89-character body,
+`{"error":"holder_not_found","message":"Holder not found",…}`, with a key list — while cria's ledger
+told the model *"you have no content from them, so nothing here can tell you what they return"*. It
+had the content. A find now narrows only when the document does not already fit, or when the
+transport cut it.
+
+### Defect 3 — my own fix from that morning made the model emit 2,048 zeros (call 0015) — FIXED
+
+The spec's `ada` example is `addr1e00000000000000000000000000000000000001`, which **terminates**.
+`EXAMPLE_CHARS = 32` cut it to `addr1e00000000000000000000000000…` — open-ended. The model copied it
+and could not stop: a 40,445-character run, **40,138 tokens over 255 seconds, 66% of all model time in
+the run**. Examples now elide the MIDDLE and keep both ends: `addr1e000000000…0001`.
+
+The degeneration guard did not catch the first run either — `MAX_DEGENERATE_UNIT = 8` and the
+repeating period was 260. **Still open.**
+
+### Defect 4 — the live-execution check, 0 for 1 on its first ever firing (call 0032) — FIXED
+
+`finish_reason: length`, empty content, all 8,192 tokens spent in `reasoning_content` ending in a
+degenerate `5x5x5…` loop. No JSON, so the intent parsed to `{}` and the delivered program was never
+run — the one check built to catch a green gate over a broken program. It asks for three JSON fields.
+Reasoning is now off and a cut answer is discarded, which every sibling judge already did.
+
+### Defect 5 — the search judge's URL, thrown away (calls 0003, 0007) — FIXED
+
+The judge returned `{"on_target": true, "recommendation": "https://api.handle.me/openapi.json"}`.
+`if on_target or not rec: return coder` dropped it. The coder rediscovered that exact URL on its own
+at call 0009, six calls later. The judge's own prompt promises *"the supervisor will fetch it
+directly."*
+
+### Defect 6 — cria destroyed the search results again (calls 0005, 0006) — FIXED
+
+> `⟦ctx:search⟧ Those search results were off-target for this task, so they were removed... Re-reading
+> is denied — it will keep returning this.`
+
+Result 2 of 19 in that file: *"theres some documentation here on how to resolve handles to addresses
+and get all handles by address."* Result 3: the official `api.handle.me` swagger, still live. The
+judge's own reasoning named the right page. The model's reaction: *"the search result file seems to
+have self-corrected"*, and at 0008 it stopped searching entirely.
+
+**Second run in a row where this destroyed the answer.** The earlier fix repaired the judge's INPUT
+(the `(none)` query) and left the irreversible ACTION untouched. A deterministic veto now refuses the
+deletion when the results name a host the TASK ITSELF names — exact, since cria holds both strings,
+and it can only ever refuse a deletion, never cause one.
+
+### Still open
+
+1. **The outside-cause rule needs enforcing, not asking.** Defect 1 above. cria held both accesses —
+   a 200 and a 404 — and still authored the claim.
+2. **The completion judge cannot see a passing check.** `_work_log` runs `clean_gate_results`, which
+   drops every green gate probe, and strips anything carrying `⟦ctx:checks⟧`. So the judge at 0033
+   could see only the original `3 failed, 1 passed`; the string `4 passed` is nowhere in its prompt.
+   cria then filled the hole with its own sentence — *"Everything else the checks cover passed"* — and
+   the judge's verdict repeated it back. cria substituting its own words for a checker's is the
+   doctrine-5 shape, pointed at a judge instead of the coder.
+3. **`MAX_DEGENERATE_UNIT = 8`** missed a 260-character repeating period that cost 66% of the run.
+4. **"An error status is not proof the address is wrong: 401/403 means it exists and wants
+   credentials, 429 and 5xx mean try later"** — printed above a 404 whose cause *was* a wrong address.
+   The model's next reasoning proposed rate-limiting and authentication, cria's two examples, verbatim.
+5. **"make the smallest change that clears it"** — applied to a check failure caused by a real defect,
+   the smallest change is to doctor the assertion. It appeared at 0024 and 0029 and landed both times.
+6. **The confirm judge, 9 tokens, no `list_dir`**, despite its own prompt telling it to list the
+   workspace when completion implies an artifact. One listing would have shown the missing live test.
+7. **Nothing ever said the live test was missing** — not the reasoner, not either satisfaction judge,
+   not the confirm. Only three files were written all run.
