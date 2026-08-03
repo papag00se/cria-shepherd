@@ -770,8 +770,49 @@ def check_reasoning_tool_call(row, cap, ws):
                        f"{repeats} recovery(ies) repeated an earlier one in this run")
 
 
+def check_call_syntax_tool_call(row, cap, ws):
+    """How many replies came back with a tool call written in `content` as CALL SYNTAX —
+    ``edit_file({"path": …})`` — and no tool call anywhere cria could see.
+
+    The number reported is what cria RECOVERS, produced by running the real entry point
+    (:func:`massage.recover_leaked_tool_calls`) over the captured completion with the tool menu that
+    call actually advertised. Nothing here re-implements the parser or its gates; the checker only
+    counts what cria's own function did, and reads the tools off the paired request body — a check
+    that supplied its own menu would be measuring itself.
+
+    The "why" carries the REFUSALS separately, because they are the half that must not drift. A
+    reply cut at the output cap is refused outright: one 123 KB truncated reply in this corpus parses
+    into 252 `edit_file` calls, and forwarding a runaway generation is the failure this recovery must
+    never become. The population line is the denominator — replies that were lost with a JSON object
+    sitting in their content — so a rate can be read off it rather than guessed at."""
+    recovered = refused_cut = lost = calls = 0
+    for f, comp, tools in replies(cap):
+        choice = (comp.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        if msg.get("tool_calls"):
+            continue
+        text = massage.content_text(msg.get("content"))
+        if not text.strip() or extract_json_object(text) is None:
+            continue
+        lost += 1
+        got, _left = massage._call_syntax_calls(text, tools)
+        if not got:
+            continue
+        if choice.get("finish_reason") == "length":
+            refused_cut += 1
+            continue
+        after = massage.recover_leaked_tool_calls(json.loads(json.dumps(comp)), tools, None)
+        tcs = ((after.get("choices") or [{}])[0].get("message") or {}).get("tool_calls")
+        if tcs:
+            recovered += 1
+            calls += len(tcs)
+    return recovered, (f"{lost} lost reply(s) holding a JSON object; {calls} call(s) recovered; "
+                       f"{refused_cut} refused (the reply was cut at the output cap)")
+
+
 CHECKS = {
     "oscillation": check_oscillation,
+    "call-syntax-tool-call": check_call_syntax_tool_call,
     "unclosed-verdict": check_unclosed_verdict,
     "replan-json-shape": check_replan_json_shape,
     "denied-call-logged": check_denied_call_logged,

@@ -635,6 +635,25 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # an inescapable mandate. The general mechanisms carry it instead — plan.txt tells the drafter to
     # research first, the critic clears a research step on facts obtained, and the durable ⟦ctx:facts⟧
     # ledger keeps the real endpoints in front of the coder across compaction.
+    #
+    # NO "this step claims an endpoint returns a field it does not" gate here either. MEASURED
+    # 2026-08-03 over all 86 recorded runs: 3,779 coder prompts carried a step, 71 of them named a
+    # route whose response FIELDS the ledger already held, and a token matcher over those flagged
+    # 15 — which are TWO distinct steps repeated, and BOTH state the truth outright ("`total_handles`
+    # is **not** in that response – it appears in `/holders/{address}`" and "…then GET
+    # /holders/{holder} to get total_handles"). Two of two false positives, zero true positives.
+    # The step that IS false — run 20260803T112245's "sends a GET request to
+    # https://api.handle.me/handles/{handle} … extracts … total handles held by the holder", carried
+    # into 20 coder prompts — names no field token at all, so no matcher over the sentence can see
+    # it. That is principle 9's table again: the difference is not in the sentence.
+    #
+    # And the facts were never the missing part. That run made SIX re-derivation calls and every one
+    # was handed the per-endpoint field list showing `/handles/{handle}` returns no `total_handles`;
+    # 105 of its 107 coder prompts carried the same list under "use these EXACT names and nesting; do
+    # not guess". The evidence, the instruction (line 5 of replan.txt) and the ability to rewrite the
+    # tail were all already here. A second surface saying it again is noise on a delivered fact
+    # (principle 3), and a deterministic trigger for it cannot be built from what the corpus holds
+    # (principle 15).
     return kept
 
 
