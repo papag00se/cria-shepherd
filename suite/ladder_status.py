@@ -63,6 +63,20 @@ LANGUAGES = [("python", "ada-handles")]     # the ladder walks ONE language at a
 # wedged model must not silently eat days of a long-running goal.
 BLOCKED_AFTER = 5
 
+# A model whose TOOLING is broken, which is not the same thing as a model that keeps failing. The
+# ladder measures models and cria; when the binary underneath is the problem, every run measures the
+# binary instead, and burning attempts on it teaches nothing and costs the whole budget.
+#
+# Keyed by model name -> the reason, shown in the table and in the NEXT line. Removing the entry is
+# how the model rejoins the ladder; nothing else needs changing.
+BLOCKED_ON_TOOLING = {
+    "zaya1": "build: 38 B-params/sec vs 239-1312 for every other model on this GPU — fully resident "
+             "(81/81 layers) yet 10 graph splits + a 104 MiB host compute buffer, so ops leave the "
+             "card every token. Suspect: no CUDA kernel for the recurrent R/S state this arch carries "
+             "across all 80 layers in f32 (draft PR #23112). Rebuilding upstream; watch for graph "
+             "splits dropping to 1-2. Until then every zaya1 result measures the binary.",
+}
+
 
 def rows(task):
     if not RESULTS.exists():
@@ -187,7 +201,9 @@ def state_for(task):
             "next_walk": unwalked[0]["run_id"] if unwalked else None,
             "next_walk_capture": (unwalked[0].get("capture_dir") if unwalked else None),
             "strikes": strikes(rs, sections),
-            "blocked": (not passed) and strikes(rs, sections) >= BLOCKED_AFTER and not unwalked,
+            "blocked": (not passed) and (name in BLOCKED_ON_TOOLING
+                                         or (strikes(rs, sections) >= BLOCKED_AFTER and not unwalked)),
+            "blocked_on": BLOCKED_ON_TOOLING.get(name, ""),
             "running": running == name,
         })
     return out, running
@@ -226,11 +242,17 @@ def main() -> None:
         print("-" * 96)
         for c in cells:
             st = ("RUNNING" if c["running"] else "PASSED 4/4" if c["passed"] else
-                  "BLOCKED" if c["blocked"] else "needs walk" if c["needs_walk"] else
+                  ("BLOCKED (tooling)" if c["blocked_on"] else "BLOCKED") if c["blocked"] else
+                  "needs walk" if c["needs_walk"] else
                   "not started" if not c["attempts"] else "ready to rerun")
             best = f"{c['best']:.0f}" if c["best"] is not None else "—"
             print(f"{c['model']:18s} {c['params']:12s} {c['arch']:22s} {c['kind']:6s} "
                   f"{c['planner']:5s} {c['attempts']:5d} {best:>5s}  {st}")
+        for c in cells:
+            if c["blocked_on"]:
+                print(f"\n  {c['model']} is BLOCKED ON TOOLING, not on the model or on cria:\n"
+                      f"    {c['blocked_on']}\n"
+                      f"    Clear it by removing the BLOCKED_ON_TOOLING entry in suite/ladder_status.py.")
         print()
         if running:
             print(f"IN FLIGHT: {running} — do not start another run, and do not edit cria or its "
