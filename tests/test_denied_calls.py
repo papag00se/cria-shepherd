@@ -23,7 +23,6 @@ MARKED WHERE REFUSED, NEVER MATCHED BY WORDING. ``cria.denial`` is applied at th
 to refuse (``writeproxy._refusal_command``, the two read-size guards, ``webfetch._guard_msg``'s
 repeat-gate keys, the search-read denial). Nothing downstream asks what a result says.
 """
-import json
 import os
 import subprocess
 import tempfile
