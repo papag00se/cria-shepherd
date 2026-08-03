@@ -409,6 +409,14 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     return (
         # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
         # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
+        # A MISSING FILE IS NOT AN EMPTY ONE. `awk` on a nonexistent path prints nothing, `|| echo 0`
+        # makes that a zero, and the past-EOF branch then reports a file that does not exist as one
+        # with no lines in it. Walked on ada-handles_fabliq_codex_pon_1785721353 (calls 0093-0096,
+        # 0085-0088, 0263, 0268): the coder guessed a path, cria answered "has 0 lines; line 1 is past
+        # the end of the file", and its reasoning recorded the damage — "the file was empty or
+        # couldn't be found". The UNRANGED read of that same path says "No such file or directory",
+        # so cria held the true answer and served the false one. Ask the filesystem first.
+        f'if [ ! -e {q} ]; then printf "%s: No such file or directory\\n" {q}; exit 1; fi; '
         f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
         f'if [ {start} -gt "$__n" ]; then '
         f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '

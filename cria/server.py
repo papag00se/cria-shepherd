@@ -211,7 +211,19 @@ def _compaction_transcript(messages: list) -> str:
              # left in, it became the transcript's last line while the line BEFORE it was a stale
              # "produce the corrected FULL file in a single write_file call". The model obeys the
              # last instruction it reads, and answered with a write_file (measured g8 0187/0188).
-             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)]
+             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)
+             # …and cria's OWN prior briefings, for the reason selfcompact states in its own words:
+             # "excluded from the summarizer input, so cria's OWN prior briefings never become a
+             # rollup-of-a-rollup (each round summarizing the last round's summary is how a transient
+             # hallucination hardened into authoritative misdirection)". That exclusion was enforced
+             # in the self-compaction path only. This sibling fed the previous briefing straight back
+             # in, so a false claim was re-signed every cycle and became unfalsifiable.
+             #
+             # Walked on ada-handles_fabliq_codex_pon_1785721353: the compactor asserted
+             # "handle_resolver.py has a syntax error - it's missing a closing parenthesis", was fed
+             # its own briefing next round, emitted the identical sentence back, and that fixed point
+             # rode every prompt for the rest of the run while cria's own compileall exited 0.
+             and not selfcompact.has_anchor(m)]
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.

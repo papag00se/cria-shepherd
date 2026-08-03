@@ -94,6 +94,13 @@ def _msg_tokens(m: dict) -> int:
     return est_tokens(t)
 
 
+def has_anchor(m: dict) -> bool:
+    """Public alias — the harness-compaction path in server.py needs the same exclusion this
+    module has always applied to its own summarizer input, and reaching into a private name is how
+    two copies of a rule drift apart."""
+    return _has_anchor(m)
+
+
 def _has_anchor(m: dict) -> bool:
     t = _text(m)
     return any(mk in t for mk in _ANCHOR_MARKERS)
