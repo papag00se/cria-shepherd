@@ -251,26 +251,31 @@ def _fact_repeat(case: Case, msg: dict) -> dict:
 
 
 def _fact_edit_matches_disk(case: Case, msg: dict) -> dict:
-    """Would this edit's old_string actually be FOUND in the file? The gate-verbatim defect was the
-    coder copying cria's de-indented copy of a source line into an old_string that could never
-    match — four failed edits in a row. The archived workspace holds the real file, so this is a
-    fact, not an opinion. None when the reply proposes no edit."""
-    res = {}
+    """The gate-verbatim defect was the coder copying cria's DE-INDENTED copy of a source line into
+    an ``edit_file`` old_string that could never match the file — four failed edits in a row.
+
+    Two facts, both byte checks. First: does the edit quote a line out of the checks block at all
+    (that is the copying, and it is measured against the block THIS prompt carried). Second: is the
+    old_string present in the archived workspace file — which is the FINAL state of that run, not
+    the state at this call, so it is named as such and is evidence only when True."""
+    quoted, on_disk = [], {}
+    block_lines = [ln.strip() for ln in case.old.split("\n")[1:] if len(ln.strip()) >= 20]
     for n, a in calls_of(msg):
         if n != "edit_file":
             continue
-        old = a.get("old_string") or a.get("old") or ""
-        p = a.get("path") or a.get("file_path") or ""
-        if not old or not p or case.ws is None:
+        old = str(a.get("old_string") or a.get("old") or "")
+        p = str(a.get("path") or a.get("file_path") or "")
+        if not old:
             continue
-        f = case.ws / os.path.basename(str(p))
-        if not f.is_file():
-            continue
-        try:
-            res[os.path.basename(str(p))] = old in f.read_text(errors="replace")
-        except OSError:
-            continue
-    return {"edit_old_string_is_in_the_real_file": res or None}
+        quoted += [ln[:60] for ln in block_lines if ln in old]
+        f = (case.ws / os.path.basename(p)) if (case.ws and p) else None
+        if f is not None and f.is_file():
+            try:
+                on_disk[os.path.basename(p)] = old in f.read_text(errors="replace")
+            except OSError:
+                pass
+    return {"edit_quotes_a_line_from_the_checks_block": quoted or None,
+            "old_string_in_the_FINAL_archived_file": on_disk or None}
 
 
 def _fact_import(case: Case, msg: dict) -> dict:
@@ -278,9 +283,13 @@ def _fact_import(case: Case, msg: dict) -> dict:
     removing a module-level import to satisfy a style warning, shipping a NameError."""
     touched = []
     for n, a in calls_of(msg):
+        if n != "edit_file":
+            continue
         old = str(a.get("old_string") or a.get("old") or "")
-        if n == "edit_file" and re.search(r"^\s*(import |from \S+ import )", old, re.M):
-            touched.append(old.strip().splitlines()[0][:60])
+        # The MATCHED line, not the first line of the old_string — reporting the wrong one turns a
+        # useful fact into a puzzle (it printed the file's shebang for an edit that spanned imports).
+        touched += [m.group(0).strip()[:60]
+                    for m in re.finditer(r"^[ \t]*(?:import |from \S+ import ).*$", old, re.M)]
     return {"edits_an_import_line": touched or None}
 
 
@@ -829,6 +838,28 @@ def main() -> None:
             if fix in ("gate-verbatim", "advisory-gate") and leftover > hits + also:
                 print(f"   NOTE {leftover - hits - also} OTHER ⟦ctx:checks⟧ block(s) could not be "
                       f"paired to raw output and remain as they shipped — this call reads both")
+            # A finding cria drops from the gate block can still ride in a DIFFERENT cria surface of
+            # the same prompt — the ⟦ctx:steer⟧ ground-truth block is built by proberun from the same
+            # probe report, and this harness recomposes only the gate block. Today's code filters
+            # both through the one predicate (probeparse.parse_output applies it to every finding),
+            # so when this fires the case UNDERSTATES the fix. Say it rather than let a reader
+            # conclude the model ignored the change.
+            # Matched on the checker's MESSAGE, with cria's own location prefix stripped: the same
+            # finding is rendered with a different location in each surface (`file:41:15:` in the
+            # gate block, `file:41:` in the steer), so matching the whole line finds nothing and
+            # reports a clean isolation that isn't one.
+            def _msg_of(s):
+                return probegate._LOC_PREFIX.sub("", s.strip()).strip()
+
+            kept = {ln.strip() for ln in _finding_lines(c.new)}
+            elsewhere = [ln.strip() for ln in _finding_lines(c.old)
+                         if ln.strip() not in kept and len(_msg_of(ln)) >= 15
+                         and any(_msg_of(ln) in _msg_text(m)
+                                 for m in body_new.get("messages", []))]
+            if elsewhere:
+                print(f"   NOTE {len(elsewhere)} dropped finding(s) still appear elsewhere in this "
+                      f"prompt (another cria surface this harness does not recompose), e.g. "
+                      f"{elsewhere[0][-70:]!r} — the case UNDERSTATES the fix")
             show_diff(c.old, c.new, args.detail)
             for cls in difference_classes(c.old, c.new):
                 print(f"   · {cls}")
