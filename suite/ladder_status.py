@@ -30,9 +30,13 @@ MILESTONE_MINUTES = 15
 # failing tells you almost nothing until the big ones pass. Flip `reverse=` in your head by editing
 # this list; nothing else reads an ordering.
 #
-# `planner` is the OPERATOR'S HYPOTHESIS, not a measured result: dense models appear to cope with the
-# planner off, MoEs appear to need it on. It is recorded here so the ladder GENERATES the evidence
-# rather than assuming it — every row carries the setting it ran under.
+# `planner` was the OPERATOR'S HYPOTHESIS: dense models cope with the planner off, MoEs need it on.
+# It is recorded here so the ladder GENERATES the evidence rather than assuming it — every row carries
+# the setting it ran under. THE EVIDENCE IS NOW TWO MoEs AGAINST IT. mellum2 spent sixteen planner-on
+# runs peaking at 3/4 and passed 4/4 with the planner off; zaya1 never reached the coder once in four
+# planner-on attempts. nemotron-elastic passed 4/4 planner-ON at the first try, so this is not
+# "the planner is bad" — it is that driving a plan is itself a capability, and the smallest models
+# spend the whole budget on it instead of on the work.
 # dense/MoE is read from each GGUF's own header (general.architecture + <arch>.expert_count /
 # expert_used_count), NOT from a model card or a name. fabliq was on the dense list until the header
 # was actually read: `lfm2moe`, 32 experts, 4 active — an LFM2.5-8B-A1B. docs/model-settings.md had
@@ -46,7 +50,7 @@ LADDER = [
     ("ornith",           "9B",          "qwen35",            "dense", "off"),
     ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "off"),  # flipped 2026-08-02 — see docs/audits/ladder-walk.md (16 planner-on runs peaked at 3/4 over 27-60 min; the first planner-off run reached the same score in 3.9 min and 53 calls, with none of the plan-side faults)
     ("nemotron-elastic", "12B/A2B",     "nemotron_h_moe 128/6", "moe", "on"),
-    ("zaya1",            "8.4B/A760M",  "zaya 16/1",         "moe",   "on"),
+    ("zaya1",            "8.4B/A760M",  "zaya 16/1",         "moe",   "off"),  # flipped 2026-08-02 — four planner-on attempts, the coder reached ZERO times. 20260801T211548 spent all fifteen minutes in the planner inventing `/workspace/dumps/workspace` and re-reading files under it, 140+ tool calls in one response, three rounds each cut off at the token cap. 20260801T221447 produced 27,089 characters of planner reasoning with zero tool calls, saying "we can simulate in our mind" — word counts in it: script 86, readme 35, plan 4. The fourth (20260802T181318) had made 14 calls in 13 minutes, every one planner or classifier, none coder. A 760M-active model cannot drive this planner; that is the evidence the column exists to generate, and it is now two models against the hypothesis
     ("fabliq",           "8B/A1B",      "lfm2moe 32/4",      "moe",   "on"),
 ]
 # lfm25 is deliberately absent: the systemd unit exists but the model has no entry in
