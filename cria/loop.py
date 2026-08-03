@@ -554,10 +554,15 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # ONE READER for "a step list written as JSON" — planner.json_steps, the same function the
     # initial draft reads through. This call used to require a dict with a literal `steps` key, and
     # cria already owned every other shape the reasoner uses: a bare top-level array, a synonym key,
-    # a dict item per step. Measured 2026-08-02 over 232 captured re-derivations: 19 were unreadable
-    # here, 13 of them a bare JSON array — 7 carrying real steps (run 20260727T234416 call 0024
-    # returned a complete four-step re-derivation, its own thinking saying "I need to produce JSON
-    # steps only") and 6 the empty `[]`. The plan was left unchanged on all 13.
+    # a dict item per step. RE-MEASURED at review 2026-08-03 over 233 captured re-derivations, by
+    # replaying the OLD test (`isinstance(obj, dict) and isinstance(obj["steps"], list)`) against
+    # this new one: 11 replies main could not read and this reader can — 5 carrying real steps (run
+    # 20260727T234416 call 0024 returned a complete four-step re-derivation, its own thinking saying
+    # "I need to produce JSON steps only") and 6 the empty `[]`. The plan was left unchanged on all 11.
+    # (The commit that landed this said "13 … 7 with steps"; the empty half reproduces exactly and
+    # the steps half does not. The inflation came from a replay gate that tested `obj["steps"]` for
+    # TRUTHINESS rather than for being a list, which counts `{"steps": []}` — a shape main already
+    # handled — as a miss. Corrected here rather than left to the next walk: rule 23b.)
     #
     # JSON ONLY — deliberately NOT parse_steps, whose prose fallbacks read numbered and bulleted
     # LINES. The re-derivation's replies are not drafts: run 20260728T101412 call 0121 answered with
@@ -1034,9 +1039,12 @@ def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | Non
     WHAT WAS MEASURED. Replaying all 18,655 captured final replies through cria's own reader
     (2026-08-02): 14 came back unreadable while holding a syntactically complete JSON object missing
     a single ``}``. All 14 stopped on their own (``finish_reason: stop``). Twelve are NOT-done
-    rulings with a written reason AND a written proposed_fix — the diagnosis the coder never got.
-    One is an APPROVAL (``done: true``, run 20260801T232511 call 0173-critic) and one is a plan
-    re-derivation carrying no verdict flag at all (0050-reasoner). Both are refused here.
+    rulings, ELEVEN of them with a written reason AND a written proposed_fix — the diagnosis the
+    coder never got. (The commit said twelve carried both. The twelfth is 0120-critic-confirm, whose
+    phase schema is ``{consistent, why}`` and has no ``proposed_fix`` field to carry; corrected at
+    review rather than left standing, rule 23b.) One is an APPROVAL (``done: true``, run
+    20260801T232511 call 0173-critic) and one is a plan re-derivation carrying no verdict flag at
+    all (0050-reasoner). Both are refused here.
 
     DIRECTION (#13), stated as code below and not only in prose: the recovered object must carry the
     phase's flag and it must be literally ``False``. A recovered NOT-done can only ever cost a turn
