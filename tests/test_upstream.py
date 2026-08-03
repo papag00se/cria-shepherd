@@ -261,7 +261,10 @@ class ChatWatchedTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         det = rumination.Detector(budget=10_000_000, threshold=999)  # never fires — capture a normal turn
-        big = "I will resolve the handle then check the mock. " * 500  # ~23k chars; must NOT be clipped
+        # ~23k chars; must NOT be clipped. VARIED, not one sentence x500: the degeneration guard now
+        # catches any repeating period, and a fixture that repeats one sentence is itself the shape it
+        # exists to stop. The point of this test is length, not repetition.
+        big = "".join(f"Step {i}: resolve handle {i} then check the mock result for it. " for i in range(500))
         lines = [
             _sse(_delta(reasoning_content=big)),
             _sse({"choices": [{"delta": {}, "finish_reason": "stop"}]}),

@@ -71,7 +71,10 @@ class DegenerateTailTests(unittest.TestCase):
         self.assertTrue(rumination.degenerate_tail("some code then " + "x" * 3000))  # tail is all x
 
     def test_varied_or_short_is_not_degenerate(self):
-        self.assertFalse(rumination.degenerate_tail("def f():\n    return 1\n" * 300))  # varied
+        # GENUINELY varied. The old fixture was one 22-character block x300, which is the shape the
+        # guard exists to stop — it was labelled "varied" and was not.
+        self.assertFalse(rumination.degenerate_tail(
+            "".join(f"def f{i}():\n    return {i}\n" for i in range(300))))
         self.assertFalse(rumination.degenerate_tail("0" * 100))                        # below the window
         self.assertFalse(rumination.degenerate_tail(""))
         # a long run followed by real content is NOT degenerate (the tail recovered)

@@ -47,9 +47,16 @@ DEFAULT_REASONING_BUDGET = 4096
 DEGENERATE_RUN_CHARS = 2048
 
 
-# Longest repeating unit treated as a stuck stream. Two characters covers the measured
-# cases (`y8`, `v5`); eight leaves room for a short token loop without reaching prose.
-MAX_DEGENERATE_UNIT = 8
+# A tail is degenerate when it is periodic with at least this many whole repeats. Three exact
+# repetitions filling 2,048 characters is not something real output does; it is a stuck stream.
+#
+# This used to bound the repeating UNIT at 8 characters, which missed the expensive case. Walked on
+# ada-handles_mellum2_codex_poff_1785714194 call 0014: writing a README example, the model emitted a
+# 40,445-character repeating run with a period of **260** — 40,138 tokens over 255 seconds, 66% of
+# all model time in an eight-minute run — and the guard returned False the whole way. The rumination
+# detector could not cover it either: this ran inside a write_file ARGUMENT, which that watcher
+# excludes on purpose.
+MIN_DEGENERATE_REPEATS = 3
 
 
 def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
@@ -65,11 +72,31 @@ def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
     # ada-handles_mellum2_codex_pon_1785628543. A single-character test cannot see either. Bounded to
     # short units: a genuinely repeating 8-character block is degenerate, a repeating paragraph is
     # rumination and belongs to the detector above, not here.
-    for size in range(2, MAX_DEGENERATE_UNIT + 1):
-        unit = tail[:size]
-        if unit * (len(tail) // size) == tail[:len(tail) // size * size]:
-            return True
-    return False
+    return _smallest_period(tail) <= len(tail) // MIN_DEGENERATE_REPEATS
+
+
+def _smallest_period(s: str) -> int:
+    """The shortest string whose repetition builds ``s`` — allowing a PARTIAL final block. Returns
+    ``len(s)`` when ``s`` is not periodic at all.
+
+    KMP's failure function, O(n), one pass, every unit size at once. The obvious one-liner
+    ``(s+s).index(s,1)`` was tried first and is wrong here: it only finds the period when the period
+    DIVIDES the length. The measured stream had a 255-character period in a 2,048-character window —
+    8.03 repeats — so the rotation test reported "not periodic" on the exact case this exists for.
+    Real output never runs three whole repeats of any block through the whole window; a stuck stream
+    always does."""
+    n = len(s)
+    if n < 2:
+        return n
+    fail = [0] * n
+    k = 0
+    for i in range(1, n):
+        while k and s[i] != s[k]:
+            k = fail[k - 1]
+        if s[i] == s[k]:
+            k += 1
+        fail[i] = k
+    return n - fail[n - 1]
 
 
 # Longest-first so a multi-word marker ("but wait") is preferred over its substring ("wait") at

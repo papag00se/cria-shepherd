@@ -61,15 +61,24 @@ class DegenerateUnitTests(unittest.TestCase):
     def test_a_single_repeated_character_still_is(self):
         self.assertTrue(rumination.degenerate_tail("y" * (self.W + 10)))
 
-    def test_units_up_to_the_bound(self):
-        for size in range(2, rumination.MAX_DEGENERATE_UNIT + 1):
-            unit = "".join(chr(97 + i) for i in range(size))
-            with self.subTest(size=size):
-                self.assertTrue(rumination.degenerate_tail(unit * self.W))
+    def test_any_repeating_period_is_caught_not_just_a_short_one(self):
+        """The bound used to be an 8-character unit. Walked on run 1785714194 call 0014: a repeating
+        run with a period of 260 burned 40,138 tokens over 255 seconds — 66% of all model time in an
+        eight-minute run — and the guard returned False the whole way. It ran inside a write_file
+        ARGUMENT, which the rumination watcher excludes on purpose, so nothing else could see it."""
+        for size in (2, 3, 8, 64, 255, 260):
+            unit = "".join(chr(97 + (i % 26)) for i in range(size))
+            with self.subTest(period=size):
+                self.assertTrue(rumination.degenerate_tail(unit * (self.W * 2 // size)))
+
+    def test_a_period_needing_fewer_than_three_repeats_is_left_alone(self):
+        unit = "x" + "".join(chr(97 + (i % 26)) for i in range(900))
+        self.assertFalse(rumination.degenerate_tail(unit * 3))
 
     def test_real_output_is_NOT_flagged(self):
         # Never block a run that is genuinely producing text.
-        for text in ("the quick brown fox jumps over the lazy dog. " * 200,
+        for text in ("".join(f"the {i} quick brown foxes jumped over {i * 3} lazy dogs. "
+                             for i in range(200)),
                      "".join(f"line {i}: value = {i * 7}\n" for i in range(400)),
                      "".join(f"    self.assertEqual(result[{i}], {i})\n" for i in range(300))):
             with self.subTest(text=text[:30]):
