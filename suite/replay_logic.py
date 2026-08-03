@@ -35,7 +35,7 @@ SUITE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE.parent))
 
 from cria import (execcheck, jsontext, loop, massage, planner, probegate,  # noqa: E402
-                  probeparse, prompts, selfcompact, webfetch)
+                  probeparse, prompts, selfcompact, webfetch, writeproxy)
 from cria.jsontext import extract_json_object, strip_think  # noqa: E402
 
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -809,6 +809,43 @@ def check_call_syntax_tool_call(row, cap, ws):
     return recovered, (f"{lost} lost reply(s) holding a JSON object; {calls} call(s) recovered; "
                        f"{refused_cut} refused (the reply was cut at the output cap)")
 
+def check_spill_read_small(row, cap, ws):
+    """How many spilled files were refused a WHOLE read while being small enough to read whole.
+
+    The read-only spill guard refused every whole read of a spilled file at any size, with a message
+    that says "reading it whole gets truncated, so you would miss the middle". Under
+    :data:`writeproxy.READ_INLINE_MAX` that is false — nothing would have been truncated — and it is
+    a claim about cria's own guard stated as a claim about the world (rule 5b).
+
+    The path is read out of the steer cria rendered, then SIZED on the archived workspace. That
+    archive is the run's FINAL state, so a file that grew after the refusal reads as its final size:
+    the direction is under-count, and it is stated rather than hidden. Deduped per run on the path,
+    because one refusal rides in every later prompt of the conversation."""
+    if ws is None:
+        return 0, "no archived workspace"
+    # The corpus-stable phrase, not the current template verbatim — this steer has been reworded
+    # across the 96 runs and an anchor that only matches today's wording silently measures the
+    # newest runs only (the SPILL_READ_STEER comment above).
+    rx = re.compile(r"(\S+)\s*" + re.escape(SPILL_READ_STEER))
+    small, big, gone = set(), set(), set()
+    for _f, t in coder_prompts(cap):
+        if SPILL_READ_STEER not in t:
+            continue
+        for m in rx.finditer(t):
+            rel = m.group(1)
+            p = (ws / rel.lstrip("./")).resolve()
+            if not p.is_file():
+                gone.add(rel)
+                continue
+            (small if p.stat().st_size <= writeproxy.READ_INLINE_MAX else big).add(rel)
+    why = (f"{len(small) + len(big)} spilled paths refused a whole read, "
+           f"{len(big)} genuinely oversized")
+    if gone:
+        # Named, never folded into the count: a path the archive no longer holds is UNKNOWN, and an
+        # unknown counted as "not small" is the silent under-count this file exists to avoid.
+        why += f", {len(gone)} not in the archive (size unknown)"
+    return len(small), why
+
 
 CHECKS = {
     "oscillation": check_oscillation,
@@ -830,6 +867,7 @@ CHECKS = {
     "missing-file-read": check_missing_file_read,
     "steer-truncated": check_steer_truncated,
     "facts-anchor-absent": check_facts_anchor_absent,
+    "spill-read-small": check_spill_read_small,
 }
 
 

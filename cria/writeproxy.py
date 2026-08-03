@@ -416,7 +416,12 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
       Too big → steer to a narrower range / grep instead of returning a doomed-to-be-truncated blob.
     * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
     An in-range, in-size read returns exactly its content."""
-    steer = denial.mark(prompts.render("large_range_steer", path=str(path)))
+    # Through the ONE refusal owner, not a hand-rolled printf. The size branch REPLACES the range
+    # the coder asked for — the `sed` never runs — and printf exits 0, so the harness stamped
+    # "Process exited with code 0" over text saying the read did not happen. That is the exact pair
+    # REFUSED_EXIT_CODE (see the module header) was introduced to kill, and these two size guards
+    # were missed because they live INSIDE a lowered command rather than at a call site.
+    steer = _refusal_command(prompts.render("large_range_steer", path=str(path)))
     return (
         # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
         # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
@@ -439,13 +444,51 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         # reasoning tokens insisting a valid f-string was valid — then took three more calls to find
         # one line. Numbering is why the crew never has that problem.
         f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
-        # A REFUSED read did not run, so it must not report success — the same rule the module header
-        # states for every refusal cria lowers, which this branch (and the whole-read guard below)
-        # inherited printf's exit 0 in defiance of. The reading branch still exits 0.
-        f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then printf %s {_qbash(steer)}; '
-        f'exit {REFUSED_EXIT_CODE}; '
+        f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then {steer}; '
         f'else printf \'%s\\n\' "$__s"; fi; fi'
     )
+
+
+def _spill_read_command(path: str) -> str:
+    """A WHOLE read of a file in the read-only spill scratch: hand back the file when it fits, and
+    refuse only when it genuinely does not.
+
+    This branch used to refuse EVERY whole read of a spilled file, at any size, with a message that
+    says "reading it whole gets truncated, so you would miss the middle". For a file under
+    :data:`READ_INLINE_MAX` that sentence is false — nothing would have been truncated — and cria
+    says it about its OWN read guard, which is a claim about cria dressed as a claim about the world
+    (rule 5b). Measured over the 96 captured runs (``suite/replay_logic.py --check spill-read-small``):
+    FIVE distinct spilled files were refused a whole read while being 6630–8408 bytes, across 5 runs,
+    every one of them saved SEARCH RESULTS. Search results are the worst case: a shell pipeline writes
+    them, so cria never holds them parsed and there is no outline to carry — "grep it for what you
+    need" was the entire answer, about a file the coder had no way to see the shape of.
+
+    The size test lives in the LOWERED COMMAND, not in an in-process ``stat``, for the same reason
+    :func:`_read_command` puts it there: the file is on the harness's filesystem at the moment of the
+    read, and a size cria measured a turn earlier is a remembered flag, not the world.
+
+    A MISSING FILE IS NOT AN EMPTY ONE — the same guard :func:`_ranged_read` carries, for the same
+    reason. ``wc -c`` on a path that is not there yields 0, which is not over the limit, so the read
+    fell through to ``cat``, whose error goes to STDERR: the coder saw an empty result with no
+    explanation and crawled the path forever. Ask the filesystem first and answer on stdout.
+
+    DIRECTION OF FAILURE: strictly toward the coder having MORE real content. It changes no verdict
+    path, advances no step, and the oversized case is byte-identical to before (same steer, same
+    outline, same refusal exit code)."""
+    q = _qbash(path)
+    # The outline carries the doc's own routes/keys — the SIBLING of the web_fetch spill refusal, and
+    # the same trap: cria refuses the whole read of a doc it is itself holding parsed, and answers
+    # with "grep it for what you need", which cannot be acted on before you know what the doc
+    # contains. Measured across the 123 captured sessions: 1,931 coder calls carried this steer and
+    # 500 of them (26%) had no outline anywhere in the prompt. "" when the doc is not cached
+    # (rule 5b — no outline is invented); the steer's own instructions stand without it. The EDIT
+    # refusal names no content, so it takes no outline — which is why it renders without one above.
+    steer = prompts.render("spill_read_steer", path=path,
+                           outline=webfetch.outline_for_spill_path(path))
+    # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.
+    return (f'if [ ! -e {q} ]; then printf "%s: No such file or directory\\n" {q}; exit 1; fi; '
+            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
+            f'then {_refusal_command(steer)}; else cat {q}; fi')
 
 
 def _read_command(args: dict) -> str | None:
@@ -460,11 +503,11 @@ def _read_command(args: dict) -> str | None:
         return _ranged_read(q, str(path), f"{start},$", start)
     # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
-    # The steer is a REFUSAL — the read did not happen — so it is marked as one and exits non-zero,
-    # the rule the module header states and this branch was the last site still breaking.
-    steer = denial.mark(prompts.render("large_read_steer", path=str(path)))
+    # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
+    # report success.
+    steer = _refusal_command(prompts.render("large_read_steer", path=str(path)))
     return (f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f"then printf %s {_qbash(steer)}; exit {REFUSED_EXIT_CODE}; else cat {q}; fi")
+            f"then {steer}; else cat {q}; fi")
 
 
 def _list_command(args: dict) -> str:
@@ -746,19 +789,19 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif (name in (_WRITE_NAMES | _EDIT_NAMES | _READ_NAMES) and name in injected
                   and (sp := _tool_path(args)) and _under_spill_dir(str(sp))
                   and not (name in _READ_NAMES and (args.get("start_line") or args.get("end_line")))):
-                key = "spill_read_steer" if name in _READ_NAMES else "spill_edit_refusal"
-                # The READ steer carries the document's own outline — the SIBLING of the web_fetch
-                # spill refusal, and the same trap: cria refuses the whole read of a doc it is itself
-                # holding parsed, and answers with "grep it for what you need", which cannot be acted
-                # on before you know what the doc contains. Measured across the 123 captured sessions:
-                # 1,931 coder calls carried this steer and 500 of them (26%) had no outline anywhere
-                # in the prompt. "" when the doc is not cached (rule 5b — no outline is invented); the
-                # steer's own instructions stand without it. The EDIT refusal names no content, so it
-                # takes no outline.
-                outline = webfetch.outline_for_spill_path(str(sp)) if name in _READ_NAMES else ""
-                cmd = _refusal_command(prompts.render(key, path=str(sp), outline=outline))
+                # A READ is SIZE-GATED, not refused outright (see _spill_read_command): a spilled
+                # file under READ_INLINE_MAX is handed over, because "reading it whole gets
+                # truncated" is not true of it. An edit/write is refused whatever the size — the doc
+                # is reference material, and that has nothing to do with how big it is.
+                cmd = (_spill_read_command(str(sp)) if name in _READ_NAMES
+                       else _refusal_command(prompts.render("spill_edit_refusal", path=str(sp))))
                 if rlog is not None:
-                    rlog.emit("writeproxy.blocked_spill", tool=name, path=str(sp))
+                    # A read is no longer necessarily BLOCKED — the size test runs on the harness's
+                    # filesystem, so cria does not know here which way it went. Naming this event
+                    # "blocked" for a read that then succeeds would put a false fact in cria's own
+                    # log, which is the same defect one level down (rule 12: the event is the truth).
+                    rlog.emit("writeproxy.spill_read_gated" if name in _READ_NAMES
+                              else "writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:
                 path = _tool_path(args)
                 if path:
