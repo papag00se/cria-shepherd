@@ -3214,3 +3214,73 @@ directive is in `reasoning_content` and cria reads content only.
 fabliq emits well-formed native tool calls inside `reasoning_content` rather than the tool channel
 (0014, 0018, 0023, 0028, 0059, 0064, 0068, 0070). The bytes are correct; cria does not look there.
 That is a real model quirk — but cria losing eight turns to it is cria's half.
+
+---
+
+## ada-handles_fabliq_codex_pon_1785725976
+
+**Score 0/4**, killed at the 15-minute milestone. 255 calls, planner ON. **The workspace is EMPTY —
+not one file written.** Worse than attempt 1, which at least produced two.
+
+**cria fault: yes**
+
+### Depth of this walk — stated plainly
+
+This section is NOT a six-reader full read like its predecessor. It rests on three measurements taken
+from this run's own capture, and on the fact that attempt 1 — the identical wedge, 12 calls apart in
+shape — WAS read in full by six readers whose findings are the section above.
+
+1. **Every coder call was step 1 of 6.** Parsed the `Do ONLY this step (N of M)` line out of all 85
+   coder prompts in `20260802T195958-…`: `{1: 85}`. The plan never advanced once, exactly as in
+   attempt 1.
+2. **The workspace is empty** (`tmp/` only) — verified by copying it and running the real verifier:
+   `no candidate resolver script`, `no tests ran`, `no live-test file`, `no README`.
+3. **The refusal loop is measured across all 123 captured sessions**, this one included: 2,074 coder
+   calls carried the re-fetch refusal and **981 (47%) had no outline anywhere in the prompt**; in 22
+   of the 23 sessions that fired one, cria had shown an outline for that same URL earlier in that
+   same session.
+
+### What this run proved that attempt 1 could not
+
+**The red-gate fix was not the lock.** `loop.gate_red_advance` never fired, and it could not: the
+gate can only go red if code exists to fail, and this run wrote none. The red-gate veto is a real
+defect — 872 holds across 40 sessions — but it was not what pinned fabliq. I said before this run
+that "the step it deadlocked on can now actually close." It could not, and my own walk record held
+the reason.
+
+### The lock, and the mechanism behind it — FIXED
+
+Three cria refusals form a closed loop around `Do ONLY this step (1 of 6) … Read the Ada Handles API
+documentation`:
+
+| the coder does | cria says |
+|:--|:--|
+| `web_fetch` the URL | *"You already fetched … read THAT file instead of re-fetching"* |
+| `read_file` the spill whole | *"a large reference document … grep it for what you need"* |
+| `exec_command` to read it | the system prompt calls exec_command a LAST RESORT |
+
+Each guard is individually sound. **The trap is their composition, and nobody scored the pair:**
+the size guard landed 2026-07-22 and the spill guard 2026-07-27, while the footgun audit that scored
+every other assist ran 2026-07-22.
+
+**The mechanism, measured:** the outline is emitted ONCE, at spill time. The refusal is DURABLE,
+keyed on the file rather than on whether the model can still see anything. Compaction deletes the
+first and the second keeps firing. In attempt 1 the outline was present for calls 0013–0072, vanished
+at the first compaction, and never returned — while the refusal fired in **139 of the remaining 141
+coder calls**. At call 0270 the coder sent `find="<keyword>"`, cria's own placeholder, the only
+"keyword" it had ever been handed.
+
+**Fixed (14b38d1):** a refusal that denies a read now CARRIES the document's outline — the routes and
+field shapes cria already holds — instead of naming a file and saying "grep it". Both re-fetch call
+sites and the spill read steer. The coder's search-results refusal genuinely cannot carry one (that
+spill is written by a shell pipeline, so cria never holds the content in-process) and was left alone.
+
+### The historical comparison that reframes this
+
+The 2026-07-21 `/goal` drove this exact task with this exact model through `scripts/live_exec.py`.
+Its best run reached **steps [1,2,3,4,5]** with the resolver on the correct `/handles/{handle}`
+endpoint. **Neither guard that wedges it today existed then.** Fabliq has regressed from step 5 to
+step 1, and the cause is two individually-reasonable guards that were never scored together.
+
+No run of that `/goal` ever completed all four deliverables either — so this is not a claim that
+fabliq can pass. It is a claim that cria built a wall that was not there in July.
