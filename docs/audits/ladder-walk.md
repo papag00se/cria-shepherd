@@ -3078,3 +3078,126 @@ and is not being touched). The signal to watch after rebuilding is `graph splits
 1–2. Until then, any zaya1 result measures the binary.
 
 **fabliq goes next.** It is the last model on the ladder and runs on a normal build.
+
+---
+
+## ada-handles_fabliq_codex_pon_1785721353
+
+**Score 0/4**, killed at the 15-minute milestone, 267 calls, planner ON. Delivered
+`handle_resolver.py` and `test_handle_resolver.py`. **No README, no live test.**
+`python3 handle_resolver.py goose` → `Error: 'str' object has no attribute 'get'`, exit 1. Its own
+tests: 3 failed, 1 passed.
+
+Walked by six readers over contiguous slices of all 273 calls, prompts and reasoning both.
+**All six: `cria fault: yes`.**
+
+### The run in one line
+
+**cria pinned the coder to step 1 of 6 — "Read the Ada Handles API documentation" — and then refused
+every route to reading it. The plan never left step 1 in 267 calls.** Steps 4 and 5 were the live
+test and the README, which is exactly why neither exists.
+
+### Defect 1 — a step with no legal way to close
+
+Every prompt from 0093 to 0273 ends with `Do ONLY this step (1 of 6), then stop: Read the Ada
+Handles API documentation from https://api.handle.me/swagger/swagger.yml`. cria's answers:
+
+| the coder does | cria says |
+|:--|:--|
+| `web_fetch` that URL | *"You already fetched … read THAT file instead of re-fetching"* |
+| `read_file` the spilled copy, whole | *"is a large reference document — reading it whole gets truncated … grep it"* |
+| `read_file` a line range | *"(no lines in that range — … has 0 lines; line 1 is past the end of the file)"* |
+| `exec_command` to read it | system prompt: *"LAST RESORT … Do NOT use it to read … when a focused tool exists"* |
+
+That third answer is about a file **that does not exist** — the model had guessed a path.
+`writeproxy.py:412` runs `awk 'END{print NR}' <path> 2>/dev/null || echo 0`, so a missing file reads
+as an empty one. The unranged read of the same path correctly says `No such file or directory`, so
+cria holds both answers and shows the false one. Reproduced.
+
+The step verifier's own `proposed_fix` was *"Read the swagger file using read_file with full path"* —
+the action cria blocks.
+
+### Defect 2 — a red gate vetoes EVERY step, including ones that write no code
+
+`loop.py:1968-1971`: `if nudge is not None: … return self._renudge(...)` returns **before**
+`self._verify` is consulted. `loop.step_incomplete {"step": 1, "reason": "probe failed", "attempt": 9}`
+— a **research** step held open nine times because pytest was red. The steps that fix the tests are
+3 and 4, behind step 1. Perfect deadlock; the run spent its whole second half there. The step
+verifier's prompt already carries the correct rule — *"a research step is fulfilled the MOMENT the
+coder obtained them via a tool call"* — and never gets to run. The last critic call in the entire
+267-call run was **0060**; 207 calls ran with no completion judgment at all.
+
+### Defect 3 — cria manufactured the bug the run chased for 200 calls (FIXED)
+
+`probegate.py:251` did `s = ln.strip()` and `:259` `if s not in seen` with `seen` global to the whole
+gate output — so the traceback's SOURCE ECHO arrives de-indented and de-duplicated. A reader fed real
+pytest output through cria's own `clean_gate_output()` and reproduced its exact call-0185 bytes:
+
+        'total_handles': total_handles
+    except requests.exceptions.RequestException as e:      <- the closing } is GONE
+
+The file parses cleanly; `compileall` exited 0 in that same gate. cria told the coder
+*"handle_resolver.py has a syntax error - it's missing a closing parenthesis"* in **every prompt for
+45 consecutive calls**, and the coder copied that de-indented text into `edit_file` old_strings that
+could never match — four failed edits in a row trace to it. **Fixed: the checker's own line is
+shipped; dedupe still keys on the stripped form.**
+
+### Defect 4 — the confirm checker is starved, then overturns on what it wasn't given
+
+`_confirm_completion` gets the step text and the verdict's reason. Nothing else. Step 1 was ruled
+**DONE four times** (0015, 0019, 0024, 0029) and **overturned four times** (0016, 0020, 0025, 0030).
+At 0020 its stated reason was a **verbatim copy of the DONE reason, describing success**:
+
+> `{"consistent": false, "why": "The web_fetch call returned HTTP 200 OK and saved the documentation
+> to ./tmp/read-only/api.handle.me_swagger_swagger.yml, fulfilling the step's goal of reading the Ada
+> Handles API documentation."}`
+
+cria flipped the verdict to not-done and injected that success sentence into the coder as
+`⟦ctx:steer⟧`, directly under "Do ONLY this step, then stop." It holds `list_dir`/`read_file`, is
+told *"Do not think out loud"* with reasoning prefilled off, and called a tool zero times in four
+attempts. cria had printed the on-disk listing to the critic one call earlier.
+
+### Defect 5 — the compaction makes a false claim unfalsifiable
+
+The compactor is fed the PREVIOUS briefing as its transcript, so *"missing closing parenthesis"* is
+re-signed every cycle — a fixed point. `server.py:275` `_harden_compaction_reply` never applies
+`role.clean_content`, so a stray `</think>` and a fully doubled body became the session's entire
+remembered past. Its sibling `loop.summarize()` (line 3829) does apply it.
+
+### Defect 6 — `ON_TRACK` emitted by a model that just reasoned it is stuck
+
+Verbatim at 0213: *"I believe the coder is stuck and needs help… The appropriate response would be to
+use the directive `ON_TRACK` to indicate that the coder is not making progress."* Same shape at
+0100, 0105, 0109, 0134, 0145, 0163, 0175, 0186, 0255. The prompt sentence puts the sentinel and the
+wrong condition in one clause, and a 1B-active model collapses them. In several the full correct
+directive is in `reasoning_content` and cria reads content only.
+
+### Also confirmed, each reproduced
+
+- **A missing required `new_string` was coerced to "delete this text"** (`writeproxy.py:728`), cria
+  applied the deletion and reported the wreckage as `unmatched ')'` in the coder's file. **FIXED.**
+- **A truncated steer shipped whole**: 0139 returned `finish_reason=length` with 8,192 tokens of the
+  coder's own pytest failures, and cria delivered ~27,000 characters of it under a prompt asking for
+  "under 120 words". **FIXED.**
+- **`focustrim._is_failure` matched `\bnot found\b`** against the file's own docstring line
+  (`ValueError: If the handle is invalid or not found`) and deleted a SUCCESSFUL read of the file
+  under repair, plus the `⟦ctx:checks⟧` block — while keeping the fabricated messages.
+- **The exact-repeat web_fetch gate is dead for `raw=true`**: `_visible_web_calls`
+  (`server.py:58-81`) returns 3-tuples and never reads `raw`, so `seen_key` can never match. Three
+  byte-identical fetches at 0036/0039/0040 went unblocked.
+- **`massage.recover_leaked_tool_calls` never inspects `reasoning_content`** — fabliq emits
+  well-formed native tool calls into the think channel; eight turns were silently lost.
+- **`_judge_completion` withdraws tools above `VERIFY_MAX_CHARS` and still tells the model it has
+  them** — 0041 spent a 64,043-char call asking to `read_file('./handle_resolver.py')`, the one
+  action pointed at the real bug, and nothing could serve it.
+- **The rumination guard reports fabricated numbers** on the degenerate arm: *"hit 0 second-guessing
+  phrases … after ~2048 reasoning tokens"* where cria's own `count_markers` finds 41 markers and
+  ~5,969 tokens, and 2048 is a CHARACTER constant.
+- **`server.py:236` hides `tmp/`** from the post-compaction file listing — the exact directory cria
+  spills large fetches into, while ordering the coder to read one.
+
+### Model walls
+
+fabliq emits well-formed native tool calls inside `reasoning_content` rather than the tool channel
+(0014, 0018, 0023, 0028, 0059, 0064, 0068, 0070). The bytes are correct; cria does not look there.
+That is a real model quirk — but cria losing eight turns to it is cria's half.
