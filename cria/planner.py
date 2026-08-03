@@ -171,7 +171,16 @@ def _clean_step(text) -> str:
             if isinstance(v, str) and v.strip():
                 return _clean_step(v)
         return ""
-    s = str(text)
+    # A STEP IS TEXT A MODEL WROTE. Anything else in a JSON array — ``null``, a number, a bool, a
+    # nested list — is not a step, and ``str()`` on it AUTHORS one out of a Python repr: measured,
+    # ``json_steps('[null, null]')`` returned ``['None', 'None']``, and in the living re-derivation
+    # that list REPLACES the plan (#5b — cria may not put words in the model's mouth; #2 — the
+    # dangerous intervention is the one that replaces a correct prior). Pre-existing and newly
+    # reachable now that a bare top-level array is read. Dropped here, and a non-empty list that
+    # drops to nothing is refused as unreadable by the callers rather than read as "nothing remains".
+    if not isinstance(text, str):
+        return ""
+    s = text
     m = _DIALECT_MARKER.search(s)
     if m:
         s = s[:m.start()]
@@ -305,30 +314,55 @@ def json_steps(text: str) -> list[str] | None:
     reasoner to return when every remaining deliverable is already done, and it is distinguishable
     from ``None`` at every caller.
 
-    Three shapes, in order — each one a shape the model chose, none of them guessed at:
+    Three shapes — each one a shape the model chose, none of them guessed at:
 
-    1. a ``steps``/``plan``/``items`` list (or a numbered plan packed into one string value);
-    2. one — and only one — OTHER key holding a usable list, which is a model answering a synonym
-       of the ask (``remaining_steps``);
-    3. the reply IS a top-level array. Same items, same cleaning, the key simply absent.
+    1. the reply IS a top-level array (of strings, or of ``{"step": …}`` objects);
+    2. a ``steps``/``plan``/``items`` list (or a numbered plan packed into one string value);
+    3. one — and only one — OTHER key holding a usable list, which is a model answering a synonym
+       of the ask (``remaining_steps``).
 
-    Shape 3 is what this function was added for, and its guard is the whole of it: the array must be
+    Shape 1 is what this function was added for, and its guard is the whole of it: the array must be
     what the reply IS, after fences and ``<think>`` come off — never an array found somewhere INSIDE
     it. Measured 2026-08-02 over 232 captured re-derivation calls: 13 answered with a bare array (7
     with steps, 6 with ``[]``) and every one of them opens with ``[``. The reply that proves the
     guard is needed is run 20260801T232511 call 0067, which answered with a pytest FILE — and whose
     first bracket is ``result["resolved_ada_address"]``, an array of one string that a scan for the
     first ``[`` would have handed back as the plan.
+
+    IT IS TRIED FIRST, and the ORDER is load-bearing (fixed 2026-08-03). Shape 1 used to run last,
+    after ``extract_json_object`` — which, on a top-level array of OBJECTS, returns the first
+    ELEMENT. ``[{"step": "Write resolve.py"}, {"step": "Write the README"}]`` therefore entered the
+    object reader as ``{"step": "Write resolve.py"}``, matched no step key, offered no list to the
+    synonym scan, and came back ``None`` — while shape 1 alone reads it perfectly. Only arrays of
+    bare STRINGS worked, and the docstring that claimed "same items, same cleaning" for shape 1 was
+    describing code that never ran for the dict form (#5b: cria may not state a false fact, and a
+    docstring is a fact about the code). The per-object step wrapper is a shape these models really
+    emit — ``remaining_steps: [{"step": …, "status": …}]`` is in the corpus — it simply arrived
+    wrapped in an object, where the synonym scan caught it. Trying the array first costs nothing:
+    it fires only when the whole denoised reply parses as a JSON array, which is a strictly narrower
+    test than "contains an object somewhere".
     """
     body = strip_think(text)
+    arr = _top_level_array_steps(body)
+    if arr is not None:
+        return arr
     obj = extract_json_object(body)
     if obj:
+        # An explicitly EMPTY primary list is an answer ("nothing remains") — but it is the answer of
+        # LAST resort, taken only after the synonym scan has come up empty too. Returning it here
+        # short-circuited a reply that carried BOTH: `{"steps": [], "remaining_steps": ["a","b"]}`
+        # read as "nothing remains" while the model had written the tail one key over. Zero corpus
+        # occurrences, and still wrong in the direction that costs the most — this reader also drafts
+        # the INITIAL plan, where one miss costs the whole run.
+        empty_answer = False
         for k in _STEP_KEYS:
             v = obj.get(k)
             if isinstance(v, list):
                 steps = [c for s in v if (c := _clean_step(s))]
-                if steps or not v:
-                    return steps        # an explicitly EMPTY list is the answer, not a miss
+                if steps:
+                    return steps
+                if not v:
+                    empty_answer = True
             elif isinstance(v, str) and v.strip():  # a numbered plan packed into one string value
                 steps = _split_inline_numbered(v)
                 if steps:
@@ -348,8 +382,8 @@ def json_steps(text: str) -> list[str] | None:
                 candidates.append(got)
         if len(candidates) == 1:
             return candidates[0]
-        return None
-    return _top_level_array_steps(body)
+        return [] if empty_answer and not candidates else None
+    return None
 
 
 def _top_level_array_steps(body: str) -> list[str] | None:
@@ -357,7 +391,12 @@ def _top_level_array_steps(body: str) -> list[str] | None:
 
     "IS", not "contains": the denoised reply must open with ``[``. That single rule is what keeps a
     Python file, a README, or any prose carrying a subscript from being read as a plan — see
-    :func:`json_steps` for the capture that measured it."""
+    :func:`json_steps` for the capture that measured it.
+
+    A NON-EMPTY array that yields no step text is ``None``, not ``[]``. The two mean opposite things
+    to :func:`cria.loop.reassess_remaining` — ``[]`` drops the remaining plan, ``None`` keeps it — and
+    ``[1, 2, 3]`` or ``[null, null]`` is a model that answered with something other than steps, not a
+    model saying the work is finished. Only an array the model wrote as literally empty says that."""
     cleaned = jsontext.denoise(body).strip()
     if not cleaned.startswith("["):
         return None
@@ -367,7 +406,8 @@ def _top_level_array_steps(body: str) -> list[str] | None:
         return None
     if not isinstance(arr, list):
         return None
-    return [c for x in arr if (c := _clean_step(x))]
+    steps = [c for x in arr if (c := _clean_step(x))]
+    return steps if steps or not arr else None
 
 
 def parse_steps(text: str) -> list[str] | None:

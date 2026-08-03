@@ -426,5 +426,183 @@ class ReassessRemainingReadsTheReplyItWasSentTests(unittest.TestCase):
         self.assertIsNone(steps, "an uncovered tail must leave the plan untouched")
 
 
+# ---------------------------------------------------------------------------------------------
+# 3. THE REVIEW OF THE ABOVE — four defects the two fixes carried, and one they made reachable.
+#
+# Each is measured against ~/.cria/calls (2026-08-03) and stated with its real prevalence, including
+# the ones that are ZERO. A zero is not a reason to skip a fix whose failure direction is bad; it is
+# a reason to say so out loud instead of inventing a number.
+
+
+class ATopLevelArrayOfSTEPOBJECTSIsReadTests(unittest.TestCase):
+    """B2-1. ``json_steps`` ran ``extract_json_object`` FIRST, and on a top-level array of objects
+    that returns the first ELEMENT — so the reply entered the object reader as a single ``{"step":
+    …}``, matched no step key, offered no list to the synonym scan, and came back None. Only arrays
+    of bare STRINGS ever worked, while the docstring claimed shape 3 was "same items, same cleaning"
+    (#5b — a docstring is a fact about the code). Prevalence: 0 of 234 captured re-derivations and 1
+    reply in the whole corpus; the per-object step wrapper is nonetheless a shape these models really
+    emit — ``remaining_steps: [{"step": …, "status": …}]`` is in the corpus — it simply arrived
+    wrapped in an object, where the synonym scan caught it."""
+
+    def test_the_dict_shape_is_read(self):
+        self.assertEqual(
+            planner.json_steps('[{"step": "Write resolve.py"}, {"step": "Write the README"}]'),
+            ["Write resolve.py", "Write the README"])
+
+    def test_the_dict_shape_carries_its_status_field_without_leaking_it(self):
+        text = json.dumps([{"step": "Research the API", "status": "pending"},
+                           {"step": "Write the resolver", "status": "pending"}])
+        self.assertEqual(planner.json_steps(text), ["Research the API", "Write the resolver"])
+
+    def test_the_string_array_still_reads__the_shape_that_already_worked(self):
+        self.assertEqual(len(planner.json_steps(REPLAN_0024) or []), 4)
+
+    def test_a_reply_that_merely_CONTAINS_an_array_of_objects_is_not_a_plan(self):
+        # ADVERSARIAL — the input that would make it fire when it must not. Trying the array first
+        # cannot widen what is read: the whole denoised reply must parse as a JSON array, which is
+        # strictly narrower than "an object is in here somewhere".
+        self.assertIsNone(planner.json_steps(
+            'Here is the fixture:\n[{"step": "x"}, {"step": "y"}]\nthat is all.'))
+
+    def test_an_object_holding_the_step_list_is_unaffected(self):
+        self.assertEqual(planner.json_steps('{"steps": ["a", "b"]}'), ["a", "b"])
+
+
+class AnEmptyPrimaryKeyDoesNotHideASynonymTests(unittest.TestCase):
+    """B2-3. Honouring ``{"steps": []}`` the moment it is seen short-circuited the synonym scan, so a
+    reply carrying BOTH read as "nothing remains" while the model had written the tail one key over.
+    Zero corpus occurrences — and still wrong in the direction that costs the most, because this same
+    reader drafts the INITIAL plan, where one miss costs a whole run."""
+
+    def test_the_synonym_wins_over_an_empty_primary(self):
+        self.assertEqual(planner.json_steps('{"steps": [], "remaining_steps": ["a","b"]}'), ["a", "b"])
+
+    def test_an_empty_list_with_no_synonym_is_STILL_the_answer(self):
+        # The empty answer is not weakened, only deferred: replan.txt asks for exactly this.
+        self.assertEqual(planner.json_steps('{"steps": []}'), [])
+        self.assertEqual(planner.json_steps("[]"), [])
+
+    def test_an_AMBIGUOUS_pair_stays_a_safe_null(self):
+        # ADVERSARIAL — two synonym lists is a guess cria does not make, and an empty primary must
+        # not turn that guess into a "nothing remains" either.
+        self.assertIsNone(planner.json_steps(
+            '{"steps": [], "remaining_steps": ["a"], "next_actions": ["b"]}'))
+
+
+class AJsonNullNeverBecomesAStepTests(unittest.TestCase):
+    """B2-4. ``_clean_step`` ended in ``str(text)``, so a JSON ``null`` became the step ``"None"`` and
+    ``[1, 2, 3]`` became three steps named after digits — cria AUTHORING plan text out of a Python
+    repr (#5b), in the one place whose result REPLACES the plan (#2). Pre-existing, and newly
+    reachable now that a bare array is read at all. Prevalence 0; the failure it prevents is a
+    plan cria wrote."""
+
+    def test_null_items_are_not_steps(self):
+        self.assertIsNone(planner.json_steps("[null, null]"))
+
+    def test_number_items_are_not_steps(self):
+        self.assertIsNone(planner.json_steps("[1, 2, 3]"))
+
+    def test_a_non_empty_array_that_yields_nothing_is_UNREADABLE_not_finished(self):
+        # The distinction that matters: None keeps the plan, [] drops the tail. A model answering
+        # with three integers has not said the work is done.
+        self.assertIsNone(planner._top_level_array_steps("[null]"))
+        self.assertEqual(planner._top_level_array_steps("[]"), [])
+
+    def test_the_re_derivation_keeps_the_plan_on_a_step_less_array(self):
+        self.assertIsNone(
+            loop.reassess_remaining(_scripted([_comp("[null, null]")]), _role(), "t", "- done",
+                                    "- old step", "ev", _Rlog()))
+
+    def test_a_mixed_array_keeps_the_real_steps(self):
+        self.assertEqual(planner.json_steps('["Write resolve.py", null, "Write the README"]'),
+                         ["Write resolve.py", "Write the README"])
+
+
+class ARecoveredVerdictMustCarryAFindingTests(unittest.TestCase):
+    """B2-2. ``close_unclosed_object`` makes a new input reachable: a model that ECHOES the
+    instruction it was given and stops mid-object. The instruction ends in a literal JSON template,
+    so ``Answer in the form {"done": false, "reason": "..."`` repairs perfectly into a NOT-done whose
+    finding is ``...`` — which ``_verdict_nudge`` then hands the coder as its corrective (#3: on a
+    signal with nothing in it, say nothing). Prevalence 0 of the 12 repairable verdicts on this box,
+    and 1 of 314 verdicts the ordinary reader already accepts. It ships because refusing costs
+    NOTHING: the fail-closed path reaches the same NOT-done without cria claiming the judge spoke."""
+
+    def test_a_reason_of_only_punctuation_is_refused(self):
+        self.assertIsNone(loop.verdict_from_unclosed(
+            'Answer in the form {"done": false, "reason": "..."', "done", _Rlog(), "critic"))
+
+    def test_the_prompts_OWN_placeholder_is_refused(self):
+        for slot in ("<short>", "<brief fix prose>"):
+            with self.subTest(slot=slot):
+                self.assertIsNone(loop.verdict_from_unclosed(
+                    '{"done": false, "reason": "%s"' % slot, "done", _Rlog(), "critic"))
+
+    def test_an_absent_or_empty_reason_is_refused(self):
+        self.assertIsNone(loop.verdict_from_unclosed(
+            '{"done": false, "proposed_fix": "read the file"', "done", _Rlog(), "critic"))
+
+    def test_the_MEASURED_verdict_is_still_recovered(self):
+        # The whole population this fix exists to rescue must be untouched by the bound on it.
+        self.assertIsNotNone(loop.verdict_from_unclosed(CRITIC_0469, "done", _Rlog(), "critic"))
+        self.assertIsNotNone(loop.verdict_from_unclosed(SATISFACTION_0083, "satisfied", _Rlog(), "s"))
+        self.assertIsNotNone(loop.verdict_from_unclosed(CONFIRM_0120, "consistent", _Rlog(), "c"))
+
+    def test_a_real_reason_that_HAPPENS_to_carry_angle_brackets_is_kept(self):
+        # ADVERSARIAL — the input that must not be mistaken for a template slot. Only a reason that
+        # IS one bracket pair and nothing else is refused.
+        obj = loop.verdict_from_unclosed(
+            '{"done": false, "reason": "the <html> landing page was read, not the spec"',
+            "done", _Rlog(), "critic")
+        self.assertIsNotNone(obj)
+        self.assertIn("<html>", obj["reason"])
+
+    def test_the_refusal_falls_to_the_path_that_was_already_there(self):
+        # DIRECTION: refusing a hollow recovery cannot advance anything. The step critic still
+        # returns no verdict, which fails CLOSED exactly as it did before this recovery existed.
+        lp = _loop_with(_scripted([_comp('{"done": false, "reason": "..."')]))
+        obj, _raw = lp._verdict("sys", "user", _Rlog(), reasoning_off=False)
+        self.assertIsNone(obj)
+
+
+class ARepeatedKeyResolvesToTheFirstREALAnswerTests(unittest.TestCase):
+    """B2-5. ``_first_wins`` used Python truthiness for "empty", so a JSON ``false`` counted as
+    nothing-said and the next occurrence overwrote it — in the reader every verdict cria has goes
+    through. Measured over 24,196 captured payloads: 73 repeated keys, 4 with a falsy-but-real first
+    value, and exactly ONE that cria acts on."""
+
+    # run 20260803T112245 call 0157-critic, verbatim: a step critic that answered twice.
+    CRITIC_0157 = (
+        '{\n  "done": false,\n  "reason": "The coder fetched the OpenAPI spec and identified the '
+        'endpoint GET /handles/{handle} as returning resolved_addresses.",\n  "proposed_fix": '
+        '"No fix needed; the step is satisfied.",\n  "done": true\n}')
+
+    def test_the_measured_contradiction_no_longer_APPROVES(self):
+        obj = jsontext.extract_json_object(self.CRITIC_0157)
+        self.assertIs(obj["done"], False,
+                      "cria advanced a step on the later of two contradictory answers")
+
+    def test_an_EMPTY_first_value_still_yields_to_the_later_one(self):
+        # The behaviour _first_wins was written for is untouched: [] is genuinely nothing said.
+        self.assertEqual(jsontext.loads('{"missing": [], "missing": ["the tests"]}'),
+                         {"missing": ["the tests"]})
+        self.assertEqual(jsontext.loads('{"reason": "", "reason": "no README"}'),
+                         {"reason": "no README"})
+        self.assertEqual(jsontext.loads('{"steps": null, "steps": ["a"]}'), {"steps": ["a"]})
+
+    def test_a_first_value_of_zero_is_an_ANSWER(self):
+        self.assertEqual(jsontext.loads('{"count": 0, "count": 9}'), {"count": 0})
+
+    def test_the_degenerate_echo_this_hook_exists_for_is_still_beaten(self):
+        self.assertEqual(jsontext.loads('{"steps": ["real one"], "steps": [1,2,3]}'),
+                         {"steps": ["real one"]})
+
+    def test_the_direction_is_toward_keeping_work(self):
+        # A repeated flag can now only ever resolve to the EARLIER answer. When those disagree the
+        # judge has not decided, and an undecided judge means NOT done (#13) — never the reverse.
+        self.assertIs(jsontext.loads('{"done": false, "done": true}')["done"], False)
+        self.assertIs(jsontext.loads('{"satisfied": false, "satisfied": true}')["satisfied"], False)
+        self.assertIs(jsontext.loads('{"consistent": false, "consistent": true}')["consistent"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

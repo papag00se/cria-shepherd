@@ -127,6 +127,16 @@ def _unclosed_tail(s: str, start: int) -> str:
     return "".join(reversed(stack))
 
 
+def _is_empty(v) -> bool:
+    """Does this value carry no answer? ``null``, an empty string, an empty container — nothing else.
+
+    ``False`` and ``0`` are ANSWERS, and the distinction is the whole of :func:`_first_wins`. Python
+    truthiness conflates them: ``not False`` and ``not []`` are both true, so a first ``"done": false``
+    counted as "nothing was said" and a later ``"done": true`` overwrote it. That is the entire verdict
+    protocol — every judge cria has answers under a boolean — read by the truthiness of its own answer."""
+    return v is None or (isinstance(v, (str, bytes, list, tuple, dict, set)) and not v)
+
+
 def _first_wins(pairs):
     """Resolve a REPEATED key to its first non-empty value, not its last.
 
@@ -134,10 +144,24 @@ def _first_wins(pairs):
     wrong one: a small model that repeats a key emits its real answer first and a degenerate echo
     after. Measured (run 0727-121457) a planner emitted `{"steps":[<five real steps>],"steps":[1,2,3,4,5]}`
     and stdlib semantics threw the plan away, handing the coder steps named "1", "2", "3".
-    Empty-first is skipped so `{"missing":[], "missing":["the tests"]}` still reports the tests."""
+    Empty-first is skipped so `{"missing":[], "missing":["the tests"]}` still reports the tests.
+
+    EMPTY IS A SHAPE, NOT A TRUTHINESS (fixed 2026-08-03). "Empty" used to be Python falsiness, so a
+    JSON ``false`` was treated as nothing-said and the next occurrence replaced it. Measured over
+    24,196 captured payloads: 73 repeated keys, 4 of them with a falsy-but-real first value, and
+    exactly ONE that cria acts on — run 20260803T112245 call 0157-critic, a step critic that wrote
+
+        {"done": false, "reason": "…", "proposed_fix": "…", "done": true}
+
+    and was read as ``done: true``. cria ADVANCED the step on the later of two contradictory answers.
+    A judge that says both has not decided, and an undecided judge means NOT done (#13); reading the
+    first is also simply what this function's own name and docstring have always promised. The other
+    three occurrences are keys no cria code reads (``has_datum`` ×2, both ``false`` either way, and
+    one ``briefing_complete`` inside a model's own summary JSON), so the measured blast radius across
+    all 22 callers of :func:`loads` is that single verdict."""
     out = {}
     for k, v in pairs:
-        if k in out and (out[k] or not v):
+        if k in out and (not _is_empty(out[k]) or _is_empty(v)):
             continue          # keep the earlier value unless it was empty and this one is not
         out[k] = v
     return out

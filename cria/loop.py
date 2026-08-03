@@ -1074,9 +1074,39 @@ def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | Non
     obj = jsontext.close_unclosed_object(vtext or "")
     if not isinstance(obj, dict) or obj.get(flag) is not False:
         return None      # no repairable object, no verdict flag, or an APPROVAL — all refused
+    if not _is_a_finding(str(obj.get("reason") or obj.get("why") or "")):
+        return None      # a ruling with nothing behind it — see _is_a_finding
     rlog.emit("loop.verdict_from_unclosed", level="info", phase=phase, flag=flag,
               reason=_clip(str(obj.get("reason") or obj.get("why") or ""), 120))
     return obj
+
+
+def _is_a_finding(reason: str) -> bool:
+    """Does this ``reason`` carry an answer, rather than the SHAPE of one?
+
+    Every judge prompt defines ``reason`` as "your SPECIFIC finding grounded in THIS evidence", and
+    recovery exists to rescue the judge's own words. When there are no words there is nothing to
+    rescue, and the fail-closed path already reaches the same NOT-done ruling without cria claiming
+    the judge said something. So refusing here costs nothing and can only ever move the outcome
+    toward "keep working" — which is why it ships at a measured prevalence of ZERO (0 of the 12
+    repairable NOT-done verdicts on this box, and 1 of 314 verdicts cria's ordinary reader already
+    accepts). It is a bound on what recovery may do, not a detector.
+
+    TWO SHAPES, no vocabulary — this must not become a list of words anyone has to keep tuning:
+
+    * nothing but punctuation or whitespace. ``close_unclosed_object`` makes a new input reachable —
+      a model that ECHOES the instruction it was given and stops mid-object — and the instruction it
+      is given ends in a literal JSON template. ``Answer in the form {"done": false, "reason": "..."``
+      repairs perfectly and yields a "finding" of ``...``, which ``_verdict_nudge`` would then hand
+      the coder as its corrective.
+    * an angle-bracket placeholder and nothing else. That is cria's OWN convention for a slot the
+      model is meant to fill — ``"reason": "<short>"``, ``"proposed_fix": "<brief fix prose>"``,
+      ``grep -n "<keyword>"`` — so a reason that IS one is the template coming back, not a reading of
+      the evidence. Structural (the bracket shape cria writes), never a list of the words inside."""
+    r = (reason or "").strip()
+    if not re.search(r"\w", r):
+        return False
+    return not (r.startswith("<") and r.endswith(">") and ">" not in r[1:-1])
 
 
 def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
