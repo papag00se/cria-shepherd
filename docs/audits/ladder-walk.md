@@ -3394,3 +3394,284 @@ At **0045**, unaided: *"It does not directly include total Handles… However, t
 endpoint /holders/{address} that returns total_handles. So we need to combine data from both
 endpoints."* That is the entire correct design. Three lines later it discarded it, because cria had
 told it four times, in cria's own voice, that it had not read the spec.
+
+---
+
+## ada-handles_fabliq_codex_pon_1785771361
+
+**Score 0/4, `terminal: crashed-early`.** 21 calls, **41 seconds**. Not a milestone miss and not a
+model verdict — `suite/run.py:355` labels any run whose harness exits normally under 60 seconds this
+way, so the harness quit on its own.
+
+**cria fault: none** — on the evidence available, which is thin and I say so rather than dressing it up.
+
+### Walk depth, stated plainly
+
+21 calls, read directly rather than by readers: the phase distribution, the final call's prompt and
+response, and `suite/run.py`'s exit condition. This is a 41-second harness abort, not a 15-minute
+agent session; there is no loop to walk.
+
+### What happened
+
+Phases: **19 planner, 3 classifier, 3 proxy. Zero coder.** The session never reached the coding loop.
+
+The last call (`0021-proxy`) came back `finish_reason: stop`, no tool calls, with a plan as prose in
+the content field:
+
+    {"plan": [{"step": "Write Python script that resolves Ada Handle to Cardano address
+               using api.handle.me", "status": "pending"}]}
+
+codex received a text answer where it expected a tool call and ended the session.
+
+### Why this is the model's shape, not a new cria defect
+
+fabliq emitting structured JSON as *content* instead of a tool call is recorded three times in this
+record already — 5 of 27 coder turns lost to it in run `1785721353` (tool calls inside
+`reasoning_content`), and `massage.recover_leaked_tool_calls` scanning only `content` is the known
+sibling gap. This instance is the same shape on the proxy path.
+
+It is **not** the planner deadlock of attempts 1–3: those spent 267 and 255 calls pinned to step 1
+with a live loop. This one never started one.
+
+### Not concluded
+
+Whether this reproduces. A single 41-second abort is one sample of a model that is
+non-deterministic on three of four sampled configurations; fabliq itself is deterministic at temp 0
+within a server instance but **not across server restarts** (measured during the tier-3 replay work),
+and cria.service had just been restarted with the spill-read fix. Re-running is cheaper than
+theorising, and that is the next action rather than a fix.
+
+**No fix is proposed from this run.** Recording a 41-second abort as a defect would be manufacturing
+a finding to have one.
+
+---
+
+## ada-handles_fabliq_codex_pon_1785781354
+
+**Score 0/4, `terminal: milestone-miss-15min`.** 232 captured calls (the row says 221; the row counts
+completed calls, three had no response and one was retried). 951 s wall. 96 coder turns, 49 reasoner,
+37 planner, 14 critic, 8 critic-confirm, 8 steer-recover, 2 self-compact, 3 proxy.
+
+**cria fault: yes**
+
+### Walk depth
+
+Every one of the 232 calls, in order, prompt paired with reasoning and response. The delivered
+workspace was copied to a throwaway dir, run, and scored with `suite/tasks/ada-handles/verify.py`.
+The live API was queried by hand to settle the field question. The `ON_TRACK` steer corruption was
+reproduced from the raw capture files.
+
+### The one-line cause
+
+**cria told the coder, twice and in cria's own voice, that `GET /handles/{handle}` returns
+`total_handles`. It does not.** Every later version of the deliverable reads that field and dies on
+the real handle. That single false fact is the whole 0/4.
+
+Checked against the live API just now:
+
+    /handles/goose            → no total_handles key
+    /holders/<its stake addr> → total_handles: 15
+
+Checked against cria's own `⟦ctx:facts⟧` block, which was on the same page as both steers:
+
+    GET /handles/{handle}   → … holder(string) … resolved_addresses{ada,eth,btc} …
+    GET /holders/{address}  → total_handles(integer, e.g. 1421) …
+
+### Defect 1 — the false fact, stated twice
+
+**0085** (authored by the flail supervisor at 0084), cria said:
+
+> *"You ... write the resolve_ada_handle.py script that fetches
+> https://api.handle.me/handles/{handle}, extracts resolved address, holder address, and total
+> handles from the JSON response, and writes them to variables for further use."*
+
+The coder complied at 0086 — `total_handles = data['total_handles']` — and that line survives into the
+delivered file.
+
+**0139** (authored at 0138), cria said:
+
+> *"turn --- The exact path to resolve an Ada Handle and retrieve holder information is GET
+> /handles/{handle}. … The response includes fields such as resolved_addresses (which contains the
+> holder address), holder address, and total_handles (total number of handles owned by that handle)."*
+
+Three things wrong in one steer: `total_handles` is not in that response; `resolved_addresses` does
+not contain the holder address; and the steer opens with the literal string `turn ---`, a transcript
+separator that leaked out of the supervisor's own output and was shipped to the coder as the first
+two words of its instruction.
+
+### Defect 2 — the coder found the truth and cria steered it back off
+
+At **0166** the model reasoned, unaided and correctly:
+
+> *"So the handle endpoint does not return total_handles. We must look for another endpoint."*
+
+The critic at **0167** did not engage with that at all. It vetoed for a different reason and cria
+injected at **0168**:
+
+> *"Add defensive checks using .get() with appropriate defaults or raise a custom exception when any
+> of the required fields are absent. For example, replace data['resolved_addresses']['ada'] with
+> data.get('resolved_addresses', {}).get('ada'), and similarly for holder and total_handles"*
+
+That is cria writing literal code into a steer, and the code it writes hardens the wrong field into
+place — it converts "this field is not here" from a `KeyError` the coder might have investigated into
+a `ValueError` it treated as correct behaviour. The model never returned to its own finding.
+
+The right instruction did exist once. At **0153** a critic wrote, and cria injected at **0154**:
+
+> *"Make a GET request to /handles/{handle} … to obtain the resolved addresses, then use those
+> addresses with GET /holders/{address} to retrieve holder information."*
+
+That is the entire correct design. It was said once, in a step-critic `proposed_fix`, the coder
+ignored it, and nothing in cria ever raised it again.
+
+### Defect 3 — the ON_TRACK sentinel is stripped as a substring
+
+The flail supervisor at **0210** answered with a malformed blob rather than a directive:
+
+    {
+      "ON_TRACK",
+      "ACTION": "Write unit tests for resolve_handle function in …/test_resolve_handle.py"
+    }
+
+cria did not treat that as "not a directive". It removed the token and shipped the rest. The coder's
+steer at **0211** was, verbatim:
+
+    ⟦ctx:steer⟧ { " ", "ACTION": "Write unit tests for resolve_handle function in …/test_resolve_handle.py" }
+
+Reproduced from `0210-reasoner.response.json` and `0211-coder-s3.prompt.txt`. The sentinel check is a
+substring removal, not an exact-match on the whole reply, so any reply that merely *contains* the word
+becomes a directive with a hole punched in it.
+
+### Defect 4 — unusable confirm-gate verdicts still become directives
+
+Four confirm vetoes in this run were unusable. The new fix caught one of them.
+
+- **0173** answered `{"consistent": false, "why": "resolve_ada_handle.py"}`. cria's steer at **0174**
+  was, in full: `⟦ctx:steer⟧ resolve_ada_handle.py`. A bare filename handed to the coder as an
+  instruction.
+- **0183** answered *"The file …/resolve_ada_handle.py does not exist in the workspace, so the
+  claimed completion cannot be verified."* The critic prompt one call earlier, **0182**, lists
+  `resolve_ada_handle.py (1196 B)` in its own workspace listing. cria injected the false claim at
+  **0184**; the coder responded by rewriting the file wholesale, **and that rewrite is what dropped the
+  `if __name__ == "__main__"` block**. The delivered script has no entry point at all.
+- **0099** and **0108** both vetoed with *"no verification was performed"* / *"no evidence of the
+  actual research … is provided"* — the checker reporting its own failure to look as the coder's failure.
+- **0201** echoed the approval's reason word for word. **This is the case the new fix targets, and it
+  fired**: cria re-asked at **0202** with *"Repeating the reason above back word for word is not an
+  answer"*, and the re-ask cleared the block. That fix works. It covers one shape out of four.
+
+fabliq's confirm-checker called `list_dir` or `read_file` zero times across all 8 invocations, which
+matches the 0-of-87 measurement already on this record.
+
+### Defect 5 — step 1 was held open for 119 of 232 calls by a checker that never looked
+
+The facts arrived at **0041**: `web_fetch https://api.handle.me/openapi.json` returned HTTP 200 with
+all 33 routes and the response shape of the five that matter. The step-critic's own prompt says a
+research step *"is fulfilled the MOMENT the coder obtained them via a tool call"*. Step 1 was
+nevertheless refused ten times — 0047, 0060, 0061, 0088, 0091, 0099, 0108, 0133, 0136, 0153 — and only
+passed at 0157/0158, at call **119 of 232**. Half the run.
+
+Two of the refusals cria injected as steers state something the same prompt disproves:
+
+- **0088 → 0089**: *"The provided evidence does not show that the coder actually read the OpenAPI
+  specification or extracted the required path and parameters from it."* The evidence block above it
+  contains the fetch, the 200, and the field list.
+- **0136 → 0137**: *"no file or artifact exists in the workspace that contains this information."*
+  The workspace listing in the critic prompt one call earlier reads
+  `tmp/read-only/api.handle.me_openapi.json (96221 B)`.
+
+### Defect 6 — cria contradicted itself about one file, seven calls apart
+
+**0046**, after the search supervisor purged the results:
+
+> *"Those search results were off-target for this task, so they were removed. Search instead for: ADA
+> Handle Python client. Re-reading ./tmp/read-only/search-ada_handles_api_resolve_handle_endpoint.txt
+> is denied — it will keep returning this."*
+
+**0053**, when the coder searched again:
+
+> *"READ THAT FILE rather than searching again: grep -n "<keyword>"
+> ./tmp/read-only/search-ada_handles_api_resolve_handle_endpoint.txt, or read_file it with a
+> start_line/end_line range."*
+
+Same path, opposite order. Calls 0053–0079 are the coder oscillating between a search it is blocked
+from and a file it is forbidden to read. The "search instead for: ADA Handle Python client"
+recommendation also points away from the source the coder had already fetched.
+
+Separately: the judges do not see the denial. In the action logs at 0091 and in the compaction
+transcript at 0149, that same `read_file` is rendered as having **returned the 19 search results**.
+The coder and its judges were shown two different histories of the same call.
+
+### Defect 7 — compaction destroyed the session's own fetch record, twice
+
+At **0149** the briefing writer refused:
+
+> *"I'm sorry, but I can't provide a briefing based on this conversation because it contains no actual
+> accomplishments to summarize."*
+
+cria injected that refusal verbatim into the coder at **0150** under the heading *"Your summary of the
+work so far"*, stray `</think>` tag included. Worse, in the same prompt the `⟦ctx:facts⟧` block
+degraded from the full endpoint-and-field list to:
+
+> *"https://api.handle.me/openapi.json → HTTP 200 (this page answered, but no endpoint definitions
+> were found in it … nothing read so far DEFINES the API's routes)"*
+
+That is false — those definitions had been carried for 100 calls and reappear after the *next*
+compaction at 0163. The same degradation happened again at **0223**. Both times the coder's next move
+was to restart the search loop.
+
+### Model walls (one line each)
+
+- **8 of 96 coder turns lost to the reasoning channel (8.3%)** — 0046, 0059, 0087, 0090, 0106, 0131,
+  0152, 0156. Four carry a complete `<|tool_call_start|>[…]<|tool_call_end|>` inside
+  `reasoning_content` with `content: null` and no `tool_calls`; four carry a JSON pseudo-call there
+  instead. **All 8 were followed immediately by a critic call**, so each loss also bought a critic
+  round-trip. 0087 is the clean example: the whole corrected `resolve_ada_handle.py`, `write_file`
+  wrapper and all, sitting in the reasoning with nothing in `content`.
+- 0064's flail supervisor ran to `finish_reason: length`, repeating one JSON block about twelve times.
+- The delivered `live_tests.py` asserts spec *placeholder* strings containing a literal ellipsis
+  (`'addr1e000000000…0002'`) and subscripts a tuple as a dict (`result['resolved_address']`). Written
+  at 0224 after two compactions had erased the working version it had at 0208.
+
+### What the delivered workspace actually does
+
+Copied out and run:
+
+    $ python3 resolve_ada_handle.py goose
+    (no output)                              exit 0     ← no __main__ block at all
+    >>> resolve_handle('goose')
+    ValueError: Missing or invalid total_handles integer for handle goose
+    $ python3 -m pytest -q
+    5 failed, 1 passed
+    README.md                                 does not exist
+
+`test_resolve.py` also hardcodes `sys.path.insert(0, '/tmp/suite-ada-handles_…-tndcpie9')`, the
+original run directory, so the delivered suite only imports on the machine that produced it.
+
+`suite/tasks/ada-handles/verify.py` on the copy: **0/4**, all four parts false — matching the
+recorded row exactly.
+
+### The two fixes under test
+
+- **Spilled search files handed over instead of refused** — *never applied in this run.* The only
+  large spill was the 96 KB `api.handle.me_openapi.json`, over the size limit by design; it was gated
+  6 times (`writeproxy.spill_read_gated: 6`). The one under-limit spill, the 7.7 KB search file, was
+  refused at 0046 by a *different* gate — the search-loop purge — so the handover never got a turn.
+  No evidence either way from this run.
+- **Confirm-gate verbatim-echo veto re-asked instead of flipped** — *fired once and worked*
+  (0201 → 0202, block cleared). It is the right fix for the shape it names. It caught 1 of the 4
+  unusable confirm verdicts here; the other three were a bare filename, a false "does not exist", and
+  "no verification was performed".
+
+### Fixes this run argues for (not applied — walk only)
+
+1. A steer author must not assert a response field. When a directive names a field, check it against
+   the session's own fetch record and drop the claim if the record puts that field on a different
+   endpoint. Defect 1 is the whole run.
+2. `ON_TRACK` must be an exact-match on the entire reply. A reply that merely contains the token is
+   not a directive and not an all-clear — drop it and re-ask.
+3. A confirm-gate `why` that names no artifact and no contradiction — a bare filename, or a sentence
+   whose only content is that the checker did not look — is unusable, exactly like the verbatim echo.
+   Re-ask; never inject.
+4. Compaction must not downgrade a fetch record it already holds. "No endpoint definitions were found"
+   is a claim, and cria had the endpoints on disk when it made it.
