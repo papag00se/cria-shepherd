@@ -2330,6 +2330,19 @@ class Loop:
         if obj is not None and _claims_impossible_action(obj, rlog, "critic"):
             obj = None   # fabricated evidence → the parse-miss retry path, never a standing verdict
         if obj is not None:
+            # MEASURED AND DELIBERATELY NOT BUILT (2026-08-02): the mirror of the reasoning recovery in
+            # _verdict — "the judge APPROVED but its own thinking says NOT done" — does not exist. Of
+            # 493 captured critic calls, 264 approved with a readable verdict and 7 of those have a
+            # negative ruling somewhere in the thinking. All 7 were read in full; every one is the
+            # judge ARGUING ITSELF TO the approval it emitted, not contradicting it — the negative is
+            # hypothetical ("maybe the step is not fully satisfied because they haven't verified the
+            # fetched file … but they used web_fetch with the exact URL, that's sufficient") or about
+            # a DIFFERENT scope ("the README is missing overall … but for THIS step: DONE"). Same for
+            # the satisfaction judge: 2 of 88, both the same shape. A lexical read cannot tell a
+            # considered-and-rejected objection from a real one, so overriding a verdict the judge
+            # actually reached would be 0-for-9 on the evidence. The approve path's brake is
+            # _confirm_completion, which asks a fresh question against fresh ground truth.
+            #
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
@@ -2402,7 +2415,26 @@ class Loop:
                 # budget for content; if that is also cut, _verify fails closed as it already does.
                 rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
                 return None, vtext
-            return extract_json_object(vtext) or None, vtext
+            obj = extract_json_object(vtext)
+            if obj is not None:
+                return obj, vtext
+            # THE SAME RECOVERY THE SATISFACTION JUDGE HAS HAD SINCE 08-01, which this phase never got.
+            # Measured 2026-08-02 over every captured step-critic call on this box (n=493, replayed
+            # through cria's own reading path — extract_json_object then _fill_missing_verdict_flag):
+            # 175 were unreadable, and 7 of those carry a clear NOT-done in the thinking cria threw
+            # away. Four are one shape — the judge spent its inspection rounds calling tools and never
+            # answered (finish_reason=tool_calls, content ""), e.g. "So the step 'Write a live test
+            # that runs resolve_handle.py with handle goose' is not done — there is no test for
+            # 'goose' in the file." What the coder got instead was `unverified_step`, a generic
+            # keep-working line carrying none of that.
+            #
+            # ONE DIRECTION ONLY, and for the same reason stated above _VERDICT_NEGATIVE: a recovered
+            # NOT-done can only ever mean "keep working", so a false positive costs a turn and never a
+            # false finish (principle 13). The mirror case was measured and DELIBERATELY not built —
+            # see the note in _verify.
+            ph = "critic" + ("-noreason" if reasoning_off else "")
+            return (verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
+                    or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose")), vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
             return None, ""
@@ -3852,7 +3884,8 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
-              max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "") -> str:
+              max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "",
+              capture: list | None = None) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -3863,7 +3896,12 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
     ``coder_tools`` (opt-in): a rendered coder-tool summary. When set, the reasoner is reasoning ABOUT
     the coder's session, so it is prepended as context — the reasoner is otherwise blind to the coder's
     tools and can name an action the coder can't do (it wavered 'we don't have a grep tool' with
-    exec_command right there). Compaction/summarization callers leave it empty (not reasoning about acts)."""
+    exec_command right there). Compaction/summarization callers leave it empty (not reasoning about acts).
+    ``capture`` (opt-in): a list the RAW completion of each pass is appended to, in order, so a caller
+    that needs more than the text can have it. summarize returns "" on a truncated or tool-call reply
+    and thereby discards the reasoning behind it — which is exactly the channel the steer author's
+    answer-vs-thinking recovery must read (:func:`_steer_from_reasoning`). Capturing does not change
+    what is returned; capture[0] is always the reasoning-ON pass."""
     if coder_tools:
         user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
     def _one(reasoning_off: bool) -> str:
@@ -3879,6 +3917,8 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
         try:
             rlog.phase = phase + ("-noreason" if reasoning_off else "")
             applied = massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog)
+            if capture is not None:
+                capture.append(applied)   # BEFORE any of the rejections below discard it
             # A summarize/redirect call offers NO tools, so ANY tool call the model produced (native, or
             # a dialect leak recover_leaked_tool_calls promoted) means it answered in ACT/PLAN mode, not
             # prose. coerce_text_answer then salvages its reasoning_content — but on a "summarize past
@@ -4433,6 +4473,9 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # visible in the captures as its own call, never mistaken for the authoring pass.
     def _steer_ask(system: str, _user: str) -> str:
         return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-code") or ""
+    # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
+    def _recover_ask(system: str) -> str:
+        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-recover") or ""
     if workspace_root and os.path.isdir(workspace_root):
         # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
         # lists names/sizes only, and the author holds the same read-only tools the judges hold —
@@ -4462,11 +4505,19 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         text = strip_think(text or "").strip()
         evidence = user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog, ask=_steer_ask,
+        directive = _steer_or_none(text) or _steer_from_reasoning(comp, text, _recover_ask, rlog)
+        return _grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask,
                                        sess=gs, messages=body.get("messages", []))
+    # BOTH PATHS, not just the tooled one: `capture` hands back the raw completions so the toolless
+    # branch can read the same discarded thinking. capture[0] is the reasoning-ON pass — summarize's
+    # retry runs with reasoning forced OFF and has none to read.
+    passes: list = []
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
-                      phase="reasoner", coder_tools=coder_tools) or "").strip()
-    return _grounded_steer_or_none(_steer_or_none(text), user, rlog, ask=_steer_ask,
+                      phase="reasoner", coder_tools=coder_tools, capture=passes) or "").strip()
+    directive = _steer_or_none(text)
+    if directive is None and passes:
+        directive = _steer_from_reasoning(passes[0], text, _recover_ask, rlog)
+    return _grounded_steer_or_none(directive, user, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []))
 
 
@@ -4524,6 +4575,93 @@ def _steer_or_none(text: str) -> str | None:
     # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
     # "ok"/"yes" residue without discarding a real short steer.
     return directive if len(directive) >= 8 else None
+
+
+# ---- THE ANSWER SAYS ON_TRACK; THE THINKING SAYS STUCK ------------------------------------------
+#
+# `_steer_or_none` above handles every shape the AUTHOR'S ANSWER can take — the hedge, the negation,
+# the bare token. It cannot help when the answer is a bare `ON_TRACK` and the reasoning that produced
+# it says the opposite, because by then the reasoning is already on the floor. Verbatim from the
+# fabliq walk (ada-handles_fabliq_codex_pon_1785721353), call 0213:
+#
+#   "I believe the coder is stuck and needs help from the user. The appropriate response would be to
+#    use the directive `ON_TRACK` to indicate that the coder is not making progress and requires
+#    assistance."
+#
+# Emitted content: `ON_TRACK` — the token that asserts the coder needs NO help. Same run, call 0255,
+# whose thinking ends with a finished directive — "Thus we will output: Stop re-running web_fetch and
+# instead modify handle_resolver.py line 46 to raise ConnectionError…" — and whose content was again
+# the one word. cria read content only, took the veto, sent nothing, and the loop ran 12 more calls.
+# Ten calls in that one run.
+#
+# WHY A QUESTION AND NOT A PATTERN (principle 9's corollary). The trigger below fires on 243 of the
+# 1,852 declined steer-author replies that have any thinking at all, across 78 sessions. Ten were read
+# in full, and it splits about evenly: five are the real defect (0033 emitted "" with a complete
+# diagnosis behind it; 1288's thinking ends "edit test_resolve_handle.py, line 93, change that
+# assertion to expect 'resolved_addresses.ada is missing'" and it answered ON_TRACK), and five are a
+# reasoner ARGUING the question and landing correctly on-track ("This is genuinely making progress …
+# So ON_TRACK is appropriate"). Both halves contain the same words. No window over the sentence
+# separates them, and pulling "the directive" out of a rambling trace is a judgment on top of that.
+# So the pattern only decides whether ONE focused question is worth a call, and the question decides.
+#
+# ONE DIRECTION ONLY, structurally. This runs only where `_steer_or_none` already returned None — no
+# steer exists at that point, so the recovery can only ever turn SILENCE into a steer. It cannot
+# suppress a directive, cannot veto a rescue, and touches no completion verdict. And whatever it
+# recovers goes through `_grounded_steer_or_none` like any other authored steer: roleplay markers,
+# ungrounded URLs, dictated code, a service the ledger shows answering, a false line citation. The
+# outer caps are untouched too — MAX_FLAIL_STEERS_PER_STEP, FLAIL_COOLDOWN and the same-checks
+# suppression all gate before author_steer ever calls the model.
+#
+# A TRIGGER, deliberately over-firing — the same contract as _BLAME_WORDS and _CODE_SHAPED.
+_STEER_REASONING_STUCK = re.compile(
+    r"(?i)\b(?:(?:is|are|it'?s|coder is) stuck|stuck in a loop|"
+    r"not making progress|no forward progress|isn'?t making progress|needs? help|"
+    r"needs? assistance|requires? assistance|write (?:a|the) directive|"
+    r"should not (?:output|say|emit|use)|must not (?:output|say|emit)|"
+    r"not ON_TRACK|instead of ON_TRACK|looping|we must write|need to give a directive)\b")
+
+# How much of the author's thinking the recovery question carries. Bounding a prompt cria COMPOSES is
+# what principle 5's counter-nuance allows — the coder never reads this — and the traces run to 9,000+
+# characters. The TAIL, not the head: a reasoner's conclusion, and the directive it settled on, is
+# what it writes LAST ("Thus we will output: Stop re-running web_fetch …", call 0255).
+STEER_REASONING_BUDGET_CHARS = 4000
+
+
+def _reasoning_tail(text: str, budget: int) -> str:
+    """The last ``budget`` characters of a reasoning trace, started at a sentence boundary when one is
+    near the cut, and DISCLOSED with a leading ellipsis so the reader knows it opens mid-thought."""
+    text = (text or "").strip()
+    if len(text) <= budget:
+        return text
+    tail = text[-budget:]
+    m = re.search(r"(?<=[.!?])\s+", tail)
+    return "…" + (tail[m.end():] if m and m.end() < budget // 2 else tail).lstrip()
+
+
+def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
+    """The directive an ON_TRACK answer discarded, or None — see the long note above for the evidence.
+
+    ``ask(system) -> str`` is the caller's one-shot toolless reasoner. No reasoner, no thinking beyond
+    the answer itself, a cut reply, or a trigger that does not fire → None, so the common path costs
+    nothing. The recovered reply is read by `_steer_or_none` like any other, which is why the hedge
+    and negation handling is not duplicated here."""
+    if ask is None or massage.is_truncated(comp):
+        return None      # a cut reply is not a directive, and a cut trace is not a conclusion
+    reasoning = _reasoning_of(comp)
+    # `_reasoning_of` falls back to `content` for a model with no separate channel (principle 19). If
+    # that IS the answer we already read, there is no second signal here and nothing to recover.
+    if not reasoning or reasoning.strip() == (answer or "").strip():
+        return None
+    if not _STEER_REASONING_STUCK.search(reasoning):
+        return None
+    rlog.emit("loop.steer_answer_contradicted", level="info", answer=_clip(answer, 60))
+    recovered = strip_think(ask(prompts.render(
+        "steer_reasoning_recover",
+        reasoning=_reasoning_tail(reasoning, STEER_REASONING_BUDGET_CHARS))) or "").strip()
+    directive = _steer_or_none(recovered)
+    if directive:
+        rlog.emit("loop.steer_from_reasoning", level="info", head=_clip(directive, 140))
+    return directive
 
 
 # A steer that CONTAINS a transcript is not a directive — it is the reasoner role-playing the

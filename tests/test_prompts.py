@@ -230,7 +230,9 @@ class PromptAgnosticismTests(unittest.TestCase):
         # sentinel ("NOT_STUCK") into the trigger word and emits it for the WRONG reason, vetoing its
         # own rescue while looping (observed live: reasoning "stuck in an infinite loop" → emitted
         # NOT_STUCK). The "fine, no help" verdict must be a POSITIVE token the trigger can't produce.
-        for name in ("steer_diagnose", "steer_diagnose_user"):
+        # steer_reasoning_recover re-asks the SAME question against the author's own discarded
+        # thinking, so it carries the same sentinel and is bound by the same rule.
+        for name in ("steer_diagnose", "steer_diagnose_user", "steer_reasoning_recover"):
             p = prompts.load(name)
             self.assertIn("ON_TRACK", p, name)
             self.assertNotIn("NOT_STUCK", p, name)  # the negation-trap token must be gone from the prompt
