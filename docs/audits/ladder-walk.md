@@ -3019,3 +3019,62 @@ and it can only ever refuse a deletion, never cause one.
    workspace when completion implies an artifact. One listing would have shown the missing live test.
 7. **Nothing ever said the live test was missing** — not the reasoner, not either satisfaction judge,
    not the confirm. Only three files were written all run.
+
+---
+
+## ada-handles_zaya1_codex_pon_1785719577
+
+**Score 0/4**, killed at the 15-minute milestone. 13 calls, 957 seconds, planner and classifier only —
+**the coder was never reached, so nothing was ever written to disk.** Fourth zaya1 attempt, fourth
+time with that same shape.
+
+**cria fault: none — this run is not a valid measurement of anything, and the cause is the build.**
+
+### Why this run cannot be judged
+
+zaya1 ran at **49.8 tok/s**. Normalised against what the same GPU delivers for every other model on
+the ladder, that is roughly **ten times too slow**:
+
+| model | quant | active B | best t/s | **B-params/sec** |
+|:--|:--|--:|--:|--:|
+| ternary-bonsai | Q2_0_g128 | 27.0 | 48.6 | **1312** |
+| gemma4 | Q4_K_M | 12.0 | 61.9 | **743** |
+| qwythos | — | 9.0 | 80.2 | **722** |
+| mellum2 | Q4_K_M | 2.5 | 189.4 | **474** |
+| nemotron-elastic | — | 2.0 | 119.4 | **239** |
+| **zaya1** | **Q6_K** | **0.76** | **49.8** | **38** |
+
+Q6_K over Q4_K_M accounts for perhaps 1.5× of that gap. The rest is a slow path, and the load log
+names its shape: the model is **fully resident** (`offloaded 81/81 layers to GPU`) and still reports
+**`graph splits = 10`** with a **104 MiB `CUDA_Host` compute buffer**. Ops are leaving the GPU every
+token on a model that fits entirely on it. The prime suspect is what makes this architecture
+distinctive — `llama_memory_recurrent` carries R/S state across all **80 layers in f32** — exactly the
+thing a draft PR would have a reference implementation for and no CUDA kernel.
+
+At 38 B-params/sec zaya1 gets roughly a quarter of the thinking mellum2 got inside the same
+fifteen-minute window. Judging it as a MODEL on that basis is not a fair test, and neither is judging
+cria on how it handled a model running at a tenth of its hardware.
+
+### What is honestly known, and what is not
+
+- **Known:** every one of the 13 calls was planner or classifier; the coder was never reached; the
+  three prior attempts did the same. One of those spent the whole run inventing
+  `/workspace/dumps/workspace`; another produced 27,089 characters of planner reasoning with zero
+  tool calls (`"we can simulate in our mind"`; word counts in it: script 86, readme 35, plan 4).
+- **NOT known:** whether cria's planner framing contributes. **This run was not read call by call.**
+  A reader was dispatched and died before reporting. No verdict here is based on reading, and by the
+  standard this project has learned the hard way, that means no verdict here should be trusted. It is
+  recorded as `cria fault: none` because the run is invalid as a measurement, NOT because cria was
+  cleared — nothing cleared it.
+- **The planner-off flip for zaya1 was made before this walk**, on the shape of four runs. That is the
+  experiment the planner column exists to generate, but the goal doc's own rule is to flip *after* a
+  walk finds no cria fault. It was premature and is noted as such.
+
+### Action
+
+zaya1 is **blocked on its build, not on the model or on cria.** A fresh build of the upstream branch
+is underway alongside the working one (which carries 33 local commits — the folded-in dependency PR —
+and is not being touched). The signal to watch after rebuilding is `graph splits` dropping from 10 to
+1–2. Until then, any zaya1 result measures the binary.
+
+**fabliq goes next.** It is the last model on the ladder and runs on a normal build.
