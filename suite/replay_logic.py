@@ -74,6 +74,25 @@ def request_messages(prompt_path):
         return []
 
 
+def replies(cap):
+    """(response path, completion, the tool menu THAT call advertised) for every captured reply.
+
+    The menu is read off the paired request body rather than assumed, because it is the thing that
+    decides whether a name is an action at all — a plan-only planner call advertises one tool, a
+    compaction advertises none, and a check that supplied its own menu would be measuring itself."""
+    for f in sorted(cap.glob("*.response.json")):
+        try:
+            comp = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        req = f.with_name(f.name.replace(".response.json", ".json"))
+        try:
+            tools = (json.loads(req.read_text()).get("body") or {}).get("tools")
+        except (OSError, ValueError, AttributeError, TypeError):
+            tools = None
+        yield f, comp, tools
+
+
 def around(template, placeholder, width=40):
     """The literal text a prompt template puts immediately BEFORE and AFTER ``placeholder`` — so a
     check anchors on cria's own wording rather than a copy of it that goes stale the next time the
@@ -709,6 +728,46 @@ def _object_spans(text):
                     yield text[i:j + 1]
                     break
         i = text.find("{", i + 1)
+_REASONING_DEBRIS = ("<|tool_call_start|>", "<|tool_call_end|>", "<tool_call>", "</tool_call>",
+                     "<function=", "</function>", "<|tool_call>")
+
+
+def check_reasoning_tool_call(row, cap, ws):
+    """How many replies came back LOST — no text, no tool_calls — while holding a tool call in
+    ``reasoning_content``, the one channel llama.cpp's parser never reads.
+
+    The number reported is what cria RECOVERS, produced by running the real predicate
+    (:func:`massage.recover_reasoning_tool_calls`) over the captured completion with the tool menu
+    that call actually advertised. Nothing here re-implements the parser or its gates; the checker
+    only counts what cria's own function did.
+
+    The "why" carries the denominator, the REFUSALS, and the count of recoveries that REPEAT one
+    already made in the same run. That last number is the one to watch: it is not a cost of the
+    recovery but a measure of how long the loop stayed stuck, and it should FALL as the guards that
+    can only see forwarded calls start seeing them."""
+    recovered = refused = lost = repeats = 0
+    seen = set()
+    for _f, comp, tools in replies(cap):
+        msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
+        rc = msg.get("reasoning_content") or msg.get("reasoning") or ""
+        if not isinstance(rc, str) or not any(d in rc for d in _REASONING_DEBRIS):
+            continue
+        if msg.get("tool_calls") or massage.content_text(msg.get("content")).strip():
+            continue                      # not a lost turn — the call or an answer came through
+        lost += 1
+        after = massage.recover_reasoning_tool_calls(json.loads(json.dumps(comp)), tools, None)
+        tcs = ((after.get("choices") or [{}])[0].get("message") or {}).get("tool_calls")
+        if not tcs:
+            refused += 1
+            continue
+        recovered += 1
+        fp = tuple((tc["function"]["name"], tc["function"]["arguments"]) for tc in tcs)
+        if fp in seen:
+            repeats += 1
+        seen.add(fp)
+    return recovered, (f"{lost} lost reply(s) whose reasoning carried tool-call dialect; "
+                       f"{refused} refused (no complete call, or off this call's menu); "
+                       f"{repeats} recovery(ies) repeated an earlier one in this run")
 
 
 CHECKS = {
@@ -718,6 +777,7 @@ CHECKS = {
     "denied-call-logged": check_denied_call_logged,
     "denied-call-deleted": check_denied_call_deleted,
     "repeated-verdict-key": check_repeated_verdict_key,
+    "reasoning-tool-call": check_reasoning_tool_call,
     "reattach": check_reattach,
     "step-reframe": check_step_reframe,
     "satisfaction": check_satisfaction_due,

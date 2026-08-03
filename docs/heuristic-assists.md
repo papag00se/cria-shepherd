@@ -24,6 +24,7 @@ the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in
 - **write_file / edit_file ↔ shell round-trip** — lowered to a byte-exact base64 heredoc write; the recorded shell call re-presented as the original tool.
 - **Leaked-call recovery** — tool calls emitted as text (Hermes `<tool_call>`, XML `<function=…>`, Gemma-fable `<|tool_call>…`) → real calls; Gemma `<|channel>` thinking stripped.
 - **LFM2/Fabliq sentinel strip** — native `<|tool_call_start|>…<|tool_call_end|>` pairs + orphans stripped from content.
+- **Reasoning-channel call recovery** — a COMPLETE call the model left in `reasoning_content` (the one channel llama.cpp's parser never reads) → a real call. Only when the turn is already lost (no text, no `tool_calls`), the call is terminal and unfenced, every argument is a literal the model typed, and the name + required args are on the request's own menu. Measured 2026-08-03: 80 lost replies across 127 sessions, 68 recovered; fabliq lost 10.7% of its coder turns this way.
 - **Shell-name rewrite** — `ls`/`cat`/`grep`/`git`/… emitted as tool names → proper `shell` calls (full alias table).
 - **exec_command array fix** — `cmd` as `["bash","-lc",…]` → routed to `shell`.
 - **Shell-args normalization** — a string command wrapped to `[bash,-lc,cmd]`; a double-wrapped array unwrapped.
@@ -32,6 +33,7 @@ the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in
 - **Tool-argument normalization** — string→JSON parse, dict passthrough, `{value}` wrap; `{function:{…}}` vs `{name,args}` unified.
 - **Fenced-JSON tolerance** — tool args wrapped in ``` fences → extracted.
 - **Malformed-JSON repair** — botched `write_file` args (raw newlines/quotes) → path + content recovered.
+- **Missing-content refusal** — a `write_file` whose required `content` is absent or null → refused, not lowered as an empty write (the byte-exact write truncated a working file to zero and reported success); an intentional empty string still writes. Sibling of the `new_string` refusal on the edit path.
 - **Double-escaped-newline repair** — a file written as one physical line with literal `\n` → decoded.
 - **apply_patch normalize** — unified diff → native; missing `+`/`-`/space prefixes repaired; hunk headers collapsed; multiple wrappers merged; a pure Add-File patch → a whole-file write.
 - **Malformed-tool-call recovery** (re-prompt) — an unparseable `<tool_call>` → re-prompted to re-issue cleanly, steering multi-line work to `write_file`.

@@ -12,6 +12,7 @@ where the whole completion is in hand. Streaming-path recovery is a refinement.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import uuid
@@ -507,9 +508,30 @@ def _envelope_calls(content: str, tools) -> list:
     return calls
 
 
+def content_text(content) -> str:
+    """The TEXT of an assistant/user ``content`` field, whatever shape it arrived in.
+
+    A message's content is a plain string on the classic completions wire and a LIST OF PARTS
+    (``[{"type": "text", "text": …}, …]``) on every client that can also send an image — both
+    shapes reach cria, and code that tests only ``isinstance(content, str)`` reads a parts-list
+    reply as EMPTY. Deliberately inclusive: any dict part carrying a ``text`` counts, typed or
+    not, because every caller here uses the result to decide whether the model already SAID
+    something, and over-reading text can only make a guard decline to act (rule 13, fail safe)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return ""
+
+
 def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
     """Promote a tool call the model emitted as TEXT (Hermes `<tool_call>…`, XML
-    `<function=…>`) into a real tool_calls entry, and strip it from the content."""
+    `<function=…>`) into a real tool_calls entry, and strip it from the content.
+
+    Finishes with :func:`recover_reasoning_tool_calls`, which asks the same question of the
+    REASONING channel — the one place llama.cpp's own parser never looks. Chained here rather
+    than added to :func:`apply` so that every caller gets it from ONE owner, including
+    ``planner.py``, which calls this function directly and not ``apply``."""
     for choice in completion.get("choices", []):
         msg = choice.get("message")
         if not isinstance(msg, dict):
@@ -545,6 +567,333 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             if choice.get("finish_reason") in (None, "stop"):
                 choice["finish_reason"] = "tool_calls"
             _log(rlog, "massage.leaked_recovered", calls=[c["function"]["name"] for c in calls])
+    return recover_reasoning_tool_calls(completion, tools, rlog)
+
+
+# ------------------------------------------------- a call left in the REASONING channel
+#
+# MEASURED 2026-08-03 over every capture in ~/.cria/calls — 127 sessions, 18,770 replies: 80 replies
+# came back with `content: null`, NO `tool_calls`, and tool-call dialect sitting in
+# `reasoning_content`. Nothing in cria ever looked there.
+#
+# WHICH MODELS, re-derived at review. The capture's own `model` field is the routing alias "cria" on
+# every request, so it cannot attribute anything; the real model comes from the suite row that owns
+# the session. Mapping 96 sessions that way:
+#
+#     fabliq            63 of 1,159   (61 coder + 2 reasoner)
+#     nemotron-elastic   9 of   446   (coder)
+#     zaya1              5 of    69   (planner)
+#     mellum2            2 of 4,593   (coder)
+#     gemma4 0/6,768 · qwythos 0/1,241 · ternary-bonsai 0/494 · ornith 0/63 · qwopus 0/39
+#     (1 further loss is in a session no suite row maps)
+#
+# It skews hard by model, but "mellum2 … lost none" — as the commit that landed this said — is FALSE,
+# and zaya1 was missing from that table altogether. Corrected here rather than left standing: a
+# number in shipped source is not allowed to be approximately right (rule 23b).
+#
+# It compounds. 65 of the 80 were IMMEDIATELY followed by a critic call, because a turn with no tool
+# call reads to cria as a completion claim — so each lost turn also buys a critic and a confirm
+# round-trip.
+#
+# RUN 20260802T195958, corrected at review, because the story first told about it was wrong in the
+# way that matters. The claim was "from call 0052 to call 0250 the cycle is coder → critic →
+# critic-confirm thirty-five times, with the coder's prompt BYTE-IDENTICAL every cycle — all 33,168
+# bytes of it … nothing in cria's loop could change that constant". Read the actual captures: there
+# are SEVENTY coder calls in that span and TWO prompts that strictly alternate, 33,168 bytes and
+# 33,188 bytes, 35 of each. They differ in one sentence — the ⟦ctx:steer⟧ line — and the two steers
+# CONTRADICT each other, one saying the spec was never fetched and the other that it was fetched and
+# saved. So cria did change the prompt, every other cycle; the run is a two-state oscillation, not a
+# fixed point, and "the loop could not change the constant" is not what happened.
+#
+# What IS true, and is the whole case for this parser: the 33,168-byte prompt is byte-identical
+# across all 35 of its occurrences, and the model answers it with a byte-identical lost turn every
+# time — a deterministic function handed a constant. And the 20-byte sibling is NOT fixed here: its
+# reply carries a JSON plan blob in `content`, so gate 1 refuses it by design. This recovers half of
+# that deadlock. The other half is the same disease in the channel this function does not read, and
+# it is still open (55 further turns corpus-wide emit dialect debris into `content` and produce no
+# tool call). Naming it here so the next walk does not have to rediscover it.
+# See :func:`recover_reasoning_tool_calls` on why the repeats are an argument FOR this, not against.
+#
+# WHY THE STRIPPER IS NOT THE FIX. :func:`_strip_lfm2_sentinels` deliberately DELETES
+# `<|tool_call_start|>…<|tool_call_end|>` rather than parsing it, on the stated grounds that
+# "llama.cpp's peg-native parser already handles a well-formed native call". That premise is true of
+# `content` and false of `reasoning_content`. Verified on the same corpus: across the 12,406 replies
+# where llama.cpp DID produce tool_calls, the sentinels survive in `content` ZERO times (its parser
+# consumed them); across the 62 replies where the sentinels sit in `reasoning_content`, it produced a
+# call ZERO times. Re-pointing the stripper at the reasoning channel would DELETE these calls, not
+# recover them. So this is a PARSER, and it reads the reasoning channel only.
+#
+# WHAT IT ADMITS. Replaying the gates below over those 80 lost replies recovers 68 and refuses 12
+# (reproduced exactly at review, with the split below). Every refusal is SAFE — a refusal is exactly
+# today's behaviour — but "every refusal reads correctly on the file", as first written, overstates
+# it: one of the twelve (20260802T181318 call 0016-planner) reads as a genuinely intended call the
+# model fenced for formatting after writing "Thus, I propose:", not an illustration. EIGHT have no
+# complete call at all — a narration
+# that writes a whole source file as prose and then closes `</parameter></function></tool_call>`
+# with tags that were never opened, a model quoting a previous tool RESPONSE the same way, a
+# `<zyphra_tool_call>` with parameters but no `<function=NAME>`, a JSON blob ended by a bare
+# `</tool_call>`, an `exec_command(…)]<|tool_call_end|>` whose opening sentinel never came. THREE
+# name a tool the request never advertised (a plan-only planner reaching for exec_command; the
+# read-only reasoner reaching for update_plan). ONE is a call the model fenced off as an
+# illustration. Recovering any of them means inventing the tool name, the argument boundary, or the
+# model's intent.
+#
+# WHICH WAY IT FAILS. Toward more work, never toward a wrong action. A missed recovery is exactly
+# today's behaviour — the turn is lost, cria calls the critic, the coder tries again. A WRONG recovery
+# would execute something the model did not ask for, so every gate below is a refusal:
+#
+#   1. the turn must ALREADY be lost — no text content AND no tool_calls. If llama.cpp surfaced the
+#      call, or the model wrote prose, nothing here runs (regression-only, principle 2; and it is
+#      what makes double-execution structurally impossible rather than merely unlikely). "Text" is
+#      read through :func:`content_text`, so a parts-list reply counts as text like any other.
+#   2. the call must be SYNTACTICALLY COMPLETE — opening delimiter, name, closing delimiter, and
+#      arguments that parse. Unlike :func:`_extract_gemma`, a truncated call is NOT salvaged here:
+#      salvage guesses, and guessing on the model's private channel is authoring.
+#   3. every argument value must be a LITERAL the model itself wrote. Nothing is inferred, defaulted
+#      or placed by schema — that is the line between reshaping a call and authoring one (principle
+#      5b; cria guessing an argument is how its own `<keyword>` placeholder reached a live web_fetch).
+#      SCOPE, stated exactly: this gate is enforced by :func:`_literal_kwargs` on the LFM2-native arm
+#      only. The Hermes arm reads JSON (whose values are literals by construction) and the XML arm
+#      reads `<parameter=…>` text, where `_XML_PARAM` is non-greedy — so nine `<parameter=steps>`
+#      openers closed by ONE `</parameter>` collapse into a single string carrying the other eight
+#      tags verbatim, where the tool's schema declares an array. That is a PRE-EXISTING property of
+#      the content path (`recover_leaked_tool_calls` has always had it) which this function now
+#      reaches from a second channel, and gate 4 does not catch it because the menu is asked for
+#      presence, never for type. Named here because "every argument is a literal the model wrote" is
+#      true of one of the three dialects and reads as if it were true of all three.
+#   4. the name must be on the menu THIS request advertised, and every argument that menu marks
+#      `required` must be present AND carry a value. The menu is what keeps prose from becoming an
+#      action — the same gate :func:`_envelope_calls` relies on. A toolless request (a compaction, a
+#      critic, a summarizer) advertises no menu, so a call can never be recovered out of one.
+#   5. the call must be TERMINAL and UNQUOTED. Terminal: nothing but dialect tags and whitespace may
+#      follow it — a call the model EMITTED is where generation stopped, while a call it merely
+#      weighed and moved past has its own reasoning after it. Unquoted: an ODD number of ``` fences
+#      opens before the call, so the call sits inside a code block the model is DISPLAYING, refuses
+#      it. Both are structural facts about the token stream, not lexical guesses about intent.
+#
+# The reasoning text itself is NEVER modified. Only `tool_calls` is added. The flail detector, the
+# rumination detector and `verdict_from_reasoning` all read `reasoning_content`, and rewriting it
+# under them would change what they see for no gain (principle 2: the safe class is additive).
+
+# The dialects measured to leak a COMPLETE call into the reasoning channel. Adding one is adding an
+# entry here plus its parser; gemma-fable's `<|tool_call>call:NAME{…}` is deliberately absent — it
+# produced this shape zero times in the corpus, and its existing parser SALVAGES truncated calls,
+# which is the one thing gate 2 forbids (principle 15: don't build a detector for a case you have not
+# measured — an unexercised arm is dead weight that can itself misfire).
+_REASONING_DIALECTS = ("lfm2-native", "hermes-json", "xml-function")
+
+# A tag-shaped token — any dialect's opener or closer. What may follow a recovered call and still
+# leave it TERMINAL is exactly these plus whitespace. NOT backticks: a closing ``` fence after the
+# call means the call was inside a fenced block the model was DISPLAYING, and v1 of this fix
+# admitted `rm -rf /workspace` out of a reasoning that said "the dialect looks like this, for
+# reference:" because a backtick counted as terminal.
+_TAG_TOKEN = re.compile(r"<[^<>\s][^<>]*>")
+_FENCE = "```"
+
+
+def _is_terminal(text: str, end: int) -> bool:
+    """Nothing but dialect tags and whitespace follows the span that ends at ``end``."""
+    return not _TAG_TOKEN.sub("", text[end:]).strip()
+
+
+def _is_quoted(text: str, start: int) -> bool:
+    """The span starting at ``start`` sits inside an OPEN markdown code fence — an odd number of
+    ``` delimiters precede it — so the model is displaying the call, not making it."""
+    return text.count(_FENCE, 0, start) % 2 == 1
+
+
+def _literal_kwargs(call) -> dict | None:
+    """The keyword arguments of a parsed ``ast.Call``, each evaluated as a LITERAL — or None if any
+    one of them is anything else.
+
+    ``ast.literal_eval`` is the whole safety argument for this dialect: it accepts a string, number,
+    bool, None, tuple, list, set or dict of literals and rejects every name, call, attribute and
+    operator, so a recovered argument can only ever be bytes the model typed. Nothing is executed —
+    the tree is parsed, never evaluated.
+
+    …and it is a WIDER grammar than the wire. `literal_eval` also accepts four things JSON has no
+    representation for — ``b'x'``, ``{'a', 'b'}``, ``frozenset``, ``1+2j`` — and :func:`_toolcall`
+    serialises with ``json.dumps``, which raises ``TypeError`` on every one of them. Left unguarded
+    that is not a refusal, it is a CRASH in the response path: on the server route the exception is
+    caught by the ``(json.JSONDecodeError, TypeError)`` handler around ``massage.apply`` and reported
+    as "upstream returned a non-JSON 200 body", which is a false fact about a reply that was perfectly
+    good JSON (principle 5b); on the loop routes it is uncaught. So the encodability of the value is
+    part of gate 3, not an afterthought at the encoder: an argument that cannot ride the protocol is
+    not an argument the model can have meant on it, and every gate in this file must fail toward
+    today's behaviour, never toward a 500."""
+    if call.args:
+        return None      # a positional argument cannot be placed without guessing which field it is
+    args: dict = {}
+    for kw in call.keywords:
+        if kw.arg is None:
+            return None  # `**something` — not a literal argument list
+        try:
+            args[kw.arg] = ast.literal_eval(kw.value)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            return None
+    try:
+        json.dumps(args)
+    except (TypeError, ValueError, RecursionError):
+        return None      # a literal the wire cannot carry — refuse, exactly like an unparseable one
+    return args
+
+
+def _lfm2_native_calls(body: str) -> list | None:
+    """Parse an LFM2/Fabliq native call body — ``[read_file(path='./spec.json')]`` — with Python's
+    OWN parser. Returns [(name, args), …] or None.
+
+    The dialect is not JSON and not XML: it is Python call syntax, verbatim, and the captured bodies
+    parse as a `list` of keyword-only calls over Python literals (a `web_fetch(url=…, raw=True)`, an
+    `update_plan(plan=[{…}, …])`, a `write_file(path=…, content='…\\n…')` carrying a whole source
+    file with its escapes intact). So the right parser is ``ast``, not a regex — a regex over this
+    silently drops nested and numeric arguments, which is the mistake the gemma-fable comment above
+    records having already made once.
+
+    Using the real grammar is also what makes gate 2 free: a cut-off string or an unclosed paren is a
+    ``SyntaxError``, so a truncated call cannot parse and is refused rather than half-recovered."""
+    try:
+        tree = ast.parse(body.strip(), mode="eval")
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
+        return None
+    node = tree.body
+    nodes = node.elts if isinstance(node, ast.List) else [node]
+    out = []
+    for c in nodes:
+        if not isinstance(c, ast.Call) or not isinstance(c.func, ast.Name):
+            return None  # `mod.fn(…)`, a bare name, an expression → not this dialect, refuse whole
+        args = _literal_kwargs(c)
+        if args is None:
+            return None
+        out.append((c.func.id, args))
+    return out or None
+
+
+def _reasoning_call_spans(text: str) -> list:
+    """Every (start, end, dialect, [(name, args), …]) a COMPLETE tool call occupies in ``text``.
+
+    Each arm requires both delimiters. The Hermes and XML arms reuse the very regexes the content
+    path uses (:data:`_HERMES`, :data:`_XML_FN`, :data:`_XML_PARAM`), so the two channels can never
+    drift apart on what those dialects look like."""
+    spans = []
+    i = 0
+    while True:
+        o = text.find(_LFM2_TC_OPEN, i)
+        if o < 0:
+            break
+        c = text.find(_LFM2_TC_CLOSE, o + len(_LFM2_TC_OPEN))
+        if c < 0:
+            break  # an unterminated call — generation was cut off mid-emission; refuse it
+        parsed = _lfm2_native_calls(text[o + len(_LFM2_TC_OPEN):c])
+        if parsed:
+            spans.append((o, c + len(_LFM2_TC_CLOSE), "lfm2-native", parsed))
+        i = c + len(_LFM2_TC_CLOSE)
+    for m in _HERMES.finditer(text):
+        obj = extract_json_object(m.group(1))
+        if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
+            continue
+        args = obj.get("arguments", {})
+        if isinstance(args, str):
+            args = extract_json_object(args)
+        if isinstance(args, dict):
+            spans.append((m.start(), m.end(), "hermes-json", [(obj["name"], args)]))
+    for m in _XML_FN.finditer(text):
+        body = m.group(2)
+        args = extract_json_object(body)
+        if not isinstance(args, dict):
+            args = {k: v.strip() for k, v in _XML_PARAM.findall(body)}
+        # No `<parameter=…>` pair and no JSON body means the arguments never arrived — the nemotron
+        # shape where a whole file was narrated as prose and then closed with tags that were never
+        # opened. There is nothing to recover, and inventing the payload is the thing this function
+        # exists not to do.
+        if args:
+            spans.append((m.start(), m.end(), "xml-function", [(m.group(1), args)]))
+    return _outermost(sorted(spans, key=lambda s: (s[0], s[1])))
+
+
+def _outermost(spans: list) -> list:
+    """Drop every span that another span ENCLOSES.
+
+    Dialects nest: an XML `write_file` whose `content` parameter shows a hermes `<tool_call>`
+    example produces two spans, and the nested one starts LATER — so picking the last span by
+    position takes the model's illustration and throws away the write it was illustrating. The
+    enclosing span is the call; anything inside it is that call's payload."""
+    return [s for s in spans
+            if not any(o is not s and o[0] <= s[0] and s[1] <= o[1] for o in spans)]
+
+
+def _menu_admits(name: str, args: dict, schemas: dict) -> bool:
+    """The call names a tool THIS request advertised, and carries every argument that tool's own
+    schema marks ``required`` with a value that is not null. Both halves ask the menu, never a
+    hardcoded list — and a request with no tools admits nothing at all.
+
+    Present-but-null is refused, not just absent: `write_file(path='x', content=None)` satisfies
+    "has the key" and then lowers to a byte-exact write of nothing, truncating a working file while
+    reporting success. A required argument the model left empty is a call it did not finish."""
+    if name not in schemas:
+        return False
+    req = (schemas.get(name) or {}).get("required")
+    if isinstance(req, list):
+        return all(args.get(r) is not None for r in req if isinstance(r, str))
+    return True
+
+
+def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
+    """Promote a complete tool call the model left in ``reasoning_content`` into a real ``tool_calls``
+    entry — the one channel llama.cpp's own parser never reads. Full rationale, the refusal gates
+    and the measured prevalence are in the block comment above.
+
+    Additive and idempotent: it only ever ADDS ``tool_calls`` to a choice that had none, never edits
+    the reasoning, and a second pass sees the calls it just added and does nothing.
+
+    **Why the identical repeats are NOT deduplicated here.** 41 of the 68 recoveries in the corpus
+    are byte-identical to one already recovered in the same session, 35 of them the same
+    ``web_fetch('https://api.handle.me/swagger.yml', find='swagger')``, whose own reasoning says the
+    previous attempt returned a 404. That looks like a reason to recover only the first of a kind.
+    It is the opposite. The repeats are identical because the coder's PROMPT was identical — the
+    same 33,168 bytes for thirty-five consecutive cycles — and the reason cria could never change
+    that prompt is that :func:`loop.guard_track_repetition`, :func:`loop.guard_track_write_streak`,
+    the search-loop matcher and the fetch ledger all iterate FORWARDED TOOL CALLS, and a lost turn
+    forwards none. Recovering the call is what lets them see it: the third identical one trips
+    ``redirect_due`` (``REPEAT_FINGERPRINT_N``), and a redirect changes the prompt. Suppressing the
+    repeat here would starve the guard that ends the loop of the only evidence it runs on, and would
+    re-create the deadlock one cycle later — a second, dumber repeat-detector in the massage layer,
+    shadowing the real one (principle 4). The loop already owns "the same action, again"; this
+    function's only job is to stop losing the action."""
+    schemas = _menu_schemas(tools)
+    if not schemas:
+        return completion  # gate 4: no menu → nothing can be an action
+    for choice in completion.get("choices", []):
+        msg = choice.get("message")
+        if not isinstance(msg, dict):
+            continue
+        # gate 1. Only a turn that is ALREADY lost. Note this also settles double-execution: if
+        # llama.cpp surfaced the call itself, `tool_calls` is set and this returns untouched.
+        if msg.get("tool_calls") or content_text(msg.get("content")).strip():
+            continue
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            continue
+        spans = _reasoning_call_spans(reasoning)
+        if not spans:
+            continue
+        start, end, dialect, parsed = spans[-1]
+        # gate 5. TERMINAL — the generation stopped at this call — and not quoted inside a fence.
+        if not _is_terminal(reasoning, end) or _is_quoted(reasoning, start):
+            _log(rlog, "massage.reasoning_call_not_terminal", dialect=dialect,
+                 calls=[n for n, _a in parsed], trailing=len(reasoning) - end,
+                 quoted=_is_quoted(reasoning, start))
+            continue
+        # gate 4. Every call in the span must be admitted; one stranger refuses the lot, because a
+        # partly-forwarded list is an action sequence the model never asked for.
+        if not all(_menu_admits(n, a, schemas) for n, a in parsed):
+            _log(rlog, "massage.reasoning_call_off_menu", dialect=dialect,
+                 calls=[n for n, _a in parsed])
+            continue
+        msg["tool_calls"] = [_toolcall(n, a) for n, a in parsed]
+        if choice.get("finish_reason") in (None, "stop"):
+            choice["finish_reason"] = "tool_calls"
+        _log(rlog, "massage.reasoning_call_recovered", dialect=dialect,
+             calls=[n for n, _a in parsed], at=start, reasoning_chars=len(reasoning))
     return completion
 
 

@@ -55,7 +55,8 @@ class OneOwnerTests(unittest.TestCase):
     def test_every_guard_goes_through_it(self):
         import inspect
         src = inspect.getsource(writeproxy.translate_outbound)
-        self.assertEqual(src.count("_refusal_command("), 6)   # +1: edit_file with no new_string
+        # +1: edit_file with no new_string. +1: write_file with no content.
+        self.assertEqual(src.count("_refusal_command("), 7)
 
     @staticmethod
     def _lower_fetch(result):
