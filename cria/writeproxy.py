@@ -723,7 +723,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                   and (sp := _tool_path(args)) and _under_spill_dir(str(sp))
                   and not (name in _READ_NAMES and (args.get("start_line") or args.get("end_line")))):
                 key = "spill_read_steer" if name in _READ_NAMES else "spill_edit_refusal"
-                cmd = _refusal_command(prompts.render(key, path=str(sp)))
+                # The READ steer carries the document's own outline — the SIBLING of the web_fetch
+                # spill refusal, and the same trap: cria refuses the whole read of a doc it is itself
+                # holding parsed, and answers with "grep it for what you need", which cannot be acted
+                # on before you know what the doc contains. Measured across the 123 captured sessions:
+                # 1,931 coder calls carried this steer and 500 of them (26%) had no outline anywhere
+                # in the prompt. "" when the doc is not cached (rule 5b — no outline is invented); the
+                # steer's own instructions stand without it. The EDIT refusal names no content, so it
+                # takes no outline.
+                outline = webfetch.outline_for_spill_path(str(sp)) if name in _READ_NAMES else ""
+                cmd = _refusal_command(prompts.render(key, path=str(sp), outline=outline))
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:

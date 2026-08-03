@@ -304,6 +304,37 @@ class WebTests(unittest.TestCase):
         translate_outbound(normal, _CMD_SHELL, injected={"edit_file"})
         self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
+    def test_whole_read_of_a_spilled_doc_is_steered_WITH_the_documents_outline(self):
+        # The SIBLING of the web_fetch spill refusal, and the other half of the closed loop that held
+        # ada-handles_fabliq_codex_pon_1785721353 on step 1 for 267 calls: the re-fetch says "read the
+        # file", the whole read of that file says "grep it for what you need", and neither ever names
+        # what is IN it. Measured across the 123 captured sessions: 1,931 coder calls carried this
+        # steer, 500 of them (26%) with no outline anywhere in the prompt. cria holds the doc parsed,
+        # so the steer says what to grep FOR.
+        import json as _json
+        from cria import webfetch as wf
+        url = "https://api.handle.me/swagger/swagger.yml"
+        body = _json.dumps({"openapi": "3.0.0", "info": {"description": "x" * (wf.OVERSIZE_CHARS + 500)},
+                            "paths": {"/handles/{handle}": {}, "/holders/{address}": {}}})
+        wf._cache_put(url, 200, "application/json",
+                      *wf.reduce_for_cache(body, "application/json", url), False)
+        try:
+            whole = _call("read_file", {"path": wf._spill_name(url)})
+            translate_outbound(whole, _CMD_SHELL, injected={"read_file"})
+            cmd = _lowered_cmd(whole)
+            self.assertIn("API endpoints (2)", cmd)
+            self.assertIn("/holders/{address}", cmd)
+            self.assertNotIn("<keyword>", cmd)      # a real route list replaces the placeholder
+            self.assertNotIn("{{", cmd)             # every token filled — no raw placeholder shipped
+            # an UNCACHED spill file invents nothing — the steer still stands on its own (rule 5b)
+            other = _call("read_file", {"path": "./tmp/read-only/some-other-doc.txt"})
+            translate_outbound(other, _CMD_SHELL, injected={"read_file"})
+            ocmd = _lowered_cmd(other)
+            self.assertNotIn("API endpoints", ocmd)
+            self.assertIn("grep", ocmd)
+        finally:
+            wf.clear_cache()
+
     def test_malformed_fused_call_caught_on_any_shell_name(self):
         # the debris guard keyed on the literal name "shell" — inert for the LIVE Codex shell
         # (exec_command) and any harness whose shell is named differently. Now it's SHELL_TOOL_NAMES.

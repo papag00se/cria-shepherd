@@ -2,7 +2,7 @@
 # refused (its prior result is still in the conversation) or when it is guessing URLs. One fragment
 # per key (parsed by prompts.load_map). Placeholders: {{QUERY}} {{URL}} {{DOMAIN}} {{STREAK}} and
 # {{DOMAIN_STEER}} (the domain_steer fragment, or empty when the query names no domain); the spill
-# fragments add {{STATUS_LABEL}} {{CHARS}} {{TARGET}} {{FIND}}.
+# fragments add {{STATUS_LABEL}} {{CHARS}} {{TARGET}} {{FIND}} {{OUTLINE}}.
 search_repeat = You already ran web_search "{{PRIOR}}", which is near-identical to "{{QUERY}}". Its results were saved to {{TARGET}} — they are NOT repeated here, so READ THAT FILE rather than searching again: grep -n "<keyword>" {{TARGET}}, or read_file it with a start_line/end_line range. Otherwise make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
 domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH it directly: web_fetch https://{{DOMAIN}} , then read the response for what you need.
 fetch_repeat = You already fetched web_fetch {{URL}} with these exact params, and re-fetching returns the same content you were given earlier in this conversation. Use what it returned, or narrow it with a different find= to get just the part you need.
@@ -10,7 +10,12 @@ fetch_repeat = You already fetched web_fetch {{URL}} with these exact params, an
 # dead URL as though the answer were sitting above; nothing is there to use.
 fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact params and it returned {{STATUS}}, so you have no content from it. What that status means is yours to read: 401/403 says the address exists and wants credentials, 429 and 5xx say the server is busy or broken rather than absent, 404 says that one path is wrong. Decide from the status whether to come back to this address later, correct the path, or use a different source — an error is not by itself proof that nothing is there.
 # Same repeat, but the doc was oversized and cria SPILLED it to a file — it is NOT above, it is on disk.
-fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved to {{TARGET}} — read THAT file (grep -n "<keyword>" {{TARGET}}, or read_file with a start_line/end_line range) instead of re-fetching.
+# The refusal CARRIES the document's outline ({{OUTLINE}}, empty when nothing is cached for the url), so
+# it ANSWERS instead of only denying: "go grep it" is unusable when the coder does not yet know what to
+# grep FOR, and 47% of refusal-carrying calls in the corpus had no outline left in the prompt. The
+# closing instructions are true with or without an outline, and the outline ends with its own grep line
+# naming REAL routes — so no "<keyword>" placeholder for a weak model to echo back into find=.
+fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved IN FULL to {{TARGET}}, and that file is still there.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.
 spill = {{STATUS_LABEL}} · {{URL}}\nThis document is too large for the context ({{CHARS}} chars) — it was saved IN FULL to {{TARGET}}, a path relative to the project directory you are working in.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 find_large = \n\n⚠ This find="{{FIND}}" match is large ({{CHARS}} chars) and is only part of the document — narrow it (a more specific keyword), or grep {{TARGET}} for exact lines, or fetch this URL again WITHOUT find= to get the document's full route/shape outline.

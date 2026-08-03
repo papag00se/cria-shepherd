@@ -348,6 +348,46 @@ def spill_outline(parsed: Optional[Any], target: str) -> str:
     return _spill_outline(parsed, target)
 
 
+def outline_for_url(url: str) -> str:
+    """The outline cria ALREADY HOLDS for ``url``'s spilled document — rebuilt from the parsed doc in
+    the per-URL cache — or ``""`` when nothing is cached for it.
+
+    This exists so a REFUSAL can be an ANSWER. A spill refusal and the spill-file read steer both
+    say "that document is on disk, go grep it" and name nothing the document contains, which is a
+    riddle when the coder does not yet know what to grep FOR (measured: it copied the literal
+    ``<keyword>`` placeholder into ``find=`` — run 0802-184308 call 0270). cria fetched and parsed
+    the doc, so it can say what is in it, and the outline it built at spill time is exactly that.
+
+    MEASURED over the 123 captured sessions: 2,074 coder calls carried the spill refusal and 981 of
+    them (47%) had NO outline anywhere in the prompt — the initial spill's outline had been
+    compacted away while the durable refusal kept firing. In run 0802-184308 the outline vanished at
+    the first compaction (call 0075) and never came back, so 139 of the remaining 141 coder calls
+    were told to read a file cria described only by its filename. The plan never left step 1 of 6.
+
+    ``""`` on a cache miss is not a fallback, it is rule 5b: cria states no fact it cannot back with
+    the real document. The refusal's own read instructions stand on their own without it."""
+    cached = _DOC_CACHE.get(url)
+    if not cached:
+        return ""
+    return _spill_outline(cached[3], _spill_name(url))
+
+
+def outline_for_spill_path(path: str) -> str:
+    """:func:`outline_for_url`'s twin, keyed by the SPILL FILE instead of the url — for the read side
+    of the same closed door, where cria only ever sees the path the coder typed.
+
+    :func:`_spill_name` is a pure function of the url and cria controls the whole spill dir, so the
+    basename identifies the document exactly; matching on it (not the full string) means ``./tmp/…``,
+    ``tmp/…`` and a root-absolute form all resolve to the same doc."""
+    base = os.path.basename(os.path.normpath((path or "").strip()))
+    if not base:
+        return ""
+    for url in _DOC_CACHE:
+        if os.path.basename(_spill_name(url)) == base:
+            return outline_for_url(url)
+    return ""
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
     content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a
@@ -826,7 +866,12 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
     # NINETEEN times. Only a whole-doc re-fetch is refused — a `find=` is navigation into the doc and
     # is answered normally, which is the whole point of having spilled it.
     if session and external and not find and not cursor and already_spilled(session, url, workspace_root):
-        return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
+        # The refusal CARRIES the outline (:func:`outline_for_url`). Refusing a re-fetch while cria is
+        # itself holding the parsed document, and answering with nothing but a filename, is what made
+        # step 1 unclosable in run 0802-184308 — 981 of 2,074 refusal-carrying calls across the corpus
+        # had no outline in the prompt at all.
+        return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
+                          outline=outline_for_url(url))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
@@ -840,7 +885,8 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
             if not (isinstance(c_status, int) and 200 <= c_status < 300):
                 return _guard_msg("fetch_repeat_failed", url=url, status=status_label(c_status))
             if len(c_reduced) > OVERSIZE_CHARS:
-                return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url))
+                return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
+                                  outline=outline_for_url(url))
         return _guard_msg("fetch_repeat", url=url)
     out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
     if session and external and status is not None:

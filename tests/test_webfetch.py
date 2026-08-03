@@ -695,6 +695,48 @@ class GateTests(unittest.TestCase):
         finally:
             wf.fetch = orig
 
+    def test_the_spill_refusal_carries_the_outline_cria_already_holds(self):
+        # THE CLOSED LOOP (walked on ada-handles_fabliq_codex_pon_1785721353, 267 calls, step 1 of 6
+        # never closed): every route to reading the spec was refused BY CRIA — re-fetch ("you already
+        # fetched it, read the file"), whole read of the spilled file ("grep it for what you need"),
+        # exec_command ("last resort"). The refusal denied a read of a document cria was holding
+        # parsed at that very moment, and named nothing it contains — so "grep it" had no operand.
+        # Measured over the 123 captured sessions: 2,074 coder calls carried this refusal and 981
+        # (47%) had NO outline anywhere in the prompt, the spill's own outline having been compacted
+        # away. In that run the outline vanished at the first compaction (call 0075) and 139 of the
+        # remaining 141 coder calls saw only a filename; at 0270 the coder sent the literal
+        # find="<keyword>" back — cria's own placeholder, the only "keyword" it had ever been given.
+        spec = {"openapi": "3.0.0", "info": {"description": "x" * (wf.OVERSIZE_CHARS + 500)},
+                "paths": {"/handles/{handle}": {"get": {"responses": {"200": {"content": {
+                    "application/json": {"schema": {"type": "object", "properties": {
+                        "holder": {"type": "string"}}}}}}}}},
+                    "/holders/{address}": {}}}
+        url = "https://api.handle.me/swagger/swagger.yml"
+        body = json.dumps(spec)
+        wf._cache_put(url, 200, "application/json", *wf.reduce_for_cache(body, "application/json", url), False)
+        wf.note_fetch_spill("s-outline", url)
+        out = wf.fetch_nav(url, session="s-outline")
+        self.assertIn(wf._spill_name(url), out)              # still refused — the file IS the answer
+        self.assertIn("API endpoints (2)", out)              # ...and the refusal now ANSWERS
+        self.assertIn("/holders/{address}", out)
+        self.assertIn("response shape", out)
+        self.assertIn("holder", out)
+        self.assertNotIn("<keyword>", out)                   # no placeholder left to echo into find=
+        self.assertNotIn("{{", out)                          # every token filled
+
+    def test_the_spill_refusal_invents_no_outline_when_the_doc_is_not_cached(self):
+        # Rule 5b: the outline is a claim about the document, so it is made only from the real parsed
+        # document. Nothing cached → the refusal says only what it can back, and its read instructions
+        # still stand on their own.
+        url = "https://example.com/never-parsed.bin"
+        wf.clear_cache()
+        wf.note_fetch_spill("s-nocache", url)
+        out = wf.fetch_nav(url, session="s-nocache")
+        self.assertIn(wf._spill_name(url), out)
+        self.assertNotIn("API endpoints", out)
+        self.assertNotIn("top-level keys", out)
+        self.assertIn("grep", out)
+
     def test_a_clearance_permits_one_run_not_a_standing_pass(self):
         # THE REGRESSION (live run 0727-103922): the clearance was permanent for the session, so a
         # query judged a new direction ONCE could then be re-run forever — the coder issued the
