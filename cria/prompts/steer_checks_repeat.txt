@@ -2,4 +2,4 @@
 
 {{FINDINGS}}
 
-Read what each one names and fix exactly that. Make the smallest change that clears it. If you have already tried a fix for one of these and it did not work, read the file as it stands now before trying another — the version in your head may not be the version on disk.
+Read what each one names and fix exactly that. Make the smallest change that makes it actually work. If a test failed, fix what it caught — changing the assertion so it stops asking is not a fix. If you have already tried a fix for one of these and it did not work, read the file as it stands now before trying another — the version in your head may not be the version on disk.

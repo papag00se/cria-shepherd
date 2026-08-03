@@ -280,9 +280,16 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
         # what it saw and claimed done while real errors remained invisible. The context floor
         # (contextfloor.fit) is the one window-aware place a truncation may happen, and only when the
         # physical window forces it — never a blind per-site clip here.
+        # NOT "the smallest change that clears it". When the failure is a real defect, the smallest
+        # change that CLEARS it is to stop the check asking. Walked on
+        # ada-handles_mellum2_codex_poff_1785714194: at 0029 pytest reported `AssertionError: 0 not
+        # greater than 0` — a true signal that the deliverable was wrong — and the coder rewrote its
+        # own assertion to `assertEqual(result["total_handles"], 0)`. The test then certified the bug
+        # and the run shipped green. The phrase landed twice in that one run.
         return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the "
                 "checker's OWN message and the line it flagged; resolve what each one names with the "
-                "smallest change that clears it:\n" + "\n".join(findings))
+                "smallest change that makes it actually work. If a test failed, fix what the test "
+                "caught — changing the test so it stops asking is not a fix:\n" + "\n".join(findings))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")

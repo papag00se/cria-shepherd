@@ -3,9 +3,17 @@
 # fact as one that succeeded. Presenting them in one undifferentiated list let the anchor tell the
 # coder to "code directly against the endpoints listed above" when the only entries were two 404s on
 # a domain it had hallucinated — cria restating a dead URL as a REAL result it already had.
+# The `failed` note used to volunteer causes: "401/403 means it exists and wants credentials, 429 and
+# 5xx mean try later". Walked on ada-handles_mellum2_codex_poff_1785714194 call 0023 — the model's very
+# next reasoning proposed "the API is rate-limiting" and "maybe the holder endpoint requires
+# authentication", cria's own two examples read straight back, for a 404 whose actual cause was a wrong
+# value in the path. A menu of causes is a menu a stuck model orders from. It now points at the one
+# thing that is checkable and was true: compare the value you sent against the parameter description.
+# The "you have no content from them" clause is also gone — it was false. cria HAD the 404's 89-byte
+# body, `{"error":"holder_not_found","message":"Holder not found"}`, and had replaced it with a key list.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
-failed = THESE FETCHES CAME BACK WITH AN ERROR — you have no content from them, so nothing here can tell you what they return; do not write code against them on the strength of a guess. An error status is not proof the address is wrong: 401/403 means it exists and wants credentials, 429 and 5xx mean try later, 404 on one path says nothing about the others. Read the status and decide — re-request one when the status says that would help, and stop re-requesting one that keeps refusing:
+failed = THESE FETCHES CAME BACK WITH AN ERROR — do not write code against them on the strength of a guess. Read the status and decide: re-request one when the status says that would help, and stop re-requesting one that keeps refusing. A 404 on one path says nothing about the others, and says nothing about whether the SERVICE works — if another fetch below succeeded, it works. Before concluding anything about the service, check the VALUE you put in the path against what that route's parameter description above says it wants:
 # Header for the per-URL RESPONSE-SHAPE block. The ledger used to carry only the endpoint routes, so
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
