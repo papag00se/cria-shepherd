@@ -508,6 +508,157 @@ def _envelope_calls(content: str, tools) -> list:
     return calls
 
 
+# ------------------------------------------- a call written as CALL SYNTAX in `content`
+#
+# MEASURED 2026-08-03 over every capture in ~/.cria/calls — 11,454 coder/proxy replies. 404 came
+# back with NO tool_calls and a JSON object sitting in `content`; 50 of those hold an object whose
+# keys are all properties of a tool THIS request advertised; 46 of the 50 also wrote that tool's
+# NAME immediately in front of the object, in call syntax:
+#
+#     edit_file({"path": "test_resolve_handle.py", "old_string": "…", "new_string": "…"})
+#
+# No recovery reaches them. :func:`_envelope_calls` wants `{name, arguments}` ENTRIES inside one
+# object and this shape has the name OUTSIDE it; :func:`_extract_leaked` reads angle-bracket
+# dialects only. So the model named a tool on the menu, supplied a complete argument object keyed
+# by that tool's own schema, and cria threw the turn away — which reads to the loop as a completion
+# claim and buys a critic round-trip.
+#
+# THE FOUR THAT ARE NOT THIS ARE NOT TOUCHED. Three wrote a name the request never advertised
+# (`create_file`, `fix_file`) and one wrote a bare ```json object with no name anywhere. Recovering
+# those means choosing a tool for the model — authoring, not reshaping (principle 5b).
+#
+# WHAT THE GATES BELOW ADMIT, replayed over the whole corpus: 48 replies recovered and 4 refused as
+# cut at the output cap, out of 2,537 lost replies holding a JSON object. Of the 46 the population
+# was drawn from, 43 recover; the 3 that do not are the bare-name shape (twice) and one reply that
+# opened with prose. Eight of the 48 are the steer-diagnose REASONER, whose read-only menu is what
+# holds it to `read_file`/`list_dir` — the loop's own inspection round already documents this exact
+# recovery as if it existed (see cria/loop.py, "a flaky-dialect model leaks its tool call as TEXT").
+#
+# WHICH MODELS. Mapping each capture session to the suite row that owns it: mellum2 17 of 779, and
+# every other mapped model ZERO (gemma4 0/222, qwythos 0/237, nemotron-elastic 0/85,
+# ternary-bonsai 0/47, zaya1 0/10, ornith 0/8, qwopus 0/5). The remaining 31 recoveries are in
+# sessions no suite row maps, so "this is a mellum2 shape" is NOT established — a majority of the
+# population is unattributed and saying otherwise would be the mistake the sibling parser's comment
+# had to be corrected for (rule 23b).
+#
+# READING THEM (rule 23b) is what set the boundary below, and no count would have. The 46 fall into
+# three shapes:
+#
+#   * 14 are the call and nothing else, sometimes several in a row (one reply is fourteen
+#     consecutive `read_file` calls). Whole-reply Python grammar reads these.
+#   * ~11 close the call `}}` instead of `})`. The ARGUMENT object is brace-complete and parses;
+#     only the terminator is mistyped. So the object is located by :func:`jsontext._balanced_object`
+#     rather than by matching a paren, and a run of `)}]` after it is accepted as the terminator
+#     however the model spelled it.
+#   * ~17 write one well-formed call and then IMPERSONATE THE HARNESS — 1454 continues with
+#     "tool: ⟦ctx:edit⟧ … old_string matches 2 places" and a whole fabricated ⟦ctx:checks⟧ block;
+#     1002 fabricates a tool result and then a second call, `exec_command`, re-running cria's own
+#     gate script. That is a stop-token failure, not a plan. Forwarding the LAST call there would
+#     execute the model's fabrication of its own future turn.
+#
+# Hence the one structural rule: only the LEADING RUN of calls is recovered. Scanning starts at the
+# first byte of `content`; between two calls nothing may sit but whitespace and dialect tags; the
+# first byte that is neither ends the run, and everything from there stays in `content` untouched.
+# That is a prefix of the token stream, not a choice among candidates — cria never picks WHICH call
+# the model meant. It also makes the fence gate free: a reply that opens ``` does not begin with a
+# call, so a displayed example is never an action.
+#
+# WHICH WAY IT FAILS: toward more work, never toward a wrong action, and never toward "done".
+#   * A refusal is exactly today's behaviour — the turn is lost, the critic runs, the coder retries.
+#   * A recovery can only ADD a tool call to a turn that had none. A turn that carries a tool call
+#     is not a completion claim, so this can never approve a task; a recovered `task_complete` is
+#     forwarded like any other call and meets the same completion gate it always did.
+#   * It never runs when the harness already produced tool calls, nor when an earlier recovery in
+#     this function did (regression-only, principle 2).
+#
+# THE GATES, reusing the reasoning-channel parser's rather than writing a second, weaker set:
+#   1. the turn is already lost — no tool_calls (checked by the caller, which also refuses a reply
+#      cut at the output cap: a truncated generation's last call is a guess).
+#   2. the call is COMPLETE — the argument object must be brace-balanced and parse. An unclosed
+#      object ends the run; nothing is salvaged from a fragment.
+#   3. every argument value is a literal the model wrote. `jsontext.loads` yields JSON values only,
+#      so this holds by construction — there is no expression grammar to admit here at all.
+#   4. the name is on the menu THIS request advertised, every `required` argument is present and
+#      non-null (:func:`_menu_admits`), AND every key the model wrote is a declared property of
+#      that tool. The last half is what makes the object unambiguously the ARGUMENTS and not some
+#      other structure that happens to follow a name — cria never places a value by guessing.
+#   5. terminal-and-unquoted, in the form this channel supports it: the run must START the reply,
+#      and it ends at the first byte that is not another call.
+
+_CALL_SYNTAX_OPEN = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*(?=\{)")
+# How a model closes this call once the argument object is done. `)` is the dialect; `}` and `]`
+# are the two mistypes the corpus holds. Accepted as a terminator, never required — the object's
+# own closing brace is what ends the call.
+_CALL_SYNTAX_TERM = ")}]"
+
+
+def _skip_between_calls(text: str, pos: int) -> int:
+    """Past whitespace and dialect tags — the ONLY things that may sit between two calls of a run.
+
+    Deliberately not "any punctuation": the whole safety of the leading-run rule is that prose
+    stops it, and a skipper that steps over prose would step over a fabricated tool result.
+
+    "Dialect tag" is :data:`_TAG_TOKEN`, and it is ANGLE-BRACKET SHAPE, not a list of known tags —
+    which is the honest statement of the bound, because `<[^<>\\s][^<>]*>` also matches a sentence a
+    model wrapped in angle brackets. Prose stops the run only where prose is UNBRACKETED. Measured
+    2026-08-03 over every capture: across the 52 replies this parser reads a call out of, the only
+    span it ever stepped over is `</tool_call>`, 17 times, and it stepped over nothing at all before
+    a leading call. Widening this to a fixed tag list would be tuning a matcher against imagined
+    cases the corpus does not hold (principle 15); the claim is narrowed here instead."""
+    while pos < len(text):
+        if text[pos].isspace():
+            pos += 1
+            continue
+        m = _TAG_TOKEN.match(text, pos)
+        if not m:
+            break
+        pos = m.end()
+    return pos
+
+
+def _call_syntax_calls(content: str, tools) -> tuple[list[dict], str]:
+    """(the leading run of `NAME({…})` calls in ``content``, what is left of ``content``).
+
+    ``([], content)`` when the reply does not START with such a call — which is the answer for
+    every reply that opens with prose, a fence, or a name the menu does not carry. Rationale, the
+    measurement and the refusal gates are in the block comment above."""
+    schemas = _menu_schemas(tools)
+    if not schemas:
+        return [], content              # gate 4: no menu → nothing can be an action
+    calls: list[dict] = []
+    pos = 0
+    while True:
+        m = _CALL_SYNTAX_OPEN.match(content, _skip_between_calls(content, pos))
+        if m is None:
+            break
+        name = m.group(1)
+        if name not in schemas:
+            break
+        span = jsontext._balanced_object(content, m.end())
+        if span is None:
+            break                       # gate 2: the arguments never closed — refuse the fragment
+        try:
+            args = jsontext.loads(span)
+        except ValueError:
+            break
+        if not isinstance(args, dict) or not all(isinstance(k, str) for k in args):
+            break
+        props = set((schemas[name] or {}).get("properties") or {})
+        if not props or not set(args) <= props or not _menu_admits(name, args, schemas):
+            break                       # gate 4: this object is not that tool's argument list
+        calls.append(_toolcall(name, args))
+        pos = m.end() + len(span)
+        while pos < len(content) and content[pos] in _CALL_SYNTAX_TERM:
+            pos += 1                    # the terminator, however the model spelled it
+    if not calls:
+        return [], content
+    # Nothing but dialect scaffolding left (a stray `</tool_call>` the model closed with, whose
+    # opener never came) is not an answer the coder wrote — drop it by the SAME predicate that
+    # decides what may sit between two calls, never by a second rule about what looks like debris.
+    rest = content[pos:]
+    return calls, "" if _skip_between_calls(rest, 0) == len(rest) else rest
+
+
 def content_text(content) -> str:
     """The TEXT of an assistant/user ``content`` field, whatever shape it arrived in.
 
@@ -547,6 +698,8 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             continue  # already has real tool calls; don't double-recover
         if not isinstance(content, str) or not content.strip():
             continue
+        calls: list[dict] = []
+        cleaned = content
         if "<" not in content:
             # No angle-bracket dialect. The call may still be here as JSON DATA — the same leak,
             # a different envelope. Content is dropped whole (the call replaces it): a model that
@@ -559,14 +712,35 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
                     choice["finish_reason"] = "tool_calls"
                 _log(rlog, "massage.envelope_recovered",
                      calls=[c["function"]["name"] for c in env])
-            continue
-        calls, cleaned = _extract_leaked(content)
+                continue
+        else:
+            calls, cleaned = _extract_leaked(content)
+        event = "massage.leaked_recovered"
+        if not calls:
+            # Neither dialect above. The call may still be here in CALL SYNTAX — `edit_file({…})` —
+            # which is 46 of the 50 replies measured to hold an offered tool's own argument object
+            # and no tool call at all. See the block comment on :func:`_call_syntax_calls`.
+            #
+            # A reply CUT AT THE OUTPUT CAP is refused outright, and this is the gate that earns its
+            # keep: replaying the parser over the corpus, one truncated 123 KB reply
+            # (20260728T000013 call 0514) parses into 252 `edit_file` calls — a generation that ran
+            # away rather than a plan, and forwarding it would have been cria authoring a 252-action
+            # turn out of a fragment. Gate 2's rule for one call ("a truncated call is not salvaged")
+            # applied to the run: where the reply itself is truncated its LAST call is a guess, and
+            # the run has no end the model wrote. The paths above are deliberately left alone — this
+            # is regression-only, and it may not change what they already do.
+            calls, cleaned = _call_syntax_calls(content, tools)
+            if calls and choice.get("finish_reason") == "length":
+                _log(rlog, "massage.call_syntax_truncated",
+                     calls=[c["function"]["name"] for c in calls], chars=len(content))
+                continue
+            event = "massage.call_syntax_recovered"
         if calls:
             msg["tool_calls"] = calls
             msg["content"] = cleaned or None
             if choice.get("finish_reason") in (None, "stop"):
                 choice["finish_reason"] = "tool_calls"
-            _log(rlog, "massage.leaked_recovered", calls=[c["function"]["name"] for c in calls])
+            _log(rlog, event, calls=[c["function"]["name"] for c in calls])
     return recover_reasoning_tool_calls(completion, tools, rlog)
 
 
