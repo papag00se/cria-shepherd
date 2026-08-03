@@ -3168,17 +3168,26 @@ class VerifyEvidenceTests(unittest.TestCase):
         self.assertNotIn(proberun.PROBE_EXIT_SENTINEL, ev)
         self.assertNotIn("exit 97", ev)                           # ...and its command side too
 
-    def test_work_log_excludes_crias_own_search_denial_note(self):
+    def test_work_log_LABELS_crias_own_search_denial_instead_of_deleting_it(self):
         # The search-read denial is cria's own voice written BACK into the message stream; it was being
         # logged as something the coder's tool returned, then read by the critic and the briefing.
+        # It used to be DELETED here, which left the coder's `$ read_file …` line with no result line
+        # at all — a call that looks like it returned nothing, about a file still on disk (229 coder
+        # turns across 9 captured runs). The call is labelled now and the note is kept verbatim.
         from cria.loop import _work_log
-        from cria import selfcompact
-        msgs = [{"role": "tool", "content": f"{selfcompact.SEARCH_MARKER} Those search results were "
-                                            "off-target for this task, so they were removed."},
+        from cria import denial
+        note = (f"{denial.DENIED_MARKER} Those search results were off-target for this task, so they "
+                "were removed.")
+        msgs = [{"role": "assistant", "tool_calls": [
+                    {"id": "r1", "function": {"name": "read_file",
+                                              "arguments": '{"path":"./tmp/read-only/search-x.txt"}'}}]},
+                {"role": "tool", "tool_call_id": "r1", "content": note},
                 {"role": "tool", "content": "real tool output"}]
         ev = _work_log(msgs)
         self.assertIn("real tool output", ev)
-        self.assertNotIn("off-target", ev)
+        self.assertIn("off-target", ev)                      # never destroyed
+        call_line = next(ln for ln in ev.splitlines() if ln.startswith("$ read_file"))
+        self.assertIn("DID NOT RUN", call_line)
 
     def test_evidence_is_bounded_for_the_JUDGE_with_the_elision_disclosed(self):
         # THE DOOM LOOP (live run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB

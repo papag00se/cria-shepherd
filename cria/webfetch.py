@@ -36,7 +36,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import apidiscovery, brave, prompts
+from . import apidiscovery, brave, denial, prompts
 from .content_reduce import est_tokens, html_to_text
 from .searchloop import first_domain_in, normalize_search, searches_match
 
@@ -758,10 +758,30 @@ def _note_streak(session: str, status: int) -> int:
     return n
 
 
+# The guard keys that REFUSE a call — the fetch or the search did not run, and this text stands in
+# its place. Named by KEY, at the one place a guard message is rendered, so the mark is a property of
+# the decision cria made and never of the words it chose (:mod:`cria.denial`).
+#
+# The rest of the map is deliberately absent, and the distinction is the whole point of listing them:
+# `spill` / `search_spill` are the results of a fetch that DID run (an oversized document really was
+# retrieved and saved), and `domain_steer` / `guess_hint` / `find_large` are fragments appended to a
+# real result. Marking those would tell a judge a successful fetch never happened.
+_REFUSAL_KEYS = frozenset({
+    "search_repeat", "search_repeat_inline",
+    "fetch_repeat", "fetch_repeat_failed", "fetch_repeat_spilled",
+})
+
+
 def _guard_msg(key: str, **tokens: object) -> str:
     """One loop-guard message from prompts/webfetch_guards.txt (re-read per call so it's tunable
-    without a restart), with its {{TOKEN}}s filled."""
-    return prompts.fill(prompts.load_map("webfetch_guards")[key], **tokens)
+    without a restart), with its {{TOKEN}}s filled — marked as a call that did not run when this key
+    is one of the repeat gates (:data:`_REFUSAL_KEYS`).
+
+    A repeat-gate refusal often CARRIES real ground truth: `fetch_repeat_spilled` embeds the
+    document's own route and response-shape outline. The mark says only that the call did not run;
+    what it says about the body is nothing at all, deliberately."""
+    text = prompts.fill(prompts.load_map("webfetch_guards")[key], **tokens)
+    return denial.mark(text) if key in _REFUSAL_KEYS else text
 
 
 def prior_matching_search(session: Optional[str], query: str) -> Optional[str]:

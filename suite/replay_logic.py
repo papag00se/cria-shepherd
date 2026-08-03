@@ -527,10 +527,197 @@ def check_replan_json_shape(row, cap, ws):
                              f"answered 'nothing remains', {misses} genuinely unreadable")
 
 
+# ---------------------------------------------------------------------------------------------
+# A REFUSED CALL LOGGED AS A TOOL'S ANSWER.
+
+# The refusal templates cria authors, by prompt key — the population, read from cria's own prompt
+# files at replay time and never copied here. The mark that identifies a refusal at RUNTIME
+# (cria.denial) cannot be replayed onto captures written before it existed, so this check anchors on
+# the templates instead. That is the only half it re-derives, and it is bounded: the anchor for each
+# key must be a literal span that appears in NO other template, so a closing sentence two templates
+# share — `spill` (a fetch that DID run) and `fetch_repeat_spilled` (one that did not) end with the
+# same paragraph — can never be counted as the wrong one. The LABELLING mechanism is not replayed at
+# all; tests/test_denied_calls.py owns that.
+_REFUSAL_PROMPTS = ("malformed_call_refusal", "cria_home_refusal", "external_path_refusal",
+                    "external_install_refusal", "spill_read_steer", "spill_edit_refusal",
+                    "edit_missing_new_string", "large_read_steer", "large_range_steer",
+                    "write_refused", "search_read_denied",
+                    "webfetch_guards:search_repeat", "webfetch_guards:search_repeat_inline",
+                    "webfetch_guards:fetch_repeat", "webfetch_guards:fetch_repeat_failed",
+                    "webfetch_guards:fetch_repeat_spilled")
+_PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}|%%[A-Z_]+%%")
+_LOG_RESULT = re.compile(r"^  -> ", re.M)
+_LOG_CALL = re.compile(r"^\$ \S", re.M)
+
+
+def _all_prompt_fragments():
+    """Every prompt template on disk, keyed ``name`` or ``name:entry`` for the load_map files."""
+    out = {}
+    for p in sorted((pathlib.Path(loop.__file__).parent / "prompts").glob("*.txt")):
+        raw = p.read_text(encoding="utf-8")
+        out[p.stem] = raw
+        if re.search(r"^[a-z_]+ = ", raw, re.M):
+            for k, v in prompts.load_map(p.stem).items():
+                out[f"{p.stem}:{k}"] = v
+    return out
+
+
+def _unique_anchors():
+    """key -> the longest literal span of that template found in no OTHER template."""
+    frags = _all_prompt_fragments()
+    anchors = {}
+    for key in _REFUSAL_PROMPTS:
+        if key not in frags:
+            raise ValueError(f"replay_logic: prompt {key} is gone — re-anchor rather than measure 0")
+        others = [v for k, v in frags.items()
+                  if k != key and not k.startswith(key + ":") and not key.startswith(k + ":")]
+        best = ""
+        for run in sorted((s.strip() for s in _PLACEHOLDER.split(frags[key])), key=len, reverse=True):
+            for width in (120, 90, 70, 50, 35):
+                cand = run[:width]
+                if len(cand) >= 30 and not any(cand in o for o in others):
+                    best = cand if len(cand) > len(best) else best
+                    break
+            if best:
+                break
+        if not best:
+            raise ValueError(f"replay_logic: no unique anchor for {key} — widen or re-anchor")
+        anchors[key] = best
+    return anchors
+
+
+def _result_bodies(text):
+    """Each ``  -> `` result body in a rendered action log, up to the next call or result line."""
+    starts = [m.start() for m in _LOG_RESULT.finditer(text)]
+    bounds = sorted(set(starts) | {m.start() for m in _LOG_CALL.finditer(text)} | {len(text)})
+    for s in starts:
+        yield text[s + 5:next(b for b in bounds if b > s)]
+
+
+def check_denied_call_logged(row, cap, ws):
+    """How many JUDGE prompts were told a call cria REFUSED was what the coder's tool returned.
+
+    ``loop._work_log`` renders a refusal as ``  -> <text>``, byte-identical to a real result, while
+    ``prompts/verify.txt`` tells the critic in cria's own voice that "each ``-> ...`` line is what it
+    returned". A fire is one judge prompt whose action log carries at least one refusal body.
+
+    The reason line names the refusal COUNT separately from the prompt count, because one prompt
+    routinely carries several and collapsing them would understate the evidence a judge was reading."""
+    anchors = _unique_anchors()
+    prompts_hit = bodies = total = 0
+    for f in sorted(cap.glob("*.prompt.txt")):
+        phase = f.name.split("-", 1)[-1].replace(".prompt.txt", "")
+        if not phase.startswith(("critic", "satisfaction", "compactor")):
+            continue
+        try:
+            t = f.read_text(errors="replace")
+        except OSError:
+            continue
+        found = False
+        for b in _result_bodies(t):
+            total += 1
+            if any(a in b for a in anchors.values()):
+                bodies += 1
+                found = True
+        prompts_hit += bool(found)
+    return prompts_hit, (f"{bodies} of {total} `-> ` result bodies in this run's judge prompts are "
+                         f"a refusal cria authored")
+
+
+def check_denied_call_deleted(row, cap, ws):
+    """How many coder turns the work log left with a ``$`` call line and NO result line at all.
+
+    Driven through cria's OWN ``loop._work_log`` over the captured message list — nothing here
+    re-implements it. The deleted result is the search-read denial, which ``_is_cria_scaffolding``
+    used to strip: that removes the RESULT and keeps the CALL, so a judge sees a read that appears to
+    have returned nothing about a file still on disk. Arguably worse than the mislabel above, and the
+    reason the note is labelled now rather than deleted."""
+    turns = holes = 0
+    for f in sorted(cap.glob("*.json")):
+        if f.name.endswith(".response.json") or "coder" not in f.name:
+            continue
+        try:
+            msgs = json.loads(f.read_text())["body"].get("messages") or []
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        lines = loop._work_log(msgs).splitlines()
+        n = sum(1 for i, ln in enumerate(lines)
+                if ln.startswith("$ ") and not (lines[i + 1:i + 2] or [""])[0].startswith("  -> "))
+        if n:
+            turns += 1
+            holes += n
+    return turns, f"{holes} call lines with no result line, over this run's coder turns"
+
+
+def check_repeated_verdict_key(row, cap, ws):
+    """How many model replies repeat a key whose FIRST value is a real answer cria was discarding.
+
+    ``jsontext._first_wins`` resolved a repeated key to its first NON-EMPTY value using Python
+    truthiness, so a JSON ``false`` read as nothing-said and a later ``true`` replaced it. Both
+    readings are driven here — ``jsontext.loads`` against the stdlib's last-wins — so this measures
+    the parser, never a copy of it. A fire is a reply where the two now disagree AND the key is one
+    cria acts on.
+
+    IT REPORTS 0/86 TODAY, AND THAT IS A POPULATION FACT, NOT A RATE. This harness's population is
+    the runs recorded in ``suite/results/results.jsonl``; ``~/.cria/calls`` holds more session
+    directories than that (127 vs 86 at the time of writing), including the run that motivated the
+    fix — 20260803T112245 call 0157-critic, a step critic that wrote ``"done": false`` and then
+    ``"done": true`` in the same object and was read as an APPROVAL. Scanning every captured payload
+    on the box directly: 24,196 texts, 73 repeated keys, 4 with a falsy-but-real first value, of
+    which that one is the only key cria acts on. The check stays here so the number moves on its own
+    once the row lands."""
+    fires = other = 0
+    for _f, _fin, text in _final_replies(cap):
+        for span in _object_spans(text):
+            try:
+                mine = jsontext.loads(span)
+                theirs = json.loads(span)
+            except ValueError:
+                continue
+            if mine == theirs:
+                continue
+            keys = [k for k in mine if mine.get(k) != theirs.get(k)]
+            if any(k in ("done", "satisfied", "consistent", "steps", "missing") for k in keys):
+                fires += 1
+            else:
+                other += 1
+    return fires, f"{other} more disagree on a key cria does not read"
+
+
+def _object_spans(text):
+    """Every brace-balanced object span in ``text`` — the same spans cria's own reader scans."""
+    i = (text or "").find("{")
+    while i != -1:
+        depth, in_str, esc = 0, False, False
+        for j in range(i, len(text)):
+            c = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    yield text[i:j + 1]
+                    break
+        i = text.find("{", i + 1)
+
+
 CHECKS = {
     "oscillation": check_oscillation,
     "unclosed-verdict": check_unclosed_verdict,
     "replan-json-shape": check_replan_json_shape,
+    "denied-call-logged": check_denied_call_logged,
+    "denied-call-deleted": check_denied_call_deleted,
+    "repeated-verdict-key": check_repeated_verdict_key,
     "reattach": check_reattach,
     "step-reframe": check_step_reframe,
     "satisfaction": check_satisfaction_due,

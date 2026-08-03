@@ -53,8 +53,9 @@ FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→s
                                     # from cria's own session memory, so the coder keeps the real endpoints it
                                     # already fetched even after the HARNESS compacts the raw result out of its
                                     # own history — else it re-fetches to rediscover them (370-call spec loop).
-SEARCH_MARKER = "⟦ctx:search⟧"      # tags a suppressed search-results read — cria's OWN voice written back into
-                                    # the stream, so the work log/critic can tell it from a real tool result.
+# (⟦ctx:search⟧ lived here and is gone. It tagged ONE denial — a suppressed search-results read — and
+#  the general case is every call cria refuses: cria.denial.DENIED_MARKER now marks all of them, at
+#  the sites that decide to refuse. Two markers for one idea is one to keep in sync.)
 # cria-SURFACED spec-shape markers — the [API endpoints …] / [response shape …] blocks a web_fetch result
 # carries (mirror webfetch.ROUTES_MARKER / SHAPE_MARKER; a test asserts sync). They hold the API's REAL
 # endpoint paths + response field names — EXTERNAL ground truth the coder must code against, NOT its own

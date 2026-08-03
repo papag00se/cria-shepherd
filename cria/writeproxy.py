@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, editrecovery, prompts, webfetch
+from . import brave, denial, editrecovery, prompts, webfetch
 from . import content_reduce as content_reduce_mod
 from . import dirguard
 from .config import CRIA_HOME
@@ -59,9 +59,16 @@ REFUSED_EXIT_CODE = 1
 
 
 def _refusal_command(text: str) -> str:
-    """The one way cria lowers a refusal: print it, then exit non-zero. ONE owner — the five call
-    sites each hand-rolled `printf %s …` and all five inherited printf's exit 0."""
-    return f"printf %s {_qbash(text)}; exit {REFUSED_EXIT_CODE}"
+    """The one way cria lowers a refusal: MARK it as a call that did not run, print it, then exit
+    non-zero. ONE owner — the five call sites each hand-rolled `printf %s …` and all five inherited
+    printf's exit 0.
+
+    The mark (:mod:`cria.denial`) is applied HERE, at the site that decides to refuse, because the
+    exit code does not survive to the reader that needs it: a refusal comes back as a tool result
+    whose text is the only thing a judge's action log carries, and ``represent_inbound`` strips the
+    harness's ``Process exited with code`` envelope off read/nav results outright. Marking the text
+    is what lets ``loop._work_log`` say the call never ran without matching a single word of it."""
+    return f"printf %s {_qbash(denial.mark(text))}; exit {REFUSED_EXIT_CODE}"
 
 
 # Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
@@ -317,8 +324,12 @@ def _write_command(path: str, content: str) -> str:
     leaves a half-written file. No arg-size limit / no chunking — the content rides in the heredoc."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX, wrote=_WROTE,
-                                           refused=_b64(prompts.load("write_refused")),
-                                           isdir=_b64(prompts.load("write_isdir")))
+                                           # Both are REFUSALS decided inside the lowered heredoc —
+                                           # validate-before-lower rejected the content, or the path
+                                           # is a directory. Nothing was written either way, so both
+                                           # carry the did-not-run mark from the site that authors them.
+                                           refused=_b64(denial.mark(prompts.load("write_refused"))),
+                                           isdir=_b64(denial.mark(prompts.load("write_isdir"))))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -405,7 +416,7 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
       Too big → steer to a narrower range / grep instead of returning a doomed-to-be-truncated blob.
     * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
     An in-range, in-size read returns exactly its content."""
-    steer = prompts.render("large_range_steer", path=str(path))
+    steer = denial.mark(prompts.render("large_range_steer", path=str(path)))
     return (
         # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
         # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
@@ -428,7 +439,11 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         # reasoning tokens insisting a valid f-string was valid — then took three more calls to find
         # one line. Numbering is why the crew never has that problem.
         f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
+        # A REFUSED read did not run, so it must not report success — the same rule the module header
+        # states for every refusal cria lowers, which this branch (and the whole-read guard below)
+        # inherited printf's exit 0 in defiance of. The reading branch still exits 0.
         f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then printf %s {_qbash(steer)}; '
+        f'exit {REFUSED_EXIT_CODE}; '
         f'else printf \'%s\\n\' "$__s"; fi; fi'
     )
 
@@ -445,9 +460,11 @@ def _read_command(args: dict) -> str | None:
         return _ranged_read(q, str(path), f"{start},$", start)
     # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
-    steer = prompts.render("large_read_steer", path=str(path))
+    # The steer is a REFUSAL — the read did not happen — so it is marked as one and exits non-zero,
+    # the rule the module header states and this branch was the last site still breaking.
+    steer = denial.mark(prompts.render("large_read_steer", path=str(path)))
     return (f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f"then printf %s {_qbash(steer)}; else cat {q}; fi")
+            f"then printf %s {_qbash(steer)}; exit {REFUSED_EXIT_CODE}; else cat {q}; fi")
 
 
 def _list_command(args: dict) -> str:
@@ -502,6 +519,13 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
             written = os.path.join(workspace_root, target.lstrip("./")) if workspace_root else ""
             webfetch.note_fetch_spill(session, str(url), written)
             return _spill_command(target, content, msg)
+    # A repeat-gate REFUSAL comes back from fetch_nav as ordinary text, and this printf gave it
+    # printf's exit 0 — the "a refused call must not report success" contradiction the module header
+    # documents, at the one site that still had it. Which results are refusals is webfetch's own
+    # decision, recorded on the text at the key it rendered (denial), never re-derived from wording:
+    # a real 404 page is a RESULT and still exits 0 here.
+    if denial.is_denied(result):
+        return _refusal_command(result)
     return f"printf %s {_qbash(result)}"
 
 
