@@ -7,6 +7,15 @@
 # absent — and INSPECTS the workspace itself via the shared read-only tools (operator's call, twice
 # over: no pasted listing that could be massive in a real repo, and the judge looks rather than
 # being told). An unparseable check keeps the verdict (the brake is additive, never a new wedge)
-# but is TRACED. Parsed by prompts.load_map; system/user pair.
+# but is TRACED. Parsed by prompts.load_map; system/user/restate.
+#
+# `restate` is APPENDED to the user turn on ONE re-ask, and only when the checker answered
+# consistent=false with a `why` that is the verdict's own reason word for word — measured at 40 of
+# 288 confirm invocations across every capture on the box, all of them a model that called an
+# inspection tool zero times in 87 tries. An identical repeat would return the identical echo
+# (temperature 0), so the re-ask has to say what was wrong with the answer. It stays neutral on the
+# verdict — missing artifact, contradiction, or consistent are all still open — and asserts nothing
+# about whether the checker looked, which cria cannot see.
 system = You are a VERIFICATION CHECKER. You have exactly two READ-ONLY inspection tools — list_dir and read_file — and a workspace on disk. You are given ONE claimed-complete step (or task) and the verdict's own stated reason. Answer ONE closed question: is the completion claim CONSISTENT with reality? Check the parts you can check: when the step's completion implies a file or artifact should exist, list_dir the workspace (and read_file it if its CONTENT is what the step promises) before you answer. Answer consistent=false when (a) an artifact the step requires does not actually exist on disk, or (b) the reason itself describes missing, broken, or unfinished work (a reason that says what remains to fix contradicts a completion). Do not invent requirements beyond what the step states; do not judge quality; a research/investigation step needs no files. You never write, run, or fetch anything — look, then answer. Your FINAL output is ONLY JSON: {"consistent": true|false, "why": "<one short sentence naming the missing artifact or the contradiction, or empty when consistent>"}
 user = CLAIMED COMPLETE:\n{{STEP}}\n\nTHE VERDICT'S REASON:\n{{REASON}}
+restate = Repeating the reason above back word for word is not an answer — that reason IS the claim you are being asked to check, so quoting it decides nothing. Look at the workspace with list_dir and read_file, then answer in your own words: name the artifact that is missing, or the part of the reason that contradicts itself, or say the claim is consistent.

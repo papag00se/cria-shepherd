@@ -5566,6 +5566,133 @@ class ConfirmCheckerInspectsTests(unittest.TestCase):
         self.assertIn("tmp/", protocol[-1]["content"])             # the REAL disk answered
 
 
+class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
+    """THE APPROVE-PATH BRAKE VETOED WITH THE APPROVAL'S OWN WORDS.
+
+    Measured across all 124 captured sessions on the box — 288 confirm invocations (both phases),
+    parsed with cria's own verdict reader: 125 answered `consistent: false`, and 40 of those gave, as
+    the whole `why`, the done-reason they had just been handed, verbatim. cria read the boolean,
+    discarded the contradiction, and injected the affirming sentence into the coder as the reason the
+    step was NOT done. One run held step 1 of 5 open from call 0037 to call 0209 that way — roughly
+    55 of its 60 minutes — on work its own evidence proves finished.
+
+    The verdict is treated as UNUSABLE, never flipped: re-asked once with the echo named, then failed
+    CLOSED on the plain keep-working instruction. Flipping it to `consistent: true` would advance a
+    step on a judge that produced no evidence — the fail-OPEN principle 13 forbids."""
+
+    # Run 20260802T214153 call 0134, both fields byte-identical in the capture.
+    REASON = ("The coder successfully fetched the Ada Handles API specification from "
+              "https://api.handle.me/openapi.json and extracted all required endpoints, request "
+              "formats, and response structures. The evidence shows the spec contains the needed "
+              "information.")
+    STEP = ("Research the Ada Handles API specification to identify required endpoints, request "
+            "formats, and response structures.")
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
+    @staticmethod
+    def _confirm(consistent, why=""):
+        return {"choices": [{"message": {"content": json.dumps(
+            {"consistent": consistent, "why": why})}}]}
+
+    def _done(self, reason):
+        return {"choices": [{"message": {"content": json.dumps(
+            {"done": True, "reason": reason, "proposed_fix": ""})}}]}
+
+    def test_the_echo_is_recognised_and_a_real_contradiction_is_not(self):
+        from cria.loop import _restates_the_verdict
+        self.assertTrue(_restates_the_verdict(self.REASON, self.REASON))
+        # whitespace + case jitter is still the same sentence
+        self.assertTrue(_restates_the_verdict("  " + self.REASON.upper() + "\n", self.REASON))
+        # the 85 falses that were read: every one names a real absence or contradiction
+        self.assertFalse(_restates_the_verdict("README.md does not exist on disk", self.REASON))
+        self.assertFalse(_restates_the_verdict("", self.REASON))       # no why at all is not an echo
+        self.assertFalse(_restates_the_verdict(self.REASON, ""))       # no reason to echo
+
+    def test_a_step_is_NOT_advanced_by_the_echo(self):
+        """The direction that makes this safe: unusable, not true. The step stays open."""
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("x = 1\n")
+            chat = _Scripted([self._done(self.REASON), self._confirm(False, self.REASON)])
+            ctx = _ctx(_Scripted([_toolcall()]), chat)
+            ctx.reasoner_role = self._role()
+            rlog = _Rlog()
+            ok, why = Loop(ctx)._verify(self.STEP, "coder says done", "", "ev", rlog,
+                                        idx=1, total=5, key="sid:x", workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertIn(("loop.confirm_restated_claim",), [(k,) for k, _ in rlog.events])
+        self.assertIn(("loop.confirm_restated_twice",), [(k,) for k, _ in rlog.events])
+
+    def test_the_affirming_sentence_never_reaches_the_coder(self):
+        """The concrete damage: "the coder successfully fetched ... and extracted all required
+        endpoints" printed under "Do ONLY this step, then stop"."""
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("x = 1\n")
+            chat = _Scripted([self._done(self.REASON), self._confirm(False, self.REASON)])
+            ctx = _ctx(_Scripted([_toolcall()]), chat)
+            ctx.reasoner_role = self._role()
+            ok, why = Loop(ctx)._verify(self.STEP, "c", "", "ev", _Rlog(),
+                                        idx=1, total=5, key="sid:x", workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertNotIn("successfully fetched", why)
+        self.assertNotIn("extracted all required endpoints", why)
+        self.assertIn("not yet verified", why)          # the plain keep-working instruction
+
+    def test_the_re_ask_happens_ONCE_names_the_echo_and_can_still_approve(self):
+        """A repeat at temperature 0 returns the identical echo, so the second ask must differ — and
+        it must be able to rule either way, or the brake would just be disabled."""
+        from cria.loop import _confirm_completion
+        bodies = []
+
+        def chat(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps(self._confirm(False, self.REASON)).encode()
+            return json.dumps(self._confirm(True, "")).encode()
+
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("x = 1\n")
+            rlog = _Rlog()
+            ok, why = _confirm_completion(self.STEP, self.REASON, ws, chat, self._role(), rlog,
+                                          phase="critic-confirm")
+        self.assertTrue(ok)                                  # the re-ask's real answer stands
+        self.assertEqual(len(bodies), 2, "the re-ask must happen exactly once")
+        first = bodies[0]["messages"][-1]["content"]
+        second = bodies[1]["messages"][-1]["content"]
+        self.assertNotEqual(first, second, "an identical re-ask at temperature 0 is a wasted call")
+        self.assertIn("is not an answer", second)
+        self.assertTrue(second.startswith(first))            # the question itself is unchanged
+        self.assertIn(("loop.confirm_restated_claim",), [(k,) for k, _ in rlog.events])
+
+    def test_the_SIBLING_caller_is_covered_too(self):
+        """_confirm_completion has exactly two callers — the step critic and the whole-task
+        satisfaction critic. The fix lives in the shared function, so both get it; this pins that,
+        because a mechanism landing on one path and missing its twin is this repo's most repeated
+        defect."""
+        from cria.loop import judge_satisfaction
+        sat = {"choices": [{"message": {"content": json.dumps(
+            {"satisfied": True, "reason": self.REASON})}}]}
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "resolve.py").write_text("x = 1\n")
+            chat = _Scripted([sat, self._confirm(False, self.REASON)])
+            rlog = _Rlog()
+            ok, reason, _fx = judge_satisfaction(self.STEP, "ev", chat, self._role(), rlog,
+                                                 workspace_root=ws)
+        self.assertFalse(ok)
+        self.assertNotIn("successfully fetched", reason)
+        self.assertIn("not yet verified", reason)
+        self.assertIn(("loop.confirm_restated_twice",), [(k,) for k, _ in rlog.events])
+
+    def test_both_callers_still_go_through_the_one_shared_function(self):
+        import inspect
+        from cria import loop as L
+        src = inspect.getsource(L)
+        self.assertEqual(src.count("_confirm_completion("), 3,   # 1 def + 2 call sites
+                         "a third confirm call site would need the same brake")
+
+
 class SatisfactionRouteGroundingTests(unittest.TestCase):
     """THE COMPLETION CRITIC'S PROPOSED FIX WAS NEVER ROUTE-GROUNDED (run 0728-m10): its corrective
     step handed the coder `GET https://api.handle.me/v1/resolve/{handle}` — an INVENTED route — while

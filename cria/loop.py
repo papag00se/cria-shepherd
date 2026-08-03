@@ -765,6 +765,38 @@ def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
     return ""
 
 
+def _restates_the_verdict(why: str, reason: str) -> bool:
+    """True when a confirm verdict's stated `why` IS the done-reason it was handed, word for word.
+
+    A verdict that says `consistent: false` and then gives, as its whole justification, the very
+    sentence that argued the step was DONE has not contradicted anything — it has echoed the
+    question. cria used to read the boolean and forward that sentence to the coder as the reason it
+    is NOT done, so the coder read "the coder successfully fetched the specification and extracted
+    all required endpoints" printed directly under "Do ONLY this step, then stop".
+
+    MEASURED across all 124 captured sessions on the box (288 confirm invocations parsed with cria's
+    own verdict reader, both phases): 125 answered false, and **40 of those 125 restate the done
+    reason verbatim** — 14% of every confirm ever run. All 40 are fabliq, which is also the model
+    that called an inspection tool 0 times in 87 confirm invocations; a judge that never looks has
+    nothing in its context but the reason it was handed, and hands it straight back. One run
+    (20260802T195958) contributed 36 of the 40 and never left step 1 in 255 calls; another
+    (20260802T214153) held step 1 of 5 from call 0037 to 0209 on work its own evidence had finished.
+    Verbatim example, both fields byte-identical: {"consistent": false, "why": "The coder
+    successfully fetched the Ada Handles API specification from https://api.handle.me/openapi.json
+    and extracted all required endpoints, request formats, and response structures."}
+
+    An EQUALITY test, not a similarity ratio — the same shape `_dedupe_doubled` uses on a doubled
+    steer, and for the same reason: "substantially a restatement" is a judgment, and a tuned ratio is
+    the pattern principle 9's corollary says to replace with a question rather than tune. The
+    normalisation is whitespace + case only. The remaining 85 falses were read: every one names a
+    real absence or contradiction, so a *non*-verbatim affirming why has zero measured instances and
+    no detector is built for it (principle 1 — the bar to ADD is high; principle 15 — base-rate it
+    first)."""
+    a = re.sub(r"\s+", " ", (why or "").strip()).casefold()
+    b = re.sub(r"\s+", " ", (reason or "").strip()).casefold()
+    return bool(a) and a == b
+
+
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
                         rlog, *, phase: str) -> tuple[bool, str]:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
@@ -788,7 +820,18 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     logged `confirm_unparsed`, confirmed anyway, and ended the run over a workspace holding no test
     file at all — while that same judge's own reasoning had found the real defects ("the test suite
     never asserts total_handles", "a circular mock of the function under test"). Not confirming costs
-    work turns cria had already paid for; confirming on nothing ends the run."""
+    work turns cria had already paid for; confirming on nothing ends the run.
+
+    A verdict that RESTATES its own claim (see :func:`_restates_the_verdict`) is treated as UNUSABLE,
+    exactly like an unparseable one: re-asked once, then failed CLOSED. It is deliberately NOT
+    flipped to `consistent: true`. Flipping it would make the step ADVANCE on a judge that gave no
+    evidence — the fail-OPEN on completion principle 13 forbids outright, and the same reasoning that
+    keeps `_claims_impossible_action` from repairing a fabricated reason: an incoherent verdict tells
+    you the judge did not answer, never what the answer was. The direction is what makes a false
+    positive harmless. Should a done-reason ever legitimately describe missing work (clause (b) of
+    the checker's own prompt), quoting it back would be a fair veto — and cria's response here is
+    still to withhold approval. The only thing lost is the specific wording; the boolean is
+    identical. Nothing can advance that would not have advanced before."""
     if not workspace_root or not os.path.isdir(workspace_root):
         return True, ""
     absent = step_names_absent_artifact(claim, workspace_root)
@@ -796,28 +839,50 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         rlog.emit("loop.confirm_absent_artifact", level="info", phase=phase, artifact=absent)
         return False, prompts.render("confirm_absent_artifact", artifact=absent)
     labels = prompts.load_map("verify_confirm")
-    user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
-    comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
-                             phase=phase, force_think_off=True, workspace_root=workspace_root,
-                             answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
-    vtext = _completion_text(comp)
-    if reasoner_role is not None:
-        vtext = reasoner_role.clean_content(vtext)
-    cleaned = strip_think(vtext)
-    word = _consistent_word(cleaned)
-    if word is not None:
-        # The one-word answer, plus whatever reason line followed it.
-        why = "\n".join(cleaned.strip().splitlines()[1:]).strip()
-        return word, why
-    obj = extract_json_object(cleaned)
-    if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
+
+    def ask(extra: str = "") -> tuple[bool | None, str]:
+        """One confirm judgement → (consistent, why), or (None, "") when it cannot be read."""
+        user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)") + extra
+        comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
+                                 phase=phase, force_think_off=True, workspace_root=workspace_root,
+                                 answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
+        vtext = _completion_text(comp)
+        if reasoner_role is not None:
+            vtext = reasoner_role.clean_content(vtext)
+        cleaned = strip_think(vtext)
+        word = _consistent_word(cleaned)
+        if word is not None:
+            # The one-word answer, plus whatever reason line followed it.
+            return word, "\n".join(cleaned.strip().splitlines()[1:]).strip()
+        obj = extract_json_object(cleaned)
+        if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
+            rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
+            return None, ""
+        return obj["consistent"], str(obj.get("why") or "").strip()
+
+    verdict, why = ask()
+    if verdict is False and _restates_the_verdict(why, reason):
+        # ONE re-ask, escalated — the checker is told that echoing the reason answers nothing and
+        # pointed back at the tools it holds. A plain repeat would be worthless: the judge call runs
+        # at temperature 0, so the identical prompt returns the identical echo. The escalation is
+        # neutral on the answer (it demands the missing artifact OR the contradiction OR consistent)
+        # and asserts nothing about what the judge did — cria cannot see whether it looked, and a
+        # "you did not look" it cannot check would be the false fact principle 5b forbids.
+        rlog.emit("loop.confirm_restated_claim", level="warning", phase=phase, head=_clip(why, 120))
+        verdict, why = ask("\n\n" + labels["restate"])
+        if verdict is False and _restates_the_verdict(why, reason):
+            rlog.emit("loop.confirm_restated_twice", level="warning", phase=phase)
+            verdict = None
+    if verdict is None:
         # The coder-facing reason is the plain keep-working instruction, never cria's bookkeeping and
         # never the satisfied-verdict's own reason (which argues the opposite of what the caller is
-        # about to say) — same wording the satisfaction path already uses when it fails closed.
-        rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
+        # about to say) — same wording the satisfaction path already uses when it fails closed. That
+        # rule was written for the unparseable case and the echo is exactly the case it names: the
+        # done-reason arriving back as the not-done reason, only this time through a verdict that
+        # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
         return False, prompts.load("unverified_step")
-    return obj["consistent"], str(obj.get("why") or "").strip()
+    return verdict, why
 
 
 # A judge holds ONLY read-only inspection tools (list_dir/read_file) — a verdict whose reason
