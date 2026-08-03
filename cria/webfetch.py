@@ -553,19 +553,33 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     return out
 
 
-# The per-endpoint field cap. MEASURED across the whole capture corpus 2026-08-03: a capped list
-# appears in 12,599 prompts, and the number of fields it hides is only ever **4 or 6** — those are
-# the only two values that occur. So the old cap of 30 was paying "the coder cannot tell whether this
-# field exists" across 12,599 prompts to save at most six field names. The comment below states that
-# cost in its own words: "a coder looking for a field that exists but sits past the cap concludes the
-# API doesn't return it — and guesses."
+# The per-endpoint TOP-LEVEL field cap. MEASURED across the whole capture corpus 2026-08-03, and
+# re-derived independently at review: a capped list appears in 12,599 prompt captures, 33,537
+# occurrences in all, and the number of fields hidden is only ever **4 or 6** — those are the only
+# two values that occur. So the old cap of 30 was paying "the coder cannot tell whether this field
+# exists" to save at most six field names. The comment above states that cost in its own words: "a
+# coder looking for a field that exists but sits past the cap concludes the API doesn't return it —
+# and guesses."
 #
-# It has a second cost nobody counted: it blinds cria's OWN checks. Absence from a TRUNCATED list is
-# not evidence a field is missing, so the ledger-contradiction check has to abstain on every capped
-# endpoint — which is why that check re-reads the parsed document instead of trusting the ledger.
+# WHAT THIS CONSTANT ACTUALLY CLEARS, stated exactly, because the first draft of this comment
+# claimed the whole 12,599 and that is false. The two hidden counts have two different sources:
+#   * `+4` — 16,588 occurrences — is THIS cap, on `GET /handles/{handle}` (34 fields). Raising it
+#     to 40 clears it, and that is the endpoint whose missing tail cost a run.
+#   * `+6` — 16,949 occurrences — is the NESTED cap, the literal `8` in the `_depth == 0` recursion
+#     above, on `stats{…}` inside `GET /health`. This constant does not touch it.
+# Per file: 12,595 of the 12,599 prompts still carry a nested-capped list after this change. The
+# same "a field that exists reads as absent" defect is therefore still live one level down; fixing
+# it is a separate change that needs its own measurement, not a number folded into this one.
 #
-# 40 clears every observed spec with room to spare. The cap and its disclosure stay: a pathological
-# spec must still be bounded, and a silent slice is the thing that is actually forbidden.
+# It has a second cost: it blinds cria's OWN checks. Absence from a TRUNCATED list is not evidence a
+# field is missing, so any ledger-contradiction check must abstain on every capped endpoint — which
+# is why such a check has to re-read the parsed document instead of trusting the ledger.
+#
+# 40 clears both captured versions of the one observed spec, but not with much room: the newer
+# swagger.yml renders 36 fields, four short of the cap, and grew by two between the two captures.
+# Cost of the raise, measured: +80 chars on the older document, +149 on the newer, worst case 4.7%
+# of a single 34,838-char prompt and 0.378% corpus-wide. The cap and its disclosure stay: a
+# pathological spec must still be bounded, and a SILENT slice is the thing that is actually forbidden.
 FIELD_CAP = 40
 
 
