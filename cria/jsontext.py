@@ -41,8 +41,90 @@ def extract_json_object(text: str) -> dict | None:
     """
     if not text:
         return None
-    cleaned = _FENCE.sub("", strip_think(text)).replace("```", "")
-    return _scan_object(cleaned)
+    return _scan_object(denoise(text))
+
+
+def denoise(text: str) -> str:
+    """The reply with a model's habitual wrappers removed — ``<think>`` preambles and ```` ``` ````
+    fences. The ONE place that preprocessing lives, so :func:`extract_json_object` and
+    :func:`close_unclosed_object` never disagree about what "the text" is."""
+    return _FENCE.sub("", strip_think(text)).replace("```", "")
+
+
+def close_unclosed_object(text: str) -> dict | None:
+    """A JSON object whose only defect is its MISSING CLOSING BRACE(S), parsed — else ``None``.
+
+    NOT a lenient parser and deliberately not wired into :func:`extract_json_object`. It supplies
+    closers — ``}`` and ``]``, in the nesting order the text itself opened them — and nothing else.
+    Every byte of key and value is the model's own; if the object needs anything but closers to
+    parse (a value, a comma removed, a closing quote) this returns ``None``. That is the whole line
+    between reshaping what the model wrote and authoring what it did not (principle 5b/#2).
+
+    Measured 2026-08-02 over 18,655 captured final replies: 14 complete verdicts and re-derivations
+    were lost to exactly one absent ``}``, all of them ``finish_reason: stop`` — the model stopped
+    on its own, mid-punctuation, with the answer already written. Example (run 20260728T000013, call
+    0469-critic, 763 chars): ``{"done": false, "reason": "…no read_file, edit_file, or write_file on
+    README.md appears in the evidence.", "proposed_fix": "Check if README.md exists via list_dir…"``
+    — read as NO verdict at all.
+
+    TWO refusals are structural, not tuning:
+
+    * A text that ends INSIDE a string is refused. Closing braces around a half-written value would
+      hand on a sentence that stops mid-word — the truncation lie rule #5 exists to prevent.
+    * A ``finish_reason: length`` reply is refused by the CALLERS, which is where the finish reason
+      is visible at all — this function is given only text. Each verdict call site runs
+      ``massage.is_truncated`` before reaching here. A cut generation is not a finished answer no
+      matter how well the bytes happen to close.
+
+    This says nothing about WHICH way a recovered object rules. That is the caller's to decide, and
+    for a verdict it is one-directional — see :func:`cria.loop.verdict_from_unclosed`.
+    """
+    if not text:
+        return None
+    cleaned = denoise(text)
+    start = cleaned.find("{")
+    while start != -1:
+        closers = _unclosed_tail(cleaned, start)
+        if closers:
+            try:
+                obj = loads(cleaned[start:] + closers)
+            except json.JSONDecodeError:
+                obj = None
+            if isinstance(obj, dict):
+                return obj
+        start = cleaned.find("{", start + 1)
+    return None
+
+
+def _unclosed_tail(s: str, start: int) -> str:
+    """The closers that would balance the object opening at ``start``, or ``""``.
+
+    ``""`` means there is nothing to repair here — the span already closes (that is
+    :func:`extract_json_object`'s job), or it ends inside a string, or ``start`` opens nothing."""
+    stack: list[str] = []
+    in_str = escaped = False
+    for c in s[start:]:
+        if in_str:
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c in "{[":
+            stack.append("}" if c == "{" else "]")
+        elif c in "}]":
+            if not stack or stack[-1] != c:
+                return ""          # mismatched nesting — not a missing-closer defect
+            stack.pop()
+            if not stack:
+                return ""          # it closed on its own
+    if in_str:
+        return ""                  # ends mid-string: closing it would ship a half-written value
+    return "".join(reversed(stack))
 
 
 def _first_wins(pairs):

@@ -433,6 +433,7 @@ def _fact_missing_file(case: Case, msg: dict) -> dict:
 
 
 FACTS = {
+    "unclosed-verdict": lambda case, msg: _fact_unclosed_verdict(case, msg),
     "spill-outline": _fact_spill,
     "repeat-body": _fact_repeat,
     "gate-verbatim": _fact_edit_matches_disk,
@@ -875,7 +876,113 @@ def cases_missing_file_read(row, cap, ws, limit):
     return out
 
 
+# The two spellings of "cria could not read the verdict" the corpus holds. The first is cria's
+# CURRENT prompt file, read rather than copied. The second is the retired bookkeeping line it
+# replaced — a literal, because nothing in the repo still holds it, and a harness that only matches
+# today's wording silently measures the newest runs only (replay_logic's SPILL_READ_STEER rule).
+UNVERIFIED_RETIRED = "unverified (no parseable verdict)"
+
+
+def _unverified_anchor(text):
+    """The 'no verdict' text this prompt actually carried, or ``None``."""
+    for anchor in (prompts.load("unverified_step").strip(), UNVERIFIED_RETIRED):
+        if anchor and anchor in text:
+            return anchor
+    return None
+
+
+def cases_unclosed_verdict(row, cap, ws, limit):
+    """The coder's re-nudge after a step critic whose verdict was lost to one absent closing brace.
+
+    What the coder read was cria saying it had no verdict. What it would read now is the judge's OWN
+    ``reason`` and ``proposed_fix``, because the verdict object it wrote is recoverable by supplying
+    closers.
+
+    Driven through cria's own code and nothing else: the critic's captured reply goes through
+    :func:`loop.verdict_from_unclosed` (the one-way gate, so an unclosed APPROVAL yields no case at
+    all) and the result through :func:`loop._verdict_nudge` (the same function the live re-nudge
+    calls). Nothing is transcribed; revert the fix and the same driving produces no case.
+
+    PAIRING is by call ORDER, which is the only record of it on disk, and it is strict: the case is
+    a coder prompt carrying the no-verdict text whose most recent critic call BOTH failed cria's
+    reader AND is recovered by the gate. A readable critic verdict in between ends the pairing —
+    that coder turn is about a verdict cria did read, and recomposing it would splice this fix's
+    text into another call's slot.
+
+    DISCLOSED: on a capture that predates the prompt-wording fix, the shipped text is the retired
+    bookkeeping line, so the diff carries TWO changes — that wording fix and this one. Said in the
+    case's own ``why`` rather than left for the reader to infer."""
+    pending = None                       # the recovered verdict of the most recent critic call
+    out = []
+    for f in sorted(cap.glob("*.json")):
+        if f.name.endswith(".response.json"):
+            continue
+        kind = f.name.split("-", 1)[-1].replace(".json", "")
+        resp = f.with_name(f.name.replace(".json", ".response.json"))
+        if kind.startswith("critic") and "confirm" not in kind:
+            pending = None
+            try:
+                j = json.loads(resp.read_text())
+            except (OSError, ValueError):
+                continue
+            ch = (j.get("choices") or [{}])[0]
+            if ch.get("finish_reason") == "length":
+                continue                 # refused before the reader — never a case
+            text = _msg_text(ch.get("message") or {})
+            if replay_logic.extract_json_object(text) is not None:
+                continue                 # cria read this one fine; the pairing is broken
+            pending = (f.name, loop.verdict_from_unclosed(text, "done", _QuietLog(), "critic"))
+            continue
+        if "coder" not in kind or pending is None or pending[1] is None:
+            continue
+        try:
+            body = (json.loads(f.read_text()).get("body") or {})
+        except (OSError, ValueError):
+            continue
+        if not body.get("messages"):
+            continue
+        old = next((a for m in body["messages"] if (a := _unverified_anchor(_msg_text(m)))), None)
+        if old is None:
+            continue
+        new = loop._verdict_nudge(pending[1], False)
+        if not new.strip():
+            continue
+        why = (f"the critic at {pending[0]} wrote a verdict cria could not read; "
+               f"verdict_from_unclosed recovers it and _verdict_nudge renders the coder-facing text")
+        if old == UNVERIFIED_RETIRED:
+            why += ("; NOTE the shipped text is the RETIRED bookkeeping line — this diff therefore "
+                    "carries the later prompt-wording fix as well as this one")
+        out.append(Case("unclosed-verdict", f, row.get("model", "?"), body, old, new, why, ws,
+                        {"reason": str(pending[1].get("reason") or ""),
+                         "fix": str(pending[1].get("proposed_fix") or "")}))
+        pending = None
+        if len(out) >= limit:
+            break
+    return out
+
+
+class _QuietLog:
+    """A run log that swallows the trace. This harness prints the recomposition itself; the event is
+    cria's, for a live run's record, and duplicating it here would read as a second firing."""
+
+    phase = ""
+
+    def emit(self, *_a, **_kw):
+        pass
+
+
+def _fact_unclosed_verdict(case: Case, msg: dict) -> dict:
+    """Does the reply act on the diagnosis it was handed? Byte checks against the recovered verdict
+    — the words are in the recomposed text and, being the judge's own, nowhere else in the prompt."""
+    blob = signature(msg) + json.dumps(calls_of(msg))
+    words = [w for w in re.findall(r"[\w./{}-]{5,}", case.facts.get("fix", ""))
+             if w not in case.old]
+    return {"echoes_a_token_of_the_proposed_fix": [w for w in dict.fromkeys(words) if w in blob][:6],
+            "answers_with_prose_only": not msg.get("tool_calls")}
+
+
 RECOMPOSERS = {
+    "unclosed-verdict": cases_unclosed_verdict,
     "spill-outline": cases_spill_outline,
     "repeat-body": cases_repeat_body,
     "gate-verbatim": cases_gate_verbatim,

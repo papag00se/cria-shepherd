@@ -36,10 +36,11 @@ from pathlib import Path
 
 from . import callcapture, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
+from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
-from .planner import _clean_step, _extract_cwd, missing_deliverables, reasoned_noise_indices
+from .planner import _extract_cwd, missing_deliverables, reasoned_noise_indices
 from .searchloop import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
 from .toolargs import PATH_KEYS, parse_args
@@ -414,7 +415,12 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         # one. Recovers a NOT-satisfied ruling only: of 46 unparseable replies on this box, 20 held a
         # clear judgment in the reasoning and 4 more stated one in plain prose ("The claim is
         # inconsistent... Fix: add src/__init__.py"), all of it discarded.
-        return (verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
+        #
+        # The judge's OWN object comes first when one absent brace is all that is wrong with it
+        # (verdict_from_unclosed) — same one-way NOT-satisfied contract, but it carries the reason
+        # and proposed_fix the judge actually wrote. 3 of this phase's replies on this box.
+        return (verdict_from_unclosed(vtext, "satisfied", rlog, ph)
+                or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
                 or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose"))
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
@@ -545,16 +551,30 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
                      prompts.render("replan_user", task=task, completed=completed or "(none)",
                                     remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
                      rlog, phase="reasoner", coder_tools=coder_tools) or ""
-    obj = extract_json_object(strip_think(text))
-    if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list):
+    # ONE READER for "a step list written as JSON" — planner.json_steps, the same function the
+    # initial draft reads through. This call used to require a dict with a literal `steps` key, and
+    # cria already owned every other shape the reasoner uses: a bare top-level array, a synonym key,
+    # a dict item per step. Measured 2026-08-02 over 232 captured re-derivations: 19 were unreadable
+    # here, 13 of them a bare JSON array — 7 carrying real steps (run 20260727T234416 call 0024
+    # returned a complete four-step re-derivation, its own thinking saying "I need to produce JSON
+    # steps only") and 6 the empty `[]`. The plan was left unchanged on all 13.
+    #
+    # JSON ONLY — deliberately NOT parse_steps, whose prose fallbacks read numbered and bulleted
+    # LINES. The re-derivation's replies are not drafts: run 20260728T101412 call 0121 answered with
+    # a README in markdown, and parse_steps reads four of its bullets as plan steps. Reading a
+    # README as the remaining plan is a worse outcome than reading nothing (principle 2 — the
+    # dangerous class of intervention is the one that REPLACES a correct prior).
+    cleaned = planner.json_steps(strip_think(text))
+    if cleaned is None:
         return None  # unparseable / wrong shape → keep the plan exactly as it was
-    if not obj["steps"]:
-        return []  # the reasoner says nothing remains → the plan is complete
-    # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare string)
-    # to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
-    cleaned = [c for x in obj["steps"] if (c := _clean_step(x))]
     if not cleaned:
-        return None  # no usable step text → keep the plan we had
+        # The reasoner says nothing remains. replan.txt asks for exactly this ("Return [] ONLY when
+        # the evidence shows every remaining deliverable is already done") and this function's own
+        # contract defines it, so it is honoured whether it arrived as `{"steps": []}` or bare `[]`.
+        # NOT a false-finish path: the caller does not drop the tail on this alone — it re-asks
+        # judge_satisfaction against the same evidence first, and a not-satisfied answer keeps every
+        # remaining step (loop.replan_empty_declined).
+        return []
     # Same reasoner NOISE judgment the INITIAL plan gets (reasoned_noise_indices): drop a re-derived step
     # that codified a bare command, dictated literal code, or a speculative guess — a re-derivation
     # grounded in the coder's FAILED work otherwise codifies its guessed endpoint into an authoritative
@@ -857,6 +877,17 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
             return word, "\n".join(cleaned.strip().splitlines()[1:]).strip()
         obj = extract_json_object(cleaned)
         if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
+            # One absent closing brace is not "no answer" — but only a NOT-consistent one is
+            # recovered (verdict_from_unclosed). This is the APPROVE-path brake: recovering a
+            # `consistent: true` out of a defect in the bytes would confirm a done, which is the
+            # one direction principle 13 forbids; recovering the false costs a work turn.
+            # Truncation is refused HERE because this site, unlike the other two judges, has no
+            # is_truncated guard of its own: a reply cut at the cap is not an answer even when its
+            # bytes happen to balance once closed (rule #5).
+            recovered = (None if massage.is_truncated(comp)
+                         else verdict_from_unclosed(vtext, "consistent", rlog, phase))
+            if recovered is not None:
+                return False, str(recovered.get("why") or recovered.get("reason") or "").strip()
             rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
             return None, ""
         return obj["consistent"], str(obj.get("why") or "").strip()
@@ -991,6 +1022,61 @@ def _cut_on_a_word(text: str, budget: int) -> str:
     head = text[:budget]
     sp = head.rfind(" ")
     return (head[:sp] if sp > budget // 2 else head).rstrip() + "…"
+
+
+def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | None:
+    """A judge's OWN verdict object, recovered when its only defect is an absent closing brace — and
+    ONLY when it rules NOT-done. ``None`` otherwise.
+
+    ``flag`` is the phase's own key ("done" / "satisfied" / "consistent"), exactly as
+    :func:`verdict_from_reasoning` takes it, so no caller's reading path changes shape.
+
+    WHAT WAS MEASURED. Replaying all 18,655 captured final replies through cria's own reader
+    (2026-08-02): 14 came back unreadable while holding a syntactically complete JSON object missing
+    a single ``}``. All 14 stopped on their own (``finish_reason: stop``). Twelve are NOT-done
+    rulings with a written reason AND a written proposed_fix — the diagnosis the coder never got.
+    One is an APPROVAL (``done: true``, run 20260801T232511 call 0173-critic) and one is a plan
+    re-derivation carrying no verdict flag at all (0050-reasoner). Both are refused here.
+
+    DIRECTION (#13), stated as code below and not only in prose: the recovered object must carry the
+    phase's flag and it must be literally ``False``. A recovered NOT-done can only ever cost a turn
+    of work; a recovered "done" would be a false finish reached through a defect in the bytes, which
+    is the fail-OPEN-on-missing-ground-truth root of every early exit this file documents. The same
+    one-way contract, and the same reason, as ``verdict_from_reasoning`` and the reasoning-off
+    retry's ``verify_failclosed``.
+
+    WHY BEFORE ``verdict_from_reasoning``: both recover a NOT-done, but this one recovers the verdict
+    the judge actually WROTE — its own ``reason`` and its own ``proposed_fix``, verbatim — where the
+    reasoning path can only forward sentences scraped out of the thinking and leaves ``proposed_fix``
+    empty. Strictly better evidence for the same ruling, so it is tried first.
+
+    WHAT IT ACTUALLY CHANGES, read rather than assumed (the corrective this entry exists to record).
+    The first draft of this docstring claimed all twelve "fell to ``unverified_step``". They did not.
+    Following each one to the next captured call: in 4 of the 8 step-critic cases the reasoning-OFF
+    retry answered with its own readable NOT-done, so the coder read THAT — the change here is which
+    pass's words reach it (the careful one's) and one reasoner call saved, not a rescue. The 3
+    satisfaction cases and the 1 confirm case fell closed as designed. In exactly ONE call in 126
+    sessions did the coder actually read cria saying it had no verdict: run 20260728T092146 call
+    0019, where BOTH critic passes came back unclosed and the coder was handed the bare line
+    ``unverified (no parseable verdict)``. Asked again through ``suite/replay_recompose.py`` on the
+    same model at that call's own sampling, the shipped prompt produced a reply whose thinking reads
+    "the user's steering instruction says 'unverified (no parseable verdict)' — meaning they haven't
+    given me a specific check to perform", and answered with prose and no tool call at all; the
+    recomposed prompt sent it to inspect the API response the judge had named. That is the whole
+    measured model-facing effect: n=1. This ships as a READER fix, not a rescue.
+
+    NOT TRUNCATION. A ``finish_reason: length`` reply is refused before it reaches here, at every
+    one of the three call sites — the two judges already ran ``massage.is_truncated`` and returned;
+    the confirm brake, which had no such guard, grew one at its call to this. A cut generation stays
+    refused however neatly its bytes happen to close. This function is given only text and cannot
+    see the finish reason, which is why the refusal is stated at the sites that CAN.
+    """
+    obj = jsontext.close_unclosed_object(vtext or "")
+    if not isinstance(obj, dict) or obj.get(flag) is not False:
+        return None      # no repairable object, no verdict flag, or an APPROVAL — all refused
+    rlog.emit("loop.verdict_from_unclosed", level="info", phase=phase, flag=flag,
+              reason=_clip(str(obj.get("reason") or obj.get("why") or ""), 120))
+    return obj
 
 
 def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
@@ -2498,7 +2584,14 @@ class Loop:
             # false finish (principle 13). The mirror case was measured and DELIBERATELY not built —
             # see the note in _verify.
             ph = "critic" + ("-noreason" if reasoning_off else "")
-            return (verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
+            # ...and BEFORE that: the judge's own verdict object when one absent closing brace is
+            # the only thing wrong with it (verdict_from_unclosed — 8 of this phase's replies on this
+            # box, every one a NOT-done with a written proposed_fix). Same one direction, for the
+            # same reason; it just recovers what the judge wrote instead of paraphrasing it. Mostly
+            # this spares the reasoning-off retry below and lets the CAREFUL pass speak; twice in the
+            # corpus both passes were unclosed and the coder read nothing at all.
+            return (verdict_from_unclosed(vtext, "done", rlog, ph)
+                    or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
                     or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose")), vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))

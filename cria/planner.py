@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from . import groundtruth, massage, planner_tools, prompts, urlgrounding
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
+from . import jsontext
 from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
 from .plan import Plan, PlanItem
 
@@ -293,11 +294,32 @@ def _salvage_array_steps(body: str) -> list[str] | None:
     return steps
 
 
-def parse_steps(text: str) -> list[str] | None:
-    """Extract plan steps, accepting a numbered/bulleted list (the prompt's ask, and what small models
-    emit best), a JSON object whose step array is under ``steps``/``plan``/``items`` (models vary the
-    key), OR — when that JSON is malformed by unescaped inner quotes — the salvaged array items. Returns
-    None when none yield steps."""
+def json_steps(text: str) -> list[str] | None:
+    """The step list a model wrote AS JSON, or ``None`` when the reply holds no JSON step list.
+
+    The ONE owner of "read a step list out of JSON". :func:`parse_steps` is this plus the prose
+    fallbacks (numbered/bulleted lines); :func:`cria.loop.reassess_remaining` is this and NOTHING
+    else, deliberately — see the direction note there.
+
+    An EMPTY list is a real answer, not a miss: ``[]`` is what cria's own ``replan.txt`` tells the
+    reasoner to return when every remaining deliverable is already done, and it is distinguishable
+    from ``None`` at every caller.
+
+    Three shapes, in order — each one a shape the model chose, none of them guessed at:
+
+    1. a ``steps``/``plan``/``items`` list (or a numbered plan packed into one string value);
+    2. one — and only one — OTHER key holding a usable list, which is a model answering a synonym
+       of the ask (``remaining_steps``);
+    3. the reply IS a top-level array. Same items, same cleaning, the key simply absent.
+
+    Shape 3 is what this function was added for, and its guard is the whole of it: the array must be
+    what the reply IS, after fences and ``<think>`` come off — never an array found somewhere INSIDE
+    it. Measured 2026-08-02 over 232 captured re-derivation calls: 13 answered with a bare array (7
+    with steps, 6 with ``[]``) and every one of them opens with ``[``. The reply that proves the
+    guard is needed is run 20260801T232511 call 0067, which answered with a pytest FILE — and whose
+    first bracket is ``result["resolved_ada_address"]``, an array of one string that a scan for the
+    first ``[`` would have handed back as the plan.
+    """
     body = strip_think(text)
     obj = extract_json_object(body)
     if obj:
@@ -305,8 +327,8 @@ def parse_steps(text: str) -> list[str] | None:
             v = obj.get(k)
             if isinstance(v, list):
                 steps = [c for s in v if (c := _clean_step(s))]
-                if steps:
-                    return steps
+                if steps or not v:
+                    return steps        # an explicitly EMPTY list is the answer, not a miss
             elif isinstance(v, str) and v.strip():  # a numbered plan packed into one string value
                 steps = _split_inline_numbered(v)
                 if steps:
@@ -326,6 +348,40 @@ def parse_steps(text: str) -> list[str] | None:
                 candidates.append(got)
         if len(candidates) == 1:
             return candidates[0]
+        return None
+    return _top_level_array_steps(body)
+
+
+def _top_level_array_steps(body: str) -> list[str] | None:
+    """The steps of a reply that IS a JSON array, or ``None``.
+
+    "IS", not "contains": the denoised reply must open with ``[``. That single rule is what keeps a
+    Python file, a README, or any prose carrying a subscript from being read as a plan — see
+    :func:`json_steps` for the capture that measured it."""
+    cleaned = jsontext.denoise(body).strip()
+    if not cleaned.startswith("["):
+        return None
+    try:
+        arr = jsontext_loads(cleaned)
+    except ValueError:
+        return None
+    if not isinstance(arr, list):
+        return None
+    return [c for x in arr if (c := _clean_step(x))]
+
+
+def parse_steps(text: str) -> list[str] | None:
+    """Extract plan steps, accepting a numbered/bulleted list (the prompt's ask, and what small models
+    emit best), JSON in any of the shapes :func:`json_steps` reads, OR — when that JSON is malformed
+    by unescaped inner quotes — the salvaged array items. Returns None when none yield steps.
+
+    An EMPTY JSON list falls THROUGH to the prose fallbacks here rather than being returned. This
+    reader's callers draft a plan, and "the model returned no steps" is a failed draft for them; only
+    the living re-derivation has a meaning for ``[]``, and it calls :func:`json_steps` directly."""
+    body = strip_think(text)
+    steps = json_steps(body)
+    if steps:
+        return steps
     salvaged = _salvage_array_steps(body)  # malformed JSON array (unescaped inner quotes) → recover items
     if salvaged:
         return salvaged

@@ -34,8 +34,9 @@ import sys
 SUITE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE.parent))
 
-from cria import (execcheck, loop, massage, probegate, probeparse,  # noqa: E402
-                  prompts, selfcompact, webfetch)
+from cria import (execcheck, jsontext, loop, massage, planner, probegate,  # noqa: E402
+                  probeparse, prompts, selfcompact, webfetch)
+from cria.jsontext import extract_json_object, strip_think  # noqa: E402
 
 RESULTS = SUITE / "results" / "results.jsonl"
 STEER_RE = re.compile(r"⟦ctx:steer⟧|GROUND TRUTH — the repo's own checks fail")
@@ -424,8 +425,112 @@ def check_facts_anchor_absent(row, cap, ws):
     return 0, "no fetches — an empty ledger injects nothing"
 
 
+def _final_replies(cap):
+    """(response path, finish_reason, the reply's text) for every captured call of a run.
+
+    Reads the RESPONSE files, which is where a finish reason exists at all — the two checks below
+    both turn on it, and a reply cut at the output cap is the one thing neither recovery may touch."""
+    for f in sorted(cap.glob("*.response.json")):
+        try:
+            j = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        ch = (j.get("choices") or [{}])[0]
+        msg = ch.get("message") or {}
+        c = msg.get("content")
+        if isinstance(c, list):
+            c = "".join(str(p.get("text", "")) for p in c if isinstance(p, dict))
+        yield f, ch.get("finish_reason"), c if isinstance(c, str) else ""
+
+
+# The verdict key each judge phase answers under — cria's own three flags, keyed on the phase name
+# the capture file carries. The `-noreason` suffix is covered by the prefix match below.
+_VERDICT_FLAGS = (("critic-confirm", "consistent"), ("satisfaction", "satisfied"),
+                  ("critic", "done"))
+
+
+def check_unclosed_verdict(row, cap, ws):
+    """How many judge verdicts cria threw away over an absent closing brace — and how many of those
+    the one-way gate actually recovers.
+
+    Both halves are cria's own code, never a copy of it: ``extract_json_object`` decides
+    "unreadable", ``jsontext.close_unclosed_object`` decides "repairable by closers alone", and
+    ``loop.verdict_from_unclosed`` decides which way it may rule. A repaired APPROVAL is counted in
+    the population and NOT in the fires — that is the direction, measured rather than asserted.
+
+    ``finish_reason: length`` never enters either half. A cut generation is refused at every call
+    site before the reader is reached, so counting it here would report a fix that cannot fire."""
+    repairable = fires = approvals = cut = 0
+    for f, finish, text in _final_replies(cap):
+        phase = f.name.split("-", 1)[-1].replace(".response.json", "")
+        flag = next((v for k, v in _VERDICT_FLAGS if phase.startswith(k)), "")
+        if not flag or not text.strip() or extract_json_object(text) is not None:
+            continue
+        obj = jsontext.close_unclosed_object(text)
+        if not isinstance(obj, dict) or flag not in obj:
+            continue
+        if finish == "length":
+            cut += 1
+            continue
+        repairable += 1
+        if obj[flag] is False:
+            fires += 1
+        else:
+            approvals += 1
+    why = f"{repairable} unreadable judge replies a closer alone repairs"
+    if approvals:
+        why += f", {approvals} of them an APPROVAL the one-way gate refuses"
+    if cut:
+        why += f", {cut} more cut at the cap and refused before the reader"
+    return fires, why
+
+
+def check_replan_json_shape(row, cap, ws):
+    """How many living re-derivations cria read as NOTHING while the reasoner had answered.
+
+    The population is every call whose SYSTEM prompt is cria's own ``replan`` template — anchored on
+    the template's own literal text via :func:`around`, so a reworded prompt fails loudly rather than
+    quietly measuring zero. A fire is a reply the OLD shape test rejected (a dict with a non-empty
+    literal ``steps`` list) that ``planner.json_steps`` — the reader cria already owned — reads.
+
+    An EMPTY answer counts as a fire and is named separately in the reason. cria's ``replan.txt``
+    asks for exactly ``[]`` when nothing remains, and the old shape test could not tell it from a
+    parse miss — so it is a behaviour change of its own (the caller now re-asks judge_satisfaction
+    instead of carrying a stale tail), and folding it into the silent half would be the under-count
+    :func:`around` exists to refuse."""
+    left, right = around("replan", "{{TRIGGER}}")
+    replies = {p.name: t for p, _fin, t in _final_replies(cap)}
+    fires = empties = misses = 0
+    for f in sorted(cap.glob("*.json")):
+        if f.name.endswith(".response.json"):
+            continue
+        try:
+            body = json.loads(f.read_text())["body"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        msgs = body.get("messages") or []
+        syst = str((msgs[0] if msgs else {}).get("content") or "")
+        if left not in syst or right not in syst:
+            continue
+        text = replies.get(f.name.replace(".json", ".response.json"), "")
+        obj = extract_json_object(strip_think(text))
+        if isinstance(obj, dict) and isinstance(obj.get("steps"), list) and obj["steps"]:
+            continue                    # the old shape test read this one
+        got = planner.json_steps(strip_think(text))
+        if got is None:
+            misses += 1
+        elif got:
+            fires += 1
+        else:
+            empties += 1
+    return fires + empties, (f"{fires} re-derivations the old shape test dropped, {empties} that "
+                             f"answered 'nothing remains', {misses} genuinely unreadable")
+
+
 CHECKS = {
     "oscillation": check_oscillation,
+    "unclosed-verdict": check_unclosed_verdict,
+    "replan-json-shape": check_replan_json_shape,
     "reattach": check_reattach,
     "step-reframe": check_step_reframe,
     "satisfaction": check_satisfaction_due,
