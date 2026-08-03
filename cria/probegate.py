@@ -256,9 +256,27 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
             # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered
             if probeparse.is_advisory(s) or probeparse.is_advisory(_LOC_PREFIX.sub("", s)):
                 continue
+            # KEEP THE LINE AS THE CHECKER WROTE IT. `s` is the stripped copy — fine for deciding
+            # whether to keep a line, wrong to SHIP, because cria ships this block under "each is the
+            # checker's OWN message". De-indenting and globally de-duplicating destroys the source
+            # echo in a traceback: pytest prints the failing function's body, and a `}` or `)` on its
+            # own line is both indentation-bearing AND a repeat of one seen earlier, so it is deleted
+            # twice over.
+            #
+            # Walked on ada-handles_fabliq_codex_pon_1785721353. A reader fed the real pytest output
+            # through this function and reproduced cria's exact call-0185 bytes, including:
+            #
+            #     'total_handles': total_handles
+            # except requests.exceptions.RequestException as e:      <- the closing } is GONE
+            #
+            # The file parses cleanly; `compileall` exited 0 in that same gate. cria manufactured
+            # "handle_resolver.py has a syntax error — missing a closing parenthesis", restated it in
+            # every prompt for 45 straight calls, and the coder copied the DE-INDENTED text into
+            # edit_file old_strings that could never match. Two earlier walks named this their top
+            # fix. Dedupe on the stripped form; emit the original.
             if s not in seen:
                 seen.add(s)
-                section_findings.append(s)
+                section_findings.append(ln.rstrip())
         findings.extend(section_findings)
         # a check that exited NON-ZERO but printed NOTHING usable (empty output) still FAILED — don't
         # let it read as clean. If it printed only advisory lines (had_content, no findings), that's an

@@ -639,3 +639,55 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             out = probegate.clean_gate_output(failing, probegate.plan_gate(ws))
         self.assertIn("undefined name", out)
         self.assertNotIn("No tests ran", out)
+
+
+class VerbatimMeansVerbatimTests(unittest.TestCase):
+    """cria ships this block under "each is the checker's OWN message". It was shipping a STRIPPED,
+    globally DE-DUPLICATED copy — which destroys a traceback's source echo, because a `}` or `)` on
+    its own line is both indentation-bearing and a repeat of one seen earlier, so it was deleted
+    twice over.
+
+    Walked on ada-handles_fabliq_codex_pon_1785721353. A reader fed real pytest output through
+    cria's own clean_gate_output() and reproduced its exact call-0185 bytes, closing brace missing.
+    The file parsed cleanly and `compileall` exited 0 in that same gate. cria manufactured
+    "handle_resolver.py has a syntax error — missing a closing parenthesis", restated it in every
+    prompt for 45 straight calls, and the coder copied the de-indented text into edit_file
+    old_strings that could never match. Two earlier walks named this their top fix."""
+
+    SRC = ("$ python3 -m pytest -q\n"
+           "    def resolve(h):\n"
+           "        return {\n"
+           "            'a': 1,\n"
+           "            'b': 2\n"
+           "        }\n"
+           "    except RequestException as e:\n"
+           "E   AttributeError: 'str' object has no attribute 'get'\n")
+
+    def _clean(self, body):
+        from cria import proberun
+        raw = (f"{probegate.SECTION_PREFIX}probe-1{probegate.SECTION_SUFFIX}\n"
+               f"{body}{proberun.PROBE_EXIT_SENTINEL}1\n")
+        return probegate.clean_gate_output(raw, None) or ""
+
+    def test_the_closing_brace_is_not_deleted(self):
+        self.assertIn("}", self._clean(self.SRC))
+
+    def test_indentation_survives(self):
+        out = self._clean(self.SRC).splitlines()
+        self.assertTrue(any(l.startswith("            'a': 1") for l in out),
+                        "the checker's own indentation was stripped")
+
+    def test_the_error_line_still_reaches_the_coder(self):
+        self.assertIn("'str' object has no attribute 'get'", self._clean(self.SRC))
+
+    def test_a_repeated_line_is_still_deduped_once(self):
+        # Dedupe on the stripped form is still right — it just must not change what is EMITTED.
+        body = "$ x\n    a = 1\n    a = 1\n        a = 1\nE   Boom\n"
+        out = self._clean(body)
+        self.assertEqual(out.count("a = 1"), 1)
+
+    def test_advisory_lines_are_still_filtered(self):
+        body = "$ x\nfoo.py:1:1: 'os' imported but unused\nE   Boom\n"
+        out = self._clean(body)
+        self.assertNotIn("imported but unused", out)
+        self.assertIn("Boom", out)
