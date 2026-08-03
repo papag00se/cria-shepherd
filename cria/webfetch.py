@@ -553,7 +553,23 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     return out
 
 
-def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = 30) -> list[str]:
+# The per-endpoint field cap. MEASURED across the whole capture corpus 2026-08-03: a capped list
+# appears in 12,599 prompts, and the number of fields it hides is only ever **4 or 6** — those are
+# the only two values that occur. So the old cap of 30 was paying "the coder cannot tell whether this
+# field exists" across 12,599 prompts to save at most six field names. The comment below states that
+# cost in its own words: "a coder looking for a field that exists but sits past the cap concludes the
+# API doesn't return it — and guesses."
+#
+# It has a second cost nobody counted: it blinds cria's OWN checks. Absence from a TRUNCATED list is
+# not evidence a field is missing, so the ledger-contradiction check has to abstain on every capped
+# endpoint — which is why that check re-reads the parsed document instead of trusting the ledger.
+#
+# 40 clears every observed spec with room to spare. The cap and its disclosure stay: a pathological
+# spec must still be bounded, and a silent slice is the thing that is actually forbidden.
+FIELD_CAP = 40
+
+
+def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = FIELD_CAP) -> list[str]:
     """For an OpenAPI/Swagger-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through
     the response schema's ``$ref`` (see :func:`_ref_map`) — so a coder knows WHAT an endpoint returns
     (the exact field names to extract, plus one level of nesting), not just WHERE to call. The recurring
