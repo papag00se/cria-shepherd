@@ -34,19 +34,31 @@ calls in production — ``webfetch.fetch_nav``, ``prompts.render("redirect_canne
 Where a fix's effect cannot be reproduced that way the case is SKIPPED with its reason printed, never
 approximated: an approximated prompt measures the approximation.
 
+ASK THE MODEL THAT HAD THE PROBLEM. ``--same-model`` groups the cases by the model each capture ran
+against and loads that model before sending, one swap per model. Without it every case is answered by
+whatever happens to be on the GPU, and a reply from a different model is not evidence about the model
+that shipped the defect — it is not even the same chat template. The first run of this harness did
+exactly that and its "no behavioural change" readings had to be thrown away.
+
 Read-only: no workspace is touched (the archived copies are read, and cwd is restored), no result is
-fed back into a run, nothing is restarted. Model calls go DIRECTLY to the model server, like
-replay.py, so nothing here depends on cria's routing.
+fed back into a run, and cria is never restarted. The MODEL SERVER on :18084 is restarted by
+``--same-model`` — that is the point of the flag — and whatever was loaded when it started is put back
+at the end. Model calls go DIRECTLY to the model server, like replay.py, so nothing here depends on
+cria's routing.
 """
 import argparse
+import atexit
 import difflib
 import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
+import tomllib
 import urllib.request
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -54,10 +66,18 @@ SUITE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE.parent))
 sys.path.insert(0, str(SUITE))
 
+import ladder_status  # noqa: E402 — ONE owner for "which model is blocked on its build"
 import replay_logic  # noqa: E402 — sibling harness: ONE owner for "which runs have evidence"
+import run as ladder_run  # noqa: E402 — ONE owner for model name -> systemd unit, and the swap
 from cria import (loop, probegate, probeparse, prompts, shelltool,  # noqa: E402
                   webfetch, writeproxy)
 
+# The fleet's launch config: the ONE place that says which served model id a fleet name answers as.
+# Read rather than copied, so a re-quantised model cannot silently break attribution here.
+FLEET_TOML = pathlib.Path.home() / ".config" / "llama-fleet" / "models.toml"
+# How many of a run's coder replies are read to corroborate the ladder row's model. One run is one
+# model by construction, so this is a cross-check, not a scan.
+CORROBORATE_CALLS = 8
 BASE = "http://127.0.0.1:18084"
 CHAT = f"{BASE}/v1/chat/completions"
 MODELS = f"{BASE}/v1/models"
@@ -131,14 +151,18 @@ def captured_reply(call: pathlib.Path) -> dict:
     return ((j.get("choices") or [{}])[0].get("message")) or {}
 
 
-def captured_model(call: pathlib.Path) -> str:
-    """The model id the SERVER answered as for this call — the authority on what the capture ran
-    against. The request body often carries the harness's own name for the endpoint ("cria")."""
-    resp = call.with_name(call.name.replace(".json", ".response.json"))
+def served_model(resp: pathlib.Path) -> str:
+    """The model id the SERVER answered as, read off a captured RESPONSE file."""
     try:
         return json.loads(resp.read_text()).get("model") or ""
     except (OSError, ValueError):
         return ""
+
+
+def captured_model(call: pathlib.Path) -> str:
+    """The model id the SERVER answered as for this call — the authority on what the capture ran
+    against. The request body often carries the harness's own name for the endpoint ("cria")."""
+    return served_model(call.with_name(call.name.replace(".json", ".response.json")))
 
 
 def _msg_text(m: dict) -> str:
@@ -182,6 +206,82 @@ def loaded_model() -> str:
         return "?"
 
 
+# ---------------------------------------------------------------------------------------------
+# WHICH MODEL PRODUCED THIS CAPTURE, and how to put it back on the GPU
+#
+# Two independent records answer the first question and they are cross-checked rather than picked
+# between. The ladder row is the ATTRIBUTION: `suite/run.py` swaps the model, then runs, then writes
+# the row, so the row's `model` is the runner's own statement of what was loaded. The capture's
+# `.response.json` carries the id the SERVER answered as, which is the model itself speaking — but
+# only on the runs whose harness did not send its own name for the endpoint (older captures answer
+# "cria"). Where both exist they must agree; a conflict excludes the run rather than choosing.
+
+
+def fleet_aliases() -> dict:
+    """served-model-id -> ladder model name, read off the fleet's own launch config.
+
+    ``models.toml`` maps a fleet name to the ``alias`` its server answers as; ``run.SERVICES`` maps
+    the LADDER's name for a model to its systemd unit, which is ``llama-<fleet name>…``. Joining the
+    two gives id -> ladder name with no hand-written table to drift."""
+    try:
+        fleet = tomllib.loads(FLEET_TOML.read_text()).get("models") or {}
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for fleet_name, spec in fleet.items():
+        alias = (spec or {}).get("alias")
+        if not alias:
+            continue
+        for ladder_name, svc in ladder_run.SERVICES.items():
+            if svc.startswith(f"llama-{fleet_name}"):
+                out[alias] = ladder_name
+    return out
+
+
+def origin_model(row, cap, aliases) -> tuple:
+    """(ladder model name, how it is known) for a captured run, or (None, why not).
+
+    Never guesses: a run whose two records disagree, or whose row names no model, is excluded with
+    its reason, because a case sent to the wrong model answers a question nobody asked."""
+    claimed = str(row.get("model") or "")
+    # The first coder replies are enough: a run cannot span two models — `run.py` swaps once, before
+    # the harness starts — so this is corroboration of the row, not a search for a mid-run change.
+    served = {served_model(f) for f in sorted(cap.glob("*coder*.response.json"))[:CORROBORATE_CALLS]}
+    served = {s for s in served if s and s != "cria"}
+    known = {aliases[s] for s in served if s in aliases}
+    unknown = served - set(aliases)
+    if not claimed:
+        return None, "the ladder row names no model"
+    if unknown:
+        return None, (f"the server answered as {sorted(unknown)}, which the fleet config does not "
+                      f"name — cannot corroborate")
+    if len(known) > 1:
+        return None, f"the captures answer as more than one model: {sorted(known)}"
+    if known and next(iter(known)) != claimed:
+        return None, (f"the ladder row says {claimed} but the server answered as "
+                      f"{next(iter(known))} — conflicting records")
+    return claimed, ("corroborated by the server's own id" if known else
+                     "the ladder runner's record (the server echoed the harness name)")
+
+
+def ensure_loaded(name: str, aliases: dict) -> tuple:
+    """Put ``name`` on the GPU. Returns (ok, message). Uses the ladder runner's own swap so there is
+    ONE implementation of "one model at a time on this card"."""
+    want = [a for a, n in aliases.items() if n == name]
+    if loaded_model() in want:
+        return True, f"{name} already loaded"
+    if name not in ladder_run.SERVICES:
+        return False, f"no systemd unit is configured for {name}"
+    try:
+        ladder_run.swap_model(name)
+    except Exception as e:  # noqa: BLE001 — a model that will not load is a reported skip, not a crash
+        return False, f"{name} did not come up: {type(e).__name__}: {e}"
+    got = loaded_model()
+    if want and got not in want:
+        return False, f"asked for {name}, the server answers as {got!r}"
+    return True, f"{name} loaded ({got})"
+
+
 def ask(body: dict) -> dict:
     out = {k: v for k, v in body.items() if k != "stream_options"}
     out["stream"] = False
@@ -212,8 +312,22 @@ def calls_of(msg: dict) -> list[tuple[str, dict]]:
 
 
 def signature(msg: dict) -> str:
-    """A reply's identity for the byte-identical check: content plus every tool call, verbatim."""
-    return (msg.get("content") or "") + json.dumps(msg.get("tool_calls") or [], sort_keys=True)
+    """A reply's identity for the byte-identical check: everything the MODEL produced — its
+    reasoning, its answer, and each tool call's name and arguments.
+
+    The tool call's ``id`` is deliberately excluded. llama.cpp mints a fresh 32-character random id
+    for every response (verified against the live server: three sends of one prompt at temperature 0
+    returned identical arguments under three different ids), so it is the server's handle, not the
+    model's output. Including it made every reply that called a tool differ from itself — which is
+    exactly what the first run of this harness reported: EVERY case "non-deterministic" and EVERY
+    old/new pair "not byte-identical". Both were this line, not the model. A harness that measures
+    its own transport is rule 12's mistake at the measurement layer."""
+    parts = [msg.get("reasoning_content") or "", msg.get("content") or ""]
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        parts.append(json.dumps({"name": fn.get("name"), "arguments": fn.get("arguments")},
+                                sort_keys=True))
+    return "\x1f".join(parts)
 
 
 def named_paths(msg: dict) -> set:
@@ -278,19 +392,32 @@ def _fact_edit_matches_disk(case: Case, msg: dict) -> dict:
             "old_string_in_the_FINAL_archived_file": on_disk or None}
 
 
+_IMPORT_LINE = re.compile(r"^([ \t]*)((?:import |from \S+ import ).*)$", re.M)
+
+
 def _fact_import(case: Case, msg: dict) -> dict:
-    """Does the reply delete or rewrite an import line? The advisory-gate defect was the coder
-    removing a module-level import to satisfy a style warning, shipping a NameError."""
-    touched = []
+    """Does the reply delete an import line? The advisory-gate defect was the coder removing a
+    module-level import to satisfy a style warning, shipping a NameError.
+
+    "Touched an import" is not that defect — it fires on any edit whose old_string happens to span
+    the import block, and reading four such replies showed every one of them harmless. What answers
+    the question is the DIFFERENCE: an import present in ``old_string`` and absent from
+    ``new_string`` is one this edit removes. The indentation is kept because it is the whole
+    distinction — deleting a module-level ``import json`` ships a NameError, while collapsing a
+    duplicate copy of it nested inside ``if __name__`` is the correct fix for that same warning, and
+    the two are indistinguishable once the leading whitespace is stripped."""
+    touched, removed = [], []
     for n, a in calls_of(msg):
         if n != "edit_file":
             continue
         old = str(a.get("old_string") or a.get("old") or "")
-        # The MATCHED line, not the first line of the old_string — reporting the wrong one turns a
-        # useful fact into a puzzle (it printed the file's shebang for an edit that spanned imports).
-        touched += [m.group(0).strip()[:60]
-                    for m in re.finditer(r"^[ \t]*(?:import |from \S+ import ).*$", old, re.M)]
-    return {"edits_an_import_line": touched or None}
+        new = str(a.get("new_string") or a.get("new") or "")
+        was = {(m.group(1), m.group(2).strip()) for m in _IMPORT_LINE.finditer(old)}
+        now = {(m.group(1), m.group(2).strip()) for m in _IMPORT_LINE.finditer(new)}
+        touched += [t[1][:60] for t in sorted(was)]
+        removed += [("module-level " if not indent else f"nested ({len(indent)} spaces in) ") + line
+                    for indent, line in sorted(was - now)]
+    return {"edits_an_import_line": touched or None, "REMOVES_an_import": removed or None}
 
 
 def _fact_missing_file(case: Case, msg: dict) -> dict:
@@ -491,18 +618,56 @@ _HEAD = probegate.CHECKS_MARKER + " the repo's own checks report"
 
 
 def _shipped_checks_blocks(body):
-    """The ⟦ctx:checks⟧ error-class blocks a captured prompt actually carried, whole."""
+    """(block, is the whole message) for every ⟦ctx:checks⟧ error-class block a captured prompt
+    carried.
+
+    The second value is load-bearing. cria delivers a gate result as a message of its own, so a
+    message that is NOTHING BUT the block has a known end: the end of the message. Where the block is
+    embedded in something larger — a compaction briefing, which re-quotes it above its own ``• ``
+    digests — nothing in the bytes says where the checker's lines stop, and a recomposer that guesses
+    will edit its neighbour. Measured: a first version deleted three lines out of the coder's OWN
+    pyflakes exec output, which is not cria's text to touch at all."""
     for m in body.get("messages", []):
         t = _msg_text(m)
         i = t.find(_HEAD)
         while i >= 0:
             end = replay_logic.BLOCK_END_RE.search(t, i)
-            yield t[i:end.start() if end else len(t)].rstrip()
+            block = t[i:end.start() if end else len(t)].rstrip()
+            yield block, block == t.strip()
             i = t.find(_HEAD, i + 1)
 
 
 def _finding_lines(block):
     return [ln for ln in block.split("\n")[1:] if ln.strip()]
+
+
+def _advisory_filtered(block):
+    """The shipped gate block with only its ADVISORY findings removed — cria's own predicate, applied
+    exactly as ``probegate`` applies it (whole line, and line minus its ``file:line:col:`` prefix).
+
+    Recomposing a gate block normally needs the RAW checker bytes, because the pre-fix cleaner
+    destroyed indentation and duplicate lines and only the raw output can put them back. The advisory
+    fix restores nothing — ``is_advisory`` DELETES findings — so the block the prompt already carries
+    is input enough, and every surviving line here is a byte copy of a line that shipped. Nothing is
+    composed; the header sentence is left exactly as it shipped so the ONLY difference the model sees
+    is the suppression this fix is being asked about.
+
+    Why this matters rather than being a convenience: on the mellum2 run that shipped the NameError,
+    the coder prompt carried the same findings in THREE ⟦ctx:checks⟧ blocks, and the raw output for
+    two of them survives nowhere. Recomposing only the third left the model reading the suppressed
+    lines through the other two — the A/B measured almost nothing, and the model's own reasoning
+    still enumerated all four findings.
+
+    None when nothing in the block is advisory, or when EVERYTHING is: a fully advisory result ships
+    as no block at all today, and rendering that as an empty findings list would be inventing a
+    surface cria does not emit."""
+    head, *lines = block.split("\n")
+    kept = [ln for ln in lines
+            if not (probeparse.is_advisory(ln.strip())
+                    or probeparse.is_advisory(probegate._LOC_PREFIX.sub("", ln.strip())))]
+    if len(kept) == len(lines) or not any(ln.strip() for ln in kept):
+        return None
+    return "\n".join([head] + kept)
 
 
 def _gate_cases(fix, row, cap, ws, limit, differs):
@@ -513,7 +678,11 @@ def _gate_cases(fix, row, cap, ws, limit, differs):
 
     The raw output is paired to the shipped block by counting shared finding lines (compared
     stripped, since stripping is exactly what the old code did) and taking the best match. The
-    pairing evidence is printed with the case, so a wrong pairing is visible rather than silent."""
+    pairing evidence is printed with the case, so a wrong pairing is visible rather than silent.
+
+    Where no raw output survives, advisory-gate falls back to :func:`_advisory_filtered` — not an
+    approximation but the same predicate on a sufficient input (see its docstring). gate-verbatim has
+    no such fallback and reports the missing evidence instead."""
     shipped_any = any(True for _f, b in coder_bodies(cap) for _ in _shipped_checks_blocks(b))
     composed = []
     for src, raws in (("a proxy capture", _raw_gate_outputs(cap)),
@@ -522,12 +691,13 @@ def _gate_cases(fix, row, cap, ws, limit, differs):
             clean = probegate.clean_gate_output(raw)
             if clean and clean.startswith(_HEAD):   # the FINDINGS header, not the clean one
                 composed.append((clean, src))
-    if not composed:
+    if not composed and fix != "advisory-gate":
         if shipped_any:
             NOTES.append("shipped gate findings, but the RAW checker output survives in no capture "
                          "and no complete log block (the harness log keeps only the tail of a long "
                          "exec output) — recomposing it would be inventing the checker's words")
         return []
+
     def _pair(old):
         """The composed block that best matches ``old``, its source, and the overlap."""
         old_lines = {ln.strip() for ln in _finding_lines(old)}
@@ -538,6 +708,34 @@ def _gate_cases(fix, row, cap, ws, limit, differs):
                 best, score, src = clean, shared, source
         return best, score, src, len(old_lines)
 
+    all_advisory: set = set()
+
+    def _recompose(blk, whole):
+        """(the block cria composes today, how it was driven) or (None, '')."""
+        best, score, src, carried = _pair(blk)
+        # ``differs`` is the whole-relation test — the guard that keeps a case from pairing one
+        # gate's output against another's applies to the siblings too.
+        if best is not None and best != blk and differs(blk, best):
+            return best, (f"clean_gate_output re-run on the raw checker output from {src}; paired "
+                          f"to the shipped block on {score} shared finding lines "
+                          f"(of {carried} it carried)")
+        # Only where the block IS the message: elsewhere its end is not in the bytes.
+        if fix == "advisory-gate" and whole:
+            filt = _advisory_filtered(blk)
+            if filt:
+                return filt, ("probeparse.is_advisory applied line-by-line to the block cria "
+                              "shipped — this fix only DELETES findings, so every surviving line "
+                              "is a byte copy of one the prompt carried")
+            if all(probeparse.is_advisory(ln.strip())
+                   or probeparse.is_advisory(probegate._LOC_PREFIX.sub("", ln.strip()))
+                   for ln in _finding_lines(blk)) and not all_advisory:
+                all_advisory.add(cap)      # NOTES is counted per RUN — say it once for this one
+                NOTES.append("a gate block whose findings are ALL advisory is left as it shipped: "
+                             "cria would send its clean-result sentence instead, and composing that "
+                             "here would mean copying cria's own wording rather than running its "
+                             "code — so this run's case understates the fix by that block")
+        return None, ""
+
     out, used = [], set()
     for call, body in coder_bodies(cap):
         blocks = list(_shipped_checks_blocks(body))
@@ -545,26 +743,17 @@ def _gate_cases(fix, row, cap, ws, limit, differs):
         # A conversation carries the same findings several turns over; leaving the earlier copies as
         # they shipped leaves the suppressed lines in front of the model and understates the fix —
         # measured, the first advisory case still saw all four findings through an older block.
-        others = []
-        for blk in blocks:
-            b_new, _s, _src, _n = _pair(blk)
-            # ``differs`` is the whole-relation test — the same guard that keeps a case from pairing
-            # one gate's output against another's applies to the siblings too.
-            if b_new and b_new != blk and differs(blk, b_new):
-                others.append((blk, b_new))
-        for old in blocks:
+        others = [(blk, new) for blk, new in ((b, _recompose(b, w)[0]) for b, w in blocks) if new]
+        for old, whole in blocks:
             if old in used:
                 continue
-            best, score, src, carried = _pair(old)
-            if best is None or not differs(old, best):
+            best, why = _recompose(old, whole)
+            if best is None:
                 continue
             used.add(old)
-            out.append(Case(fix, call, row.get("model", "?"), body, old, best,
-                            f"clean_gate_output re-run on the raw checker output from {src}; paired "
-                            f"to the shipped block on {score} shared finding lines "
-                            f"(of {carried} it carried)", ws,
+            out.append(Case(fix, call, row.get("model", "?"), body, old, best, why, ws,
                             {"also": [p for p in others if p[0] != old],
-                             "unpaired": len(blocks) - len(others) - 1}))
+                             "unpaired": len(blocks) - len(others)}))
             break
     # The call whose WHOLE prompt could be recomposed is the honest one to send: a block left as it
     # shipped puts the old text back in front of the model through an older turn. Ordering, not
@@ -754,17 +943,198 @@ def show_reply(label: str, msg: dict, detail: bool) -> None:
         print("     (empty reply)")
 
 
+def build_cases(fix, data, n, per_run):
+    """The cases for one fix, built offline. Returns (sendable, built, identical)."""
+    cases, unchanged, built = [], 0, 0
+    for row, cap, ws in data:
+        if len(cases) >= n:
+            break
+        try:
+            got = RECOMPOSERS[fix](row, cap, ws, per_run)
+        except Exception as e:  # noqa: BLE001 — a recomposition that fails is reported, not hidden
+            print(f"  · skip {cap.name}: recomposition raised {type(e).__name__}: {e}")
+            continue
+        built += len(got)
+        # A case whose recomposition is IDENTICAL is a real answer — the run already had the fix,
+        # or the fix does not reach this call — but it costs the model nothing, so it is counted
+        # and named rather than sent, and the search continues for one that DOES differ.
+        for c in got:
+            if c.old == c.new:
+                unchanged += 1
+                print(f"  · {c.session}/{c.call.name}: recomposed text is IDENTICAL to what "
+                      f"shipped — nothing to ask the model")
+            elif len(cases) < n:
+                cases.append(c)
+    return cases, built, unchanged
+
+
+def report_case(fix, c, live, args) -> dict:
+    """Print one case in full and ask the model. Returns the deterministic facts, for the summary."""
+    body_new, hits = substitute(c.body, c.old, c.new)
+    # Sibling renderings of the SAME guard elsewhere in this conversation are recomposed too
+    # (see _gate_cases): leaving them as they shipped puts the old text back in front of the
+    # model through an older turn and understates the fix.
+    also = 0
+    for o, n in c.facts.get("also") or []:
+        body_new, extra = substitute(body_new, o, n)
+        also += extra
+    # The capture's OWN model id (what the server answered as), not the ladder's short name
+    # — a replay against a different model is still informative but must be labelled.
+    # The server's OWN answer is the authority (the harness sends "cria" as the model name).
+    was = captured_model(c.call) or c.body.get("model") or c.model
+    if was in ("cria", "", None):
+        was = c.model
+    tag = "" if was == live else "  ← DIFFERENT MODEL — label the reading"
+    if c.facts.get("same_model"):
+        tag = "  ← SAME MODEL"
+    print(f"── {c.session}/{c.call.name}  (captured against {was} [{c.model}]; replayed "
+          f"against {live}{tag})")
+    sampling = {k: v for k, v in c.body.items() if k in _SAMPLING} or {"temperature": 0.0}
+    print(f"   sampling (the call's own): {sampling}")
+    print(f"   {c.why}")
+    print(f"   the text appears in {hits} message(s) of the prompt; "
+          f"{len(c.old)} chars → {len(c.new)} chars"
+          + (f"; {also} sibling block(s) recomposed too" if also else ""))
+    # Whatever could NOT be recomposed stays as it shipped, and the reader must know — else
+    # the new text gets credit for a reply the old text also shaped.
+    leftover = sum(_msg_text(m).count(_HEAD) for m in body_new.get("messages", []))
+    if fix in ("gate-verbatim", "advisory-gate") and leftover > hits + also:
+        print(f"   NOTE {leftover - hits - also} OTHER ⟦ctx:checks⟧ block(s) could not be "
+              f"paired to raw output and remain as they shipped — this call reads both")
+
+    # A finding cria drops from the gate block can still ride in a DIFFERENT cria surface of
+    # the same prompt — the ⟦ctx:steer⟧ ground-truth block is built by proberun from the same
+    # probe report, and this harness recomposes only the gate block. Today's code filters
+    # both through the one predicate (probeparse.parse_output applies it to every finding),
+    # so when this fires the case UNDERSTATES the fix. Say it rather than let a reader
+    # conclude the model ignored the change.
+    # Matched on the checker's MESSAGE, with cria's own location prefix stripped: the same
+    # finding is rendered with a different location in each surface (`file:41:15:` in the
+    # gate block, `file:41:` in the steer), so matching the whole line finds nothing and
+    # reports a clean isolation that isn't one.
+    def _msg_of(s):
+        return probegate._LOC_PREFIX.sub("", s.strip()).strip()
+
+    kept = {ln.strip() for ln in _finding_lines(c.new)}
+    carriers = {}
+    for ln in _finding_lines(c.old):
+        s = ln.strip()
+        if s in kept or len(_msg_of(ln)) < 15:
+            continue
+        for m in body_new.get("messages", []):
+            if _msg_of(ln) in _msg_text(m):
+                carriers.setdefault(s, []).append(m)
+    if carriers:
+        print(f"   NOTE {len(carriers)} dropped finding(s) still reach the model elsewhere in this "
+              f"prompt — the case UNDERSTATES the fix. Where each one still is:")
+        for s, msgs in list(carriers.items())[:4]:
+            # WHOSE text is still carrying it decides whether the fix could ever have removed it: a
+            # cria surface this harness does not recompose is an artefact of the harness; the CODER's
+            # own checker output is not cria's to filter and would still be there in a live run.
+            where = []
+            for m in msgs:
+                t = _msg_text(m).strip()
+                mine = t.startswith("⟦ctx:") or "⟦ctx:" in t[:200]
+                where.append(f"{m.get('role')}:{'a cria surface' if mine else t[:40]!r}")
+            print(f"     · {s[-70:]!r} in {len(msgs)} message(s): " + " | ".join(where[:3]))
+    show_diff(c.old, c.new, args.detail)
+    for cls in difference_classes(c.old, c.new):
+        print(f"   · {cls}")
+    if hits == 0:
+        print("   the shipped text was not found in the body — not sent.\n")
+        return {}
+    if args.dry_run:
+        print()
+        return {}
+    fact_fn = FACTS[fix]
+    show_reply("CAPTURED at run time (from disk)", captured_reply(c.call), args.detail)
+    try:
+        # BOTH prompts, --sends times each. A weak model at its own sampling moves on its own, and
+        # a single old reply against a single new one cannot tell that apart from the change. Two
+        # sends can only ever say "not deterministic"; four begin to say how wide the spread is.
+        olds = [ask(c.body) for _ in range(args.sends)]
+        news = [ask(body_new) for _ in range(args.sends)]
+    except Exception as e:  # noqa: BLE001
+        print(f"   upstream error: {type(e).__name__}: {e}\n")
+        return {}
+    o_sigs = [signature(m) for m in olds]
+    n_sigs = [signature(m) for m in news]
+    stable = len(set(o_sigs)) == 1 and len(set(n_sigs)) == 1
+    for i, m in enumerate(olds):
+        if i == 0 or o_sigs[i] not in o_sigs[:i]:
+            show_reply("REPLAY of the prompt AS IT SHIPPED" if i == 0
+                       else f"...the SAME old prompt, send {i + 1}", m, args.detail)
+    for i, m in enumerate(news):
+        if i == 0 or n_sigs[i] not in n_sigs[:i]:
+            show_reply("REPLAY of the RECOMPOSED prompt" if i == 0
+                       else f"...the SAME recomposed prompt, send {i + 1}", m, args.detail)
+    # The ACTION separately from the whole reply. A sampled model rewrites its reasoning every send
+    # while asking for the identical tool call, so signature-level "4 distinct replies" can sit on
+    # top of one stable action — and the action is what the run's next turn is built from. Both are
+    # byte facts; neither is a score.
+    o_acts = [json.dumps(calls_of(m), sort_keys=True) for m in olds]
+    n_acts = [json.dumps(calls_of(m), sort_keys=True) for m in news]
+    print("  ── facts")
+    print(f"     distinct ACTIONS (tool name + arguments, ignoring wording): "
+          f"{len(set(o_acts))} old / {len(set(n_acts))} new; "
+          f"{len(set(o_acts) & set(n_acts))} action(s) taken on BOTH sides")
+    print(f"     {args.sends} send(s) of each prompt · the model is "
+          f"{'DETERMINISTIC' if stable else 'NOT deterministic'} here — "
+          + (f"every send of a prompt agreed ({len(set(o_sigs))} distinct old, "
+             f"{len(set(n_sigs))} distinct new)" if stable else
+             f"a prompt sent {args.sends}× gave {len(set(o_sigs))} distinct old and "
+             f"{len(set(n_sigs))} distinct new replies, so read each column as SAMPLES"))
+    overlap = sorted(set(o_sigs) & set(n_sigs))
+    print(f"     replies byte-identical old vs new: first-send {o_sigs[0] == n_sigs[0]}; "
+          f"{len(overlap)} of {len(set(o_sigs) | set(n_sigs))} distinct replies appear on BOTH sides")
+    labelled = [(f"old  #{i + 1}", m) for i, m in enumerate(olds)] + \
+               [(f"new  #{i + 1}", m) for i, m in enumerate(news)]
+    for label, msg in labelled:
+        f = {**base_facts(msg), **fact_fn(c, msg)}
+        print(f"     {label}: " + "  ".join(f"{k}={v}" for k, v in f.items()
+                                            if v not in (None, [])))
+    print()
+    return {"fix": fix, "model": c.model, "case": f"{c.session}/{c.call.name}",
+            "deterministic": stable, "distinct_old": len(set(o_sigs)),
+            "distinct_new": len(set(n_sigs)), "first_send_identical": o_sigs[0] == n_sigs[0],
+            "shared_replies": len(overlap), "sampling": sampling,
+            "acts_old": len(set(o_acts)), "acts_new": len(set(n_acts)),
+            "acts_shared": len(set(o_acts) & set(n_acts))}
+
+
+def _attribute(data, aliases):
+    """(by model, excluded) — every run placed under the model that produced it, or set aside."""
+    by_model, excluded, how = defaultdict(list), [], defaultdict(Counter)
+    for row, cap, ws in data:
+        name, why = origin_model(row, cap, aliases)
+        if name is None:
+            excluded.append((cap.name, why))
+            continue
+        by_model[name].append((row, cap, ws))
+        how[name][why] += 1
+    return by_model, excluded, how
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fix", choices=sorted(RECOMPOSERS), action="append")
-    ap.add_argument("--n", type=int, default=3, help="cases per fix (a few READ beats many counted)")
+    ap.add_argument("--n", type=int, default=3, help="cases per fix (a few READ beats many counted); "
+                                                     "with --same-model, cases per fix PER MODEL")
     ap.add_argument("--per-run", type=int, default=1, help="cases taken from any one captured run")
+    ap.add_argument("--sends", type=int, default=2,
+                    help="how many times each prompt is sent, per side (2 can only say 'not "
+                         "deterministic'; 4 begins to say how wide)")
     ap.add_argument("--detail", action="store_true", help="full replies and full diffs")
     ap.add_argument("--dry-run", action="store_true", help="build cases, call no model")
     ap.add_argument("--session", help="only captures from this session id")
     ap.add_argument("--oldest-first", action="store_true",
                     help="take cases from the earliest runs (default: the most recent, which are "
                          "the ones the walks read and the ones the current model ran)")
+    ap.add_argument("--same-model", action="store_true",
+                    help="ask each capture's OWN model: group the cases by origin model and load "
+                         "that model before sending, one swap per model, restoring what was loaded "
+                         "at the start. Without it every reply comes from whatever is on the GPU.")
+    ap.add_argument("--models", help="comma-separated origin models to cover (--same-model only)")
     args = ap.parse_args()
     wanted = args.fix or sorted(RECOMPOSERS)
 
@@ -778,129 +1148,140 @@ def main() -> None:
     print("replies are SHOWN, never scored — the facts printed are byte checks, the reading is "
           "yours\n")
 
-    for fix in wanted:
-        print(f"{'=' * 100}\n══ {fix}\n{'=' * 100}")
-        cases, unchanged, built = [], 0, 0
-        NOTES.clear()
-        for row, cap, ws in data:
-            if len(cases) >= args.n:
-                break
-            try:
-                got = RECOMPOSERS[fix](row, cap, ws, args.per_run)
-            except Exception as e:  # noqa: BLE001 — a recomposition that fails is reported, not hidden
-                print(f"  · skip {cap.name}: recomposition raised {type(e).__name__}: {e}")
+    if not args.same_model:
+        for fix in wanted:
+            print(f"{'=' * 100}\n══ {fix}\n{'=' * 100}")
+            NOTES.clear()
+            cases, built, unchanged = build_cases(fix, data, args.n, args.per_run)
+            for note in sorted(set(NOTES)):
+                print(f"  · {sum(1 for x in NOTES if x == note)} run(s): {note}")
+            if not cases:
+                print(f"  no case with a recomposed difference ({built} built, {unchanged} "
+                      f"identical)\n")
                 continue
-            built += len(got)
-            # A case whose recomposition is IDENTICAL is a real answer — the run already had the fix,
-            # or the fix does not reach this call — but it costs the model nothing, so it is counted
-            # and named rather than sent, and the search continues for one that DOES differ.
-            for c in got:
-                if c.old == c.new:
-                    unchanged += 1
-                    print(f"  · {c.session}/{c.call.name}: recomposed text is IDENTICAL to what "
-                          f"shipped — nothing to ask the model")
-                elif len(cases) < args.n:
-                    cases.append(c)
-        for note in sorted(set(NOTES)):
-            print(f"  · {sum(1 for x in NOTES if x == note)} run(s): {note}")
-        if not cases:
-            print(f"  no case with a recomposed difference ({built} built, {unchanged} identical)\n")
+            print(f"  {built} case(s) recomposed; {unchanged} identical to what shipped; "
+                  f"{len(cases)} sent to the model\n")
+            for c in cases:
+                report_case(fix, c, live, args)
+        return
+
+    # ---- same-model mode -------------------------------------------------------------------
+    aliases = fleet_aliases()
+    if not aliases:
+        sys.exit(f"cannot read the fleet config at {FLEET_TOML} — without it a capture cannot be "
+                 f"tied to a model, and guessing is the one thing this harness must not do")
+    by_model, excluded, how = _attribute(data, aliases)
+    print("── every captured run placed under the model that produced it")
+    for name in sorted(by_model):
+        print(f"   {name:17s} {len(by_model[name]):3d} run(s) — "
+              + "; ".join(f"{n} {why}" for why, n in how[name].most_common()))
+    for cap_name, why in excluded:
+        print(f"   EXCLUDED {cap_name}: {why}")
+    if not excluded:
+        print("   0 runs excluded — every run's two records agree")
+    print()
+
+    picked = [m.strip() for m in args.models.split(",")] if args.models else sorted(by_model)
+    plan, order = {}, []
+    for name in picked:
+        if name not in by_model:
+            print(f"── {name}: no captured run is attributed to it — skipped")
             continue
-        print(f"  {built} case(s) recomposed; {unchanged} identical to what shipped; "
-              f"{len(cases)} sent to the model\n")
+        if name in ladder_status.BLOCKED_ON_TOOLING:
+            print(f"── {name}: BLOCKED ON TOOLING, not asked — "
+                  f"{ladder_status.BLOCKED_ON_TOOLING[name][:110]}…")
+            continue
+        print(f"{'=' * 100}\n══ building cases from {name}'s own captures "
+              f"({len(by_model[name])} runs)\n{'=' * 100}")
+        per_fix = {}
+        for fix in wanted:
+            NOTES.clear()
+            print(f"  ── {fix}")
+            cases, built, unchanged = build_cases(fix, by_model[name], args.n, args.per_run)
+            for note in sorted(set(NOTES)):
+                print(f"    · {sum(1 for x in NOTES if x == note)} run(s): {note}")
+            print(f"    {built} recomposed, {unchanged} identical to what shipped, "
+                  f"{len(cases)} sendable")
+            for c in cases:
+                c.facts["same_model"] = True
+            if cases:
+                per_fix[fix] = cases
+        if per_fix:
+            plan[name] = per_fix
+            order.append(name)
+    if args.dry_run:
+        print("\n── dry run: nothing sent, no model swapped")
+        for name in order:
+            for fix, cases in plan[name].items():
+                print(f"   {name:17s} {fix:20s} {len(cases)} case(s)")
+                for c in cases:
+                    print(f"        {c.session}/{c.call.name}")
+        return
+    if not order:
+        print("\nno sendable case on any selected model.")
+        return
 
-        for c in cases:
-            body_new, hits = substitute(c.body, c.old, c.new)
-            # Sibling renderings of the SAME guard elsewhere in this conversation are recomposed too
-            # (see _gate_cases): leaving them as they shipped puts the old text back in front of the
-            # model through an older turn and understates the fix.
-            also = 0
-            for o, n in c.facts.get("also") or []:
-                body_new, extra = substitute(body_new, o, n)
-                also += extra
-            # The capture's OWN model id (what the server answered as), not the ladder's short name
-            # — a replay against a different model is still informative but must be labelled.
-            # The server's OWN answer is the authority (the harness sends "cria" as the model name).
-            was = captured_model(c.call) or c.body.get("model") or c.model
-            if was in ("cria", "", None):
-                was = c.model
-            print(f"── {c.session}/{c.call.name}  (captured against {was} [{c.model}]; replayed "
-                  f"against {live}{'' if was == live else '  ← DIFFERENT MODEL — label the reading'})")
-            sampling = {k: v for k, v in c.body.items() if k in _SAMPLING} or {"temperature": 0.0}
-            print(f"   sampling (the call's own): {sampling}")
-            print(f"   {c.why}")
-            print(f"   the text appears in {hits} message(s) of the prompt; "
-                  f"{len(c.old)} chars → {len(c.new)} chars"
-                  + (f"; {also} sibling block(s) recomposed too" if also else ""))
-            # Whatever could NOT be recomposed stays as it shipped, and the reader must know — else
-            # the new text gets credit for a reply the old text also shaped.
-            leftover = sum(_msg_text(m).count(_HEAD) for m in body_new.get("messages", []))
-            if fix in ("gate-verbatim", "advisory-gate") and leftover > hits + also:
-                print(f"   NOTE {leftover - hits - also} OTHER ⟦ctx:checks⟧ block(s) could not be "
-                      f"paired to raw output and remain as they shipped — this call reads both")
-            # A finding cria drops from the gate block can still ride in a DIFFERENT cria surface of
-            # the same prompt — the ⟦ctx:steer⟧ ground-truth block is built by proberun from the same
-            # probe report, and this harness recomposes only the gate block. Today's code filters
-            # both through the one predicate (probeparse.parse_output applies it to every finding),
-            # so when this fires the case UNDERSTATES the fix. Say it rather than let a reader
-            # conclude the model ignored the change.
-            # Matched on the checker's MESSAGE, with cria's own location prefix stripped: the same
-            # finding is rendered with a different location in each surface (`file:41:15:` in the
-            # gate block, `file:41:` in the steer), so matching the whole line finds nothing and
-            # reports a clean isolation that isn't one.
-            def _msg_of(s):
-                return probegate._LOC_PREFIX.sub("", s.strip()).strip()
+    # The GPU holds one model; whatever was on it when this started goes back on when it ends,
+    # including on a crash — a harness that leaves the fleet in a different state than it found it
+    # has changed the thing the next run measures.
+    start_name = aliases.get(live)
+    restored = {"done": False}
 
-            kept = {ln.strip() for ln in _finding_lines(c.new)}
-            elsewhere = [ln.strip() for ln in _finding_lines(c.old)
-                         if ln.strip() not in kept and len(_msg_of(ln)) >= 15
-                         and any(_msg_of(ln) in _msg_text(m)
-                                 for m in body_new.get("messages", []))]
-            if elsewhere:
-                print(f"   NOTE {len(elsewhere)} dropped finding(s) still appear elsewhere in this "
-                      f"prompt (another cria surface this harness does not recompose), e.g. "
-                      f"{elsewhere[0][-70:]!r} — the case UNDERSTATES the fix")
-            show_diff(c.old, c.new, args.detail)
-            for cls in difference_classes(c.old, c.new):
-                print(f"   · {cls}")
-            if c.old == c.new:
-                print("   RECOMPOSED TEXT IS IDENTICAL — this fix changes nothing the model reads "
-                      "on this call; not sent.\n")
+    def restore():
+        if restored["done"]:
+            return
+        restored["done"] = True
+        if not start_name:
+            print(f"\n!! COULD NOT RESTORE: the model loaded at start ({live!r}) is not named in "
+                  f"{FLEET_TOML}. The GPU now holds {loaded_model()!r}.")
+            return
+        ok, msg = ensure_loaded(start_name, aliases)
+        print(f"\n── restoring the model that was loaded at start: {msg}"
+              + ("" if ok else "  !! RESTORE FAILED"))
+
+    atexit.register(restore)
+    # atexit alone is not enough: a `timeout`/Ctrl-C kill delivers SIGTERM/SIGINT, which ends the
+    # process WITHOUT running atexit, and the fleet is then left holding whatever model was mid-run.
+    # Measured the hard way — one killed run left mellum2 loaded. Raising SystemExit from the handler
+    # unwinds through the `finally` below, so the restore happens on every exit path there is.
+    def _bail(signum, _frame):
+        raise SystemExit(f"interrupted by signal {signum}")
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _bail)
+    summary = []
+    try:
+        for name in order:
+            print(f"\n{'=' * 100}\n══ ASKING {name} — the model these captures came from\n"
+                  f"{'=' * 100}")
+            ok, msg = ensure_loaded(name, aliases)
+            print(f"   {msg}")
+            if not ok:
+                print(f"   SKIPPED: {name} could not be loaded, so none of its cases were asked")
                 continue
-            if hits == 0:
-                print("   the shipped text was not found in the body — not sent.\n")
-                continue
-            if args.dry_run:
-                print()
-                continue
-            fact_fn = FACTS[fix]
-            show_reply("CAPTURED at run time (from disk)", captured_reply(c.call), args.detail)
-            try:
-                # BOTH prompts twice. A weak model at its own sampling moves on its own, and a
-                # single old reply against a single new one cannot tell that apart from the change.
-                a1, a2 = ask(c.body), ask(c.body)
-                b1, b2 = ask(body_new), ask(body_new)
-            except Exception as e:  # noqa: BLE001
-                print(f"   upstream error: {type(e).__name__}: {e}\n")
-                continue
-            stable = signature(a1) == signature(a2) and signature(b1) == signature(b2)
-            show_reply("REPLAY of the prompt AS IT SHIPPED", a1, args.detail)
-            if signature(a1) != signature(a2):
-                show_reply("...the SAME old prompt, second send", a2, args.detail)
-            show_reply("REPLAY of the RECOMPOSED prompt", b1, args.detail)
-            if signature(b1) != signature(b2):
-                show_reply("...the SAME recomposed prompt, second send", b2, args.detail)
-            print("  ── facts")
-            print(f"     the model is {'DETERMINISTIC' if stable else 'NOT deterministic'} here — "
-                  + ("two sends of each prompt agreed" if stable else
-                     "a prompt sent twice gave two different replies, so read each column as ONE "
-                     "SAMPLE, not a result"))
-            print(f"     replies byte-identical old vs new: {signature(a1) == signature(b1)}")
-            for label, msg in (("old  #1", a1), ("old  #2", a2), ("new  #1", b1), ("new  #2", b2)):
-                f = {**base_facts(msg), **fact_fn(c, msg)}
-                print(f"     {label}: " + "  ".join(f"{k}={v}" for k, v in f.items()
-                                                    if v not in (None, [])))
-            print()
+            got = loaded_model()
+            for fix, cases in plan[name].items():
+                print(f"\n{'-' * 100}\n── {fix} · {len(cases)} case(s) from {name}\n{'-' * 100}")
+                for c in cases:
+                    row = report_case(fix, c, got, args)
+                    if row:
+                        summary.append(row)
+    finally:
+        restore()
+
+    print(f"\n{'=' * 100}\n══ what was asked, and of whom (facts only — the reading is yours)\n"
+          f"{'=' * 100}")
+    for r in summary:
+        print(f"   {r['model']:17s} {r['fix']:20s} {r['case']:46s} "
+              f"{'deterministic' if r['deterministic'] else 'NOT deterministic'} "
+              f"({r['distinct_old']} distinct old / {r['distinct_new']} distinct new of "
+              f"{args.sends}); actions {r['acts_old']}/{r['acts_new']}, "
+              f"{r['acts_shared']} on both sides; {r['shared_replies']} reply(s) on both sides")
+    for name in sorted({r["model"] for r in summary}):
+        rows = [r for r in summary if r["model"] == name]
+        det = sum(1 for r in rows if r["deterministic"])
+        print(f"   ── {name}: {det}/{len(rows)} case(s) deterministic at the captures' own "
+              f"sampling {rows[0]['sampling']}")
 
 
 if __name__ == "__main__":
