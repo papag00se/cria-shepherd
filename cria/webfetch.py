@@ -358,9 +358,13 @@ def outline_for_url(url: str) -> str:
     ``<keyword>`` placeholder into ``find=`` — run 0802-184308 call 0270). cria fetched and parsed
     the doc, so it can say what is in it, and the outline it built at spill time is exactly that.
 
-    MEASURED over the 123 captured sessions: 2,074 coder calls carried the spill refusal and 981 of
-    them (47%) had NO outline anywhere in the prompt — the initial spill's outline had been
-    compacted away while the durable refusal kept firing. In run 0802-184308 the outline vanished at
+    MEASURED over the 124 captured sessions, and re-measurable at any time with
+    ``suite/replay_logic.py --check spill-outline``: 2,102 coder calls carried the spill refusal or
+    the spill-file read steer, and 840 of them (40%) had NO outline anywhere in the prompt — the
+    initial spill's outline had been compacted away while the durable refusal kept firing. (An
+    earlier reading of this said 981 of 2,074; the population is confirmed, the no-outline count
+    was over-stated. The refusal ALONE accounts for 1,438 of those calls, 695 without an outline.)
+    In run 0802-184308 the outline vanished at
     the first compaction (call 0075) and never came back, so 139 of the remaining 141 coder calls
     were told to read a file cria described only by its filename. The plan never left step 1 of 6.
 
