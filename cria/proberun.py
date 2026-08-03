@@ -394,25 +394,20 @@ def gate_skipped_count(report: ProbeReport) -> int:
     return total
 
 
-def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
-    """Returns None when everything the probes could check is clean (so
-    completion is allowed).
-
-    Precedence: the tier-0 syntax floor first (it localizes parse errors to the
-    exact line — the single most repairable signal). The floor now lives IN the
-    candidate list (kind=SyntaxCheck, congruent across ecosystems); the legacy
-    LinterReport parameter is honored when a caller still passes one. A probe
-    that couldn't LAUNCH (tool absent = cria's own setup gap) never blocks — we
-    only block on a real diagnosis — with TWO congruent exceptions: (a) a tier-0
-    SyntaxCheck that RAN and exited non-zero is itself the diagnosis ("the code
-    does not parse/compile"), even when its output defeated the parsers; and (b) a
-    hard-failure-kind probe (Test/Typecheck/BuildCheck) that TIMED OUT — the command
-    RAN and did NOT finish, so it did NOT verify; a timeout is an undecidable result,
-    not an absent tool, so completion fails CLOSED on it (principle #13, M3).
+def block_findings(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
+    """The checker's OWN failing lines, with NO preamble — or None when everything that could be
+    checked is clean. This is the body of :func:`completion_block_nudge`, split out because it has a
+    SECOND reader that must not receive the coder-facing preamble: the step critic, which is now
+    handed a red gate as evidence and asked whose failure it is (loop._verify_after_probe).
+    ``block_nudge_preamble`` is an imperative addressed to the coder ("resolve exactly what it
+    names"), and an imperative reads as a task briefing to a weak judge — the measured fence problem
+    in principle 8, where a judge handed a work-shaped prompt did the work instead of ruling on it.
+    One renderer, two framings; the findings themselves are byte-identical for both readers.
     """
     if floor is not None and not floor.is_clean():
-        # nudge_text() may itself be None per the LinterReport contract;
-        # returned as-is, exactly like upstream.
+        # nudge_text() may itself be None per the LinterReport contract; returned as-is, exactly like
+        # upstream — it carries the FLOOR's own digest header (floor_digest.nudge_preamble), never
+        # BLOCK_NUDGE_PREAMBLE, so there is nothing to strip and completion_block_nudge must not add one.
         return floor.nudge_text()
     kinds = _kind_by_command(report)
     lines: list[str] = []
@@ -442,7 +437,31 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     combined = syntax_lines + lines  # floor first, exactly the old precedence
     if not combined:
         return None
-    return BLOCK_NUDGE_PREAMBLE + "\n".join(combined)
+    return "\n".join(combined)
+
+
+def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = None) -> Optional[str]:
+    """Returns None when everything the probes could check is clean (so
+    completion is allowed).
+
+    Precedence: the tier-0 syntax floor first (it localizes parse errors to the
+    exact line — the single most repairable signal). The floor now lives IN the
+    candidate list (kind=SyntaxCheck, congruent across ecosystems); the legacy
+    LinterReport parameter is honored when a caller still passes one. A probe
+    that couldn't LAUNCH (tool absent = cria's own setup gap) never blocks — we
+    only block on a real diagnosis — with TWO congruent exceptions: (a) a tier-0
+    SyntaxCheck that RAN and exited non-zero is itself the diagnosis ("the code
+    does not parse/compile"), even when its output defeated the parsers; and (b) a
+    hard-failure-kind probe (Test/Typecheck/BuildCheck) that TIMED OUT — the command
+    RAN and did NOT finish, so it did NOT verify; a timeout is an undecidable result,
+    not an absent tool, so completion fails CLOSED on it (principle #13, M3).
+    """
+    if floor is not None and not floor.is_clean():
+        return floor.nudge_text()   # the legacy floor already carries its own preamble — untouched
+    body = block_findings(report)
+    if body is None:
+        return None
+    return BLOCK_NUDGE_PREAMBLE + body
 
 
 def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = None,

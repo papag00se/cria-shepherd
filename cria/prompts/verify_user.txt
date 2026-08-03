@@ -5,6 +5,13 @@
 step = STEP: {{STEP}}
 evidence = WHAT THE CODER DID — its tool CALLS and what they returned (real ground truth):\n{{EVIDENCE}}
 probe = GROUND-TRUTH CHECKS (lint · type-check · tests · git): {{PROBE}}
+# Added when the checks came back RED. The checks run over the WHOLE repository, so a finding carries
+# no information about WHICH step produced it — nothing in the check output attributes a failure to a
+# step, and that attribution is a judgment, which is why it is asked here rather than pattern-matched.
+# The findings are the checker's own lines WITHOUT the coder-facing "resolve exactly what it names"
+# preamble: an imperative reads as a task briefing to a weak judge and it starts fixing instead of
+# ruling. Stated as a fact plus ONE narrow question; it never suggests an answer in either direction.
+probe_red = THE REPO'S OWN CHECKS ARE CURRENTLY FAILING. These checks run over the WHOLE repository, so this is a fact about the repository — it is NOT a verdict on this step, and the output cannot say which step's work produced it:\n{{FINDINGS}}\n\nThe ONLY question you are being asked about these failures is whether THIS step's own goal requires them to be resolved. If they are this step's own work failing — the code this step wrote does not parse, the tests this step wrote fail, the command this step runs errors — that is this step failing, so answer false and name it. If they are in work that a DIFFERENT step of the plan covers, they are not evidence about this step at all: judge this step on its own goal exactly as you would with clean checks. Someone else will decide whether the whole task is finished; do not answer that question here, and do not fix anything yourself.
 summary = CODER'S SUMMARY (a claim — trust the tool output above over this):\n{{CODER_SUMMARY}}
 # Restated LAST because the step is stated once, thousands of characters earlier, while the coder's
 # summary routinely narrates its OWN numbered plan ("Step 3: write unit tests…") right before the

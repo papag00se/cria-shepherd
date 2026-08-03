@@ -3117,7 +3117,7 @@ cria holds both answers and shows the false one. Reproduced.
 The step verifier's own `proposed_fix` was *"Read the swagger file using read_file with full path"* —
 the action cria blocks.
 
-### Defect 2 — a red gate vetoes EVERY step, including ones that write no code
+### Defect 2 — a red gate vetoes EVERY step, including ones that write no code (FIXED)
 
 `loop.py:1968-1971`: `if nudge is not None: … return self._renudge(...)` returns **before**
 `self._verify` is consulted. `loop.step_incomplete {"step": 1, "reason": "probe failed", "attempt": 9}`
@@ -3126,6 +3126,19 @@ the action cria blocks.
 verifier's prompt already carries the correct rule — *"a research step is fulfilled the MOMENT the
 coder obtained them via a tool call"* — and never gets to run. The last critic call in the entire
 267-call run was **0060**; 207 calls ran with no completion judgment at all.
+
+Base-rated across the seven captured log-days before fixing: **872** `probe failed` holds over **64**
+step-positions in **40** sessions; **27** of those step-positions (167 holds) never got a single
+critic verdict. Reading all 64 step texts, ~190 holds sit on READMEs, `requirements.txt` /
+`pyproject.toml` and pure read/confirm research steps — none of which can make pytest green.
+**Fixed: the red gate is EVIDENCE the critic weighs, not a veto that skips it.** The findings go in
+under their own label (`verify_user.probe_red`) stating that the checks are repo-wide and asking the
+one question the output cannot answer — whose step is this — WITHOUT the coder-facing "resolve
+exactly what it names" preamble. A NOT-done is byte-identical to the old behaviour (the checker's own
+errors re-drive the coder, `critic_fails` untouched so the stuck-step rescue still cannot fire on a
+gate failure). A DONE advances ONE step and is logged `loop.gate_red_advance`; `last_gate_red` stays
+set, so the periodic satisfaction check stays blocked and the completion judge is handed the red
+findings (`gate_notes.red`) — the run still cannot finish red.
 
 ### Defect 3 — cria manufactured the bug the run chased for 200 calls (FIXED)
 

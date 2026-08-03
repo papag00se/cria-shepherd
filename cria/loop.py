@@ -1965,17 +1965,63 @@ class Loop:
             sess.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
-        if nudge is not None:  # GROUND TRUTH: floor or probes failed → the exact file:line errors
-            sess.verify_fails += 1
-            rlog.emit("loop.step_incomplete", step=idx, reason="probe failed", attempt=sess.verify_fails)
-            return self._renudge(sess, key, body, nudge, rlog)
+        # A RED gate is GROUND TRUTH about the REPOSITORY — it is not, by itself, a verdict on THIS
+        # step, and it used to `return` right here, before the critic ever ran. The gate is repo-wide,
+        # so one failing pytest held EVERY step of the plan, including steps that write no executable
+        # code at all. Measured over the seven captured log-days: 872 red-gate holds across 64
+        # step-positions in 40 sessions; 27 of those step-positions (167 holds) never received a
+        # single critic verdict. Reading all 64 step texts, ~190 of the holds sit on READMEs,
+        # requirements.txt / pyproject.toml, and pure read/confirm research steps — none of which can
+        # make pytest green. Walked on ada-handles_fabliq_codex_pon_1785721353: step 1, "Read the Ada
+        # Handles API documentation", held nine times by a red pytest whose fix was steps 3 and 4,
+        # sitting BEHIND it. Perfect deadlock — 267 calls, the plan never left step 1, the last critic
+        # call in the run was 0060, and the two deliverables that were never reached do not exist.
+        #
+        # WHOSE failure is this? is a judgment, and nothing in probegate/proberun attributes a finding
+        # to a step. So it goes to the critic (principle 8; #9's corollary — the rule that would need
+        # an exception list is the rule that should have been a question), which ALREADY carries the
+        # rule verbatim — "Ignore failures NOT related to this step's goal" — and structurally never
+        # got to apply it. It is handed the checker's own lines WITHOUT the coder-facing "resolve
+        # exactly what it names" preamble (proberun.block_findings), because an imperative reads as a
+        # task briefing to a weak judge.
+        #
+        # SAFE DIRECTION, both ways it can be wrong:
+        #  * critic wrongly NOT-done → byte-identical to the old behaviour. No regression exists.
+        #  * critic wrongly DONE → ONE step advances. `last_gate_red` is set above and STAYS set, so
+        #    _periodic_satisfaction is still blocked from proposing a finish, _gate_notes hands the red
+        #    findings to the completion judge, _repair_note keeps restating the failure, and the gate
+        #    re-runs on the next completion claim. The run cannot COMPLETE while red.
+        # Principle 13 governs declaring the TASK done; advancing one step of a plan is not that, and
+        # the task-level judges stay fail-closed. Today's wrong hold, by contrast, has no recovery at
+        # all — the plan can never reach the step that would fix the checks.
+        red_findings = proberun.block_findings(outcome.report) if nudge is not None else None
 
         digest = proberun.completion_probe_digest(outcome.report, missing=outcome.unran)
         evidence = self._grounded_evidence(sess, body)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
-                                  workspace_root=sess.workspace_root or "")  # grounded in the coder's own runs
+                                  workspace_root=sess.workspace_root or "",
+                                  red_findings=red_findings or "")  # grounded in the coder's own runs
+        if nudge is not None:
+            if ok:
+                # The critic read the findings and ruled they are not this step's goal. Loud by
+                # design: this is the one place a step moves while the repo is red, so the record must
+                # say so and carry the reason a human can audit.
+                rlog.emit("loop.gate_red_advance", level="warn", step=idx,
+                          findings=_clip(red_findings or "", 200), reason=_clip(reason, 200))
+                return self._advance(sess, key, body, idx, total, rlog)
+            sess.verify_fails += 1
+            # critic_fails is deliberately NOT incremented here, and this stays on plain _renudge:
+            # a red gate must never drive the stuck-step rescue (see PlanSession.critic_fails — run
+            # 0727-170754, where the rescue rewrote "Write unit tests…" into "Add retry logic…" and
+            # then failed the coder's in-flight test work against a goal it was never given), which
+            # is the contract _renudge_or_replan states in its own docstring.
+            rlog.emit("loop.step_incomplete", step=idx, reason="probe failed", attempt=sess.verify_fails)
+            # The CHECKER's own errors go to the coder, not the critic's prose — the ground truth is
+            # the repairable signal, and it is what the old short-circuit already delivered.
+            return self._renudge(sess, key, body, nudge, rlog)
+
         if ok:  # advance ONLY on a genuine pass — no fail cap
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -1984,8 +2030,14 @@ class Loop:
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
-        """Mark the current step VERIFIED (a step advances ONLY on a genuine pass — there is no
-        accept-unverified), update cria's plan mirror, and move on."""
+        """Mark the current step VERIFIED (a step advances ONLY on a genuine critic pass — there is no
+        accept-unverified), update cria's plan mirror, and move on.
+
+        The bar is unchanged: the careful reasoning-ON critic, plus the on-disk _confirm_completion
+        brake. What changed (see _verify_after_probe) is that a RED repo-wide gate is now EVIDENCE the
+        critic weighs rather than a veto that skipped it — a step may advance while the checks are red
+        IF the critic ruled the findings belong to another step's work. That is still a genuine pass;
+        it is not a cap, a budget, or an accept-unverified."""
         item = sess.plan.current()
         item.done = True
         # A CLEAN status only — never the coder's raw output. The coder's text is unbounded prose (and
@@ -2005,7 +2057,14 @@ class Loop:
         sess.spin_probe_due = False
         sess.recent_actions = []
         sess.redirect_due = False
-        sess.last_gate_flag = ""   # convergence tracking is per step
+        # Convergence tracking is per step — EXCEPT while the repo is still RED. This string is the
+        # only carrier of the failing findings into cria's rolling briefing
+        # (_briefing_gate_ground_truth reads exactly this field) and into the completion judge's
+        # evidence (_gate_notes). A step may now advance over a red gate the critic attributed to
+        # other work; clearing the findings there would make cria go quiet about a failure it is
+        # still holding — the same silent-loss shape rule #5b exists to prevent.
+        if not sess.last_gate_red:
+            sess.last_gate_flag = ""
         sess.compact_pending = True  # a step just VERIFIED → force a rollup next turn so the completed
         #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
@@ -2211,7 +2270,7 @@ class Loop:
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
-                routes: str = "", workspace_root: str = "") -> tuple[bool, str]:
+                routes: str = "", workspace_root: str = "", red_findings: str = "") -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -2225,6 +2284,12 @@ class Loop:
             parts.append(prompts.fill(labels["evidence"], evidence=evidence))
         if probe:
             parts.append(prompts.fill(labels["probe"], probe=probe))
+        # A RED gate is EVIDENCE the critic weighs, not a veto that skips it — see _verify_after_probe
+        # for the measurement. The checker's OWN lines, under a label that states the one thing the
+        # findings cannot state for themselves: they are repo-wide, so they do not say whose step
+        # broke them. Additive — nothing else in the prompt changes, and it is absent on a clean gate.
+        if red_findings:
+            parts.append(prompts.fill(labels["probe_red"], findings=red_findings))
         # The summary slot is a CLAIM, labeled as such — but unbounded it carried a measured 119KB
         # leaked edit_file blob into a 151KB critic prompt (0567-critic, run 0728T000013), 5x the
         # evidence budget in the same prompt. A leaked tool call is not a summary at all; a huge
@@ -3944,6 +4009,12 @@ def _gate_notes(sess) -> str:
     "3 passed, 2 skipped" read as green). Empty when there is nothing to disclose — silence over
     noise, and never a doubt-hedge on a clean run."""
     lines = prompts.load_map("gate_notes")
+    # RED FIRST. A step may now advance over a red gate the step critic attributed to another step's
+    # work (_verify_after_probe), so the plan can reach its end with the checks still failing — which
+    # was structurally impossible before, and is the one way this change could have opened a
+    # fail-OPEN on completion (principle 13). The judge gets the failure as a fact and holds the task.
+    if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
+        return "\n\n" + prompts.fill(lines["red"], findings=sess.last_gate_flag.strip())
     if getattr(sess, "last_gate_testless", False):
         return "\n\n" + lines["testless"]
     skipped = getattr(sess, "last_gate_skipped", 0)

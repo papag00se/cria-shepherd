@@ -3,6 +3,12 @@
 # (run 0728-m11): a suite can pass while SKIPPING the checks that matter — the coder wrote live tests
 # that skipTest() on the exact 404 that proves the resolver broken, and "3 passed, 2 skipped" read as
 # green. The note surfaces the tool-reported skip count as a fact; the judge holds the task and
-# decides whether the skipped checks were the point. Parsed by prompts.load_map.
+# decides whether the skipped checks were the point. `red`: the checks are FAILING right now. That
+# used to be unreachable here — every step needed a GREEN gate to advance, so a plan could not drain
+# while red. Since a step may now advance over a red gate the step critic attributed to other work
+# (loop._verify_after_probe), the completion judge must be told, or the run could finish red.
+# Precedence: red first — a failing check outranks a note about what a passing one did not cover.
+# Parsed by prompts.load_map.
+red = [GROUND TRUTH] The repo's own checks are currently FAILING:\n{{FINDINGS}}\nThese ran over the whole repository. Judge whether the task can be finished with them in this state.
 testless = [GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran). If this task required tests, green does NOT verify them; judge accordingly.
 skipped = [GROUND TRUTH] The test run reported {{COUNT}} test(s) SKIPPED. A skipped test verified NOTHING — if the task required a live/real check and the skipped tests are those checks, green does NOT verify them; read the skipped tests' own skip conditions before treating this as done.

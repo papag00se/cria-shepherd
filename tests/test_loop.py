@@ -1384,8 +1384,8 @@ class ReviewFixTests(unittest.TestCase):
 
 
 class GateFlowTests(unittest.TestCase):
-    """The ported completion gate driven THROUGH the loop: floor/probe failures block with
-    exact errors (critic never consulted); a clean gate hands the critic the digest."""
+    """The ported completion gate driven THROUGH the loop: floor/probe failures re-drive the coder
+    with the exact errors; a clean gate hands the critic the digest."""
 
     def _ws(self):
         import tempfile, os
@@ -1410,10 +1410,10 @@ class GateFlowTests(unittest.TestCase):
         parts += [f"{P}git{S}", "abc"]
         return "\n".join(parts)
 
-    def test_floor_failure_blocks_without_critic(self):
+    def test_floor_failure_re_drives_with_the_exact_error(self):
         ws = self._ws()
         coder = _Recorder([_toolcall(), _done(), _toolcall()])
-        reasoner = _Scripted([_verdict(True)])   # would pass — must NOT be reached
+        reasoner = _Scripted([_verdict(False)])   # the critic rules the failure IS this step's
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)          # act
@@ -1423,8 +1423,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertTrue(c3["choices"][0]["message"].get("tool_calls"))   # coder re-driven
         self.assertIn("loop.gate", rlog.kinds())                          # truth capture
         self.assertIn("loop.step_incomplete", rlog.kinds())
-        self.assertEqual(reasoner.calls, 0, "a failing floor short-circuits — no critic")
-        # the coder's nudge carries the EXACT error
+        # the coder's nudge carries the EXACT error — the CHECKER's words, not the critic's prose
         self.assertIn("SyntaxError", coder.last_user())
 
     def test_plan_on_red_gate_records_last_gate_red(self):
@@ -1460,10 +1459,10 @@ class GateFlowTests(unittest.TestCase):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.periodic_gate", rlog.kinds())
 
-    def test_failing_test_probe_blocks_without_critic(self):
+    def test_failing_test_probe_re_drives_with_the_exact_error(self):
         ws = self._ws()
         coder = _Recorder([_toolcall(), _done(), _toolcall()])
-        reasoner = _Scripted([_verdict(True)])
+        reasoner = _Scripted([_verdict(False)])   # the critic rules the failing tests ARE this step's
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)
@@ -1472,7 +1471,6 @@ class GateFlowTests(unittest.TestCase):
             probe_body="FAILED tests/test_x.py::t - AssertionError: boom\n1 failed\nEXIT:1")),
             "k", _Classification(), rlog)
         self.assertTrue(c3["choices"][0]["message"].get("tool_calls"))
-        self.assertEqual(reasoner.calls, 0, "failing tests short-circuit — no critic")
         self.assertIn("tests/test_x.py", coder.last_user())
 
     def test_clean_gate_hands_critic_the_digest(self):
