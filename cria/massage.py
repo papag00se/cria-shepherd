@@ -596,7 +596,15 @@ def _skip_between_calls(text: str, pos: int) -> int:
     """Past whitespace and dialect tags — the ONLY things that may sit between two calls of a run.
 
     Deliberately not "any punctuation": the whole safety of the leading-run rule is that prose
-    stops it, and a skipper that steps over prose would step over a fabricated tool result."""
+    stops it, and a skipper that steps over prose would step over a fabricated tool result.
+
+    "Dialect tag" is :data:`_TAG_TOKEN`, and it is ANGLE-BRACKET SHAPE, not a list of known tags —
+    which is the honest statement of the bound, because `<[^<>\\s][^<>]*>` also matches a sentence a
+    model wrapped in angle brackets. Prose stops the run only where prose is UNBRACKETED. Measured
+    2026-08-03 over every capture: across the 52 replies this parser reads a call out of, the only
+    span it ever stepped over is `</tool_call>`, 17 times, and it stepped over nothing at all before
+    a leading call. Widening this to a fixed tag list would be tuning a matcher against imagined
+    cases the corpus does not hold (principle 15); the claim is narrowed here instead."""
     while pos < len(text):
         if text[pos].isspace():
             pos += 1
