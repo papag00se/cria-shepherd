@@ -34,12 +34,13 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
+from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
-from .planner import _clean_step, _extract_cwd, missing_deliverables, reasoned_noise_indices
+from .planner import _extract_cwd, missing_deliverables, reasoned_noise_indices
 from .searchloop import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
 from .toolargs import PATH_KEYS, parse_args
@@ -414,7 +415,12 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         # one. Recovers a NOT-satisfied ruling only: of 46 unparseable replies on this box, 20 held a
         # clear judgment in the reasoning and 4 more stated one in plain prose ("The claim is
         # inconsistent... Fix: add src/__init__.py"), all of it discarded.
-        return (verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
+        #
+        # The judge's OWN object comes first when one absent brace is all that is wrong with it
+        # (verdict_from_unclosed) — same one-way NOT-satisfied contract, but it carries the reason
+        # and proposed_fix the judge actually wrote. 3 of this phase's replies on this box.
+        return (verdict_from_unclosed(vtext, "satisfied", rlog, ph)
+                or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
                 or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose"))
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
@@ -545,16 +551,30 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
                      prompts.render("replan_user", task=task, completed=completed or "(none)",
                                     remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
                      rlog, phase="reasoner", coder_tools=coder_tools) or ""
-    obj = extract_json_object(strip_think(text))
-    if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list):
+    # ONE READER for "a step list written as JSON" — planner.json_steps, the same function the
+    # initial draft reads through. This call used to require a dict with a literal `steps` key, and
+    # cria already owned every other shape the reasoner uses: a bare top-level array, a synonym key,
+    # a dict item per step. Measured 2026-08-02 over 232 captured re-derivations: 19 were unreadable
+    # here, 13 of them a bare JSON array — 7 carrying real steps (run 20260727T234416 call 0024
+    # returned a complete four-step re-derivation, its own thinking saying "I need to produce JSON
+    # steps only") and 6 the empty `[]`. The plan was left unchanged on all 13.
+    #
+    # JSON ONLY — deliberately NOT parse_steps, whose prose fallbacks read numbered and bulleted
+    # LINES. The re-derivation's replies are not drafts: run 20260728T101412 call 0121 answered with
+    # a README in markdown, and parse_steps reads four of its bullets as plan steps. Reading a
+    # README as the remaining plan is a worse outcome than reading nothing (principle 2 — the
+    # dangerous class of intervention is the one that REPLACES a correct prior).
+    cleaned = planner.json_steps(strip_think(text))
+    if cleaned is None:
         return None  # unparseable / wrong shape → keep the plan exactly as it was
-    if not obj["steps"]:
-        return []  # the reasoner says nothing remains → the plan is complete
-    # _clean_step coerces a dict item ({"step": "…"}, which a small model emits instead of a bare string)
-    # to its text — else the step becomes the dict repr "{'step': …}" (the observed leak).
-    cleaned = [c for x in obj["steps"] if (c := _clean_step(x))]
     if not cleaned:
-        return None  # no usable step text → keep the plan we had
+        # The reasoner says nothing remains. replan.txt asks for exactly this ("Return [] ONLY when
+        # the evidence shows every remaining deliverable is already done") and this function's own
+        # contract defines it, so it is honoured whether it arrived as `{"steps": []}` or bare `[]`.
+        # NOT a false-finish path: the caller does not drop the tail on this alone — it re-asks
+        # judge_satisfaction against the same evidence first, and a not-satisfied answer keeps every
+        # remaining step (loop.replan_empty_declined).
+        return []
     # Same reasoner NOISE judgment the INITIAL plan gets (reasoned_noise_indices): drop a re-derived step
     # that codified a bare command, dictated literal code, or a speculative guess — a re-derivation
     # grounded in the coder's FAILED work otherwise codifies its guessed endpoint into an authoritative
@@ -857,6 +877,17 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
             return word, "\n".join(cleaned.strip().splitlines()[1:]).strip()
         obj = extract_json_object(cleaned)
         if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
+            # One absent closing brace is not "no answer" — but only a NOT-consistent one is
+            # recovered (verdict_from_unclosed). This is the APPROVE-path brake: recovering a
+            # `consistent: true` out of a defect in the bytes would confirm a done, which is the
+            # one direction principle 13 forbids; recovering the false costs a work turn.
+            # Truncation is refused HERE because this site, unlike the other two judges, has no
+            # is_truncated guard of its own: a reply cut at the cap is not an answer even when its
+            # bytes happen to balance once closed (rule #5).
+            recovered = (None if massage.is_truncated(comp)
+                         else verdict_from_unclosed(vtext, "consistent", rlog, phase))
+            if recovered is not None:
+                return False, str(recovered.get("why") or recovered.get("reason") or "").strip()
             rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
             return None, ""
         return obj["consistent"], str(obj.get("why") or "").strip()
@@ -991,6 +1022,91 @@ def _cut_on_a_word(text: str, budget: int) -> str:
     head = text[:budget]
     sp = head.rfind(" ")
     return (head[:sp] if sp > budget // 2 else head).rstrip() + "…"
+
+
+def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | None:
+    """A judge's OWN verdict object, recovered when its only defect is an absent closing brace — and
+    ONLY when it rules NOT-done. ``None`` otherwise.
+
+    ``flag`` is the phase's own key ("done" / "satisfied" / "consistent"), exactly as
+    :func:`verdict_from_reasoning` takes it, so no caller's reading path changes shape.
+
+    WHAT WAS MEASURED. Replaying all 18,655 captured final replies through cria's own reader
+    (2026-08-02): 14 came back unreadable while holding a syntactically complete JSON object missing
+    a single ``}``. All 14 stopped on their own (``finish_reason: stop``). Twelve are NOT-done
+    rulings with a written reason AND a written proposed_fix — the diagnosis the coder never got.
+    One is an APPROVAL (``done: true``, run 20260801T232511 call 0173-critic) and one is a plan
+    re-derivation carrying no verdict flag at all (0050-reasoner). Both are refused here.
+
+    DIRECTION (#13), stated as code below and not only in prose: the recovered object must carry the
+    phase's flag and it must be literally ``False``. A recovered NOT-done can only ever cost a turn
+    of work; a recovered "done" would be a false finish reached through a defect in the bytes, which
+    is the fail-OPEN-on-missing-ground-truth root of every early exit this file documents. The same
+    one-way contract, and the same reason, as ``verdict_from_reasoning`` and the reasoning-off
+    retry's ``verify_failclosed``.
+
+    WHY BEFORE ``verdict_from_reasoning``: both recover a NOT-done, but this one recovers the verdict
+    the judge actually WROTE — its own ``reason`` and its own ``proposed_fix``, verbatim — where the
+    reasoning path can only forward sentences scraped out of the thinking and leaves ``proposed_fix``
+    empty. Strictly better evidence for the same ruling, so it is tried first.
+
+    WHAT IT ACTUALLY CHANGES, read rather than assumed (the corrective this entry exists to record).
+    The first draft of this docstring claimed all twelve "fell to ``unverified_step``". They did not.
+    Following each one to the next captured call: in 4 of the 8 step-critic cases the reasoning-OFF
+    retry answered with its own readable NOT-done, so the coder read THAT — the change here is which
+    pass's words reach it (the careful one's) and one reasoner call saved, not a rescue. The 3
+    satisfaction cases and the 1 confirm case fell closed as designed. In exactly ONE call in 126
+    sessions did the coder actually read cria saying it had no verdict: run 20260728T092146 call
+    0019, where BOTH critic passes came back unclosed and the coder was handed the bare line
+    ``unverified (no parseable verdict)``. Asked again through ``suite/replay_recompose.py`` on the
+    same model at that call's own sampling, the shipped prompt produced a reply whose thinking reads
+    "the user's steering instruction says 'unverified (no parseable verdict)' — meaning they haven't
+    given me a specific check to perform", and answered with prose and no tool call at all; the
+    recomposed prompt sent it to inspect the API response the judge had named. That is the whole
+    measured model-facing effect: n=1. This ships as a READER fix, not a rescue.
+
+    NOT TRUNCATION. A ``finish_reason: length`` reply is refused before it reaches here, at every
+    one of the three call sites — the two judges already ran ``massage.is_truncated`` and returned;
+    the confirm brake, which had no such guard, grew one at its call to this. A cut generation stays
+    refused however neatly its bytes happen to close. This function is given only text and cannot
+    see the finish reason, which is why the refusal is stated at the sites that CAN.
+    """
+    obj = jsontext.close_unclosed_object(vtext or "")
+    if not isinstance(obj, dict) or obj.get(flag) is not False:
+        return None      # no repairable object, no verdict flag, or an APPROVAL — all refused
+    if not _is_a_finding(str(obj.get("reason") or obj.get("why") or "")):
+        return None      # a ruling with nothing behind it — see _is_a_finding
+    rlog.emit("loop.verdict_from_unclosed", level="info", phase=phase, flag=flag,
+              reason=_clip(str(obj.get("reason") or obj.get("why") or ""), 120))
+    return obj
+
+
+def _is_a_finding(reason: str) -> bool:
+    """Does this ``reason`` carry an answer, rather than the SHAPE of one?
+
+    Every judge prompt defines ``reason`` as "your SPECIFIC finding grounded in THIS evidence", and
+    recovery exists to rescue the judge's own words. When there are no words there is nothing to
+    rescue, and the fail-closed path already reaches the same NOT-done ruling without cria claiming
+    the judge said something. So refusing here costs nothing and can only ever move the outcome
+    toward "keep working" — which is why it ships at a measured prevalence of ZERO (0 of the 12
+    repairable NOT-done verdicts on this box, and 1 of 314 verdicts cria's ordinary reader already
+    accepts). It is a bound on what recovery may do, not a detector.
+
+    TWO SHAPES, no vocabulary — this must not become a list of words anyone has to keep tuning:
+
+    * nothing but punctuation or whitespace. ``close_unclosed_object`` makes a new input reachable —
+      a model that ECHOES the instruction it was given and stops mid-object — and the instruction it
+      is given ends in a literal JSON template. ``Answer in the form {"done": false, "reason": "..."``
+      repairs perfectly and yields a "finding" of ``...``, which ``_verdict_nudge`` would then hand
+      the coder as its corrective.
+    * an angle-bracket placeholder and nothing else. That is cria's OWN convention for a slot the
+      model is meant to fill — ``"reason": "<short>"``, ``"proposed_fix": "<brief fix prose>"``,
+      ``grep -n "<keyword>"`` — so a reason that IS one is the template coming back, not a reading of
+      the evidence. Structural (the bracket shape cria writes), never a list of the words inside."""
+    r = (reason or "").strip()
+    if not re.search(r"\w", r):
+        return False
+    return not (r.startswith("<") and r.endswith(">") and ">" not in r[1:-1])
 
 
 def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
@@ -1640,7 +1756,7 @@ class Loop:
         # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
         # (Parity with _replan_tail, which already judges against sess.plan.task.)
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
-        ev = _satisfaction_evidence(body.get("messages", []))
+        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
         # tests; none of that can tell you the delivered program does anything. This check existed and
@@ -1799,7 +1915,7 @@ class Loop:
             sess.pending_coder_text = _completion_text(coder)
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
-        evidence = self._grounded_evidence(sess, body)
+        evidence = self._grounded_evidence(sess, body, rlog)
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
@@ -1873,9 +1989,18 @@ class Loop:
                     # Marker-tagged and prompt-file-sourced: this note is cria's OWN voice written back
                     # into the message stream, so it must be identifiable — the work log and the critic
                     # were reading it as something the coder's tool returned.
+                    #
+                    # It carries the SHARED did-not-run mark (cria.denial), not a private one. This
+                    # denial is the same species as every refusal writeproxy lowers — the read did not
+                    # happen and these are cria's words in its place — and a marker of its own bought
+                    # only a second thing to keep in sync. The work log used to DELETE this note for
+                    # being cria's voice, which left the critic a `$ read_file …` call with no result
+                    # line at all: a call that looks like it returned nothing, on a file that is still
+                    # on disk. Measured 2026-08-03: 229 coder turns across 9 runs. Labelled now, not
+                    # deleted (#2 — never destroy, disclose).
                     steer = f" Search instead for: {sess.search_recommend}." if sess.search_recommend else ""
                     out.append({**m, key: prompts.render("search_read_denied",
-                                                         marker=selfcompact.SEARCH_MARKER, steer=steer, file=f)})
+                                                         marker=denial.DENIED_MARKER, steer=steer, file=f)})
                     continue
             out.append(m)
         return out
@@ -1977,7 +2102,7 @@ class Loop:
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
-            evidence = self._grounded_evidence(sess, body)
+            evidence = self._grounded_evidence(sess, body, rlog)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
                                       routes=known_routes(body.get('messages', []), sess),
@@ -2062,7 +2187,7 @@ class Loop:
         red_findings = proberun.block_findings(outcome.report) if nudge is not None else None
 
         digest = proberun.completion_probe_digest(outcome.report, missing=outcome.unran)
-        evidence = self._grounded_evidence(sess, body)
+        evidence = self._grounded_evidence(sess, body, rlog)
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
@@ -2157,7 +2282,7 @@ class Loop:
         # living plan is an inescapable mandate (485 calls burned on one), and cria authoring the step was
         # the overreach underneath it. Nothing cria writes outranks the re-derivation any more.
         rederivable = remaining
-        evidence = self._grounded_evidence(sess, body)
+        evidence = self._grounded_evidence(sess, body, rlog)
         # The replanner is cria's SECOND author of plan steps, and it was never told the thing the
         # planner is told (147e224): that nothing read so far DEFINES a route. Measured (run
         # 0727-180058) its evidence carried zero `endpoints:` and zero `/handles/{handle}` while
@@ -2315,7 +2440,7 @@ class Loop:
 
     # ------------------------------------------------------------------ helpers
 
-    def _grounded_evidence(self, sess: PlanSession, body: dict) -> str:
+    def _grounded_evidence(self, sess: PlanSession, body: dict, rlog=None) -> str:
         """The critic's / re-derivation's ground truth: the coder's recent tool actions (the work log)
         PLUS the DURABLE fetched-page facts (url→status→endpoints) cria accumulated PLUS what actually
         exists on disk (the workspace inventory). Without the durable facts, a research step is judged
@@ -2328,7 +2453,7 @@ class Loop:
         held files (run 0728-m1). Additive: every section only ever tells the critic MORE about the real
         state; none claims work that wasn't done."""
         messages = body.get("messages", [])
-        log = _bound_evidence(_work_log(messages))
+        log = _bound_evidence(_work_log(messages, rlog=rlog))
         facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
         inventory = workspace_inventory(sess.workspace_root)
         return "\n\n".join(part for part in (log, facts, inventory) if part)
@@ -2498,7 +2623,14 @@ class Loop:
             # false finish (principle 13). The mirror case was measured and DELIBERATELY not built —
             # see the note in _verify.
             ph = "critic" + ("-noreason" if reasoning_off else "")
-            return (verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
+            # ...and BEFORE that: the judge's own verdict object when one absent closing brace is
+            # the only thing wrong with it (verdict_from_unclosed — 8 of this phase's replies on this
+            # box, every one a NOT-done with a written proposed_fix). Same one direction, for the
+            # same reason; it just recovers what the judge wrote instead of paraphrasing it. Mostly
+            # this spares the reasoning-off retry below and lets the CAREFUL pass speak; twice in the
+            # corpus both passes were unclosed and the coder read nothing at all.
+            return (verdict_from_unclosed(vtext, "done", rlog, ph)
+                    or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
                     or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose")), vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
@@ -2543,7 +2675,7 @@ class Loop:
             f"{i + 1}. [{'done' if it.done else 'incomplete'}] {it.text}"
             for i, it in enumerate(sess.plan.items)
         )
-        log = _work_log(body.get("messages", []))
+        log = _work_log(body.get("messages", []), rlog=rlog)
         prior = (prompts.render("done_summary_prior", prior_work=sess.prior_work) + "\n\n") if sess.prior_work else ""
         user = prompts.render("done_summary_user", prior=prior, task=sess.plan.task,
                               checklist=checklist, log=log or "(no tool activity captured)")
@@ -2600,7 +2732,7 @@ class Loop:
             return None
         task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
                 else _history_root(body.get("messages", []))[0])
-        evidence = _satisfaction_evidence(body.get("messages", []))
+        evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
         evidence += _gate_notes(sess)
         # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
         # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
@@ -2832,7 +2964,7 @@ class Loop:
         incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
         task = _history_root(body.get("messages", []))[0]
-        ev = _satisfaction_evidence(body.get("messages", []))
+        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
         # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
@@ -2999,20 +3131,49 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     return "", ""
 
 
-def _work_log(messages: list[dict], *, keep_checks: bool = False) -> str:
+def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None) -> str:
     """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
     Full content flows: this is a model-read input (the summarizer/judge), and the context floor is
     the one window-aware place any physical truncation happens — a per-site clip here would just be a
-    dumber, undetectable slice of what the model reads."""
+    dumber, undetectable slice of what the model reads.
+
+    A REFUSED CALL IS LABELLED AS ONE. cria lowers a refusal to a ``printf`` of its own words, so the
+    refusal arrives as a tool result and rendered as ``  -> …`` it is byte-identical to a real one —
+    while ``prompts/verify.txt`` tells the step critic, in cria's voice, that "each ``-> ...`` line is
+    what it returned". Measured 2026-08-03 across 127 sessions: 216 of 537 step-critic prompts with an
+    action log (40%) and 140 of 370 satisfaction prompts (38%) carry at least one. The label goes on
+    the ``$`` CALL line, because the call is the only thing cria knows did not happen; the result body
+    is left entirely alone, verbatim and unqualified. That restraint is the fix's whole shape — a
+    refusal frequently carries REAL ground truth (a repeat-fetch refusal embeds the document's own
+    endpoint list, the very block ``selfcompact`` anchors verbatim), and an earlier draft that
+    labelled the BODY told the judge to discard its only real evidence.
+
+    Which results are refusals is decided at the site that refused (:mod:`cria.denial`) and read here
+    from the mark, never from wording. Pairing is by ``tool_call_id``: an assistant turn can carry
+    several calls and only one of them be refused, and there is no other record of which. A tool
+    result with no id cannot be attributed to a call, so nothing is labelled for it — the safe
+    direction (an unlabelled line is exactly today's behaviour) and it is counted in the event rather
+    than left silent."""
     lines: list[str] = []
+    # Loaded per call like every other model-facing string, so the wording is tunable without a code
+    # change (#22). It says one thing and stops there: the call did not run.
+    DENIED_CALL_LABEL = prompts.load("work_log_denied")
     # Same scrub chain every other reasoner-facing serialization uses (author_steer, _summarize_single,
     # _self_compact): without clean_gate_results, cria's OWN gate probe renders here as a coder action —
     # `$ shell {"command": "cd … || exit 97\necho ___CRIA_GATE_…\npytest …"}` — and its raw output as
     # something the coder's tool returned. This log feeds the step critic, the re-derivation, the
     # satisfaction judge and the completion briefing, so the orchestration was being judged as work.
-    for m in probegate.clean_gate_results(_reasoner_session(messages)):
+    scrubbed = list(probegate.clean_gate_results(_reasoner_session(messages)))
+    denied_ids = {tid for m in scrubbed
+                  if m.get("role") == "tool" and (tid := m.get("tool_call_id"))
+                  and denial.is_denied(str(m.get("content") or ""))}
+    unpaired = sum(1 for m in scrubbed
+                   if m.get("role") == "tool" and not m.get("tool_call_id")
+                   and denial.is_denied(str(m.get("content") or "")))
+    labelled = 0
+    for m in scrubbed:
         role = m.get("role")
         if role == "assistant":
             for tc in m.get("tool_calls") or []:
@@ -3020,11 +3181,17 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False) -> str:
                 args = str(fn.get("arguments", "")).strip()
                 if _is_cria_scaffolding(args, keep_checks=keep_checks):
                     continue
-                lines.append(f"$ {fn.get('name')} {args}")
+                mark = ""
+                if tc.get("id") in denied_ids:
+                    mark = " " + DENIED_CALL_LABEL
+                    labelled += 1
+                lines.append(f"$ {fn.get('name')} {args}{mark}")
         elif role == "tool":
             c = str(m.get("content") or "").strip()
             if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
                 lines.append(f"  -> {c}")
+    if rlog is not None and (labelled or unpaired):
+        rlog.emit("loop.work_log_denied", level="info", labelled=labelled, unpaired=unpaired)
     return "\n".join(lines)
 
 
@@ -3049,15 +3216,23 @@ def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
     its own words — "Everything else the checks cover passed" — and the judge's verdict repeated that
     sentence back. cria may SELECT which of a checker's real lines to show; it may never SUBSTITUTE
     its own, and least of all to the judge that ends the session on the answer.
+
+    THE SEARCH-READ DENIAL IS NO LONGER HERE, and that is a fix, not an omission. It was added for
+    the right reason — the note is cria's voice and was being read as a tool's answer — but deleting
+    a tool RESULT does not delete the CALL that produced it, so the log kept the coder's
+    ``$ read_file …`` line and lost its ``->`` line entirely: a call that appears to have returned
+    nothing, about a file that is still sitting on disk. Measured 2026-08-03 over ~/.cria/calls: 229
+    coder turns across 9 runs, every one of them a hole. Deletion was the wrong tool for the job the
+    whole time; the note is now labelled by :func:`_work_log` as a call that did not run and shown
+    verbatim (#2 — the safe class of intervention is additive, never destructive).
     """
     if probegate.CHECKS_MARKER in text:
         return not keep_checks
     return (probegate.SECTION_PREFIX in text
-            or proberun.PROBE_EXIT_SENTINEL in text
-            or selfcompact.SEARCH_MARKER in text)
+            or proberun.PROBE_EXIT_SENTINEL in text)
 
 
-def _satisfaction_evidence(messages: list[dict]) -> str:
+def _satisfaction_evidence(messages: list[dict], rlog=None) -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -3069,7 +3244,7 @@ def _satisfaction_evidence(messages: list[dict]) -> str:
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _bound_evidence(_work_log(messages, keep_checks=True))
+    log = _bound_evidence(_work_log(messages, keep_checks=True, rlog=rlog))
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim

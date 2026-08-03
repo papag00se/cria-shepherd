@@ -14,14 +14,17 @@ Captured verbatim, run 20260729T174527 call 0123:
 import subprocess
 import unittest
 
-from cria import writeproxy
+from cria import denial, writeproxy
 
 
 class RefusalCommandTests(unittest.TestCase):
     def test_the_refusal_text_still_reaches_the_model(self):
+        # Verbatim, with the did-not-run mark in front of it — the only addition, and the thing that
+        # lets a judge's action log say the call never ran without matching a word of the text.
         cmd = writeproxy._refusal_command("Refused: outside the workspace.")
         r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
-        self.assertEqual(r.stdout, "Refused: outside the workspace.")
+        self.assertEqual(r.stdout, f"{denial.DENIED_MARKER} Refused: outside the workspace.")
+        self.assertTrue(denial.is_denied(r.stdout))
 
     def test_and_the_process_does_NOT_report_success(self):
         cmd = writeproxy._refusal_command("Refused: outside the workspace.")
@@ -33,7 +36,7 @@ class RefusalCommandTests(unittest.TestCase):
         nasty = "Refused: `$(rm -rf /)` 'x' \"y\" \\ | ; & > < newline\nsecond line"
         r = subprocess.run(["bash", "-c", writeproxy._refusal_command(nasty)],
                            capture_output=True, text=True)
-        self.assertEqual(r.stdout, nasty)
+        self.assertEqual(r.stdout, f"{denial.DENIED_MARKER} {nasty}")
         self.assertNotEqual(r.returncode, 0)
 
 
@@ -54,12 +57,33 @@ class OneOwnerTests(unittest.TestCase):
         src = inspect.getsource(writeproxy.translate_outbound)
         self.assertEqual(src.count("_refusal_command("), 6)   # +1: edit_file with no new_string
 
+    @staticmethod
+    def _lower_fetch(result):
+        """``_fetch_command`` with fetch_nav's answer supplied — the one thing that decides the shape."""
+        import unittest.mock as mock
+        with mock.patch.object(writeproxy.webfetch, "fetch_nav", return_value=result), \
+                mock.patch.object(writeproxy.webfetch, "already_spilled", return_value=True):
+            return writeproxy._fetch_command({"url": "https://api.handle.me/handles/goose"})
+
     def test_a_normal_tool_RESULT_is_untouched(self):
-        # Only refusals exit non-zero. A real fetch/read result must still report success.
-        import inspect
-        src = inspect.getsource(writeproxy._fetch_command)
-        self.assertIn("printf %s", src)
-        self.assertNotIn("_refusal_command", src)
+        # Only refusals exit non-zero. A real fetch result — including a real HTTP 404, which is an
+        # ANSWER the coder must read and reason about, not a refusal — still reports success.
+        page = "HTTP 404 Not Found · https://api.handle.me/v1/handles/goose\n{}"
+        cmd = self._lower_fetch(page)
+        self.assertNotIn(f"exit {writeproxy.REFUSED_EXIT_CODE}", cmd)
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, page)
+
+    def test_a_REFUSED_fetch_does_not_report_success(self):
+        # The repeat gate answers inside fetch_nav and its text was printf'd at exit 0 — the one site
+        # the exit-code contract never reached. Which results are refusals is webfetch's own decision,
+        # read off the mark it applied, never re-derived from the wording here.
+        refusal = denial.mark("You already fetched web_fetch … with these exact params.")
+        cmd = self._lower_fetch(refusal)
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.stdout, refusal)   # marked ONCE — mark is idempotent
 
 
 if __name__ == "__main__":
