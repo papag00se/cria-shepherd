@@ -2837,7 +2837,7 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     return "", ""
 
 
-def _work_log(messages: list[dict]) -> str:
+def _work_log(messages: list[dict], *, keep_checks: bool = False) -> str:
     """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
@@ -2856,27 +2856,42 @@ def _work_log(messages: list[dict]) -> str:
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
                 args = str(fn.get("arguments", "")).strip()
-                if _is_cria_scaffolding(args):
+                if _is_cria_scaffolding(args, keep_checks=keep_checks):
                     continue
                 lines.append(f"$ {fn.get('name')} {args}")
         elif role == "tool":
             c = str(m.get("content") or "").strip()
-            if c and not _is_cria_scaffolding(c):
+            if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
                 lines.append(f"  -> {c}")
     return "\n".join(lines)
 
 
-def _is_cria_scaffolding(text: str) -> bool:
+def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
     """Is this cria's own orchestration rather than the coder's work?
 
     The old test was ``"PROBE_EXIT" not in c`` — the NAME of the constant, never its value. The emitted
     sentinel is ``proberun.PROBE_EXIT_SENTINEL`` ("EXIT:") and the gate's section prefix is
     ``probegate.SECTION_PREFIX`` ("___CRIA_GATE_"), so the literal it checked for occurs only in test
     fixtures — the guard never fired in production and every raw probe dump landed in the work log as
-    the coder's own tool output. Keyed on the real constants now, so it cannot drift again."""
+    the coder's own tool output. Keyed on the real constants now, so it cannot drift again.
+
+    A ⟦ctx:checks⟧ block is NOT scaffolding: it is cria's rendering of a real checker's real output.
+    Stripping it is right for a log that describes what the CODER did, and wrong for the judge that
+    decides whether the task is done — which is the one reader for whom "did the checks pass" is the
+    question. ``keep_checks`` says which reader this is.
+
+    Walked on ada-handles_mellum2_codex_poff_1785714194 call 0033: the satisfaction judge wrote "the
+    test suite test_resolve_handle.py passes" and nothing in its evidence said so. The string
+    `4 passed` appears nowhere in its prompt; the only pytest result it could see was the original
+    `3 failed, 1 passed`, because every check block had been stripped. cria then supplied the gap in
+    its own words — "Everything else the checks cover passed" — and the judge's verdict repeated that
+    sentence back. cria may SELECT which of a checker's real lines to show; it may never SUBSTITUTE
+    its own, and least of all to the judge that ends the session on the answer.
+    """
+    if probegate.CHECKS_MARKER in text:
+        return not keep_checks
     return (probegate.SECTION_PREFIX in text
             or proberun.PROBE_EXIT_SENTINEL in text
-            or probegate.CHECKS_MARKER in text
             or selfcompact.SEARCH_MARKER in text)
 
 
@@ -2892,7 +2907,7 @@ def _satisfaction_evidence(messages: list[dict]) -> str:
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _bound_evidence(_work_log(messages))
+    log = _bound_evidence(_work_log(messages, keep_checks=True))
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
