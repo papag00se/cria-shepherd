@@ -3284,3 +3284,113 @@ step 1, and the cause is two individually-reasonable guards that were never scor
 
 No run of that `/goal` ever completed all four deliverables either — so this is not a claim that
 fabliq can pass. It is a claim that cria built a wall that was not there in July.
+
+---
+
+## ada-handles_fabliq_codex_pon_1785732102
+
+**Score 1.0/4.0** — README only. Passed the 15-minute milestone (**the first fabliq run ever to score
+anything**), killed at 30 min for not reaching 2/4. 280 calls, planner ON.
+
+Walked by three readers over contiguous slices of all 281 captured calls, prompts and reasoning both.
+**All three: `cria fault: yes`.**
+
+### What the refusal fix actually did
+
+It fired exactly as designed and **was not the lock.** The outline was in the coder's very first
+prompt (0011) and never left — `GET /handles/{handle} … holder(string, e.g. stake1uxxxx…),
+resolved_addresses{ada(string)}` and `GET /holders/{address} → total_handles(integer)`. A reader
+verified those against the live API by hand. Everything needed to score 4/4 was on screen at call 11.
+
+**A new wall replaced the old one: cria's own judges.** Five separate judges ruled the research step
+incomplete *while holding the research results in their own prompt*, each demanding the coder
+`read_file` the whole 96 KB spec — the one action cria refuses. The loop is:
+
+> critic demands the whole read → cria refuses the whole read (politely, with the outline) → critic
+> sees no read → demands it again
+
+### Defect 1 — the only DONE the run earned, taken back by a judge with no evidence
+
+At **0036** the step critic ruled step 1 `done: true` (*"The coder read the OpenAPI specification
+file … which contains the required endpoints, request formats, and response structures"*).
+
+At **0037** the approve-path confirm checker — handed a **four-line prompt**: the step text and the
+verdict's reason, nothing else — answered:
+
+> `{"consistent": false, "why": "…but no evidence of this research is provided in the available information."}`
+
+cria forwarded that to the coder verbatim at **0039**, in a prompt that on the same page lists the
+endpoints it had obtained. Step 1 was a RESEARCH step: there is no artifact on disk to inspect, and
+`verify_confirm.txt` authorises `false` only for a missing artifact or a self-contradicting reason.
+Neither applied.
+
+**Measured across all 124 captures (offline):** 288 confirm invocations, 125 vetoes. **40 of those
+vetoes (32%) are the approval's own sentence, word for word.** Whether the checker ever opens the
+workspace splits by MODEL, not task: qwythos/gemma4/ternary-bonsai look 97–100% of the time; **fabliq
+0 of 87, nemotron 0 of 15.** A checker that looks approves 116/137; one that does not vetoes 104/138.
+On research steps it vetoes **90 of 96**. **FIXED** for the verbatim-echo case (`0a0046d`): such a
+verdict is now *unusable* — re-asked once, never flipped to done. The no-artifact case was measured,
+found dominant, and deliberately NOT fixed: the only thing that unwedges it is letting a step advance
+without a brake, which fails open on completion.
+
+### Defect 2 — cria caused the duplicate resolvers itself (FIXED)
+
+At **0079** the repetition redirect pasted the entire 3.2 KB of `handle_resolver.py` back to the coder
+under the words *"Choose a DIFFERENT next action."* The model complied literally: same 3.2 KB, new
+filename `test_handle.py`. Three calls later, a third copy into `resolver.py`. cria defined
+"different" as not-this-ACTION, never not-this-CONTENT — and the log line directly below already
+clipped that same string to 120 chars. **Bounded for cria's own record, unbounded for the model.**
+
+**FIXED (`688af5f`), and it is the one fix in this cycle proven to change behaviour on the model that
+had the problem** — fabliq, temp 0, 4 sends each side: old prompt writes the copy 4/4, new prompt
+`read_file`s instead 4/4.
+
+### Defect 3 — a steer that named neither path nor content
+
+At **0124** the model's reasoning reached the correct fix and wrote it as text: *"we need to create a
+`web_fetch.py` file in the same directory… `def web_fetch(url, find=None, raw=False)`"*. No tool call.
+cria's no-write steer at **0125**: *"your last message contained the file's contents as text, but no
+write tool call was made — send that same content again as a write tool call."* It names no path and
+no content; the model's own preceding message had named both. The model resolved "that same content"
+to the wrong thing and wrote `ada_handles_api_specification.txt`, an invented document asserting
+*"The API uses standard HTTP authentication headers"* — contradicting the real spec line cria was
+carrying in `⟦ctx:facts⟧` on the same page. Two calls later it quoted its own fabrication back as fact.
+
+### Defect 4 — cria ordered an install cria forbids
+
+**0092**, dirguard: *"Installing into the shared system or user environment is not permitted here…"*
+**0098**, cria's own steer: *"run pip3 install --user web_fetch to install it in your user site."*
+Blocked again at 0100 by the identical guard. A reader ran it: the PyPI `web_fetch` package exists but
+is an unrelated HTML-caching library, so `from web_fetch import web_fetch` binds a module and
+`web_fetch(url, …)` raises `TypeError`. Four calls burned on a fix that could not have worked.
+
+### Defect 5 — cria's plan invented the filename that created the third resolver
+
+The plan at **0008** named `ada_handle_resolver.py`, a filename the request never gave. cria's own
+step-removal judge at **0010** — whose prompt states verbatim that *"an invented FILENAME the request
+never mentioned … becomes a requirement the coder must match, and it will build a second copy of work
+it has already finished under its own name"* — was asked about that exact plan and answered `NONE`.
+The rule predicted the outcome; the check that owns it passed the violation. That file is on disk.
+
+### Also confirmed, each reproduced
+
+- **0062 steer told the shipped program to call a harness tool**: *"Use web_fetch to call
+  https://api.handle.me/openapi.json … implement the logic"*. The coder wrote
+  `from web_fetch import web_fetch` into the deliverable. cria's planner prompt forbids this in bold —
+  but that rule lives only in the planner prompt; the coder system prompt and steer author never see it.
+- **8 KB refused as "a large reference document"** (0096, 0101, 0102) — 58 lines; a ranged read
+  returned all of it inline two calls later.
+- **5 of 27 coder turns lost** to tool calls emitted inside `reasoning_content`;
+  `massage.recover_leaked_tool_calls` only scans `content`.
+- **`_usable_query` hole**: the search supervisor returned a prose sentence containing a URL, and cria
+  wrote the whole English sentence into the coder's `web_search` query.
+- **The critic's best instruction never reached the coder** (0104): *"directly read the OpenAPI spec
+  from https://api.handle.me/openapi.json to extract the required information"* — cria injected the
+  stale checks steer instead.
+
+### What the model got right and cria talked it out of
+
+At **0045**, unaided: *"It does not directly include total Handles… However, there is a separate
+endpoint /holders/{address} that returns total_handles. So we need to combine data from both
+endpoints."* That is the entire correct design. Three lines later it discarded it, because cria had
+told it four times, in cria's own voice, that it had not read the spec.
