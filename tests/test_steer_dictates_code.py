@@ -108,3 +108,28 @@ class WiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ACutReplyIsNotADirectiveTests(unittest.TestCase):
+    """The tool-inspecting steer branch took `_completion_text(comp)` with no truncation check, while
+    its toolless sibling `summarize()` has had one since the truncation guard landed and
+    `live_execution_marker` says it outright: "a cut intent is not an intent".
+
+    Walked on ada-handles_fabliq_codex_pon_1785721353 call 0139: the author returned
+    finish_reason=length with 8,192 tokens of the coder's OWN pytest failures repeated about nine
+    times, and cria delivered roughly 27,000 characters of that to the coder in cria's voice — under
+    a prompt asking for "a SHORT directive (under 120 words)". The real directive was sitting in the
+    discarded reasoning_content."""
+
+    def test_the_tooled_author_path_drops_a_cut_reply(self):
+        import inspect
+        src = inspect.getsource(loop.author_steer)
+        self.assertIn("massage.is_truncated(comp)", src)
+
+    def test_it_is_traced_never_silent(self):
+        import inspect
+        self.assertIn("loop.steer_truncated", inspect.getsource(loop.author_steer))
+
+    def test_the_toolless_sibling_still_has_its_own_guard(self):
+        import inspect
+        self.assertIn("massage.is_truncated", inspect.getsource(loop.summarize))

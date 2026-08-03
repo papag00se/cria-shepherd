@@ -725,7 +725,23 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if path and args.get("old_string") is not None:
-                    cmd = _edit_command(str(path), str(args.get("old_string") or ""), str(args.get("new_string") or ""))
+                    # A MISSING required argument is not an empty one. `new_string` is declared
+                    # required, and `args.get(...) or ""` turned its ABSENCE — the shape a truncated
+                    # tool call has — into "delete this text". cria then applied that deletion, saw
+                    # the wreckage, and reported it to the coder as a fact about ITS file:
+                    #   "your edit would break handle_resolver.py — unmatched ')' (line 15)"
+                    # Walked on ada-handles_fabliq_codex_pon_1785721353 call 0165-0166: that file
+                    # compiles cleanly. The syntax error was cria's own artifact, handed over with a
+                    # file:line citation — and it named the exact phantom (a missing closing paren)
+                    # the run had already been chasing for a hundred calls. An intentional empty
+                    # new_string is still fine; only an ABSENT key is refused.
+                    if "new_string" not in args:
+                        cmd = _refusal_command(prompts.load("edit_missing_new_string"))
+                        if rlog is not None:
+                            rlog.emit("writeproxy.edit_missing_arg", tool=name, arg="new_string")
+                    else:
+                        cmd = _edit_command(str(path), str(args.get("old_string") or ""),
+                                            str(args.get("new_string") or ""))
             elif name in _READ_NAMES and name in injected:
                 cmd = _read_command(args)
             elif name in _LIST_NAMES and name in injected:

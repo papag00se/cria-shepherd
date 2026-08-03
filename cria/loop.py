@@ -4374,6 +4374,17 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                                  tooled_user, rlog, phase="reasoner",
                                  workspace_root=workspace_root, transcript=transcript,
                                  answer_now=verifytools.ANSWER_NOW_STEER)
+        # A CUT REPLY IS NOT A DIRECTIVE. Its toolless sibling `summarize()` has checked this since
+        # the truncation guard landed, and `live_execution_marker` says it outright — "a cut intent is
+        # not an intent". This branch never got it. Walked on
+        # ada-handles_fabliq_codex_pon_1785721353 call 0139: the author returned finish_reason=length
+        # with 8,192 tokens of the coder's own pytest failures repeated ~9x, and cria delivered 27,000
+        # characters of that to the coder, in cria's voice, under a prompt asking for "a SHORT
+        # directive (under 120 words)". The real directive was sitting in the discarded
+        # reasoning_content.
+        if massage.is_truncated(comp):
+            rlog.emit("loop.steer_truncated", level="warn", phase="reasoner")
+            return None
         text = _completion_text(comp)
         if reasoner_role is not None:
             text = reasoner_role.clean_content(text)
