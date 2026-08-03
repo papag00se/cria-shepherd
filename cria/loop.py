@@ -4380,10 +4380,12 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         text = strip_think(text or "").strip()
         evidence = user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog, ask=_steer_ask)
+        return _grounded_steer_or_none(_steer_or_none(text), evidence, rlog, ask=_steer_ask,
+                                       sess=gs, messages=body.get("messages", []))
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner", coder_tools=coder_tools) or "").strip()
-    return _grounded_steer_or_none(_steer_or_none(text), user, rlog, ask=_steer_ask)
+    return _grounded_steer_or_none(_steer_or_none(text), user, rlog, ask=_steer_ask,
+                                   sess=gs, messages=body.get("messages", []))
 
 
 def _steer_or_none(text: str) -> str | None:
@@ -4519,7 +4521,65 @@ def _dictates_code(directive: str, ask=None) -> bool:
     return head != "DESCRIBES"        # DICTATES, or anything unreadable → the pre-filter stands
 
 
-def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None) -> str | None:
+# A TRIGGER, deliberately over-firing: its only job is to decide whether one focused question is
+# worth a call. Whether a directive LEAPS from "this request failed" to "the service does not work"
+# is a judgment, and principle 9's corollary forbids a pattern making it.
+_BLAME_WORDS = re.compile(
+    r"(?i)\b(?:not (?:a )?(?:working|available|live|real)|does ?n[o']?t (?:support|work|exist|serve)|"
+    r"is (?:down|offline|broken|unavailable|deprecated)|no longer (?:works|available|supported)|"
+    r"rate[- ]limit|requires? (?:an? )?(?:api[- ]?key|auth|credential)|documentation (?:landing )?page|"
+    r"returns? 404 for (?:every|all)|consistently returns? 404|impossible given the api)\b")
+
+
+def _blames_a_service_that_answered(directive: str, sess, messages: list, rlog, ask) -> bool:
+    """True when the directive concludes the SERVICE is broken while cria's own ledger holds a 2xx
+    for that host.
+
+    The steer author's system prompt already forbids this, in these words: "NEVER attribute the
+    failure to an outside cause — authentication, rate limits, permissions, a broken service — that
+    the working access disproves; a false cause becomes the coder's belief and every later step
+    builds on it." That is a request, not an enforcement, and this is what it costs when a small
+    reasoner breaks it.
+
+    Walked on ada-handles_mellum2_codex_poff_1785714194 call 0026, cria's own voice, delivered
+    verbatim to the coder at 0027:
+
+        "The Ada Handles API does not support /holders/{address} returning per-holder total_handles —
+         it consistently returns 404 ... which is impossible given the API. Fix: handle the 404 and
+         return 0 for total_handles. In test_resolve_handle.py, relax the total_handles assertion to
+         allow 0."
+
+    Run during the walk: that endpoint returns 200 with total_handles: 15 for the STAKE address the
+    code already held. The coder read the steer as the user speaking, wrote the band-aid, rewrote its
+    own assertion to expect 0, and the run shipped green over a broken deliverable. The same false
+    claim ended two earlier runs on this task.
+
+    Silent when cria has NO successful fetch: then it cannot disprove anything, and abstaining is the
+    only honest answer (same contract as :func:`known_routes`). Silent with no reasoner."""
+    if not directive or ask is None:
+        return False
+    if not _BLAME_WORDS.search(directive):
+        return False
+    ledger = _fetch_ground_truth(messages, sess, header="PAGES ALREADY FETCHED")
+    if not ledger.strip() or not _fetch_succeeded_anywhere(sess, messages):
+        return False          # nothing answered → cria holds no disproof → not its call to make
+    ans = strip_think(ask(prompts.render("steer_blames_the_service",
+                                         ledger=ledger, directive=directive)) or "").strip()
+    head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
+    if head == "BLAMES":
+        rlog.emit("loop.steer_blames_service", level="warn", head=_clip(directive, 140))
+        return True
+    return False
+
+
+def _fetch_succeeded_anywhere(sess, messages: list) -> bool:
+    """Did ANY fetch this session come back 2xx? The disproof this check stands on."""
+    merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
+    return any(_fetch_succeeded(_fetch_facts(e)[0]) for e in merged.values())
+
+
+def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
+                            sess=None, messages: list | None = None) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
     The steer author's own system prompt already says "NEVER invent a file path, directory, command,
@@ -4544,6 +4604,9 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         return None
     if _dictates_code(directive, ask):
         rlog.emit("loop.steer_dictated_code", level="warn", head=_clip(directive, 120))
+        return None
+    if sess is not None and _blames_a_service_that_answered(
+            directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None
     cite = _false_line_citation(directive, evidence)
     if cite:

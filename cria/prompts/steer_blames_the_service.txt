@@ -1,0 +1,17 @@
+You are checking ONE thing about a short directive that is about to be sent to a coding model. Answer with a single word.
+
+Below the directive is the record of what this session actually fetched — real HTTP statuses from real requests, not anyone's claim.
+
+Some directives blame the OUTSIDE WORLD for a failure: the service is down, the API does not support what is being asked, it returns errors for everything, it is a documentation page rather than a working API, it is rate-limiting, it needs credentials nobody has. Sometimes that is true. But when the record shows the same host answering successfully, it is false — and a false cause is worse than no directive at all, because the coding model adopts it as fact and every later step builds on it.
+
+A directive that says a specific REQUEST failed, or that a specific path returns an error, is fine — that is an observation. What is not fine is concluding from it that the SERVICE does not work or cannot do the thing, when the record shows it answering.
+
+Answer EXACTLY one word:
+BLAMES — it concludes the service is unavailable, broken, rate-limited, or incapable of what is being asked, and the record below shows that same host answering successfully.
+GROUNDED — it does not make that leap, or the record does not contradict it.
+
+THE RECORD OF WHAT WAS ACTUALLY FETCHED:
+{{LEDGER}}
+
+DIRECTIVE:
+{{DIRECTIVE}}
