@@ -240,3 +240,22 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         class _S:
             fetched_pages = {}
         self.assertIsNone(loop._fetched_facts_anchor(_S()))
+
+
+class ExecIntentAsksASimpleQuestionTests(unittest.TestCase):
+    """The live-execution check asks for three JSON fields. Its first and only live firing —
+    ada-handles_mellum2_codex_poff_1785714194 call 0032 — came back `finish_reason=length` with
+    EMPTY content and all 8,192 tokens spent in reasoning, ending in a degenerate `5x5x5…` loop.
+    No JSON, so the delivered program was never run: the one check built to catch a green gate over
+    a broken program, 0 for 1. Every sibling judge already forces thinking off or retries a cut
+    answer; this call did neither."""
+
+    def test_it_forces_thinking_off(self):
+        self.assertIn("force_think_off=True", inspect.getsource(loop.live_execution_marker))
+
+    def test_a_CUT_answer_is_not_used_as_an_intent(self):
+        self.assertIn("massage.is_truncated", inspect.getsource(loop.live_execution_marker))
+
+    def test_it_still_never_affects_a_completion_on_failure(self):
+        src = inspect.getsource(loop.live_execution_marker)
+        self.assertIn('return ""', src)     # every failure path is silent, never a raise

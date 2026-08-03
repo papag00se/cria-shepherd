@@ -450,7 +450,17 @@ def _example_hint(v: dict) -> str:
     s = " ".join(str(ex).split())     # one line: a multi-line example would break the field list
     if not s:
         return ""
-    return f", e.g. {s[:EXAMPLE_CHARS]}…" if len(s) > EXAMPLE_CHARS else f", e.g. {s}"
+    if len(s) <= EXAMPLE_CHARS:
+        return f", e.g. {s}"
+    # ELIDE THE MIDDLE, never the tail. A head-only cut ending in `…` reads as "and it continues",
+    # and spec placeholders are mostly a long run of one character: the Ada Handles spec's `ada`
+    # example is `addr1e00000000000000000000000000000000000001`, which TERMINATES, and cutting it at
+    # 32 produced `addr1e00000000000000000000000000…`. Walked on
+    # ada-handles_mellum2_codex_poff_1785714194 call 0015: the model copied that and could not stop —
+    # it emitted exactly 2,048 zeros before a guard caught it. Keeping both ends shows the shape and
+    # the terminator, cannot be read as open-ended, and is shorter than the head-only form was.
+    keep = max(4, (EXAMPLE_CHARS - 1) // 2)
+    return f", e.g. {s[:keep]}…{s[-4:]}"
 
 
 def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> list[str]:
@@ -904,7 +914,21 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 "The response body was EMPTY. Retrying this exact URL returns the same empty "
                 "result — try a different source or path."), status, False
-    if find:
+    # A `find` NARROWS. When the whole document already fits, there is nothing to narrow — narrowing
+    # can then only DELETE. Walked on ada-handles_mellum2_codex_poff_1785714194 call 0019: the coder
+    # fetched /handles/goose with find="resolved_addresses"; the document is 1,546 characters against
+    # a 16,000-character budget, and cria returned 139 of them. What it dropped was
+    # `holder: stake1u85prp8…` — the exact argument that makes /holders/ return total_handles: 15.
+    # That value appears in ZERO of the run's 34 prompts. The same narrowing replaced a 404's
+    # 89-character body, `{"error":"holder_not_found","message":"Holder not found",…}`, with
+    # "no match. Available top-level keys: error, message, docs" — while cria told the model
+    # elsewhere "you have no content from them". It had the content and threw it away.
+    #
+    # Principle 5: cria never truncates what the model reads. A find on a document that fits was
+    # truncation wearing a search's clothes.
+    # (`truncated` = the TRANSPORT cut the body at the fetch limit. Then the document does not fit by
+    # definition, and a find-miss must still disclose that content exists beyond the cut.)
+    if find and (truncated or est_tokens(reduced) > cap_tokens):
         slice_ = find_in(reduced, parsed, find, cap_tokens)
         # A broad find (e.g. `paths` on a whole spec) can match a subtree far bigger than one page —
         # window it and tell the model to narrow, so a "filtered" fetch never dumps an unusable wall.

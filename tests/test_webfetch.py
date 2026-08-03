@@ -924,10 +924,21 @@ class FieldExamplesTests(unittest.TestCase):
     def test_a_non_string_example_still_rides(self):
         self.assertIn("length(integer, e.g. 9)", self.summary())
 
-    def test_the_example_is_bounded_and_the_cut_is_disclosed(self):
+    def test_a_long_example_keeps_BOTH_ends_so_it_cannot_read_as_endless(self):
+        """A head-only cut ending in `…` reads as "and it continues". Spec placeholders are mostly a
+        long run of one character: the Ada Handles `ada` example is
+        `addr1e00000000000000000000000000000000000001`, which TERMINATES, and cutting it at 32 gave
+        `addr1e00000000000000000000000000…`. Walked on run 1785714194 call 0015 — the model copied
+        that and emitted exactly 2,048 zeros before a guard stopped it."""
         holder = next(f for f in self.summary() if f.startswith("holder("))
-        self.assertTrue(holder.endswith("…)"))
+        self.assertIn("…", holder)
+        self.assertFalse(holder.endswith("…)"), "the example still reads as open-ended")
         self.assertLess(len(holder), 80)
+
+    def test_a_terminated_placeholder_keeps_its_terminator(self):
+        out = wf._example_hint({"example": "addr1e00000000000000000000000000000000000001"})
+        self.assertTrue(out.startswith(", e.g. addr1e"))
+        self.assertTrue(out.endswith("0001"))
 
     def test_a_structural_example_is_dropped(self):
         # A list/dict example restates the shape; it is not a discriminating value.
@@ -944,3 +955,46 @@ class FieldExamplesTests(unittest.TestCase):
     def test_the_field_cap_disclosure_still_works_alongside_examples(self):
         out = self.summary(max_fields=2)
         self.assertTrue(out[-1].startswith("…+"))
+
+
+class FindNeverDeletesADocumentThatFitsTests(unittest.TestCase):
+    """A `find` NARROWS. When the whole document already fits the page budget there is nothing to
+    narrow, so narrowing can only DELETE.
+
+    Walked on ada-handles_mellum2_codex_poff_1785714194 call 0019: the coder fetched /handles/goose
+    with find="resolved_addresses". The document is 1,546 characters against a 16,000-character
+    budget and cria returned 139 of them — dropping `holder: stake1u85prp8…`, the exact argument
+    that makes /holders/ return total_handles: 15. That value appears in ZERO of the run's 34
+    prompts."""
+
+    BODY = ('{"name":"goose","holder":"stake1u85prp8xt2lqxfkshjmtxvpa8w0g5galkdznlryhnlvzv0qk9z7h9",'
+            '"resolved_addresses":{"ada":"addr1qxsfzsmy6y2sedua"},"length":5}')
+
+    def _fetch(self, body, truncated=False, url=None, **kw):
+        # A DISTINCT url per case: fetch_nav caches, and three cases sharing one url made every
+        # case after the first read the first one's body.
+        url = url or f"https://api.handle.me/handles/{self.id().rsplit('.', 1)[-1]}"
+        orig = wf.fetch
+        wf.fetch = lambda u, ua=None: wf.FetchResult(200, u, "application/json", body, truncated)
+        try:
+            return wf.fetch_nav(url, **kw)
+        finally:
+            wf.fetch = orig
+
+    def test_a_find_on_a_small_document_returns_the_WHOLE_document(self):
+        out = self._fetch(self.BODY, find="resolved_addresses")
+        self.assertIn("stake1u85prp8", out, "the field the run needed was dropped")
+        self.assertIn("resolved_addresses", out)
+
+    def test_a_find_MISS_on_a_small_document_still_shows_the_body(self):
+        # The 404 case: cria replaced an 89-char error body with "no match, available keys: …"
+        # and told the model elsewhere it had no content from that fetch.
+        out = self._fetch('{"error":"holder_not_found","message":"Holder not found"}',
+                          find="total_handles")
+        self.assertIn("Holder not found", out)
+
+    def test_a_TRANSPORT_cut_body_still_narrows_and_discloses(self):
+        # The body really was cut at the fetch limit, so a miss may be an absence OR a cut.
+        out = self._fetch('{"a":1}', truncated=True, find="nonexistentkey")
+        self.assertIn("no match", out)
+        self.assertIn("fetch limit", out)

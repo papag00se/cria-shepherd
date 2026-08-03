@@ -1079,8 +1079,19 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
         return ""
     try:
         system, user = execcheck.intent_prompt(task)
+        # REASONING OFF, and a cut answer is no answer. This asks for three JSON fields and nothing
+        # else — there is nothing here to think about, and thinking is what killed it. Its first and
+        # only live firing, ada-handles_mellum2_codex_poff_1785714194 call 0032: `finish_reason=length`,
+        # empty content, all 8,192 tokens spent in reasoning_content, ending in a degenerate `5x5x5…`
+        # loop. No JSON, so parse_intent returned {} and the delivered program was never run — the one
+        # check built to catch a green gate over a broken program, 0 for 1. Every sibling judge already
+        # does one of these two things (force_think_off at _satisfaction_verdict, the truncation retry
+        # at the critic); this call did neither.
         comp = _judge_completion(reasoner_chat, reasoner_role, system, user, rlog,
-                                 phase="exec-intent", workspace_root="")
+                                 phase="exec-intent", workspace_root="", force_think_off=True)
+        if massage.is_truncated(comp):
+            rlog.emit("loop.exec_intent_truncated", level="warn")
+            return ""   # a cut intent is not an intent; say nothing rather than guess a command
         result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""))
         rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
                   exit_code=result.exit_code)
@@ -1774,6 +1785,21 @@ class Loop:
                     _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                  latest_user_text(msgs), q_of.get(_search_key(f), ""), results, rlog,
                                                  coder_tools=_coder_tools_summary(body.get("tools")))
+                    # DETERMINISTIC VETO over a destructive fuzzy verdict. Ruling the results
+                    # off-target DENIES the coder a file that is still on disk, permanently, on one
+                    # judgment call. Twice now that judgment has been wrong on this task and thrown
+                    # away the answer: on run 1785686596 the judge was asked about a query cria had
+                    # mangled to "(none)", and on run 1785714194 it had a clean query and STILL ruled
+                    # false while its own prompt carried a link described as "documentation on how to
+                    # resolve handles to addresses and get all handles by address", plus the official
+                    # api.handle.me swagger. The model gave up searching in the next turn.
+                    #
+                    # If the results name a host the TASK ITSELF names, they are on-target by
+                    # construction and no verdict can make them otherwise. That is exact — cria holds
+                    # both strings — and it only ever REFUSES a deletion, never causes one.
+                    if not r_ok and _results_name_the_tasks_host(latest_user_text(msgs), results):
+                        rlog.emit("loop.search_poison_refused", level="info", file=f)
+                        r_ok = True
                     if not r_ok:
                         sess.poisoned_search_files.add(_search_key(f))
                         sess.search_recommend = rec
@@ -4657,6 +4683,25 @@ def _search_key(path: str) -> str:
 _SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?tmp/read-only/search-[\w.\-]+\.txt)')
 
 
+def _results_name_the_tasks_host(task: str, results: str) -> str:
+    """A host the TASK names that also appears in the search RESULTS, or "".
+
+    The one cross-check cheap enough to stand over a destructive verdict: results that name the very
+    domain the user asked about are on-target by construction, whatever a judge says about them.
+    Both strings are cria's own, so this is exact rather than a second opinion.
+
+    Hosts only — a bare word the task mentions would match half the web. Requires the host to carry a
+    dot and a plausible TLD so "e.g." or a version number can never qualify."""
+    if not task or not results:
+        return ""
+    hosts = set(re.findall(r"\b((?:[\w-]+\.)+[a-z]{2,})\b", task.lower()))
+    low = results.lower()
+    for h in sorted(hosts, key=len, reverse=True):
+        if h.rsplit(".", 1)[0] and h in low:
+            return h
+    return ""
+
+
 def _toolcall_reads_search_file(tc) -> str | None:
     """The ./tmp/read-only search file a tool call reads (read_file path / a cat|grep command), else None."""
     raw = (tc.get("function") or {}).get("arguments")
@@ -4735,7 +4780,18 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
         on_target, rec = judge_query(reasoner_chat, reasoner_role, task, query, rlog,
                                      coder_tools=tools_summary)
         sess.query_verdicts[query] = (on_target, rec)
-    if on_target or not rec:
+    # A CONCRETE URL IS WORTH ACTING ON EVEN WHEN THE QUERY IS FINE. The judge's own prompt says: "make
+    # the recommendation a concrete URL to fetch (the API's .../openapi.json, or the docs page) — the
+    # supervisor will fetch it directly." It did not: `on_target` returned first, so a URL handed back
+    # alongside a good query was dropped on the floor. Walked on
+    # ada-handles_mellum2_codex_poff_1785714194 call 0003: the judge ruled the query on-target AND
+    # returned "https://api.handle.me/openapi.json" — the exact live URL the coder then spent six more
+    # calls rediscovering on its own at 0009. cria promising a model something it does not do is the
+    # same false-fact class as any other, and here it was promising it to its own judge.
+    #
+    # A search is still a legitimate move, so an on-target query is NOT rewritten — only a URL is acted
+    # on, and only through the same host-grounding check below that an off-target one passes.
+    if not rec or (on_target and not _looks_like_url(_usable_query(rec) or "")):
         return coder
     # The recommendation must be a QUERY before it can replace the coder's own. Measured: 47% of all
     # searches today were rewritten, and the replacements included `web_search('…')` wrappers and
@@ -4761,7 +4817,9 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
             return coder
         rlog.emit("loop.search_query_judged", action="fetch", query=query, rec=url)
         return _substitute_fetch(coder, msg, search_tc, url,
-                                 f"'{query}' looked off-target for this task — fetching {url} instead")
+                                 (f"fetching {url} — the source this task names, read it directly"
+                                  if on_target else
+                                  f"'{query}' looked off-target for this task — fetching {url} instead"))
     search_tc["function"] = {**(search_tc.get("function") or {}), "arguments": json.dumps({"query": rec})}
     _add_note(coder, f"'{query}' looked off-target for this task — searching '{rec}' instead")
     rlog.emit("loop.search_query_judged", action="requery", query=query, rec=rec)
