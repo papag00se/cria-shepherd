@@ -4126,3 +4126,40 @@ on the same task converging slower. Model variance against a clock, not a mechan
 
 The row stands: 3/4, model-attributable (blind-written mock fixtures + a decode speed that turns
 churn into clock death).
+
+## ada-handles_gemma4_codex_poff_1785843217
+
+REGRESSION1 campaign, gemma4 run 2/3 on `2ab7dcb`. Score **0/4**, terminal `milestone-miss-15min`
+(952 s, 131 calls). Capture `~/.cria/calls/20260804T043358-019fcc8d-4658-7f53-8e27-2bd29d16b460` —
+walked in full.
+
+### The run in one paragraph
+
+Same disease as run 1, different organ. Research was fast; resolver + tests existed with 2/2
+passing by ~minute 5. The model then burned the remaining ten minutes — roughly seventy calls — on
+a NINE-LINE throwaway `verify.py` whose f-string it could not close, cycling read→identical-edit→
+identical-write exactly like run 1's `handler` typo spiral. The README was never written (it sat
+in the plan step the coder itself collapsed), and the run died at the 15-minute floor with 0/4.
+gemma4 is now 0/4, 0/4 — the campaign's answer for this model is taking shape: its edit-exactness
+pathology under the current routing eats the milestone window regardless of which file it bites.
+
+### The cria-side incident (recorded as counter-evidence, not fixed — operator-refused class)
+
+Steer 0080 delivered a FALSE external fact in cria's voice: "the server always returns camelCase
+(from the spec: `resolvedAddresses`, `totalHandles`)" — the fetched spec says `resolved_addresses`
+and `total_handles`, and the coder's code was CORRECT until it obeyed (0081 flipped the fields).
+The shipped resolver still carries `totalHandles` — one of the 0/4's four zeros. Then steer 0102
+stated the TRUTH ("the real schema is `resolved_addresses`") and was DROPPED by the dictated-code
+judge (it pasted replacement lines). Net: the assist channel delivered the false fact and
+suppressed the true one.
+
+This is exactly the class of the twice-built, twice-REFUSED shape-contradiction check
+(docs/open-threads.md, "Withhold a steer that contradicts the session's own response shapes").
+The refusal's load-bearing bullet was "all four defects arrive AFTER the coder already wrote the
+wrong field." This instance is the counter-case: the coder's fields were RIGHT and the steer's
+false fact arrived BEFORE the write it caused. Recorded in the open thread; rebuilding a refused
+feature is the operator's call, not this walk's.
+
+**cria fault: none to fix now** — the one cria-side candidate is the refused-check class above,
+and everything else that fired (blames-service drop at 0038, dictated-code drops, repetition
+redirects, grounded flail steers naming the exact quote bug) behaved as designed. The row stands.
