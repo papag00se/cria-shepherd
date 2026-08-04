@@ -4524,3 +4524,31 @@ gemma4's first counted run: 1/4.
 RESCORED 1/4 → 2/4 under the README-probe scorer (operator ruling): the run's README documented
 `python verify.py` as the live check; the probe found it and execution proved it live. The walk's
 verdict (cria fault: none; row stands) is unchanged — the row now stands at 2/4.
+
+## ada-handles_gemma4_codex_poff_1785875123
+
+REGRESSION1 campaign, gemma4 run 2/3 (head `61242fc`+). Score **1/4** (README), terminal
+`milestone-miss-30min` (31 min, 202 calls; milestones 2.0 → 1.0 — the mid-run regression pattern
+again). Capture `~/.cria/calls/20260804T132534-019fce73-f738-7710-99f7-64fe9cba9614` — walked in
+full.
+
+### What held
+
+The search-judge redirected the opening search straight to the real openapi.json (0004). The new
+false-citation shapes withheld FIVE fabricated-line steers (`loop.steer_false_citation` ×5 — the
+guard added this morning is earning its keep). Working resolver on disk by call 15; the 15-minute
+milestone scored 2.0.
+
+### cria fault: none — the model dismantled its own working state again
+
+The second half is gemma4's signature churn, uncatchable without fuzzy judgment: the
+`handler`/`handle` typo re-introduced through five full-file rewrites; a self-inflicted
+`papagoose → papagoes` handle typo (0178) that survived to the end in live.py; a src/-layout
+reorganization that stranded imports; `[tool.Pytest]`/`pythonpaths` casing-and-key fabrications;
+and — the biggest single blinder — a pass/fail pipe (`pytest … | python -c "print('PASS' if …)"`)
+through the nonexistent bare `python`, which swallowed every real pytest result for dozens of
+calls. One DICTATES steer (0021) RATIFIED that broken pipe (kept `| python -c`, dropped the
+`else` from the conditional) while correctly saying "use python3" — logged as dictated-code
+counter-evidence #2. A which()-based guard on dictated commands was considered and REJECTED:
+`python` legitimately exists inside the activated venvs the same steers recommend, so the ground
+truth is not exact. Row STANDS — gemma4 run 2: 1/4.
