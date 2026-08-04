@@ -4163,3 +4163,34 @@ feature is the operator's call, not this walk's.
 **cria fault: none to fix now** — the one cria-side candidate is the refused-check class above,
 and everything else that fired (blames-service drop at 0038, dictated-code drops, repetition
 redirects, grounded flail steers naming the exact quote bug) behaved as designed. The row stands.
+
+## ada-handles_qwythos_codex_poff_1785844343
+
+REGRESSION1 campaign, qwythos run 2/3 on `7ec52ff`. Score **0/4**, terminal `milestone-miss-15min`
+(950 s, 89 calls). Capture `~/.cria/calls/20260804T045243-019fcc9e-7261-76b0-9877-28c43d72707c` —
+walked in full.
+
+### The run in one paragraph
+
+Research clean in 8 calls (spill read by line ranges + one find= pull; the critic verified it on
+real evidence). The death was an INTERFACE OSCILLATION entirely of the model's making: it wrote
+`script.py` with a placeholder resolver, wrote `test_script.py` blind against a DIFFERENT
+interface (`resolved_ada_address` / `holder_address` / `holder_total_handles`, `main(argv)`), and
+then spent ~60 calls alternating between reshaping the script to fit the tests and reshaping the
+tests to fit the script — with MagicMock-serialization bugs layered on top — never converging.
+At the 15-minute floor: placeholder still in the resolver's path, 3/4 tests red, no README, no
+live test. Run 1 of the same model finished 4/4 in 14.7 minutes; run 2 is the same coin landing
+on the other side of the clock.
+
+### cria fault: none — one design-tradeoff prevalence note
+
+The critics were consistently grounded (0049/0074/0077 each named the exact failing lines and the
+mismatch), the confirm at 0083 did a real inspection and its veto quoted the file's actual
+behavior, and the flail steers named the right bug. Two TRUE steer diagnoses (0034's mock-invoke
+explanation, 0085's None-return/main-signature fix) were DROPPED by the dictated-code judge — both
+pasted replacement code, which is exactly what that judge exists to drop, and its documented
+measurement (authored code is usually broken) still holds. That is now three true-directives
+dropped across these walks (gemma4 run 2's snake_case correction, these two) against the measured
+harm the drop prevents; recorded as prevalence for the steer-channel design, not changed.
+
+The row stands: 0/4, model-attributable (blind-written test interface + oscillation).

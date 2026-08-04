@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 04:50:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 05:09:25 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -67,6 +67,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+98a4951 docs(regression): gemma4 2/3 = 0/4 walked — same edit-spiral disease; false-field steer counter-evidence to open-threads
 7ec52ff docs(regression): ternary-bonsai 2/3 = 3/4 walked — cria fault none; clock death mid-fix; row stands
 2ab7dcb docs(regression): nemotron 1/3 = 3/4 walked — cria fault none; refuted-by-disk guard fired 4x correctly in-run
 ccf601b docs(regression): nemotron-elastic 1/4 walked + superseded — confirm veto refuted-by-disk fixed; rerun on new code
@@ -81,7 +82,6 @@ f0411bf docs(regression): qwopus 1/3 = 4/4 — 17/17 tests, 48 min
 2e7de81 docs(regression): ternary-bonsai 1/3 = 4/4 on a17a7c1 — the backstop declined the same early finish
 ca75dd9 docs(regression): run 1 walked + superseded; campaign restarts ternary-bonsai on a17a7c1
 a17a7c1 fix(loop): a session NEVER completes on judgment alone — the plan-ON end runs the checks it owns
-3a145c6 chore(suite): fabliq run-kill tails + ladder report refresh from parking
 ```
 
 ---
