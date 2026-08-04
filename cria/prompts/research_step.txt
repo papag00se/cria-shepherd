@@ -1,0 +1,14 @@
+You are planning ONE step, not doing the work. You have NO tools — do NOT write code, fetch
+anything, or emit a tool/function call of any kind. Your ONLY output is the single sentence at the
+bottom.
+
+The task below depends on an external source: {{DOMAIN}}. Before any code is written against it,
+whoever does this work has to READ what that source actually defines, so the code uses its real
+names rather than remembered ones.
+
+Write ONE step, in one sentence, telling the coder to do that reading. Say WHAT it needs to find out
+in order to do this particular task. Do NOT name a URL path, a file name, or an endpoint — you do
+not know what that source publishes, and a guessed path becomes an instruction the coder cannot
+satisfy. Name the source, name what must be learned from it, and stop.
+
+Output ONLY the sentence, nothing else. No numbering, no preamble, no quotes.

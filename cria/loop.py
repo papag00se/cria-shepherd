@@ -38,11 +38,12 @@ from . import callcapture, denial, editrecovery, execcheck, focustrim, groundtru
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
+from . import research
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
                       surviving_noise_drops)
-from .searchloop import normalize_search
+from .searchloop import first_domain_in, normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
@@ -1628,7 +1629,13 @@ class Loop:
                 # proxy it. A live synthetic session (loaded above) skips this entirely.
                 if classification is None or classification.task_type != "coding":
                     return None
-                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages)),
+                # The reading step is written BY THE MODEL (research.authored_research_step) — cria
+                # only supplies the one fact it can establish on its own, that the task names an
+                # external source. cria does not write plan steps.
+                def _plan_ask(sysp, usr):
+                    return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                     sysp, usr, rlog, phase="research-step")
+                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask),
                                    synthetic=True, prior_work=briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
                 # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
@@ -1637,7 +1644,7 @@ class Loop:
                 # A synthetic plan is NEVER mirrored to disk (no _persist_plan): it's just the raw task.
                 if _stable_session(session_key):
                     self._store.put(session_key, sess)
-                rlog.emit("loop.start", id=sess.plan.id, steps=1, synthetic=True)
+                rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=True)
             else:
                 # A rewrite is a CONTINUATION only as a pure handoff — the summary IS the latest user
                 # text (the harness replaced history, the user typed nothing new). Then a completed
@@ -1680,11 +1687,15 @@ class Loop:
                         if getattr(self._ctx.planner, "_retriable_failure", False) \
                                 or classification is None or classification.task_type != "coding":
                             return None
-                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages)),
+                        def _plan_ask(sysp, usr):
+                            return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                             sysp, usr, rlog, phase="research-step")
+                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask),
                                            synthetic=True, prior_work=briefing)
                         if _stable_session(session_key):
                             self._store.put(session_key, sess)
-                        rlog.emit("loop.start", id=sess.plan.id, steps=1, synthetic=True, planner_fallback=True)
+                        rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=True,
+                                  planner_fallback=True)
                     else:
                         sess = PlanSession(plan=plan, prior_work=briefing)
                         self._store.put(session_key, sess)
@@ -1872,6 +1883,18 @@ class Loop:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
+        # PERIODIC READING CHECK. A step that asks for research has no way to declare itself finished
+        # except through the step critic reading the transcript, and when the step names a source that
+        # cannot be reached the critic is right to refuse it forever: run 1785804243 spent 114 of its
+        # 195 calls on "Research the Ada Handles API documentation by fetching the GitHub repo root
+        # directory" and never reached step 2. Every RESEARCH_CHECK_EVERY acting turns, ask one focused
+        # question against what cria has really parsed — and when the reading this step wanted is
+        # already in hand, complete it and move on. Grounded in the fetch ledger, so it cannot clear a
+        # step on a claim: with no parsed routes and no parsed fields it answers NOT_DONE without
+        # calling the model at all (cria.research).
+        advanced = self._research_check(sess, key, body, idx, total, rlog)
+        if advanced is not None:
+            return advanced
         # PERIODIC SATISFACTION CHECK on the PLAN-ON path. It lived only on the single-item driver
         # until 2026-08-01, which is the path that needed it least: plan-off already ends the moment
         # the coder says done. With a plan, the session ends only when every STEP verifies — so a
@@ -2255,6 +2278,40 @@ class Loop:
         sess.critic_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
+
+    def _research_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
+        """Every ``RESEARCH_CHECK_EVERY`` acting turns: has the reading THIS step asks for been done?
+        Returns the driven next turn when the step is complete, else None (the usual case).
+
+        THE FACTS ARE GATHERED, NOT ASKED FOR. :func:`research.grounded_sources` reads cria's own
+        fetch ledger and keeps only the documents that came back 2xx AND had routes or response
+        fields parsed out of them. An empty list short-circuits to NOT_DONE with no model call — the
+        guarantee that matters, because run 1785804243's ledger was five HTTP 200s that defined
+        nothing ("this page answered, but no endpoint definitions were found in it") and a judge
+        shown that could still have been talked into DONE.
+
+        MOST STEPS ARE NOT RESEARCH and the verdict says so (NOT_RESEARCH), which costs one reasoner
+        call per ten turns and changes nothing. That is the price of the one case it exists for; the
+        alternative was a run spending its entire window on a step it could never satisfy.
+
+        It only ever COMPLETES a step — it never fails one, never steers, and never speaks to the
+        coder. A step it declines to clear is left exactly as it was, for the ordinary critic to
+        judge (#13, and #2: the safe class of intervention is the additive one)."""
+        if sess.coder_turns <= 0 or sess.coder_turns % research.RESEARCH_CHECK_EVERY:
+            return None
+        item = sess.plan.current()
+        if item is None or item.done:
+            return None
+        sources = research.grounded_sources(_extract_fetches(body.get("messages", [])))
+        verdict = research.step_reading_verdict(
+            lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                        sysp, usr, rlog, phase="research-check"),
+            sess.plan.task, item.text, sources)
+        if verdict != research.DONE:
+            return None
+        rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
+                  turns=sess.coder_turns, step_text=item.text[:160])
+        return self._advance(sess, key, body, idx, total, rlog)
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
         """Mark the current step VERIFIED (a step advances ONLY on a genuine critic pass — there is no
@@ -3141,15 +3198,36 @@ def _session_from_dict(d) -> PlanSession | None:
         return None
 
 
-def _synthetic_plan(task: str, clock=None) -> Plan:
+def _synthetic_plan(task: str, clock=None, ask=None) -> Plan:
     """A degenerate 1-item 'plan' for PLAN-OFF mode: the whole task is ONE implicit step whose item
     text IS the raw task. The PlanSession carries the ``synthetic`` flag (which selects raw-task
     framing + the single-item off-ramps); the Plan itself is an ordinary 1-item Plan. id/created match
     the Planner's convention (clock + task-key) so a resumed synthetic session keeps a stable id. Never
     mirrored to disk (no ``_persist_plan``) — it holds no decomposition, only the user's own words."""
     now = (clock or (lambda: datetime.now(timezone.utc)))()
+    # A READING STEP FIRST when the task itself names an external source. Plan-off has no planner, so
+    # nothing ever told the coder to look anything up — and it didn't: run 1785805694 made ZERO
+    # web_fetch calls in 237, then wrote a resolver, unit tests, a live test and a README against
+    # `api.handle.me/v1/handle/` returning `address`/`holder`/`totalHandles`, an API it invented
+    # whole. It scored 1/4 and could not have scored more: the resolver cannot resolve.
+    #
+    # THIS IS A DELIBERATE RETURN, and the thing it returns to was retired for cause. The old
+    # research-first injection baked a PATH in (`https://<domain>/openapi.json`) and pinned the step
+    # so the re-derivation could not drop it — a possibly-wrong URL made an inescapable mandate, and
+    # one wrong "not satisfied" re-added it over and over (~275 churning turns). Two things are
+    # different now. It names only the DOMAIN THE TASK ITSELF NAMES, never a path, so there is no
+    # guess to be trapped by. And it has an EXIT that the retired version never had: the periodic
+    # reading check (Loop._research_check) clears it the moment the ledger holds what it asked for,
+    # grounded in parsed routes and fields rather than in anyone's claim. A step with an exit is a
+    # different object from a step without one.
+    #
+    # The step is an ordinary item — not pinned, not immutable. The living re-derivation may drop it
+    # like any other, and the step critic judges it like any other.
+    domain = first_domain_in(task)
+    step = research.authored_research_step(ask, task, domain) if (domain and ask) else ""
+    items = ([PlanItem(text=step)] if step else []) + [PlanItem(text=task)]
     return Plan(id=f"{now.strftime('%Y%m%dT%H%M%S')}-{_task_key(task)[:8]}", task=task,
-                created=now.isoformat(timespec="seconds"), items=[PlanItem(text=task)])
+                created=now.isoformat(timespec="seconds"), items=items)
 
 
 def _history_root(messages: list[dict]) -> tuple[str, str]:
