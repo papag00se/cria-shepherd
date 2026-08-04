@@ -187,6 +187,7 @@ class GuardState:
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
+    research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
     drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     last_gate_red: bool = False  # the most recent gate/check-in found real error-class problems (RED). The
@@ -2301,8 +2302,14 @@ class Loop:
         It only ever COMPLETES a step — it never fails one, never steers, and never speaks to the
         coder. A step it declines to clear is left exactly as it was, for the ordinary critic to
         judge (#13, and #2: the safe class of intervention is the additive one)."""
+        # ONCE PER TICK. The driver recurses into the next item without advancing coder_turns, so a
+        # modulo test alone re-fires for every remaining step inside one turn — that recursion is how
+        # run 1785812224 walked six steps in under three minutes.
         if sess.coder_turns <= 0 or sess.coder_turns % research.RESEARCH_CHECK_EVERY:
             return None
+        if sess.research_checked_turn == sess.coder_turns:
+            return None
+        sess.research_checked_turn = sess.coder_turns
         item = sess.plan.current()
         if item is None or item.done:
             return None
@@ -2318,11 +2325,30 @@ class Loop:
         # every time. The same lesson the replan noise judge already carries: a count is not a reading.
         rlog.emit("loop.research_check", step=idx, verdict=verdict, sources=len(sources),
                   turns=sess.coder_turns)
-        if verdict != research.DONE:
-            return None
-        rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
-                  turns=sess.coder_turns, step_text=item.text[:160])
-        return self._advance(sess, key, body, idx, total, rlog)
+        # IT REPORTS. IT DOES NOT COMPLETE.
+        #
+        # This used to call _advance on a DONE, which made it a SECOND completion authority — one
+        # that never looks at the workspace. On its first planner-on run (1785812224) that bypass
+        # marked steps 1 through 6 verified in under three minutes, among them "Write a Python
+        # script…", "Implement unit tests…" and "Create a live test…", with two files on disk and
+        # nothing else built. The run scored 0.0 where the same task under plan-off scored 1.0: the
+        # guard was worse than its absence.
+        #
+        # Two things went wrong and only one of them was the model. fabliq answered DONE for plainly
+        # build-shaped steps, which NOT_RESEARCH exists to catch and did catch twice — a small model
+        # on a three-way judgement is simply not a completion gate. But the design handed it that
+        # power, and that is the defect: the step critic is the only thing here that reads the
+        # workspace, and #13 says completion fails CLOSED. A check that cannot see whether a file was
+        # written must never be what says a step producing a file is finished.
+        #
+        # What it is FOR survives intact: saying, in the log, whether the reading a step asked for has
+        # actually happened — which is the fact nobody had when run 1785804243 spent 114 calls on an
+        # unreachable research step. Handing that fact to the critic as EVIDENCE, so the one authority
+        # that checks the workspace can act on it, is the next change and needs its own measurement.
+        if verdict == research.DONE:
+            rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
+                      turns=sess.coder_turns, step_text=item.text[:160])
+        return None
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
         """Mark the current step VERIFIED (a step advances ONLY on a genuine critic pass — there is no
