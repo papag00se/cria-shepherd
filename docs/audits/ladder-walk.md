@@ -4286,3 +4286,33 @@ forth across the two spellings.
    the tests, and the steers said so.
 
 The row stands: 1/4, model-attributable.
+
+## ada-handles_nemotron-elastic_codex_pon_1785850908
+
+REGRESSION1 campaign, nemotron-elastic run 2/3 on `7e4b167` (planner ON). Score **3/4**
+(live_test.py exit=1 bare — same as run 1), terminal `exited` at 32 min, 200 calls. Capture
+`~/.cria/calls/20260804T064210-019fcd02-a380-7242-874d-141bc2f622bb` — walked in full.
+
+### The run in one paragraph
+
+Reproduces run 1's profile almost exactly: good planner research (spec + grep for total_handles),
+solid resolver + CLI (verifier: real address+holder+count), one passing unittest, README — and a
+`live_test.py` that DEMANDS a command-line argument, prints usage and exits 1 when run bare, which
+is how a test must run. The middle of the run was the model rewriting `test_resolve_handle.py`
+~20 times (0104–0175, the write-repetition pathology in its purest form — near-identical writes
+cycling on 403-handling and assertion phrasing) with steers naming the right escape each time.
+The false auth-scheme idea appeared again (0109 steered TOWARD an Authorization header the spec
+does not require; 0113 obeyed briefly) but was abandoned without shipping damage.
+
+### cria fault: none — and the new guard carried its weight
+
+`loop.confirm_refuted_by_disk` fired twice, both correct ("paths.txt does not exist",
+"live_test.py does not exist" — both on disk), so two checker fabrications that would have
+re-blocked verified steps under yesterday's code cost one log line each instead. The completion
+ran the checks green (unit test passes; the live test's own failure is invisible to pytest since
+it is a bare script whose bare run the model never performed — the satisfaction judge twice
+correctly refused earlier completion attempts on exactly "the live test has not been executed",
+and the final approval came only after the checks-green ending).
+
+nemotron-elastic's campaign answer is now consistent: 3/4, 3/4 — a stable model with one stable
+defect class (an argument-demanding "live test" it never runs bare). The row stands.
