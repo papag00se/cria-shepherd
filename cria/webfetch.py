@@ -537,7 +537,7 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
             # marker away — the one case it exists for. A nested field past the cap then read to the
             # coder as "the API does not return it", under a prompt that says "use these EXACT names
             # ... do not guess". Same rule as the sibling cap below: never a silent slice.
-            sub = _schema_field_summary(v, schemas, 8, _depth + 1)
+            sub = _schema_field_summary(v, schemas, max_fields, _depth + 1)
             out.append(f"{k}{{{', '.join(sub)}}}" if sub else f"{k}(object)")
         elif v.get("type") == "array":
             out.append(f"{k}[]")
@@ -567,9 +567,16 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 #     to 40 clears it, and that is the endpoint whose missing tail cost a run.
 #   * `+6` — 16,949 occurrences — is the NESTED cap, the literal `8` in the `_depth == 0` recursion
 #     above, on `stats{…}` inside `GET /health`. This constant does not touch it.
-# Per file: 12,595 of the 12,599 prompts still carry a nested-capped list after this change. The
-# same "a field that exists reads as absent" defect is therefore still live one level down; fixing
-# it is a separate change that needs its own measurement, not a number folded into this one.
+# THE NESTED CAP IS NOW THIS SAME CONSTANT, and the `8` is gone. Measured first: across every
+# capture dir exactly ONE object is ever nested-capped — `stats` inside `GET /health`, 14 fields, 6
+# hidden — and the six are node-sync internals (`current_block_hash`, `tip_block_hash`,
+# `utxo_schema_version`, `index_schema_version`, `lock_lambdas`, `estimated_sync_time`) that no
+# deliverable in the corpus has needed. That measurement was used, wrongly, to leave the `8` alone.
+# "No task has needed these particular fields" is a judgement about ONE api and ONE task family,
+# and cria is meant to be agnostic to both; the rule stated two paragraphs up says nothing about
+# whether a hidden field is interesting — a field that exists must never read as absent. One cap,
+# one rule, both levels. Cost on the document that cost a run: 137 characters, and it is the last
+# elision in it — that spec now renders with no `…+N more field(s)` at either level.
 #
 # It has a second cost: it blinds cria's OWN checks. Absence from a TRUNCATED list is not evidence a
 # field is missing, so any ledger-contradiction check must abstain on every capped endpoint — which

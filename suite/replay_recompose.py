@@ -432,8 +432,31 @@ def _fact_missing_file(case: Case, msg: dict) -> dict:
             "paths_that_exist_in_the_archived_workspace": on_disk}
 
 
+def _fact_spill_read_small(case: Case, msg: dict) -> dict:
+    """The refusal said "grep the file for what you need" about a file with no outline. So: does the
+    reply grep it, read it again, go back to the network — and does it name anything that is only
+    IN the file, which is the one thing it could not have known before.
+
+    ``names_something_only_the_file_says`` is a byte check against the archived file, not a score:
+    the strings are drawn from the file's own lines, so a hit means the model repeated content that
+    was in the recomposed text and nowhere else in the prompt."""
+    rel = case.facts.get("path", "")
+    base = os.path.basename(rel)
+    blob = signature(msg)
+    greps = [c for n, a in calls_of(msg) if n in ("shell", "bash", "exec_command", "run_terminal_cmd")
+             for c in [json.dumps(a)] if "grep" in c and base in c]
+    rereads = [n for n, a in calls_of(msg) if n in ("read_file", "list_dir") and base in json.dumps(a)]
+    only_here = [s for s in case.facts.get("only_in_the_file", []) if s in blob]
+    return {"greps_the_same_file_again": bool(greps),
+            "reads_the_same_file_again": rereads or None,
+            "fetches_the_web_again": [str(a.get("url", "")) for n, a in calls_of(msg)
+                                      if n == "web_fetch"] or None,
+            "names_something_only_the_file_says": only_here[:6]}
+
+
 FACTS = {
     "unclosed-verdict": lambda case, msg: _fact_unclosed_verdict(case, msg),
+    "spill-read-small": _fact_spill_read_small,
     "spill-outline": _fact_spill,
     "repeat-body": _fact_repeat,
     "gate-verbatim": _fact_edit_matches_disk,
@@ -981,8 +1004,93 @@ def _fact_unclosed_verdict(case: Case, msg: dict) -> dict:
             "answers_with_prose_only": not msg.get("tool_calls")}
 
 
+_URL_IN_FILE = re.compile(r"https?://[^\s\"'<>)]{12,}")
+# A tool result cria wrote ENTIRELY: the path, then the corpus-stable phrase, at the very start.
+_REFUSED_WHOLE_READ = re.compile(r"(\S+)\s+" + re.escape(replay_logic.SPILL_READ_STEER))
+
+
+def cases_spill_read_small(row, cap, ws, limit):
+    """A whole read of a SMALL spilled file that was refused, recomposed by RUNNING cria's own
+    lowered read command against the archived file.
+
+    The `new` string is not composed here at all. A synthetic ``read_file`` completion for the path
+    the coder actually asked for goes through :func:`writeproxy.translate_outbound` — the real entry
+    point, the real guard chain — and the shell command it lowers is EXECUTED with the cwd set to the
+    archived workspace, exactly as the harness would run it. Its stdout is what the coder would now
+    receive. Nothing is transcribed, and if the fix were reverted the very same driving would produce
+    the refusal again and the case would report itself IDENTICAL.
+
+    Only the SEARCH-RESULT population can be built here, and that is not a limitation of the harness:
+    :func:`replay_logic.check_spill_read_small` measured five small files across the 96 runs and every
+    one of them is saved search results. They are the population with no outline at all — a shell
+    pipeline writes them, so cria never holds them parsed — which is why "grep it for what you need"
+    left the coder with nothing to grep FOR.
+    """
+    if ws is None:
+        return []
+    out, seen = [], set()
+    for call, body in coder_bodies(cap):
+        if len(out) >= limit:
+            break
+        hit = rel = None
+        for m in body.get("messages", []):
+            t = _msg_text(m).strip()
+            # The refusal must be the WHOLE tool result — cria wrote every byte of it. A message
+            # that merely CONTAINS the phrase (an inventory, the coder quoting it back) would have
+            # the recomposition spliced into someone else's text. Anchored at the start on the
+            # corpus-stable phrase, never the current template's closing sentence.
+            m2 = _REFUSED_WHOLE_READ.match(t) if m.get("role") == "tool" else None
+            if m2:
+                hit, rel = t, m2.group(1)
+                break
+        if hit is None:
+            continue
+        if rel in seen:            # the refusal is durable and rides in every later prompt
+            continue
+        seen.add(rel)
+        target = (ws / rel.lstrip("./")).resolve()
+        if not target.is_file():
+            NOTES.append(f"the refused spill file is not in the archive ({rel})")
+            continue
+        size = target.stat().st_size
+        if size > writeproxy.READ_INLINE_MAX:
+            NOTES.append(f"the refused spill file is genuinely oversized ({size} bytes) — the fix "
+                         f"does not touch it")
+            continue
+        # cria's OWN code decides what the coder now gets: translate_outbound lowers the call, the
+        # shell runs it in the archived workspace. No text is written here.
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file", "arguments": json.dumps({"path": rel})}}]}}]}
+        with _cwd(ws):
+            writeproxy.translate_outbound(
+                comp, {"name": "shell", "parameters": {"properties": {"command": {"type": "string"}},
+                                                       "required": ["command"]}},
+                injected={"read_file"}, workspace_root=os.getcwd())
+            lowered = json.loads(
+                comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+            cmd = lowered.get("command") or lowered.get("cmd")
+            proc = subprocess.run(["bash", "-c", cmd[-1] if isinstance(cmd, list) else cmd],
+                                  capture_output=True, text=True, cwd=os.getcwd())
+        if proc.returncode != 0:
+            NOTES.append(f"cria's lowered read still refuses {rel} (exit {proc.returncode}) — "
+                         f"nothing to ask")
+            continue
+        # Strings that exist ONLY in the file, for the reply facts: the urls it lists. A model that
+        # names one of these got it from the recomposed text and from nowhere else in the prompt.
+        prompt_blob = "".join(_msg_text(m) for m in body.get("messages", []))
+        only_here = [u for u in dict.fromkeys(_URL_IN_FILE.findall(proc.stdout))
+                     if u not in prompt_blob][:12]
+        out.append(Case("spill-read-small", call, row.get("model", "?"), body, hit, proc.stdout,
+                        f"writeproxy.translate_outbound lowered a read_file of {rel} and the "
+                        f"command was RUN in the archived workspace ({size} bytes)", ws,
+                        {"path": rel, "bytes": size, "only_in_the_file": only_here}))
+    return out
+
+
 RECOMPOSERS = {
     "unclosed-verdict": cases_unclosed_verdict,
+    "spill-read-small": cases_spill_read_small,
     "spill-outline": cases_spill_outline,
     "repeat-body": cases_repeat_body,
     "gate-verbatim": cases_gate_verbatim,

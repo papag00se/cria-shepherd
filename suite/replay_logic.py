@@ -35,7 +35,7 @@ SUITE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE.parent))
 
 from cria import (execcheck, jsontext, loop, massage, planner, probegate,  # noqa: E402
-                  probeparse, prompts, selfcompact, webfetch)
+                  probeparse, prompts, selfcompact, webfetch, writeproxy)
 from cria.jsontext import extract_json_object, strip_think  # noqa: E402
 
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -92,6 +92,19 @@ def replies(cap):
             tools = None
         yield f, comp, tools
 
+class IntegrityError(RuntimeError):
+    """An assumption this harness measures THROUGH has stopped holding — a prompt anchor that moved,
+    a template that no longer has literal text around its placeholder.
+
+    Its own class because of what ``main`` used to do with it. The per-run ``except Exception``
+    turned any raise into ``n = 0``, and a zero is never printed (the detail rows only show runs
+    that fired), so the loudest failure this file can produce came out as
+    ``would fire on 0/96 runs (0%)`` with nothing else on the line — the exact reading
+    :func:`around` raises to prevent, printed as if it were a measurement. Reproduced by shortening
+    a prompt template: the check reported 0/86 (0%) and said nothing. Every offline number this
+    project quotes comes off these checks, so an integrity failure is never caught per-run: it
+    leaves ``main`` and takes the process's exit code with it."""
+
 
 def around(template, placeholder, width=40):
     """The literal text a prompt template puts immediately BEFORE and AFTER ``placeholder`` — so a
@@ -102,7 +115,7 @@ def around(template, placeholder, width=40):
     if any("{{" in a or "}}" in a for a in anchors):
         # A silent 0 is the one answer this harness must never give: it reads as "the guard never
         # fires" when it means "the anchor moved". Fail loudly instead.
-        raise ValueError(f"{template}: no literal anchor around {placeholder} — widen or re-anchor")
+        raise IntegrityError(f"{template}: no literal anchor around {placeholder} — widen or re-anchor")
     return anchors
 
 
@@ -809,8 +822,84 @@ def check_call_syntax_tool_call(row, cap, ws):
     return recovered, (f"{lost} lost reply(s) holding a JSON object; {calls} call(s) recovered; "
                        f"{refused_cut} refused (the reply was cut at the output cap)")
 
+def check_spill_read_small(row, cap, ws):
+    """How many spilled files were refused a WHOLE read while being small enough to read whole.
+
+    The read-only spill guard refused every whole read of a spilled file at any size, with a message
+    that says "reading it whole gets truncated, so you would miss the middle". Under
+    :data:`writeproxy.READ_INLINE_MAX` that is false — nothing would have been truncated — and it is
+    a claim about cria's own guard stated as a claim about the world (rule 5b).
+
+    The path is read out of the steer cria rendered, then SIZED on the archived workspace. That
+    archive is the run's FINAL state, so a file that grew after the refusal reads as its final size:
+    the direction is under-count, and it is stated rather than hidden. Deduped per run on the path,
+    because one refusal rides in every later prompt of the conversation."""
+    if ws is None:
+        return 0, "no archived workspace"
+    # The corpus-stable phrase, not the current template verbatim — this steer has been reworded
+    # across the 96 runs and an anchor that only matches today's wording silently measures the
+    # newest runs only (the SPILL_READ_STEER comment above).
+    rx = re.compile(r"(\S+)\s*" + re.escape(SPILL_READ_STEER))
+    small, big, gone = set(), set(), set()
+    for _f, t in coder_prompts(cap):
+        if SPILL_READ_STEER not in t:
+            continue
+        for m in rx.finditer(t):
+            rel = m.group(1)
+            p = (ws / rel.lstrip("./")).resolve()
+            if not p.is_file():
+                gone.add(rel)
+                continue
+            (small if p.stat().st_size <= writeproxy.READ_INLINE_MAX else big).add(rel)
+    why = (f"{len(small) + len(big)} spilled paths refused a whole read, "
+           f"{len(big)} genuinely oversized")
+    if gone:
+        # Named, never folded into the count: a path the archive no longer holds is UNKNOWN, and an
+        # unknown counted as "not small" is the silent under-count this file exists to avoid.
+        why += f", {len(gone)} not in the archive (size unknown)"
+    return len(small), why
+
+
+def check_cria_voice_forgery(row, cap, ws):
+    """How many captured replies OPEN a line in cria's own voice — a `⟦cria⟧` banner or anything in
+    the model-facing `⟦ctx:…⟧` namespace — and would therefore have reached a judge as the model's
+    own summary.
+
+    Run through :func:`loop._strip_cria_banners` itself rather than a copy of its rule, so reverting
+    the fix drops this to zero and the check cannot drift from the code it measures.
+
+    The "why" carries the MID-line count beside it, and that is the number that decides whether the
+    rule is safe rather than merely effective: a marker mid-line is a model quoting the work log
+    ("tool: ⟦ctx:checks⟧ …"), which is a reasoner or compactor doing its job. Across the full
+    capture set on 2026-08-03 the split was 23 openers to 348 quotes. If the mention count ever
+    starts falling with the opener count, the rule has stopped telling them apart."""
+    forged = quoted = 0
+    for f in sorted(cap.glob("*.response.json")):
+        try:
+            j = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        msg = ((j.get("choices") or [{}])[0].get("message")) or {}
+        c = msg.get("content")
+        if isinstance(c, list):
+            c = "".join(str(p.get("text", "")) for p in c if isinstance(p, dict))
+        if not isinstance(c, str) or not c:
+            continue
+        # cria's own function decides, LINE BY LINE — what the namespace rule removes that the
+        # `⟦cria⟧` rule alone would have kept. Comparing the two whole-text results instead would
+        # count every reply whose only difference is trailing whitespace.
+        opener = any(loop._strip_cria_banners(ln, whole_namespace=True) == ""
+                     and loop._strip_cria_banners(ln) != "" for ln in c.splitlines())
+        if opener:
+            forged += 1
+        elif "⟦ctx:" in c:
+            quoted += 1
+    return forged, (f"{forged} reply(s) open a line in cria's voice; "
+                    f"{quoted} more only QUOTE a marker mid-line and are left alone")
+
 
 CHECKS = {
+    "cria-voice-forgery": check_cria_voice_forgery,
     "oscillation": check_oscillation,
     "call-syntax-tool-call": check_call_syntax_tool_call,
     "unclosed-verdict": check_unclosed_verdict,
@@ -830,10 +919,37 @@ CHECKS = {
     "missing-file-read": check_missing_file_read,
     "steer-truncated": check_steer_truncated,
     "facts-anchor-absent": check_facts_anchor_absent,
+    "spill-read-small": check_spill_read_small,
 }
 
 
-def main() -> None:
+def run_check(name, data):
+    """(fired, answered, rows, errors) for one check over ``data``.
+
+    A run that RAISED did not answer the question — it is not a zero. It is kept out of both halves
+    of the rate and returned separately, because a rate whose denominator quietly includes runs that
+    never produced a number is the same silent under-count :func:`around` refuses to make.
+
+    :class:`IntegrityError` is not caught at all. It says the harness is measuring the wrong thing,
+    which is not a fact about one run, and swallowing it per-run is what turned "the anchor moved"
+    into "the guard never fires"."""
+    fired, answered, rows, errors = 0, 0, [], []
+    for row, cap, ws in data:
+        try:
+            n, why = CHECKS[name](row, cap, ws)
+        except IntegrityError:
+            raise
+        except Exception as e:  # noqa: BLE001 — one run's broken evidence, reported, never a zero
+            errors.append((cap.name, f"{type(e).__name__}: {e}"))
+            continue
+        answered += 1
+        if n:
+            fired += 1
+        rows.append((row.get("model", "?"), row.get("score"), n, why))
+    return fired, answered, rows, errors
+
+
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", choices=sorted(CHECKS), action="append")
     ap.add_argument("--detail", action="store_true")
@@ -843,27 +959,33 @@ def main() -> None:
     data = runs()
     print(f"replaying {len(data)} captured runs through cria's deterministic logic "
           f"— no model calls\n")
+    broke = 0
     for name in wanted:
-        fn = CHECKS[name]
-        fired = 0
-        rows = []
-        for row, cap, ws in data:
-            try:
-                n, why = fn(row, cap, ws)
-            except Exception as e:  # noqa: BLE001
-                n, why = 0, f"replay error: {type(e).__name__}"
-            if n:
-                fired += 1
-            rows.append((row.get("model", "?"), row.get("score"), n, why))
-        pct = 100 * fired / max(len(data), 1)
-        print(f"── {name}: would fire on {fired}/{len(data)} runs ({pct:.0f}%)")
+        fired, answered, rows, errors = run_check(name, data)
+        pct = 100 * fired / max(answered, 1)
+        of = f"{fired}/{answered} runs ({pct:.0f}%)" if answered else "NO run answered"
+        print(f"── {name}: would fire on {of}")
+        if errors:
+            # Printed unconditionally, above the detail rows. An errored run used to become a zero
+            # that nothing ever printed, so a check could report 0% while every single run had
+            # raised — and every offline number this project quotes comes off these checks.
+            broke += len(errors)
+            print(f"   !! {len(errors)} of {len(data)} run(s) RAISED and are in neither half of "
+                  f"that rate:")
+            for cap_name, msg in errors[:5]:
+                print(f"      · {cap_name}: {msg}")
+            if len(errors) > 5:
+                print(f"      · … {len(errors) - 5} more")
         if args.detail:
             for model, score, n, why in rows:
                 if n:
                     sc = f"{score:.0f}/4" if score is not None else "—"
                     print(f"     {model:17s} {sc:>5s}  x{n:<3d} {why}")
         print()
+    if broke:
+        print(f"!! {broke} check-run(s) raised — the rates above are over the runs that ANSWERED.")
+    return 1 if broke else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
