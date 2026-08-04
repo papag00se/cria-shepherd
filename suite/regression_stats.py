@@ -101,8 +101,11 @@ def _badge(avg: float) -> str:
 
 
 def model_summary(lines):
-    """Per-model rollup over that model's LAST 3 runs (any state — this is how the model has been
-    performing lately, not the campaign scoreboard; regression_status.py owns counted-ness)."""
+    """Per-model rollup over that model's last 3 COUNTED runs. Voided/superseded rows are evidence
+    about cria (an operator-thrown-out routing bug, a since-fixed fault), not about the model —
+    including them held ornith's voided 0/4 against a model that has never failed on standing
+    code (operator, 2026-08-04). A model with no counted runs yet falls back to its last 3 rows
+    of any state so it never vanishes from the grid."""
     order, by_model = [], {}
     for s in lines:
         by_model.setdefault(s["model"], []).append(s)
@@ -110,7 +113,8 @@ def model_summary(lines):
             order.append(s["model"])
     out = []
     for m in order:
-        last3 = by_model[m][-3:]
+        counted = [s for s in by_model[m] if s["state"] == "counted"]
+        last3 = (counted or by_model[m])[-3:]
         scores = [int(s["score"].split("/")[0]) for s in last3]
         avg = sum(scores) / len(scores)
         # One column per assist family (the single joined cell could never line up).
