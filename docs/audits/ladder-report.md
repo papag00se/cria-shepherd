@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 03:27:12 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 04:32:08 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,20 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — nemotron-elastic**, 35 min elapsed.
-
-| next checkpoint | at | must hold |
-|:--|--:|:--|
-| milestone 3 | 45 min | 3/4 |
-
-**Measured just now** (verifier run against a copy of the live workspace): **3/4**
-
-| deliverable | | detail |
-|:--|:--:|:--|
-| unit_tests | 🟢 | 2 passed in 0.85s |
-| live_test | 🔴 | live_test.py: exit=1, real-data markers absent |
-| resolver_cli | 🟢 | resolve_handle.py goose → address+holder+count |
-| readme | 🟢 | README.md covers install/run/tests: True |
+**Nothing running.** Next action: **walk** `ada-handles_fabliq_codex_pon_1785787074` (capture `/home/jesse/.cria/calls/20260803T125805-019fc934-72f5-7701-bb8c-4a7d529041b0`), then write `## ada-handles_fabliq_codex_pon_1785787074` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -33,7 +20,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 22 | 4/4 | 🟢 PASSED |
-| 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🔵 RUNNING |
+| 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
 | 8 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 6 | 1/4 | 📖 needs walk |
 | 9 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | off | 1 | 0/4 | ⛔ BLOCKED |
 
@@ -80,6 +67,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+2ab7dcb docs(regression): nemotron 1/3 = 3/4 walked — cria fault none; refuted-by-disk guard fired 4x correctly in-run
 ccf601b docs(regression): nemotron-elastic 1/4 walked + superseded — confirm veto refuted-by-disk fixed; rerun on new code
 ecc40f1 fix(loop): a confirm veto claiming a file is MISSING is refuted by cria's own disk
 3aab947 docs(regression): mellum2 1/3 = 3/4 walked — cria fault none; live test not separate; 5b steer instance recorded
@@ -94,7 +82,6 @@ ca75dd9 docs(regression): run 1 walked + superseded; campaign restarts ternary-b
 a17a7c1 fix(loop): a session NEVER completes on judgment alone — the plan-ON end runs the checks it owns
 3a145c6 chore(suite): fabliq run-kill tails + ladder report refresh from parking
 fd4ca0a fix(pytest): collection is tests/ by declaration, not by __pycache__ accident
-456a02d feat(suite): park fabliq; the regression campaign — 7 passing models, 3 runs each, one truth tool
 ```
 
 ---

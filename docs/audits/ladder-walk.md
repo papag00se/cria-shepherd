@@ -4087,3 +4087,42 @@ both recorded as judge-fabrication prevalence, same class as the mellum2 walk. c
 deterministic fact that contradicts "the live test exists and the code demonstrably resolves":
 the CLI does resolve live data, and teaching cria the verifier's bare-run convention would be
 task-specific overfit. The row stands as evidence about nemotron-elastic on current main.
+
+## ada-handles_ternary-bonsai_codex_poff_1785839400
+
+REGRESSION1 campaign, ternary-bonsai run 2/3 on `ccf601b`. Score **3/4** (unit tests: 2 failed /
+6 passed — two edge-case tests whose mock fixtures omit `resolved_addresses.ada`, hitting the
+resolver's KeyError at line 56), terminal `milestone-miss-60min` (3647 s, 44 calls ≈ 83 s/call).
+Capture `~/.cria/calls/20260804T033022-019fcc53-0bd0-7742-8665-912b6e0aa2c2` — walked in full.
+
+### The run in one paragraph
+
+Research clean in 2 calls (homepage → openapi.json spill with the full shape ledger). The model
+wrote all four deliverables blind by call 0008 — live test and CLI genuinely work (verifier:
+real chain data) — then spent the rest of the hour on two failing unit tests of its own authoring
+(mock fixtures that omit the `ada` key its own resolver requires). The gates kept the failures in
+front of it, the steers were mostly grounded, and the last five calls show it working the exact
+right bug (`side_effect` vs `.json.return_value` mock configuration) when the 60-minute wall
+killed the run. Run 1 on the same code converged in time and scored 4/4; run 2 is the same model
+on the same task converging slower. Model variance against a clock, not a mechanism failure.
+
+### cria fault: none — with two prevalence entries
+
+1. Flail steer 0029 fabricated a mechanism: "each write_file call uses an elided placeholder like
+   `[elided 2970 chars…]` as literal content, so the file never gets real code." No write in the
+   capture contains an elision marker, and the steer author's own sibling calls (0025–0026) read
+   the real files and found them correct. The author misread cria's OWN history view — old write
+   payloads are stubbed to their on-disk reference in the steer author's evidence — and asserted
+   the stub was the content. Benign here (the directive it produced was "read the disk first",
+   which helped), but it is the third steer-fabrication instance this campaign (gemma4 0013's
+   `base.com`, mellum2 0021's "the script and tests are written", this). The 5b enforcement family
+   grows by evidence; three walks now carry instances.
+2. Confirm veto 0017 invented artifacts for the reading step ("no fetch artifacts exist in the
+   workspace") — it ran because the gate was RED at that moment (`_confirm_applies` grounds the
+   brake on a contested disk, by design), and the missing-file refutation correctly stayed silent
+   (the only named token, `openapi.json`, genuinely does not exist at the workspace root — the
+   spill lives under tmp/read-only/ with a prefixed name). Cost: one blocked advance while the
+   tests were genuinely red anyway.
+
+The row stands: 3/4, model-attributable (blind-written mock fixtures + a decode speed that turns
+churn into clock death).
