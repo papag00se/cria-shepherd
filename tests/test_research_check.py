@@ -202,3 +202,45 @@ class WhichQuestionCriaAsksTests(unittest.TestCase):
     def test_NONE_is_still_honoured_where_it_is_offered(self):
         self.assertEqual(
             research.authored_research_step(lambda s, u: "NONE", self.TASK_WITHOUT, files="a.csv"), "")
+
+
+class AReadingStepDoesNotProduceAnythingTests(unittest.TestCase):
+    """Asked for a reading step, fabliq wrote back the whole task (run 20260803T210043):
+
+        "Write a Python script that accepts an Ada Handle as input, resolves it via the
+         api.handle.me API to obtain the Cardano address, holder address, and total handles,
+         includes unit tests for the script, creates a live test resolving the handles 'goose' and
+         'papagoose', and adds a README explaining installation and execution."
+
+    As a first plan item that is strictly WORSE than no item: the plan then holds two steps that both
+    say "do the whole job". A small model handed "write one step" defaults to restating the request,
+    so cria refuses the sentence rather than trusting it."""
+
+    TASK = "resolve an Ada Handle using the Ada Handles API (api.handle.me), with unit tests"
+    RESTATED = ("Write a Python script that accepts an Ada Handle as input, resolves it via the "
+                "api.handle.me API to obtain the Cardano address, holder address, and total "
+                "handles, includes unit tests for the script, creates a live test resolving the "
+                "handles 'goose' and 'papagoose', and adds a README explaining installation.")
+
+    def _step(self, answer):
+        return research.authored_research_step(lambda s, u: answer, self.TASK, domain="api.handle.me")
+
+    def test_the_captured_restatement_is_refused(self):
+        self.assertEqual(self._step(self.RESTATED), "")
+
+    def test_every_production_verb_is_refused(self):
+        for verb in ("Write", "Create", "Add", "Implement", "Build", "Generate"):
+            with self.subTest(verb=verb):
+                self.assertEqual(self._step(f"{verb} the resolver against api.handle.me."), "")
+
+    def test_a_real_reading_step_survives(self):
+        for good in ("Read what api.handle.me publishes to learn the endpoint and response fields.",
+                     "Fetch the api.handle.me reference and note the field names it returns.",
+                     "Consult the api.handle.me documentation for how a handle resolves."):
+            with self.subTest(good=good):
+                self.assertEqual(self._step(good), good)
+
+    def test_the_word_must_be_a_WORD_not_a_substring(self):
+        """'addressed' contains 'add'; a substring match would refuse a valid reading step."""
+        good = "Read how holder addresses are addressed in the api.handle.me reference."
+        self.assertEqual(self._step(good), good)
