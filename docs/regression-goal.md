@@ -10,9 +10,6 @@ is known to survive today until it is re-run.
 **The question:** each previously-passing model, 3 scored runs on current `main`. Does it still
 pass?
 
-**Out of rotation, by operator call:** `fabliq` (parked) and `zaya1` (blocked on tooling). They
-stay in the ladder table; do NOT run them, do NOT remove them from `LADDER`.
-
 ## The one source of truth
 
 ```

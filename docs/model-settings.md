@@ -27,7 +27,6 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
-| **fabliq-reasoning** (8B-A1B **MoE**) | Q6_K | **greedy** `temp 0` + `repeat_penalty 1.05` | LLM-OS-Models (`do_sample=False`) | arch `lfm2moe`, **32 experts / 4 active** (LFM2.5-8B-A1B base) — read from the GGUF header, not the card; trained @ **8K ctx** — beyond ~8K unverified; no temp/penalty ⇒ looping |
 | **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` (coding: `temp 0`) | yuxinlu1 card | needs a rep-penalty or it leaks `<|tool_call>`/`<|channel>` tokens |
@@ -35,7 +34,6 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template, toggle UNVERIFIED |
-| **zaya1** (8.4B-A760M MoE) | Q6_K | `temp 0.6, top_p 0.95, top_k off` (agent/code; general `1.0`) — Zyphra | Zyphra card | ⚠ **EXPERIMENTAL — runs on a local DRAFT-PR build** (llama.cpp PR #23112 branch, built from source 2026-07-29 at `~/src/llama.cpp-zaya`; no release supports arch `zaya`). Service-verified: coherent output, prefill 377 / decode **59 t/s** direct, 46 t/s served; ctx_train 131K. Re-point at a release build when the PR merges |
 
 ### Considered and DROPPED: **Moonlight-16B-A3B-Instruct** (2026-08-01)
 
@@ -79,12 +77,11 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > |---|---|---|---|
 > | ternary-bonsai 27B | `qwen35` | mellum2 12B/A2.5B | `mellum` 64 (8) |
 > | gemma4 12B | `gemma4` | nemotron-elastic 12B/A2B | `nemotron_h_moe` 128 (6) |
-> | qwythos 9B | `qwen35` | zaya1 8.4B/A760M | `zaya` 16 (1) |
-> | qwopus 9B | `qwen35` | fabliq 8B/A1B | `lfm2moe` 32 (4) |
+> | qwythos 9B | `qwen35` | | |
+> | qwopus 9B | `qwen35` | | |
 > | ornith 9B | `qwen35` | | |
 >
-> **fabliq is an MoE**, which this table implied it was not by labelling the other three and
-> leaving it bare. `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot
+> `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot
 > launch — fix that before putting it in any run order.
 
 > **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT**
@@ -140,13 +137,13 @@ on the Hub is a re-quant or fine-tune of Instruct.
 
 > **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet
 > default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow +
-> 8K depth, r=3, zero errors): tg@8K deltas par to −13% (fabliq 277→241, lfm25 277→249,
+> 8K depth, r=3, zero errors): tg@8K deltas par to −13% (lfm25 277→249,
 > mellum2/ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The
 > ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode
 > term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several
 > MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only.
 > **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** —
-> tg64@d32768 q8_0→turbo3: fabliq 239→177 (−26%), lfm25 230→163, ornith 68→49, qwopus 67→50,
+> tg64@d32768 q8_0→turbo3: lfm25 230→163, ornith 68→49, qwopus 67→50,
 > gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read
 > dequant overhead scales while the savings never arrive. ONE inconclusive cell: mellum2's q8_0
 > control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either
@@ -210,10 +207,6 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > repeat_penalty = 1.1
 > ```
 
-> **fabliq is the *Agent-Reasoning* fine-tune of its base MoE family** — the base instruct model
-> was tried live 2026-07-21 and dropped (not agentic: in the harness it monologues the plan in
-> `content` and never emits a tool call), which is why the fine-tune is the live model.
-
 ---
 
 ## Reasoning ON / OFF — the mechanism and per-model reality (verified 2026-07-08)
@@ -236,12 +229,11 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
 | **gemma4** | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` |
-| **fabliq-reasoning** | ✅ | ⚠ deliberation leaks into `content` (~1400 chars) | **LFM2 family** — never trained on the empty-think convention; the prefill is inert |
 
-So **5 of 7 do OFF cleanly** (mellum2, qwopus, ornith, qwythos, gemma4). On the LFM2-family model
-fabliq-reasoning, `enable_thinking=false` empties `reasoning_content` but the model
-still deliberates in prose in `content` — which cria's parsers can't strip (no `<think>` tags). This
-is a **model limitation**, not a missing manipulation.
+**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos, gemma4).
+Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet
+still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) —
+a model limitation to check when adding a model, not a missing manipulation.
 
 **The per-model "manipulation" you built** was exactly these `*-toggle.jinja` files (and, for a
 whole-instance off, `.reason-off` launch scripts that bake the `-nothink` template via
@@ -252,25 +244,23 @@ hardcoded `<think>` with no gate — which is precisely why the toggle had to be
 Per request cria applies THREE things so OFF works on any loaded model without per-model config:
 1. `chat_template_kwargs.enable_thinking = false` — suppresses thinking on the native-off models.
 2. appends a **mild no-think directive** to the system message ("Do not think out loud or narrate your
-   reasoning. Respond directly.") — makes the LFM2 models answer directly instead of deliberating.
+   reasoning. Respond directly.") — makes prose-deliberating template families answer directly.
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
-**Honest result (verified end-to-end on fabliq, 2026-07-08):**
+**Honest result (verified end-to-end 2026-07-08):**
 - **Native-off models** (mellum2, qwopus, ornith, qwythos, gemma4) → OFF is **clean**.
-- **fabliq** → OFF *engages* (thinking block suppressed, directive applied) and is **clean on
-  direct tasks** (a code one-liner came back tidy), but on **reasoning-heavy prompts they stay verbose**:
-  the model explains at length with *no* `</think>` marker, so the strip can't catch it (~700–900 chars
-  remained). It's **correct and never breaks cria** (parsers/`parse_steps`/`extract_json_object` still
-  pull the structured output; tool-calls are untouched) — just chatty. A *harder* directive makes them
-  terser but **wrong** (a reasoning-trained model loses accuracy when starved of reasoning), so the
-  directive is deliberately mild.
+- On a prose-deliberating template family, OFF engages and is clean on direct tasks, but
+  reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never
+  breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a
+  reasoning-trained model loses accuracy when starved of reasoning), so the directive is
+  deliberately mild.
 
 **Guidance:**
 - Flip any role `reasoning = "on"` / `"off"` in `~/.cria/cria.toml` and restart cria — it takes effect
   per request, no model reload, no per-model wiring needed.
 - `cria.toml` ships every role `reasoning = "on"` (clean fleet-wide; also what coding wants).
 - If a role needs **terse** OFF output, point it at a **native-off model** (mellum2 or a Qwen-derived
-  one). OFF on fabliq works but stays verbose on reasoning-heavy turns — a model trait, not a bug.
+  one).
 
 ---
 
@@ -289,7 +279,6 @@ with the prism dir, then `cuda-12.8-local/lib64` + `/usr/lib/wsl/lib`). Fork bin
 
 | Model | Source | Template |
 |-------|--------|----------|
-| fabliq-reasoning | `-hf mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF --hf-file …Q6_K.gguf` | `fabliq-toggle.jinja` |
 | ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
 | mellum2 | `-hf yuxinlu1/Mellum2-12B-A2.5B-…-GGUF --hf-file mellum2-claude-Q4_K_M.gguf` | *(embedded)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
@@ -319,5 +308,5 @@ for t in true false; do printf 'enable_thinking=%s -> ' "$t"
 done
 
 # see the exact launch command a model would run (no side effects)
-llama-fleet fabliq-reasoning --dry-run
+llama-fleet gemma4 --dry-run
 ```

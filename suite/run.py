@@ -54,10 +54,8 @@ SERVICES = {
     "ornith": "llama-ornith-q6",
     "gemma4": "llama-gemma4-q4km",
     "mellum2": "llama-mellum2-q4",
-    "fabliq": "llama-fabliq-reasoning-q6",
     "lfm25": "llama-lfm25-q6",
     "nemotron-elastic": "llama-nemotron-elastic",
-    "zaya1": "llama-zaya1",
 }
 
 # Harness launchers: name -> argv builder (headless/exec mode only). Phase 0 ships codex;

@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 08:32:29 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 09:26:35 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,14 +8,27 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_fabliq_codex_pon_1785787074` (capture `/home/jesse/.cria/calls/20260803T125805-019fc934-72f5-7701-bb8c-4a7d529041b0`), then write `## ada-handles_fabliq_codex_pon_1785787074` into `docs/audits/ladder-walk.md`.
+**RUNNING — gemma4**, 10 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **2/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🔴 | 1 failed, 5 passed in 0.72s |
+| live_test | 🟢 | in-file live test: 2 passed with network, fails without (provably live) |
+| resolver_cli | 🔴 | -m ada-handles goose papagoose: exit=1 |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
 | # | model | params | architecture | kind | planner | tries | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
+| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🔵 RUNNING |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
@@ -72,16 +85,14 @@ REGRESSION CAMPAIGN — python (ada-handles), 3 runs per model, note prefix REGR
 model              plan  runs  scores           verdict
 ------------------------------------------------------------------------
 ternary-bonsai     off      3  4 3 4            NOT STABLE 2/3
-gemma4             off      2  0 0              2/3 run
+gemma4             off      0  —                RUNNING
 qwythos            off      2  4 0              2/3 run
 qwopus             off      2  4 1              2/3 run
 ornith             off      2  4 0              2/3 run
 mellum2            off      2  3 1              2/3 run
 nemotron-elastic   on       2  3 3              2/3 run
 
-NEXT: RUN gemma4 (campaign run 3 of 3)
-  python3 suite/run.py --task ada-handles --model gemma4 --harness codex --planner off --milestone-minutes 15 --note "REGRESSION1 python gemma4 $(git rev-parse --short HEAD)"
-  then update docs/audits/regression-report.md with the row
+IN FLIGHT: gemma4 — do not start another run, and do not edit cria or its prompts (they load lazily; an edit changes the RUNNING system)
 ```
 
 Operator report: [`regression-report.md`](regression-report.md) · authority: `python3 suite/regression_status.py`.
@@ -89,6 +100,9 @@ Operator report: [`regression-report.md`](regression-report.md) · authority: `p
 ## Fixes landed during the ladder
 
 ```
+90e684b fix(steer,loop,editrecovery): rebase five guards off blind-author-era evidence — the provenance retunes
+c731f5c docs(regression): ternary 3/3 closes 4-3-4; gemma4 rows superseded by the hand-back fix; audit recorded
+a25b037 fix(loop): plan-off is a reading step plus the RAW task — and the audit batch
 26bfa92 docs(regression): nemotron 2/3 = 3/4 walked — cria fault none; stable model defect; pass 3 begins
 fae111a docs(regression): mellum2 2/3 = 1/4 walked — cria fault none; pytest-mock dead-end; row stands
 7e4b167 docs(regression): ornith 2/3 = 0/4 walked — cria fault none; mock-protocol oscillation; row stands
@@ -101,9 +115,6 @@ ccf601b docs(regression): nemotron-elastic 1/4 walked + superseded — confirm v
 ecc40f1 fix(loop): a confirm veto claiming a file is MISSING is refuted by cria's own disk
 3aab947 docs(regression): mellum2 1/3 = 3/4 walked — cria fault none; live test not separate; 5b steer instance recorded
 086dca6 docs(regression): ornith 1/3 = 4/4 on the confirm-applicability fix
-53f4e97 docs(regression): ornith 0/4 walked + superseded — confirm brake fixed; rerun on new code
-fbc083c fix(loop): the per-step confirm brake runs only where a disk inspection can ground
-f0411bf docs(regression): qwopus 1/3 = 4/4 — 17/17 tests, 48 min
 ```
 
 ---

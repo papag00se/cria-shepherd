@@ -173,7 +173,7 @@ reasoning tells you WHERE — and "it lost the answer it had already found" need
 "it never found it". A prompt that describes the work in the imperative invites a weak model to
 perform it.
 **Embodied.** [`project_goal_run_2026_07_18`], [`project_unified_steer_author`],
-[`project_goal_fabliq_ada_handles`]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
+[the ada-handles /goal record]; `cria/planner.py`, `cria/loop.py`, `cria/config.py`
 (pervasive "reasoner judges / code acts").
 
 ### 9. Don't fear an extra model call that prevents churn — a purposeful call is cheap next to a thrashing one
@@ -288,7 +288,7 @@ Before building machinery to fix a model's apparent mistake, correlate what was
 the delivered bytes and the model reasoning — the loop can end up "fixing" a footgun cria itself introduced.
 **Why.** Multiple derails first blamed on the model were real cria bugs (a steer that never
 reached the model, an envelope leak). The reflex must be self-suspicion, not model-blame.
-**Embodied.** [`feedback_no_footgunning`], [`project_goal_fabliq_ada_handles`] (self-corrected
+**Embodied.** [`feedback_no_footgunning`], [the ada-handles /goal record] (self-corrected
 repeatedly).
 
 ---

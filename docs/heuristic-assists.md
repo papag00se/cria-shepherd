@@ -23,8 +23,8 @@ the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in
 
 - **write_file / edit_file ↔ shell round-trip** — lowered to a byte-exact base64 heredoc write; the recorded shell call re-presented as the original tool.
 - **Leaked-call recovery** — tool calls emitted as text (Hermes `<tool_call>`, XML `<function=…>`, Gemma-fable `<|tool_call>…`) → real calls; Gemma `<|channel>` thinking stripped.
-- **LFM2/Fabliq sentinel strip** — native `<|tool_call_start|>…<|tool_call_end|>` pairs + orphans stripped from content.
-- **Reasoning-channel call recovery** — a COMPLETE call the model left in `reasoning_content` (the one channel llama.cpp's parser never reads) → a real call. Only when the turn is already lost (no text, no `tool_calls`), the call is terminal and unfenced, every argument is a literal the model typed, and the name + required args are on the request's own menu. Measured 2026-08-03: 80 lost replies across 127 sessions, 68 recovered; fabliq lost 10.7% of its coder turns this way.
+- **Native tool-call sentinel strip** — `<|tool_call_start|>…<|tool_call_end|>` pairs + orphans stripped from content (templates that leak their own call sentinels).
+- **Reasoning-channel call recovery** — a COMPLETE call the model left in `reasoning_content` (the one channel llama.cpp's parser never reads) → a real call. Only when the turn is already lost (no text, no `tool_calls`), the call is terminal and unfenced, every argument is a literal the model typed, and the name + required args are on the request's own menu. Measured 2026-08-03: 80 lost replies across 127 sessions, 68 recovered; the worst-affected model lost 10.7% of its coder turns this way.
 - **Shell-name rewrite** — `ls`/`cat`/`grep`/`git`/… emitted as tool names → proper `shell` calls (full alias table).
 - **exec_command array fix** — `cmd` as `["bash","-lc",…]` → routed to `shell`.
 - **Shell-args normalization** — a string command wrapped to `[bash,-lc,cmd]`; a double-wrapped array unwrapped.

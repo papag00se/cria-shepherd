@@ -79,20 +79,8 @@ MODEL_SAMPLING = {
         "compactor":  {"temperature": 0.0},
     },
     # Zyphra card: temp 0.6 / top_p 0.95 / top_k OFF for agent+code, 1.0 general.
-    "zaya1": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
-        "classifier": {"temperature": 0.0},
-        "compactor":  {"temperature": 0.0},
-    },
     # LLM-OS-Models ship do_sample=False -> greedy; repeat_penalty 1.05 is the publisher's value.
     # Without a penalty this family loops.
-    "fabliq": {
-        "coder":      {"temperature": 0.0, "repeat_penalty": 1.05},
-        "reasoner":   {"temperature": 0.0, "repeat_penalty": 1.05},
-        "classifier": {"temperature": 0.0, "repeat_penalty": 1.05},
-        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.05},
-    },
 }
 
 KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty")

@@ -32,15 +32,14 @@ MILESTONE_MINUTES = 15
 #
 # `planner` was the OPERATOR'S HYPOTHESIS: dense models cope with the planner off, MoEs need it on.
 # It is recorded here so the ladder GENERATES the evidence rather than assuming it — every row carries
-# the setting it ran under. THE EVIDENCE IS NOW TWO MoEs AGAINST IT. mellum2 spent sixteen planner-on
-# runs peaking at 3/4 and passed 4/4 with the planner off; zaya1 never reached the coder once in four
-# planner-on attempts. nemotron-elastic passed 4/4 planner-ON at the first try, so this is not
-# "the planner is bad" — it is that driving a plan is itself a capability, and the smallest models
-# spend the whole budget on it instead of on the work.
+# the setting it ran under. The evidence cut against it: mellum2 spent sixteen planner-on runs
+# peaking at 3/4 and passed 4/4 with the planner off, while nemotron-elastic passed 4/4 planner-ON
+# first try — driving a plan is itself a capability, and the smallest models spend the whole budget
+# on it instead of on the work. (Two sub-1B-active models retired 2026-08-04 were the strongest
+# evidence; their records live in docs/audits/ and git history.)
 # dense/MoE is read from each GGUF's own header (general.architecture + <arch>.expert_count /
-# expert_used_count), NOT from a model card or a name. fabliq was on the dense list until the header
-# was actually read: `lfm2moe`, 32 experts, 4 active — an LFM2.5-8B-A1B. docs/model-settings.md had
-# labelled the other three MoEs and left fabliq unlabelled, which reads as dense by omission.
+# expert_used_count), NOT from a model card or a name — a model card's silence reads as dense by
+# omission, and one retired model was mislabeled exactly that way until the header was read.
 LADDER = [
     # name,              params,        arch/experts,        kind,    planner
     ("ternary-bonsai",   "27B",         "qwen35",            "dense", "off"),
@@ -50,8 +49,6 @@ LADDER = [
     ("ornith",           "9B",          "qwen35",            "dense", "off"),
     ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "off"),  # flipped 2026-08-02 — see docs/audits/ladder-walk.md (16 planner-on runs peaked at 3/4 over 27-60 min; the first planner-off run reached the same score in 3.9 min and 53 calls, with none of the plan-side faults)
     ("nemotron-elastic", "12B/A2B",     "nemotron_h_moe 128/6", "moe", "on"),
-    ("fabliq",           "8B/A1B",      "lfm2moe 32/4",      "moe",   "on"),
-    ("zaya1",            "8.4B/A760M",  "zaya 16/1",         "moe",   "off"),  # flipped 2026-08-02 — four planner-on attempts, the coder reached ZERO times. 20260801T211548 spent all fifteen minutes in the planner inventing `/workspace/dumps/workspace` and re-reading files under it, 140+ tool calls in one response, three rounds each cut off at the token cap. 20260801T221447 produced 27,089 characters of planner reasoning with zero tool calls, saying "we can simulate in our mind" — word counts in it: script 86, readme 35, plan 4. The fourth (20260802T181318) had made 14 calls in 13 minutes, every one planner or classifier, none coder. A 760M-active model cannot drive this planner; that is the evidence the column exists to generate, and it is now two models against the hypothesis
 ]
 # lfm25 is deliberately absent: the systemd unit exists but the model has no entry in
 # ~/.config/llama-fleet/models.toml, so starting it cannot work. Add it back when that is fixed.
@@ -72,21 +69,9 @@ BLOCKED_AFTER = 5
 # A model the OPERATOR has taken out of rotation — not blocked, not failed out, just parked. It
 # stays in LADDER (the table keeps telling the truth about its history) but the ladder neither runs
 # it nor demands walks of its remaining failures. Removing the entry is how it rejoins.
-PARKED = {
-    "fabliq": "operator call 2026-08-03: out of rotation after 12 attempts, best 1/4. The evening's "
-              "walks moved the failure from 'trapped on an unreachable research step' (114 of 195 "
-              "calls on step 1) to 'reads the spec, then codes from memory anyway' — real progress, "
-              "no pass. The reading-step machinery it drove into existence (cria/research.py, "
-              "loop._plan_off_session) now benefits every model; fabliq itself waits.",
-}
+PARKED = {}  # name -> operator rationale; empty since 2026-08-04 (retired models removed outright)
 
-BLOCKED_ON_TOOLING = {
-    "zaya1": "build: 38 B-params/sec vs 239-1312 for every other model on this GPU — fully resident "
-             "(81/81 layers) yet 10 graph splits + a 104 MiB host compute buffer, so ops leave the "
-             "card every token. Suspect: no CUDA kernel for the recurrent R/S state this arch carries "
-             "across all 80 layers in f32 (draft PR #23112). Rebuilding upstream; watch for graph "
-             "splits dropping to 1-2. Until then every zaya1 result measures the binary.",
-}
+BLOCKED_ON_TOOLING = {}  # name -> tooling blocker; empty since 2026-08-04
 
 
 def rows(task):
