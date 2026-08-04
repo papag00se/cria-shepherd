@@ -1635,7 +1635,9 @@ class Loop:
                 def _plan_ask(sysp, usr):
                     return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                      sysp, usr, rlog, phase="research-step")
-                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask),
+                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
+                                                        files=workspace_inventory(_extract_cwd(messages)
+                                                                                  or self._ctx.workspace_root)),
                                    synthetic=True, prior_work=briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
                 # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
@@ -1690,7 +1692,9 @@ class Loop:
                         def _plan_ask(sysp, usr):
                             return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                              sysp, usr, rlog, phase="research-step")
-                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask),
+                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
+                                                        files=workspace_inventory(_extract_cwd(messages)
+                                                                                  or self._ctx.workspace_root)),
                                            synthetic=True, prior_work=briefing)
                         if _stable_session(session_key):
                             self._store.put(session_key, sess)
@@ -2302,7 +2306,8 @@ class Loop:
         item = sess.plan.current()
         if item is None or item.done:
             return None
-        sources = research.grounded_sources(_extract_fetches(body.get("messages", [])))
+        msgs = body.get("messages", [])
+        sources = research.sources_read(_extract_fetches(msgs), msgs)
         verdict = research.step_reading_verdict(
             lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                         sysp, usr, rlog, phase="research-check"),
@@ -3198,7 +3203,7 @@ def _session_from_dict(d) -> PlanSession | None:
         return None
 
 
-def _synthetic_plan(task: str, clock=None, ask=None) -> Plan:
+def _synthetic_plan(task: str, clock=None, ask=None, files: str = "") -> Plan:
     """A degenerate 1-item 'plan' for PLAN-OFF mode: the whole task is ONE implicit step whose item
     text IS the raw task. The PlanSession carries the ``synthetic`` flag (which selects raw-task
     framing + the single-item off-ramps); the Plan itself is an ordinary 1-item Plan. id/created match
@@ -3223,8 +3228,13 @@ def _synthetic_plan(task: str, clock=None, ask=None) -> Plan:
     #
     # The step is an ordinary item — not pinned, not immutable. The living re-derivation may drop it
     # like any other, and the step critic judges it like any other.
-    domain = first_domain_in(task)
-    step = research.authored_research_step(ask, task, domain) if (domain and ask) else ""
+    # ASK ON EVERY CODING TASK, not only when the task's words hold a domain — that quietly defined
+    # research as a web thing, and it is not: reading files already in the workspace, a schema on
+    # disk, a library's source or a tool's --help is the same act. cria contributes only what it can
+    # establish alone (a domain if the task names one, the workspace listing); the MODEL decides
+    # whether anything must be read and writes the step, and NONE is a first-class answer.
+    step = research.authored_research_step(ask, task, domain=first_domain_in(task) or "",
+                                           files=files) if ask else ""
     items = ([PlanItem(text=step)] if step else []) + [PlanItem(text=task)]
     return Plan(id=f"{now.strftime('%Y%m%dT%H%M%S')}-{_task_key(task)[:8]}", task=task,
                 created=now.isoformat(timespec="seconds"), items=items)

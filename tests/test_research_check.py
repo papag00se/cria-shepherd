@@ -117,12 +117,30 @@ class ThePlanOffReadingStepTests(unittest.TestCase):
         plan = loop._synthetic_plan(self.TASK, ask=self._ask("word " * 200))
         self.assertEqual([it.text for it in plan.items], [self.TASK])
 
-    def test_a_task_with_no_external_source_never_asks_the_model(self):
-        def must_not_ask(sysp, usr):
-            raise AssertionError("no domain in the task — nothing to research")
+    def test_a_self_contained_task_gets_no_step_because_the_MODEL_says_NONE(self):
+        """The model decides, not a domain regex. Research is reading — of files on disk, a schema, a
+        library's source — and a task that needs none says so."""
         task = "write a function that reverses a string, with unit tests"
-        plan = loop._synthetic_plan(task, ask=must_not_ask)
-        self.assertEqual([it.text for it in plan.items], [task])
+        for answer in ("NONE", "none", "NONE."):
+            with self.subTest(answer=answer):
+                plan = loop._synthetic_plan(task, ask=self._ask(answer))
+                self.assertEqual([it.text for it in plan.items], [task])
+
+    def test_a_task_with_no_domain_can_still_get_a_reading_step(self):
+        """The narrow version only asked when the task's words held a domain, which made every
+        non-web research invisible: reading the CSVs already in the workspace is research too."""
+        task = "build a report from the CSV files already in this directory"
+        authored = "Read the CSV files in the working directory to learn their columns before writing the report."
+        plan = loop._synthetic_plan(task, ask=self._ask(authored), files="data.csv  sales.csv")
+        self.assertEqual([it.text for it in plan.items], [authored, task])
+        self.assertIn("data.csv", self.seen)      # cria supplied the listing; the model chose
+
+    def test_a_location_the_TASK_named_is_not_a_guess(self):
+        """The refusal is for INVENTED locations. When the user named it, it is a fact."""
+        task = "read ./schema.json and generate the model classes"
+        authored = "Read ./schema.json to learn the field names before generating the classes."
+        plan = loop._synthetic_plan(task, ask=self._ask(authored))
+        self.assertEqual(plan.items[0].text, authored)
 
     def test_no_author_available_means_the_old_one_item_plan(self):
         plan = loop._synthetic_plan(self.TASK)

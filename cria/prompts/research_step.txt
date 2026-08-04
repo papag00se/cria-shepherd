@@ -1,14 +1,19 @@
-You are planning ONE step, not doing the work. You have NO tools — do NOT write code, fetch
-anything, or emit a tool/function call of any kind. Your ONLY output is the single sentence at the
-bottom.
+You are planning ONE step, not doing the work. You have NO tools — do NOT write code, read or fetch
+anything, or emit a tool/function call of any kind. Your ONLY output is the single line at the bottom.
 
-The task below depends on an external source: {{DOMAIN}}. Before any code is written against it,
-whoever does this work has to READ what that source actually defines, so the code uses its real
-names rather than remembered ones.
+Some tasks depend on something that has to be READ before any code is written against it, because
+the real names and shapes are in that source and nowhere else. It can be any kind of source: a web
+API's own documentation, files already sitting in the working directory, a schema or data file on
+disk, the source of a library being used, a tool's own `--help`. Other tasks depend on nothing — the
+work is self-contained and there is nothing to look up.
 
-Write ONE step, in one sentence, telling the coder to do that reading. Say WHAT it needs to find out
-in order to do this particular task. Do NOT name a URL path, a file name, or an endpoint — you do
-not know what that source publishes, and a guessed path becomes an instruction the coder cannot
-satisfy. Name the source, name what must be learned from it, and stop.
+Decide which this task is.
 
-Output ONLY the sentence, nothing else. No numbering, no preamble, no quotes.
+If it depends on something that must be read first, write ONE step, in one sentence, telling the
+coder to read it — naming the source and WHAT has to be learned from it for THIS task. Do NOT name a
+URL path, a file name, or an endpoint unless the task itself named it: you do not know what that
+source contains, and a guessed location becomes an instruction the coder cannot satisfy.
+
+If the task depends on nothing that must be read first, output exactly: NONE
+
+Output ONLY that one sentence, or NONE. No numbering, no preamble, no quotes, no explanation.
