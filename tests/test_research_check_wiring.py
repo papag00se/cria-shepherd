@@ -35,15 +35,34 @@ class TheCheckFiresOnTheLivePathTests(unittest.TestCase):
         lp._ctx = type("C", (), {"reasoner_chat": lambda *a, **k: None, "reasoner_role": None})()
         return lp
 
-    def test_at_the_cadence_a_satisfied_step_is_ADVANCED(self):
+    def test_a_satisfied_step_is_REPORTED_and_never_completed(self):
+        """It reports; it does not complete. Completing was a second authority that never reads the
+        workspace, and on run 1785812224 it marked "write the script", "unit tests" and "the live
+        test" verified in under three minutes with two files on disk — 0.0 where plan-off scored
+        1.0. The step critic is the only thing here that checks what was actually built (#13)."""
         lp, sess, rlog = self._loop(), _sess(research.RESEARCH_CHECK_EVERY), _Rlog()
         with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
              patch.object(research, "step_reading_verdict", return_value=research.DONE), \
-             patch.object(loop.Loop, "_advance", return_value={"advanced": True}) as adv:
+             patch.object(loop.Loop, "_advance") as adv:
             out = lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
-        self.assertEqual(out, {"advanced": True})
-        self.assertTrue(adv.called, "a satisfied research step must complete")
+        self.assertIsNone(out)
+        self.assertFalse(adv.called, "the reading check must never complete a step")
         self.assertIn("loop.research_satisfied", [k for k, _ in rlog.events])
+
+    def test_it_runs_once_per_tick_not_once_per_step(self):
+        """The driver recurses into the next item without advancing coder_turns, so a modulo test
+        alone re-fires for every remaining step inside ONE turn — six steps in three minutes."""
+        lp, sess, rlog = self._loop(), _sess(research.RESEARCH_CHECK_EVERY), _Rlog()
+        with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
+             patch.object(research, "step_reading_verdict", return_value=research.DONE) as v:
+            for _ in range(5):
+                lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v.call_count, 1)
+        sess.coder_turns += research.RESEARCH_CHECK_EVERY      # next tick — it may run again
+        with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
+             patch.object(research, "step_reading_verdict", return_value=research.DONE) as v2:
+            lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v2.call_count, 1)
 
     def test_off_cadence_it_does_nothing(self):
         lp, sess, rlog = self._loop(), _sess(research.RESEARCH_CHECK_EVERY - 1), _Rlog()
