@@ -64,6 +64,36 @@ shared endpoint (a raw chat endpoint can't be a subprocess agent). Rare config; 
 
 ---
 
+## Considered and REFUSED (don't rebuild)
+
+### Withhold a steer that contradicts the session's own response shapes (2026-08-03)
+A steer naming a parsed endpoint AND a field that endpoint does not return would have been deleted
+before delivery. Built twice, refused twice. What the evidence said, all of it re-derived by an
+independent reviewer over the 98-run corpus:
+
+- **The trade is upside-down.** 18 candidate steers: **4 defective, 10 correct**, 3 capture
+  artifacts, 1 unclassifiable — and nothing lexical separates them. Correct and defective name the
+  same two endpoints and the same two fields in the same kind of sentence. Ten clean signals gated
+  to catch four (rule 1: the bar to ADD is high).
+- **It cannot prevent the damage.** All four defects arrive AFTER the coder already wrote the wrong
+  field: −53, −196 and −19 calls. The one case where the steer led the write is the case the gate
+  MISSED at temp 0. Withholding an echo of a fact the coder is already acting on changes nothing.
+- **The real cause was upstream and is already fixed.** The steer author's evidence block ended
+  `utxo(string, e.g. …), …+4 more field(s)` — it was shown 34 of 39 fields and told 4 were hidden,
+  so it could not rule the field out. That is cria showing an author a cut list, not a model
+  inventing a fact. `FIELD_CAP` 30→40 (`ce8ac20`) renders the same spec with **no elision**. Every
+  run behind this branch predates that commit by hours.
+- **The message that actually destroyed the recovery is out of its reach.** The coder worked it out
+  alone — *"the API response we have does not contain a field for total handles"* — and what pushed
+  it back was the step critic's `reason`, which reaches the coder on a different path the check
+  never sees.
+
+If it is ever revisited, the fix belongs in the steer author's own prompt (fence it to the parsed
+field names it was given), which also covers the critic path and the plan step. Not a downstream
+deletion. Re-open only with ≥5 runs on current code showing the false claim still happens.
+
+---
+
 ## Shipped this session (done — don't re-litigate)
 - Never-truncate overhaul (`fc2682c`); web_fetch/read exec-envelope strip (`4671687`, `f77d3bb`).
 - Turn-stats ledger fixes (`86cb1c3`, `1c6fe74`, `3d7dcc8`); satisfaction-gate-on-green (`9355ca6`).

@@ -3675,3 +3675,106 @@ recorded row exactly.
    Re-ask; never inject.
 4. Compaction must not downgrade a fetch record it already holds. "No endpoint definitions were found"
    is a claim, and cria had the endpoints on disk when it made it.
+
+## ada-handles_fabliq_codex_pon_1785801960
+
+**cria fault: yes** — three, one of them the highest-prevalence defect measured in this project.
+
+Attempt 8. Milestone miss at 15 min, score 0.0/4, 51 model calls, 46 harness turns, 248.7 tok/s.
+Capture `~/.cria/calls/20260803T170610-019fca17-9475-74a3-b62b-bb2abb3d2482`, every call read in
+order against `~/.cria/logs/cria-20260804.jsonl`.
+
+FIRST, WHAT WENT RIGHT, because it is the thing four earlier walks were about. The field cap raised
+to 40 earlier the same day (`ce8ac20`) landed live here: at call 0009 the `/handles/{handle}` field
+list runs from `hex(string)` to `updated_slot_number(integer)` with no `…+N more field(s)` anywhere.
+The steer author, the plan judges and the coder all saw the complete list, and the fetch ledger
+carried it into 105 of the run's coder prompts.
+
+### 1. A repeated call is collapsed in silence, so cria re-asks a temperature-0 model the same question
+
+The run's defining fault, and it is general.
+
+- Call 0015: cria frames 9 messages (33,634 chars) and the coder calls
+  `web_fetch(url=…/openapi.json, find="GET /handles/{handle}", raw=true)`. The harness runs it and
+  the result comes back — the reasoner's own session view at 0017 shows the call AND the spec
+  section it returned.
+- Call 0016: the harness's inbound conversation has grown from 15 messages to 19 — the new call and
+  its result ARE there. cria frames **9 messages, 33,634 chars, md5 `25e96ee4…` — byte-identical to
+  0015**. Between them, one event: `context.focus_trim dropped_calls=1 dropped_msgs=1`.
+- The reply is identical too, necessarily: same 682-char reasoning, same tool call. At temperature 0
+  a model handed a constant is a deterministic function.
+- 00:13:23 `loop.repetition count=3`. 00:13:31 a supervisor directive: *"You have been repeating the
+  same fetch of /handles/{handle} without changing anything."* It had fetched it once, and been
+  asked again.
+
+The mechanism is focus-trim rule A doing exactly what it was built to do. It folds duplicate tool
+calls to their LAST occurrence keyed on (name, args, result). The conversation grew by a call whose
+args and result matched the previous one, so rule A dropped the older copy — and the rendered body
+came out identical. Rule B leaves a note for every failure it folds away; rule A collapsed in
+silence. That asymmetry is the whole bug: the model lost the only evidence it already had the
+answer, and was then punished for not knowing.
+
+MEASURED across the whole capture set: **76 of 118 runs (64%) sent a coder the byte-identical prompt
+twice in a row — 344 calls**, worst run 43 of 375. Offline check
+`suite/replay_logic.py --check identical-consecutive-prompt` (new): 53/86 suite-mapped runs (62%).
+
+FIXED in `f2bb013`: rule A still folds the duplicate, but when the collapsed group ends at the
+conversation's final tool call the model is told — this exact call has now been made N times, the
+result was identical every time, repeating it returns the same thing. A stale duplicate deep in the
+history still folds silently, and a same-args call whose RESULT DIFFERED was never a duplicate and
+still is not. 9 tests, 5 fail on clean main.
+
+### 2. The noise judge deleted the README, and the coverage backstop passed it
+
+At 00:14:24, re-deriving the tail:
+
+```
+loop.replan_noise dropped=2 kept=5
+  dropped_steps: 'Set up a Python environment with the `requests` library installed…'
+               | 'Add a README.md file explaining how to install dependencies (`pip install
+                  requests pytest`), run the script with an Ada Handle, and execute unit tests.'
+```
+
+The venv step is a correct removal. The README step is a deliverable the task names in its own
+words — *"add a README that explains how to install and run the script and the tests"* — and its
+real action is writing a doc. It was removed as environment setup because a README that explains how
+to install necessarily contains the words `pip install`. The step's own removal criterion says
+"ENVIRONMENT or PROJECT SETUP **that writes no real code/tests/docs**"; this writes a doc.
+
+The plan went 8 steps → 6, and from step 2 onward every coder prompt said "step N of 6". No step
+produced a README for the rest of the run.
+
+cria's enforced coverage check RAN — `missing_deliverables` over `done_texts + kept` — and returned
+nothing missing, so no `loop.replan_uncovered` fired. That check is a reasoner judgement, and it
+missed a deliverable named literally in the task. NOT FIXED HERE, deliberately: the code's own
+comment records this judge firing 156 times across every log day, dropping ≥1 step 75 times, and the
+fix is either a prompt change or a second judge — both need their own measurement, and this is one
+instance. Recorded so the next pass starts from evidence rather than from the instance.
+
+### 3. cria's verifier restated the plan's false fact as a confirmed finding
+
+The planner's step 1 asked to "confirm the `/handles/{handle}` endpoint returns resolved Cardano
+addresses, holder information, and total handles". It does not return total handles —
+`/holders/{address}` does, and the complete field list saying so was in the same prompt.
+
+`verify-step-01` stored: *"…confirming it returns resolved Cardano addresses, holder information,
+and total handles."* `loop.confirm_restated_claim` fired at 00:14:14 and again at 00:15:28, so the
+restatement guard SAW both — it is the step's own text coming back as the verdict's reason.
+
+Note for the refused ledger-contradiction check (see docs/open-threads.md): this run is the re-test
+that check's reviewer asked for — the false `total_handles` claim STILL occurs with the complete,
+un-elided field list live. It did not come from a steer. It came from the PLANNER, which was told
+"DON'T GUESS EXTERNAL FACTS", was handed all 39 fields, and wrote
+`"total_handles": data["total_handles"]` as literal code under a plan it was told not to write code
+in. cria's plan scrubber correctly stripped the code fence from the stored plan — but both plan
+judges at 0011 and 0012 were shown the plan WITH the code fence still attached, and both passed it
+(`{"missing": []}` and `NONE`).
+
+### What did not fail
+
+- The 4 `upstream.stream_error` events (llama.cpp's streaming tool-call differ raising "Invalid
+  diff" mid-`write_file`) were each recovered by the buffered re-issue exactly as designed —
+  0040/0042/0044/0046 have no response, 0041/0043/0045/0047 are their answers. Four saved turns.
+- `massage.reasoning_call_recovered` fired twice, both `read_file` calls the model left in the
+  reasoning channel — the fix merged earlier today, working on a live run.
+- The plan scrubber dropped the planner's code fence and its venv step from the stored plan.
