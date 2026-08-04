@@ -312,7 +312,7 @@ def _reasoning_transcript_block(reasoning: str) -> str:
     """The model's reasoning, folded into the persistent message content so it rides in the SCROLLBACK
     — the only reliable persistence, since Codex renders the native reasoning channel only transiently
     (even with show_raw_agent_reasoning). BRACKETED by a ``⟦cria⟧ 💭`` fence so the body renders CLEAN
-    (no per-line marker walling every code line a model like fabliq drafts in its reasoning);
+    (no per-line marker walling every code line a verbose reasoner drafts in its reasoning);
     strip_history drops the whole fenced block from inbound history so the model never re-ingests it."""
     return f"{THINK_FENCE}\n{reasoning.strip(chr(10))}\n{THINK_FENCE}"
 

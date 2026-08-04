@@ -66,8 +66,8 @@ hardest configuration on purpose: every role played by one 8–27B, no cloud, no
 
 ## Battle-tested across the board
 
-- **A dozen models, 8B–27B, dense and MoE** — Ornith, Qwopus, Qwythos, Gemma 4 Fable,
-  Fabliq, Mellum 2, LFM2.5, Nemotron Elastic, ZAYA1, Ternary-Bonsai. A model that
+- **Seven models, 9B–27B, dense and MoE** — Ornith, Qwopus, Qwythos, Gemma 4 Fable,
+  Mellum 2, Nemotron Elastic, Ternary-Bonsai. A model that
   breaks cria isn't a nuisance here — it's a requirement. Launch recipes per model in
   [`docs/model-settings.md`](docs/model-settings.md).
 - **Harnesses**: exercised under Codex (Responses API) and Claude tooling; anything

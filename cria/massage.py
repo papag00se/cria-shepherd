@@ -1440,7 +1440,7 @@ def repair_history_tool_args(messages: list, rlog=None) -> list:
     valid shell/Python escape but a FORBIDDEN JSON one. llama.cpp records the call, then on every later
     turn re-parses each historical tool_call's arguments as JSON while rendering the chat template —
     the one bad call throws and the server returns HTTP 500. Because the poison lives in the HISTORY,
-    not the fresh generation, it bricks the whole session and never recovers (observed on Fabliq).
+    not the fresh generation, it bricks the whole session and never recovers (observed live 2026-07, retired-model run).
 
     :func:`repair_tool_args` fixes the model's FRESH response but never touched the history cria
     forwards. Repair each malformed historical call with the same primitives; if it can't be

@@ -206,7 +206,7 @@ class Role:
         reasoning.apply_reasoning(body, self.reasoning, self.think_protocol)
         if self.reasoning == "off" and self.think_protocol == "chat_template":
             # The empty-`<think></think>` prefill suppresses thinking on models TRAINED for it
-            # (Qwen/gemma/mellum) but is inert for the LFM2 family (fabliq/lfm25), which then
+            # (Qwen/gemma/mellum) but is inert for the LFM2 template family (retired fleet), which then
             # deliberate in `content`. A mild directive makes those answer directly instead —
             # so OFF works on ANY loaded local model. clean_content() strips any residual leak.
             # (Only for template backends; a remote provider gets its own off signal, not a prompt.)

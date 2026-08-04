@@ -78,9 +78,6 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
-    # Zyphra card: temp 0.6 / top_p 0.95 / top_k OFF for agent+code, 1.0 general.
-    # LLM-OS-Models ship do_sample=False -> greedy; repeat_penalty 1.05 is the publisher's value.
-    # Without a penalty this family loops.
 }
 
 KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty")

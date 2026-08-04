@@ -50,8 +50,6 @@ LADDER = [
     ("mellum2",          "12B/A2.5B",   "mellum 64/8",       "moe",   "off"),  # flipped 2026-08-02 — see docs/audits/ladder-walk.md (16 planner-on runs peaked at 3/4 over 27-60 min; the first planner-off run reached the same score in 3.9 min and 53 calls, with none of the plan-side faults)
     ("nemotron-elastic", "12B/A2B",     "nemotron_h_moe 128/6", "moe", "on"),
 ]
-# lfm25 is deliberately absent: the systemd unit exists but the model has no entry in
-# ~/.config/llama-fleet/models.toml, so starting it cannot work. Add it back when that is fixed.
 
 LANGUAGES = [("python", "ada-handles")]     # the ladder walks ONE language at a time, in this order
 

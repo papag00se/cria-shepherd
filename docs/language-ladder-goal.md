@@ -71,8 +71,6 @@ dense and four MoE, not six and three.
 calling, which cria's whole loop depends on. Reasoning and the conditions for revisiting are in
 `docs/model-settings.md`; do not re-raise it without them.
 
-`lfm25` is deliberately absent: its systemd unit exists but it has no entry in
-`~/.config/llama-fleet/models.toml`, so starting it cannot work. Put it back when that is fixed.
 
 ### The planner column is a HYPOTHESIS, not a result
 

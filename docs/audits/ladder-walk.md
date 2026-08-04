@@ -4316,3 +4316,38 @@ and the final approval came only after the checks-green ending).
 
 nemotron-elastic's campaign answer is now consistent: 3/4, 3/4 — a stable model with one stable
 defect class (an argument-demanding "live test" it never runs bare). The row stands.
+
+## ada-handles_gemma4_codex_poff_1785860144
+
+REGRESSION1 campaign, gemma4 run 1/3 (the "referendum" rerun on `90e684b`: uncaged plan-off +
+restored dictation). Score **0/4**, terminal `milestone-miss-15min` (955 s, 61 calls). Capture
+`~/.cria/calls/20260804T091556-019fcd8f-6da5-7082-82ec-40827a80e7aa` — walked in full.
+
+### The run in one paragraph
+
+The cage is gone and the retunes visibly worked (4 dictated steers delivered, 10 flail steers
+flowed with movement resets, 3 false citations dropped) — and the run failed anyway, for a NEW
+reason planted at call 0001: **the authored reading step itself hallucinated**. It told the coder
+to "read the result of an AUTHENTICATED GET request to api.handle.me**/v1/handles/{handle}**" —
+a route, a version prefix, and an auth requirement the task never named. Calls 0002–0039 chased
+the poison: five 404s on the fake route, a hunt for /v1/auth/login, reasoners inspecting a fantasy
+filesystem (.env, main.py, /tmp/.bashrc), and a steer (0023) that FABRICATED
+`/home/user1/.cache/api.handle.me/openapi.json`, which the coder promptly tried to read. The model
+found the real route at 0039, wrote everything by 0045, and died at the wall inside its usual
+edit-noop loop (a `c`-typo it "fixed" with old==new edits).
+
+### cria fault: yes — two scope gaps in existing enforcement families, both fixed
+
+1. `research.step_defect` vets cria's own authored step lexically, and its location-token list
+   (`://`, `.json`, `swagger`…) could not see a bare `/v1/…/{handle}` path or the word
+   "authenticated". Fixed: three guess-shape arms (braced template, versioned path, auth
+   requirement), each silenced when the task's own text carries the match — same fail-safe
+   refusal contract, and the existing named-defect retry now gets a shot at re-authoring.
+2. A steer naming a fabricated absolute SYSTEM path passed both grounding checks (URL-scoped and
+   file:line-scoped). Fixed: `_phantom_system_path` — a system-root path the steer names that does
+   not exist on disk withholds the steer (`loop.steer_phantom_path`). Workspace paths (legitimate
+   create-targets) and /tmp (workspaces, spills) are deliberately out of scope.
+
+The negative referendum itself is honest data: gemma4's failures are plural — the cage was one,
+the author's hallucination class is another, and its edit-exactness pathology is the constant.
+Row superseded (fault found); gemma4 reruns on the hardened author gate.

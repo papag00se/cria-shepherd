@@ -5286,7 +5286,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
         directive = _steer_or_none(text) or _steer_from_reasoning(comp, text, _recover_ask, rlog)
         return _grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask,
-                                       sess=gs, messages=body.get("messages", []))
+                                       sess=gs, messages=body.get("messages", []),
+                                       workspace_root=workspace_root)
     # BOTH PATHS, not just the tooled one: `capture` hands back the raw completions so the toolless
     # branch can read the same discarded thinking. capture[0] is the reasoning-ON pass — summarize's
     # retry runs with reasoning forced OFF and has none to read.
@@ -5297,7 +5298,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     if directive is None and passes:
         directive = _steer_from_reasoning(passes[0], text, _recover_ask, rlog)
     return _grounded_steer_or_none(directive, user, rlog, ask=_steer_ask,
-                                   sess=gs, messages=body.get("messages", []))
+                                   sess=gs, messages=body.get("messages", []),
+                                   workspace_root=workspace_root)
 
 
 def _steer_or_none(text: str) -> str | None:
@@ -5579,8 +5581,37 @@ def _fetch_succeeded_anywhere(sess, messages: list) -> bool:
     return any(_fetch_succeeded(_fetch_facts(e)[0]) for e in merged.values())
 
 
+# Absolute paths under SYSTEM roots — the shapes a steer can only be inventing when nothing at that
+# path exists. /tmp is deliberately absent (workspaces and spill files legitimately live there), and
+# a workspace-internal path is a legitimate create-target, so neither is ever checked by this.
+_ABS_SYSTEM_PATH = re.compile(r"(?<![\w./-])(/(?:home|root|usr|etc|opt|srv|var)/[\w./-]{3,})")
+
+
+def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
+    """An absolute system-root path the directive names that does NOT exist — else "".
+
+    Walked 2026-08-04, run ada-handles_gemma4_codex_poff_1785860144 call 0023: a steer told the
+    coder "The real OpenAPI spec at /home/user1/.cache/api.handle.me/openapi.json contains…" — a
+    path that has never existed on this box — and the coder spent its next turn trying to read it.
+    The URL-grounding check is URL-scoped and the citation check is file:line-scoped, so a bare
+    fabricated filesystem path passed both. This is the same enforcement family, same shape:
+    cria holds the disk, so existence is a fact, not a judgment. A path inside the workspace is
+    never checked (it may be a create-target); a SYSTEM path that exists is fine to mention."""
+    for m in _ABS_SYSTEM_PATH.finditer(directive or ""):
+        path = m.group(1).rstrip(".,;:'\"")
+        if workspace_root and path.startswith(str(workspace_root).rstrip("/") + "/"):
+            continue
+        try:
+            if not os.path.exists(path):
+                return path
+        except OSError:
+            continue
+    return ""
+
+
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
-                            sess=None, messages: list | None = None) -> str | None:
+                            sess=None, messages: list | None = None,
+                            workspace_root: str | None = None) -> str | None:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
     The steer author's own system prompt already says "NEVER invent a file path, directory, command,
@@ -5609,6 +5640,10 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
+        return None
+    phantom = _phantom_system_path(directive, workspace_root)
+    if phantom:
+        rlog.emit("loop.steer_phantom_path", level="warn", path=phantom, head=_clip(directive, 120))
         return None
     if _dictates_code(directive, ask):
         # OBSERVE-ONLY (operator ruling, 2026-08-04). The drop's harm evidence was measured on a

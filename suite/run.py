@@ -54,7 +54,6 @@ SERVICES = {
     "ornith": "llama-ornith-q6",
     "gemma4": "llama-gemma4-q4km",
     "mellum2": "llama-mellum2-q4",
-    "lfm25": "llama-lfm25-q6",
     "nemotron-elastic": "llama-nemotron-elastic",
 }
 

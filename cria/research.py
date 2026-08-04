@@ -252,6 +252,11 @@ def step_defect(text: str, task: str) -> str | None:
         if token in lowered and token not in task_l:
             return ("it names a location the task itself never named, which the coder may be "
                     "unable to reach")
+    for pat, what in _GUESS_SHAPES:
+        m = pat.search(text)
+        if m and m.group(0).lower() not in task_l:
+            return (f"it bakes in {what} ('{m.group(0)}') that the task itself never named — a "
+                    "guessed route or requirement becomes an instruction the coder cannot satisfy")
     if any(re.search(rf"\b{v}\b", lowered) for v in _PRODUCTION_VERBS):
         return ("it is a build instruction — its verb tells the coder to produce something "
                 "rather than to read")
@@ -271,3 +276,17 @@ _PRODUCTION_VERBS = ("write", "writes", "create", "creates", "add", "adds", "imp
 # Location-shaped tokens: naming one the TASK did not name is a guess, and a guessed location is what
 # makes a step unsatisfiable. Present in the task too → the user named it, so it is a fact, not a guess.
 _LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
+
+# Guess SHAPES the token list above cannot see — same refusal contract (cria vetting its OWN
+# authored step, fail-safe: no step = the plan cria would have built anyway), each arm silenced
+# when the task's own text carries the match. Walked 2026-08-04, run
+# ada-handles_gemma4_codex_poff_1785860144: the authored step read "the result of an AUTHENTICATED
+# GET request to api.handle.me/v1/handles/{handle}" for a task naming only the bare domain — the
+# run spent 38 of its 61 calls chasing the invented /v1/ route, a login endpoint that does not
+# exist, and the auth scheme the step asserted.
+_GUESS_SHAPES = (
+    (re.compile(r"\{\w+\}"), "a braced path template"),
+    (re.compile(r"/v\d+/"), "a versioned API path"),
+    (re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[- ]?key|bearer token)\b"),
+     "an authentication requirement"),
+)
