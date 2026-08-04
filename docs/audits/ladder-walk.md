@@ -4552,3 +4552,33 @@ calls. One DICTATES steer (0021) RATIFIED that broken pipe (kept `| python -c`, 
 counter-evidence #2. A which()-based guard on dictated commands was considered and REJECTED:
 `python` legitimately exists inside the activated venvs the same steers recommend, so the ground
 truth is not exact. Row STANDS — gemma4 run 2: 1/4.
+
+## ada-handles_qwythos_codex_poff_1785877469
+
+REGRESSION1 campaign, qwythos run 2/3 (head `61242fc`+). Score **2/4** (unit tests 3/3, README),
+terminal `exited` — self-completed in 15 min, 112 calls. Capture
+`~/.cria/calls/20260804T140453-019fce97-f890-76a1-adce-4a52710a104e` — walked in full.
+
+### What held
+
+The authored-step guess gate fired live: the first authored reading step baked in
+"authentication requirements" (absent from the task), was refused, and the re-author came out
+clean (0002 → 0003). Steers were consistently grounded and specific this run (mock-shape
+diagnoses at 0025/0032/0038/0042 were each exactly right); the coder converged instead of
+spiralling. Both goose and papagoose were resolved LIVE in-session; clean self-exit.
+
+### cria fault: none — the two lost points are the model's own semantics
+
+1. resolver_cli: the final code sets `resolved_address = data["holder"]` — it REPORTS the stake
+   address as the resolved address, so the output never contains an `addr1…` string. The steers
+   correctly said "use `holder` for the HOLDER LOOKUP"; the model folded lookup and display into
+   one variable and shipped the conflation. The task asks for the resolved Cardano address.
+2. live_test: no live-test artifact exists — the model treated its in-session CLI runs as the
+   live test. The README documents only a usage command (`python3 api_resolver.py <handle>`);
+   the scorer's README probe relayed it with the literal `<handle>` placeholder and execution
+   failed (exit 2). OPEN QUESTION for the operator: should the probe substitute the task's
+   handle into `<handle>`-style placeholders? That would award the live point to any
+   README-documented usage command that provably hits the network — generous, since it decouples
+   the point from having a live TEST at all. Not changed without a ruling.
+
+Row STANDS — qwythos: ⁴⁄₄ then ²⁄₄.
