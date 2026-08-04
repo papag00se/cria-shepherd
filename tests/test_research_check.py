@@ -305,3 +305,40 @@ class ARefusedStepIsReAskedOnceTests(unittest.TestCase):
             "Read https://api.handle.me/openapi.json for the routes.", self.TASK))
         self.assertIn("longer than one step", research.step_defect("word " * 200, self.TASK))
         self.assertIsNone(research.step_defect(self.GOOD, self.TASK))
+
+
+class TheReadingStepMustActuallyBeDrivenTests(unittest.TestCase):
+    """Run 20260803T211734: the step was authored, the retry recovered it, loop.start said steps=2 —
+    and it appeared in ZERO of 56 coder prompts. `synthetic` selects the single-item driver, whose
+    framing is deliberately the raw task and ignores plan items; a 2-item plan in a synthetic session
+    is dead weight. These pin the routing: degenerate stays synthetic, a plan with a reading step
+    does not."""
+
+    def test_one_item_is_synthetic(self):
+        plan = loop._synthetic_plan("write a function that reverses a string")
+        sess = loop._plan_off_session(plan, "")
+        self.assertTrue(sess.synthetic)
+        self.assertEqual(len(sess.plan.items), 1)
+
+    def test_a_reading_step_makes_it_a_REAL_plan(self):
+        step = "Read what api.handle.me publishes to learn the endpoint and response fields."
+        plan = loop._synthetic_plan("resolve a handle via api.handle.me",
+                                    ask=lambda s, u: step)
+        sess = loop._plan_off_session(plan, "briefing")
+        self.assertFalse(sess.synthetic, "a 2-item plan in a synthetic session is never framed")
+        self.assertEqual([it.text for it in sess.plan.items][0], step)
+        self.assertEqual(sess.prior_work, "briefing")
+
+    def test_the_multi_item_driver_frames_the_step(self):
+        """The consequence that was missing live: the coder must be TOLD the step. The multi-item
+        framing carries the item text; the synthetic framing carries the raw task only."""
+        step = "Read what api.handle.me publishes to learn the endpoint and response fields."
+        task = "resolve a handle via api.handle.me"
+        plan = loop._synthetic_plan(task, ask=lambda s, u: step)
+        sess = loop._plan_off_session(plan, "")
+        framed = loop._frame_for_item(
+            [{"role": "user", "content": task}],
+            sess.plan.items[0].text, "", 1, len(sess.plan.items), synthetic=sess.synthetic)
+        blob = str(framed)
+        self.assertIn(step, blob)
+        self.assertIn("1 of 2", blob)
