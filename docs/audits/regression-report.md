@@ -35,9 +35,10 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 ## Run stats
 
 Regenerate any time with `python3 suite/regression_stats.py` (`--md` for these tables).
-The model-performance rollup covers each model's last 3 runs in any state (current form;
-the scoreboard above owns what counts). Per-run: steers = directives/redirects cria
-injected; gates = check runs it triggered.
+The model-performance rollup covers each model's last 3 runs in any state, ranked by
+completion rate, then shortest time, then least assists (current form; the scoreboard
+above owns what counts). Per-run: steers = directives/redirects cria injected; gates =
+check runs it triggered.
 
 ### Model performance (each model's last 3 runs, any state)
 

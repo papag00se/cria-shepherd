@@ -98,21 +98,24 @@ def model_summary(lines):
         last3 = by_model[m][-3:]
         scores = [int(s["score"].split("/")[0]) for s in last3]
         avg = sum(scores) / len(scores)
-        assists = []
+        assists, assist_total = [], 0.0
         for icon, _label, _match in ASSIST_FAMILIES:
             mean = sum(s["assists"][icon] for s in last3) / len(last3)
+            assist_total += mean
             if round(mean):
                 assists.append(f"{icon} {round(mean)}")
         out.append({
             "model": m,
             "_avg": avg,
+            "_assists": assist_total,
             "badge": _badge(avg),
             "trend": " ".join(_GLYPH[n] for n in scores),
             "tok_s": round(sum(s["tok_s"] for s in last3) / len(last3), 1),
             "assists": " · ".join(assists) or "—",
             "min": round(sum(s["min"] for s in last3) / len(last3)),
         })
-    return sorted(out, key=lambda s: s["_avg"], reverse=True)
+    # Operator's ranking: highest completion rate, then shortest time, then least assists.
+    return sorted(out, key=lambda s: (-s["_avg"], s["min"], s["_assists"]))
 
 
 def main() -> int:
