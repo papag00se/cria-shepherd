@@ -19,6 +19,7 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785861503 | 55df703 | milestone-miss-30min | SUPERSEDED by the reading-step-clearance fix (36e2861) — walked, cria fault yes: the reading step was unclearable, the hand-back never fired |
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785866157 | 36e2861 | milestone-miss-30min | SUPERSEDED by the steer false-fact fixes (61242fc) — walked, cria fault yes: steers cited phantom line numbers and an invented API key |
 | gemma4 | off | — | 3/4 | ada-handles_gemma4_codex_poff_1785869053 | 61242fc | milestone-miss-60min | SUPERSEDED by the case-typo refusal fix — walked, cria fault yes: 50+ refusals never named a one-letter case typo of the workspace; best gemma4 campaign score, new steer guards fired 4x correctly |
+| gemma4 | off | 1 | **1/4** | ada-handles_gemma4_codex_poff_1785873072 | 61242fc | milestone-miss-30min | walked: cria fault none — model typo churn + packaging fabrications; a factually-true steer countermanded the /holders lookup (total always 0), recorded to the observe ledger; row STANDS |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
@@ -49,7 +50,7 @@ check runs it triggered.
 | 🟡 qwopus | ⁴⁄₄ ¼ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
 | 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
-| 🟠 gemma4 | ¼ ¼ ¾ | 61.2 | 🧭 40 · 🔁 8 · 🧪 16 · 🗜️ 11 | 41 |
+| 🟠 gemma4 | ¼ ¾ ¼ | 62.9 | 🧭 36 · 🔁 8 · 🧪 12 · 🗜️ 9 | 41 |
 | 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
@@ -80,11 +81,19 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 21 | milestone-miss-30min |
 | gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 10 | milestone-miss-30min |
 | gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
+| gemma4 | counted | 1/4 | 31 | 310 | 147 | 64.1 | 24 | 11 | milestone-miss-30min |
 
-counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 7/9
+counted runs: 10 · avg wall 38 min · avg coder calls 78 · full-pass rate 7/10
 
 ## Notable events
 
+- **2026-08-04 ~13:45 — gemma4 banks its first counted run (1/4); cria fault: none.** No
+  case-typo spiral recurred; leaked judge tool-calls (including one that would have
+  overwritten a file) were contained and never executed. The scoring loss traces to a
+  factually-TRUE steer that told the coder to stop making two lookups — starving the
+  task-required total-handles field — plus the model's own typo churn and invented packaging
+  config. Nothing to fix without API-spec overfit; the steer is logged as the strongest
+  counter-example in the steer-quality observe ledger. The row stands.
 - **2026-08-04 ~13:10 — operator ruling: the live-test scorer honours a handle argument;
   nemotron's two 3/4s rescore to 4/4.** Its live test always did a real resolution — it just
   wanted the handle on the command line, a shape the scorer's own CLI check already tries.
