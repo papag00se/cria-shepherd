@@ -4194,3 +4194,35 @@ dropped across these walks (gemma4 run 2's snake_case correction, these two) aga
 harm the drop prevents; recorded as prevalence for the steer-channel design, not changed.
 
 The row stands: 0/4, model-attributable (blind-written test interface + oscillation).
+
+## ada-handles_qwopus_codex_poff_1785845382
+
+REGRESSION1 campaign, qwopus run 2/3 on `98a4951`. Score **1/4** (CLI verified with real data;
+4/8 unit tests failing; no README; no live test), terminal `milestone-miss-30min` (1848 s, 71
+calls). Capture `~/.cria/calls/20260804T051004-019fccae-5389-78a0-814f-32a7967130fe` — walked in
+full.
+
+### The run in one paragraph
+
+Research clean (search judged on-target, spec fetched, endpoint details verified by the critic on
+evidence). The coder's FIRST work turn tried to write all three files at once, hit the output
+token limit, and the README never landed on disk — the truncation guard disclosed it, the coder
+even said "I'll write in small pieces", rewrote only the resolver, and no one ever came back for
+the README. The resolver itself ended up genuinely working (403 fixed with a User-Agent after a
+GROUNDED steer — the blames-service judge correctly passed it at 0022 because the curl comparison
+proved header-dependence). The rest of the run is the campaign's recurring disease: blind-written
+test mocks (context-manager protocol, `import pytest` placement, `total_handles` fixture keys)
+oscillating against the script for ~40 calls until the 30-minute milestone. The plan-coverage
+judges ruled `{"missing": []}` three times over plans whose steps no longer produced a README or a
+separate live test — LLM coverage misses on the exact deliverables that ended up zero.
+
+### cria fault: none
+
+The guards behaved: the search judge steered the query, the steer-grounding judge correctly ruled
+GROUNDED on the one steer that mattered (the 403/User-Agent diagnosis — a true positive that
+ternary's and gemma's walks show is not automatic), two code-pasting directives were dropped per
+the dictated-code design, and the critics' step verdicts named real failing lines. The losses —
+the truncated README nobody re-wrote, the mock oscillation, the coverage judges' misses — are the
+model on its three seats. Deterministically policing plan coverage against task nouns would be the
+pattern-doing-judgment's-job that principle 9 forbids; the coverage judge exists because it is
+judgment. The row stands.
