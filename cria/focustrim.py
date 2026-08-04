@@ -182,6 +182,35 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     if not drop_ids:
         return messages, TrimReport()
 
+    # THE LAST CALL REPEATED ITSELF — say so, don't just delete the evidence.
+    #
+    # When the group whose duplicates are being collapsed is the one the model just made, this
+    # collapse is silently destructive in the one way that matters: the conversation GREW by an
+    # identical call and an identical result, this rule removes the older copy, and the rendered
+    # body comes out BYTE-IDENTICAL to the one sent a moment ago. A temperature-0 model handed a
+    # constant is a deterministic function — it returns the same call again, necessarily. cria then
+    # counts those repeats and steers the coder for "repeating the same action without changing
+    # anything", which it did not choose to do: cria deleted the only evidence that it already had.
+    #
+    # MEASURED over the whole capture set (2026-08-03): 76 of 118 runs (64%) sent a coder the
+    # byte-identical prompt twice in a row, 344 calls in all — every one a guaranteed-identical
+    # answer. Walked on ada-handles_fabliq_codex_pon_1785801960 calls 0015/0016: same prompt md5,
+    # same 682-char reasoning, same tool call, then `loop.repetition` at count 3 and a supervisor
+    # directive telling the coder to stop repeating the fetch.
+    #
+    # So the note is not decoration — it is the difference between the model being told what it did
+    # and being asked the same question again. This mirrors what rule B has always done for the
+    # failures it folds away (`trim_error_squash`); rule A collapsing in silence was the asymmetry.
+    # Only for the group that ends at the FINAL tool call: an old duplicate deep in the history is
+    # genuinely stale and folding it away is what this rule is for (#3 — silence over noise).
+    last_call_id = None
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and (m.get("tool_calls") or []):
+            last_call_id = (m["tool_calls"][-1] or {}).get("id")
+            break
+    repeated = next((cids for cids in occ.values()
+                     if len(cids) > 1 and cids[-1] == last_call_id and last_call_id is not None), None)
+
     out: list[dict] = []
     rep = TrimReport()
     for m in messages:
@@ -201,6 +230,13 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
             continue  # orphaned result of a dropped call
         else:
             out.append(m)
+    if repeated is not None:
+        label = next((_tried_label(tc) for m in messages if m.get("role") == "assistant"
+                      for tc in (m.get("tool_calls") or []) if tc.get("id") == repeated[-1]), "")
+        out.append({"role": "user",
+                    "content": prompts.render("trim_repeat_collapsed",
+                                              n=len(repeated), tried=label)})
+        rep.squashed_runs += 1
     return out, rep
 
 

@@ -1,0 +1,1 @@
+[you have now made this exact call {{N}} times and it returned the exact same result every time — the earlier copies were folded away, so this is the only record of it. Tried: {{TRIED}}. Repeating it again will return that same result: it has told you everything it can. Read what it already returned above, or take a DIFFERENT action.]

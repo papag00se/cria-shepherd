@@ -25,6 +25,7 @@ copy of their wording. A check that re-implements what it measures measures itse
 has shipped that mistake more than once.
 """
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -898,7 +899,24 @@ def check_cria_voice_forgery(row, cap, ws):
                     f"{quoted} more only QUOTE a marker mid-line and are left alone")
 
 
+def check_identical_consecutive_prompt(row, cap, ws):
+    """How many times cria sent the coder the BYTE-IDENTICAL prompt twice in a row.
+
+    At temperature 0 a model handed a constant is a deterministic function: every one of these is a
+    guaranteed-identical answer, a wasted call, and a tick on the repetition counter that then steers
+    the coder for "repeating the same action" it never chose to repeat.
+
+    Measured on the prompt captures themselves rather than through any cria function, because the
+    question is not what a rule decided — it is what was actually SENT. Consecutive within the coder
+    phase only: a judge or compactor call landing between two coder calls does not make the coder's
+    view change."""
+    hashes = [hashlib.md5(f.read_bytes()).hexdigest() for f, _t in coder_prompts(cap)]
+    repeats = sum(1 for a, b in zip(hashes, hashes[1:]) if a == b)
+    return repeats, f"{repeats} identical re-asks across {len(hashes)} coder calls"
+
+
 CHECKS = {
+    "identical-consecutive-prompt": check_identical_consecutive_prompt,
     "cria-voice-forgery": check_cria_voice_forgery,
     "oscillation": check_oscillation,
     "call-syntax-tool-call": check_call_syntax_tool_call,
