@@ -20,7 +20,7 @@ gates = check runs it triggered.
 | model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 🟢 ornith | ⁴⁄₄ ⁴⁄₄ | 80.7 | 4 | 4 | 11 | 7 | 18 |
-| 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ | 80.5 | 8 | 5 | 13 | 7 | 26 |
+| 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 9 | 4 | 11 | 5 | 23 |
 | 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 17 | 7 | 30 | 8 | 34 |
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
 | 🟢 mellum2 | ³⁄₄ ⁴⁄₄ | 173.4 | 10 | 2 | 16 | 2 | 8 |
@@ -64,8 +64,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 4/4 | 6 | 81 | 51 | 176.3 | 14 | 6 | exited |
 | gemma4 | counted | 1/4 | 31 | 238 | 127 | 62.5 | 33 | 11 | milestone-miss-30min |
 | qwythos | counted | 4/4 | 9 | 58 | 31 | 81.9 | 9 | 4 | exited |
+| qwopus | counted | 4/4 | 15 | 75 | 46 | 83.2 | 11 | 7 | exited |
 
-counted runs: 17 · avg wall 28 min · avg coder calls 73 · full-pass rate 11/17
+counted runs: 18 · avg wall 28 min · avg coder calls 71 · full-pass rate 12/18
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -91,6 +92,7 @@ counted runs: 17 · avg wall 28 min · avg coder calls 73 · full-pass rate 11/1
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
 | qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 2 | **4/4** | ada-handles_qwopus_codex_poff_1785878574 | 61242fc | exited | 11/11 unit tests, dedicated live-test file (provably live), CLI, README — 5 minutes, 34 calls: the fastest full pass of the campaign |
+| qwopus | off | 3 | **4/4** | ada-handles_qwopus_codex_poff_1785885328 | 878c1b1+ | exited | full pass — qwopus closes STABLE 3/3, the campaign's first perfect record |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785847335 (VOIDED) | 1dc813b | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
