@@ -30,6 +30,14 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 
 ## Notable events
 
+- **2026-08-04 ~10:20 — the referendum run answered, and the answer was "there was a second bug."**
+  gemma4 on the uncaged code still went 0/4 — but the walk found the poison at call one: cria's own
+  research-step author invented a route, a version prefix, and an authentication requirement out of
+  thin air, and the step-quality gate couldn't see any of the three shapes. A rescue steer then
+  fabricated a filesystem path. Both gaps fixed (guess-shape refusal on authored steps; phantom
+  system paths withhold a steer); the row is superseded and gemma4 reruns. Separately: fabliq and
+  zaya1 are fully retired from every living surface, and the provenance audit's retunes
+  (dictation delivered, flail cap resets on movement, one second look) are live and visibly firing.
 - **2026-08-04 ~08:45 — the operator-requested 48-hour footgun audit found the campaign's biggest
   bug in the campaign's own premise.** The plan-off rewiring that this campaign was built to test
   had quietly replaced "here is your task" with "do only step 1 of N, then stop" — and hid the
