@@ -882,6 +882,49 @@ def _confirm_applies(claim: str, red_findings: str = "") -> bool:
     return bool((red_findings or "").strip()) or _claim_promises_artifacts(claim)
 
 
+# The veto shapes that assert ABSENCE — the one claim class cria can refute with a stat() of its
+# own. A trigger, not a verdict: the file check below is the verdict.
+_VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not found|missing|no such file|absent|"
+                           r"no file (?:or artifact )?named|was not found)\b")
+# Path tokens including ABSOLUTE ones — _STEP_ARTIFACT starts at \w and silently drops a leading
+# slash, which would re-root an absolute path under the workspace and miss the file.
+_VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
+
+
+def _veto_refuted_by_disk(why: str, workspace_root: str) -> str:
+    """The file a NOT-consistent veto claims is MISSING that is in fact ON DISK — else "".
+
+    Walked on ada-handles_nemotron-elastic_codex_pon_1785834747 call 0054: the confirm checker
+    ruled {"consistent": false, "why": "Missing swagger.json file at /tmp/…/tmp/read-only/
+    api.handle.me_swagger.json"} — WITHOUT one inspection call — while that exact path existed
+    (the coder `ls`'d it one call later and read it the call after). The false veto re-blocked a
+    step the critic had verified, three times in one run; the coder received "Missing <file>" in
+    cria's voice — the false fact rule 5b forbids. Measured across every captured confirm: 31 of
+    152 false verdicts assert a missing file (some truly missing — those stand; this refutes only
+    what the disk disproves). Same enforcement family as urlgrounding: the checker's own prompt
+    demands it LOOK before ruling; a prompt is a request, and this is the enforcement.
+
+    Refutation is exact, both directions: the veto is overturned ONLY when at least one named path
+    EXISTS and every other path-shaped token it names is covered by an existing one (a substring —
+    "swagger.json" inside the existing ".../api.handle.me_swagger.json" is the same file reference,
+    not a second missing file). A why that names a genuinely absent file keeps its veto whole."""
+    if not why or not workspace_root or not _VETO_MISSING.search(why):
+        return ""
+    existing, missing = [], []
+    for m in _VETO_PATH.finditer(why):
+        tok = m.group(1)
+        try:
+            path = tok if os.path.isabs(tok) else groundtruth.resolve(workspace_root, tok)
+            (existing if os.path.isfile(path) else missing).append(tok)
+        except (OSError, ValueError):
+            missing.append(tok)
+    if not existing:
+        return ""
+    if all(any(t in e for e in existing) for t in missing):
+        return existing[0]
+    return ""
+
+
 def _restates_the_verdict(why: str, reason: str) -> bool:
     """True when a confirm verdict's stated `why` IS the done-reason it was handed, word for word.
 
@@ -1010,6 +1053,13 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # done-reason arriving back as the not-done reason, only this time through a verdict that
         # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
         return False, prompts.load("unverified_step")
+    if verdict is False and (refuted := _veto_refuted_by_disk(why, workspace_root)):
+        # The veto's whole stated ground is a file it calls missing that IS on disk — cria holds
+        # the disproof, so the veto cannot stand (rule 5b: the false fact would otherwise reach the
+        # coder as "Missing <file>" in cria's voice). See _veto_refuted_by_disk for the walked run.
+        rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
+                  path=refuted, head=_clip(why or "", 120))
+        return True, ""
     return verdict, why
 
 

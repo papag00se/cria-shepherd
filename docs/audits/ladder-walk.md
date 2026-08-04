@@ -3992,3 +3992,58 @@ overfit (rejected before, deliberately). The row stands.
 2. exec-intent 0066 fabricated both the command (`python resolve_handle.py goose` — no such file;
    the real one is handle_resolver.py) and a fake success string. No measurable damage (the marker
    is evidence, not a gate, and the CLI actually works), recorded as judge-fabrication prevalence.
+
+## ada-handles_nemotron-elastic_codex_pon_1785834747
+
+REGRESSION1 campaign, nemotron-elastic run 1/3 on `086dca6` (planner ON — the only pon model).
+Score **1/4** (README only; CLI prints address without holder/total; tests and live test are
+stubs), terminal `milestone-miss-30min` (1853 s, 156 calls). Capture
+`~/.cria/calls/20260804T021248-019fcc0c-0971-74f3-ae7f-abb5dd39a43c` — walked in full, 0001–0156.
+
+### The run in one paragraph
+
+The planner's own research was good (fetched the swagger YAML, quoted the real field shapes in its
+reasoning) and the plan judges dropped its two gather-path steps correctly. Then the run drowned in
+spec-grepping: the model spent nearly the whole 30 minutes grep-looping over the spilled
+swagger.json — first to "locate /handles/{handle}" (which its own earlier fetch had already
+outlined), then on a REPLANNED step with a FALSE PREMISE: "extract resolved_addresses.ada/eth/btc,
+holder, and total_handles from the **/holders/{address}** endpoint definition" — fields that
+endpoint does not define. The step critic caught the contradiction SEVEN times (0112, 0114, 0118,
+0128, 0143, 0145, 0150 — each verdict correctly naming that /holders defines only
+total_handles/address/type/…), but the model-authored replans (0097, 0119) kept regenerating the
+same step, and the coder kept grepping for fields that were never there. A resolver was
+side-written mid-churn (0043) and never finished — the CLI resolves the address but not
+holder/total; tests and the "live test" print stubs (the 0140 satisfaction judge correctly ruled
+not-satisfied on exactly that). Killed at the 30-minute milestone with 1/4.
+
+### cria fault: yes — one fixed now, one recorded for the standing open thread
+
+**Fixed: the confirm veto refuted by cria's own disk.** Calls 0028, 0050, 0054: the confirm
+checker vetoed critic-approved steps with "missing file" claims — 0054 named the EXACT absolute
+path of a file that existed (`.../tmp/read-only/api.handle.me_swagger.json`; the coder `ls`'d it
+one call later), and emitted the verdict without a single inspection call. The coder received
+"Missing swagger.json file at …" in cria's voice — the rule-5b false fact. Measured: 31 of 152
+captured confirm-false verdicts assert a missing file. Fix `_veto_refuted_by_disk`: a
+NOT-consistent verdict whose missing-file claims are disproven by a stat() of the named paths is
+overturned loudly (`loop.confirm_refuted_by_disk`); a why naming any genuinely absent file keeps
+its veto whole. Fail-before test: tests/test_confirm_refuted_by_disk.py; behavioral check on HEAD
+confirms the old code let the false veto stand.
+
+**Recorded, not built: the ledger-contradicted plan step.** The false-premise step ("extract
+resolved_addresses.* from /holders/{address}") is disprovable by cria's own fetch ledger — the
+parsed shapes say /holders returns total_handles/address/type/known_owner_name/default_handle/
+manually_set and nothing else. A steer-side version of exactly this check was built twice and
+REFUSED twice (docs/open-threads.md, 2026-08-03: 10 correct / 4 defective candidates, damage
+already landed by delivery time). This run is a NEW data point for the PLAN-STEP side of that
+thread: a ledger-contradicted step survived five replans and seven correct critic rejections, and
+consumed roughly half the run. Added to the open thread; the reviewer's refusal was steer-scoped
+and the plan-step calculus (a step pins ALL later work; the critic evidence shows it detectable)
+reads differently — but that is the operator's call, not this walk's.
+
+### Model-attributable residue
+
+nemotron as coder wrote stub deliverables and grep-looped despite six flail steers naming the
+escape; nemotron as replanner codified the false-premise step and re-emitted it after every
+rejection; nemotron as checker asserted disk states it never inspected. The 30 minutes were lost
+to the model on all three seats — but three of those blocks were cria repeating the checker's
+false facts, and those are now impossible.
