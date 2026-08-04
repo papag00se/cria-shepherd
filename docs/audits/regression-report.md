@@ -22,10 +22,10 @@ gates = check runs it triggered.
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
 | 🟡 qwopus | ⁴⁄₄ ¹⁄₄ ⁴⁄₄ | 79.1 | 8 | 4 | 10 | 7 | 28 |
 | 🟡 nemotron-elastic | ¹⁄₄ ⁴⁄₄ ⁴⁄₄ | 130.9 | 14 | 7 | 33 | 6 | 33 |
+| 🟡 ornith | ⁴⁄₄ ⁰⁄₄ ⁴⁄₄ | 79.9 | 5 | 3 | 9 | 6 | 17 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ ²⁄₄ | 79.0 | 12 | 3 | 11 | 4 | 15 |
 | 🟠 mellum2 | ³⁄₄ ¹⁄₄ | 168.8 | 16 | 0 | 44 | 8 | 20 |
 | 🟠 gemma4 | ³⁄₄ ²⁄₄ ¹⁄₄ | 63.4 | 37 | 7 | 12 | 12 | 41 |
-| 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 7 | 5 | 11 | 6 | 21 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -59,8 +59,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | counted | 1/4 | 31 | 202 | 137 | 62.6 | 32 | 9 | milestone-miss-30min |
 | qwythos | counted | 2/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
 | qwopus | counted | 4/4 | 5 | 34 | 17 | 85.4 | 3 | 3 | exited |
+| ornith | counted | 4/4 | 4 | 40 | 24 | 84.9 | 0 | 4 | exited |
 
-counted runs: 13 · avg wall 33 min · avg coder calls 77 · full-pass rate 8/13
+counted runs: 14 · avg wall 31 min · avg coder calls 74 · full-pass rate 9/14
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -87,6 +88,7 @@ counted runs: 13 · avg wall 33 min · avg coder calls 77 · full-pass rate 8/13
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785847335 (VOIDED) | 1dc813b | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
+| ornith | off | 2 | **4/4** | ada-handles_ornith_codex_poff_1785878928 | 61242fc | exited | 6/6 unit tests, live point via the README probe (documented command proved live), CLI, README — 4 minutes, 40 calls |
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
 | mellum2 | off | — | 1/4 | ada-handles_mellum2_codex_poff_1785848364 (VOIDED) | 134c382 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
