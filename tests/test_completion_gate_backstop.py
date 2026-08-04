@@ -93,7 +93,8 @@ class CompletionGateBackstopTests(unittest.TestCase):
         out = loop._work(sess, "k", _body(), rlog)
         tcs = out["choices"][0]["message"].get("tool_calls")
         self.assertTrue(tcs, "the completion must be gated — expected the checks probe, not a final answer")
-        self.assertTrue(sess.done_probe)
+        self.assertTrue(sess.completion_probe_id)  # the backstop's OWN id — never done_probe
+        self.assertFalse(sess.done_probe)          # (that flag belongs to the plan-off/satisfaction paths)
         self.assertIn("loop.completion_probe", rlog.kinds())
 
     def test_red_backstop_reopens_with_the_findings(self):
@@ -144,6 +145,34 @@ class CompletionGateBackstopTests(unittest.TestCase):
         self.assertNotIn("loop.completion_probe", rlog.kinds())
         self.assertIn("loop.done", rlog.kinds())
         self.assertIn("plan complete", out["choices"][0]["message"]["content"])
+
+    def test_stale_satisfaction_done_probe_is_not_misread(self):
+        # AUDIT 2026-08-04: the plan-ON periodic satisfaction check sets done_probe and nothing on
+        # the plan path consumes it; the backstop keying off done_probe read whatever stale result
+        # probe_call_id pointed at. The backstop must ignore done_probe and emit ITS OWN probe.
+        loop = Loop(_ctx(_Scripted([_toolcall()]), _Scripted([_summary()])))
+        sess = _emptied_sess()
+        sess.done_probe = True            # stranded by an earlier satisfied periodic check
+        sess.probe_call_id = "stale-id"   # points at some long-gone result
+        rlog = _Rlog()
+        out = loop._work(sess, "k", _body(), rlog)
+        self.assertIn("loop.completion_probe", rlog.kinds())          # a FRESH probe was emitted
+        self.assertNotEqual(sess.completion_probe_id, "stale-id")
+        self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
+
+    def test_compaction_lost_result_is_reissued_not_failopened(self):
+        # AUDIT 2026-08-04: a harness compaction between probe emit and read erased the result and
+        # the backstop fail-opened (couldn't-run → gate_fresh → judge) — the exact hole it closes.
+        loop = Loop(_ctx(_Scripted([_toolcall()]), _Scripted([_summary()])))
+        sess = _emptied_sess()
+        rlog = _Rlog()
+        probe = loop._work(sess, "k", _body(), rlog)                  # backstop emits its probe
+        first_id = sess.completion_probe_id
+        out = loop._work(sess, "k", _body(), rlog, rewritten=True)    # result erased by compaction
+        self.assertIn("loop.probe_reissued", rlog.kinds())
+        self.assertTrue(sess.completion_probe_id)                     # a NEW probe is in flight
+        self.assertNotEqual(sess.completion_probe_id, first_id)
+        self.assertNotIn("loop.done", rlog.kinds())
 
     def test_acting_turn_stales_the_gate(self):
         # gate_fresh is freshness, not history: any forwarded acting turn clears it.

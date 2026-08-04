@@ -237,16 +237,22 @@ class CompletionCriticTests(unittest.TestCase):
         self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))   # capped → exit, not forever
         self.assertEqual(reasoner_calls := loop._ctx.reasoner_chat.calls, 0, "capped before calling the critic")
 
-    def test_corrective_step_is_reused_not_grown(self):
+    def test_corrective_step_is_reused_while_open_appended_when_done(self):
         from cria.loop import _COMPLETION_FIX_PREFIX
         loop = self._loop(_Scripted([_sat(False, "broken A", fix="fix the A path"),
-                                     _sat(False, "broken B", fix="fix the B path")]))
+                                     _sat(False, "broken B", fix="fix the B path"),
+                                     _sat(False, "broken C", fix="fix the C path")]))
         sess = self._done_sess()
         loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # adds one corrective step
-        sess.plan.items[-1].done = True                       # simulate it got verified, then re-check
-        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # reuses the SAME corrective step
+        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # still OPEN → reused in place (no bloat)
         fixes = [it for it in sess.plan.items if it.text.startswith(_COMPLETION_FIX_PREFIX)]
-        self.assertEqual(len(fixes), 1)                       # exactly one, reused — no plan bloat
+        self.assertEqual(len(fixes), 1)
+        sess.plan.items[-1].done = True                       # it got verified — that record is history
+        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # AUDIT 2026-08-04: a DONE corrective step
+        fixes = [it for it in sess.plan.items if it.text.startswith(_COMPLETION_FIX_PREFIX)]
+        self.assertEqual(len(fixes), 2)                       # …is never overwritten; a new one appends
+        self.assertTrue(fixes[0].done)                        # the completed record survives, done bit intact
+        self.assertFalse(fixes[1].done)                       # the fresh corrective step is the open one
 
     def test_no_reasoner_completes_without_a_check(self):
         loop = Loop(_ctx(_Scripted([_toolcall()]), _Scripted([_sat(False)])))  # reasoner_role stays None

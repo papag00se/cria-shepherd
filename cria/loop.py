@@ -209,6 +209,12 @@ class GuardState:
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
+    # The plan-ON completion backstop's OWN probe id. Deliberately NOT ``done_probe``: the plan-ON
+    # periodic satisfaction check also sets done_probe and nothing on the plan path consumes it, so
+    # keying the backstop off done_probe read whatever stale result probe_call_id pointed at by the
+    # time the plan emptied (audited 2026-08-04). The backstop reads ONLY the probe it issued.
+    completion_probe_id: str = ""
+    completion_gate_reds: int = 0  # RED results at the completion backstop (ledger visibility; no cap)
     # A completion-gate probe's RESULT has been read since the coder's last forwarded acting turn —
     # green, or couldn't-run (the per-step fail-open posture, unchanged); RED clears it. The plan-ON
     # completion requires this: walked on ada-handles_ternary-bonsai_codex_poff_1785818931, a replan
@@ -235,6 +241,15 @@ class PlanSession(GuardState):
     # (the task-level satisfaction/done-critic). The explicit flag — NOT len(items)==1 —
     # is the key: a genuine planner 1-step plan must keep step framing and skip those off-ramps.
     synthetic: bool = False
+    # PLAN-OFF sessions, whatever their item count. The operator's contract (2026-08-04): plan-off
+    # gets a READING STEP and nothing else of the plan machinery — the task itself is never caged
+    # behind "Do ONLY this step (k of n)" framing, and the living re-derivation never splits the
+    # user's own task into steps (it re-derives PLANNER guesses; the raw task is not a guess).
+    # Audited: gemma4, temperature 0, ladder 4/4 → campaign 0/4 twice, both runs pinned on step 1
+    # for ~86-89 coder calls with the README structurally unreachable behind hidden steps the
+    # replans kept regrowing. When the reading step clears, drive() flips the session to
+    # ``synthetic`` and the raw-task single-item drive takes over exactly as before the rewiring.
+    plan_off: bool = False
     phase: Phase = Phase.WORK
     summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
@@ -851,12 +866,13 @@ def _claim_promises_artifacts(claim: str) -> bool:
     wrong-schema reply that failed closed — ~30 judge calls, and the coder started writing with 7 of
     its 15 minutes left. 0/4.
 
-    Production verbs are research.has_production_verb (the reading-step defect check's own list);
-    file tokens are _STEP_ARTIFACT with the URL exclusion, minus the one DOMAIN the claim names
+    File tokens are _STEP_ARTIFACT with the URL exclusion, minus the one DOMAIN the claim names
     (first_domain_in is TLD-allowlisted and file-extension-aware, so "api.handle.me" is excluded
-    exactly and "resolve_handle.py" never is)."""
-    if research.has_production_verb(claim):
-        return True
+    exactly and "resolve_handle.py" never is). A named file is EXACT — no judgment involved. The
+    first version also carried a production-VERB list; that was a pattern doing judgment's work
+    (operator, 2026-08-04: "fuzzy deterministic code, against principle") and it was verb-blind —
+    "Update the README", "Fix the retry loop", "Rewrite the resolver" all read as artifact-free.
+    The verbless question now goes to the reasoner in :func:`_confirm_applies`."""
     dom = (first_domain_in(claim or "") or "").lower()
     for m in _STEP_ARTIFACT.finditer(claim or ""):
         at = m.start()
@@ -868,18 +884,34 @@ def _claim_promises_artifacts(claim: str) -> bool:
     return False
 
 
-def _confirm_applies(claim: str, red_findings: str = "") -> bool:
+def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = False, ask=None,
+                     rlog=None, phase: str = "critic-confirm") -> bool:
     """Should the per-STEP confirm brake run on this approved claim at all?
 
-    Two grounds, either suffices: the claim promises an artifact a disk inspection could check
-    (:func:`_claim_promises_artifacts`), or the repo's checks are currently RED — then the disk
-    state itself is contested and the brake's look is grounded regardless of what the step names.
+    Grounds, any suffices: the repo's checks are red — per THIS call's findings OR the session's
+    standing red state (the audit found the per-call arm alone left periodic-gate reds invisible
+    here) — then the disk is contested and the brake's look is grounded whatever the step names;
+    or the claim names a FILE (exact, deterministic); or, when it names none, ONE focused reasoner
+    question rules whether the step promises anything on disk at all (deterministic code gathers,
+    the reasoner judges — the verb list this replaces couldn't see "Update the README"). Every
+    failure direction keeps the brake: no reasoner, or an unreadable answer → it runs.
 
     Scoped to the per-step confirm on purpose. The whole-TASK satisfaction confirm keeps its brake
-    unconditionally: a task names its deliverables as NOUNS ("script plus README") that no verb or
-    file-token test can see, and the brake's measured wins there (satisfied with no README on disk)
-    are exactly that shape."""
-    return bool((red_findings or "").strip()) or _claim_promises_artifacts(claim)
+    unconditionally: a task names its deliverables as NOUNS ("script plus README"), and the brake's
+    measured wins there (satisfied with no README on disk) are exactly that shape."""
+    if (red_findings or "").strip() or gate_red:
+        return True
+    if _claim_promises_artifacts(claim):
+        return True
+    if ask is None:
+        return True   # no reasoner → the brake stays (the pre-skip behavior)
+    ans = strip_think(ask(prompts.render("confirm_applies", step=claim)) or "")
+    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+    if head == "NO":
+        if rlog is not None:
+            rlog.emit("loop.confirm_skipped_no_artifact", level="info", phase=phase)
+        return False
+    return True   # YES, or anything unreadable → the brake runs
 
 
 # The veto shapes that assert ABSENCE — the one claim class cria can refute with a stat() of its
@@ -891,38 +923,44 @@ _VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not found|missing|no such f
 _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
 
 
-def _veto_refuted_by_disk(why: str, workspace_root: str) -> str:
-    """The file a NOT-consistent veto claims is MISSING that is in fact ON DISK — else "".
+def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> str:
+    """The file a NOT-consistent veto wrongly claims is MISSING — else "".
 
     Walked on ada-handles_nemotron-elastic_codex_pon_1785834747 call 0054: the confirm checker
     ruled {"consistent": false, "why": "Missing swagger.json file at /tmp/…/tmp/read-only/
     api.handle.me_swagger.json"} — WITHOUT one inspection call — while that exact path existed
-    (the coder `ls`'d it one call later and read it the call after). The false veto re-blocked a
-    step the critic had verified, three times in one run; the coder received "Missing <file>" in
-    cria's voice — the false fact rule 5b forbids. Measured across every captured confirm: 31 of
-    152 false verdicts assert a missing file (some truly missing — those stand; this refutes only
-    what the disk disproves). Same enforcement family as urlgrounding: the checker's own prompt
-    demands it LOOK before ruling; a prompt is a request, and this is the enforcement.
+    (the coder `ls`'d it one call later). The false veto re-blocked a step the critic had verified,
+    three times in one run; the coder received "Missing <file>" in cria's voice — the false fact
+    rule 5b forbids. Measured: 31 of 152 captured confirm-false verdicts assert a missing file.
 
-    Refutation is exact, both directions: the veto is overturned ONLY when at least one named path
-    EXISTS and every other path-shaped token it names is covered by an existing one (a substring —
-    "swagger.json" inside the existing ".../api.handle.me_swagger.json" is the same file reference,
-    not a second missing file). A why that names a genuinely absent file keeps its veto whole."""
-    if not why or not workspace_root or not _VETO_MISSING.search(why):
+    DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8; operator, 2026-08-04). The first
+    version of this decided WHAT "missing" referred to with a regex and a substring rule — and
+    overturned vetoes about content missing INSIDE an existing file, about absent functions, and
+    about a genuinely-missing X.py "covered" by test_X.py (audited same day, one live misfire:
+    a veto about an unverifiable API response overturned because the word "missing" appeared and
+    some file existed). What "missing" refers to is judgment; no pattern separates the shapes.
+    So: the missing-word regex is only the TRIGGER for spending one call, the disk facts are
+    gathered exactly (stat per named path), and ONE focused reasoner question rules STANDS or
+    REFUTED against those facts. Every failure direction keeps the veto: no reasoner, no named
+    file that exists, an unreadable answer — all STANDS. Only a clear REFUTED overturns."""
+    if not why or not workspace_root or ask is None or not _VETO_MISSING.search(why):
         return ""
-    existing, missing = [], []
+    facts, first_existing = [], ""
     for m in _VETO_PATH.finditer(why):
         tok = m.group(1)
         try:
             path = tok if os.path.isabs(tok) else groundtruth.resolve(workspace_root, tok)
-            (existing if os.path.isfile(path) else missing).append(tok)
+            exists = os.path.isfile(path)
         except (OSError, ValueError):
-            missing.append(tok)
-    if not existing:
-        return ""
-    if all(any(t in e for e in existing) for t in missing):
-        return existing[0]
-    return ""
+            exists = False
+        facts.append(f"- {tok}: {'EXISTS on disk' if exists else 'NOT on disk'}")
+        if exists and not first_existing:
+            first_existing = tok
+    if not first_existing:
+        return ""   # nothing the disk could refute with — the veto stands unquestioned
+    ans = strip_think(ask(prompts.render("confirm_veto_disk", why=why, facts="\n".join(facts))) or "")
+    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+    return first_existing if head == "REFUTED" else ""
 
 
 def _restates_the_verdict(why: str, reason: str) -> bool:
@@ -1053,13 +1091,18 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # done-reason arriving back as the not-done reason, only this time through a verdict that
         # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
         return False, prompts.load("unverified_step")
-    if verdict is False and (refuted := _veto_refuted_by_disk(why, workspace_root)):
-        # The veto's whole stated ground is a file it calls missing that IS on disk — cria holds
-        # the disproof, so the veto cannot stand (rule 5b: the false fact would otherwise reach the
-        # coder as "Missing <file>" in cria's voice). See _veto_refuted_by_disk for the walked run.
-        rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
-                  path=refuted, head=_clip(why or "", 120))
-        return True, ""
+    if verdict is False:
+        # Disk facts gathered exactly, ONE reasoner ruling on whether the veto's "missing" claim
+        # survives them (see _veto_refuted_by_disk — the regex is only the trigger; every failure
+        # direction keeps the veto). Rule 5b: a "Missing <file>" the disk disproves must not reach
+        # the coder in cria's voice.
+        disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, "", rlog,
+                                           phase="confirm-disk") or "") if reasoner_role is not None else None
+        refuted = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
+        if refuted:
+            rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
+                      path=refuted, head=_clip(why or "", 120))
+            return True, ""
     return verdict, why
 
 
@@ -1822,6 +1865,15 @@ class Loop:
                         rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
                         self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
+        # PLAN-OFF HAND-BACK: the reading step was the ONLY plan machinery plan-off is entitled to.
+        # The moment the current item IS the raw task (the reading step verified, or was never
+        # authored and a resume lands here), the session becomes the degenerate single-item drive —
+        # raw-task framing, the plan-off off-ramps, no step cage. The flip is one-way and idempotent.
+        if (sess.plan_off and not sess.synthetic
+                and (cur := sess.plan.current()) is not None and cur.text == sess.plan.task):
+            sess.synthetic = True
+            rlog.emit("loop.plan_off_handback", id=sess.plan.id)
+
         if sess.synthetic:  # degenerate 1-item plan → the single-item driver (raw-task framing +
             # the off-ramps a finite multi-step plan doesn't need). Placed BEFORE the multi-item
             # awaiting_probe branch: the single-item path reads its own probe results internally.
@@ -1834,7 +1886,7 @@ class Loop:
             return out
 
         self._store.clear_rewrite(session_key)  # live session: framing is rebuilt each turn anyway
-        return self._work(sess, session_key, body, rlog)
+        return self._work(sess, session_key, body, rlog, rewritten=rewritten)
 
     # ------------------------------------------------------------------ work
 
@@ -1867,7 +1919,7 @@ class Loop:
             guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
         return coder
 
-    def _work(self, sess: PlanSession, key: str, body: dict, rlog) -> dict:
+    def _work(self, sess: PlanSession, key: str, body: dict, rlog, rewritten: bool = False) -> dict:
         # Persist the harness's workspace cwd on the SESSION: a fresh <cwd> updates it, a turn without one
         # (harness compaction) keeps the last-known, and an operator-configured LoopContext root is the
         # final fallback — so the gate/steer target the harness's repo, never cria's own dir. (_ctx.
@@ -1888,29 +1940,43 @@ class Loop:
             # `gate_fresh` (a gate result read since the coder last acted) is what a normally-
             # completing plan already has from its final step's verification, so the healthy path
             # emits no duplicate probe; the judgment-only routes get ground truth before the end.
-            if sess.done_probe:  # the backstop's own probe has now run — read it before judging
-                sess.done_probe = False
+            if sess.completion_probe_id:  # the backstop's OWN probe has now run — read it before judging
+                # A harness compaction can erase the probe's result between emit and read; that is a
+                # LOST result, not a declined one — re-issue rather than fail open (parity with
+                # guard_probe_reissue on the other two probe readers; audited 2026-08-04).
+                if (not _read_tool_result(body.get("messages", []), sess.completion_probe_id).strip()
+                        and rewritten and sess.probe_reissues < MAX_PROBE_REISSUES):
+                    probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+                    if probe_tc is not None:
+                        sess.probe_reissues += 1
+                        sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
+                        rlog.emit("loop.probe_reissued", plan_off=False, attempt=sess.probe_reissues)
+                        return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+                sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
+                sess.probe_reissues = 0
                 errors = guard_gate_verdict(sess, body, rlog)
                 if errors:
                     # RED is ground truth about the repo — the task cannot complete over failing
                     # checks. Reopen with the ONE reused corrective step; the findings ride in the
                     # nudge (the channel built for them), never as a plan-step essay.
+                    sess.completion_gate_reds += 1
                     fix = PlanItem(text=_COMPLETION_FIX_PREFIX + "make the repo's own checks pass")
-                    if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
+                    if (sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX)
+                            and not sess.plan.items[-1].done):  # a DONE corrective step is history, not a slot
                         sess.plan.items[-1] = fix
                     else:
                         sess.plan.items.append(fix)
                     sess.plan.status = "in_progress"
                     self._persist_plan(sess.plan, rlog)
-                    rlog.emit("loop.gate", plan_off=False, at="completion", blocked=True)
+                    rlog.emit("loop.gate", plan_off=False, at="completion", blocked=True,
+                              reds=sess.completion_gate_reds)
                     sess.steer_source = "completion gate (repo checks failed)"
                     return self._renudge(sess, key, body,
                                          prompts.render("gate_fail_steer", errors=errors), rlog)
             elif not sess.gate_fresh:
                 probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:
-                    sess.done_probe = True
-                    sess.probe_call_id = probe_tc["id"]
+                    sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
                     rlog.emit("loop.completion_probe", plan_off=False)
                     return _completion_toolcalls([probe_tc], note="verifying — running the repo's checks")
                 # no shell tool → the objective gate can't run; the judge below decides alone (fail-open)
@@ -2008,7 +2074,8 @@ class Loop:
             rlog.emit("loop.completion_fix_noise", level="info", head=_clip(step_text, 120))
         else:
             fix = PlanItem(text=_COMPLETION_FIX_PREFIX + step_text)
-            if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
+            if (sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX)
+                    and not sess.plan.items[-1].done):  # a DONE corrective step is history, not a slot
                 sess.plan.items[-1] = fix      # reuse the one corrective step across re-checks (no plan bloat)
             else:
                 sess.plan.items.append(fix)
@@ -2136,7 +2203,8 @@ class Loop:
                                   routes=known_routes(body.get('messages', []), sess),
                                   sources_read=research.sources_read(
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
-                                  workspace_root=sess.workspace_root or "")
+                                  workspace_root=sess.workspace_root or "",
+                                  gate_red=bool(sess.last_gate_red))
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -2326,7 +2394,8 @@ class Loop:
                                       routes=known_routes(body.get('messages', []), sess),
                                   sources_read=research.sources_read(
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
-                                      workspace_root=sess.workspace_root or "")
+                                      workspace_root=sess.workspace_root or "",
+                                      gate_red=bool(sess.last_gate_red))
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -2416,7 +2485,8 @@ class Loop:
                                   sources_read=research.sources_read(
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "",
-                                  red_findings=red_findings or "")  # grounded in the coder's own runs
+                                  red_findings=red_findings or "",  # grounded in the coder's own runs
+                                  gate_red=bool(sess.last_gate_red))
         if nudge is not None:
             if ok:
                 # The critic read the findings and ruled they are not this step's goal. Loud by
@@ -2548,7 +2618,8 @@ class Loop:
         sess.compact_pending = True  # a step just VERIFIED → force a rollup next turn so the completed
         #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
-        self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
+        if not sess.plan_off:  # plan-off's tail IS the user's task — never re-derived into steps
+            self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
 
@@ -2639,7 +2710,7 @@ class Loop:
         at re-deriving the not-done tail from the REAL work done: if it rewrites/drops the stuck step, we
         re-drive fresh on the new current step; otherwise (declined/unchanged) we fall through to a normal
         re-nudge. NEVER used on a gate/real-error fail — those must be FIXED, not re-derived away."""
-        if (self._ctx.reasoner_role is not None and not sess.synthetic
+        if (self._ctx.reasoner_role is not None and not sess.synthetic and not sess.plan_off
                 and not sess.verify_replanned and sess.critic_fails >= STUCK_STEP_REPLAN):
             # ONE grounded re-derive per step. Firing every STUCK_STEP_REPLAN fails (the old
             # `verify_fails % STUCK_STEP_REPLAN == 0`) re-derived the whole tail again and again and
@@ -2666,7 +2737,7 @@ class Loop:
         ADVANCE): re-deriving REPEATEDLY churned the plan — a weak reasoner returns a different tail each
         call (observed: step count oscillated 11→5→6→9), destabilising the coder. One grounded attempt,
         then the normal guards/gate carry it. Returns a fresh re-drive when the plan MOVED, else None."""
-        if (self._ctx.reasoner_role is None or sess.synthetic or sess.thrash_replanned
+        if (self._ctx.reasoner_role is None or sess.synthetic or sess.plan_off or sess.thrash_replanned
                 or sess.step_tool_calls < STEP_THRASH_REPLAN):
             return None
         sess.thrash_replanned = True   # spend the one-shot regardless of outcome — no re-derive churn
@@ -2751,7 +2822,7 @@ class Loop:
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
-                sources_read: list | None = None) -> tuple[bool, str]:
+                gate_red: bool = False, sources_read: list | None = None) -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -2840,11 +2911,20 @@ class Loop:
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
             if done and workspace_root:
-                if not _confirm_applies(item, red_findings):
-                    # A claim that promises no artifact, over a non-red repo, leaves the disk checker
-                    # nothing it can legitimately inspect — measured coin-flip, and the walked run it
-                    # cost (see _claim_promises_artifacts). The careful critic pass already ruled.
-                    rlog.emit("loop.confirm_skipped_no_artifact", level="info", phase="critic-confirm")
+                # One focused question when the claim names no file and the repo isn't red — the
+                # verb list this replaces was fuzzy-deterministic (operator, 2026-08-04); the ask
+                # fails toward running the brake.
+                off_role = (replace(self._ctx.reasoner_role, reasoning="off")
+                            if self._ctx.reasoner_role is not None else None)
+                applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm, "",
+                                                      rlog, phase="confirm-applies") or "") \
+                    if self._ctx.reasoner_role is not None else None
+                if not _confirm_applies(item, red_findings, gate_red=gate_red,
+                                        ask=applies_ask, rlog=rlog):
+                    # A claim that promises nothing on disk, over a non-red repo, leaves the disk
+                    # checker nothing it can legitimately inspect — measured coin-flip, and the
+                    # walked run it cost. The careful critic pass already ruled.
+                    pass
                 else:
                     # The approve-path brake (see _confirm_completion): a DONE must be consistent with
                     # the FRESH on-disk listing and with its own stated reason.
@@ -3430,7 +3510,7 @@ def _plan_off_session(plan: Plan, briefing: str) -> PlanSession:
     plan session, driven by the multi-item machinery — the step is FRAMED ("Do ONLY this step
     (1 of 2): Read…"), the step critic gates it with the sources_read evidence, the reading check
     fires at its cadence, and the raw task follows as step 2."""
-    return PlanSession(plan=plan, synthetic=len(plan.items) == 1, prior_work=briefing)
+    return PlanSession(plan=plan, synthetic=len(plan.items) == 1, plan_off=True, prior_work=briefing)
 
 
 def _synthetic_plan(task: str, clock=None, ask=None, files: str = "") -> Plan:

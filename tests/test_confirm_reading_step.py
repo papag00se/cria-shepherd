@@ -1,19 +1,13 @@
-"""The per-step confirm brake does not run where nothing it checks can exist.
+"""The per-step confirm brake runs only where a disk inspection can ground — and the verbless
+question is JUDGED, not pattern-matched.
 
-Walked on ada-handles_ornith_codex_poff_1785830161 (REGRESSION1, 0/4 at the 15-min milestone): the
-critic ruled the model-authored reading step done THREE times on real fetch-ledger evidence, and the
-read-only confirm checker vetoed each one by inventing artifacts the step never promised ("no
-resolver script exists" — the resolver is step 2's work; "move or symlink the file from
-tmp/read-only/"; a wrong-schema reply that failed closed). ~30 judge calls; coding started with 7 of
-15 minutes left. Measured over every captured confirm chain: on claims naming no artifact the final
-verdicts are a coin flip (155 confirmed / 158 blocked, 36 sessions) — noise with veto power.
-
-The fix is deterministic applicability, scoped to the PER-STEP confirm: it runs only when the claim
-promises something the disk could hold — a production verb ("write unit tests") or a file token
-that is not the claim's own named DOMAIN — or when the repo's checks are currently RED (then the
-disk state is contested regardless of the step's wording). The whole-task satisfaction confirm is
-untouched: tasks name deliverables as nouns ("script plus README") and its measured wins are
-exactly that shape.
+Walked on ada-handles_ornith_codex_poff_1785830161: the critic ruled the reading step done three
+times on real fetch-ledger evidence and the confirm vetoed each one by inventing artifacts a
+research step never promises (measured coin flip on such claims: 155 pass / 158 block). The first
+fix gated the brake on a production-VERB list — fuzzy-deterministic (operator, 2026-08-04), and
+verb-blind: "Update the README" read as artifact-free. Now: a named FILE is exact and keeps the
+deterministic path; the repo being red (this call's findings OR the session's standing red state)
+always grounds the brake; otherwise ONE reasoner question rules, failing toward running the brake.
 """
 
 import os
@@ -27,12 +21,18 @@ READING_STEP = ("Read the api.handle.me documentation to learn its authenticatio
                 "call the API.")
 
 
-class ClaimPromisesArtifactsTests(unittest.TestCase):
-    def test_reading_step_promises_nothing(self):
-        self.assertFalse(_claim_promises_artifacts(READING_STEP))
+class _Ask:
+    def __init__(self, answer):
+        self.answer = answer
+        self.prompts = []
 
-    def test_production_verb_promises(self):
-        self.assertTrue(_claim_promises_artifacts("Write unit tests for the resolver"))
+    def __call__(self, system):
+        self.prompts.append(system)
+        return self.answer
+
+
+class ClaimPromisesArtifactsTests(unittest.TestCase):
+    """The deterministic half: file tokens only, exact — verbs are no longer its business."""
 
     def test_file_token_promises(self):
         self.assertTrue(_claim_promises_artifacts("Fix the retry loop in src/handle.py"))
@@ -45,24 +45,42 @@ class ClaimPromisesArtifactsTests(unittest.TestCase):
         self.assertFalse(_claim_promises_artifacts(
             "Read https://api.handle.me/openapi.json to learn the response schemas"))
 
+    def test_verbless_prose_names_no_artifact(self):
+        self.assertFalse(_claim_promises_artifacts("Update the README with usage instructions"))
+
 
 class ConfirmAppliesTests(unittest.TestCase):
-    def test_reading_step_clean_repo_skips_the_brake(self):
-        # FAILS BEFORE THE FIX (as behavior): the checker was consulted on the reading step and its
-        # invented-artifact veto stood, blocking a step the critic had verified against the ledger.
-        self.assertFalse(_confirm_applies(READING_STEP, red_findings=""))
+    def test_named_file_applies_without_a_call(self):
+        ask = _Ask("NO")
+        self.assertTrue(_confirm_applies("Write unit tests in test_handle.py", ask=ask))
+        self.assertEqual(ask.prompts, [])
 
-    def test_red_gate_grounds_the_brake_even_on_a_reading_step(self):
-        self.assertTrue(_confirm_applies(READING_STEP, red_findings="handle.py:8: undefined name"))
+    def test_red_gate_applies_without_a_call(self):
+        ask = _Ask("NO")
+        self.assertTrue(_confirm_applies(READING_STEP, red_findings="handle.py:8: undefined name", ask=ask))
+        self.assertTrue(_confirm_applies(READING_STEP, gate_red=True, ask=ask))
+        self.assertEqual(ask.prompts, [])   # a contested disk needs no question
 
-    def test_artifact_claim_always_applies(self):
-        self.assertTrue(_confirm_applies("Write unit tests in test_handle.py"))
+    def test_reading_step_skips_on_a_NO_ruling(self):
+        ask = _Ask("NO")
+        self.assertFalse(_confirm_applies(READING_STEP, ask=ask))
+        self.assertEqual(len(ask.prompts), 1)
+
+    def test_update_step_applies_on_a_YES_ruling(self):
+        # The verb-blind case the old list missed: the reasoner sees "Update the README" promises
+        # a document on disk.
+        self.assertTrue(_confirm_applies("Update the README with usage instructions", ask=_Ask("YES")))
+
+    def test_unreadable_ruling_keeps_the_brake(self):
+        for garbage in ("", "perhaps", "NOT_SURE"):
+            self.assertTrue(_confirm_applies(READING_STEP, ask=_Ask(garbage)))
+
+    def test_no_reasoner_keeps_the_brake(self):
+        self.assertTrue(_confirm_applies(READING_STEP, ask=None))
 
 
 class AbsentArtifactDomainTests(unittest.TestCase):
     def test_empty_workspace_reading_step_is_not_vetoed_on_its_domain(self):
-        # FAILS BEFORE THE FIX: "api.handle.me" matched the file-token pattern, so an empty
-        # workspace deterministically vetoed a reading step for lacking a file named after a domain.
         with tempfile.TemporaryDirectory() as ws:
             self.assertEqual(step_names_absent_artifact(READING_STEP, ws), "")
 

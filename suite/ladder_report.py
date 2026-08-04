@@ -161,6 +161,25 @@ def main() -> None:
     w("")
 
     # ---- what changed in cria while the ladder has been running
+    # The regression campaign (REGRESSION1) supersedes the ladder as the live activity; the ladder
+    # table above stays as the baseline record. This section is the campaign's own truth tool,
+    # embedded verbatim — never a re-count.
+    try:
+        camp = subprocess.run([sys.executable, str(SUITE / "regression_status.py")],
+                              capture_output=True, text=True, timeout=30).stdout.strip()
+        if camp:
+            w("## Regression campaign (REGRESSION1)")
+            w("")
+            w("```")
+            w(camp)
+            w("```")
+            w("")
+            w("Operator report: [`regression-report.md`](regression-report.md) · authority: "
+              "`python3 suite/regression_status.py`.")
+            w("")
+    except Exception:  # noqa: BLE001
+        pass
+
     w("## Fixes landed during the ladder")
     w("")
     try:

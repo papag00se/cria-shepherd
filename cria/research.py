@@ -268,13 +268,6 @@ _PRODUCTION_VERBS = ("write", "writes", "create", "creates", "add", "adds", "imp
                      "build", "builds", "generate", "generates", "produce", "produces", "modify")
 
 
-def has_production_verb(text: str) -> bool:
-    """Does this sentence instruct someone to PRODUCE something? The same verb list the reading-step
-    defect check uses, shared so every caller means the same thing by "a build instruction"."""
-    lowered = (text or "").lower()
-    return any(re.search(rf"\b{v}\b", lowered) for v in _PRODUCTION_VERBS)
-
-
 # Location-shaped tokens: naming one the TASK did not name is a guess, and a guessed location is what
 # makes a step unsatisfiable. Present in the task too → the user named it, so it is a fact, not a guess.
 _LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
