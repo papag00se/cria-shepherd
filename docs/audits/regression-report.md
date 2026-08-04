@@ -12,8 +12,9 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | ternary-bonsai | off | — | 3/4 | ada-handles_ternary-bonsai_codex_poff_1785818931 | fd4ca0a | exited | SUPERSEDED by a17a7c1 — walked, cria fault fixed; does not count toward 3 |
 | ternary-bonsai | off | 1 | **4/4** | ada-handles_ternary-bonsai_codex_poff_1785821049 | a17a7c1 | budget-killed | 9/9 unit tests, provably-live test, working CLI, README |
 | ternary-bonsai | off | 2 | **3/4** | ada-handles_ternary-bonsai_codex_poff_1785839400 | ccf601b | milestone-miss-60min | walked: cria fault none — 2 mock-fixture tests red, killed mid-fix at the hour wall; row stands |
-| gemma4 | off | 1 | **0/4** | ada-handles_gemma4_codex_poff_1785824758 | ca75dd9 | milestone-miss-15min | walked: cria fault none — model edit-spiral on one file; row stands |
-| gemma4 | off | 2 | **0/4** | ada-handles_gemma4_codex_poff_1785843217 | 2ab7dcb | milestone-miss-15min | walked: cria fault none-to-fix — 70-call f-string spiral; false-camelCase steer counter-evidence recorded to open-threads |
+| ternary-bonsai | off | 3 | **4/4** | ada-handles_ternary-bonsai_codex_poff_1785852998 | fae111a | budget-killed | 7/7 tests, live test, CLI, README — ternary closes 4/4, 3/4, 4/4 |
+| gemma4 | off | 1 | **0/4** | ada-handles_gemma4_codex_poff_1785824758 (SUPERSEDED by the hand-back fix) | ca75dd9 | milestone-miss-15min | walked: cria fault none — model edit-spiral on one file; row stands |
+| gemma4 | off | 2 | **0/4** | ada-handles_gemma4_codex_poff_1785843217 (SUPERSEDED by the hand-back fix) | 2ab7dcb | milestone-miss-15min | walked: cria fault none-to-fix — 70-call f-string spiral; false-camelCase steer counter-evidence recorded to open-threads |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | 2 | **0/4** | ada-handles_qwythos_codex_poff_1785844343 | 7ec52ff | milestone-miss-15min | walked: cria fault none — blind test interface, script/tests oscillation to the floor; row stands |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
@@ -29,6 +30,18 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 
 ## Notable events
 
+- **2026-08-04 ~08:45 — the operator-requested 48-hour footgun audit found the campaign's biggest
+  bug in the campaign's own premise.** The plan-off rewiring that this campaign was built to test
+  had quietly replaced "here is your task" with "do only step 1 of N, then stop" — and hid the
+  later steps. gemma4 (deterministic sampling) is the proof: both 0/4s spent every coding turn
+  pinned on step 1 with the README unreachable. Fixed: plan-off now does its research step, then
+  gets the raw task back, and replans can never split the user's task. gemma4's two failed rows
+  are superseded; it reruns on the fixed code. The audit also hardened tonight's three campaign
+  fixes (one critical overreach in the missing-file veto guard, rebuilt as ask-the-reasoner per
+  the no-fuzzy-determinism principle). Full record: 2026-08-04-48h-footgun-audit.md. OPEN
+  QUESTION for the operator: qwythos/qwopus/ornith/mellum2's pass-2 failures also ran on the
+  caged routing (walked as model variance at temp 0.6) — void and rerun them too, or let the rows
+  stand?
 - **2026-08-04 ~03:40 — third cria fault found and fixed (nemotron-elastic run 1).** The
   double-checker vetoed approved steps three times by claiming files were missing — once naming the
   exact path of a file that existed, without ever looking. Cria now checks the disk itself: a veto
