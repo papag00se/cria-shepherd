@@ -171,3 +171,34 @@ class TheCadenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhichQuestionCriaAsksTests(unittest.TestCase):
+    """cria settles what it can settle. A domain in the task's own words is a FACT — that the task
+    names an external source — and asking a small model to re-decide it got the answer fabliq gave
+    on the first live run: NONE, for a task whose own sentence reads "using the Ada Handles API
+    (api.handle.me)". With no domain, whether anything must be read is a real judgement and NONE is
+    a real answer."""
+
+    TASK_WITH = "resolve an Ada Handle using the Ada Handles API (api.handle.me)"
+    TASK_WITHOUT = "build a report from the files already in this directory"
+
+    def _system_for(self, task, **kw):
+        seen = {}
+
+        def ask(sysp, usr):
+            seen["system"] = sysp
+            return "Read it and learn what it returns."
+
+        research.authored_research_step(ask, task, **kw)
+        return seen["system"]
+
+    def test_a_named_domain_is_not_re_litigated(self):
+        self.assertNotIn("NONE", self._system_for(self.TASK_WITH, domain="api.handle.me"))
+
+    def test_without_a_domain_the_model_may_decline(self):
+        self.assertIn("NONE", self._system_for(self.TASK_WITHOUT, files="a.csv"))
+
+    def test_NONE_is_still_honoured_where_it_is_offered(self):
+        self.assertEqual(
+            research.authored_research_step(lambda s, u: "NONE", self.TASK_WITHOUT, files="a.csv"), "")
