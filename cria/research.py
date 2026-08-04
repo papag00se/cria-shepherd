@@ -34,6 +34,8 @@ shipped.
 """
 from __future__ import annotations
 
+import re
+
 from . import denial, jsontext, prompts
 from .jsontext import extract_json_object, strip_think
 
@@ -210,7 +212,23 @@ def authored_research_step(ask, task: str, *, domain: str = "", files: str = "")
     for token in _LOCATION_TOKENS:
         if token in lowered and token not in task_l:
             return ""      # a location the task never named — the one thing the prompt forbids
+    # A READING STEP DOES NOT PRODUCE ANYTHING. Asked for one, fabliq wrote back the entire task —
+    # "Write a Python script that accepts an Ada Handle... includes unit tests... creates a live test
+    # ... and adds a README" — which as a first plan item is strictly WORSE than no item at all: the
+    # plan then holds two steps that both say "do the whole job". A small model handed "write one
+    # step" defaults to restating the request. So cria refuses instead: a sentence carrying a verb of
+    # PRODUCTION is not a reading step. This is a refusal of cria's OWN injected content, in the safe
+    # direction (no step — the plan cria would have built anyway), not a judgement about the coder's
+    # work, which is where a lexical rule would be out of place (#9).
+    if any(re.search(rf"\b{v}\b", lowered) for v in _PRODUCTION_VERBS):
+        return ""
     return text
+
+
+# Verbs that make a sentence a BUILD instruction rather than a reading one. Refusing on these costs
+# nothing when wrong: the plan simply has no reading step, exactly as before this feature existed.
+_PRODUCTION_VERBS = ("write", "writes", "create", "creates", "add", "adds", "implement", "implements",
+                     "build", "builds", "generate", "generates", "produce", "produces", "modify")
 
 
 # Location-shaped tokens: naming one the TASK did not name is a guess, and a guessed location is what
