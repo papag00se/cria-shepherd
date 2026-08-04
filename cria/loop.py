@@ -2312,6 +2312,12 @@ class Loop:
             lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                         sysp, usr, rlog, phase="research-check"),
             sess.plan.task, item.text, sources)
+        # SAY WHAT IT DID, always. A guard that is silent when it declines cannot be told apart from
+        # one that never ran — and on this check's first live run that is exactly what happened: zero
+        # events, and no way to know whether the cadence was never reached or the verdict was NOT_DONE
+        # every time. The same lesson the replan noise judge already carries: a count is not a reading.
+        rlog.emit("loop.research_check", step=idx, verdict=verdict, sources=len(sources),
+                  turns=sess.coder_turns)
         if verdict != research.DONE:
             return None
         rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
