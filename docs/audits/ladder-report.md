@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-03 21:46:06 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-03 21:49:15 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,13 +8,26 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_fabliq_codex_pon_1785787074` (capture `/home/jesse/.cria/calls/20260803T125805-019fc934-72f5-7701-bb8c-4a7d529041b0`), then write `## ada-handles_fabliq_codex_pon_1785787074` into `docs/audits/ladder-walk.md`.
+**RUNNING — ternary-bonsai**, 0 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 1 | 15 min | 1/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **0/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🔴 | no tests ran in 0.00s |
+| live_test | 🔴 | no live-test file found |
+| resolver_cli | 🔴 | no candidate resolver script |
+| readme | 🔴 | no README |
 
 ## Ladder
 
 | # | model | params | architecture | kind | planner | tries | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
-| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
+| 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🔵 RUNNING |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
@@ -67,6 +80,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+fd4ca0a fix(pytest): collection is tests/ by declaration, not by __pycache__ accident
 456a02d feat(suite): park fabliq; the regression campaign — 7 passing models, 3 runs each, one truth tool
 ef0b771 fix(loop): the plan-off reading step was never driven — synthetic means DEGENERATE, and 2 items is not
 6085276 fix(research): a refused reading step is re-asked once, with the defect named
@@ -81,7 +95,6 @@ d8de3c4 fix(research): do not ask a small model to re-decide a fact cria already
 f2bb013 fix(focustrim): a repeated call collapsed in silence re-asks a temperature-0 model the same question
 76cad3a fix(webfetch): the nested field list obeyed a hardcoded 8 while the top level obeyed the cap
 78c2876 docs(webfetch): the nested field cap's measurement, finished — it stays
-12b8bd2 fix(loop): a line the MODEL wrote in cria's own voice reached the judge as its summary
 ```
 
 ---
