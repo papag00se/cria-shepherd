@@ -33,6 +33,25 @@ def state(r):
     return "voided" if "void" in sup.lower() else "superseded"
 
 
+# Assist families and their icons: 🧭 steers (a directive/redirect cria injected), 🔁 repetition
+# breaks (same-call loops interrupted), 🧪 gates (the repo's own checks run on the coder's behalf),
+# 🗜️ context work (self-compaction / window flooring). `*_result` keys are the same event's
+# read-back and would double-count.
+ASSIST_FAMILIES = (
+    ("🧭", "steers", lambda k: "steer" in k or k == "loop.redirect"),
+    ("🔁", "loops broken", lambda k: "repetition" in k or "wheel_spinning" in k),
+    ("🧪", "check runs", lambda k: ("gate" in k or "probe" in k) and not k.endswith("_result")),
+    ("🗜️", "context work", lambda k: "compact" in k or "floor" in k),
+)
+
+
+def assist_counts(a: dict) -> dict:
+    out = {}
+    for icon, _label, match in ASSIST_FAMILIES:
+        out[icon] = sum(v for k, v in a.items() if match(k))
+    return out
+
+
 def stat_line(r):
     a = r.get("assists", {})
     return {
@@ -43,16 +62,17 @@ def stat_line(r):
         "calls": r.get("calls", 0),
         "coder": r.get("phases", {}).get("coder", 0),
         "tok_s": round(r.get("avg_tok_s") or 0, 1),
+        "assists": assist_counts(a),
         "steers": sum(v for k, v in a.items() if "steer" in k or "redirect" in k),
-        "gates": sum(v for k, v in a.items() if "gate" in k or "probe" in k),
+        "gates": sum(v for k, v in a.items()
+                     if ("gate" in k or "probe" in k) and not k.endswith("_result")),
         "terminal": r.get("terminal", ""),
         "run_id": r.get("run_id", ""),
     }
 
 
-# Score glyphs for the model-summary table: unicode fractions of 4, a ring for zero, a check for
-# full marks. Purely presentational — the numbers stay in the per-run table.
-_GLYPH = {0: "⭕", 1: "¼", 2: "½", 3: "¾", 4: "✅"}
+# Score glyphs: fractions of 4 everywhere (⁰⁄₄ and ⁴⁄₄ composed — unicode only mints ¼ ½ ¾).
+_GLYPH = {0: "⁰⁄₄", 1: "¼", 2: "½", 3: "¾", 4: "⁴⁄₄"}
 
 
 def _badge(avg: float) -> str:
@@ -78,17 +98,19 @@ def model_summary(lines):
         last3 = by_model[m][-3:]
         scores = [int(s["score"].split("/")[0]) for s in last3]
         avg = sum(scores) / len(scores)
+        assists = []
+        for icon, _label, _match in ASSIST_FAMILIES:
+            mean = sum(s["assists"][icon] for s in last3) / len(last3)
+            if round(mean):
+                assists.append(f"{icon} {round(mean)}")
         out.append({
             "model": m,
             "_avg": avg,
             "badge": _badge(avg),
             "trend": " ".join(_GLYPH[n] for n in scores),
-            "avg": f"{avg:.1f}/4",
-            "best": f"{_GLYPH[max(scores)]} {max(scores)}/4",
-            "worst": f"{_GLYPH[min(scores)]} {min(scores)}/4",
             "tok_s": round(sum(s["tok_s"] for s in last3) / len(last3), 1),
+            "assists": " · ".join(assists) or "—",
             "min": round(sum(s["min"] for s in last3) / len(last3)),
-            "coder": round(sum(s["coder"] for s in last3) / len(last3)),
         })
     return sorted(out, key=lambda s: s["_avg"], reverse=True)
 
@@ -97,14 +119,17 @@ def main() -> int:
     md = "--md" in sys.argv
     lines = [stat_line(r) for r in rows()]
     models = model_summary(lines)
+    legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
     if md:
         print("### Model performance (each model's last 3 runs, any state)")
         print()
-        print("| model | last 3 | avg | best | worst | tok/s | avg min | avg coder calls |")
-        print("|---|---|---:|---|---|---:|---:|---:|")
+        print("| model | last 3 | avg tok/s | avg assists | avg min |")
+        print("|---|---|---:|---|---:|")
         for s in models:
-            print(f"| {s['badge']} {s['model']} | {s['trend']} | {s['avg']} | {s['best']} | "
-                  f"{s['worst']} | {s['tok_s']} | {s['min']} | {s['coder']} |")
+            print(f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
+                  f"{s['assists']} | {s['min']} |")
+        print()
+        print(f"assists per run: {legend}")
         print()
         print("### Per-run detail")
         print()
@@ -115,12 +140,11 @@ def main() -> int:
                   f"{s['coder']} | {s['tok_s']} | {s['steers']} | {s['gates']} | {s['terminal']} |")
     else:
         print("MODEL PERFORMANCE — each model's last 3 runs, any state")
-        print(f"{'':<3}{'model':<17}{'last 3':<10}{'avg':<7}{'best':<7}{'worst':<7}"
-              f"{'tok/s':>6} {'min':>4} {'coder':>6}")
+        print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  assists")
         for s in models:
-            print(f"{s['badge']:<3}{s['model']:<17}{s['trend']:<10}{s['avg']:<7}"
-                  f"{s['best'].split()[1]:<7}{s['worst'].split()[1]:<7}"
-                  f"{s['tok_s']:>6} {s['min']:>4} {s['coder']:>6}")
+            print(f"{s['badge']:<3}{s['model']:<17}{s['trend']:<12}"
+                  f"{s['tok_s']:>6} {s['min']:>4}  {s['assists']}")
+        print(f"\nassists per run: {legend}")
         print()
         print("PER-RUN DETAIL")
         print(f"{'model':<17}{'state':<11}{'score':<6}{'min':>4} {'calls':>5} {'coder':>5} "

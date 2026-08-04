@@ -34,47 +34,49 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 ## Run stats
 
 Regenerate any time with `python3 suite/regression_stats.py` (`--md` for these tables).
-steers = times cria injected a directive/redirect; gates = times cria ran or reattached
-the repo's own checks. The model-performance rollup covers each model's last 3 runs in
-any state (it shows current form; the scoreboard above owns what counts).
+The model-performance rollup covers each model's last 3 runs in any state (current form;
+the scoreboard above owns what counts). Per-run: steers = directives/redirects cria
+injected; gates = check runs it triggered.
 
 ### Model performance (each model's last 3 runs, any state)
 
-| model | last 3 | avg | best | worst | tok/s | avg min | avg coder calls |
-|---|---|---:|---|---|---:|---:|---:|
-| 🟢 ternary-bonsai | ✅ ¾ ✅ | 3.7/4 | ✅ 4/4 | ¾ 3/4 | 39.8 | 60 | 29 |
-| 🟡 qwopus | ✅ ¼ | 2.5/4 | ✅ 4/4 | ¼ 1/4 | 76.0 | 40 | 84 |
-| 🟠 nemotron-elastic | ¼ ¾ ¾ | 2.3/4 | ¾ 3/4 | ¼ 1/4 | 130.9 | 33 | 101 |
-| 🟠 qwythos | ✅ ⭕ | 2.0/4 | ✅ 4/4 | ⭕ 0/4 | 77.0 | 16 | 49 |
-| 🟠 mellum2 | ¾ ¼ | 2.0/4 | ¾ 3/4 | ¼ 1/4 | 168.8 | 20 | 78 |
-| 🔴 ornith | ⭕ ✅ ⭕ | 1.3/4 | ✅ 4/4 | ⭕ 0/4 | 76.9 | 21 | 74 |
-| 🔴 gemma4 | ⭕ ¼ ¼ | 0.7/4 | ¼ 1/4 | ⭕ 0/4 | 60.6 | 26 | 110 |
+| model | last 3 | avg tok/s | avg assists | avg min |
+|---|---|---:|---|---:|
+| 🟢 ternary-bonsai | ⁴⁄₄ ¾ ⁴⁄₄ | 39.8 | 🧭 3 · 🔁 1 · 🧪 5 · 🗜️ 3 | 60 |
+| 🟡 qwopus | ⁴⁄₄ ¼ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
+| 🟠 nemotron-elastic | ¼ ¾ ¾ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
+| 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
+| 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
+| 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
+| 🔴 gemma4 | ⁰⁄₄ ¼ ¼ | 60.6 | 🧭 28 · 🔁 5 · 🧪 12 · 🗜️ 6 | 26 |
+
+assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
 ### Per-run detail
 
 | model | state | score | min | calls | coder | tok/s | steers | gates | terminal |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|
 | ternary-bonsai | superseded | 3/4 | 12 | 40 | 12 | 43.7 | 0 | 0 | exited |
-| ternary-bonsai | counted | 4/4 | 60 | 69 | 33 | 39.1 | 4 | 11 | budget-killed |
-| gemma4 | superseded | 0/4 | 16 | 91 | 65 | 56.9 | 4 | 8 | milestone-miss-15min |
-| qwythos | counted | 4/4 | 15 | 116 | 45 | 76.4 | 14 | 14 | exited |
-| qwopus | counted | 4/4 | 48 | 232 | 130 | 75.6 | 14 | 31 | exited |
-| ornith | superseded | 0/4 | 16 | 114 | 58 | 75.7 | 4 | 14 | milestone-miss-15min |
-| ornith | counted | 4/4 | 31 | 237 | 121 | 76.5 | 9 | 25 | exited |
-| mellum2 | counted | 3/4 | 9 | 72 | 38 | 170.4 | 7 | 27 | exited |
-| nemotron-elastic | superseded | 1/4 | 31 | 156 | 87 | 129.2 | 8 | 42 | milestone-miss-30min |
-| nemotron-elastic | counted | 3/4 | 36 | 198 | 111 | 131.4 | 20 | 37 | exited |
-| ternary-bonsai | counted | 3/4 | 61 | 44 | 19 | 38.6 | 2 | 4 | milestone-miss-60min |
-| gemma4 | superseded | 0/4 | 16 | 131 | 86 | 58.7 | 5 | 10 | milestone-miss-15min |
-| qwythos | voided | 0/4 | 16 | 89 | 53 | 77.6 | 8 | 18 | milestone-miss-15min |
-| qwopus | voided | 1/4 | 31 | 71 | 38 | 76.4 | 6 | 7 | milestone-miss-30min |
-| ornith | voided | 0/4 | 16 | 74 | 43 | 78.4 | 7 | 6 | milestone-miss-15min |
-| mellum2 | voided | 1/4 | 31 | 234 | 119 | 167.1 | 25 | 67 | milestone-miss-30min |
-| nemotron-elastic | counted | 3/4 | 32 | 200 | 104 | 132.2 | 14 | 35 | exited |
-| ternary-bonsai | counted | 4/4 | 60 | 61 | 35 | 41.7 | 2 | 6 | budget-killed |
-| gemma4 | superseded | 0/4 | 16 | 61 | 36 | 61.6 | 18 | 8 | milestone-miss-15min |
-| gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 31 | milestone-miss-30min |
-| gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 18 | milestone-miss-30min |
+| ternary-bonsai | counted | 4/4 | 60 | 69 | 33 | 39.1 | 4 | 9 | budget-killed |
+| gemma4 | superseded | 0/4 | 16 | 91 | 65 | 56.9 | 4 | 4 | milestone-miss-15min |
+| qwythos | counted | 4/4 | 15 | 116 | 45 | 76.4 | 14 | 12 | exited |
+| qwopus | counted | 4/4 | 48 | 232 | 130 | 75.6 | 14 | 23 | exited |
+| ornith | superseded | 0/4 | 16 | 114 | 58 | 75.7 | 4 | 11 | milestone-miss-15min |
+| ornith | counted | 4/4 | 31 | 237 | 121 | 76.5 | 9 | 18 | exited |
+| mellum2 | counted | 3/4 | 9 | 72 | 38 | 170.4 | 7 | 26 | exited |
+| nemotron-elastic | superseded | 1/4 | 31 | 156 | 87 | 129.2 | 8 | 38 | milestone-miss-30min |
+| nemotron-elastic | counted | 3/4 | 36 | 198 | 111 | 131.4 | 20 | 31 | exited |
+| ternary-bonsai | counted | 3/4 | 61 | 44 | 19 | 38.6 | 2 | 3 | milestone-miss-60min |
+| gemma4 | superseded | 0/4 | 16 | 131 | 86 | 58.7 | 5 | 5 | milestone-miss-15min |
+| qwythos | voided | 0/4 | 16 | 89 | 53 | 77.6 | 8 | 15 | milestone-miss-15min |
+| qwopus | voided | 1/4 | 31 | 71 | 38 | 76.4 | 6 | 5 | milestone-miss-30min |
+| ornith | voided | 0/4 | 16 | 74 | 43 | 78.4 | 7 | 4 | milestone-miss-15min |
+| mellum2 | voided | 1/4 | 31 | 234 | 119 | 167.1 | 25 | 62 | milestone-miss-30min |
+| nemotron-elastic | counted | 3/4 | 32 | 200 | 104 | 132.2 | 14 | 29 | exited |
+| ternary-bonsai | counted | 4/4 | 60 | 61 | 35 | 41.7 | 2 | 4 | budget-killed |
+| gemma4 | superseded | 0/4 | 16 | 61 | 36 | 61.6 | 18 | 4 | milestone-miss-15min |
+| gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 21 | milestone-miss-30min |
+| gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 10 | milestone-miss-30min |
 
 counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
 
