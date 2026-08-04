@@ -10,12 +10,12 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 ## Run stats
 
 Regenerate any time with `python3 suite/regression_stats.py` (`--write` refreshes this
-section in place). The model-performance grid covers each model's last 3 runs in any state,
-ranked by completion rate, then shortest time, then least assists (current form; the
-scoreboard below owns what counts). Per-run: steers = directives/redirects cria injected;
+section in place). The model-performance grid covers each model's last 3 STANDING runs —
+voided/superseded rows are cria evidence, not model form — ranked by completion rate, then
+shortest time, then least assists. Per-run: steers = directives/redirects cria injected;
 gates = check runs it triggered.
 
-### Model performance (each model's last 3 runs, any state)
+### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)
 
 | model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min |
 |---|---|---:|---:|---:|---:|---:|---:|

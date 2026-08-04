@@ -22,9 +22,9 @@ REPORT = Path(__file__).parent.parent / "docs" / "audits" / "regression-report.m
 SECTION_HEADER = (
     "## Run stats\n\n"
     "Regenerate any time with `python3 suite/regression_stats.py` (`--write` refreshes this\n"
-    "section in place). The model-performance grid covers each model's last 3 runs in any state,\n"
-    "ranked by completion rate, then shortest time, then least assists (current form; the\n"
-    "scoreboard below owns what counts). Per-run: steers = directives/redirects cria injected;\n"
+    "section in place). The model-performance grid covers each model's last 3 STANDING runs —\n"
+    "voided/superseded rows are cria evidence, not model form — ranked by completion rate, then\n"
+    "shortest time, then least assists. Per-run: steers = directives/redirects cria injected;\n"
     "gates = check runs it triggered.\n\n"
 )
 
@@ -137,7 +137,7 @@ def model_summary(lines):
 def markdown(lines, models) -> str:
     legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
     icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
-    out = ["### Model performance (each model's last 3 runs, any state)", ""]
+    out = ["### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)", ""]
     out += ["| model | last 3 | avg tok/s | " + " | ".join(icons) + " | avg min |",
             "|---|---|---:|" + "---:|" * len(icons) + "---:|"]
     out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
@@ -181,7 +181,7 @@ def main() -> int:
         print(markdown(lines, models))
     else:
         icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
-        print("MODEL PERFORMANCE — each model's last 3 runs, any state")
+        print("MODEL PERFORMANCE — each model's last 3 STANDING runs (voided/superseded excluded)")
         print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  "
               + " ".join(f"{i:>4}" for i in icons))
         for s in models:
