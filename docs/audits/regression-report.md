@@ -24,7 +24,7 @@ gates = check runs it triggered.
 | 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 17 | 7 | 30 | 8 | 34 |
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
 | 🟢 mellum2 | ³⁄₄ ⁴⁄₄ | 173.4 | 10 | 2 | 16 | 2 | 8 |
-| 🟡 qwythos | ⁴⁄₄ ²⁄₄ | 79.8 | 14 | 2 | 9 | 5 | 15 |
+| 🟡 qwythos | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 12 | 2 | 7 | 4 | 13 |
 | 🔴 gemma4 | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 30 | 6 | 10 | 9 | 31 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
@@ -63,8 +63,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | superseded | 0/4 | 16 | 107 | 70 | 160.1 | 16 | 9 | milestone-miss-15min |
 | mellum2 | counted | 4/4 | 6 | 81 | 51 | 176.3 | 14 | 6 | exited |
 | gemma4 | counted | 1/4 | 31 | 238 | 127 | 62.5 | 33 | 11 | milestone-miss-30min |
+| qwythos | counted | 4/4 | 9 | 58 | 31 | 81.9 | 9 | 4 | exited |
 
-counted runs: 16 · avg wall 30 min · avg coder calls 75 · full-pass rate 10/16
+counted runs: 17 · avg wall 28 min · avg coder calls 73 · full-pass rate 11/17
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -86,6 +87,7 @@ counted runs: 16 · avg wall 30 min · avg coder calls 75 · full-pass rate 10/1
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwythos | off | 2 | **2/4** | ada-handles_qwythos_codex_poff_1785877469 | 61242fc | exited | walked: cria fault none — reports the stake address as the resolved address (no addr1 in output), no live-test artifact; guess-shape gate re-authored a poisoned step correctly; row STANDS |
+| qwythos | off | 3 | **4/4** | ada-handles_qwythos_codex_poff_1785884041 | 878c1b1 | exited | 9/9 tests, working live_test.sh, CLI, README — 9 min; RESCORED 3/4→4/4 (scorer's live glob was *.py-only; the shell live test ran green in-session); qwythos closes 4,2,4 |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
 | qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 2 | **4/4** | ada-handles_qwopus_codex_poff_1785878574 | 61242fc | exited | 11/11 unit tests, dedicated live-test file (provably live), CLI, README — 5 minutes, 34 calls: the fastest full pass of the campaign |
