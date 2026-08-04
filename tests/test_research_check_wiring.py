@@ -91,3 +91,40 @@ class TheCheckFiresOnTheLivePathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCriticGetsTheReadingFactTests(unittest.TestCase):
+    """The check reports; the CRITIC acts. It is the only thing here that reads the workspace, and it
+    was refusing research steps forever because nothing told it reading had succeeded — run
+    1785804243 held five HTTP 200s that defined nothing and 114 of 195 calls died on step 1."""
+
+    def _verify_prompt(self, sources):
+        seen = {}
+
+        def fake_ask(chat_fn, role, system, user, *a, **k):   # _judge_completion's real shape
+            seen["user"] = user
+            return '{"done": true, "reason": "ok", "proposed_fix": ""}'
+
+        lp = loop.Loop.__new__(loop.Loop)
+        lp._ctx = type("C", (), {"reasoner_chat": None, "reasoner_role": None,
+                                 "runs_dir": "", "workspace_root": ""})()
+        with patch.object(loop, "_judge_completion", side_effect=fake_ask):
+            lp._verify("Research the API docs", "did it", "", "", _Rlog(), sources_read=sources)
+        return seen.get("user", "")
+
+    def test_the_sources_reach_the_critic(self):
+        text = self._verify_prompt(
+            [("https://api.handle.me/openapi.json", "/handles/{handle}", "holder(string)")])
+        self.assertIn("/handles/{handle}", text)
+        self.assertIn("holder(string)", text)
+        self.assertIn("ACTUALLY BEEN READ", text)
+
+    def test_nothing_is_said_when_nothing_was_read(self):
+        """Silence is the honest state — cria must not imply research happened (#5b)."""
+        self.assertNotIn("ACTUALLY BEEN READ", self._verify_prompt([]))
+
+    def test_it_tells_the_critic_this_does_not_finish_a_BUILD_step(self):
+        """The bypass scored 0.0 by treating a read as completion of "write the unit tests". The
+        critic is told, in the same breath, that this list is background for a build step."""
+        text = self._verify_prompt([("u", "/r", "f")])
+        self.assertIn("does not make it done", text)
