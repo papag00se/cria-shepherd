@@ -860,7 +860,46 @@ def check_spill_read_small(row, cap, ws):
     return len(small), why
 
 
+def check_cria_voice_forgery(row, cap, ws):
+    """How many captured replies OPEN a line in cria's own voice — a `⟦cria⟧` banner or anything in
+    the model-facing `⟦ctx:…⟧` namespace — and would therefore have reached a judge as the model's
+    own summary.
+
+    Run through :func:`loop._strip_cria_banners` itself rather than a copy of its rule, so reverting
+    the fix drops this to zero and the check cannot drift from the code it measures.
+
+    The "why" carries the MID-line count beside it, and that is the number that decides whether the
+    rule is safe rather than merely effective: a marker mid-line is a model quoting the work log
+    ("tool: ⟦ctx:checks⟧ …"), which is a reasoner or compactor doing its job. Across the full
+    capture set on 2026-08-03 the split was 23 openers to 348 quotes. If the mention count ever
+    starts falling with the opener count, the rule has stopped telling them apart."""
+    forged = quoted = 0
+    for f in sorted(cap.glob("*.response.json")):
+        try:
+            j = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        msg = ((j.get("choices") or [{}])[0].get("message")) or {}
+        c = msg.get("content")
+        if isinstance(c, list):
+            c = "".join(str(p.get("text", "")) for p in c if isinstance(p, dict))
+        if not isinstance(c, str) or not c:
+            continue
+        # cria's own function decides, LINE BY LINE — what the namespace rule removes that the
+        # `⟦cria⟧` rule alone would have kept. Comparing the two whole-text results instead would
+        # count every reply whose only difference is trailing whitespace.
+        opener = any(loop._strip_cria_banners(ln, whole_namespace=True) == ""
+                     and loop._strip_cria_banners(ln) != "" for ln in c.splitlines())
+        if opener:
+            forged += 1
+        elif "⟦ctx:" in c:
+            quoted += 1
+    return forged, (f"{forged} reply(s) open a line in cria's voice; "
+                    f"{quoted} more only QUOTE a marker mid-line and are left alone")
+
+
 CHECKS = {
+    "cria-voice-forgery": check_cria_voice_forgery,
     "oscillation": check_oscillation,
     "call-syntax-tool-call": check_call_syntax_tool_call,
     "unclosed-verdict": check_unclosed_verdict,
