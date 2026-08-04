@@ -182,19 +182,27 @@ def _exempt(path: str) -> bool:
     return p in _EXEMPT_EXACT or any(p == pre.rstrip("/") or p.startswith(pre) for pre in _EXEMPT_PREFIXES)
 
 
+def _typo_fold(s: str) -> str:
+    """Case-fold and collapse dash/underscore — the two one-glyph workspace-typo classes walked so
+    far. Anything looser would start matching genuinely different directories."""
+    return os.path.normpath(os.path.expanduser(s.strip())).lower().replace("_", "-")
+
+
 def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
-    """True when ``path`` IS the workspace (or a path under it) up to LETTER CASE — i.e. the model
-    typed its own project directory with wrong casing. Walked on
-    ada-handles_gemma4_codex_poff_1785869053: the coder wrote ``…-8Ibs7re8`` (capital I) for its
-    real ``…-8ibs7re8`` workspace 106 times, drew this refusal 50+ times — the message printed both
-    strings side by side, and a temp-0 12B never spotted the one-letter difference. It instead
-    invented a false doctrine ("absolute paths are forbidden") and spiralled for ~300 calls. The
-    comparison is exact ground truth cria already holds; naming the case difference is the one
-    sentence that ends that loop at its first firing."""
+    """True when ``path`` IS the workspace (or a path under it) up to LETTER CASE or a
+    DASH/UNDERSCORE swap — i.e. the model typed its own project directory one glyph wrong.
+
+    Walked on ada-handles_gemma4_codex_poff_1785869053: the coder wrote ``…-8Ibs7re8`` (capital I)
+    for its real ``…-8ibs7re8`` workspace 106 times, drew this refusal 50+ times — the message
+    printed both strings side by side, and a temp-0 12B never spotted the one-letter difference;
+    it invented "absolute paths are forbidden" and spiralled ~300 calls. Hours after the case fix,
+    ada-handles_mellum2_codex_poff_1785880114 hit the SAME loop one glyph over: ``suite-ada_handles``
+    (underscore) for ``suite-ada-handles`` — the note never fired because the fix was
+    letter-case-only. The comparison is exact ground truth cria already holds; naming the
+    difference is the one sentence that ends the loop at its first firing."""
     if not workspace:
         return False
-    p = os.path.normpath(os.path.expanduser(path.strip())).lower()
-    ws = os.path.normpath(os.path.expanduser(workspace)).lower()
+    p, ws = _typo_fold(path), _typo_fold(workspace)
     return p == ws or p.startswith(ws + os.sep)
 
 

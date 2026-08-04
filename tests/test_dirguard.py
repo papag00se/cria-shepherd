@@ -265,18 +265,29 @@ class CaseTypoNoteTests(unittest.TestCase):
 
     def test_case_typo_of_workspace_is_called_out(self):
         r = dirguard.path_refusal("/home/jesse/src/Proj/x.py", True, "none", WS)
-        self.assertIn("ONLY IN LETTER CASE", r)
+        self.assertIn("ONLY BY A TYPO", r)
 
     def test_case_typo_of_the_root_itself(self):
         r = dirguard.path_refusal("/home/jesse/SRC/proj", True, "none", WS)
-        self.assertIn("ONLY IN LETTER CASE", r)
+        self.assertIn("ONLY BY A TYPO", r)
+
+
+    def test_underscore_for_dash_typo_is_called_out(self):
+        # ada-handles_mellum2_codex_poff_1785880114: suite-ada_handles for suite-ada-handles —
+        # the same one-glyph loop the case fix missed.
+        r = dirguard.path_refusal("/home/jesse/src_proj/x.py", True, "none", "/home/jesse/src-proj")
+        self.assertIn("ONLY BY A TYPO", r)
+
+    def test_dash_for_underscore_typo_is_called_out(self):
+        r = dirguard.path_refusal("/home/jesse/src-proj/x.py", True, "none", "/home/jesse/src_proj")
+        self.assertIn("ONLY BY A TYPO", r)
 
     def test_genuinely_external_path_gets_no_note(self):
         r = dirguard.path_refusal("/etc/passwd", True, "none", WS)
-        self.assertNotIn("LETTER CASE", r)
+        self.assertNotIn("BY A TYPO", r)
         self.assertNotIn("{{CASENOTE}}", r)   # the token is always filled, never leaked
 
     def test_no_workspace_no_note(self):
         r = dirguard.path_refusal("/etc/passwd", True, "none", None)
-        self.assertNotIn("LETTER CASE", r or "")
+        self.assertNotIn("BY A TYPO", r or "")
         self.assertNotIn("{{CASENOTE}}", r or "")

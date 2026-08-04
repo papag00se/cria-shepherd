@@ -1,1 +1,1 @@
- NOTE: the path you gave differs from the project directory ONLY IN LETTER CASE — paths here are case-sensitive, so it names a directory that does not exist. Retype the project directory exactly as shown above.
+ NOTE: the path you gave differs from the project directory ONLY BY A TYPO — a letter-case or dash/underscore difference — so it names a directory that does not exist. Retype the project directory exactly, character for character, as shown above.

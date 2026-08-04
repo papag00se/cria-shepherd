@@ -4582,3 +4582,34 @@ spiralling. Both goose and papagoose were resolved LIVE in-session; clean self-e
    the point from having a live TEST at all. Not changed without a ruling.
 
 Row STANDS — qwythos: ⁴⁄₄ then ²⁄₄.
+
+## ada-handles_mellum2_codex_poff_1785880114
+
+REGRESSION1 campaign, mellum2 run 2/3 (head `61242fc`+). Score **0/4**, terminal
+`milestone-miss-15min` (16 min, 107 calls). Capture
+`~/.cria/calls/20260804T144859-019fcec0-5747-7503-866d-704ca8e49f5a` — walked in full.
+
+### The run's own shape
+
+mellum2 read the swagger YAML instead of openapi.json and fixated on the MCP endpoint (JSON-RPC
+over POST with content-wrapped double-encoded JSON) instead of the plain REST paths every other
+model used — then drowned in unwrap churn, early 403s (a missing Accept header, cracked at 0034),
+and its signature rumination (the rumination guard fired and refocused it 3×). The new
+auth-claim brake ASKED on the invented "Authorization: Bearer <token>" steers and correctly ruled
+STANDS — real HTTP 403s were in the record, exactly the fail-toward-delivery the rule specifies.
+README landed without test instructions; unit tests were live-hitting and failed on the unwrap
+bug; 0/4 at the wall.
+
+### cria fault: yes — the workspace-typo callout was one glyph too narrow
+
+The coder repeatedly typo'd its own workspace as `suite-ada_handles…` (underscore) for
+`suite-ada-handles…` (dash) — write_file refused 4+ times, and the coder even tried to `mv` the
+real workspace onto its typo'd name (0056). The refusal printed both paths side by side without
+naming the difference: the case-typo note shipped at noon matches LETTER CASE only, and this is
+the same one-glyph disease in the adjacent shape. Fixed: the typo check now folds case AND
+dash/underscore (`_typo_fold`), and the note reads "differs ONLY BY A TYPO — a letter-case or
+dash/underscore difference". Fail-before tests added both directions.
+
+Model residue: the MCP-over-REST path choice, the double-JSON unwrap spiral, no-op edits
+(old==new), and the briefing-role echo loops are mellum2's own. Row (0/4) SUPERSEDED per the
+goal rule; mellum2 reruns on the widened callout.
