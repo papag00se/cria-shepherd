@@ -149,7 +149,10 @@ class SteerAuthorReadsItsOwnThinkingTests(unittest.TestCase):
         d = tempfile.mkdtemp() if workspace else ""
         if d:
             with open(os.path.join(d, "handle_resolver.py"), "w") as f:
-                f.write("x = 1\n")
+                # 6 real lines: the authored-directive test cites "line 4", and the false-citation
+                # guard's bare-line arm now (correctly) withholds a line number past every listed
+                # file's real length — the fixture must be tall enough for the citation to be true.
+                f.write("x = 1\ny = 2\nz = 3\na = 4\nb = 5\nc = 6\n")
         chat = _scripted(replies)
         gs = types.SimpleNamespace(recent_writes=["handle_resolver.py"], spin_path="",
                                    steered_checks_text="", fetched_pages={})

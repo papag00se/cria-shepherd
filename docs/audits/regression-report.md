@@ -30,6 +30,10 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 
 ## Notable events
 
+- **2026-08-04 ~10:55 — machine crash voided gemma4's in-flight run.** Run 1785863660 (the first
+  on the fully-uncaged code) died with the whole box; no score, no verify, not a cria fault and
+  not a counted row. The box came back with cria and the model server healthy; run 1785866157
+  replaces it on the same commit (36e2861).
 - **2026-08-04 ~10:20 — the referendum run answered, and the answer was "there was a second bug."**
   gemma4 on the uncaged code still went 0/4 — but the walk found the poison at call one: cria's own
   research-step author invented a route, a version prefix, and an authentication requirement out of

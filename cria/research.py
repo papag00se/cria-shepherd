@@ -277,6 +277,11 @@ _PRODUCTION_VERBS = ("write", "writes", "create", "creates", "add", "adds", "imp
 # makes a step unsatisfiable. Present in the task too → the user named it, so it is a fact, not a guess.
 _LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
 
+# The auth arm is shared with the STEER channel (loop._steer_auth_refuted): the same disease was
+# walked there five runs later (1785866157 steer 0191 invented "your API key" and told the coder to
+# keep a task-required live test mocked), so both channels trigger off ONE shape definition.
+AUTH_SHAPE = re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[- ]?key|bearer token)\b")
+
 # Guess SHAPES the token list above cannot see — same refusal contract (cria vetting its OWN
 # authored step, fail-safe: no step = the plan cria would have built anyway), each arm silenced
 # when the task's own text carries the match. Walked 2026-08-04, run
@@ -287,6 +292,5 @@ _LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
 _GUESS_SHAPES = (
     (re.compile(r"\{\w+\}"), "a braced path template"),
     (re.compile(r"/v\d+/"), "a versioned API path"),
-    (re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[- ]?key|bearer token)\b"),
-     "an authentication requirement"),
+    (AUTH_SHAPE, "an authentication requirement"),
 )

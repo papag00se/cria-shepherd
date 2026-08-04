@@ -5678,18 +5678,68 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         # 0127's misread rode a citation too). cria stated the line count, so the check is exact.
         rlog.emit("loop.steer_false_citation", level="warn", cite=cite)
         return None
+    if _steer_auth_refuted(directive, evidence, sess, ask, rlog):
+        return None
     return directive
 
 
-# Explicit line citations only — two fixed shapes, both anchored on a filename: `path.py:108` and
-# "lines 108-112 of path.py". Anything fuzzier would be judgment dressed as a rule.
+_AUTH_MARKER = re.compile(r"\b40[13]\b|\bunauthori[sz]ed\b|\bforbidden\b", re.I)
+
+
+def _steer_auth_refuted(directive: str, evidence: str, sess, ask, rlog) -> bool:
+    """True when the steer asserts an authentication requirement the session's own record refutes.
+
+    Walked on ada-handles_gemma4_codex_poff_1785866157 steer 0191: "don't add live network calls
+    here, they will fail without your API key; keep tests mocked" — for a task that names no key,
+    in a session whose every fetch returned HTTP 200 and which had ALREADY resolved handles live
+    without a credential. The steer countermanded a deliverable the task itself requires. Same
+    guess-shape disease `research._GUESS_SHAPES` refuses in the authored-step channel; here the
+    author HAS evidence, so a deterministic drop would misfire on a genuinely authenticated API —
+    the F2 pattern applies instead. DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8):
+    the auth shape is only the TRIGGER for spending one call, the network facts are gathered
+    exactly (the fetch ledger's statuses, the evidence's own denial markers), and ONE focused
+    question rules STANDS or REFUTED. Every failure direction DELIVERS: task mentions auth, no
+    reasoner, an unreadable answer — the trigger alone is not proof, and the roleplay retune
+    showed what unexamined drops cost. Only a clear REFUTED withholds."""
+    if not research.AUTH_SHAPE.search(directive) or ask is None:
+        return False
+    task = getattr(getattr(sess, "plan", None), "task", "") or ""
+    if research.AUTH_SHAPE.search(task):
+        return False   # the user's own words raised auth — the claim has a source
+    pages = getattr(sess, "fetched_pages", None) or {}
+    statuses = {url: str(v[0]) if isinstance(v, (list, tuple)) and v else str(v)
+                for url, v in pages.items()}
+    facts = [f"- fetched {url}: {st}" for url, st in statuses.items()]
+    facts.append("- the task's own text mentions no key, token, or login")
+    facts.append("- a 401/403/unauthorized/forbidden DOES appear elsewhere in the session evidence"
+                 if _AUTH_MARKER.search(evidence or "")
+                 else "- no 401/403/unauthorized/forbidden appears anywhere in the session evidence")
+    ans = strip_think(ask(prompts.render("confirm_auth_claim", directive=directive,
+                                         facts="\n".join(facts)), "") or "")
+    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+    if head == "REFUTED":
+        rlog.emit("loop.steer_auth_refuted", level="warn", head=_clip(directive, 120))
+        return True
+    return False
+
+
+# Explicit line citations, still anchored on exact ground truth (the disk list's stated counts):
+# `path.py:108`, "lines 108-112 of/in/from path.py", and — walked on
+# ada-handles_gemma4_codex_poff_1785866157 (steers 0185/0218/0222) — BARE references ("(line 245)",
+# "lines 30 and 98", "lines 9–15, 67–80, AND 95–99") which that run's author used five times past
+# the 64-line reality while only the colon form was checked. A bare reference names no file, so it
+# is flagged only when it exceeds EVERY stated count — a line number bigger than every file in the
+# workspace is false no matter which file it meant. Anything fuzzier would be judgment dressed as
+# a rule.
 _CITE_COLON = re.compile(r"\b([\w./-]+\.\w{1,4}):(\d{1,5})\b")
-_CITE_WORDS = re.compile(r"\blines?\s+(\d{1,5})(?:\s*[-–—]\s*(\d{1,5}))?\s+(?:of|in)\s+([\w./-]+\.\w{1,4})\b", re.I)
+_CITE_WORDS = re.compile(r"\blines?\s+(\d{1,5})(?:\s*[-–—]\s*(\d{1,5}))?\s+(?:of|in|from)\s+([\w./-]+\.\w{1,4})\b", re.I)
+_CITE_BARE = re.compile(r"\blines?\s+(\d{1,5}(?:\s*[-–—]\s*\d{1,5})?(?:(?:\s*,\s*|\s+and\s+)"
+                        r"\d{1,5}(?:\s*[-–—]\s*\d{1,5})?)*)", re.I)
 _DISK_LINE = re.compile(r"^FILE\s+(\S+)\s+—\s+[\d,]+\s+bytes,\s+([\d,]+)\s+lines?$", re.M)
 
 
 def _false_line_citation(directive: str, evidence: str) -> str | None:
-    """A `file:line` citation in the steer that exceeds the file's REAL line count as stated by the
+    """A line citation in the steer that exceeds the file's REAL line count as stated by the
     disk list cria itself composed into the evidence — or None. Only files whose count we stated are
     checkable; everything else passes (silence over noise)."""
     counts = {os.path.basename(m.group(1)): int(m.group(2).replace(",", ""))
@@ -5703,6 +5753,11 @@ def _false_line_citation(directive: str, evidence: str) -> str | None:
         known = counts.get(os.path.basename(f))
         if known is not None and n > known:
             return f"{f}:{n} (file has {known} lines)"
+    ceiling = max(counts.values())
+    for m in _CITE_BARE.finditer(directive):
+        n = max(int(d) for d in re.findall(r"\d{1,5}", m.group(1)))
+        if n > ceiling:
+            return f"line {n} (no listed file has more than {ceiling} lines)"
     return None
 
 

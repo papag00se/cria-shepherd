@@ -4386,3 +4386,60 @@ regression-guarded by test.
 Model residue: the tuple/dict interface oscillation, exception-class churn, and the re-fetch
 compulsion are gemma4's, as in every prior walk. Row superseded; gemma4 reruns with the reading
 step able to clear.
+
+## ada-handles_gemma4_codex_poff_1785866157
+
+REGRESSION1 campaign, gemma4 rerun (first run on the fully-uncaged code, `36e2861` — a machine
+crash voided the previous attempt at 1785863660). Score **1/4** (README), terminal
+`milestone-miss-30min` (1851 s, 227 calls). Capture
+`~/.cria/calls/20260804T105618-019fcdeb-501d-7672-ac3a-ef5c0097c194` — walked in full.
+
+### The fix stack worked — and the run got FURTHER than any campaign gemma4 run
+
+Calls 0001-0013 are the best opening any gemma4 campaign run has produced: the authored reading
+step was clean, the coder fetched the real openapi.json, grepped it, read the exact endpoint
+schemas, and the step cleared at 17:58:01 (`loop.reading_step_cleared`) with the hand-back firing
+at 17:58:49 (`loop.plan_off_handback`). By 18:03 (call 0083) the workspace held a WORKING
+deliverable: resolve_handle.py with 4 inline tests passing (including a real live papagoose call —
+no key needed), a README, and a working CLI. A DICTATES steer (0046, delivered under the
+observe-only ruling) had even rescued the file after the coder's first truncating self-rewrite.
+
+### Why it still failed
+
+The coder's `task_complete` at 18:03 was denied: the careful satisfaction judge burned 8
+inspection rounds then leaked malformed tool-call syntax instead of a verdict; the reasoning-off
+retry said satisfied:true; the one-way rule (a reasoning-off judge may REJECT, never APPROVE)
+failed closed. The denial was SCORE-CORRECT — the tests lived inside resolve_handle.py, invisible
+to bare pytest discovery, which is exactly what verify.py runs; the state was ~2/4, not 4/4. The
+gate's "0 tests collected" red pointed at the real remaining work.
+
+What followed was 144 calls of destruction: the temp-0 coder restructured for discoverability via
+stale-copy edits and truncating whole-file writes, renamed resolve_handle.py away (final state:
+resolve_handle.py GONE, resolve_test.py a 26-line orphan with unimported names, NameError on the
+one discovered test), and blinded itself by piping every pytest run through
+`grep -v Error\|Warning` — stripping the very NameError lines it needed. Wheel-spinning,
+repetition, and 22 flail steers all fired; the checks-reattached truth was re-injected 3×.
+
+### cria fault: yes — delivered steers stated false facts the guard family should have caught
+
+1. **False line citations escaped the existing guard's shapes.** The disk list in the steer
+   author's own prompt said `resolve_test.py — 64 lines` and `pyproject.toml — 15 lines`; delivered
+   steers cited "line 245", "lines 30 and 98", "lines 95–99 … in resolve_test.py", "remove them at
+   lines 19-20", and "deleting lines 23-24 from pyproject.toml". `_false_line_citation` caught one
+   (`resolve_handle.py:1428`, colon form) but its two shapes miss the prepositions "from"/"at",
+   bare parenthetical references, and "N and M" lists. Doctrine 5b, exact ground truth on hand.
+2. **A steer invented an authentication requirement and countermanded a task deliverable.**
+   Steer 0191 told the coder "don't add live network calls here, they will fail without your API
+   key; keep tests mocked" — the task names no key, no fetch ever returned 401/403, and the
+   session had ALREADY resolved handles live without one. Same guess-shape disease fixed in the
+   authored-step channel (research `_GUESS_SHAPES`), now sighted in the steer channel.
+
+Fixes: (1) extend the false-citation shapes (from/at prepositions; bare line refs attributed when
+the steer names exactly one known-count file; number lists). (2) an unsourced-auth-claim brake on
+steers per the F2 pattern — deterministic trigger (auth shape in steer, absent from task) +
+deterministic gather (fetch statuses, evidence auth markers) + one reasoner STANDS/REFUTED call;
+refuted → the steer is withheld.
+
+Model residue: the stale-edit blindness, truncating rewrites, Pytest/pytest casing churn, the
+self-blinding grep filter, and the conftest/pyproject fabrications are gemma4's own. Row
+superseded; gemma4 reruns with the steer channel unable to state these false facts.
