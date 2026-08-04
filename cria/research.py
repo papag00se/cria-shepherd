@@ -34,7 +34,7 @@ shipped.
 """
 from __future__ import annotations
 
-from . import prompts
+from . import denial, jsontext, prompts
 from .jsontext import extract_json_object, strip_think
 
 # Coder turns between checks. A research step that is already satisfied should not burn a whole
@@ -43,6 +43,67 @@ from .jsontext import extract_json_object, strip_think
 RESEARCH_CHECK_EVERY = 10
 
 DONE, NOT_DONE, NOT_RESEARCH = "DONE", "NOT_DONE", "NOT_RESEARCH"
+
+
+def sources_read(ledger: dict, messages: list | None = None) -> list[tuple[str, str, str]]:
+    """Everything really READ this session — the web documents that defined something, AND the files
+    on disk that were opened and came back with content.
+
+    RESEARCH IS NOT ONLY WEB. The first version of this module counted web fetches alone, which made
+    the whole check inert for every other kind of reading a task can require: files already in the
+    workspace, a library's own source, a schema on disk, a data set, a tool's `--help`. For those the
+    ledger is empty, so the verdict was permanently NOT_DONE — the check could never clear the step it
+    exists to clear, which is the trap it was built to remove, one class over.
+
+    The rule is the same for both kinds and it is what keeps this honest: a source counts only when
+    the read RETURNED SOMETHING. For a web document that means 2xx with routes or response fields
+    actually parsed out of it — a page that answered and defined nothing is not research (run
+    1785804243's ledger was five HTTP 200s reading "no endpoint definitions were found in it"). For a
+    file it means the read produced content cria did not refuse and that was not empty. An attempted
+    read is not a read."""
+    out = list(grounded_sources(ledger))
+    for path, size in files_read(messages or []):
+        out.append((path, "", f"{size} chars read from disk"))
+    return out
+
+
+def files_read(messages: list) -> list[tuple[str, int]]:
+    """``(path, chars)`` for each distinct file this session actually read, largest read per path.
+
+    Reads the CALL for the path and its paired RESULT for the content, because only the pair carries
+    both. A refusal (cria's own denial marker) is not a read, and neither is an empty result: both are
+    the shapes that made a coder believe it had seen a file it had not."""
+    calls: dict[str, str] = {}
+    got: dict[str, int] = {}
+    for m in messages or []:
+        for tc in (m.get("tool_calls") or []):
+            fn = tc.get("function") or {}
+            if str(fn.get("name", "")) not in _READ_TOOLS:
+                continue
+            args = fn.get("arguments")
+            try:
+                d = jsontext.loads(args) if isinstance(args, str) else (args or {})
+            except (ValueError, TypeError, AttributeError):
+                d = {}
+            path = d.get("path") or d.get("file") or d.get("filename")
+            if isinstance(path, str) and path.strip() and tc.get("id"):
+                calls[tc["id"]] = path.strip()
+        if m.get("role") == "tool" and m.get("tool_call_id") in calls:
+            body = m.get("content")
+            if isinstance(body, list):
+                body = "".join(str(p.get("text", "")) for p in body if isinstance(p, dict))
+            body = body if isinstance(body, str) else ""
+            if body.strip() and not denial.is_denied(body):
+                path = calls[m["tool_call_id"]]
+                got[path] = max(got.get(path, 0), len(body))
+    return sorted(got.items())
+
+
+# The read-shaped tools by name. Shell reads (`cat`, `grep`) are deliberately NOT here: cria lowers
+# its own file tools THROUGH shell, so a shell result cannot be attributed to a path without parsing
+# the command line, and a wrong attribution would report a file as read that never was. Under-count,
+# and say so, rather than guess (#5b).
+_READ_TOOLS = ("read_file", "view_file", "open_file", "cat_file")
 
 
 def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
@@ -104,30 +165,47 @@ def step_reading_verdict(ask, task: str, step: str, sources: list[tuple[str, str
 STEP_MAX_CHARS = 400
 
 
-def authored_research_step(ask, task: str, domain: str) -> str:
-    """ONE reading step for ``task``, written by the MODEL — "" when it does not produce a usable one.
+def authored_research_step(ask, task: str, *, domain: str = "", files: str = "") -> str:
+    """ONE reading step for ``task``, written by the MODEL — "" when the task needs no reading.
 
-    THE AUTHORSHIP IS THE POINT. cria may notice, deterministically, that the task names an external
-    source; it may not decide what reading that source requires. The first version of this function
-    rendered the step from a cria template, which is cria writing plan steps — the practice this repo
-    retired, and the operator's correction: the model authors the step, cria only asks for it (#8 —
-    deterministic code gathers the fact, the model does the judging).
+    THE AUTHORSHIP IS THE POINT. cria may gather the facts; it may not decide what reading a task
+    requires. The first version rendered this step from a cria template, which is cria writing plan
+    steps — the practice this repo retired, and the operator's correction: the model authors it.
 
-    NO PATHS. The prompt forbids naming a URL path, a file, or an endpoint, and this refuses an answer
-    that names one anyway. That is the exact defect that cost run 1785804243 its whole window: its
-    step said "by fetching the GitHub repo root directory", a source that returns denied, so the step
-    could never be satisfied and 114 of 195 calls died against it. A step that names WHAT to learn
-    cannot be unsatisfiable that way; a step that names WHERE can.
+    AND THE MODEL DECIDES WHETHER THERE IS ONE. The version before this only asked when the task's
+    own words contained a DOMAIN, which quietly defined research as a web thing. Research is reading,
+    whatever the source: files already in the workspace, a schema on disk, a library's source, a data
+    set, a tool's `--help`. A domain is a fact cria can establish alone, so it is passed as context
+    when there is one — but the question is now "does this task need something read first?", and
+    ``NONE`` is a first-class answer that yields no step.
 
-    SAFE NULL, NOT A FALLBACK. An empty, over-long, or path-naming answer yields "" and the caller
-    simply builds the plan it would have built before. cria never substitutes its own sentence for
-    the one the model failed to write."""
+    NO GUESSED LOCATIONS. The prompt forbids naming a path the task did not name, and this refuses an
+    answer that names one anyway — unless the task named it too, in which case it is the user's own
+    word and not a guess. That is the exact defect that cost run 1785804243 its whole window: its
+    step said "by fetching the GitHub repo root directory", which returns denied, so the step could
+    never be satisfied. A step naming WHAT to learn cannot be unsatisfiable that way; one naming
+    WHERE can.
+
+    SAFE NULL, NOT A FALLBACK. NONE, empty, over-long, or a guessed location yields "" and the caller
+    builds the plan it would have built anyway. cria never substitutes a sentence of its own."""
+    context = []
+    if domain:
+        context.append(f"A SOURCE THE TASK NAMES: {domain}")
+    if files:
+        context.append(f"FILES ALREADY IN THE WORKING DIRECTORY:\n{files}")
     text = " ".join((ask(prompts.load("research_step"),
-                         prompts.render("research_step_user", task=task, domain=domain))
+                         prompts.render("research_step_user", task=task,
+                                        context="\n\n".join(context)))
                      or "").split())
-    if not text or len(text) > STEP_MAX_CHARS:
+    if not text or len(text) > STEP_MAX_CHARS or text.strip().upper().rstrip(".") == "NONE":
         return ""
-    lowered = text.lower()
-    if "://" in lowered or any(p in lowered for p in ("openapi.json", "swagger", ".yml", ".yaml")):
-        return ""      # it named a path anyway — the one thing the prompt forbids
+    lowered, task_l = text.lower(), (task or "").lower()
+    for token in _LOCATION_TOKENS:
+        if token in lowered and token not in task_l:
+            return ""      # a location the task never named — the one thing the prompt forbids
     return text
+
+
+# Location-shaped tokens: naming one the TASK did not name is a guess, and a guessed location is what
+# makes a step unsatisfiable. Present in the task too → the user named it, so it is a fact, not a guess.
+_LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
