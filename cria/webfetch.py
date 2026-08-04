@@ -567,9 +567,16 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 #     to 40 clears it, and that is the endpoint whose missing tail cost a run.
 #   * `+6` — 16,949 occurrences — is the NESTED cap, the literal `8` in the `_depth == 0` recursion
 #     above, on `stats{…}` inside `GET /health`. This constant does not touch it.
-# Per file: 12,595 of the 12,599 prompts still carry a nested-capped list after this change. The
-# same "a field that exists reads as absent" defect is therefore still live one level down; fixing
-# it is a separate change that needs its own measurement, not a number folded into this one.
+# Per file: 12,595 of the 12,599 prompts still carry a nested-capped list after this change.
+#
+# THAT MEASUREMENT IS NOW DONE, and the nested `8` STAYS. Across every capture dir, exactly ONE
+# object is ever nested-capped: `stats` inside `GET /health`, 14 fields, 6 hidden. The six are
+# `current_block_hash`, `tip_block_hash`, `utxo_schema_version`, `index_schema_version`,
+# `lock_lambdas`, `estimated_sync_time` — node-sync internals, and no deliverable in the corpus has
+# ever needed one. The two `stats` fields a handle task might reach for, `handle_count` and
+# `holder_count`, are both in the SHOWN eight. So the raise that cleared `+4` bought a real missing
+# tail; the same raise here would buy nothing, and the disclosure marker already tells the coder
+# six more exist. Re-open it only if a run is ever seen wanting a hidden one.
 #
 # It has a second cost: it blinds cria's OWN checks. Absence from a TRUNCATED list is not evidence a
 # field is missing, so any ledger-contradiction check must abstain on every capped endpoint — which
