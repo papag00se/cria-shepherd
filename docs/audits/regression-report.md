@@ -19,20 +19,27 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785861503 | 55df703 | milestone-miss-30min | SUPERSEDED by the reading-step-clearance fix (36e2861) — walked, cria fault yes: the reading step was unclearable, the hand-back never fired |
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785866157 | 36e2861 | milestone-miss-30min | SUPERSEDED by the steer false-fact fixes (61242fc) — walked, cria fault yes: steers cited phantom line numbers and an invented API key |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
-| qwythos | off | 2 | **0/4** | ada-handles_qwythos_codex_poff_1785844343 | 7ec52ff | milestone-miss-15min | walked: cria fault none — blind test interface, script/tests oscillation to the floor; row stands |
+| qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
-| qwopus | off | 2 | **1/4** | ada-handles_qwopus_codex_poff_1785845382 | 98a4951 | milestone-miss-30min | walked: cria fault none — truncated README never rewritten, mock oscillation; row stands |
+| qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
-| ornith | off | 2 | **0/4** | ada-handles_ornith_codex_poff_1785847335 | 1dc813b | milestone-miss-15min | walked: cria fault none — MagicMock context-manager oscillation; row stands |
+| ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785847335 (VOIDED) | 1dc813b | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
-| mellum2 | off | 2 | **1/4** | ada-handles_mellum2_codex_poff_1785848364 | 134c382 | milestone-miss-30min | walked: cria fault none — pytest-mock venv dead-end + false field-name churn; row stands |
+| mellum2 | off | — | 1/4 | ada-handles_mellum2_codex_poff_1785848364 (VOIDED) | 134c382 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
 | nemotron-elastic | on | 1 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | walked: cria fault none — live test demands an argument, exits 1 bare; both fixes fired correctly in-run |
 | nemotron-elastic | on | 2 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | walked: cria fault none — same argument-demanding live test as run 1; refutation guard 2x correct |
 
 ## Notable events
 
+- **2026-08-04 ~12:05 — operator ruling: the four caged-routing pass-2 failures are VOIDED.**
+  qwythos (0/4), qwopus (1/4), ornith (0/4) and mellum2 (1/4) all ran their second pass on the
+  code that caged plan-off behind "do only step 1 of N" framing. Each was walked as model
+  variance at the time, but the cage was in the routing those runs actually executed — the rows
+  cannot separate model wobble from the since-fixed bug. All four rerun on current code; each
+  model now needs two more counted runs. nemotron-elastic's pass-2 stands (planner-on — the cage
+  was a plan-off defect).
 - **2026-08-04 ~11:50 — gemma4's uncaged run proved the fix stack, then cria's steer channel
   helped bury it.** Run 1785866157: cleanest opening of the campaign (real spec fetched, reading
   step cleared, hand-back fired, working resolver with passing LIVE tests by call 83). The
