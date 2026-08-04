@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 02:09:52 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 02:50:04 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -67,6 +67,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+3aab947 docs(regression): mellum2 1/3 = 3/4 walked — cria fault none; live test not separate; 5b steer instance recorded
 086dca6 docs(regression): ornith 1/3 = 4/4 on the confirm-applicability fix
 53f4e97 docs(regression): ornith 0/4 walked + superseded — confirm brake fixed; rerun on new code
 fbc083c fix(loop): the per-step confirm brake runs only where a disk inspection can ground
@@ -81,7 +82,6 @@ fd4ca0a fix(pytest): collection is tests/ by declaration, not by __pycache__ acc
 456a02d feat(suite): park fabliq; the regression campaign — 7 passing models, 3 runs each, one truth tool
 ef0b771 fix(loop): the plan-off reading step was never driven — synthetic means DEGENERATE, and 2 items is not
 6085276 fix(research): a refused reading step is re-asked once, with the defect named
-7c228e6 fix(research): a reading step that PRODUCES something is not a reading step
 ```
 
 ---

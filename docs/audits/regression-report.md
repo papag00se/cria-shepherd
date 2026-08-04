@@ -17,9 +17,17 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
+| nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
 
 ## Notable events
 
+- **2026-08-04 ~03:40 — third cria fault found and fixed (nemotron-elastic run 1).** The
+  double-checker vetoed approved steps three times by claiming files were missing — once naming the
+  exact path of a file that existed, without ever looking. Cria now checks the disk itself: a veto
+  built on a "missing" file that actually exists is overturned on the spot. Also recorded (for the
+  standing design thread, not built): the model-as-planner kept regenerating a step demanding
+  fields from an endpoint that doesn't have them — cria's own fetched schema disproves it — and
+  that step ate half the run through seven correct rejections.
 - **2026-08-04 ~02:20 — second cria fault found and fixed (ornith run 1).** The model finished
   its research in 2 minutes and cria's own verification machinery then ate 6 of the 15: the step
   critic approved the research step three times, and the read-only double-checker vetoed each one
