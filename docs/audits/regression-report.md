@@ -18,6 +18,7 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | gemma4 | off | — | 0/4 | ada-handles_gemma4_codex_poff_1785860144 | 90e684b | milestone-miss-15min | SUPERSEDED by the guess-shape + phantom-path fixes (55df703) — walked, cria fault yes: the authored step invented a route/auth, a steer fabricated a path |
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785861503 | 55df703 | milestone-miss-30min | SUPERSEDED by the reading-step-clearance fix (36e2861) — walked, cria fault yes: the reading step was unclearable, the hand-back never fired |
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785866157 | 36e2861 | milestone-miss-30min | SUPERSEDED by the steer false-fact fixes (61242fc) — walked, cria fault yes: steers cited phantom line numbers and an invented API key |
+| gemma4 | off | — | 3/4 | ada-handles_gemma4_codex_poff_1785869053 | 61242fc | milestone-miss-60min | SUPERSEDED by the case-typo refusal fix — walked, cria fault yes: 50+ refusals never named a one-letter case typo of the workspace; best gemma4 campaign score, new steer guards fired 4x correctly |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
@@ -47,8 +48,8 @@ injected; gates = check runs it triggered.
 | 🟠 nemotron-elastic | ¼ ¾ ¾ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
 | 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
+| 🟠 gemma4 | ¼ ¼ ¾ | 61.2 | 🧭 40 · 🔁 8 · 🧪 16 · 🗜️ 11 | 41 |
 | 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
-| 🔴 gemma4 | ⁰⁄₄ ¼ ¼ | 60.6 | 🧭 28 · 🔁 5 · 🧪 12 · 🗜️ 6 | 26 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -77,11 +78,20 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | superseded | 0/4 | 16 | 61 | 36 | 61.6 | 18 | 4 | milestone-miss-15min |
 | gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 21 | milestone-miss-30min |
 | gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 10 | milestone-miss-30min |
+| gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
 
 counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
 
 ## Notable events
 
+- **2026-08-04 ~12:55 — gemma4 hit 3/4 (its campaign best), and the walk found a one-letter
+  trap.** Run 1785869053: the fix stack held (clean research, hand-back, working resolver, 3/3
+  unit tests, working CLI, README; only the live check missed — the model named its live tests
+  undiscoverably). The new steer guards fired four times correctly. But the middle hour drowned
+  in a loop cria could have ended at its first firing: the coder typed its own workspace with
+  ONE capital letter 106 times, and the workspace refusal printed both paths side by side
+  without saying they differ only in letter case. Fixed: the refusal now names a case typo
+  outright. Row superseded; gemma4 reruns.
 - **2026-08-04 ~12:05 — operator ruling: the four caged-routing pass-2 failures are VOIDED.**
   qwythos (0/4), qwopus (1/4), ornith (0/4) and mellum2 (1/4) all ran their second pass on the
   code that caged plan-off behind "do only step 1 of N" framing. Each was walked as model
