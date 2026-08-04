@@ -6,13 +6,27 @@ wall minutes, total/coder calls, decode speed, and how often cria spoke (steers/
 or ran the repo's checks (gates/probes). Reads the same results.jsonl rows, computes nothing
 new — every figure is already in the row the runner wrote.
 
-Usage: python3 suite/regression_stats.py [--md]
+Usage: python3 suite/regression_stats.py [--md] [--write]
+  --md     print the tables as markdown
+  --write  regenerate the "## Run stats" section of docs/audits/regression-report.md in place
+           (the model-performance grid is the operator's primary view — refresh it after EVERY run)
 """
 import json
+import re as _re
 import sys
 from pathlib import Path
 
 RESULTS = Path(__file__).parent / "results" / "results.jsonl"
+REPORT = Path(__file__).parent.parent / "docs" / "audits" / "regression-report.md"
+
+SECTION_HEADER = (
+    "## Run stats\n\n"
+    "Regenerate any time with `python3 suite/regression_stats.py` (`--write` refreshes this\n"
+    "section in place). The model-performance grid covers each model's last 3 runs in any state,\n"
+    "ranked by completion rate, then shortest time, then least assists (current form; the\n"
+    "scoreboard below owns what counts). Per-run: steers = directives/redirects cria injected;\n"
+    "gates = check runs it triggered.\n\n"
+)
 
 
 def rows():
@@ -118,29 +132,48 @@ def model_summary(lines):
     return sorted(out, key=lambda s: (-s["_avg"], s["min"], s["_assists"]))
 
 
+def markdown(lines, models) -> str:
+    legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
+    out = ["### Model performance (each model's last 3 runs, any state)", ""]
+    out += ["| model | last 3 | avg tok/s | avg assists | avg min |", "|---|---|---:|---|---:|"]
+    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | {s['assists']} | {s['min']} |"
+            for s in models]
+    out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
+    out += ["| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---|"]
+    out += [f"| {s['model']} | {s['state']} | {s['score']} | {s['min']} | {s['calls']} | "
+            f"{s['coder']} | {s['tok_s']} | {s['steers']} | {s['gates']} | {s['terminal']} |"
+            for s in lines]
+    counted = [s for s in lines if s["state"] == "counted"]
+    if counted:
+        out += ["", f"counted runs: {len(counted)} · avg wall "
+                    f"{sum(s['min'] for s in counted)/len(counted):.0f} min · avg coder calls "
+                    f"{sum(s['coder'] for s in counted)/len(counted):.0f} · full-pass rate "
+                    f"{sum(1 for s in counted if s['score'] == '4/4')}/{len(counted)}"]
+    return "\n".join(out)
+
+
+def write_report(lines, models) -> None:
+    """Replace the report's '## Run stats' section in place — loud failure, never a silent no-op."""
+    text = REPORT.read_text()
+    section = SECTION_HEADER + markdown(lines, models) + "\n\n"
+    new, n = _re.subn(r"## Run stats\n.*?(?=^## (?!#)|\Z)", section, text, count=1,
+                      flags=_re.S | _re.M)
+    if n != 1:
+        raise SystemExit("report has no '## Run stats' section to replace")
+    REPORT.write_text(new)
+    print(f"refreshed {REPORT}")
+
+
 def main() -> int:
-    md = "--md" in sys.argv
     lines = [stat_line(r) for r in rows()]
     models = model_summary(lines)
     legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
-    if md:
-        print("### Model performance (each model's last 3 runs, any state)")
-        print()
-        print("| model | last 3 | avg tok/s | avg assists | avg min |")
-        print("|---|---|---:|---|---:|")
-        for s in models:
-            print(f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
-                  f"{s['assists']} | {s['min']} |")
-        print()
-        print(f"assists per run: {legend}")
-        print()
-        print("### Per-run detail")
-        print()
-        print("| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |")
-        print("|---|---|---:|---:|---:|---:|---:|---:|---:|---|")
-        for s in lines:
-            print(f"| {s['model']} | {s['state']} | {s['score']} | {s['min']} | {s['calls']} | "
-                  f"{s['coder']} | {s['tok_s']} | {s['steers']} | {s['gates']} | {s['terminal']} |")
+    if "--write" in sys.argv:
+        write_report(lines, models)
+        return 0
+    if "--md" in sys.argv:
+        print(markdown(lines, models))
     else:
         print("MODEL PERFORMANCE — each model's last 3 runs, any state")
         print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  assists")
@@ -155,12 +188,12 @@ def main() -> int:
         for s in lines:
             print(f"{s['model']:<17}{s['state']:<11}{s['score']:<6}{s['min']:>4} {s['calls']:>5} "
                   f"{s['coder']:>5} {s['tok_s']:>6} {s['steers']:>6} {s['gates']:>5}  {s['terminal']}")
-    counted = [s for s in lines if s["state"] == "counted"]
-    if counted:
-        print()
-        print(f"counted runs: {len(counted)} · avg wall {sum(s['min'] for s in counted)/len(counted):.0f} min "
-              f"· avg coder calls {sum(s['coder'] for s in counted)/len(counted):.0f} "
-              f"· full-pass rate {sum(1 for s in counted if s['score'] == '4/4')}/{len(counted)}")
+        counted = [s for s in lines if s["state"] == "counted"]
+        if counted:
+            print()
+            print(f"counted runs: {len(counted)} · avg wall {sum(s['min'] for s in counted)/len(counted):.0f} min "
+                  f"· avg coder calls {sum(s['coder'] for s in counted)/len(counted):.0f} "
+                  f"· full-pass rate {sum(1 for s in counted if s['score'] == '4/4')}/{len(counted)}")
     return 0
 
 
