@@ -4047,3 +4047,43 @@ escape; nemotron as replanner codified the false-premise step and re-emitted it 
 rejection; nemotron as checker asserted disk states it never inspected. The 30 minutes were lost
 to the model on all three seats — but three of those blocks were cria repeating the checker's
 false facts, and those are now impossible.
+
+## ada-handles_nemotron-elastic_codex_pon_1785837073
+
+REGRESSION1 campaign, nemotron-elastic run 1/3 (rerun on `ecc40f1`, the confirm-refuted-by-disk
+fix). Score **3/4** (live_test: exit=1, markers absent), terminal `exited` at 36 min, 198 calls.
+Capture `~/.cria/calls/20260804T025124-019fcc2f-6032-7363-9d3e-a24ea69880e1` — walked in full.
+
+### The run in one paragraph
+
+A dramatically healthier run than the 1/4 it superseded. The planner researched the real swagger
+spec; the plan judges dropped a gather-path step and a requirements step correctly; the coder wrote
+resolver + tests early, then spent the middle of the run on a genuine bug of its own making (the
+test recursively resolved the HOLDER address as if it were a handle → 404) with grounded flail
+steers repeatedly naming the exact fix. The satisfaction judge REFUSED an early completion (0178:
+"no live test script, README doesn't mention it, tests still recurse") — that correct refusal
+drove step 6, which created `live_test.py` and the README section. Session exited at 36 min with
+resolver CLI verified (address+holder+count), 2/2 unit tests green, README complete.
+
+### Both campaign fixes visibly worked in this run
+
+- `loop.confirm_refuted_by_disk` fired FOUR times, each correct: "requirements.txt does not exist"
+  (it did, twice), "Missing live_test.py and README.md" (both on disk), "Missing requirements.txt
+  and README.md files" (satisfaction-confirm; both on disk). Under the old code those four false
+  vetoes would have re-blocked approved steps and the whole-task finish — the exact deadlock that
+  ate the superseded run. The truly-grounded vetoes earlier in the run (0060, at a moment the
+  schema claim was genuinely unverified) still stood.
+- The completion machinery (a17a7c1 family) held the session open through a satisfaction refusal
+  and a red-gate corrective loop instead of exiting early.
+
+### Why 3/4 — cria fault: none
+
+`live_test.py` requires a command-line argument: run bare — the only way a TEST can be expected to
+run — it prints usage and exits 1, which is exactly what the verifier measured. The model built a
+second CLI, not a self-contained live test, and never once executed the file it shipped. The
+satisfaction judge approved with no logged run of it (its prompt forbids exactly that; an LLM
+judgment miss), and exec-intent fabricated its command ("python test_handles.py" — no such file) —
+both recorded as judge-fabrication prevalence, same class as the mellum2 walk. cria held no
+deterministic fact that contradicts "the live test exists and the code demonstrably resolves":
+the CLI does resolve live data, and teaching cria the verifier's bare-run convention would be
+task-specific overfit. The row stands as evidence about nemotron-elastic on current main.
