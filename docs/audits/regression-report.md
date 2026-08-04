@@ -19,7 +19,7 @@ gates = check runs it triggered.
 
 | model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 🟢 ornith | ⁴⁄₄ ⁴⁄₄ | 80.7 | 4 | 4 | 11 | 7 | 18 |
+| 🟢 ornith | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 5 | 4 | 9 | 6 | 17 |
 | 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 9 | 4 | 11 | 5 | 23 |
 | 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 17 | 7 | 30 | 8 | 34 |
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
@@ -65,8 +65,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | counted | 1/4 | 31 | 238 | 127 | 62.5 | 33 | 11 | milestone-miss-30min |
 | qwythos | counted | 4/4 | 9 | 58 | 31 | 81.9 | 9 | 4 | exited |
 | qwopus | counted | 4/4 | 15 | 75 | 46 | 83.2 | 11 | 7 | exited |
+| ornith | counted | 4/4 | 17 | 94 | 51 | 82.5 | 5 | 4 | exited |
 
-counted runs: 18 · avg wall 28 min · avg coder calls 71 · full-pass rate 12/18
+counted runs: 19 · avg wall 27 min · avg coder calls 70 · full-pass rate 13/19
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -97,6 +98,7 @@ counted runs: 18 · avg wall 28 min · avg coder calls 71 · full-pass rate 12/1
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785847335 (VOIDED) | 1dc813b | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | ornith | off | 2 | **4/4** | ada-handles_ornith_codex_poff_1785878928 | 61242fc | exited | 6/6 unit tests, live point via the README probe (documented command proved live), CLI, README — 4 minutes, 40 calls |
+| ornith | off | 3 | **4/4** | ada-handles_ornith_codex_poff_1785886460 | 878c1b1+ | exited | full pass — ornith closes STABLE 3/3, the second perfect record |
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
 | mellum2 | off | — | 1/4 | ada-handles_mellum2_codex_poff_1785848364 (VOIDED) | 134c382 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | mellum2 | off | — | 0/4 | ada-handles_mellum2_codex_poff_1785880114 | 61242fc | milestone-miss-15min | SUPERSEDED by the typo-callout widening — walked, cria fault yes: dash/underscore workspace typo drew unexplained refusals; MCP-endpoint fixation and unwrap churn are the model's own |
