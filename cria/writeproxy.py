@@ -1055,7 +1055,7 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far
                 # (``out``). A non-edit-fail failure (write refusal, real error) passes through unchanged.
-                out.append({**m, "content": editrecovery.recover(_strip_exec_envelope(content), out)})
+                out.append({**m, "content": editrecovery.recover(_strip_exec_envelope(content), out, rlog)})
             elif "externally-managed-environment" in content:
                 # PEP 668: `pip install` fails by design on this box. A weak model retries it forever
                 # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /

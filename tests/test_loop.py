@@ -3780,16 +3780,22 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         first = author_steer(self._chat("fix the expected literal on line 31"), None, ws, gs,
                              {"messages": []}, rlog, condition="flail", truth_text=checks)
         self.assertIn("line 31", first)                      # the FIRST diagnosis still lands
+        # ONE SECOND LOOK (operator ruling 2026-08-04): the never-re-invoke rule was measured on
+        # the blind-author corpus, where a second ask necessarily re-guessed. A sighted author now
+        # gets exactly one more considered pass at unchanged findings…
         second = author_steer(self._chat("actually the assertions are swapped"), None, ws, gs,
                               {"messages": []}, rlog, condition="flail", truth_text=checks)
-        # The invariant is NO SECOND REASONER DIAGNOSIS — not "no output". Updated 2026-08-01 after
-        # measuring that suppressing outright withheld the correction while nothing else carried it
-        # (129 of 176 coder prompts in run …poff_1785626379 had neither the checks nor a steer).
-        # With the checks ABSENT from the body, cria now repeats the CHECKER'S OWN LINES; it still
-        # never emits the reasoner's fresh re-guess, which is what g22 cost.
-        self.assertNotIn("swapped", second)                  # the re-guess is still dropped
-        self.assertIn("test_resolve.py:31", second)          # ...the CHECKER's own words come back
-        self.assertNotIn("fix the expected literal", second)  # not the earlier reasoner prose either
+        self.assertIn("swapped", second)                     # …which LANDS
+        # …and the THIRD ask on the same unmoved findings is where suppression begins: cria repeats
+        # the CHECKER'S OWN LINES (or stays silent when they are already visible) — never a fresh
+        # third re-guess, which is what g22's ten-contradiction spiral cost.
+        third = author_steer(self._chat("no wait, the address is cut off mid-string"), None, ws, gs,
+                             {"messages": []}, rlog, condition="flail", truth_text=checks)
+        if third is not None:
+            self.assertNotIn("cut off", third)               # reattached checker lines, not the re-guess
+            self.assertIn("AssertionError", third)
+        self.assertIn("test_resolve.py:31", third or "")     # ...the CHECKER's own words come back
+        self.assertNotIn("fix the expected literal", third or "")  # not the earlier reasoner prose either
         self.assertIn(("loop.steer_checks_reattached",), [(k,) for k, _ in rlog.events])
         # ...and when the checks ARE already in front of the coder, cria stays silent as before.
         visible = author_steer(self._chat("another re-guess"), None, ws, gs,
@@ -5946,13 +5952,15 @@ class SteerDedupeAndFirstPersonTests(unittest.TestCase):
         text = (half + half).strip()
         self.assertEqual(_dedupe_doubled(text), half.strip())
 
-    def test_first_person_plan_is_dropped(self):
+    def test_first_person_plan_is_delivered_and_traced(self):
+        # OBSERVE-ONLY (provenance audit 2026-08-04): the first-person arm's evidence is two
+        # blind-author-era MoE incidents; it killed whole steers for a pronoun. Logged, delivered.
         from cria.loop import _grounded_steer_or_none
         rlog = _Rlog()
-        self.assertIsNone(_grounded_steer_or_none(
-            "The coder is making progress. I will write resolve.py with the correct endpoints.",
-            "evidence", rlog))
-        self.assertIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
+        text = "The coder is making progress. I will write resolve.py with the correct endpoints."
+        self.assertEqual(_grounded_steer_or_none(text, "evidence", rlog), text)
+        self.assertIn(("loop.steer_roleplay_firstperson",), [(k,) for k, _ in rlog.events])
+        self.assertNotIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
 
 
 class ComposedPromptBoundsTests(unittest.TestCase):
@@ -6238,8 +6246,11 @@ class SteerBlindnessAndCodeDictationTests(unittest.TestCase):
             "First:\npython3 -m pytest tests/ -q\nthen read the error.",
             "Fix it:\nsed -i 's/Httx/httpx/' client.py",
         ]
+        # OBSERVE-ONLY since 2026-08-04 (operator ruling): code-shaped directives are logged as
+        # DICTATES and DELIVERED — the drop's harm evidence came from the since-fixed blind author,
+        # and the 08-01 dense passes were carried by sighted dictation.
         for d in drop:
-            self.assertIsNone(_grounded_steer_or_none(d, "", _R()), d[:40])
+            self.assertEqual(_grounded_steer_or_none(d, "", _R()), d, d[:40])
         keep = [
             "You have an undefined resolve_handle on line 11 of cli.py; import it at the top.",
             "Read resolver.py and use the resolved_addresses.ada field the checks name.",

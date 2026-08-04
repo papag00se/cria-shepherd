@@ -231,6 +231,8 @@ class GuardState:
     # source you named" — a steer the coder can disregard, not an action taken for it.
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
     # real result has been floored out of the window (else a steer can't counter a late spiral)
+    same_checks_relooked: bool = False  # the ONE second look at unchanged findings has been spent
+    #                                     (rearms whenever the findings move; see author_steer)
 
 
 @dataclass
@@ -388,12 +390,29 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
+        _reset_flail_budget(gs)   # checks went GREEN — the target moved; a sighted author may steer again
         return
     if finding == gs.gate_sig:
         gs.gate_stall += 1
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
+        _reset_flail_budget(gs)   # findings MOVED — see _reset_flail_budget
+
+
+def _reset_flail_budget(gs: GuardState) -> None:
+    """Fresh flail-steer budget when the gate findings MOVE (or go green).
+
+    Provenance audit 2026-08-04: the per-step cap (MAX_FLAIL_STEERS_PER_STEP) was sized from ONE
+    07-25 run whose 25 thrashing steers were authored BLIND (pre-ab51e59); the blindness was fixed
+    five days later, and the campaign walks repeatedly record the capped channel giving CORRECT
+    directives before going silent (gemma4 run 1785824758: 3 steers, cap, then ~60 spiral calls).
+    Operator ruling: the anti-thrash intent stays — 3 steers against an UNMOVING target still
+    silences — but a sighted author working a target that moves is never capped out. Reset only on
+    advance was the old rule; reset on movement is the new one."""
+    if getattr(gs, "flail_steers_this_step", 0):
+        gs.flail_steers_this_step = 0
+        gs.flail_cap_logged = False
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
@@ -2415,6 +2434,8 @@ class Loop:
         # chose no-cap (a step never advances unverified), so a stall is LOGGED loudly instead.
         if nudge and nudge == sess.last_gate_flag:
             rlog.emit("loop.gate_stalled", level="warning", step=idx)
+        if (nudge or "") != sess.last_gate_flag:
+            _reset_flail_budget(sess)   # plan-ON sibling of track_gate_progress's movement reset
         sess.last_gate_flag = nudge or ""
         # OSCILLATION: this exact finding-set has been here before, with a different one in between.
         # Two errors that are each other's cause — clearing A re-creates B — and every individual fix
@@ -5162,7 +5183,15 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # character ("- addr1e000…0002  ?  -"). The check output is the better steer, it is already in
     # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
     checks_now = (truth_text or "").strip()
-    if checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", ""):
+    if (checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", "")
+            and not getattr(gs, "same_checks_relooked", False)):
+        # ONE grounded SECOND LOOK per unchanged-findings streak (provenance audit 2026-08-04): the
+        # never-re-invoke rule was measured entirely on the blind-author corpus, where a second ask
+        # necessarily re-guessed (g22's ten contradicting steers). A sighted author gets exactly one
+        # more considered pass at the same findings; the streak's third and later asks fall through
+        # to the reattach/silence below unchanged. The flag rearms whenever the findings move.
+        gs.same_checks_relooked = True
+    elif checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", ""):
         # The suppression above rests on ONE premise, stated in its own reasoning: "the check output
         # is already in front of the coder". Measured on run ada-handles_mellum2_codex_poff_1785626379
         # that premise was false for 129 of 176 coder prompts — the checks or a steer rode along in
@@ -5182,6 +5211,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                   head=_clip(checks_now, 100))
         return None
     if gs is not None:
+        if checks_now != getattr(gs, "steered_checks_text", ""):
+            gs.same_checks_relooked = False   # findings moved → the one second look rearms
         gs.steered_checks_text = checks_now
 
     # Superseded write payloads are STUBBED to their on-disk reference (the existing compact_view
@@ -5420,11 +5451,13 @@ def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
 _ROLEPLAY_STEER = re.compile(
     r"(?m)(?:\b(?:write_file|edit_file|exec_command|read_file|web_fetch|apply_patch)\s*\(\s*\{"   # tool-call syntax
     r"|^\s*(?:assistant|tool|user)\s*:\s"      # transcript role labels
-    r"|⟦ctx:"                                   # a steer must not nest cria's own markers
-    r"|\b[Ii] will (?:write|create|implement|add|run|fix|build)\b)"  # the author announcing ITS OWN
-    # plans — the steer contract is second person ("You …"); "I will write resolve.py" is the
-    # reasoner in the coder's seat (run 0729-mellum2 call 0059, injected verbatim, twice-doubled)
+    r"|⟦ctx:)"                                  # a steer must not nest cria's own markers
 )
+# The author announcing ITS OWN plans ("I will write resolve.py") — the steer contract is second
+# person. SPLIT from the hard-drop arms above (provenance audit 2026-08-04): its evidence is two
+# blind-author-era MoE incidents (run 0729-mellum2 call 0059), and as a drop it killed whole steers
+# for a pronoun. Now observe-only at the call site, pending a truth sample of its fires.
+_ROLEPLAY_FIRSTPERSON = re.compile(r"\b[Ii] will (?:write|create|implement|add|run|fix|build)\b")
 
 
 def _dedupe_doubled(text: str) -> str:
@@ -5566,13 +5599,24 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     if _ROLEPLAY_STEER.search(directive):
         rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
         return None
+    if _ROLEPLAY_FIRSTPERSON.search(directive):
+        # OBSERVE-ONLY (provenance audit, 2026-08-04): the first-person arm's evidence is two
+        # blind-author-era MoE incidents, and it killed whole steers for a pronoun (40 unexamined
+        # drops on one model in one day). The transcript-syntax arms above remain hard drops —
+        # those are self-evidently fiction. This arm logs and delivers, pending the truth sample.
+        rlog.emit("loop.steer_roleplay_firstperson", level="info", delivered=True,
+                  head=_clip(directive, 120))
     bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
         return None
     if _dictates_code(directive, ask):
-        rlog.emit("loop.steer_dictated_code", level="warn", head=_clip(directive, 120))
-        return None
+        # OBSERVE-ONLY (operator ruling, 2026-08-04). The drop's harm evidence was measured on a
+        # BLIND author (pre-ab51e59: empty truth slot 6/6 runs — broken invented code); the
+        # blindness was fixed the same day, and the 08-01 dense ladder passes were carried by ~15
+        # sighted dictated steers per run (gemma4 4/4). The operator trusts that record over the
+        # guard: DICTATES is logged for the cross-cohort re-measure, and the steer is DELIVERED.
+        rlog.emit("loop.steer_dictated_code", level="info", delivered=True, head=_clip(directive, 120))
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None

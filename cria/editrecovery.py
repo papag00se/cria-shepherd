@@ -111,7 +111,7 @@ def compose(fail: dict, prior: int) -> str:
     return report("no_anchor")
 
 
-def recover(content: str, prior_msgs: list) -> str:
+def recover(content: str, prior_msgs: list, rlog=None) -> str:
     """If ``content`` is a heredoc edit-FAIL fact-report, compose the one directive (keyed on the file's
     prior edit-steer count in ``prior_msgs``). Otherwise return it unchanged — non-edit-fail results
     (write refusals, real errors) pass straight through."""
@@ -121,7 +121,15 @@ def recover(content: str, prior_msgs: list) -> str:
         fail = json.loads(base64.b64decode(content[len(EDITFAIL):].strip()).decode("utf-8"))
     except (ValueError, json.JSONDecodeError):
         return content
-    return compose(fail, _prior_edit_steers(prior_msgs, fail.get("path") or ""))
+    prior = _prior_edit_steers(prior_msgs, fail.get("path") or "")
+    # TELEMETRY (provenance audit 2026-08-04): the whole-file escalation had no event at all — its
+    # window-fill cost on dense models (both gemma4 0/4s compacted mid-run under forced rewrites)
+    # was uncountable from the logs. The event makes the re-measure possible; behavior unchanged.
+    if (rlog is not None and prior + 1 >= ESCALATE_AFTER
+            and fail.get("mode") not in ("phantom", "would_break", "multi", "multi_flex")):
+        rlog.emit("editrecovery.escalated", path=os.path.basename(fail.get("path") or ""),
+                  fails=prior + 1)
+    return compose(fail, prior)
 
 
 def summarize(content: str) -> str:

@@ -65,3 +65,27 @@ guess. Tests: tests/test_plan_off_handback.py (framing test fails on pre-fix HEA
 - The other pass-2 failures (qwythos, qwopus, ornith, mellum2) were walked as model-attributable
   variance, but every plan-off row before this fix measured the caged routing; whether to void
   them and rerun is the operator's call, recorded in the regression report.
+
+## Addendum — lens 4, evidence provenance (operator-directed, same day)
+
+Seed: the dictated-code drop's evidence base. Finding: its harm was measured on a BLIND steer
+author (empty truth slot 6/6 runs, fixed in the same commit ab51e59); the 08-01 dense ladder
+passes ran with sighted dictation flowing (the regex drop was inert); the 08-02 reasoner judge
+then suppressed the channel on the stale evidence. Systematic sweep found four more guards with
+fouled provenance (full detail in the audit transcript): the flail-steer cap (one blind-era
+fabliq run; bound dense campaign runs 11 times), the same-checks suppression (measured wholly on
+the blind corpus), the roleplay first-person arm (two blind-era MoE incidents), and edit-recovery's
+forced whole-file rewrite (weak-model rationale, no telemetry, window-fill deaths on both gemma4
+0/4s). Checked-and-sound: spill gating, blames-service, repetition redirect, repeat-collapse note,
+work-log labeling, truncation/rumination, URL/citation grounding.
+
+Retunes landed (operator: "go"; trust ruling — the dense models' passing record under the old
+conditions outranks guards built on fouled evidence):
+- dictated-code drop → OBSERVE-ONLY (judge logs DICTATES, steer delivered);
+- roleplay FIRST-PERSON arm → observe-only (transcript-syntax arms still drop);
+- flail cap resets whenever the gate findings MOVE (silence still lands after 3 steers at an
+  unmoving target);
+- same-checks suppression grants ONE grounded second look per unchanged-findings streak;
+- editrecovery whole-file escalation now emits (`editrecovery.escalated`) so its cost is countable.
+Deferred pending re-measure: edit-recovery behavior itself; the noise-scrub's 27 pre-878ead2 dense
+drops (one-time audit).

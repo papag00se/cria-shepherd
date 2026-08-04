@@ -98,11 +98,14 @@ class WiringTests(unittest.TestCase):
         src = inspect.getsource(loop.author_steer)
         self.assertEqual(src.count("ask=_steer_ask"), 2)   # tooled path and plain path
 
-    def test_a_dropped_steer_is_traced_never_silent(self):
+    def test_a_DICTATES_steer_is_delivered_and_traced(self):
+        # OBSERVE-ONLY (operator ruling, 2026-08-04): the drop's harm evidence came from a BLIND
+        # author (since fixed); the 08-01 dense passes were carried by sighted dictation. The judge
+        # still runs and logs — the steer is DELIVERED, pending the cross-cohort re-measure.
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
                                            ask=lambda s, u: "DICTATES")
-        self.assertIsNone(out)
+        self.assertEqual(out, REAL_DICTATION)
         self.assertIn("loop.steer_dictated_code", [k for k, _ in rlog.events])
 
 
