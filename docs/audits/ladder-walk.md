@@ -4613,3 +4613,41 @@ dash/underscore difference". Fail-before tests added both directions.
 Model residue: the MCP-over-REST path choice, the double-JSON unwrap spiral, no-op edits
 (old==new), and the briefing-role echo loops are mellum2's own. Row (0/4) SUPERSEDED per the
 goal rule; mellum2 reruns on the widened callout.
+
+## ada-handles_gemma4_codex_poff_1785881741
+
+REGRESSION1 campaign, gemma4 run 3/3 (head `878c1b1`+). Score **1/4** (README), terminal
+`milestone-miss-30min` (31 min, 238 calls; milestones 1.0 → 1.0 — survived the 15-min wall on the
+exact floor, never climbed). Capture
+`~/.cria/calls/20260804T151601-019fced9-1886-75e1-a088-6e23720766b6` — walked in full. gemma4's
+campaign closes 2/4, 1/4, 1/4 — NOT STABLE 0/3.
+
+### What held
+
+The authored-step guess gate fired again (0002's "authentication" clause refused, 0003 clean).
+A premature task_complete at call 13 was correctly blocked. By call 53 a working httpx client
+with passing tests existed — the third run in a row to reach a working state inside 15 minutes.
+
+### cria fault: none-to-fix — but the dictated-code ledger now has its verdict-grade evidence
+
+The dismantling was seeded by the steer channel's DELIVERED dictations, per the observe-only
+ruling:
+- Steer 0046 told the coder to drop the /holders call ("remove get_holder from the path") — the
+  task's total-handles field lives there; same countermand shape as run 1785873072's steer 0008.
+- Steer 0083 DICTATED a full client rewrite containing `self.client` (never assigned — the
+  AttributeError the rest of the run fought), a `get_handler` typo, and an async flip. The coder
+  noticed the bug in its THINK ("the class has no client attribute") and applied the rewrite
+  with the bug anyway. Every subsequent spiral (sync/async schism, resolve_handle/resolve_handler
+  shadowing, the overload wars) descends from this delivery.
+- Steer 0215 prescribed `async def resolve_handle(client=None, handle):` — invalid Python
+  (non-default after default); the coder attempted it three times.
+
+A parse-check arm on dictated code was considered and REJECTED: dictated fences are routinely
+partial (ellipses, cut context), so ast.parse would drop good rescues wholesale — judgment
+dressed as a rule. Instead the cross-cohort re-measure the observe-only ruling asked for now has
+its answer in the ledger: dictations rescued/carried the STRONG cohort (07-30/08-01 walks;
+866157's call-46 rescue), and have now seeded the destruction of THREE consecutive gemma4 runs
+(papagoase typo, broken-pipe ratification, this rewrite). RECOMMENDATION for the operator: keep
+DICTATES delivered for the strong cohort, restore the drop (or a demotion to DESCRIBES-style
+paraphrase) for gemma4-class weak-obedient models — a per-role knob, not a global reversal. Not
+changed without a ruling. Row STANDS.
