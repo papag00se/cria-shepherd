@@ -3950,3 +3950,45 @@ The coder's own re-claim loop (task_complete with a summary instead of moving on
 confirm replies, and the post-0041 build being too slow for the remaining window are ornith's. But
 the window was 7 minutes instead of 13 because cria's own brake spent the difference vetoing a step
 three judges had verified.
+
+## ada-handles_mellum2_codex_poff_1785833976
+
+REGRESSION1 campaign, mellum2 run 1/3 on `53f4e97`. Score **3/4** (live_test: "no live-test file
+found"), terminal `exited` at 8.8 min, 72 calls. Capture
+`~/.cria/calls/20260804T015957-019fcc00-4691-7493-a673-1320509d4ebc` — walked in full, 0001–0072.
+
+### The run in one paragraph
+
+Fast and mostly healthy. Research: homepage → openapi.json → a real `/handles/goose` fetch → the
+critic (0012) correctly held the step until `total_handles`' source was actually read → done. The
+model then wrote README, resolver, and one test file; hit the real API's 403 (missing User-Agent);
+and spent step 3 — the completion backstop's own corrective step, "make the repo's own checks
+pass" — fixing the header and an unused import, with the gate red-then-green driving it (8 gates,
+the a17a7c1 backstop visibly working). At 8.8 min the checks were genuinely green, the satisfaction
+judge + confirm approved, and the session exited. What's missing: the task said "SEPARATELY, create
+a live test" — the model folded one live-hitting test into `test_handle_resolver.py` instead. The
+verifier credits an in-file live test only when `pytest -k live` selects it (its documented 07-30
+operator ruling); the test wasn't named "live" and no separate live file exists → 3/4.
+
+### cria fault: none
+
+The 3/4 is a model compliance miss against explicit task wording. The deliverable genuinely
+resolves live data (its one test passes against the real API; the CLI verifies with real
+address+holder+count), so the satisfaction judge's "satisfied" was a defensible-but-wrong LLM
+judgment on where "separately" draws the line — and cria holds no deterministic fact that
+contradicts it. Teaching cria the verifier's "-k live" naming convention would be task-specific
+overfit (rejected before, deliberately). The row stands.
+
+### Observations recorded for prevalence (not fixed — bar-to-ADD)
+
+1. Flail steer 0021 stated a FALSE FACT in cria's voice: "The script and tests are written" —
+   before any file existed (the disk section it was handed said no files touched). The briefing
+   then repeated it, and the coder's step 2 opened by writing the README for a script that did not
+   exist. Damage here was self-limiting (the red gate forced the real files three calls later), but
+   this is the doctrine-5b class, and it is CHECKABLE: a steer asserting work exists while cria's
+   own disk facts show an empty workspace. One measured instance today; the steer-grounding family
+   (ungrounded URL, false citation, dictated code, blames-service) has no member for this claim
+   class yet. If walks keep producing instances, that is the enforcement to add.
+2. exec-intent 0066 fabricated both the command (`python resolve_handle.py goose` — no such file;
+   the real one is handle_resolver.py) and a fake success string. No measurable damage (the marker
+   is evidence, not a gate, and the CLI actually works), recorded as judge-fabrication prevalence.
