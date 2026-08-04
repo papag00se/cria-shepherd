@@ -31,6 +31,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _liveprobe  # noqa: E402 — shared live-test fairness helpers (see its docstring)
+
 TIMEOUT = 300           # a cold cargo/maven build is slow; a hang is caught by the wall, not here
 LIVE_TIMEOUT = 180
 
@@ -132,7 +135,14 @@ def unit_tests(ws, spec):
 
 
 def live_test(ws, spec):
-    """PASSES with the network and FAILS without it. A mock passes both ways and scores nothing."""
+    """PASSES with the network and FAILS without it. A mock passes both ways and scores nothing.
+
+    Three branches, most-specific first (the Python task's walked fairness rules, shared via
+    _liveprobe): a dedicated live-named file (*.py/*.sh wrapper — legitimate in ANY language's
+    workspace), then the language's own test suite, then the README-guided probe."""
+    f_ok, f_detail = _liveprobe.live_file_check(ws)
+    if f_ok:
+        return True, f_detail
     for cmd in spec["test"]:
         code, out = run(cmd, ws, timeout=LIVE_TIMEOUT)
         if code == -3:
@@ -143,7 +153,10 @@ def live_test(ws, spec):
         if b_code != 0 or spec["fail"].search(b_out):
             return True, f"{' '.join(cmd)}: passes with network, fails without (provably live)"
         return False, f"{' '.join(cmd)}: passes with the network BLOCKED — mocked, not live"
-    return False, "no runnable test suite to check for liveness"
+    p_ok, p_detail = _liveprobe.readme_live_probe(ws)
+    if p_ok:
+        return True, p_detail
+    return False, f"no runnable test suite to check for liveness; {p_detail}"
 
 
 def _readme_commands(ws, spec):
