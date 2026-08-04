@@ -244,3 +244,64 @@ class AReadingStepDoesNotProduceAnythingTests(unittest.TestCase):
         """'addressed' contains 'add'; a substring match would refuse a valid reading step."""
         good = "Read how holder addresses are addressed in the api.handle.me reference."
         self.assertEqual(self._step(good), good)
+
+
+class ARefusedStepIsReAskedOnceTests(unittest.TestCase):
+    """A refusal used to shrug, and the shrug cost the run its research: fabliq restated the whole
+    task, cria refused it, and the run coded an invented API having read nothing. Every other refusal
+    in this codebase re-asks with the problem named — a malformed tool call gets the parse error, a
+    missed edit gets the file's real text. This one now does too. ONCE: a model that restates twice
+    is answering from its defaults, and a third ask is the same coin flip again."""
+
+    TASK = "resolve an Ada Handle using the Ada Handles API (api.handle.me), with unit tests"
+    BAD = ("Write a Python script that accepts an Ada Handle as input, resolves it via the "
+           "api.handle.me API, includes unit tests, and adds a README explaining installation.")
+    GOOD = "Read what api.handle.me publishes to learn the endpoint and response field names."
+
+    def _scripted(self, *answers):
+        seen = []
+
+        def ask(sysp, usr):
+            seen.append(usr)
+            return answers[min(len(seen), len(answers)) - 1]
+        return ask, seen
+
+    def test_a_bad_first_answer_recovers_on_the_retry(self):
+        ask, seen = self._scripted(self.BAD, self.GOOD)
+        out = research.authored_research_step(ask, self.TASK, domain="api.handle.me")
+        self.assertEqual(out, self.GOOD)
+        self.assertEqual(len(seen), 2)
+
+    def test_the_retry_names_the_defect_and_quotes_the_answer(self):
+        ask, seen = self._scripted(self.BAD, self.GOOD)
+        research.authored_research_step(ask, self.TASK, domain="api.handle.me")
+        self.assertIn(self.BAD, seen[1])                      # its own sentence, un-truncated
+        self.assertIn("build instruction", seen[1])           # why it was refused
+        self.assertIn("produce something", seen[1])
+
+    def test_a_retry_still_defective_yields_no_step_and_no_third_ask(self):
+        ask, seen = self._scripted(self.BAD, self.BAD)
+        self.assertEqual(research.authored_research_step(ask, self.TASK, domain="api.handle.me"), "")
+        self.assertEqual(len(seen), 2)
+
+    def test_a_good_first_answer_is_not_second_guessed(self):
+        ask, seen = self._scripted(self.GOOD)
+        self.assertEqual(research.authored_research_step(ask, self.TASK, domain="api.handle.me"),
+                         self.GOOD)
+        self.assertEqual(len(seen), 1)
+
+    def test_NONE_and_empty_are_answers_not_defects(self):
+        """NONE says no reading is needed; an empty reply leaves nothing to correct. Neither earns
+        a retry."""
+        for answer in ("NONE", ""):
+            with self.subTest(answer=answer):
+                ask, seen = self._scripted(answer)
+                self.assertEqual(research.authored_research_step(ask, self.TASK, files="a.csv"), "")
+                self.assertEqual(len(seen), 1)
+
+    def test_each_defect_class_gets_its_own_words(self):
+        self.assertIn("build instruction", research.step_defect("Create the resolver.", self.TASK))
+        self.assertIn("location", research.step_defect(
+            "Read https://api.handle.me/openapi.json for the routes.", self.TASK))
+        self.assertIn("longer than one step", research.step_defect("word " * 200, self.TASK))
+        self.assertIsNone(research.step_defect(self.GOOD, self.TASK))

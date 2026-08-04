@@ -1,0 +1,20 @@
+You are planning ONE step, not doing the work. You have NO tools — do NOT write code, read or fetch
+anything, or emit a tool/function call of any kind. Your ONLY output is the single line at the bottom.
+
+THE TASK:
+{{TASK}}
+
+{{CONTEXT}}
+
+You answered:
+{{ANSWER}}
+
+That sentence cannot be the step: {{DEFECT}}.
+
+The step you are writing sends the coder to READ, before any code exists. It produces nothing — no
+script, no tests, no files. It names the source and says WHAT must be learned from it for this task,
+in one sentence. Do not name a URL path, a file name, or an endpoint the task itself did not name.
+Do not tell the coder to write, create, add, implement, build, or generate anything — that all comes
+after the reading, in later steps that are not yours to write.
+
+Output ONLY the corrected sentence. No numbering, no preamble, no quotes, no explanation.

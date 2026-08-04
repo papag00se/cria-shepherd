@@ -188,13 +188,24 @@ def authored_research_step(ask, task: str, *, domain: str = "", files: str = "")
     never be satisfied. A step naming WHAT to learn cannot be unsatisfiable that way; one naming
     WHERE can.
 
-    SAFE NULL, NOT A FALLBACK. NONE, empty, over-long, or a guessed location yields "" and the caller
-    builds the plan it would have built anyway. cria never substitutes a sentence of its own."""
+    A DEFECTIVE SENTENCE IS RE-ASKED ONCE, WITH THE DEFECT NAMED — the same courtesy every other
+    refusal in this codebase already pays. A malformed tool call is re-prompted with the parse error;
+    a missed edit is re-asked with the file's real text; this refusal used to just shrug, and on its
+    first live outing that shrug cost the run its research entirely: fabliq restated the whole task
+    ("Write a Python script that accepts an Ada Handle… includes unit tests… and adds a README"),
+    cria refused it, and the run coded an invented API having read nothing. Observed rate before the
+    retry: 2 usable steps in 4 asks. One retry, never more — a model that restates twice is answering
+    from its defaults and a third ask is the same coin flip again.
+
+    SAFE NULL, NOT A FALLBACK. NONE, an empty answer, or a retry that is still defective yields ""
+    and the caller builds the plan it would have built anyway. cria never substitutes a sentence of
+    its own."""
     context = []
     if domain:
         context.append(f"A SOURCE THE TASK NAMES: {domain}")
     if files:
         context.append(f"FILES ALREADY IN THE WORKING DIRECTORY:\n{files}")
+    ctx_block = "\n\n".join(context)
     # WHICH QUESTION depends on what cria can prove. A domain in the task's own words is a FACT — the
     # task names an external source — so asking a small model to re-decide it invites the answer
     # fabliq gave on the first live run: NONE, for a task whose own sentence says "using the Ada
@@ -203,26 +214,52 @@ def authored_research_step(ask, task: str, *, domain: str = "", files: str = "")
     # library's source, a data set — and the model makes it, NONE included.
     system = prompts.load("research_step_known" if domain else "research_step")
     text = " ".join((ask(system,
-                     prompts.render("research_step_user", task=task,
-                                    context="\n\n".join(context)))
+                     prompts.render("research_step_user", task=task, context=ctx_block))
                      or "").split())
-    if not text or len(text) > STEP_MAX_CHARS or text.strip().upper().rstrip(".") == "NONE":
+    if not text or _is_none(text):
+        return ""   # NONE is an ANSWER, not a defect; an empty reply leaves nothing to correct
+    defect = step_defect(text, task)
+    if defect is None:
+        return text
+    retry = " ".join((ask(system,
+                      prompts.render("research_step_retry", task=task, context=ctx_block,
+                                     answer=text, defect=defect))
+                      or "").split())
+    if not retry or _is_none(retry) or step_defect(retry, task) is not None:
         return ""
+    return retry
+
+
+def step_defect(text: str, task: str) -> str | None:
+    """Why this sentence cannot be the reading step — a plain-words reason for the retry prompt to
+    quote — or None when it can. Each reason is the lesson of a run that paid for it:
+
+    * BUILD verb — fabliq, asked for a reading step, wrote back the entire task ("Write a Python
+      script… includes unit tests… and adds a README"). As a first plan item that is strictly worse
+      than none: two steps that both say "do the whole job". A reading step produces nothing.
+    * a LOCATION the task never named — run 1785804243's step said "by fetching the GitHub repo root
+      directory", which returns denied, so the step could never be satisfied and 114 of 195 calls
+      died against it. A step naming WHAT to learn cannot be unsatisfiable that way; WHERE can.
+    * over-LONG — a paragraph is the model writing the plan or the work, not one step.
+
+    These are refusals of cria's OWN injected content, failing in the safe direction — no step, the
+    plan cria would have built anyway. Not a judgement about the coder's work, which is where a
+    lexical rule would be out of place (#9)."""
+    if len(text) > STEP_MAX_CHARS:
+        return "it is far longer than one step"
     lowered, task_l = text.lower(), (task or "").lower()
     for token in _LOCATION_TOKENS:
         if token in lowered and token not in task_l:
-            return ""      # a location the task never named — the one thing the prompt forbids
-    # A READING STEP DOES NOT PRODUCE ANYTHING. Asked for one, fabliq wrote back the entire task —
-    # "Write a Python script that accepts an Ada Handle... includes unit tests... creates a live test
-    # ... and adds a README" — which as a first plan item is strictly WORSE than no item at all: the
-    # plan then holds two steps that both say "do the whole job". A small model handed "write one
-    # step" defaults to restating the request. So cria refuses instead: a sentence carrying a verb of
-    # PRODUCTION is not a reading step. This is a refusal of cria's OWN injected content, in the safe
-    # direction (no step — the plan cria would have built anyway), not a judgement about the coder's
-    # work, which is where a lexical rule would be out of place (#9).
+            return ("it names a location the task itself never named, which the coder may be "
+                    "unable to reach")
     if any(re.search(rf"\b{v}\b", lowered) for v in _PRODUCTION_VERBS):
-        return ""
-    return text
+        return ("it is a build instruction — its verb tells the coder to produce something "
+                "rather than to read")
+    return None
+
+
+def _is_none(text: str) -> bool:
+    return text.strip().upper().rstrip(".") == "NONE"
 
 
 # Verbs that make a sentence a BUILD instruction rather than a reading one. Refusing on these costs
