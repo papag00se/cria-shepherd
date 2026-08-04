@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 00:54:10 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 01:27:20 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,20 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — qwopus**, 47 min elapsed.
-
-| next checkpoint | at | must hold |
-|:--|--:|:--|
-| milestone 4 | 60 min | 4/4 |
-
-**Measured just now** (verifier run against a copy of the live workspace): **4/4**
-
-| deliverable | | detail |
-|:--|:--:|:--|
-| unit_tests | 🟢 | 17 passed in 0.02s |
-| live_test | 🟢 | live_test.py: real resolution (addr1+stake1 present) |
-| resolver_cli | 🟢 | ada_handle_resolver.py goose → address+holder+count |
-| readme | 🟢 | README.md covers install/run/tests: True |
+**Nothing running.** Next action: **walk** `ada-handles_fabliq_codex_pon_1785787074` (capture `/home/jesse/.cria/calls/20260803T125805-019fc934-72f5-7701-bb8c-4a7d529041b0`), then write `## ada-handles_fabliq_codex_pon_1785787074` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -30,7 +17,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🔵 RUNNING |
+| 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 22 | 4/4 | 🟢 PASSED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
@@ -80,6 +67,8 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+fbc083c fix(loop): the per-step confirm brake runs only where a disk inspection can ground
+f0411bf docs(regression): qwopus 1/3 = 4/4 — 17/17 tests, 48 min
 59e710a docs(regression): qwythos 1/3 = 4/4 — clean pass in 14.7 min
 81a4113 docs(regression): gemma4 1/3 = 0/4 walked — cria fault none; model edit-spiral; routing watch-item noted
 2e7de81 docs(regression): ternary-bonsai 1/3 = 4/4 on a17a7c1 — the backstop declined the same early finish
@@ -93,8 +82,6 @@ ef0b771 fix(loop): the plan-off reading step was never driven — synthetic mean
 7c228e6 fix(research): a reading step that PRODUCES something is not a reading step
 228e672 feat(loop): hand the reading fact to the step critic, the one authority that reads the workspace
 9c44ed0 fix(loop): the reading check completed steps it could not verify — it now only reports
-09f7535 fix(loop): the reading check was invisible when it declined, so it could not be verified
-d8de3c4 fix(research): do not ask a small model to re-decide a fact cria already holds
 ```
 
 ---

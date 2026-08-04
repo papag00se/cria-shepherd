@@ -14,9 +14,18 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | gemma4 | off | 1 | **0/4** | ada-handles_gemma4_codex_poff_1785824758 | ca75dd9 | milestone-miss-15min | walked: cria fault none — model edit-spiral on one file; row stands |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
+| ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 
 ## Notable events
 
+- **2026-08-04 ~02:20 — second cria fault found and fixed (ornith run 1).** The model finished
+  its research in 2 minutes and cria's own verification machinery then ate 6 of the 15: the step
+  critic approved the research step three times, and the read-only double-checker vetoed each one
+  by demanding files a research step never promises. Measured across all history: on steps that
+  promise no file, that double-check is a coin flip (155 pass / 158 block) — pure noise with veto
+  power. Fix: the double-check now runs only where there is something on disk it could actually
+  check (or the repo's checks are failing). Full suite green (2345), cria restarted, the failed
+  row superseded; ornith reruns on the fixed code.
 - **2026-08-04 ~00:15 — gemma4 run 1 is a real regression signal, not a cria bug.** 0/4 at the
   15-minute check. The model built a near-working file in 3 minutes, then spent 12 minutes breaking
   and re-breaking it with inexact edits — deleting its own tests a minute before the check. Every
