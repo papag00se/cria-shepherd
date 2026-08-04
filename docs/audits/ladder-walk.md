@@ -4226,3 +4226,29 @@ the truncated README nobody re-wrote, the mock oscillation, the coverage judges'
 model on its three seats. Deterministically policing plan coverage against task nouns would be the
 pattern-doing-judgment's-job that principle 9 forbids; the coverage judge exists because it is
 judgment. The row stands.
+
+## ada-handles_ornith_codex_poff_1785847335
+
+REGRESSION1 campaign, ornith run 2/3 on `1dc813b`. Score **0/4**, terminal `milestone-miss-15min`
+(953 s, 74 calls). Capture `~/.cria/calls/20260804T054236-019fcccc-1d44-7c40-9b2c-a8e87e24bc3a` —
+walked in full.
+
+### The run in one paragraph
+
+Research done cleanly by call 0009 (docs 404 → homepage → openapi.json), the reading check ruled
+DONE on the ledger, and the critic verified step 1 with real inspections — the confirm machinery
+that ate this model's superseded run 1 never mis-fired once on the fixed code. Then the campaign's
+recurring disease: resolver written, tests written blind with `return_value` mocks that cannot
+satisfy `with urlopen(...) as response:`, and ~40 calls of the same TypeError
+(`MagicMock is not str/bytes`) cycling through rewrites that never touched the actual gap
+(`__enter__`/`__exit__`). Killed at the 15-minute floor: 2 tests red, resolver CLI exits 1, no
+README, no live test. Three true steer diagnoses were dropped as DICTATES (0054, 0057, 0065 — all
+pasted replacement code; the design's documented cost, now six instances across these walks).
+
+**cria fault: none** — every judge that fired was grounded; the mock-protocol blindness and the
+never-written README/live-test are the model against the clock. The row stands. Pattern note for
+the final summary: five distinct planner-off models (gemma4 ×2, qwythos, qwopus, ornith) have now
+died the SAME way in pass 2 — blind-written test mocks plus edit-exactness oscillation inside the
+milestone window — while the same models passed identically-coded run 1s. The variance is the
+model's coin, not a code change between runs: runs 1 and 2 for qwythos/qwopus/ornith straddle only
+docs commits.
