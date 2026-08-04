@@ -33,6 +33,142 @@ def run(cmd, cwd, timeout=TIMEOUT):
         return -2, f"VERIFIER-EXEC-ERROR: {e}"
 
 
+# ---- README-guided live probe (operator directive 2026-08-04) --------------------------------
+# When every deterministic live-test branch fails, ONE inference call may propose the command the
+# README documents for the live test. The model only PROPOSES; ground truth judges: the command
+# must run inside the workspace, print real resolution markers WITH the network, and lose them
+# (or fail) with the network dead — the provably-live rule unchanged. Evidence = the README, plus
+# two READ-ONLY tools (list_dir / read_file, workspace-bounded). Any failure — no server, no
+# README, unparseable reply, refused paths — falls back to the deterministic verdict already in
+# hand; the probe can only ever ADD a point that real execution then proves.
+LLM_URL = "http://127.0.0.1:18084/v1/chat/completions"
+LLM_PROBE_PROMPT = (
+    "You are helping a test SCORER find the LIVE-test command for a small Python project. The "
+    "README is your evidence; you may inspect files first. Reply with EXACTLY ONE JSON object "
+    "and nothing else, in one of these forms:\n"
+    '  {"read_file": "<relative path>"}   — see a file\'s contents\n'
+    '  {"list_dir": "<relative path>"}    — list a directory\n'
+    '  {"command": "<shell command>"}     — your FINAL answer: the one command the README '
+    "documents (or the project layout implies) that runs the LIVE test against the real API. "
+    "Use python3, never bare python. If no live-test command exists, reply "
+    '{"command": ""}.'
+)
+
+
+def _llm(messages):
+    import urllib.request
+    body = json.dumps({"model": "scorer", "messages": messages,
+                       "temperature": 0, "max_tokens": 700}).encode()
+    req = urllib.request.Request(LLM_URL, data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        d = json.loads(resp.read())
+    text = d["choices"][0]["message"].get("content") or ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+
+
+def _json_obj(text):
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# A weak model often leaks its harness's tool-call syntax instead of JSON
+# (`<|tool_call>call:Bash{command:<|"|>python tests/generate_live.py<|"|>,…}`). The payload is
+# recoverable deterministically — same lesson as cria's massage.leaked_* family.
+_LEAK_CMD = re.compile(r'(?:command|cmd)\s*:\s*<\|"\|>(.*?)<\|"\|>', re.S)
+_LEAK_PATH = re.compile(r'(?:path|file_path)\s*:\s*<\|"\|>(.*?)<\|"\|>', re.S)
+
+
+def _reply_action(text):
+    """The probe reply as an action dict — JSON first, leaked tool-call syntax second."""
+    obj = _json_obj(text)
+    if isinstance(obj, dict) and ({"command", "read_file", "list_dir"} & set(obj)):
+        return obj
+    m = _LEAK_CMD.search(text)
+    if m:
+        return {"command": m.group(1).strip()}
+    m = _LEAK_PATH.search(text)
+    if m and ("read" in text.lower() or "Read" in text):
+        return {"read_file": m.group(1).strip()}
+    return None
+
+
+def _safe_rel(ws: Path, rel: str) -> Path | None:
+    try:
+        p = (ws / str(rel)).resolve()
+        return p if str(p).startswith(str(ws.resolve()) + os.sep) or p == ws.resolve() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def readme_live_probe(ws: Path):
+    """(ok, detail) from the README-guided probe, or (False, reason). Judgment is EXECUTION."""
+    rd = next((p for p in ws.iterdir() if p.is_file() and p.name.lower().startswith("readme")), None)
+    if rd is None:
+        return False, "no README for the live probe to read"
+    skip = ("__pycache__", "venv", ".venv", "node_modules", "site-packages", ".git")
+    listing = "\n".join(sorted(str(p.relative_to(ws)) for p in ws.rglob("*.py")
+                               if not any(x in p.parts for x in skip))[:60])
+    messages = [
+        {"role": "system", "content": LLM_PROBE_PROMPT},
+        {"role": "user", "content": f"README:\n{rd.read_text(errors='replace')[:6000]}\n\n"
+                                    f"PYTHON FILES IN THE WORKSPACE:\n{listing}"},
+    ]
+    cmd = None
+    try:
+        for _ in range(5):
+            reply = _llm(messages)
+            obj = _reply_action(reply) or {}
+            if "command" in obj:
+                cmd = str(obj.get("command") or "").strip()
+                break
+            if "read_file" in obj:
+                p = _safe_rel(ws, obj["read_file"])
+                result = p.read_text(errors="replace")[:8000] if p and p.is_file() else "NOT FOUND"
+            elif "list_dir" in obj:
+                p = _safe_rel(ws, obj["list_dir"])
+                result = "\n".join(sorted(x.name for x in p.iterdir())) if p and p.is_dir() else "NOT FOUND"
+            else:
+                return False, "live probe: unparseable reply"
+            messages += [{"role": "assistant", "content": reply},
+                         {"role": "user", "content": result}]
+    except Exception as e:  # noqa: BLE001 — no server / timeout → deterministic verdict stands
+        return False, f"live probe unavailable: {e}"
+    if not cmd:
+        return False, "live probe: README documents no live-test command"
+    if re.search(r"[;&|]|\brm\b|\bmv\b|>\s", cmd):
+        return False, f"live probe: refused compound/mutating command ({cmd[:60]})"
+    # This box has no bare `python`; READMEs say it anyway. Same substitution a human would make.
+    cmd = re.sub(r"(?<![\w/-])python(?=\s)", "python3", cmd)
+    argv = ["bash", "-c", cmd]
+    code, out = run(argv, ws, timeout=180)
+    if code != 0:
+        return False, f"live probe: `{cmd}` exit={code}, real-data markers absent"
+    markers = bool(ADDR_RE.search(out) and HOLDER_RE.search(out))
+    # Provably-live rule, either proof: real markers that vanish when the network dies, or a
+    # clean exit that turns into a failure when the network dies (a unittest suite prints dots,
+    # not addresses — exit-code proof is the same standard the in-file pytest branch uses).
+    dead = {**os.environ, "HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9",
+            "http_proxy": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9"}
+    try:
+        blocked = subprocess.run(argv, cwd=ws, capture_output=True, text=True, timeout=180, env=dead)
+        b_out = (blocked.stdout or "") + (blocked.stderr or "")
+        b_rc, b_markers = blocked.returncode, bool(ADDR_RE.search(b_out) and HOLDER_RE.search(b_out))
+    except subprocess.TimeoutExpired:
+        b_rc, b_markers = -1, False  # hanging without a network is failing without a network
+    if markers:
+        if b_rc == 0 and b_markers:
+            return False, f"live probe: `{cmd}` passes with the network BLOCKED — mocked, not live"
+        return True, f"README-documented live command `{cmd}`: provably live (markers with network only)"
+    if b_rc != 0:
+        return True, f"README-documented live command `{cmd}`: provably live (passes with network, fails without)"
+    return False, f"live probe: `{cmd}` exit=0 but no markers and no network dependence proof"
+
+
 def positive_count(out: str) -> bool:
     """Is there a real handle COUNT in the output — not a digit borrowed from an address?
 
@@ -109,6 +245,14 @@ def main(ws: Path) -> dict:
                 live_detail = "in-file 'live' test passes even with the network blocked — mocked, not live"
         except subprocess.TimeoutExpired:
             live_detail = "in-file live check timed out"
+    if not live_ok:
+        # Last resort: ask what the README says to run (see readme_live_probe — the model only
+        # proposes; execution with the provably-live rule decides).
+        probe_ok, probe_detail = readme_live_probe(ws)
+        if probe_ok:
+            live_ok, live_detail = True, probe_detail
+        else:
+            live_detail = f"{live_detail}; {probe_detail}"
     r["parts"]["live_test"] = {"ok": live_ok, "detail": live_detail}
 
     # 3) Resolver works as the README says — or, failing README instructions, the conventional

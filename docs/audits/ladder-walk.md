@@ -4518,3 +4518,9 @@ truncating whole-file rewrites (0240/0261 dropped imports/functions again), fabr
 shellcheck-on-Python), self-masking pipes the steers had to talk it out of, and a late
 input-validation change that broke its own green tests at the 30-minute wall. Row STANDS —
 gemma4's first counted run: 1/4.
+
+### Addendum to ada-handles_gemma4_codex_poff_1785873072 (2026-08-04 ~14:00)
+
+RESCORED 1/4 → 2/4 under the README-probe scorer (operator ruling): the run's README documented
+`python verify.py` as the live check; the probe found it and execution proved it live. The walk's
+verdict (cria fault: none; row stands) is unchanged — the row now stands at 2/4.
