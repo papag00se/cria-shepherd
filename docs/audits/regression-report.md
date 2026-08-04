@@ -10,8 +10,15 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | model | plan | run | score | run_id | sha | terminal | note |
 |---|---|---:|---:|---|---|---|---|
 | ternary-bonsai | off | — | 3/4 | ada-handles_ternary-bonsai_codex_poff_1785818931 | fd4ca0a | exited | SUPERSEDED by a17a7c1 — walked, cria fault fixed; does not count toward 3 |
+| ternary-bonsai | off | 1 | **4/4** | ada-handles_ternary-bonsai_codex_poff_1785821049 | a17a7c1 | budget-killed | 9/9 unit tests, provably-live test, working CLI, README |
 
 ## Notable events
+
+- **2026-08-03 ~23:25 — the fix proved itself on its first run.** ternary-bonsai run 1 on `a17a7c1`
+  scored 4/4. The same early-finish attempt from the walked run happened again — the replanner tried
+  to declare everything done — but this time cria refused it and ran the repo's checks (twice) before
+  letting the session end. The run used the full hour (`budget-killed`) instead of exiting at 12
+  minutes with broken tests.
 
 - **2026-08-03 ~22:20 — cria fault found and fixed on the first campaign run.** The run scored 3/4
   (unit tests red: the model wrote its test file blind with three bugs and no one ever ran pytest).
