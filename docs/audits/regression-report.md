@@ -31,6 +31,40 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | nemotron-elastic | on | 1 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | walked: cria fault none — live test demands an argument, exits 1 bare; both fixes fired correctly in-run |
 | nemotron-elastic | on | 2 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | walked: cria fault none — same argument-demanding live test as run 1; refutation guard 2x correct |
 
+## Run stats
+
+Regenerate any time with `python3 suite/regression_stats.py` (`--md` for this table).
+steers = times cria injected a directive/redirect; gates = times cria ran or reattached
+the repo's own checks. Snapshot as of the last finished run:
+
+| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| ternary-bonsai | superseded | 3/4 | 12 | 40 | 12 | 43.7 | 0 | 0 | exited |
+| ternary-bonsai | counted | 4/4 | 60 | 69 | 33 | 39.1 | 4 | 11 | budget-killed |
+| gemma4 | superseded | 0/4 | 16 | 91 | 65 | 56.9 | 4 | 8 | milestone-miss-15min |
+| qwythos | counted | 4/4 | 15 | 116 | 45 | 76.4 | 14 | 14 | exited |
+| qwopus | counted | 4/4 | 48 | 232 | 130 | 75.6 | 14 | 31 | exited |
+| ornith | superseded | 0/4 | 16 | 114 | 58 | 75.7 | 4 | 14 | milestone-miss-15min |
+| ornith | counted | 4/4 | 31 | 237 | 121 | 76.5 | 9 | 25 | exited |
+| mellum2 | counted | 3/4 | 9 | 72 | 38 | 170.4 | 7 | 27 | exited |
+| nemotron-elastic | superseded | 1/4 | 31 | 156 | 87 | 129.2 | 8 | 42 | milestone-miss-30min |
+| nemotron-elastic | counted | 3/4 | 36 | 198 | 111 | 131.4 | 20 | 37 | exited |
+| ternary-bonsai | counted | 3/4 | 61 | 44 | 19 | 38.6 | 2 | 4 | milestone-miss-60min |
+| gemma4 | superseded | 0/4 | 16 | 131 | 86 | 58.7 | 5 | 10 | milestone-miss-15min |
+| qwythos | voided | 0/4 | 16 | 89 | 53 | 77.6 | 8 | 18 | milestone-miss-15min |
+| qwopus | voided | 1/4 | 31 | 71 | 38 | 76.4 | 6 | 7 | milestone-miss-30min |
+| ornith | voided | 0/4 | 16 | 74 | 43 | 78.4 | 7 | 6 | milestone-miss-15min |
+| mellum2 | voided | 1/4 | 31 | 234 | 119 | 167.1 | 25 | 67 | milestone-miss-30min |
+| nemotron-elastic | counted | 3/4 | 32 | 200 | 104 | 132.2 | 14 | 35 | exited |
+| ternary-bonsai | counted | 4/4 | 60 | 61 | 35 | 41.7 | 2 | 6 | budget-killed |
+| gemma4 | superseded | 0/4 | 16 | 61 | 36 | 61.6 | 18 | 8 | milestone-miss-15min |
+| gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 31 | milestone-miss-30min |
+| gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 18 | milestone-miss-30min |
+
+counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
+
+counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
+
 ## Notable events
 
 - **2026-08-04 ~12:05 — operator ruling: the four caged-routing pass-2 failures are VOIDED.**
