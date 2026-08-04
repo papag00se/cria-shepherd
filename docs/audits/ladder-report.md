@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-03 21:42:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-03 21:46:06 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -67,6 +67,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+456a02d feat(suite): park fabliq; the regression campaign — 7 passing models, 3 runs each, one truth tool
 ef0b771 fix(loop): the plan-off reading step was never driven — synthetic means DEGENERATE, and 2 items is not
 6085276 fix(research): a refused reading step is re-asked once, with the defect named
 7c228e6 fix(research): a reading step that PRODUCES something is not a reading step
@@ -81,7 +82,6 @@ f2bb013 fix(focustrim): a repeated call collapsed in silence re-asks a temperatu
 76cad3a fix(webfetch): the nested field list obeyed a hardcoded 8 while the top level obeyed the cap
 78c2876 docs(webfetch): the nested field cap's measurement, finished — it stays
 12b8bd2 fix(loop): a line the MODEL wrote in cria's own voice reached the judge as its summary
-07d877c fix(replay): the integrity raise main() turned into "would fire on 0/86 runs (0%)"
 ```
 
 ---
