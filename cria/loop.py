@@ -1636,18 +1636,22 @@ class Loop:
                 def _plan_ask(sysp, usr):
                     return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                      sysp, usr, rlog, phase="research-step")
-                sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
-                                                        files=workspace_inventory(_extract_cwd(messages)
-                                                                                  or self._ctx.workspace_root)),
-                                   synthetic=True, prior_work=briefing)
+                sess = _plan_off_session(_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
+                                                         files=workspace_inventory(_extract_cwd(messages)
+                                                                                   or self._ctx.workspace_root)),
+                                          briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
                 # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
                 # exactly as the plan-off path handed unstable keys a fresh state, so a synthetic session
                 # can't leak across unrelated same-prompt conversations (the plan-cache-leak class).
-                # A synthetic plan is NEVER mirrored to disk (no _persist_plan): it's just the raw task.
+                # A DEGENERATE plan is never mirrored to disk: it's just the raw task. One that gained
+                # a reading step is a real plan and mirrors like any other.
                 if _stable_session(session_key):
                     self._store.put(session_key, sess)
-                rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=True)
+                if not sess.synthetic:
+                    self._persist_plan(sess.plan, rlog)
+                rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items),
+                          synthetic=sess.synthetic)
             else:
                 # A rewrite is a CONTINUATION only as a pure handoff — the summary IS the latest user
                 # text (the harness replaced history, the user typed nothing new). Then a completed
@@ -1693,13 +1697,13 @@ class Loop:
                         def _plan_ask(sysp, usr):
                             return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                              sysp, usr, rlog, phase="research-step")
-                        sess = PlanSession(plan=_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
-                                                        files=workspace_inventory(_extract_cwd(messages)
-                                                                                  or self._ctx.workspace_root)),
-                                           synthetic=True, prior_work=briefing)
+                        sess = _plan_off_session(_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
+                                                                 files=workspace_inventory(_extract_cwd(messages)
+                                                                                           or self._ctx.workspace_root)),
+                                                 briefing)
                         if _stable_session(session_key):
                             self._store.put(session_key, sess)
-                        rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=True,
+                        rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=sess.synthetic,
                                   planner_fallback=True)
                     else:
                         sess = PlanSession(plan=plan, prior_work=briefing)
@@ -3252,6 +3256,25 @@ def _session_from_dict(d) -> PlanSession | None:
                            synthetic=bool(d.get("synthetic")))
     except Exception:  # noqa: BLE001
         return None
+
+
+
+def _plan_off_session(plan: Plan, briefing: str) -> PlanSession:
+    """The plan-off session, with ``synthetic`` meaning what it has always meant: DEGENERATE.
+
+    ``synthetic`` selects the single-item driver, whose framing is deliberately the RAW TASK — it
+    ignores the plan's items (route-unify invariant 2). That is exactly right for the 1-item case it
+    was built for, and exactly wrong the moment the plan holds a model-authored reading step: run
+    20260803T211734 authored the step, the retry recovered it, ``loop.start`` reported ``steps=2`` —
+    and the step appeared in ZERO of the run's 56 coder prompts, because the single-item driver never
+    frames items. The feature was inert on the one path it was built for, and the run wrote four
+    files against an invented API having read nothing.
+
+    So: one item → synthetic, the degenerate raw-task drive, unchanged. Two items → an ordinary
+    plan session, driven by the multi-item machinery — the step is FRAMED ("Do ONLY this step
+    (1 of 2): Read…"), the step critic gates it with the sources_read evidence, the reading check
+    fires at its cadence, and the raw task follows as step 2."""
+    return PlanSession(plan=plan, synthetic=len(plan.items) == 1, prior_work=briefing)
 
 
 def _synthetic_plan(task: str, clock=None, ask=None, files: str = "") -> Plan:
