@@ -4443,3 +4443,42 @@ refuted → the steer is withheld.
 Model residue: the stale-edit blindness, truncating rewrites, Pytest/pytest casing churn, the
 self-blinding grep filter, and the conftest/pyproject fabrications are gemma4's own. Row
 superseded; gemma4 reruns with the steer channel unable to state these false facts.
+
+## ada-handles_gemma4_codex_poff_1785869053
+
+REGRESSION1 campaign, gemma4 rerun on the steer false-fact fixes (`61242fc`). Score **3/4** —
+gemma4's best campaign result (unit tests 3/3 passing, working CLI, README; only the provably-live
+check failed, its live tests living in an undiscoverable `generate_live.py`). Terminal
+`milestone-miss-60min` (61 min, 492 calls; milestones 2.0 → 2.0 → 3.0 → 3.0). Capture
+`~/.cria/calls/20260804T114423-019fce17-5582-74a3-84a5-3474f07ecbe9` — walked in full.
+
+### The new guards fired correctly, live
+
+Three `loop.steer_false_citation` withholds (the shapes added hours earlier caught real
+fabrications) and one `loop.steer_phantom_path` withhold (steer 0271 invented
+`/home/user1/model/work/testfiles…`). The opening was again clean: real spec fetched and read,
+reading step cleared, hand-back fired, working resolver + mocked tests by call 17. Two
+satisfaction-confirm INCONSISTENT rulings correctly caught judge verdicts citing files that do
+not exist.
+
+### cria fault: yes — the workspace refusal never named the one fact that ends the loop
+
+From call 0044 the coder typed its own workspace with ONE capital letter (`…-8Ibs7re8` for
+`…-8ibs7re8`) — 106 occurrences, 50+ dirguard refusals. The refusal printed the real root and the
+typo'd path side by side but never said they differ only in letter case; a temp-0 12B cannot spot
+a one-glyph difference in two 47-character strings, so it invented a false doctrine ("absolute
+paths are forbidden in this sandbox"), re-derived it at nearly every failure for ~300 calls, and
+burned the middle hour of the run re-running identical commands. 38 flail steers flowed and none
+named the typo either — the reasoner is the same model.
+
+Fix: the refusal now performs the exact comparison cria can do and the model cannot — when the
+denied path equals (or sits under) the workspace root up to letter case, the message says the
+path differs ONLY IN LETTER CASE and to retype the root exactly (`_case_typo_of_workspace`,
+`external_path_case_note.txt`). Deterministic, ground-truthed, one sentence, fires only on the
+exact confusion measured.
+
+Model residue (observe-only ledger): a dictated steer misspelled a task handle ("papagoase") and
+the coder briefly adopted it; steers invented tools (`pygrep`, "pydocstan") costing ~3 calls;
+the mock-shape oscillation (json attribute vs lambda), stale-copy edits, and the
+`textwrap.dedent` pipe are gemma4's own. Row (3/4) superseded per the goal rule; gemma4 reruns
+with the refusal able to name a case typo.

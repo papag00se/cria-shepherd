@@ -182,13 +182,31 @@ def _exempt(path: str) -> bool:
     return p in _EXEMPT_EXACT or any(p == pre.rstrip("/") or p.startswith(pre) for pre in _EXEMPT_PREFIXES)
 
 
+def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
+    """True when ``path`` IS the workspace (or a path under it) up to LETTER CASE — i.e. the model
+    typed its own project directory with wrong casing. Walked on
+    ada-handles_gemma4_codex_poff_1785869053: the coder wrote ``…-8Ibs7re8`` (capital I) for its
+    real ``…-8ibs7re8`` workspace 106 times, drew this refusal 50+ times — the message printed both
+    strings side by side, and a temp-0 12B never spotted the one-letter difference. It instead
+    invented a false doctrine ("absolute paths are forbidden") and spiralled for ~300 calls. The
+    comparison is exact ground truth cria already holds; naming the case difference is the one
+    sentence that ends that loop at its first firing."""
+    if not workspace:
+        return False
+    p = os.path.normpath(os.path.expanduser(path.strip())).lower()
+    ws = os.path.normpath(os.path.expanduser(workspace)).lower()
+    return p == ws or p.startswith(ws + os.sep)
+
+
 def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
     # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
     # the one place cria can state the real one.
     root = f" ({workspace})" if workspace else ""
-    return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root)
+    note = prompts.load("external_path_case_note") if _case_typo_of_workspace(path, workspace) else ""
+    return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
+                        casenote=note)
 
 
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:

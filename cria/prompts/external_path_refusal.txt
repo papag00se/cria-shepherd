@@ -1,1 +1,1 @@
-{{VERB}} outside the working directory is not permitted here — keep every file you read or write inside the project directory{{ROOT}}. The path {{PATH}} is outside it; use a path within the project instead.
+{{VERB}} outside the working directory is not permitted here — keep every file you read or write inside the project directory{{ROOT}}. The path {{PATH}} is outside it; use a path within the project instead.{{CASENOTE}}

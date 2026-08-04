@@ -253,3 +253,30 @@ class GlobalInstallTests(unittest.TestCase):
                     "pip list"):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(self.refuse(cmd), cmd)
+
+
+class CaseTypoNoteTests(unittest.TestCase):
+    """A refusal for a LETTER-CASE typo of the workspace itself must say so.
+
+    Walked on ada-handles_gemma4_codex_poff_1785869053: the coder wrote its own workspace with one
+    capital letter (…-8Ibs7re8 for …-8ibs7re8) 106 times; the refusal printed both strings without
+    naming the difference, and the model spiralled on an invented "absolute paths are forbidden"
+    doctrine for ~300 calls."""
+
+    def test_case_typo_of_workspace_is_called_out(self):
+        r = dirguard.path_refusal("/home/jesse/src/Proj/x.py", True, "none", WS)
+        self.assertIn("ONLY IN LETTER CASE", r)
+
+    def test_case_typo_of_the_root_itself(self):
+        r = dirguard.path_refusal("/home/jesse/SRC/proj", True, "none", WS)
+        self.assertIn("ONLY IN LETTER CASE", r)
+
+    def test_genuinely_external_path_gets_no_note(self):
+        r = dirguard.path_refusal("/etc/passwd", True, "none", WS)
+        self.assertNotIn("LETTER CASE", r)
+        self.assertNotIn("{{CASENOTE}}", r)   # the token is always filled, never leaked
+
+    def test_no_workspace_no_note(self):
+        r = dirguard.path_refusal("/etc/passwd", True, "none", None)
+        self.assertNotIn("LETTER CASE", r or "")
+        self.assertNotIn("{{CASENOTE}}", r or "")
