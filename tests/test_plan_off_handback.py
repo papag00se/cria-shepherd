@@ -136,3 +136,55 @@ class PlanOffHandbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadingCheckClearsPlanOffStepTests(unittest.TestCase):
+    """The reading check may COMPLETE the plan-off reading step (and only that).
+
+    Walked run ada-handles_gemma4_codex_poff_1785861503: the reading was ledger-complete by call
+    12, the repo went red on step-2 work, and weak critics refused the reading step for 247 calls
+    — the hand-back never fired. Scope guards keep 1785812224's second-completion-authority defect
+    dead: plan-off only, never the task item, DONE only (grounded sources required upstream)."""
+
+    def _loop_with_verdict(self, verdict):
+        reasoner = _Scripted([{"choices": [{"message": {"content": json.dumps({"verdict": verdict})}}]}])
+        ctx = LoopContext(planner=_Planner(), coder_chat=_Scripted([_toolcall()]),
+                          reasoner_chat=reasoner, runs_dir="")
+        from cria.config import Role
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        return Loop(ctx, LoopStore())
+
+    def _grounded(self):
+        # the deterministic gather, patched: the unit under test is the DONE branch, not the
+        # ledger parser (which has its own tests)
+        from unittest import mock
+        return mock.patch("cria.loop.research.sources_read",
+                          return_value=[("https://api.handle.me/openapi.json",
+                                         "/handles/{handle}", "holder, resolved_addresses.ada")])
+
+    def test_done_clears_the_reading_step_on_plan_off(self):
+        import cria.research as research
+        loop = self._loop_with_verdict("DONE")
+        sess = _two_item_sess()
+        sess.coder_turns = research.RESEARCH_CHECK_EVERY   # the check's cadence tick
+        rlog = _Rlog()
+        with self._grounded():
+            out = loop._research_check(sess, "k", _body(), 1, 2, rlog)
+        self.assertTrue(sess.plan.items[0].done)           # the reading step is VERIFIED
+        self.assertIn("loop.reading_step_cleared", rlog.kinds())
+        self.assertIsNotNone(out)                          # the driven next turn came back
+
+    def test_done_on_planner_on_session_still_only_reports(self):
+        import cria.research as research
+        loop = self._loop_with_verdict("DONE")
+        plan = Plan(id="x", task=TASK, created="c",
+                    items=[PlanItem(text="Read the spec to learn the shapes"), PlanItem(text="build it")])
+        sess = _plan_off_session(plan, "")
+        sess.plan_off = False                              # a genuine planner session
+        sess.coder_turns = research.RESEARCH_CHECK_EVERY
+        rlog = _Rlog()
+        with self._grounded():
+            out = loop._research_check(sess, "k", _body(), 1, 2, rlog)
+        self.assertFalse(sess.plan.items[0].done)          # 1785812224 regression guard: report only
+        self.assertIsNone(out)
+        self.assertIn("loop.research_satisfied", rlog.kinds())

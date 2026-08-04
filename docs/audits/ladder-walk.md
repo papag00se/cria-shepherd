@@ -4351,3 +4351,38 @@ edit-noop loop (a `c`-typo it "fixed" with old==new edits).
 The negative referendum itself is honest data: gemma4's failures are plural — the cage was one,
 the author's hallucination class is another, and its edit-exactness pathology is the constant.
 Row superseded (fault found); gemma4 reruns on the hardened author gate.
+
+## ada-handles_gemma4_codex_poff_1785861503
+
+REGRESSION1 campaign, gemma4 run 1/3 (hardened author gate, `55df703`). Score **1/4** (README
+verified — first time past the 15-minute floor), terminal `milestone-miss-30min` (1850 s, 247
+calls). Capture `~/.cria/calls/20260804T093834-019fcda4-239c-7cb1-a3a2-ddd599b83f6e` — walked in
+full.
+
+### What the recent fixes visibly did
+
+The authored reading step came out CLEAN (no guessed route, no invented auth — the new gate's
+first live outing). The new confirm-disk ruler ran once and correctly kept a veto standing.
+25 flail steers flowed under movement resets; steer 0242's diagnosis (tuple-vs-dict return)
+produced the fix at 0243. Three DICTATES steers delivered per the observe-only ruling. Progress
+is real: 0/4 → 0/4 → 0/4 → 1/4, and the first floor cleared.
+
+### cria fault: yes — the hand-back could not fire, so the cage effectively persisted
+
+The reading was ledger-complete by call 12 (openapi fetched, routes and shapes parsed). But the
+repo went red on step-2 work the model did inside step 1, and from then on the reading step was
+UNCLEARABLE: critics refused it for step-2 reasons (0037-0039, 0048+0057-veto, 0062's garbled
+"upstream research step"), confirm inspections wandered into hallucinated project layouts
+(api/handlers.py, src/meapi, package.json) before ruling, and the session recited "Do ONLY this
+step (1 of 2)" for 247 calls — the framing itself feeding the re-fetch compulsion (openapi
+re-fetched or re-read ~15 times). The hand-back fix was correct but unreachable.
+
+Fix: the reading check now COMPLETES the plan-off reading step on a DONE verdict
+(`loop.reading_step_cleared` → advance → hand-back next drive). Scope holds 1785812224's
+second-completion-authority defect dead: plan-off only, never the task item, DONE only (grounded
+sources structurally required). On a genuine planner session the check still only reports —
+regression-guarded by test.
+
+Model residue: the tuple/dict interface oscillation, exception-class churn, and the re-fetch
+compulsion are gemma4's, as in every prior walk. Row superseded; gemma4 reruns with the reading
+step able to clear.

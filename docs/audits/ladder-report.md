@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 09:36:08 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 10:14:05 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -70,17 +70,17 @@ REGRESSION CAMPAIGN — python (ada-handles), 3 runs per model, note prefix REGR
 model              plan  runs  scores           verdict
 ------------------------------------------------------------------------
 ternary-bonsai     off      3  4 3 4            NOT STABLE 2/3
-gemma4             off      1  0                needs walk
+gemma4             off      1  1                needs walk
 qwythos            off      2  4 0              2/3 run
 qwopus             off      2  4 1              2/3 run
 ornith             off      2  4 0              2/3 run
 mellum2            off      2  3 1              2/3 run
 nemotron-elastic   on       2  3 3              2/3 run
 
-NEXT: WALK ada-handles_gemma4_codex_poff_1785860144
-  read /home/jesse/.cria/calls/20260804T091556-019fcd8f-6da5-7082-82ec-40827a80e7aa — EVERY call, start to finish, pairing NNNN-*.prompt.txt with NNNN-*.reasoning.txt
+NEXT: WALK ada-handles_gemma4_codex_poff_1785861503
+  read /home/jesse/.cria/calls/20260804T093834-019fcda4-239c-7cb1-a3a2-ddd599b83f6e — EVERY call, start to finish, pairing NNNN-*.prompt.txt with NNNN-*.reasoning.txt
   A walk is READING, not searching. No grep, no sampling, no counting.
-  then write '## ada-handles_gemma4_codex_poff_1785860144' into docs/audits/ladder-walk.md with a 'cria fault: yes|none' line
+  then write '## ada-handles_gemma4_codex_poff_1785861503' into docs/audits/ladder-walk.md with a 'cria fault: yes|none' line
   a cria fault gets FIXED (docs/principles.md, fail-before test, pytest green, commit+push, restart cria.service), then mark this model's FAILED campaign rows superseded so its three runs measure the current code
 ```
 
@@ -89,6 +89,7 @@ Operator report: [`regression-report.md`](regression-report.md) · authority: `p
 ## Fixes landed during the ladder
 
 ```
+55df703 fix(research,steer): the authored step may not GUESS, and a steer may not name a phantom path
 12a3fcd chore(suite,docs): retire fabliq and zaya1 from every living surface
 90e684b fix(steer,loop,editrecovery): rebase five guards off blind-author-era evidence — the provenance retunes
 c731f5c docs(regression): ternary 3/3 closes 4-3-4; gemma4 rows superseded by the hand-back fix; audit recorded
@@ -103,7 +104,6 @@ fae111a docs(regression): mellum2 2/3 = 1/4 walked — cria fault none; pytest-m
 2ab7dcb docs(regression): nemotron 1/3 = 3/4 walked — cria fault none; refuted-by-disk guard fired 4x correctly in-run
 ccf601b docs(regression): nemotron-elastic 1/4 walked + superseded — confirm veto refuted-by-disk fixed; rerun on new code
 ecc40f1 fix(loop): a confirm veto claiming a file is MISSING is refuted by cria's own disk
-3aab947 docs(regression): mellum2 1/3 = 3/4 walked — cria fault none; live test not separate; 5b steer instance recorded
 ```
 
 ---

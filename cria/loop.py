@@ -2598,6 +2598,22 @@ class Loop:
         if verdict == research.DONE:
             rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
                       turns=sess.coder_turns, step_text=item.text[:160])
+            # PLAN-OFF HAND-BACK RIDER (operator contract 2026-08-04: plan-off gets a reading step
+            # and NOTHING else of the plan machinery). The plan-off reading step is the one step
+            # whose whole deliverable IS the ledger fact this check just verified — there is no
+            # workspace artifact for a critic to weigh, and walked run 1785861503 shows what the
+            # critic path costs instead: the reading was ledger-complete by call 12, the repo went
+            # red on step-2 work, and weak critics then refused the reading step for 247 calls —
+            # "Do ONLY this step (1 of 2)" recited ~30 times fed the very re-fetch compulsion the
+            # framing was supposed to prevent, and the hand-back never fired. This is NOT the
+            # 1785812224 second-completion-authority defect returning: that run marked BUILD steps
+            # done on a planner-ON plan. Here the scope is plan-off only, the READING step only
+            # (never the task item), on a DONE that structurally requires grounded sources — and
+            # everything that produces files still answers to the gates on the raw-task drive this
+            # advance hands back to.
+            if sess.plan_off and item.text != sess.plan.task:
+                rlog.emit("loop.reading_step_cleared", step=idx, plan_off=True)
+                return self._advance(sess, key, body, idx, total, rlog)
         return None
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
