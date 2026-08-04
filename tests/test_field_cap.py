@@ -5,12 +5,13 @@ ever 4 or 6 — those are the only two values that occur.
 So cria was paying "the coder cannot tell whether this field exists" to save at most six field
 names. On the Ada Handles spec the whole difference is 80 characters.
 
-WHAT THIS CHANGE CLEARS, and what it does not. The `+4` occurrences are this cap, on
-`GET /handles/{handle}` — the endpoint whose missing tail cost a run — and raising it to 40 clears
-them. The `+6` occurrences are the SEPARATE hardcoded nested cap of 8 in `_schema_field_summary`'s
-`_depth == 0` recursion, on `stats{…}` inside `GET /health`, and this change does not touch it:
-12,595 of the 12,599 prompts still carry a nested-capped list afterwards. The test below pins that
-so the claim cannot drift back to "the cap is gone".
+WHAT THIS CLEARS. The `+4` occurrences are this cap, on `GET /handles/{handle}` — the endpoint
+whose missing tail cost a run — and raising it to 40 clears them. The `+6` occurrences came from a
+SEPARATE hardcoded nested cap of 8 in `_schema_field_summary`'s `_depth == 0` recursion, on
+`stats{…}` inside `GET /health`. That one was first left alone, on the ground that the six fields
+it hid were node-sync internals no task had needed — a judgement about one api and one task family,
+which is not a test cria is entitled to apply. The nested list now shares `FIELD_CAP`: one cap, one
+rule, both levels, and the real spec renders with no elision anywhere for 137 characters.
 
 The cap's own comment states the cost: "a coder looking for a field that exists but sits past the
 cap concludes the API doesn't return it — and guesses."
@@ -55,23 +56,43 @@ class FieldCapTests(unittest.TestCase):
         narrow = "\n".join(wf._endpoint_response_fields(spec, max_fields=30))
         self.assertLess(len(wide) - len(narrow), 400)
 
-    def test_the_NESTED_cap_is_untouched_and_still_discloses(self):
-        """The claim this change may make is exactly "the TOP-LEVEL cap is raised", and no more.
-
-        Half the capped lists in the corpus — the `+6` on `stats{…}` inside `GET /health` — come
-        from the separate hardcoded `8` in the `_depth == 0` recursion, which `FIELD_CAP` does not
-        reach. Pinned here because the first draft of the commit attributed all 12,599 prompts to
-        this constant, and a false number in shipped source is the thing this project keeps paying
-        for (rule 23b)."""
-        spec = {"openapi": "3.0.0", "paths": {"/health": {"get": {"responses": {"200": {"content": {
+    def _health_spec(self, n_nested):
+        return {"openapi": "3.0.0", "paths": {"/health": {"get": {"responses": {"200": {"content": {
             "application/json": {"schema": {"type": "object", "properties": {
                 "status": {"type": "string"},
                 "stats": {"type": "object",
-                          "properties": {f"n{i}": {"type": "integer"} for i in range(14)}},
+                          "properties": {f"n{i}": {"type": "integer"} for i in range(n_nested)}},
             }}}}}}}}}}
-        line = wf._endpoint_response_fields(spec)[0]
-        # still capped one level down, at 8, EVEN at the raised top-level cap …
-        self.assertIn("…+6 more field(s)", line)
-        # … and it is inside the nested braces, not at the top level.
+
+    def test_a_NESTED_object_obeys_the_SAME_cap(self):
+        """The nested list used a hardcoded `8` while the top level used `FIELD_CAP`, so the very
+        defect this constant exists to prevent stayed live one level down.
+
+        It was left that way on a measurement that turned out to be the wrong test: across the whole
+        capture corpus exactly one object is ever nested-capped — `stats` inside `GET /health` — and
+        the six fields it hides are node-sync internals (`current_block_hash`, `tip_block_hash`,
+        `utxo_schema_version`, `index_schema_version`, `lock_lambdas`, `estimated_sync_time`) that
+        no deliverable has needed. But "no task needed these particular fields" is a judgement about
+        ONE api and ONE task family, and cria is meant to be agnostic to both. The rule the cap's
+        own comment states does not mention relevance: a field that exists must never read as
+        absent. One cap, one rule, both levels."""
+        line = wf._endpoint_response_fields(self._health_spec(14))[0]
+        self.assertNotIn("more field(s)", line)
+        self.assertIn("n13(integer)", line)          # the last field the old `8` hid
         self.assertIn("stats{", line)
         self.assertTrue(line.rstrip().endswith("}"), line)
+
+    def test_a_NESTED_object_is_still_BOUNDED_and_still_discloses(self):
+        """Sharing the cap is not removing it. A pathological nested object is still cut at
+        FIELD_CAP, and the cut is still disclosed — inside the braces, where it describes the
+        object it applies to rather than the endpoint."""
+        line = wf._endpoint_response_fields(self._health_spec(wf.FIELD_CAP + 3))[0]
+        self.assertIn("…+3 more field(s)}", line)
+        self.assertIn("stats{", line)
+
+    @unittest.skipUnless(os.path.exists(SPEC), "captured spec not present")
+    def test_the_real_spec_now_renders_with_no_elision_at_all(self):
+        """The end state on the document that cost a run: not one `…+N more field(s)` anywhere,
+        at either level. Measured cost of the nested half: 137 characters."""
+        text = "\n".join(wf._endpoint_response_fields(json.load(open(SPEC))))
+        self.assertNotIn("more field(s)", text)

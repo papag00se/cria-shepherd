@@ -117,12 +117,17 @@ class NestedFieldDisclosureTests(unittest.TestCase):
         # with `sub[:8]` — three lines above a comment reading "never a silent slice". A nested field
         # past the cap then read to the coder as "the API does not return it", under a prompt saying
         # "use these EXACT names and nesting; do not guess".
+        # The nested object must EXCEED the cap for there to be a disclosure to slice off. It used
+        # to exceed a hardcoded `8` while the caller passed 30; the nested list now shares the
+        # caller's cap, so the fixture has to out-run that cap instead.
         sch = {"type": "object", "properties": {
             "nested": {"type": "object",
-                       "properties": {f"f{i}": {"type": "string"} for i in range(14)}},
+                       "properties": {f"f{i}": {"type": "string"} for i in range(35)}},
             "other": {"type": "string"}}}
         out = wf._schema_field_summary(sch, {}, 30)
         self.assertTrue(any("more field(s)" in x for x in out), out)
+        # …and it survives INSIDE the braces, which is where the slice used to remove it.
+        self.assertTrue(any(x.startswith("nested{") and "…+5 more field(s)}" in x for x in out), out)
 
 
 class FieldTypeTruthTests(unittest.TestCase):
