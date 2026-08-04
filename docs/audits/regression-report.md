@@ -33,9 +33,24 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 
 ## Run stats
 
-Regenerate any time with `python3 suite/regression_stats.py` (`--md` for this table).
+Regenerate any time with `python3 suite/regression_stats.py` (`--md` for these tables).
 steers = times cria injected a directive/redirect; gates = times cria ran or reattached
-the repo's own checks. Snapshot as of the last finished run:
+the repo's own checks. The model-performance rollup covers each model's last 3 runs in
+any state (it shows current form; the scoreboard above owns what counts).
+
+### Model performance (each model's last 3 runs, any state)
+
+| model | last 3 | avg | best | worst | tok/s | avg min | avg coder calls |
+|---|---|---:|---|---|---:|---:|---:|
+| 🟢 ternary-bonsai | ✅ ¾ ✅ | 3.7/4 | ✅ 4/4 | ¾ 3/4 | 39.8 | 60 | 29 |
+| 🟡 qwopus | ✅ ¼ | 2.5/4 | ✅ 4/4 | ¼ 1/4 | 76.0 | 40 | 84 |
+| 🟠 nemotron-elastic | ¼ ¾ ¾ | 2.3/4 | ¾ 3/4 | ¼ 1/4 | 130.9 | 33 | 101 |
+| 🟠 qwythos | ✅ ⭕ | 2.0/4 | ✅ 4/4 | ⭕ 0/4 | 77.0 | 16 | 49 |
+| 🟠 mellum2 | ¾ ¼ | 2.0/4 | ¾ 3/4 | ¼ 1/4 | 168.8 | 20 | 78 |
+| 🔴 ornith | ⭕ ✅ ⭕ | 1.3/4 | ✅ 4/4 | ⭕ 0/4 | 76.9 | 21 | 74 |
+| 🔴 gemma4 | ⭕ ¼ ¼ | 0.7/4 | ¼ 1/4 | ⭕ 0/4 | 60.6 | 26 | 110 |
+
+### Per-run detail
 
 | model | state | score | min | calls | coder | tok/s | steers | gates | terminal |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|
