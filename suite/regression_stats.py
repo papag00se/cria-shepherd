@@ -85,8 +85,9 @@ def stat_line(r):
     }
 
 
-# Score glyphs: fractions of 4 everywhere (⁰⁄₄ and ⁴⁄₄ composed — unicode only mints ¼ ½ ¾).
-_GLYPH = {0: "⁰⁄₄", 1: "¼", 2: "½", 3: "¾", 4: "⁴⁄₄"}
+# Score glyphs: EXPLICIT fractions of 4, all composed — the reduced ½ hid a 2/4 from the operator
+# ("what about the 2/4 run?"), so every value now reads as x-of-4 with no arithmetic.
+_GLYPH = {0: "⁰⁄₄", 1: "¹⁄₄", 2: "²⁄₄", 3: "³⁄₄", 4: "⁴⁄₄"}
 
 
 def _badge(avg: float) -> str:

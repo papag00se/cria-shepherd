@@ -19,12 +19,12 @@ gates = check runs it triggered.
 
 | model | last 3 | avg tok/s | avg assists | avg min |
 |---|---|---:|---|---:|
-| 🟢 ternary-bonsai | ⁴⁄₄ ¾ ⁴⁄₄ | 39.8 | 🧭 3 · 🔁 1 · 🧪 5 · 🗜️ 3 | 60 |
-| 🟡 nemotron-elastic | ¼ ⁴⁄₄ ⁴⁄₄ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
-| 🟡 qwopus | ⁴⁄₄ ¼ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
+| 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 🧭 3 · 🔁 1 · 🧪 5 · 🗜️ 3 | 60 |
+| 🟡 nemotron-elastic | ¹⁄₄ ⁴⁄₄ ⁴⁄₄ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
+| 🟡 qwopus | ⁴⁄₄ ¹⁄₄ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
-| 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
-| 🟠 gemma4 | ¾ ½ ¼ | 63.4 | 🧭 37 · 🔁 7 · 🧪 12 · 🗜️ 12 | 41 |
+| 🟠 mellum2 | ³⁄₄ ¹⁄₄ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
+| 🟠 gemma4 | ³⁄₄ ²⁄₄ ¹⁄₄ | 63.4 | 🧭 37 · 🔁 7 · 🧪 12 · 🗜️ 12 | 41 |
 | 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
