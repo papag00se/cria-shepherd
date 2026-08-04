@@ -15,6 +15,9 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | ternary-bonsai | off | 3 | **4/4** | ada-handles_ternary-bonsai_codex_poff_1785852998 | fae111a | budget-killed | 7/7 tests, live test, CLI, README — ternary closes 4/4, 3/4, 4/4 |
 | gemma4 | off | 1 | **0/4** | ada-handles_gemma4_codex_poff_1785824758 (SUPERSEDED by the hand-back fix) | ca75dd9 | milestone-miss-15min | walked: cria fault none — model edit-spiral on one file; row stands |
 | gemma4 | off | 2 | **0/4** | ada-handles_gemma4_codex_poff_1785843217 (SUPERSEDED by the hand-back fix) | 2ab7dcb | milestone-miss-15min | walked: cria fault none-to-fix — 70-call f-string spiral; false-camelCase steer counter-evidence recorded to open-threads |
+| gemma4 | off | — | 0/4 | ada-handles_gemma4_codex_poff_1785860144 | 90e684b | milestone-miss-15min | SUPERSEDED by the guess-shape + phantom-path fixes (55df703) — walked, cria fault yes: the authored step invented a route/auth, a steer fabricated a path |
+| gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785861503 | 55df703 | milestone-miss-30min | SUPERSEDED by the reading-step-clearance fix (36e2861) — walked, cria fault yes: the reading step was unclearable, the hand-back never fired |
+| gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785866157 | 36e2861 | milestone-miss-30min | SUPERSEDED by the steer false-fact fixes (61242fc) — walked, cria fault yes: steers cited phantom line numbers and an invented API key |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | 2 | **0/4** | ada-handles_qwythos_codex_poff_1785844343 | 7ec52ff | milestone-miss-15min | walked: cria fault none — blind test interface, script/tests oscillation to the floor; row stands |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
@@ -30,6 +33,17 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 
 ## Notable events
 
+- **2026-08-04 ~11:50 — gemma4's uncaged run proved the fix stack, then cria's steer channel
+  helped bury it.** Run 1785866157: cleanest opening of the campaign (real spec fetched, reading
+  step cleared, hand-back fired, working resolver with passing LIVE tests by call 83). The
+  completion was correctly refused — the tests weren't pytest-discoverable, exactly what the
+  scorer requires — but during the 144-call restructuring spiral that followed, delivered steers
+  cited line numbers past every file's real length five times ("line 245" in a 64-line file) and
+  one invented an API key to argue the task-required live test should stay mocked. Both are
+  doctrine-5b false facts with the ground truth sitting in the author's own prompt. Fixed
+  (61242fc): the false-citation guard now reads bare/from/at line references, and an
+  auth-requirement claim absent from the task triggers one gather-then-ask STANDS/REFUTED call.
+  Row superseded; gemma4 reruns.
 - **2026-08-04 ~10:55 — machine crash voided gemma4's in-flight run.** Run 1785863660 (the first
   on the fully-uncaged code) died with the whole box; no score, no verify, not a cria fault and
   not a counted row. The box came back with cria and the model server healthy; run 1785866157
