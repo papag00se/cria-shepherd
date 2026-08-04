@@ -63,8 +63,6 @@ the repo's own checks. Snapshot as of the last finished run:
 
 counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
 
-counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
-
 ## Notable events
 
 - **2026-08-04 ~12:05 — operator ruling: the four caged-routing pass-2 failures are VOIDED.**
