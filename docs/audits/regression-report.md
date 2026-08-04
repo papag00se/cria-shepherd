@@ -17,15 +17,15 @@ gates = check runs it triggered.
 
 ### Model performance (each model's last 3 runs, any state)
 
-| model | last 3 | avg tok/s | avg assists | avg min |
-|---|---|---:|---|---:|
-| 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 🧭 3 · 🔁 1 · 🧪 5 · 🗜️ 3 | 60 |
-| 🟡 nemotron-elastic | ¹⁄₄ ⁴⁄₄ ⁴⁄₄ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
-| 🟡 qwopus | ⁴⁄₄ ¹⁄₄ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
-| 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
-| 🟠 mellum2 | ³⁄₄ ¹⁄₄ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
-| 🟠 gemma4 | ³⁄₄ ²⁄₄ ¹⁄₄ | 63.4 | 🧭 37 · 🔁 7 · 🧪 12 · 🗜️ 12 | 41 |
-| 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
+| model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
+| 🟡 nemotron-elastic | ¹⁄₄ ⁴⁄₄ ⁴⁄₄ | 130.9 | 14 | 7 | 33 | 6 | 33 |
+| 🟡 qwopus | ⁴⁄₄ ¹⁄₄ | 76.0 | 10 | 6 | 14 | 10 | 40 |
+| 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ ²⁄₄ | 79.0 | 12 | 3 | 11 | 4 | 15 |
+| 🟠 mellum2 | ³⁄₄ ¹⁄₄ | 168.8 | 16 | 0 | 44 | 8 | 20 |
+| 🟠 gemma4 | ³⁄₄ ²⁄₄ ¹⁄₄ | 63.4 | 37 | 7 | 12 | 12 | 41 |
+| 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 7 | 5 | 11 | 6 | 21 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -57,8 +57,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
 | gemma4 | counted | 2/4 | 31 | 310 | 147 | 64.1 | 24 | 11 | milestone-miss-30min |
 | gemma4 | counted | 1/4 | 31 | 202 | 137 | 62.6 | 32 | 9 | milestone-miss-30min |
+| qwythos | counted | 2/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
 
-counted runs: 11 · avg wall 38 min · avg coder calls 84 · full-pass rate 7/11
+counted runs: 12 · avg wall 36 min · avg coder calls 82 · full-pass rate 7/12
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -78,6 +79,7 @@ counted runs: 11 · avg wall 38 min · avg coder calls 84 · full-pass rate 7/11
 | gemma4 | off | 2 | **1/4** | ada-handles_gemma4_codex_poff_1785875123 | 61242fc | milestone-miss-30min | walked: cria fault none — handler/handle typo warfare, self-typo'd handle, self-blinding pass/fail pipe; false-citation guard withheld 5 fabricated steers; row STANDS |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
+| qwythos | off | 2 | **2/4** | ada-handles_qwythos_codex_poff_1785877469 | 61242fc | exited | walked: cria fault none — reports the stake address as the resolved address (no addr1 in output), no live-test artifact; guess-shape gate re-authored a poisoned step correctly; row STANDS |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
 | qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |

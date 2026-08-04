@@ -113,20 +113,17 @@ def model_summary(lines):
         last3 = by_model[m][-3:]
         scores = [int(s["score"].split("/")[0]) for s in last3]
         avg = sum(scores) / len(scores)
-        assists, assist_total = [], 0.0
-        for icon, _label, _match in ASSIST_FAMILIES:
-            mean = sum(s["assists"][icon] for s in last3) / len(last3)
-            assist_total += mean
-            if round(mean):
-                assists.append(f"{icon} {round(mean)}")
+        # One column per assist family (the single joined cell could never line up).
+        fam = {icon: round(sum(s["assists"][icon] for s in last3) / len(last3))
+               for icon, _label, _match in ASSIST_FAMILIES}
         out.append({
             "model": m,
             "_avg": avg,
-            "_assists": assist_total,
+            "_assists": sum(fam.values()),
             "badge": _badge(avg),
             "trend": " ".join(_GLYPH[n] for n in scores),
             "tok_s": round(sum(s["tok_s"] for s in last3) / len(last3), 1),
-            "assists": " · ".join(assists) or "—",
+            "fam": fam,
             "min": round(sum(s["min"] for s in last3) / len(last3)),
         })
     # Operator's ranking: highest completion rate, then shortest time, then least assists.
@@ -135,9 +132,12 @@ def model_summary(lines):
 
 def markdown(lines, models) -> str:
     legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
+    icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
     out = ["### Model performance (each model's last 3 runs, any state)", ""]
-    out += ["| model | last 3 | avg tok/s | avg assists | avg min |", "|---|---|---:|---|---:|"]
-    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | {s['assists']} | {s['min']} |"
+    out += ["| model | last 3 | avg tok/s | " + " | ".join(icons) + " | avg min |",
+            "|---|---|---:|" + "---:|" * len(icons) + "---:|"]
+    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
+            + " | ".join(str(s['fam'][i]) for i in icons) + f" | {s['min']} |"
             for s in models]
     out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
     out += ["| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |",
@@ -176,11 +176,14 @@ def main() -> int:
     if "--md" in sys.argv:
         print(markdown(lines, models))
     else:
+        icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
         print("MODEL PERFORMANCE — each model's last 3 runs, any state")
-        print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  assists")
+        print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  "
+              + " ".join(f"{i:>4}" for i in icons))
         for s in models:
             print(f"{s['badge']:<3}{s['model']:<17}{s['trend']:<12}"
-                  f"{s['tok_s']:>6} {s['min']:>4}  {s['assists']}")
+                  f"{s['tok_s']:>6} {s['min']:>4}  "
+                  + " ".join(f"{s['fam'][i]:>4}" for i in icons))
         print(f"\nassists per run: {legend}")
         print()
         print("PER-RUN DETAIL")
