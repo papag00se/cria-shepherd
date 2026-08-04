@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-02 09:32:21 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-03 21:42:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,7 +8,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running.** Next action: **walk** `ada-handles_mellum2_codex_poff_1785686596` (capture `/home/jesse/.cria/calls/20260802T090329-019fc337-4fd6-7472-af0b-a348e8fb002c`), then write `## ada-handles_mellum2_codex_poff_1785686596` into `docs/audits/ladder-walk.md`.
+**Nothing running.** Next action: **walk** `ada-handles_fabliq_codex_pon_1785787074` (capture `/home/jesse/.cria/calls/20260803T125805-019fc934-72f5-7701-bb8c-4a7d529041b0`), then write `## ada-handles_fabliq_codex_pon_1785787074` into `docs/audits/ladder-walk.md`.
 
 ## Ladder
 
@@ -19,10 +19,10 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 19 | 3/4 | 📖 needs walk |
+| 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 22 | 4/4 | 🟢 PASSED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
-| 8 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | on | 0 | — | ⬜ not started |
-| 9 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 0 | — | ⬜ not started |
+| 8 | fabliq | 8B/A1B | `lfm2moe 32/4` | moe | on | 6 | 1/4 | 📖 needs walk |
+| 9 | zaya1 | 8.4B/A760M | `zaya 16/1` | moe | off | 1 | 0/4 | ⛔ BLOCKED |
 
 ## Attempts
 
@@ -53,25 +53,35 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 | 08-02 08:39 | mellum2 | 3/4 | exited | — | 53 | 175.0 | `ada-handles_mellum2_codex_poff_1785685170` |
 | 08-02 08:49 | mellum2 | 3/4 | exited | — | 161 | 168.0 | `ada-handles_mellum2_codex_poff_1785685763` |
 | 08-02 09:03 | mellum2 | 2/4 | exited | — | 88 | 173.6 | `ada-handles_mellum2_codex_poff_1785686596` |
+| 08-02 10:52 | mellum2 | 2/4 | exited | 15m:1✓ | 166 | 162.9 | `ada-handles_mellum2_codex_poff_1785693138` |
+| 08-02 16:43 | mellum2 | 2/4 | exited | — | 34 | 165.7 | `ada-handles_mellum2_codex_poff_1785714194` |
+| 08-02 17:52 | mellum2 | 4/4 | exited | 15m:4✓ | 111 | 173.5 | `ada-handles_mellum2_codex_poff_1785718325` |
+| 08-02 18:13 | zaya1 | 0/4 | milestone-miss-15min | 15m:0✗ | 13 | 49.8 | `ada-handles_zaya1_codex_pon_1785719577` |
+| 08-02 18:43 | fabliq | 0/4 | milestone-miss-15min | 15m:0✗ | 267 | 218.4 | `ada-handles_fabliq_codex_pon_1785721353` |
+| 08-02 19:59 | fabliq | 0/4 | milestone-miss-15min | 15m:0✗ | 255 | 268.9 | `ada-handles_fabliq_codex_pon_1785725976` |
+| 08-02 21:41 | fabliq | 1/4 | milestone-miss-30min | 15m:1✓ 30m:1✗ | 280 | 245.4 | `ada-handles_fabliq_codex_pon_1785732102` |
+| 08-03 08:36 | fabliq | 0/4 | crashed-early | — | 21 | 264.9 | `ada-handles_fabliq_codex_pon_1785771361` |
+| 08-03 11:22 | fabliq | 0/4 | milestone-miss-15min | 15m:0✗ | 221 | 243.9 | `ada-handles_fabliq_codex_pon_1785781354` |
+| 08-03 12:58 | fabliq | 0/4 | milestone-miss-15min | 15m:0✗ | 115 | 248.7 | `ada-handles_fabliq_codex_pon_1785787074` |
 
 ## Fixes landed during the ladder
 
 ```
-ee13db6 docs: drop the invented word 'oracle' — it is just suite/ladder_status.py
-782479e ladder: flip mellum2 to planner OFF — the hypothesis loses on this model
-f258a83 fix(verify): the resolver's COUNT check could never fail
-d466769 fix(replan): delete the regex guard; tell the judge the invariant it was breaking
-5d7ba9e fix(suite): the live probe I just shipped would have blocked every run forever
-e680f6b fix(suite): refuse to start, and refuse to score, when the live service throttles us
-c4e34b9 fix(replan): bound the artifact match — adjacency was too tight, the sentence too loose
-6f716ef fix(replan): narrow the artifact protection I added — it was protecting junk
-eb9a1fe fix(probeparse): my stdlib fix was incomplete — cover every parser, not just pytest
-8c85646 fix(replan): the noise judge may not delete a step that AUTHORS a file
-151435b obs(loop): log WHICH steps the noise judge deleted, not just how many
-69efeaf fix(probeparse): stop pointing the coder at Python's standard library
-78d5d05 fix(replan): refuse a re-derived step that names a CRIA TOOL as the product's code
-7bbf886 feat(verify): show the critic when a step's quoted values are absent from the file
-895651a fix(loop): the unexecuted-write guard could not see a pasted README
+ef0b771 fix(loop): the plan-off reading step was never driven — synthetic means DEGENERATE, and 2 items is not
+6085276 fix(research): a refused reading step is re-asked once, with the defect named
+7c228e6 fix(research): a reading step that PRODUCES something is not a reading step
+228e672 feat(loop): hand the reading fact to the step critic, the one authority that reads the workspace
+9c44ed0 fix(loop): the reading check completed steps it could not verify — it now only reports
+09f7535 fix(loop): the reading check was invisible when it declined, so it could not be verified
+d8de3c4 fix(research): do not ask a small model to re-decide a fact cria already holds
+86bf62c fix(research): research is reading, not fetching — count disk reads, and let the model say NONE
+68912bf feat(research): ask whether the reading happened, and give plan-off a reading step to finish
+878ead2 fix(planner,loop): the noise judge deleted a README the task asked for, and coverage passed it
+f2bb013 fix(focustrim): a repeated call collapsed in silence re-asks a temperature-0 model the same question
+76cad3a fix(webfetch): the nested field list obeyed a hardcoded 8 while the top level obeyed the cap
+78c2876 docs(webfetch): the nested field cap's measurement, finished — it stays
+12b8bd2 fix(loop): a line the MODEL wrote in cria's own voice reached the judge as its summary
+07d877c fix(replay): the integrity raise main() turned into "would fire on 0/86 runs (0%)"
 ```
 
 ---

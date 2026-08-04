@@ -69,6 +69,17 @@ BLOCKED_AFTER = 5
 #
 # Keyed by model name -> the reason, shown in the table and in the NEXT line. Removing the entry is
 # how the model rejoins the ladder; nothing else needs changing.
+# A model the OPERATOR has taken out of rotation — not blocked, not failed out, just parked. It
+# stays in LADDER (the table keeps telling the truth about its history) but the ladder neither runs
+# it nor demands walks of its remaining failures. Removing the entry is how it rejoins.
+PARKED = {
+    "fabliq": "operator call 2026-08-03: out of rotation after 12 attempts, best 1/4. The evening's "
+              "walks moved the failure from 'trapped on an unreachable research step' (114 of 195 "
+              "calls on step 1) to 'reads the spec, then codes from memory anyway' — real progress, "
+              "no pass. The reading-step machinery it drove into existence (cria/research.py, "
+              "loop._plan_off_session) now benefits every model; fabliq itself waits.",
+}
+
 BLOCKED_ON_TOOLING = {
     "zaya1": "build: 38 B-params/sec vs 239-1312 for every other model on this GPU — fully resident "
              "(81/81 layers) yet 10 graph splits + a 104 MiB host compute buffer, so ops leave the "
@@ -204,6 +215,8 @@ def state_for(task):
             "blocked": (not passed) and (name in BLOCKED_ON_TOOLING
                                          or (strikes(rs, sections) >= BLOCKED_AFTER and not unwalked)),
             "blocked_on": BLOCKED_ON_TOOLING.get(name, ""),
+            "parked": name in PARKED,
+            "parked_why": PARKED.get(name, ""),
             "running": running == name,
         })
     return out, running
@@ -220,8 +233,8 @@ def main() -> None:
 
     # WALK BEFORE RUN, always: a scored run already holds its evidence and walking costs no GPU,
     # while starting another run buries that capture under a newer one.
-    to_walk = [c for c in cells if c["needs_walk"]]
-    live = [c for c in cells if not c["passed"] and not c["blocked"]]
+    to_walk = [c for c in cells if c["needs_walk"] and not c["parked"]]
+    live = [c for c in cells if not c["passed"] and not c["blocked"] and not c["parked"]]
     complete = not live
     action, target = "none", None
     if running:
@@ -242,12 +255,18 @@ def main() -> None:
         print("-" * 96)
         for c in cells:
             st = ("RUNNING" if c["running"] else "PASSED 4/4" if c["passed"] else
+                  "PARKED (operator)" if c["parked"] else
                   ("BLOCKED (tooling)" if c["blocked_on"] else "BLOCKED") if c["blocked"] else
                   "needs walk" if c["needs_walk"] else
                   "not started" if not c["attempts"] else "ready to rerun")
             best = f"{c['best']:.0f}" if c["best"] is not None else "—"
             print(f"{c['model']:18s} {c['params']:12s} {c['arch']:22s} {c['kind']:6s} "
                   f"{c['planner']:5s} {c['attempts']:5d} {best:>5s}  {st}")
+        for c in cells:
+            if c["parked"]:
+                print(f"\n  {c['model']} is PARKED by the operator — no runs, no walk demands:\n"
+                      f"    {c['parked_why']}\n"
+                      f"    It rejoins by removing the PARKED entry in suite/ladder_status.py.")
         for c in cells:
             if c["blocked_on"]:
                 print(f"\n  {c['model']} is BLOCKED ON TOOLING, not on the model or on cria:\n"
@@ -258,9 +277,9 @@ def main() -> None:
             print(f"IN FLIGHT: {running} — do not start another run, and do not edit cria or its "
                   f"prompts (they load lazily; an edit changes the RUNNING system)")
         elif complete:
-            blocked = [c["model"] for c in cells if c["blocked"]]
-            print(f"{args.language.upper()} COMPLETE" if not blocked else
-                  f"{args.language.upper()} DONE EXCEPT BLOCKED: {', '.join(blocked)} — "
+            out_of_play = [c["model"] for c in cells if c["blocked"] or c["parked"]]
+            print(f"{args.language.upper()} COMPLETE" if not out_of_play else
+                  f"{args.language.upper()} DONE EXCEPT PARKED/BLOCKED: {', '.join(out_of_play)} — "
                   f"not a pass, and the language is NOT finished")
         elif action == "walk":
             print(f"NEXT: WALK {target['next_walk']}")
