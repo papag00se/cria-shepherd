@@ -40,7 +40,8 @@ from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
-from .planner import _extract_cwd, missing_deliverables, reasoned_noise_indices
+from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
+                      surviving_noise_drops)
 from .searchloop import normalize_search
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
 from .toolargs import PATH_KEYS, parse_args
@@ -588,6 +589,15 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     # all-noise re-derivation → None (keep the prior plan), never an empty plan.
     _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
     drop = reasoned_noise_indices(_ask, task, cleaned, facts=facts)
+    # PER-STEP, FAIL-CLOSED: a deletion that would lose a deliverable is refused on its own, and the
+    # rest of the verdict still applies (planner.surviving_noise_drops). The broad coverage check
+    # below is NOT this check — it ran in the walked run and passed a tail whose README step had just
+    # been deleted, because "does this plan cover everything?" over five steps skims where "does
+    # deleting THIS step lose something?" does not.
+    if drop:
+        drop, refused = surviving_noise_drops(_ask, task, cleaned, drop)
+        for i, lost in refused.items():
+            rlog.emit("loop.replan_noise_refused", level="warn", lost=lost, step=cleaned[i][:160])
     kept = [s for i, s in enumerate(cleaned) if i not in drop]
     # SAY WHAT THE JUDGE DID. The initial plan reports this (plan.noise_dropped / plan.noise_all_kept);
     # the re-derivation ran the same judge and reported nothing, so a tail that came back carrying a

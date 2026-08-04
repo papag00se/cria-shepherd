@@ -927,6 +927,7 @@ class NoiseStepDropTests(unittest.TestCase):
                           '2. Write the fibonacci module fib.py.\n3. Add unit tests in test_fib.py.'),  # plan
             _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop step 1 (pure plumbing)
+            _content_resp('{"lost": ""}'),  # would that deletion lose a deliverable? no
             _content_resp('NONE'),     # which API? none → no research question
         ])
         rlog = _Rlog()
@@ -945,6 +946,7 @@ class NoiseStepDropTests(unittest.TestCase):
                           "2. Write resolver.py that calls the endpoint the spec names\n3. Add unit tests"),
             _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop the bare grep command
+            _content_resp('{"lost": ""}'),  # would that deletion lose a deliverable? no
             _content_resp('NONE'),     # which API? none
         ])
         rlog = _Rlog()
@@ -961,6 +963,7 @@ class NoiseStepDropTests(unittest.TestCase):
                           "2. Write resolver.py"),
             _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop the step that dictates literal code
+            _content_resp('{"lost": ""}'),  # would that deletion lose a deliverable? no
             _content_resp('NONE'),
         ])
         rlog = _Rlog()
@@ -976,6 +979,8 @@ class NoiseStepDropTests(unittest.TestCase):
             _content_resp('1. Set up the development environment.\n2. Install the dependencies.'),
             _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1, 2'),     # NOISE? both — but cria never empties the plan
+            _content_resp('{"lost": ""}'),  # per-step: deleting step 1 loses no deliverable
+            _content_resp('{"lost": ""}'),  # per-step: nor step 2 — both are pure plumbing
             _content_resp('NONE'),
         ])
         rlog = _Rlog()
@@ -1326,7 +1331,8 @@ class NoiseDropCoverageTests(unittest.TestCase):
                           "2. Add unit tests in test_resolver.py\n3. Write README.md"),
             _content_resp('{"missing": []}'),                       # submit-time coverage: clean
             _content_resp('1, 2'),                                  # noise judge eats the real work
-            _content_resp('{"missing": ["the script", "unit tests"]}'),  # post-drop coverage: NOT clean
+            _content_resp('{"lost": "the script"}'),                # per-step: step 1 IS the script
+            _content_resp('{"lost": "unit tests"}'),                # per-step: step 2 IS the tests
             _content_resp('NONE'),
         ])
         rlog = _Rlog()
@@ -1335,6 +1341,34 @@ class NoiseDropCoverageTests(unittest.TestCase):
         texts = [it.text for it in plan.items]
         self.assertEqual(len(texts), 3)                             # the deletion did NOT land
         self.assertTrue(any("resolver.py" in t for t in texts))
+        # It is now stopped ONE GATE EARLIER, per deleted step, and each refusal names what it saved.
+        # The broad post-drop coverage check below is still there and still enforced — it just never
+        # gets the chance here, which is the point: it is the check that passed a deleted README in
+        # run 1785801960, so it is no longer the only thing standing between a noise verdict and a
+        # lost deliverable.
+        refused = [ev for k, ev in rlog.events if k == "plan.noise_refused"]
+        self.assertEqual(len(refused), 2)
+        self.assertEqual({r["lost"] for r in refused}, {"the script", "unit tests"})
+        self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
+    def test_the_broad_coverage_backstop_still_refuses_what_the_per_step_check_waves_through(self):
+        """Both gates, in order. The per-step check says deleting step 1 loses nothing; the
+        post-drop coverage check disagrees about the plan as a whole and refuses. Neither replaces
+        the other — this is the run-0728-m10 hole, still closed."""
+        prov = _ScriptedProvider([
+            _tool_resp("web_search", {"query": "background"}),
+            _content_resp("1. Write resolver.py calling the spec's endpoint\n"
+                          "2. Add unit tests in test_resolver.py\n3. Write README.md"),
+            _content_resp('{"missing": []}'),                       # submit-time coverage: clean
+            _content_resp('1'),                                     # noise judge drops step 1
+            _content_resp('{"lost": ""}'),                          # per-step: nothing lost, it says
+            _content_resp('{"missing": ["the script"]}'),           # coverage disagrees → refuse
+            _content_resp('NONE'),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(_msgs("script + tests + README"), rlog)
+        self.assertEqual(len(plan.items), 3)                        # the deletion did NOT land
         self.assertTrue(any(k == "plan.noise_uncovered" for k, _ in rlog.events))
         self.assertFalse(any(k == "plan.noise_dropped" for k, _ in rlog.events))
 
@@ -1344,6 +1378,7 @@ class NoiseDropCoverageTests(unittest.TestCase):
             _content_resp("1. Set up the environment\n2. Write resolver.py\n3. Add tests"),
             _content_resp('{"missing": []}'),                       # submit-time coverage
             _content_resp('1'),                                     # drop the plumbing
+            _content_resp('{"lost": ""}'),                          # loses no deliverable
             _content_resp('{"missing": []}'),                       # post-drop coverage: still clean
             _content_resp('NONE'),
         ])

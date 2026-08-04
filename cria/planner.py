@@ -575,6 +575,61 @@ def missing_deliverables(ask, task: str, steps: list[str]) -> list[str]:
     return _parse_missing_verdict(ans)
 
 
+def deliverable_lost_by_drop(ask, task: str, dropped: str, remaining: list[str]) -> str:
+    """The thing the REQUEST asks for that only ``dropped`` produces — "" when deleting it loses
+    nothing. One focused question per deleted step, and the last word on whether it goes.
+
+    THE BROAD COVERAGE CHECK IS NOT ENOUGH, and this is not a second opinion — it is a different
+    question. :func:`missing_deliverables` asks "does this whole plan cover everything?", an OPEN
+    audit over every step at once, and it is the check that was already running when the noise judge
+    deleted a README. Walked on ada-handles_fabliq_codex_pon_1785801960 (00:14:24): the judge dropped
+
+        "Add a README.md file explaining how to install dependencies (`pip install requests
+         pytest`), run the script with an Ada Handle, and execute unit tests."
+
+    — a deliverable the task names in its own words — because a README that explains how to install
+    necessarily contains `pip install`, which reads as environment setup. `missing_deliverables` then
+    ran over the surviving 5 steps and returned NOTHING MISSING. The plan went 8 steps to 6 and no
+    step produced a README again. So the answer cannot be to ask the same open question harder.
+
+    This asks about ONE step, names it, and shows what would remain — the narrow question a weak
+    reasoner can actually hold (principle 9's corollary: one focused question beats a broad one doing
+    the same work). The prompt carries the specific trap by name, because it is the trap: a step can
+    DESCRIBE installing while its action is producing documentation.
+
+    IT FAILS CLOSED, unlike every other judge in this file. An unparseable or empty answer KEEPS the
+    step. The other judges take the safe null in the direction of doing nothing because their action
+    is to hand a plan back or invent a requirement; this one's action is a DELETION, and the
+    asymmetry is total — keeping a plumbing step costs one turn, while deleting a deliverable means
+    the work never happens and nothing later notices (#2: the dangerous class of intervention is the
+    one that removes correct content). Measured in cria's own logs: this noise judge has fired 156
+    times across every recorded day and dropped at least one step 75 times; it deleted deliverables
+    twice in this ladder alone, once ending a run at 1/4 with "unit tests" and "live test" gone."""
+    ans = ask(prompts.load("plan_drop_check"),
+              prompts.render("plan_drop_check_user", task=task, dropped=dropped,
+                             remaining="\n".join(f"- {s}" for s in remaining) or "(none)"))
+    obj = extract_json_object(strip_think(ans or ""))
+    if not isinstance(obj, dict) or not isinstance(obj.get("lost"), str):
+        return "unreadable verdict"   # fail CLOSED — the step stays
+    return obj["lost"].strip()
+
+
+def surviving_noise_drops(ask, task: str, steps: list[str], drop: set) -> tuple[set, dict]:
+    """``drop`` minus every index whose deletion would lose a deliverable — and what each refusal
+    saved, for the caller to trace. Deciding one step at a time (rather than refusing the whole drop
+    set on one bad member) keeps the genuine plumbing removals that share the verdict: in the walked
+    run the same verdict carried a correct venv removal and the README deletion."""
+    kept_drop, refused = set(), {}
+    for i in sorted(drop):
+        remaining = [s for j, s in enumerate(steps) if j != i and j not in drop]
+        lost = deliverable_lost_by_drop(ask, task, steps[i], remaining)
+        if lost:
+            refused[i] = lost
+        else:
+            kept_drop.add(i)
+    return kept_drop, refused
+
+
 def reasoned_noise_indices(ask, task: str, steps: list[str], facts: str = "") -> set:
     """Indices of NOISE steps to DROP from a plan — pure environment-plumbing, a bare shell command,
     dictated literal code, or a FABRICATED/SPECULATIVE guess (a made-up endpoint/path/field the coder
@@ -723,6 +778,14 @@ class Planner:
         # focused safety judgment for what slips through. Never empties the plan (an all-noise verdict is
         # kept as-is — the step critic still guards every step).
         drop = self._reasoned_noise_indices(task, steps, rlog)
+        # Per-step, fail-closed: refuse just the deletions that would lose a deliverable and let the
+        # rest of the verdict stand (see planner.deliverable_lost_by_drop for what the broad coverage
+        # check below missed, and why this is a different question rather than a second opinion).
+        if drop and self._role is not None:
+            drop, refused = surviving_noise_drops(
+                lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps, drop)
+            for i, lost in refused.items():
+                rlog.emit("plan.noise_refused", level="warn", lost=lost, step=steps[i][:160])
         kept = [s for i, s in enumerate(steps) if i not in drop]
         if drop and kept:
             # ORDER MATTERS (run 0728-m10): coverage judges the plan at SUBMIT time, so a noise drop

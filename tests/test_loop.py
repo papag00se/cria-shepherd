@@ -370,7 +370,8 @@ class LivingPlanTests(unittest.TestCase):
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
             _Scripted([_replan(["Call /resolve/{handle} and return the address", "Write unit tests"]),
-                       _text("1")]),
+                       _text("1"),
+                       _text('{"lost": ""}')]),   # per-step: the guessed route is not a deliverable
             self._role(), "resolve an Ada Handle via api.handle.me", "- researched", "- old", "ev", _Rlog())
         self.assertFalse(any("/resolve/{handle}" in s for s in steps))  # speculative step dropped, not hardened
         self.assertTrue(any("unit tests" in s for s in steps))          # real steps survive
@@ -404,7 +405,8 @@ class LivingPlanTests(unittest.TestCase):
         steps = reassess_remaining(
             _Scripted([_replan(["grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json",
                                 "Write the resolver using the endpoint the spec names"]),
-                       _text("1")]),
+                       _text("1"),
+                       _text('{"lost": ""}')]),   # per-step: a bare grep produces no deliverable
             self._role(), "resolve via api.handle.me", "- researched", "- old", "ev", _Rlog())
         self.assertFalse(any(s.startswith("grep") for s in steps))
         self.assertTrue(any("resolver" in s for s in steps))
@@ -414,7 +416,8 @@ class LivingPlanTests(unittest.TestCase):
         # a re-derivation the reasoner judges ENTIRELY noise (script "1, 2") → None (keep the plan we had),
         # never an empty plan
         out = reassess_remaining(
-            _Scripted([_replan(["grep -n x f.json", "cat ./f.py"]), _text("1, 2")]),
+            _Scripted([_replan(["grep -n x f.json", "cat ./f.py"]), _text("1, 2"),
+                       _text('{"lost": ""}'), _text('{"lost": ""}')]),  # neither is a deliverable
             self._role(), "task", "- done", "- old", "ev", _Rlog())
         self.assertIsNone(out)
 
@@ -4913,7 +4916,8 @@ class ReplanNoiseIsVisibleTests(unittest.TestCase):
         from cria.loop import reassess_remaining
         rlog = _Rlog()
         # re-derive returns two steps; the noise judge drops the first
-        chat = _Scripted([_replan(["grep -n x file", "Write the resolver"]), _text("1")])
+        chat = _Scripted([_replan(["grep -n x file", "Write the resolver"]), _text("1"),
+                          _text('{"lost": ""}')])   # per-step: a bare grep produces no deliverable
         out = reassess_remaining(chat, self._role(), "build it", "- step 1", "- old", "ev", rlog)
         self.assertEqual(out, ["Write the resolver"])
         self.assertIn("loop.replan_noise", rlog.kinds())
