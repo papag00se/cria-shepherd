@@ -3839,3 +3839,58 @@ gate-verified green) skip the extra probe — no duplicate pytest run.
 
 Model-attributable residue (not cria's to fix): the three blind test bugs at 0013, and the judges'
 verdict quality. With the gate in the path, the judges no longer decide alone.
+
+## ada-handles_gemma4_codex_poff_1785824758
+
+REGRESSION1 campaign, gemma4 run 1/3 on `ca75dd9`. Score **0/4**, terminal `milestone-miss-15min`
+(942 s, 91 calls). Capture `~/.cria/calls/20260803T232619-019fcb73-9c86-7cd0-bd47-fdd627b648e0` —
+walked in full, calls 0001–0091 in order, paired with cria's event log for the session.
+
+### The run in one paragraph
+
+Research was clean and fast (homepage → openapi.json → spill with the full endpoint/shape ledger,
+~30 s). The model wrote a working-shaped 139-line `src/handle.py` with inline mock tests by minute
+3, then spent the ENTIRE remaining run in an edit spiral on that one file: inexact `edit_file`
+old_strings, duplicate `get_with_retry` definitions, a `handler`/`handle` typo, tests broken by its
+own rewrite and finally `rm`'d at call 0090, one minute before the milestone check. The harness ran
+out of context at 9.5 min (the repeated whole-file rewrites filled the 49K window) and compacted;
+the spiral resumed identically on the other side. At 15 min: no runnable CLI, no tests, no live
+test, no README → 0/4, floor 1 missed, killed.
+
+### What cria did (checked, in order)
+
+- Repeat-fetch collapse, spill gating, dirguard (two typo'd out-of-workspace paths denied),
+  edit-recovery (3 failed edits → forced whole-file rewrite with the exact on-disk content, twice),
+  repetition redirects (3), wheel-spin probes (2), periodic gates (4, one spoke), flail steers
+  (3, then capped: `loop.flail_exhausted`), self-compaction, compaction rerouting to the compactor
+  role — all fired where designed and all grounded in real state.
+- The living replan at 06:29 (thrash trigger, one-shot) turned the 2-step plan into 4 concrete
+  steps (fix handle.py / run pytest / live test / README). Reasonable structure; the coder then
+  never finished step 1, and the step framing kept it there by design ("I'm on step 1 of 4 — only
+  do this one fix" appears verbatim in its reasoning at 0057). A README alone would have cleared
+  the 15-min floor.
+- The dictated-code judge caught and dropped one steer that pasted a replacement function
+  (`loop.steer_dictated_code`, call 0029/0030). The steer-vs-thinking recovery, truncation guard,
+  and edit-failure disclosures all behaved.
+
+### Observations that are NOT this run's cause (recorded for prevalence)
+
+1. Flail steer 0007 invented line ranges ("roughly 5008–5200 for the Handle schema") — the
+   line-citation check covers only `path.py:N` / "lines N–M of file.py" shapes. The coder ignored
+   the numbers; no damage here.
+2. Flail steer 0013 carried pseudo-code with an invented token (`get_with_retry(f"{base.com}/…")`).
+   The dictation pre-filter's inline-call arm matches only DOTTED calls (`pkg.fn(...)`), so an
+   undotted call never reaches the one-question judge. The coder did not transcribe `base.com`;
+   the file uses `base_url`. urlgrounding deliberately scopes to `https?://` URLs and declines
+   identifier policing (documented, measured rationale in cria/urlgrounding.py).
+3. The replan-noise judge's reasoning-off retry emitted garbage ("10296752880400") → parsed as
+   no-noise → all 4 steps kept (fail-open by design; the steps were in fact reasonable).
+4. `loop.compaction_reframed` logs every turn post-compaction — reframe_compaction re-normalizes
+   the compaction turn that stays in history. By design, just chatty.
+
+**cria fault: none** — every guard fired where built, the steers that carried small inventions were
+not transcribed and not load-bearing, and the 0/4 is the model spiraling on `edit_file` exactness
+and file-state tracking inside the new 2-item plan-off routing. This row stands as evidence about
+gemma4 on current main. If runs 2/3 die the same way — pinned on step 1 while deliverables that
+would clear the milestone sit unstarted in later steps — THAT aggregate (the routing shape, not any
+one guard) is the thing to bring back as a finding with three runs of data behind it.

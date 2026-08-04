@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-03 22:22:51 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-03 23:50:45 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -67,6 +67,9 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+2e7de81 docs(regression): ternary-bonsai 1/3 = 4/4 on a17a7c1 — the backstop declined the same early finish
+ca75dd9 docs(regression): run 1 walked + superseded; campaign restarts ternary-bonsai on a17a7c1
+a17a7c1 fix(loop): a session NEVER completes on judgment alone — the plan-ON end runs the checks it owns
 3a145c6 chore(suite): fabliq run-kill tails + ladder report refresh from parking
 fd4ca0a fix(pytest): collection is tests/ by declaration, not by __pycache__ accident
 456a02d feat(suite): park fabliq; the regression campaign — 7 passing models, 3 runs each, one truth tool
@@ -79,9 +82,6 @@ ef0b771 fix(loop): the plan-off reading step was never driven — synthetic mean
 d8de3c4 fix(research): do not ask a small model to re-decide a fact cria already holds
 86bf62c fix(research): research is reading, not fetching — count disk reads, and let the model say NONE
 68912bf feat(research): ask whether the reading happened, and give plan-off a reading step to finish
-878ead2 fix(planner,loop): the noise judge deleted a README the task asked for, and coverage passed it
-f2bb013 fix(focustrim): a repeated call collapsed in silence re-asks a temperature-0 model the same question
-76cad3a fix(webfetch): the nested field list obeyed a hardcoded 8 while the top level obeyed the cap
 ```
 
 ---
