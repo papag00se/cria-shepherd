@@ -20,8 +20,8 @@ gates = check runs it triggered.
 | model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 |
+| 🟡 qwopus | ⁴⁄₄ ¹⁄₄ ⁴⁄₄ | 79.1 | 8 | 4 | 10 | 7 | 28 |
 | 🟡 nemotron-elastic | ¹⁄₄ ⁴⁄₄ ⁴⁄₄ | 130.9 | 14 | 7 | 33 | 6 | 33 |
-| 🟡 qwopus | ⁴⁄₄ ¹⁄₄ | 76.0 | 10 | 6 | 14 | 10 | 40 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ ²⁄₄ | 79.0 | 12 | 3 | 11 | 4 | 15 |
 | 🟠 mellum2 | ³⁄₄ ¹⁄₄ | 168.8 | 16 | 0 | 44 | 8 | 20 |
 | 🟠 gemma4 | ³⁄₄ ²⁄₄ ¹⁄₄ | 63.4 | 37 | 7 | 12 | 12 | 41 |
@@ -58,8 +58,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | counted | 2/4 | 31 | 310 | 147 | 64.1 | 24 | 11 | milestone-miss-30min |
 | gemma4 | counted | 1/4 | 31 | 202 | 137 | 62.6 | 32 | 9 | milestone-miss-30min |
 | qwythos | counted | 2/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
+| qwopus | counted | 4/4 | 5 | 34 | 17 | 85.4 | 3 | 3 | exited |
 
-counted runs: 12 · avg wall 36 min · avg coder calls 82 · full-pass rate 7/12
+counted runs: 13 · avg wall 33 min · avg coder calls 77 · full-pass rate 8/13
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -82,6 +83,7 @@ counted runs: 12 · avg wall 36 min · avg coder calls 82 · full-pass rate 7/12
 | qwythos | off | 2 | **2/4** | ada-handles_qwythos_codex_poff_1785877469 | 61242fc | exited | walked: cria fault none — reports the stake address as the resolved address (no addr1 in output), no live-test artifact; guess-shape gate re-authored a poisoned step correctly; row STANDS |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
 | qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
+| qwopus | off | 2 | **4/4** | ada-handles_qwopus_codex_poff_1785878574 | 61242fc | exited | 11/11 unit tests, dedicated live-test file (provably live), CLI, README — 5 minutes, 34 calls: the fastest full pass of the campaign |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785830161 | 59e710a | milestone-miss-15min | SUPERSEDED by the confirm-applicability fix — walked, cria fault yes; does not count toward 3 |
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | ornith | off | — | 0/4 | ada-handles_ornith_codex_poff_1785847335 (VOIDED) | 1dc813b | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
