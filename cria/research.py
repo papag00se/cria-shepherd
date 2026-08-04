@@ -193,9 +193,16 @@ def authored_research_step(ask, task: str, *, domain: str = "", files: str = "")
         context.append(f"A SOURCE THE TASK NAMES: {domain}")
     if files:
         context.append(f"FILES ALREADY IN THE WORKING DIRECTORY:\n{files}")
-    text = " ".join((ask(prompts.load("research_step"),
-                         prompts.render("research_step_user", task=task,
-                                        context="\n\n".join(context)))
+    # WHICH QUESTION depends on what cria can prove. A domain in the task's own words is a FACT — the
+    # task names an external source — so asking a small model to re-decide it invites the answer
+    # fabliq gave on the first live run: NONE, for a task whose own sentence says "using the Ada
+    # Handles API (api.handle.me)". cria settles what it can settle and asks only what it cannot
+    # (#8). With no domain, whether anything must be read is a genuine judgement — files on disk, a
+    # library's source, a data set — and the model makes it, NONE included.
+    system = prompts.load("research_step_known" if domain else "research_step")
+    text = " ".join((ask(system,
+                     prompts.render("research_step_user", task=task,
+                                    context="\n\n".join(context)))
                      or "").split())
     if not text or len(text) > STEP_MAX_CHARS or text.strip().upper().rstrip(".") == "NONE":
         return ""

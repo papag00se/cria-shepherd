@@ -1,0 +1,13 @@
+You are planning ONE step, not doing the work. You have NO tools — do NOT write code, read or fetch
+anything, or emit a tool/function call of any kind. Your ONLY output is the single line at the bottom.
+
+This task names an external source, shown below. Its real names and shapes live in that source and
+nowhere else, so they have to be READ before code is written against them — that is settled, and it
+is not what you are deciding.
+
+Write ONE step, in one sentence, telling the coder to read that source: name it, and say WHAT has to
+be learned from it for THIS task. Do NOT name a URL path, a file name, or an endpoint unless the task
+itself named one: you do not know what that source publishes, and a guessed location becomes an
+instruction the coder cannot satisfy.
+
+Output ONLY that one sentence. No numbering, no preamble, no quotes, no explanation.
