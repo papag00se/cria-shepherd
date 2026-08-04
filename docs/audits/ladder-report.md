@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 05:59:11 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 06:39:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -67,6 +67,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+7e4b167 docs(regression): ornith 2/3 = 0/4 walked — cria fault none; mock-protocol oscillation; row stands
 134c382 docs(regression): qwopus 2/3 = 1/4 walked — cria fault none; truncated README + mock oscillation; row stands
 1dc813b docs(regression): qwythos 2/3 = 0/4 walked — cria fault none; interface oscillation; row stands
 98a4951 docs(regression): gemma4 2/3 = 0/4 walked — same edit-spiral disease; false-field steer counter-evidence to open-threads
@@ -81,7 +82,6 @@ fbc083c fix(loop): the per-step confirm brake runs only where a disk inspection 
 f0411bf docs(regression): qwopus 1/3 = 4/4 — 17/17 tests, 48 min
 59e710a docs(regression): qwythos 1/3 = 4/4 — clean pass in 14.7 min
 81a4113 docs(regression): gemma4 1/3 = 0/4 walked — cria fault none; model edit-spiral; routing watch-item noted
-2e7de81 docs(regression): ternary-bonsai 1/3 = 4/4 on a17a7c1 — the backstop declined the same early finish
 ```
 
 ---

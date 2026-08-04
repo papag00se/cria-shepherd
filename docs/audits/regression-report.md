@@ -22,6 +22,7 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | ornith | off | 1 | **4/4** | ada-handles_ornith_codex_poff_1785832068 | fbc083c | exited | 8/8 unit tests, live test, CLI, README — 31 min on the fixed code |
 | ornith | off | 2 | **0/4** | ada-handles_ornith_codex_poff_1785847335 | 1dc813b | milestone-miss-15min | walked: cria fault none — MagicMock context-manager oscillation; row stands |
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
+| mellum2 | off | 2 | **1/4** | ada-handles_mellum2_codex_poff_1785848364 | 134c382 | milestone-miss-30min | walked: cria fault none — pytest-mock venv dead-end + false field-name churn; row stands |
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
 | nemotron-elastic | on | 1 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | walked: cria fault none — live test demands an argument, exits 1 bare; both fixes fired correctly in-run |
 

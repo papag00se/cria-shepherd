@@ -4252,3 +4252,37 @@ died the SAME way in pass 2 — blind-written test mocks plus edit-exactness osc
 milestone window — while the same models passed identically-coded run 1s. The variance is the
 model's coin, not a code change between runs: runs 1 and 2 for qwythos/qwopus/ornith straddle only
 docs commits.
+
+## ada-handles_mellum2_codex_poff_1785848364
+
+REGRESSION1 campaign, mellum2 run 2/3 on `134c382`. Score **1/4** (README only; 4 test ERRORS at
+setup; live and CLI exit 1), terminal `milestone-miss-30min` (1845 s, 234 calls). Capture
+`~/.cria/calls/20260804T055944-019fccdb-cd19-7c33-a152-d5251090b6e5` — walked in full.
+
+### The run in one paragraph
+
+Steps 1–4 went cleanly (spec read and critic-verified; resolver, CLI wrapper, unit tests written
+and step-verified; the confirm brake did honest inspections — one veto at 0028 was even the
+legitimate "verdict assumed content it never read" case). The run then died on ONE environmental
+fact it never accepted: its tests use the `mocker` fixture from pytest-mock, which is not
+installed for the system python that the repo checks (and the campaign verifier) run with. Every
+pytest run failed at setup with "fixture 'mocker' not found"; the model built a .venv and pip
+installed pytest-mock INTO THE VENV over and over while the checks kept running system python; the
+one working move — rewrite the tests on stdlib unittest.mock — was never taken in ~60 calls. A
+parallel red-herring cycle: judges asserted the API returns `resolved_address` (singular — false;
+the spec and live API say `resolved_addresses`), and the coder edited code and tests back and
+forth across the two spellings.
+
+### cria fault: none — two prevalence entries
+
+1. Judge field-fact fabrication: critic 0209/0215 asserted the false singular field name as ground
+   truth ("see resolve..." citing the spec that says the opposite), driving churn. Same 5b-family
+   class as the campaign's other steer/judge fabrications — that's now four walked instances for
+   the shape-contradiction open thread (this one is a CRITIC, a third surface after steers and
+   plan steps).
+2. The blames/grounded and dictates judges were right where sampled (0166 GROUNDED on the true
+   mocker diagnosis). The gate's system-python posture is by design (the repo's checks run as the
+   repo's user would); a model that pins its tests to a plugin the environment lacks has to adapt
+   the tests, and the steers said so.
+
+The row stands: 1/4, model-attributable.
