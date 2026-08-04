@@ -1984,6 +1984,8 @@ class Loop:
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
+                                  sources_read=research.sources_read(
+                                      _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "")
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
@@ -2171,6 +2173,8 @@ class Loop:
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
                                       routes=known_routes(body.get('messages', []), sess),
+                                  sources_read=research.sources_read(
+                                      _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                       workspace_root=sess.workspace_root or "")
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
@@ -2256,6 +2260,8 @@ class Loop:
         ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
+                                  sources_read=research.sources_read(
+                                      _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "",
                                   red_findings=red_findings or "")  # grounded in the coder's own runs
         if nudge is not None:
@@ -2591,7 +2597,8 @@ class Loop:
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
-                routes: str = "", workspace_root: str = "", red_findings: str = "") -> tuple[bool, str]:
+                routes: str = "", workspace_root: str = "", red_findings: str = "",
+                sources_read: list | None = None) -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -2636,6 +2643,18 @@ class Loop:
             parts.append(prompts.fill(labels["absent_literals"], artifact=artifact,
                                       literals=", ".join(repr(m) for m in missing),
                                       them="it" if len(missing) == 1 else "them"))
+        # WHAT HAS ACTUALLY BEEN READ, when anything has. The same shape as absent_step_literals
+        # above: a deterministic fact cria gathered, handed to the critic, which still judges
+        # (principle 8). This is the fact the critic did not have when it refused a research step
+        # forever — run 1785804243 spent 114 of its 195 calls on "Research the Ada Handles API
+        # documentation…" while the transcript held five HTTP 200s that defined nothing, and the
+        # critic had no way to tell reading-that-succeeded from reading-that-failed. Only sources
+        # that RETURNED something are here (research.sources_read): a page that answered and defined
+        # nothing is not evidence that anything was learned. Absent entirely when nothing was read,
+        # which is itself the honest state — cria says nothing rather than implying research happened.
+        if sources_read:
+            parts.append(prompts.fill(labels["sources_read"],
+                                      sources=research._sources_block(sources_read)))
         # Additive — the same step text, nothing dropped.
         parts.append(prompts.fill(labels["step_again"], step=item))
         user = "\n\n".join(parts)
