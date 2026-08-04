@@ -5598,8 +5598,13 @@ class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
               "https://api.handle.me/openapi.json and extracted all required endpoints, request "
               "formats, and response structures. The evidence shows the spec contains the needed "
               "information.")
-    STEP = ("Research the Ada Handles API specification to identify required endpoints, request "
-            "formats, and response structures.")
+    # The captured run's step was a pure research step. The per-step confirm no longer runs on a
+    # claim that promises no artifact over a clean repo (_confirm_applies — the coin-flip veto that
+    # pinned that very run's step 1 for ~55 minutes), so the _verify-driven tests below use an
+    # artifact-promising step: the echo pathology is the checker's, not the step's, and the brake
+    # still runs wherever a disk inspection can ground.
+    STEP = ("Write resolve.py implementing the Ada Handles resolver with the endpoints, request "
+            "formats, and response structures the fetched specification defines.")
 
     def _role(self):
         from cria.config import Role

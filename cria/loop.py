@@ -820,12 +820,66 @@ def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
             return ""
     except OSError:
         return ""   # unreadable → say nothing; the reasoned brake still runs
+    dom = (first_domain_in(claim or "") or "").lower()
     for m in _STEP_ARTIFACT.finditer(claim or ""):
         at = m.start()
         if "://" in claim[max(0, at - 60):at]:   # a URL's path is not a workspace artifact
             continue
+        # A DOMAIN the step names is not a workspace file ("api.handle.me" matches the file-token
+        # pattern — ".me" reads as an extension; first_domain_in is TLD-allowlisted and
+        # file-extension-aware, so real filenames never qualify).
+        if dom and m.group(1).lower() == dom:
+            continue
         return m.group(1)
     return ""
+
+
+def _claim_promises_artifacts(claim: str) -> bool:
+    """Does this completion claim promise anything the workspace could hold?
+
+    The confirm brake below inspects the DISK, and every one of its measured wins is a claim that
+    promises an artifact — by a production verb ("write unit tests", m8) or by naming a file (the
+    empty-workspace CLI step). A claim with neither — the model-authored READING step is the common
+    case — leaves the checker nothing it can legitimately inspect: its own prompt says "a
+    research/investigation step needs no files", and a weak checker ignores that and invents one.
+
+    MEASURED over every captured confirm chain on the box (313 final verdicts on claims naming no
+    artifact): 155 confirmed, 158 blocked — a coin flip, across 36 sessions. Walked on
+    ada-handles_ornith_codex_poff_1785830161: the critic ruled the reading step done THREE times on
+    real fetch-ledger evidence, and the confirm vetoed each one — "no resolver script exists" (the
+    resolver is step 2's work), then "move or symlink the file from tmp/read-only/", then a
+    wrong-schema reply that failed closed — ~30 judge calls, and the coder started writing with 7 of
+    its 15 minutes left. 0/4.
+
+    Production verbs are research.has_production_verb (the reading-step defect check's own list);
+    file tokens are _STEP_ARTIFACT with the URL exclusion, minus the one DOMAIN the claim names
+    (first_domain_in is TLD-allowlisted and file-extension-aware, so "api.handle.me" is excluded
+    exactly and "resolve_handle.py" never is)."""
+    if research.has_production_verb(claim):
+        return True
+    dom = (first_domain_in(claim or "") or "").lower()
+    for m in _STEP_ARTIFACT.finditer(claim or ""):
+        at = m.start()
+        if "://" in (claim or "")[max(0, at - 60):at]:
+            continue
+        if dom and m.group(1).lower() == dom:
+            continue
+        return True
+    return False
+
+
+def _confirm_applies(claim: str, red_findings: str = "") -> bool:
+    """Should the per-STEP confirm brake run on this approved claim at all?
+
+    Two grounds, either suffices: the claim promises an artifact a disk inspection could check
+    (:func:`_claim_promises_artifacts`), or the repo's checks are currently RED — then the disk
+    state itself is contested and the brake's look is grounded regardless of what the step names.
+
+    Scoped to the per-step confirm on purpose. The whole-TASK satisfaction confirm keeps its brake
+    unconditionally: a task names its deliverables as NOUNS ("script plus README") that no verb or
+    file-token test can see, and the brake's measured wins there (satisfied with no README on disk)
+    are exactly that shape."""
+    return bool((red_findings or "").strip()) or _claim_promises_artifacts(claim)
 
 
 def _restates_the_verdict(why: str, reason: str) -> bool:
@@ -2736,15 +2790,21 @@ class Loop:
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
             if done and workspace_root:
-                # The approve-path brake (see _confirm_completion): a DONE must be consistent with
-                # the FRESH on-disk listing and with its own stated reason.
-                confirmed, why = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
-                                                     self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                     rlog, phase="critic-confirm")
-                rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
-                if not confirmed:
-                    done = False
-                    obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
+                if not _confirm_applies(item, red_findings):
+                    # A claim that promises no artifact, over a non-red repo, leaves the disk checker
+                    # nothing it can legitimately inspect — measured coin-flip, and the walked run it
+                    # cost (see _claim_promises_artifacts). The careful critic pass already ruled.
+                    rlog.emit("loop.confirm_skipped_no_artifact", level="info", phase="critic-confirm")
+                else:
+                    # The approve-path brake (see _confirm_completion): a DONE must be consistent with
+                    # the FRESH on-disk listing and with its own stated reason.
+                    confirmed, why = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
+                                                         self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                         rlog, phase="critic-confirm")
+                    rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
+                    if not confirmed:
+                        done = False
+                        obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
             reason = _verdict_nudge(obj, done, routes)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason

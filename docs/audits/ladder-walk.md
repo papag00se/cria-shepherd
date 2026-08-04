@@ -3894,3 +3894,59 @@ and file-state tracking inside the new 2-item plan-off routing. This row stands 
 gemma4 on current main. If runs 2/3 die the same way — pinned on step 1 while deliverables that
 would clear the milestone sit unstarted in later steps — THAT aggregate (the routing shape, not any
 one guard) is the thing to bring back as a finding with three runs of data behind it.
+
+## ada-handles_ornith_codex_poff_1785830161
+
+REGRESSION1 campaign, ornith run 1/3 on `59e710a`. Score **0/4**, terminal `milestone-miss-15min`
+(944 s, 114 calls). Capture `~/.cria/calls/20260804T005622-019fcbc6-0d5f-7d23-835f-5509c66a40e4` —
+walked in full, calls 0001–0114 in order.
+
+### The run in one paragraph
+
+Research was clean: /docs 404 → homepage → openapi.json → an authentication-focused `find=` pull —
+by call 0009 (~2 min) the model had everything (no auth, `/handles/{handle}`, `/holders/{address}`,
+`resolved_addresses.ada`, `total_handles`) and said so. Then the run drowned in its own
+verification: the coder claimed the reading step done; the CRITIC agreed — three separate times, on
+real fetch-ledger evidence — and the read-only CONFIRM checker vetoed every one. Round 1: "no
+resolver script exists in the workspace" (the resolver is step 2's work; the step's own purpose
+clause "so the resolver script can call the API" was read as a promise). Round 2: a wrong-schema
+`{"done": false}` demanding the spill file be "moved or symlinked" out of tmp/read-only. Round 3:
+wrong schema again, complaining a search spill "appears to be from a different task". Every
+unusable verdict failed closed, so the approved step stayed blocked. ~30 of the first 40 calls were
+judges judging judges; the flail steer at 0040 finally said "no files exist, stop confirming and
+write" — the coder started coding with ~7 of 15 minutes left, part-built the resolver and tests,
+hit the harness's own context compaction at 0093, and was killed mid-build at the milestone: 0/4.
+
+### cria fault: yes — the confirm brake is noise with veto power on artifact-free steps
+
+The confirm checker's own prompt says "a research/investigation step needs no files." A weak
+checker ignores that and invents an artifact; the prompt is a request, not an enforcement
+(cria/urlgrounding.py's own doctrine). MEASURED across every captured confirm chain on the box:
+on claims that name NO on-disk artifact, final verdicts split **155 confirmed / 158 blocked** — a
+coin flip, across 36 sessions. The brake's measured wins (m6 "satisfied with no README", m8 "write
+unit tests" passed against spills, the empty-workspace CLI approval) are ALL artifact-promising
+claims. On a claim that promises nothing the disk could hold, the checker has no legitimate
+question to answer — every block is an invention.
+
+Fix (`_confirm_applies`, per-step confirm only): the brake runs only when the claim promises an
+artifact — a production verb (research.has_production_verb, the reading-step defect check's own
+list) or a file token that is not the claim's own named DOMAIN — or when the repo's checks are
+currently RED (a contested disk grounds the look regardless of the step's wording). The whole-task
+satisfaction confirm is untouched: tasks name deliverables as nouns ("script plus README") and its
+measured wins are that shape. Sibling fix in `step_names_absent_artifact`: "api.handle.me" matches
+the file-token pattern (".me" reads as an extension), so the one domain `first_domain_in` extracts
+(TLD-allowlisted, extension-aware — real filenames never qualify) is excluded exactly; an empty
+workspace no longer deterministically vetoes a reading step for lacking a file named after a
+domain.
+
+Also re-fixtured the two echo-brake tests that drove _verify with the captured run's research step
+(their own measured pathology — a run pinned ~55 minutes by echo-vetoes — was ON a research step,
+i.e. the class this fix removes); the echo machinery itself is unchanged and still covered on
+artifact-promising claims and the satisfaction phase.
+
+### Model-attributable residue
+
+The coder's own re-claim loop (task_complete with a summary instead of moving on), the wrong-schema
+confirm replies, and the post-0041 build being too slow for the remaining window are ornith's. But
+the window was 7 minutes instead of 13 because cria's own brake spent the difference vetoing a step
+three judges had verified.
