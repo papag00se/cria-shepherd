@@ -20,6 +20,7 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | gemma4 | off | — | 1/4 | ada-handles_gemma4_codex_poff_1785866157 | 36e2861 | milestone-miss-30min | SUPERSEDED by the steer false-fact fixes (61242fc) — walked, cria fault yes: steers cited phantom line numbers and an invented API key |
 | gemma4 | off | — | 3/4 | ada-handles_gemma4_codex_poff_1785869053 | 61242fc | milestone-miss-60min | SUPERSEDED by the case-typo refusal fix — walked, cria fault yes: 50+ refusals never named a one-letter case typo of the workspace; best gemma4 campaign score, new steer guards fired 4x correctly |
 | gemma4 | off | 1 | **2/4** | ada-handles_gemma4_codex_poff_1785873072 | 61242fc | milestone-miss-30min | walked: cria fault none — row STANDS; RESCORED 1/4→2/4 (operator, 2026-08-04): the README-probe scorer found its documented live command and proved it live; the true-facts steer that starved /holders remains in the observe ledger |
+| gemma4 | off | 2 | **1/4** | ada-handles_gemma4_codex_poff_1785875123 | 61242fc | milestone-miss-30min | walked: cria fault none — handler/handle typo warfare, self-typo'd handle, self-blinding pass/fail pipe; false-citation guard withheld 5 fabricated steers; row STANDS |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
@@ -50,7 +51,7 @@ check runs it triggered.
 | 🟡 qwopus | ⁴⁄₄ ¼ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
 | 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
-| 🟠 gemma4 | ¼ ¾ ½ | 62.9 | 🧭 36 · 🔁 8 · 🧪 12 · 🗜️ 9 | 41 |
+| 🟠 gemma4 | ¾ ½ ¼ | 63.4 | 🧭 37 · 🔁 7 · 🧪 12 · 🗜️ 12 | 41 |
 | 🔴 ornith | ⁰⁄₄ ⁴⁄₄ ⁰⁄₄ | 76.9 | 🧭 7 · 🔁 5 · 🧪 11 · 🗜️ 6 | 21 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
@@ -82,8 +83,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 10 | milestone-miss-30min |
 | gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
 | gemma4 | counted | 2/4 | 31 | 310 | 147 | 64.1 | 24 | 11 | milestone-miss-30min |
+| gemma4 | counted | 1/4 | 31 | 202 | 137 | 62.6 | 32 | 9 | milestone-miss-30min |
 
-counted runs: 10 · avg wall 38 min · avg coder calls 78 · full-pass rate 7/10
+counted runs: 11 · avg wall 38 min · avg coder calls 84 · full-pass rate 7/11
 
 ## Notable events
 
