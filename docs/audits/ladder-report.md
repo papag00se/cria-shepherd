@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 00:05:48 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 00:54:10 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,18 +8,18 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**RUNNING — qwythos**, 14 min elapsed.
+**RUNNING — qwopus**, 47 min elapsed.
 
 | next checkpoint | at | must hold |
 |:--|--:|:--|
-| milestone 1 | 15 min | 1/4 |
+| milestone 4 | 60 min | 4/4 |
 
 **Measured just now** (verifier run against a copy of the live workspace): **4/4**
 
 | deliverable | | detail |
 |:--|:--:|:--|
-| unit_tests | 🟢 | 8 passed in 0.01s |
-| live_test | 🟢 | live_test_goose.py: real resolution (addr1+stake1 present) |
+| unit_tests | 🟢 | 17 passed in 0.02s |
+| live_test | 🟢 | live_test.py: real resolution (addr1+stake1 present) |
 | resolver_cli | 🟢 | ada_handle_resolver.py goose → address+holder+count |
 | readme | 🟢 | README.md covers install/run/tests: True |
 
@@ -29,8 +29,8 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🔵 RUNNING |
-| 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
+| 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
+| 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🔵 RUNNING |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 6 | mellum2 | 12B/A2.5B | `mellum 64/8` | moe | off | 22 | 4/4 | 🟢 PASSED |
 | 7 | nemotron-elastic | 12B/A2B | `nemotron_h_moe 128/6` | moe | on | 1 | 4/4 | 🟢 PASSED |
@@ -80,6 +80,7 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 ## Fixes landed during the ladder
 
 ```
+59e710a docs(regression): qwythos 1/3 = 4/4 — clean pass in 14.7 min
 81a4113 docs(regression): gemma4 1/3 = 0/4 walked — cria fault none; model edit-spiral; routing watch-item noted
 2e7de81 docs(regression): ternary-bonsai 1/3 = 4/4 on a17a7c1 — the backstop declined the same early finish
 ca75dd9 docs(regression): run 1 walked + superseded; campaign restarts ternary-bonsai on a17a7c1
@@ -94,7 +95,6 @@ ef0b771 fix(loop): the plan-off reading step was never driven — synthetic mean
 9c44ed0 fix(loop): the reading check completed steps it could not verify — it now only reports
 09f7535 fix(loop): the reading check was invisible when it declined, so it could not be verified
 d8de3c4 fix(research): do not ask a small model to re-decide a fact cria already holds
-86bf62c fix(research): research is reading, not fetching — count disk reads, and let the model say NONE
 ```
 
 ---
