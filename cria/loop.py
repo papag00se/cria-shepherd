@@ -209,6 +209,13 @@ class GuardState:
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
+    # A completion-gate probe's RESULT has been read since the coder's last forwarded acting turn —
+    # green, or couldn't-run (the per-step fail-open posture, unchanged); RED clears it. The plan-ON
+    # completion requires this: walked on ada-handles_ternary-bonsai_codex_poff_1785818931, a replan
+    # returned [] with the coder mid-step-1, three LLM judges approved files that were never executed,
+    # and the session exited 3/4 with ZERO gates run — pytest would have printed "5 failed". A session
+    # must not end on judgment alone while cria never even ATTEMPTED the repo's checks.
+    gate_fresh: bool = False
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
     # NB: there is deliberately NO search-escape state here. cria used to SUBSTITUTE a web_fetch for a
     # search-looping coder's own web_search (streak/volume counters, a convention URL, a domain-root
@@ -1769,6 +1776,40 @@ class Loop:
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
         if item is None:  # every step verified INDIVIDUALLY — but is the WHOLE task actually done?
+            # OBJECTIVE completion backstop (parity with BOTH plan-off done paths, which always run
+            # guard_gate_op before ending). Not every route here verified its steps: a replan can
+            # return [] and empty the tail on the satisfaction judge's word alone — walked on
+            # ada-handles_ternary-bonsai_codex_poff_1785818931, where that route exited 3/4 with the
+            # repo's checks NEVER run (5 unit tests failing on disk, three LLM judges approving).
+            # `gate_fresh` (a gate result read since the coder last acted) is what a normally-
+            # completing plan already has from its final step's verification, so the healthy path
+            # emits no duplicate probe; the judgment-only routes get ground truth before the end.
+            if sess.done_probe:  # the backstop's own probe has now run — read it before judging
+                sess.done_probe = False
+                errors = guard_gate_verdict(sess, body, rlog)
+                if errors:
+                    # RED is ground truth about the repo — the task cannot complete over failing
+                    # checks. Reopen with the ONE reused corrective step; the findings ride in the
+                    # nudge (the channel built for them), never as a plan-step essay.
+                    fix = PlanItem(text=_COMPLETION_FIX_PREFIX + "make the repo's own checks pass")
+                    if sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX):
+                        sess.plan.items[-1] = fix
+                    else:
+                        sess.plan.items.append(fix)
+                    sess.plan.status = "in_progress"
+                    self._persist_plan(sess.plan, rlog)
+                    rlog.emit("loop.gate", plan_off=False, at="completion", blocked=True)
+                    sess.steer_source = "completion gate (repo checks failed)"
+                    return self._renudge(sess, key, body,
+                                         prompts.render("gate_fail_steer", errors=errors), rlog)
+            elif not sess.gate_fresh:
+                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+                if probe_tc is not None:
+                    sess.done_probe = True
+                    sess.probe_call_id = probe_tc["id"]
+                    rlog.emit("loop.completion_probe", plan_off=False)
+                    return _completion_toolcalls([probe_tc], note="verifying — running the repo's checks")
+                # no shell tool → the objective gate can't run; the judge below decides alone (fail-open)
             reason = self._reopen_if_unsatisfied(sess, body, rlog)
             if reason is not None:
                 # not satisfied → a corrective step is now current; re-drive it (don't complete green-but-wrong)
@@ -1953,6 +1994,7 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
+            sess.gate_fresh = False    # the workspace may change → any prior gate result is stale
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
@@ -2171,6 +2213,7 @@ class Loop:
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
+            sess.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body, rlog)
@@ -2222,8 +2265,10 @@ class Loop:
         # were dead on every real multi-step plan — exactly where "ground truth over judgment" needs them.
         if nudge is not None:
             sess.last_gate_red = True
+            sess.gate_fresh = False      # red never satisfies the completion backstop
         else:
             sess.last_gate_red = False   # ran and genuinely clean → GREEN
+            sess.gate_fresh = True       # fresh ground truth — the completion backstop is satisfied
             sess.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
             sess.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
@@ -3066,6 +3111,7 @@ class Loop:
             sess.steer_source = ""
         if _has_tool_calls(comp):
             sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
+            sess.gate_fresh = False  # the workspace may change → any prior gate result is stale
             return comp  # acting → forward
         return self._gate_single_done(sess, comp, framed, body, session_key, rlog)
 
@@ -4492,19 +4538,23 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
         else probegate.GateOutcome(ran=False)
     if not outcome.ran:
+        gs.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
     findings = proberun.completion_block_nudge(outcome.report)
     if findings:
         gs.last_gate_red = True
+        gs.gate_fresh = False  # red never satisfies the completion backstop
         track_gate_progress(gs, findings)
         return findings
     failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:  # a check ran and FAILED (no parseable line) → the 'done' isn't genuine
         gs.last_gate_red = True
+        gs.gate_fresh = False  # red never satisfies the completion backstop
         msg = "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
         track_gate_progress(gs, msg)
         return msg
     gs.last_gate_red = False  # ran and genuinely clean → GREEN
+    gs.gate_fresh = True      # fresh ground truth — the completion backstop is satisfied
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence for the judge
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
     track_gate_progress(gs, "")

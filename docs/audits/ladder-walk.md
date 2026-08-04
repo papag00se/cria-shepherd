@@ -3778,3 +3778,64 @@ judges at 0011 and 0012 were shown the plan WITH the code fence still attached, 
 - `massage.reasoning_call_recovered` fired twice, both `read_file` calls the model left in the
   reasoning channel — the fix merged earlier today, working on a live run.
 - The plan scrubber dropped the planner's code fence and its venv step from the stored plan.
+
+## ada-handles_ternary-bonsai_codex_poff_1785818931
+
+REGRESSION1 campaign, run 1/3 for ternary-bonsai on `fd4ca0a`. Score **3/4** (unit_tests red: 5
+failed, 11 collected), terminal `exited` at 11.7 min, 40 calls. Capture
+`~/.cria/calls/20260803T215014-019fcb1b-a73c-7ac0-a330-1d8e08601ca9` — walked in full, every call
+0001–0040 in order.
+
+### What the model did (mostly right)
+
+- 0001–0012: clean research chain. Classifier → model-authored reading step → two searches (the
+  second a near-dup the coder chose over reading the spill file) → `/docs` 404 → `/` → the OpenAPI
+  link list → `openapi.json` (spilled, outline + field shapes injected) → two `find=` pulls for
+  `/handles/{handle}` and `/holders/{address}`. The search supervisor judged both queries on-target
+  (its junk `recommendation` strings were unused — that field only steers when off-target).
+- 0012–0015: wrote all four deliverables in one pass — resolver, tests, live test, README. The
+  resolver and live test are genuinely correct: the external verifier confirmed real on-chain
+  resolution (`addr1…`/`stake1…` present) and a working CLI.
+- 0013 is where the 3/4 was authored: `test_handle_resolver.py` written blind with three bugs —
+  `sys` used in `TestMain` with no `import sys`; a bare `Exception` fed to a mock `side_effect`
+  where the code under test catches only `requests.RequestException`; and
+  `HandleResolution(handle_name=...)` called with three required dataclass fields missing.
+  5 failed / 6 passed — exactly what the campaign verifier later measured.
+- 0016: re-fetched an already-satisfied `find=` (stall) → 0017 living-plan replan.
+
+### The failure chain (cria's side)
+
+The coder **never ran a single command all session** — no pytest, no CLI run, nothing. Every layer
+that stood between that and a false "done" was an LLM judgment, and all of them approved:
+
+1. 0017 replan returned `{"steps": []}` — "everything is done" — with no run in evidence.
+2. Empty replan is satisfaction-gated: 0018–0021 the judge inspected files read-only and ruled
+   satisfied. Its own reasoning wrote "I don't see any execution" — found it, then lost it —
+   and talked itself into "the user didn't explicitly say run it".
+3. 0022–0026 confirm checker: consistency-with-disk only → consistent.
+4. Plan emptied → `item is None` completion path → 0027 exec-intent said `runs: false` (wrong on
+   its face: the task is a CLI with a named example input), 0028–0033 second satisfaction round →
+   satisfied, 0034–0039 confirm → consistent, 0040 compactor → session exited.
+
+**The objective completion gate never ran — zero `loop.gate` events in the whole run.** The gate
+fires on a coder done-claim or a guard trip; here the coder never claimed done — the REPLAN
+completed the plan on its behalf, and the plan-ON `item is None` completion path runs LLM judges
+only. Both plan-off completion paths already carry the objective-gate backstop
+(`_periodic_satisfaction` and the bare-done path both call `guard_gate_op` before ending); the
+multi-item completion is the one route without it. Today's route-unify rewiring (a plan-off run
+with a reading step becomes a REAL 2-item plan through the multi-item driver) made plan-off runs
+travel exactly this unguarded route for the first time — measured: every other `exited` run in
+results.jsonl has ≥1 gate; this one has 0.
+
+**cria fault: yes** — a session can reach `Phase.DONE` with the repo's checks never having run,
+on the one completion route with no ground-truth backstop. `pytest` would have printed `5 failed`;
+three LLM judges in a row were asked to imagine it instead.
+
+Fix: the `item is None` completion requires a FRESH GREEN gate — a completion gate that ran clean
+with no coder acting turn forwarded since. Absent that, cria emits the completion gate probe first
+(`done_probe`, same machinery as plan-off) and only a green result reaches the satisfaction judge;
+a red result reopens the plan with the concrete findings. Healthy completions (final step just
+gate-verified green) skip the extra probe — no duplicate pytest run.
+
+Model-attributable residue (not cria's to fix): the three blind test bugs at 0013, and the judges'
+verdict quality. With the gate in the path, the judges no longer decide alone.
