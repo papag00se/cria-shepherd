@@ -205,15 +205,19 @@ def main(ws: Path) -> dict:
     #    in output). Shape-agnostic: any file whose name mentions "live".
     # RECURSIVE — the first version only looked at the workspace root, and a src-layout run
     # (gemma's habit) had its real tests/live.py scored "no live-test file found" (false FAIL).
-    live_files = sorted(p for p in ws.rglob("*.py")
+    # *.sh included (walked on ada-handles_qwythos_codex_poff_1785884041: a real, working
+    # live_test.sh — resolved both handles live in-session — scored zero because this glob only
+    # knew Python; a shell runner is a legitimate reading of "create a live test").
+    live_files = sorted(p for ext in ("*.py", "*.sh") for p in ws.rglob(ext)
                         if "live" in p.name.lower() and "__pycache__" not in p.parts)
     live_ok, live_detail = False, "no live-test file found"
     for lf in live_files:
+        runner = ["bash"] if lf.suffix == ".sh" else [sys.executable]
         # Bare first; a usage-error retry gets the task's own handle as an argument (operator
         # ruling 2026-08-04: nemotron lost this point twice for a live test that WORKS but wants
         # the handle on the command line — the CLI check already honours exactly that shape).
-        for argv in ([sys.executable, str(lf.relative_to(ws))],
-                     [sys.executable, str(lf.relative_to(ws)), "goose"]):
+        for argv in (runner + [str(lf.relative_to(ws))],
+                     runner + [str(lf.relative_to(ws)), "goose"]):
             code, out = run(argv, ws)
             if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out):
                 shown = " goose" if argv[-1] == "goose" else ""

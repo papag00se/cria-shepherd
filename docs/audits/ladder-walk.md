@@ -4651,3 +4651,22 @@ its answer in the ledger: dictations rescued/carried the STRONG cohort (07-30/08
 DICTATES delivered for the strong cohort, restore the drop (or a demotion to DESCRIBES-style
 paraphrase) for gemma4-class weak-obedient models — a per-role knob, not a global reversal. Not
 changed without a ruling. Row STANDS.
+
+## ada-handles_qwythos_codex_poff_1785884041
+
+REGRESSION1 campaign, qwythos run 3/3. Scored **3/4** at run time, terminal `exited` —
+self-completed in 9 min, 58 calls. Capture
+`~/.cria/calls/20260804T155422-019fcefc-323e-7f11-913a-07fc6e778bef` — walked in full.
+
+### cria fault: none — a scorer gap took the fourth point, and it is fixed
+
+The run was clean: guess-gate re-authored the reading step (auth clause refused, 0002→0003),
+9/9 unit tests, working CLI, README, and a REAL live test — `live_test.sh`, a shell runner that
+resolved both goose and papagoose against the live API in-session (0018). The scorer's live-file
+search globbed `*.py` only, so a working shell artifact scored zero; the README probe then
+proposed bare pytest (exit 0, no liveness proof) and the point was lost to file extension alone.
+Fixed in verify.py: the live-file glob now includes `*.sh` (run via bash, same marker rules).
+Re-verified against the preserved original workspace: **4/4**. Archive sweep: no other campaign
+run has a shell live-test, so no other score changes. The steer channel behaved (one DICTATES
+delivered — a correct monkeypatch→patch prescription the coder applied successfully; one
+roleplay-syntax drop). qwythos closes 4/4, 2/4, 4/4.
