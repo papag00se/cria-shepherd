@@ -29,8 +29,8 @@ Campaign code state starts at `main` (see each row's sha; fixes mid-campaign are
 | mellum2 | off | 1 | **3/4** | ada-handles_mellum2_codex_poff_1785833976 | 53f4e97 | exited | walked: cria fault none — live test folded into the unit-test file, not separate; row stands |
 | mellum2 | off | — | 1/4 | ada-handles_mellum2_codex_poff_1785848364 (VOIDED) | 134c382 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
-| nemotron-elastic | on | 1 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | walked: cria fault none — live test demands an argument, exits 1 bare; both fixes fired correctly in-run |
-| nemotron-elastic | on | 2 | **3/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | walked: cria fault none — same argument-demanding live test as run 1; refutation guard 2x correct |
+| nemotron-elastic | on | 1 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): the live test worked with the task's handle as argument; the scorer now honours that shape, as its CLI check always did |
+| nemotron-elastic | on | 2 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): same argument-shape rescore as run 1; refutation guard 2x correct in-run |
 
 ## Run stats
 
@@ -45,8 +45,8 @@ check runs it triggered.
 | model | last 3 | avg tok/s | avg assists | avg min |
 |---|---|---:|---|---:|
 | 🟢 ternary-bonsai | ⁴⁄₄ ¾ ⁴⁄₄ | 39.8 | 🧭 3 · 🔁 1 · 🧪 5 · 🗜️ 3 | 60 |
+| 🟡 nemotron-elastic | ¼ ⁴⁄₄ ⁴⁄₄ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
 | 🟡 qwopus | ⁴⁄₄ ¼ | 76.0 | 🧭 10 · 🔁 6 · 🧪 14 · 🗜️ 10 | 40 |
-| 🟠 nemotron-elastic | ¼ ¾ ¾ | 130.9 | 🧭 14 · 🔁 7 · 🧪 33 · 🗜️ 6 | 33 |
 | 🟠 qwythos | ⁴⁄₄ ⁰⁄₄ | 77.0 | 🧭 11 · 🔁 2 · 🧪 14 · 🗜️ 5 | 16 |
 | 🟠 mellum2 | ¾ ¼ | 168.8 | 🧭 16 · 🧪 44 · 🗜️ 8 | 20 |
 | 🟠 gemma4 | ¼ ¼ ¾ | 61.2 | 🧭 40 · 🔁 8 · 🧪 16 · 🗜️ 11 | 41 |
@@ -67,24 +67,32 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | ornith | counted | 4/4 | 31 | 237 | 121 | 76.5 | 9 | 18 | exited |
 | mellum2 | counted | 3/4 | 9 | 72 | 38 | 170.4 | 7 | 26 | exited |
 | nemotron-elastic | superseded | 1/4 | 31 | 156 | 87 | 129.2 | 8 | 38 | milestone-miss-30min |
-| nemotron-elastic | counted | 3/4 | 36 | 198 | 111 | 131.4 | 20 | 31 | exited |
+| nemotron-elastic | counted | 4/4 | 36 | 198 | 111 | 131.4 | 20 | 31 | exited |
 | ternary-bonsai | counted | 3/4 | 61 | 44 | 19 | 38.6 | 2 | 3 | milestone-miss-60min |
 | gemma4 | superseded | 0/4 | 16 | 131 | 86 | 58.7 | 5 | 5 | milestone-miss-15min |
 | qwythos | voided | 0/4 | 16 | 89 | 53 | 77.6 | 8 | 15 | milestone-miss-15min |
 | qwopus | voided | 1/4 | 31 | 71 | 38 | 76.4 | 6 | 5 | milestone-miss-30min |
 | ornith | voided | 0/4 | 16 | 74 | 43 | 78.4 | 7 | 4 | milestone-miss-15min |
 | mellum2 | voided | 1/4 | 31 | 234 | 119 | 167.1 | 25 | 62 | milestone-miss-30min |
-| nemotron-elastic | counted | 3/4 | 32 | 200 | 104 | 132.2 | 14 | 29 | exited |
+| nemotron-elastic | counted | 4/4 | 32 | 200 | 104 | 132.2 | 14 | 29 | exited |
 | ternary-bonsai | counted | 4/4 | 60 | 61 | 35 | 41.7 | 2 | 4 | budget-killed |
 | gemma4 | superseded | 0/4 | 16 | 61 | 36 | 61.6 | 18 | 4 | milestone-miss-15min |
 | gemma4 | superseded | 1/4 | 31 | 247 | 157 | 59.2 | 35 | 21 | milestone-miss-30min |
 | gemma4 | superseded | 1/4 | 31 | 227 | 138 | 61.1 | 30 | 10 | milestone-miss-30min |
 | gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
 
-counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 5/9
+counted runs: 9 · avg wall 39 min · avg coder calls 71 · full-pass rate 7/9
 
 ## Notable events
 
+- **2026-08-04 ~13:10 — operator ruling: the live-test scorer honours a handle argument;
+  nemotron's two 3/4s rescore to 4/4.** Its live test always did a real resolution — it just
+  wanted the handle on the command line, a shape the scorer's own CLI check already tries.
+  verify.py now retries a usage-failing live file with the task's handle. Both archived
+  workspaces re-verified at 4/4 (sole change: the live point). A full-archive rescore sweep
+  found no other run whose score the fix changes; one unrelated drift noted (mellum2 run 1's
+  unit test asserts a live on-chain count that has since changed — its recorded, at-run-time
+  row stands). nemotron-elastic now sits at 4/4, 4/4 with one run to go.
 - **2026-08-04 ~12:55 — gemma4 hit 3/4 (its campaign best), and the walk found a one-letter
   trap.** Run 1785869053: the fix stack held (clean research, hand-back, working resolver, 3/3
   unit tests, working CLI, README; only the live check missed — the model named its live tests

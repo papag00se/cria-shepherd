@@ -73,11 +73,19 @@ def main(ws: Path) -> dict:
                         if "live" in p.name.lower() and "__pycache__" not in p.parts)
     live_ok, live_detail = False, "no live-test file found"
     for lf in live_files:
-        code, out = run([sys.executable, str(lf.relative_to(ws))], ws)
-        if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out):
-            live_ok, live_detail = True, f"{lf.name}: real resolution (addr1+stake1 present)"
+        # Bare first; a usage-error retry gets the task's own handle as an argument (operator
+        # ruling 2026-08-04: nemotron lost this point twice for a live test that WORKS but wants
+        # the handle on the command line — the CLI check already honours exactly that shape).
+        for argv in ([sys.executable, str(lf.relative_to(ws))],
+                     [sys.executable, str(lf.relative_to(ws)), "goose"]):
+            code, out = run(argv, ws)
+            if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out):
+                shown = " goose" if argv[-1] == "goose" else ""
+                live_ok, live_detail = True, f"{lf.name}{shown}: real resolution (addr1+stake1 present)"
+                break
+            live_detail = f"{lf.name}: exit={code}, real-data markers {'partial' if ADDR_RE.search(out) or HOLDER_RE.search(out) else 'absent'}"
+        if live_ok:
             break
-        live_detail = f"{lf.name}: exit={code}, real-data markers {'partial' if ADDR_RE.search(out) or HOLDER_RE.search(out) else 'absent'}"
     if not live_ok:
         # Operator ruling (07-30): a live TEST inside the test file counts — it need not be a
         # separate file. It must still be provably LIVE (the m14 lesson: a mocked "live" test is
