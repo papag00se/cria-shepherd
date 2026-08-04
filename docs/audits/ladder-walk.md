@@ -4482,3 +4482,39 @@ the coder briefly adopted it; steers invented tools (`pygrep`, "pydocstan") cost
 the mock-shape oscillation (json attribute vs lambda), stale-copy edits, and the
 `textwrap.dedent` pipe are gemma4's own. Row (3/4) superseded per the goal rule; gemma4 reruns
 with the refusal able to name a case typo.
+
+## ada-handles_gemma4_codex_poff_1785873072
+
+REGRESSION1 campaign, gemma4 run on the case-typo refusal fix (`36e2861`+ chain, head `61242fc`+).
+Score **1/4** (README), terminal `milestone-miss-30min` (31 min, 310 calls; milestones 2.0 → 1.0 —
+another mid-run regression). Capture
+`~/.cria/calls/20260804T125123-019fce54-ab22-7b21-86a3-a72c62f2d130` — walked in full.
+
+### What held
+
+No case-typo spiral this run (the path stayed lowercase throughout — the previous run's poison
+did not recur). The confirm-applies skip fired correctly once. Leaked judge tool-calls — including
+one that would have OVERWRITTEN verify.py (`echo "===build===" > verify.py`, satisfaction-confirm
+0217) and a reasoner edit adding a phantom `python-pycurl` dependency (0201) — were recovered
+structurally and NEVER executed; the archived files prove both writes did not land. Several steers
+were genuinely good (the grep -v error-masking diagnosis at 0066/0107 was exactly right).
+
+### cria fault: none — but one delivered steer seeded the biggest scoring loss
+
+Steer 0008 (call 8): "You can resolve BOTH … in ONE call to GET /handles/{handle} … Stop making
+two lookups." Its stated facts are TRUE (that response does carry `holder` and
+`resolved_addresses.ada`) — but the task's third required fact, the holder's TOTAL handles, lives
+only at /holders/{address}, and the coder obeyed: resolve.py shipped `data.get("total_handles",
+0)` — always zero. Call 0040 even noticed ("both returned total_handles=0, which is plausible")
+and moved on. The CLI check failed exactly there: "holder/total missing". No false fact was
+stated, so no guard class applies; catching it would require cria to judge API response shapes —
+the task-specific/API-spec overfit the operator has repeatedly rejected. Recorded to the
+steer-quality observe ledger as the strongest counter-example yet: a factually-true steer that
+countermands a task deliverable.
+
+Model residue owns the rest: the resolve_by_handle/resolve_by_handler typo ping-pong (~15 calls),
+truncating whole-file rewrites (0240/0261 dropped imports/functions again), fabricated packaging
+(`setuptools.build` backend, a `[build]` TOML section, `pyproject-convention = true`,
+shellcheck-on-Python), self-masking pipes the steers had to talk it out of, and a late
+input-validation change that broke its own green tests at the 30-minute wall. Row STANDS —
+gemma4's first counted run: 1/4.
