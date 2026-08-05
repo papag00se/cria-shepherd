@@ -714,13 +714,30 @@ def _spill_outline(parsed: Any, target: str) -> str:
         shapes = _endpoint_response_fields(parsed)
         shape_block = (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
                        "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
+        # The grep example is a REAL route as a FIXED string — and it must be the PATH alone.
+        # Walked twice, on two different model families (finetune run 1785893473 call 0019, stock
+        # run 1785948232 call 0005): the shape lines above read "GET /handles/{handle} → …", both
+        # coders grepped the file for that exact label, and the spec stores the method as a KEY
+        # INSIDE the route's object — zero hits, and each read the empty result as "the file is
+        # wrong/missing". cria's own rendering taught the ungreppable string; the hint now hands
+        # over a command that provably matches (JSON quotes the path, YAML doesn't; -F on the bare
+        # path matches both).
+        # The example route must itself be a USEFUL grep target: an earlier seeded example used
+        # routes[0] blindly, a real spec's routes[0] was "/", and the degenerate `grep "/"` sent
+        # the coder crawling the meta-path aliases. Prefer a parameterized route (the kind the
+        # task actually needs), else the first non-trivial one; none → the plain list phrasing.
+        example = next((r for r in routes if "{" in r), next((r for r in routes if len(r) > 1), None))
+        hint = (f"[grep for a route as a FIXED string, e.g.: grep -n -F '{example}' {target} — "
+                f"the METHOD (GET/POST) is a key INSIDE the route's section, so grepping "
+                f"'GET /path' matches nothing]\n") if example else \
+               (f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
         return (f'{ROUTES_MARKER}{len(routes)}): {", ".join(routes)}]\n'
-                f'{shape_block}'
-                f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
+                f'{shape_block}' + hint)
     keys = [k for k in top_level_keys(parsed) if k != "[array]"]
     if keys:
         return (f'[top-level keys ({len(keys)}): {", ".join(keys)}]\n'
-                f'[grep {target} for the key you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
+                f"[grep for a key as a FIXED string, e.g.: grep -n -F '{keys[0]}' {target}, "
+                f'or read_file it with a start_line/end_line range]\n')
     return ""
 
 

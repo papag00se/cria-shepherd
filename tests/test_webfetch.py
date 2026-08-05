@@ -429,10 +429,12 @@ class FetchNavSeedTests(unittest.TestCase):
         self.assertIn("API endpoints (3)", msg)
         self.assertIn("/handles/{handle}", msg)
         self.assertIn("/holders/{address}", msg)
-        # points the model at the endpoint LIST, not a single seeded route: a seeded routes[0] can be a
-        # useless meta-path (real spec: routes[0]=="/" → the degenerate `grep -n "/"`), which sent the
-        # coder crawling the /openapi.json//swagger.json aliases at the top of the list.
-        self.assertIn("FROM THAT LIST", msg)
+        # The seeded grep example must be a USEFUL route — parameterized when one exists — never
+        # the degenerate "/" (which once sent the coder crawling the meta-path aliases), and the
+        # method warning must ride with it (two model families grepped 'GET /path' into a void).
+        self.assertIn("grep -n -F '/handles/{handle}'", msg)
+        self.assertNotIn("grep -n -F '/'", msg)
+        self.assertIn("matches nothing", msg)
         self.assertNotIn('grep -n "/"', msg)                 # no degenerate example
         self.assertNotIn("<keyword>", msg)
 
@@ -1102,3 +1104,34 @@ class HarnessHistoryBudgetTests(unittest.TestCase):
                              f"find slice is {len(out.encode())} bytes — this is the slice Codex "
                              "middle-cut in 84 prompts of run 1785893473")
         self.assertIn("narrow it", out.lower())   # the model is told how to see the rest
+
+
+class SpillGrepHintTests(unittest.TestCase):
+    """The outline's shape lines read `GET /path → fields`, and TWO model families (finetune run
+    1785893473 call 0019, stock run 1785948232 call 0005) grepped the spill for that exact label —
+    zero hits (the method is a key INSIDE the route object), and both read the empty result as
+    'the file is wrong'. The hint must hand over a command that provably matches."""
+
+    def test_the_hint_gives_a_real_fixed_string_route_and_the_method_warning(self):
+        parsed = {"openapi": "3.0.3",
+                  "paths": {"/handles/{handle}": {"get": {}}, "/holders/{address}": {"get": {}}}}
+        out = wf._spill_outline(parsed, "./tmp/read-only/spec.json")
+        self.assertIn("grep -n -F '/handles/{handle}'", out)
+        self.assertIn("matches nothing", out)
+        self.assertNotIn("FROM THAT LIST", out)
+
+    def test_the_example_command_actually_matches_the_raw_json(self):
+        import subprocess, tempfile, os, re as _re
+        doc = {"openapi": "3.0.3", "paths": {"/handles/{handle}": {"get": {}}}}
+        parsed = doc
+        out = wf._spill_outline(parsed, "SPILL")
+        m = _re.search(r"grep -n -F '([^']+)' SPILL", out)
+        self.assertIsNotNone(m)
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(doc, fh)
+        try:
+            r = subprocess.run(["grep", "-n", "-F", m.group(1), fh.name],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, "the hint's own example must find a line")
+        finally:
+            os.unlink(fh.name)
