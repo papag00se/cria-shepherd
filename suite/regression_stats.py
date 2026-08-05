@@ -35,7 +35,15 @@ def rows():
         if not line.strip():
             continue
         r = json.loads(line)
-        if str(r.get("note", "")).startswith("REGRESSION1"):
+        # Scope widened 2026-08-05 (operator: report brought current): the campaign closed and
+        # the lanes moved on — a grid keyed to the REGRESSION1 note prefix showed nemotron on
+        # its retired planner-on lane and omitted gemma4-stock entirely. The grid is THE
+        # operator view, so it now covers every ada-handles row; superseded/voided rows are
+        # still excluded downstream by state().
+        # RETIRED models never render: fabliq/zaya1 (operator call 2026-08-04) and the gemma4
+        # finetune (operator call 2026-08-05, "replace the finetune in all places"). Their rows
+        # stay in results.jsonl as evidence; the grid is a living surface.
+        if r.get("task") == "ada-handles" and r.get("model") not in ("fabliq", "zaya1", "gemma4"):
             out.append(r)
     return out
 
