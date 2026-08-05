@@ -84,7 +84,9 @@ _LFM2_TC_CLOSE = "<|tool_call_end|>"
 # answer, that "answer" is a MANGLED leaked call the recover/strip pass couldn't clean (a truncated
 # `<|tool_call>call:Gemma4__…` blob with no proper close), not real content.
 _LEAK_DEBRIS = (_GEMMA_TC_OPEN, _GEMMA_TC_CLOSE, _GEMMA_STR, _LFM2_TC_OPEN, _LFM2_TC_CLOSE,
-                "<tool_call>", "</tool_call>")
+                "<tool_call>", "</tool_call>",
+                # nemotron/maple XML-function dialect (fused-call walks 1785946072, 1785956867)
+                "<function=", "<parameter=")
 
 
 def has_tool_call_leak(text: str) -> bool:

@@ -6302,3 +6302,27 @@ class ContinuationKeepsFetchLedgerTests(unittest.TestCase):
         store.put("task:xyz", self._old_sess())
         store.put("task:xyz", PlanSession(plan=_plan(2)))
         self.assertFalse(store.get("task:xyz").fetched_pages)
+
+
+class RoleplaySteerTagDialectTests(unittest.TestCase):
+    """Walked on maple-preview run 1785956867 call 0083: a steer reading `Let me read the current
+    files … <tool_call> {"name": "read_file", …} </tool_call>` was DELIVERED — the hard-drop's
+    tool-call arm knew only the `name({` shape, not the TAG dialects (maple/qwen `<tool_call>`,
+    gemma `<|tool_call>`, nemotron `<function=`/`<parameter=`). The tag catalog has ONE owner
+    (massage._LEAK_DEBRIS); the steer guard now builds its arm from it."""
+
+    CASES = [
+        'Let me read the files. <tool_call> {"name": "read_file", {"path": "x.py"}} </tool_call>',
+        'Fix the import. <|tool_call>call:edit_file{path:<|"|>x.py<|"|>}<tool_call|>',
+        'I will check. <function=read_file>\n<parameter=path>\nx.py',
+    ]
+
+    def test_every_tag_dialect_is_dropped(self):
+        from cria.loop import _ROLEPLAY_STEER
+        for s in self.CASES:
+            self.assertTrue(_ROLEPLAY_STEER.search(s), f"escaped the hard-drop: {s[:60]}")
+
+    def test_prose_naming_a_tool_still_passes(self):
+        from cria.loop import _ROLEPLAY_STEER
+        ok = "Use read_file on tests/x.py to see the real lines, then make one targeted edit."
+        self.assertFalse(_ROLEPLAY_STEER.search(ok))

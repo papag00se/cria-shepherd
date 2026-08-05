@@ -5479,10 +5479,14 @@ def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
 # output. Injected as ⟦ctx:steer⟧ it reads as fact (observed: the coder copied a steer's INVENTED
 # mock addresses verbatim into the shipped file, run 0729-mellum2 call 0157). Deterministic
 # markers of transcript syntax — never a judgment call:
+# The tool-call TAG dialects come from massage._LEAK_DEBRIS — the one catalog of transcript
+# syntax (walked on maple 1785956867 call 0083: a `<tool_call> {"name": …}` steer DELIVERED
+# because this arm knew only the `name({` shape; the tag family lived one module away).
 _ROLEPLAY_STEER = re.compile(
     r"(?m)(?:\b(?:write_file|edit_file|exec_command|read_file|web_fetch|apply_patch)\s*\(\s*\{"   # tool-call syntax
     r"|^\s*(?:assistant|tool|user)\s*:\s"      # transcript role labels
-    r"|⟦ctx:)"                                  # a steer must not nest cria's own markers
+    r"|⟦ctx:"                                   # a steer must not nest cria's own markers
+    r"|" + "|".join(re.escape(mk) for mk in massage._LEAK_DEBRIS) + r")"
 )
 # The author announcing ITS OWN plans ("I will write resolve.py") — the steer contract is second
 # person. SPLIT from the hard-drop arms above (provenance audit 2026-08-04): its evidence is two
