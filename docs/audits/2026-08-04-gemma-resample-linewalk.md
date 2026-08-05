@@ -258,3 +258,28 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
 - **0069 steer-code judge** — DICTATES, correctly; delivered per the observe-only ruling.
   So the coder is about to receive an instruction to fix a line that is already fixed.
 
+### chunks 13–17 — calls 0070–0074 (the gate-parody script; a fabricated SUCCESS reply inside a command)
+
+- **0070** — the stale steer lands; the coder edits with the dead `resolved_ur1` old_string and
+  the edit-miss assist answers with the file's REAL current text (`original_address` — already
+  fixed). Reality pushback works; one call wasted per stale claim.
+- **0071–0072 — THE GATE-PARODY SCRIPT.** The coder copies cria's own composed check script out
+  of history and re-emits a mangled clone: `$__cria_out` mutated to `$__cira`, an invented
+  checker `python3 -m pygamedetect`, broken regex, a phantom `tests/test_wallet/__spec__.py`
+  path. Result: bash integer errors, "No module named pygamedetect", "[middle -16384 bytes
+  elided]". Its THINK then blames the tooling: "a bash math bug in the instrumentation script …
+  unrelated to my code", "pygametest … upstream tooling and harmless". The lowered gate script
+  rides in history attributed to the CODER, so the model imitates plumbing it was never meant
+  to own — and when the imitation breaks, 'the instrumentation' takes the blame. (Design
+  tension, noted for the report — not a new guard.)
+- **0072→0073** — the next call is malformed in a new way: the model writes a FABRICATED TOOL
+  RESPONSE into its own command text — `… | grep ERROR'}]\n}<tool_call|>Responsed: {duration: 0,
+  error_code: 0, message: 'SUCCESS', stdout: '', stderr: ''}` — inventing the success it hoped
+  for. cria's malformed-call refusal names it exactly ("marker tokens leaked into the command
+  text … Nothing was run"). Guard ✓.
+- **0073** — clean rerun of `pytest | grep ERROR` → exit 1 with EMPTY output → cria's
+  pipe-ate-the-output guard fires ("re-run WITHOUT the pipe … before drawing any conclusion").
+  Exactly the right assist at exactly the right moment.
+- **0074** — coder re-runs unfiltered. (Harness compactions at 0066/0072/0074 — 4, 16, 8 turns —
+  all carried cleanly by cria's summaries; the ⟦ctx:facts⟧ ledger and AGENTS.md survive each.)
+

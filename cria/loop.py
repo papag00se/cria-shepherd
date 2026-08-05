@@ -1549,6 +1549,19 @@ class LoopStore:
 
     def put(self, key: str, sess: PlanSession) -> None:
         with self._lock:
+            # A REPLACING put on a stable (sid:) key is the same CONVERSATION getting a new
+            # session object — the post-compaction continuation, the follow-up plan. Its durable
+            # fetch ledger is conversation truth and must survive the swap: walked on run
+            # 1785893473 call 0083, the continuation session started blank and the next prompt
+            # told the coder "no endpoint definitions were found in it" about a spec whose full
+            # 33-endpoint outline the OLD session's ledger still held. _merge_fetches keeps the
+            # richer entry per URL, so a later outline-less fetch can't clobber an earlier
+            # outline. task: keys are prompt-derived and can collide across unrelated runs —
+            # those inherit nothing (the plan-cache-leak lesson, applied to fetches).
+            prev = self._sessions.get(key)
+            if prev is not None and _stable_session(key) and getattr(prev, "fetched_pages", None):
+                sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
+                                                    prev.fetched_pages)
             self._sessions[key] = sess
             self._save_locked()
 

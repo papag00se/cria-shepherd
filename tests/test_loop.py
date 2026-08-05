@@ -6258,3 +6258,47 @@ class SteerBlindnessAndCodeDictationTests(unittest.TestCase):
         ]
         for k in keep:
             self.assertIsNotNone(_grounded_steer_or_none(k, "", _R()), k[:40])
+
+
+class ContinuationKeepsFetchLedgerTests(unittest.TestCase):
+    """Walked on ada-handles_gemma4_codex_poff_1785893473 call 0083: after Codex's LOCAL_COMPACT
+    the continuation built a brand-new PlanSession and stored it over the old one — discarding
+    sess.fetched_pages, the DURABLE fetch ledger that held api.handle.me's full 33-endpoint
+    outline. The very next prompt told the coder "no endpoint definitions were found in it" —
+    a false fact about a spec cria had fully surfaced 60 calls earlier, at exactly the boundary
+    the durable ledger exists to survive."""
+
+    ROUTES = "/handles, /handles/{handle}, /holders/{address}"
+
+    def _old_sess(self):
+        s = PlanSession(plan=_plan(1))
+        s.fetched_pages = {"https://api.handle.me/openapi.json":
+                           ("HTTP 200", self.ROUTES, "GET /handles/{handle} → holder(string)", "")}
+        return s
+
+    def test_a_replacing_put_on_a_stable_key_carries_the_ledger(self):
+        store = LoopStore()
+        store.put("sid:abc", self._old_sess())
+        store.put("sid:abc", PlanSession(plan=_plan(2)))     # the continuation's fresh session
+        kept = store.get("sid:abc").fetched_pages or {}
+        self.assertIn("https://api.handle.me/openapi.json", kept)
+        self.assertIn("/handles/{handle}", kept["https://api.handle.me/openapi.json"][1])
+
+    def test_the_new_sessions_richer_entry_still_wins(self):
+        store = LoopStore()
+        store.put("sid:abc", self._old_sess())
+        new = PlanSession(plan=_plan(2))
+        new.fetched_pages = {"https://api.handle.me/openapi.json":
+                             ("HTTP 200", "", "", "")}       # find= result: header, no outline
+        store.put("sid:abc", new)
+        kept = store.get("sid:abc").fetched_pages
+        self.assertIn("/handles/{handle}", kept["https://api.handle.me/openapi.json"][1],
+                      "an outline-less later fetch must not clobber the earlier outline")
+
+    def test_an_unstable_task_key_does_NOT_inherit(self):
+        # task: keys are derived from the prompt text — a re-run of the same task in a fresh
+        # conversation must start with an empty ledger (no unearned cross-run facts).
+        store = LoopStore()
+        store.put("task:xyz", self._old_sess())
+        store.put("task:xyz", PlanSession(plan=_plan(2)))
+        self.assertFalse(store.get("task:xyz").fetched_pages)
