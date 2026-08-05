@@ -23,8 +23,8 @@ gates = check runs it triggered.
 | 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 9 | 4 | 11 | 5 | 23 | 114 |
 | 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 17 | 7 | 30 | 8 | 34 | 199 |
 | 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 | 58 |
-| 🟢 mellum2 | ³⁄₄ ⁴⁄₄ | 173.4 | 10 | 2 | 16 | 2 | 8 | 76 |
 | 🟡 qwythos | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 12 | 2 | 7 | 4 | 13 | 95 |
+| 🟡 mellum2 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 9 | 2 | 14 | 2 | 8 | 76 |
 | 🔴 gemma4 | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 30 | 6 | 10 | 9 | 31 | 250 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
@@ -66,8 +66,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | qwythos | counted | 4/4 | 9 | 58 | 31 | 81.9 | 9 | 4 | exited |
 | qwopus | counted | 4/4 | 15 | 75 | 46 | 83.2 | 11 | 7 | exited |
 | ornith | counted | 4/4 | 17 | 94 | 51 | 82.5 | 5 | 4 | exited |
+| mellum2 | counted | 2/4 | 8 | 76 | 49 | 177.1 | 7 | 9 | exited |
 
-counted runs: 19 · avg wall 27 min · avg coder calls 70 · full-pass rate 13/19
+counted runs: 20 · avg wall 26 min · avg coder calls 69 · full-pass rate 13/20
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -103,6 +104,7 @@ counted runs: 19 · avg wall 27 min · avg coder calls 70 · full-pass rate 13/1
 | mellum2 | off | — | 1/4 | ada-handles_mellum2_codex_poff_1785848364 (VOIDED) | 134c382 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
 | mellum2 | off | — | 0/4 | ada-handles_mellum2_codex_poff_1785880114 | 61242fc | milestone-miss-15min | SUPERSEDED by the typo-callout widening — walked, cria fault yes: dash/underscore workspace typo drew unexplained refusals; MCP-endpoint fixation and unwrap churn are the model's own |
 | mellum2 | off | 2 | **4/4** | ada-handles_mellum2_codex_poff_1785881344 | 878c1b1+ | exited | 3/3 unit tests, dedicated live-test file (real resolution), CLI, README — 6 minutes, 81 calls, first run on the widened typo callout |
+| mellum2 | off | 3 | **2/4** | ada-handles_mellum2_codex_poff_1785887600 | 878c1b1+ | exited | walked: cria fault none — MCP fixation + a 45-call jsonrpc:'2.0' blindness; CLI shipped address-only and its own judge approved it; mellum2 closes 3,4,2 NOT STABLE |
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
 | nemotron-elastic | on | 1 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): the live test worked with the task's handle as argument; the scorer now honours that shape, as its CLI check always did |
 | nemotron-elastic | on | 2 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): same argument-shape rescore as run 1; refutation guard 2x correct in-run |
