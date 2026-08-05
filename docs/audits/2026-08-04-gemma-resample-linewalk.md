@@ -456,12 +456,21 @@ an example value read as a format rule and defended to the end.
 - Write-protect ./tmp/read-only spills (mode 0444) — one near-miss (0027's redirect).
 
 **Measured and REJECTED (2026-08-04, operator discussion):** a detector for "the coder's own
-validation rejects an input the task names" (the goose landmine). Strict prevalence across all
-~100 captured sessions: exactly 1 (this run), and the check-visible signal first appears at
-call 0259 of 284 — syntax/collection failures kept pytest from reaching the goose test until
-~10 minutes before the wall, so even a perfect detector fires too late here. Prevalence 1 +
-late signal + the high bar to ADD ⇒ not built. Re-measure only if gemma4 v3 reproduces the
-pattern.
+validation rejects an input the task names" (the goose landmine). Two independent grounds:
+1. **Doctrine (the decisive one, operator's call).** Selecting WHICH task words count as
+   inputs is a judgment about what the prose means; freezing a reasoner's one-time extraction
+   into a string watchlist is principle 8's "tell" with a launderer in front — deterministic
+   code standing on an interpretation of intent, not on a record cria holds. The staleness is
+   visible in this very run: the model tested `papagoase` (typo) — a literal tripwire armed
+   with "goose, papagoose" mismatches on mutation, and its silence then reads as "no problem".
+   Every accepted trigger stands on cria's own records (bytes, line counts, repeat hashes, the
+   fetch ledger); none stands on task meaning, and this one would have been the first.
+2. **Prevalence.** Strict count across ~100 captured sessions: exactly 1 (this run), and the
+   check-visible signal first appears at call 0259 of 284 — syntax/collection failures kept
+   pytest from reaching the goose test until ~10 minutes before the wall. Even a perfect
+   detector fires too late here.
+Not built; do not re-propose as a literal watcher. If gemma4 v3 reproduces the pattern, the
+admissible shape is a QUESTION (rule 9's corollary), not a pattern.
 
 ## Corrected problematic-calls index (supersedes the skim-era index)
 
