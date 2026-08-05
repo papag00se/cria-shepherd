@@ -186,3 +186,81 @@ def readme_live_probe(ws: Path):
     if ok:
         return True, f"README-documented live command `{cmd}`: {suffix}"
     return False, f"live probe: `{cmd}` {suffix}"
+
+
+# Placeholder values cria's own spec outline carries — evidence must never match the EXAMPLES.
+_PLACEHOLDER_RE = re.compile(r"addr1e0{6,}|stake1[a-z]?x{4,}|stake1d4fg5dghr")
+_FETCH_HEADER_RE = re.compile(r"\AHTTP \d{3}|Content-Type:", re.M)
+
+
+def session_live_evidence(capture_dir, names=("goose", "papagoose")):
+    """Operator ruling 2026-08-05: the live-test deliverable ALSO counts when the session holds
+    evidence that the coder RAN a test of a live handle and got successful results — "the spirit
+    is there and the interpretation is fair." The rule follows the ruling's words exactly, and
+    the first draft's false positives (a reasoner's file-read echoing hardcoded values; a 23K
+    curl dump of the whole /handles list that merely CONTAINS 'goose') define the fences:
+      - the RESULT must pair with the EXEC call that produced it (call_id / positional pairing),
+        never a read_file/web_fetch — file contents and research fetches are not runs;
+      - the producing COMMAND must itself name a task handle (it was run ON the handle) or be a
+        pytest invocation, and must not be a bare curl/wget/httpie fetch of the API — executing
+        the coder's own code is the ruling's subject;
+      - the OUTPUT must carry a real addr1… AND a real stake1… (cria's outline placeholders
+        excluded).
+    Returns (ok, detail-naming-the-call)."""
+    import json as _json
+    from pathlib import Path as _P
+    d = _P(capture_dir)
+    if not d.is_dir():
+        return False, "no capture dir"
+    name_re = re.compile("|".join(re.escape(n) for n in names), re.I)
+    # ALLOWLIST of program runners — the ruling's subject is the coder's OWN code running.
+    # A blocklist kept leaking: `curl` was research, then `cd ws && grep goose goose.json`
+    # re-emitted a saved file's contents. Only an invocation of a program counts, after
+    # stripping any `cd <dir> &&` prefix; grep/cat/curl/wget never appear on this list.
+    runner_re = re.compile(
+        r"^\s*(?:python3?(?:\s+-m)?|pytest|node|ruby|php|java|go\s+run|cargo\s+run|bash|sh|\./)")
+    exec_names = {"exec_command", "shell", "bash", "run", "execute_command"}
+    for f in sorted(d.glob("[0-9]*.json")):
+        if f.name.endswith(".response.json"):
+            continue
+        try:
+            body = _json.loads(f.read_text(errors="replace")).get("body", {})
+        except (ValueError, OSError):
+            continue
+        msgs = body.get("messages", [])
+        calls = {}          # call_id -> (tool name, arguments str)
+        last_call = None
+        for m in msgs:
+            for tc in (m.get("tool_calls") or []):
+                fn = tc.get("function", {})
+                calls[tc.get("id") or ""] = (fn.get("name", ""), fn.get("arguments", ""))
+                last_call = (fn.get("name", ""), fn.get("arguments", ""))
+            if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+                continue
+            producer = calls.get(m.get("tool_call_id") or "") or last_call
+            if not producer or producer[0] not in exec_names:
+                continue
+            cmd = producer[1]
+            if not name_re.search(cmd) and "pytest" not in cmd:
+                continue          # the run was not ON a task handle and was not the test suite
+            shell_text = cmd.split('"cmd"')[-1].lstrip(':{ "[')
+            shell_text = re.sub(r"^(?:cd\s+\S+\s*&&\s*)+", "", shell_text)
+            if not runner_re.match(shell_text):
+                continue          # not a program invocation (curl/grep/cat are not runs of their code)
+            c = m.get("content")
+            if c is None:
+                c = m.get("output") or ""
+            if isinstance(c, list):
+                c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+            if not isinstance(c, str) or len(c) > 20000:
+                continue
+            if not name_re.search(c):
+                continue
+            addrs = [a for a in ADDR_RE.findall(c) if not _PLACEHOLDER_RE.search(a)]
+            holders = [h for h in HOLDER_RE.findall(c) if not _PLACEHOLDER_RE.search(h)]
+            if addrs and holders:
+                return True, (f"in-session live resolution evidence (call {f.name.split('.')[0]}): "
+                              f"executed `{'pytest' if 'pytest' in cmd else 'handle-named command'}` "
+                              f"output shows {addrs[0][:24]}… + holder — counted per operator "
+                              f"ruling 2026-08-05")
+    return False, "no in-session live execution evidence"

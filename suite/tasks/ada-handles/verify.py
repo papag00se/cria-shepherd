@@ -58,7 +58,7 @@ def positive_count(out: str) -> bool:
     return any(int(n) > 0 for n in re.findall(r"\b\d+\b", stripped))
 
 
-def main(ws: Path) -> dict:
+def main(ws: Path, capture=None) -> dict:
     r = {"task": "ada-handles", "score": 0.0, "max_score": 4.0, "success": False, "parts": {}}
 
     # 1) Unit tests: pytest discovers and passes ≥1 real test.
@@ -103,6 +103,15 @@ def main(ws: Path) -> dict:
             live_ok, live_detail = True, probe_detail
         else:
             live_detail = f"{live_detail}; {probe_detail}"
+    if not live_ok and capture is not None:
+        # Operator ruling 2026-08-05: evidence that the coder's own executed code resolved a
+        # task handle live, captured in the session, counts — "the spirit is there and the
+        # interpretation is fair." Evidence rules live in _liveprobe.session_live_evidence.
+        ev_ok, ev_detail = _liveprobe.session_live_evidence(capture)
+        if ev_ok:
+            live_ok, live_detail = True, ev_detail
+        else:
+            live_detail = f"{live_detail}; {ev_detail}"
     r["parts"]["live_test"] = {"ok": live_ok, "detail": live_detail}
 
     # 3) Resolver works as the README says — or, failing README instructions, the conventional
@@ -160,4 +169,5 @@ def main(ws: Path) -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(main(Path(sys.argv[1]).resolve()), indent=1))
+    print(json.dumps(main(Path(sys.argv[1]).resolve(),
+                      capture=sys.argv[2] if len(sys.argv) > 2 else None), indent=1))

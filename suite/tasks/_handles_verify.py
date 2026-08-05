@@ -134,7 +134,7 @@ def unit_tests(ws, spec):
     return False, 0, f"no passing test run ({spec['tool']})"
 
 
-def live_test(ws, spec):
+def live_test(ws, spec, capture=None):
     """PASSES with the network and FAILS without it. A mock passes both ways and scores nothing.
 
     Three branches, most-specific first (the Python task's walked fairness rules, shared via
@@ -156,6 +156,13 @@ def live_test(ws, spec):
     p_ok, p_detail = _liveprobe.readme_live_probe(ws)
     if p_ok:
         return True, p_detail
+    if capture is not None:
+        # Operator ruling 2026-08-05 (ported from the Python task, fixes-in-both-paths): captured
+        # evidence of the coder's own executed code resolving a task handle live counts.
+        ev_ok, ev_detail = _liveprobe.session_live_evidence(capture)
+        if ev_ok:
+            return True, ev_detail
+        p_detail = f"{p_detail}; {ev_detail}"
     return False, f"no runnable test suite to check for liveness; {p_detail}"
 
 
@@ -202,7 +209,7 @@ def readme(ws):
     return ok, f"{rd.name} covers install/run/tests: {ok}"
 
 
-def verify(task: str, language: str, ws: Path) -> dict:
+def verify(task: str, language: str, ws: Path, capture=None) -> dict:
     spec = LANGS[language]
     r = {"task": task, "language": language, "score": 0.0, "max_score": 4.0,
          "success": False, "parts": {}}
@@ -214,7 +221,7 @@ def verify(task: str, language: str, ws: Path) -> dict:
     ok, n, detail = unit_tests(ws, spec)
     r["parts"]["unit_tests"] = {"ok": ok, "passed": n, "detail": detail}
 
-    lok, ldetail = live_test(ws, spec)
+    lok, ldetail = live_test(ws, spec, capture)
     r["parts"]["live_test"] = {"ok": lok, "detail": ldetail}
 
     cok, cdetail = cli(ws, spec)
@@ -230,4 +237,5 @@ def verify(task: str, language: str, ws: Path) -> dict:
 
 def main(task: str, language: str) -> None:
     ws = Path(sys.argv[1]).resolve()
-    print(json.dumps(verify(task, language, ws)))
+    capture = sys.argv[2] if len(sys.argv) > 2 else None
+    print(json.dumps(verify(task, language, ws, capture)))

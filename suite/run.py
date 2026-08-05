@@ -366,7 +366,8 @@ def main() -> None:
     archive.mkdir(parents=True, exist_ok=True)
     sh("cp", "-r", str(ws), str(archive / "workspace"), timeout=300)
 
-    vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws), timeout=600)
+    vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws),
+            *([str(session_dir)] if session_dir else []), timeout=600)
     try:
         verdict = json.loads(vr.stdout)
     except Exception:  # noqa: BLE001

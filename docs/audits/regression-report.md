@@ -21,11 +21,11 @@ gates = check runs it triggered.
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
+| 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
-| 🟡 qwythos · 9B q6 | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟡 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ²⁄₄ | 134.6 | 38 | 205 | 19 | 6 | 32 | 8 |
 | 🟡 mellum2 · 12B-MoE q4 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
-| 🔴 gemma4 · 12B q4km (retired finetune) | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
+| 🟠 gemma4 · 12B q4km (retired finetune) | ²⁄₄ ¹⁄₄ ²⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -57,12 +57,12 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4 | superseded | 3/4 | 61 | 492 | 251 | 63.4 | 54 | 16 | milestone-miss-60min |
 | gemma4 | counted | 2/4 | 31 | 310 | 147 | 64.1 | 24 | 11 | milestone-miss-30min |
 | gemma4 | counted | 1/4 | 31 | 202 | 137 | 62.6 | 32 | 9 | milestone-miss-30min |
-| qwythos | counted | 2/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
+| qwythos | counted | 3/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
 | qwopus | counted | 4/4 | 5 | 34 | 17 | 85.4 | 3 | 3 | exited |
 | ornith | counted | 4/4 | 4 | 40 | 24 | 84.9 | 0 | 4 | exited |
 | mellum2 | superseded | 0/4 | 16 | 107 | 70 | 160.1 | 16 | 9 | milestone-miss-15min |
 | mellum2 | counted | 4/4 | 6 | 81 | 51 | 176.3 | 14 | 6 | exited |
-| gemma4 | counted | 1/4 | 31 | 238 | 127 | 62.5 | 33 | 11 | milestone-miss-30min |
+| gemma4 | counted | 2/4 | 31 | 238 | 127 | 62.5 | 33 | 11 | milestone-miss-30min |
 | qwythos | counted | 4/4 | 9 | 58 | 31 | 81.9 | 9 | 4 | exited |
 | qwopus | counted | 4/4 | 15 | 75 | 46 | 83.2 | 11 | 7 | exited |
 | ornith | counted | 4/4 | 17 | 94 | 51 | 82.5 | 5 | 4 | exited |
@@ -112,6 +112,14 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
+- **2026-08-05 — operator scoring ruling: an in-session live run of the coder's OWN code
+  resolving a task handle counts as the live test** ("the spirit is there and the interpretation
+  is fair"). Implemented in _liveprobe.session_live_evidence with adversarially-tested fences
+  (paired exec results only; runner-allowlist commands naming a handle or pytest — curl fetches,
+  file greps and hardcoded-value file reads all rejected; real-marker output, placeholders
+  excluded). run.py passes the capture dir to both verifiers. 13 recorded rows raised
+  (raise-only; provenance in each row's `rescored` key). Headline: **gemma4-stock is now
+  4/4 × 4** — its "miss" was always this interpretation; nemotron poff standing 4, 2*, 4, 4.
 - **2026-08-05 — FINETUNE ABLATION VERDICT: stock gemma-4-12b-it Q4_K_M scores 3/4, 3/4, 3/4
   (280/240/200 s; 29/25/22 calls; all clean exits)** on the identical lane (same quant, same
   gemma-toggle template, same card sampling, planner off) where the yuxinlu1 finetune scored
