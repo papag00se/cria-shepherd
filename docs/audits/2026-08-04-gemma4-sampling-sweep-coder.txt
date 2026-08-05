@@ -1,0 +1,14 @@
+phase=coder-s1  prompts=30  settings=['card', 'card-np', 't07', 't07-np', 't05', 't05-np', 'tight-k20', 'tight-p90', 't07-tight', 'minp10']
+
+setting                tool_ok    verdict_ok       echo_ok   errors
+-------------------------------------------------------------------
+card                     29/29          0/30           0/1        0
+card-np                  30/30          0/30           0/1        0
+t07                      30/30          0/30             —        0
+t07-np                   30/30          0/30             —        0
+t05                      29/29          0/30           0/1        0
+t05-np                   30/30          0/30           0/1        0
+tight-k20                30/30          0/30           0/1        0
+tight-p90                30/30          0/30             —        0
+t07-tight                30/30          0/30           1/1        0
+minp10                   30/30          0/30             —        0

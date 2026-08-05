@@ -1,0 +1,14 @@
+phase=satisfaction-confirm  prompts=20  settings=['card', 'card-np', 't07', 't07-np', 't05', 't05-np', 'tight-k20', 'tight-p90', 't07-tight', 'minp10']
+
+setting                tool_ok    verdict_ok       echo_ok   errors
+-------------------------------------------------------------------
+card                         —          8/20             —        0
+card-np                      —          6/20             —        0
+t07                          —          7/20             —        0
+t07-np                       —          5/20             —        0
+t05                          —          5/20             —        0
+t05-np                       —          6/20             —        0
+tight-k20                    —          7/20             —        0
+tight-p90                    —          8/20             —        0
+t07-tight                    —          3/20             —        0
+minp10                       —          6/20             —        0

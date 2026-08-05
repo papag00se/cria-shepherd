@@ -112,6 +112,14 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
+- **2026-08-04 — gemma4 sampling sweep (post-walk):** 10 settings × 50 real captured prompts
+  replayed against live gemma4 (suite/replay.py; tables in
+  docs/audits/2026-08-04-gemma4-sampling-sweep-*.txt). Tool-call well-formedness ≈100% at every
+  setting (the run-killing malformed calls are ~2%/call — below this sample's floor). Judge
+  verdict parseability: card 8/20 ties for best; every cooler temp scores ≤ card; the
+  most-constrained cell (t0.7 + top_p .90 + top_k 20) collapses to 3/20. Ruling: keep card
+  sampling; "temp too high" is not the lever — invention texture is weights-owned (seen at
+  temp 0, 0.2, and 1.0 alike).
 
 - **2026-08-04 ~19:35 — FOLLOW-UP EXPERIMENT 2: gemma4 planner-ON (card sampling) — 0/4 at the
   15-min wall, the day's worst gemma4 result.** Run ada-handles_gemma4_codex_pon_1785896127
