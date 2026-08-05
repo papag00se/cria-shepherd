@@ -1091,3 +1091,35 @@ class BinaryBlobTests(unittest.TestCase):
         r = planner_tools._exec_command({"command": "cat blob.bin"}, cwd=d, scratch=d)
         self.assertIn("binary content", r.text)            # not soup, not an exception
         self.assertNotIn("�", r.text)
+
+
+class MissingPathRefusalTests(unittest.TestCase):
+    """A synthetic write/edit whose PATH never arrived (the arguments came out malformed — gemma4
+    re-measure run 1785893473 calls 0007/0059/0184 fused path and old_string into new_string) used
+    to fall through UN-LOWERED to the harness, whose reply — "unsupported call: edit_file" — the
+    coder read as 'edits are unsupported'. cria advertised the tool; cria owns the refusal."""
+
+    def _cmd(self, name, args):
+        comp = _call(name, args)
+        translate_outbound(comp, _CMD_SHELL, injected={name})
+        return _lowered_cmd(comp)
+
+    def test_edit_with_no_path_is_refused_not_forwarded_raw(self):
+        # the run's real malformed shape: everything fused into new_string
+        cmd = self._cmd("edit_file", {"new_string": "    assert x\\n',old_string:"})
+        self.assertIn("malformed", cmd)
+        self.assertIn("path", cmd)
+
+    def test_edit_with_path_but_absent_old_string_is_refused(self):
+        cmd = self._cmd("edit_file", {"path": "a.py", "new_string": "x"})
+        self.assertIn("malformed", cmd)
+
+    def test_write_with_no_path_is_refused_not_forwarded_raw(self):
+        cmd = self._cmd("write_file", {"content": "body text", "result_type": "file_created"})
+        self.assertIn("malformed", cmd)
+        self.assertIn("path", cmd)
+
+    def test_intact_calls_still_lower(self):
+        self.assertIn("write_bytes", self._cmd("write_file", {"path": "a.py", "content": "x"}))
+        edit = self._cmd("edit_file", {"path": "a.py", "old_string": "x", "new_string": "y"})
+        self.assertNotIn("malformed", edit)

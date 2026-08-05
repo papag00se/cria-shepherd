@@ -1,0 +1,1 @@
+Your write_file call has no usable `path` argument — the arguments arrived malformed (often the path ends up fused into another field). Nothing was written and no file on disk was touched. Re-send the write as one complete call with `path` and `content` as two separate JSON fields.

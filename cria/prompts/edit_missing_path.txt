@@ -1,0 +1,1 @@
+Your edit_file call has no usable `path` argument — the arguments arrived malformed (often the path and old_string text end up fused into another field). Nothing was changed and no file on disk was touched. Re-send the edit as one complete call with `path`, `old_string` and `new_string` as three separate JSON fields.

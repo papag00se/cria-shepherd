@@ -804,6 +804,15 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                               else "writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:
                 path = _tool_path(args)
+                if not path:
+                    # No usable path — the arguments arrived malformed (gemma4 re-measure run
+                    # 1785893473 call 0007: path fused into another key). Before this branch the
+                    # un-lowerable call fell through RAW to the harness, whose reply —
+                    # "unsupported call: write_file" — the coder read as "writes are unsupported".
+                    # cria advertised this tool; cria owns the refusal that explains it.
+                    cmd = _refusal_command(prompts.load("write_missing_path"))
+                    if rlog is not None:
+                        rlog.emit("writeproxy.write_missing_arg", tool=name, arg="path")
                 if path:
                     # The `new_string` lesson below, for the tool that carries whole files. `content`
                     # is declared required, and `args.get("content") or ""` turned its ABSENCE — and
@@ -823,6 +832,15 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         cmd = _write_command(str(path), _repair_double_escaped(str(body)))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
+                if not path or args.get("old_string") is None:
+                    # Same malformed-arguments hole as the write branch (run 1785893473 calls
+                    # 0059/0184: path+old_string fused into new_string). Un-lowered, the raw call
+                    # drew the harness's opaque "unsupported call: edit_file", which the coder
+                    # misread as edits being unsupported and rerouted through whole-file rewrites.
+                    cmd = _refusal_command(prompts.load("edit_missing_path"))
+                    if rlog is not None:
+                        rlog.emit("writeproxy.edit_missing_arg", tool=name,
+                                  arg="path" if not path else "old_string")
                 if path and args.get("old_string") is not None:
                     # A MISSING required argument is not an empty one. `new_string` is declared
                     # required, and `args.get(...) or ""` turned its ABSENCE — the shape a truncated
