@@ -52,6 +52,15 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
         "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
     },
+    # DeepGrove Maple-Preview — NO publisher card yet (preview + community port). Neutral
+    # start: temp 1.0 nucleus, NO repeat penalty (the penalty is a per-model finding, never a
+    # default — greedy+penalty was the gemma mutation engine). Tune only from replay/run evidence.
+    "maple-preview": {
+        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
+        "classifier": {"temperature": 0.0, "repeat_penalty": 1.0},
+        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.0},
+    },
     # empero-ai (Qwen3.5 thinking): temp 0.6 / top_p 0.95 / top_k 20.
     "qwythos": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
