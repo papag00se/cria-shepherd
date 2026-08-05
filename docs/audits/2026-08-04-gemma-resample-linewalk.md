@@ -455,6 +455,14 @@ an example value read as a format rule and defended to the end.
   (0040, 0158, 0251 — three in one run; the dictated-code observe cohort carries them).
 - Write-protect ./tmp/read-only spills (mode 0444) — one near-miss (0027's redirect).
 
+**Measured and REJECTED (2026-08-04, operator discussion):** a detector for "the coder's own
+validation rejects an input the task names" (the goose landmine). Strict prevalence across all
+~100 captured sessions: exactly 1 (this run), and the check-visible signal first appears at
+call 0259 of 284 — syntax/collection failures kept pytest from reaching the goose test until
+~10 minutes before the wall, so even a perfect detector fires too late here. Prevalence 1 +
+late signal + the high bar to ADD ⇒ not built. Re-measure only if gemma4 v3 reproduces the
+pattern.
+
 ## Corrected problematic-calls index (supersedes the skim-era index)
 
 | call | what actually happened |
