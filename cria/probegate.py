@@ -189,6 +189,23 @@ def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
     return out
 
 
+def _line_on_disk(finding: str, workspace: str) -> "str | None":
+    """The on-disk text of the line a ``path:LINE…`` finding flags, or None. Feeds probeparse's
+    F811 discriminator (def/class shadow = real bug; import rebinding = advisory) — the file
+    access the pure predicate can't do itself."""
+    import os
+    from pathlib import Path
+    m = _FLAGGED_LINE_RE.match(finding)
+    if not m or not workspace:
+        return None
+    path, line_no = m.group(1), int(m.group(2))
+    p = Path(path) if os.path.isabs(path) else Path(workspace) / path
+    try:
+        return p.read_text(errors="replace").splitlines()[line_no - 1]
+    except (OSError, IndexError):
+        return None
+
+
 def _is_hard_failure(plan, sid: str) -> bool:
     """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
     looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
@@ -216,6 +233,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
+    workspace = getattr(plan, "workspace", "") or ""
     findings: list[str] = []
     seen: set[str] = set()
     could_not_run = False
@@ -279,8 +297,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
                 continue
             had_content = True
             # advisory either as a whole line (phrase/prefix forms) or once the location prefix is
-            # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered
-            if probeparse.is_advisory(s) or probeparse.is_advisory(_LOC_PREFIX.sub("", s)):
+            # stripped (bare style code like `foo.py:80:1: E501 …`) — unused-import / style, filtered.
+            # For an F811 redefinition the flagged line on disk is the discriminator (def/class
+            # shadow = real bug, kept; import rebinding = cleanliness, dropped) — only F811 pays
+            # the disk read.
+            flagged = (_line_on_disk(s, workspace)
+                       if probeparse.F811_PHRASE in s.lower() else None)
+            if (probeparse.is_advisory(s, flagged)
+                    or probeparse.is_advisory(_LOC_PREFIX.sub("", s), flagged)):
                 continue
             # KEEP THE LINE AS THE CHECKER WROTE IT. `s` is the stripped copy — fine for deciding
             # whether to keep a line, wrong to SHIP, because cria ships this block under "each is the

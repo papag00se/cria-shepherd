@@ -762,3 +762,53 @@ class UnusedNameWarningsNeverGateTests(unittest.TestCase):
                 self.assertFalse(probeparse.is_advisory(msg))
                 r = probeparse.parse_output("python3 -m pyflakes .", "", 1, f"x.py:3:1: {msg}\n", "")
                 self.assertTrue(r.findings, f"a real error was dropped: {msg}")
+
+
+class F811ShadowDiscriminatorTests(unittest.TestCase):
+    """F811 covers TWO different things under one message: an import bound twice (cleanliness,
+    stays advisory — the mellum2 walk) and a def/class bound twice, where the second silently
+    replaces the first at runtime (a real bug). Walked on
+    ada-handles_maple-preview_codex_poff_1785956867: the coder wrote two `def resolve_handle`
+    in one file — the second shadowed the /v1 network resolver, the "live" path recursed into
+    its own simulator, and the whole run built a mock architecture around the confusion.
+    pyflakes named the exact line; the advisory filter suppressed it, and no channel ever
+    surfaced the duplicate. The discriminator the old KNOWN-COST comment called for: the
+    flagged line's on-disk text, injected by callers that hold the file (the module stays pure —
+    with no flagged_line the pure default is unchanged)."""
+
+    _MSG = "redefinition of unused 'resolve_handle' from line 27"
+
+    def test_pure_default_without_the_line_stays_advisory(self):
+        self.assertTrue(probeparse.is_advisory(self._MSG))
+        self.assertTrue(probeparse.is_advisory(self._MSG, None))
+
+    def test_a_def_shadow_is_a_real_error(self):
+        for line in ("def resolve_handle(handle, live_test=False):",
+                     "    def resolve_handle(handle):",
+                     "async def resolve_handle(handle):",
+                     "class ResolveHandle:"):
+            with self.subTest(line=line):
+                self.assertFalse(probeparse.is_advisory(self._MSG, line))
+
+    def test_an_import_rebinding_stays_advisory(self):
+        for line in ("import json", "from x import resolve_handle", "    import json"):
+            with self.subTest(line=line):
+                self.assertTrue(probeparse.is_advisory(self._MSG, line))
+
+    def test_the_line_only_refines_f811_not_other_advisories(self):
+        # A def-shaped flagged line must not un-filter a genuinely advisory message.
+        self.assertTrue(probeparse.is_advisory("'json' imported but unused", "def f():"))
+
+    def test_parse_output_with_a_reader_keeps_the_def_shadow(self):
+        out = "x.py:148:1: redefinition of unused 'resolve_handle' from line 27\n"
+        r = probeparse.parse_output("python3 -m pyflakes x.py", "", 1, out, "",
+                                    read_source_line=lambda p, n: "def resolve_handle(h, live_test=False):")
+        self.assertEqual(len(r.findings), 1, f"the def shadow was dropped: {r.summary}")
+        r = probeparse.parse_output("python3 -m pyflakes x.py", "", 1, out, "",
+                                    read_source_line=lambda p, n: "import json")
+        self.assertEqual(r.findings, [], "an import rebinding gated")
+
+    def test_parse_output_without_a_reader_is_unchanged(self):
+        out = "x.py:148:1: redefinition of unused 'resolve_handle' from line 27\n"
+        r = probeparse.parse_output("python3 -m pyflakes x.py", "", 1, out, "")
+        self.assertEqual(r.findings, [])

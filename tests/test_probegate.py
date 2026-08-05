@@ -9,7 +9,7 @@ from pathlib import Path
 
 from cria import probegate
 from cria.probediscovery import ProbeKind
-from cria.probegate import interpret_gate, plan_gate, split_sections
+from cria.probegate import GatePlan, interpret_gate, plan_gate, split_sections
 from cria.proberun import completion_block_nudge, completion_probe_digest, syntax_floor_clean
 
 
@@ -691,6 +691,42 @@ class VerbatimMeansVerbatimTests(unittest.TestCase):
         out = self._clean(body)
         self.assertNotIn("imported but unused", out)
         self.assertIn("Boom", out)
+
+
+class F811ShadowInGateOutputTests(unittest.TestCase):
+    """The model-facing gate result must surface a def/class F811 shadow (a real bug: the second
+    binding silently wins) while still dropping the import-rebinding form (cleanliness). Walked on
+    ada-handles_maple-preview_codex_poff_1785956867 — the duplicate `def resolve_handle` was the
+    structural root of the failed run and the suppressed pyflakes line was the only checker output
+    that named it."""
+
+    def _ws(self, content):
+        import tempfile
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "x.py"), "w") as fh:
+            fh.write(content)
+        return d
+
+    def _raw(self, body):
+        return "Chunk ID: 7f3\n" + _sec(0, "EXIT:0") + _sec(1, body) + _git() + "\n"
+
+    def test_a_def_shadow_survives_to_the_model(self):
+        ws = self._ws("import json\n" + "\n" * 3 + "def resolve_handle(h, live_test=False):\n    pass\n")
+        raw = self._raw("x.py:5:1: redefinition of unused 'resolve_handle' from line 2\nEXIT:1")
+        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        self.assertIn("redefinition of unused 'resolve_handle'", out)
+        self.assertIn("def resolve_handle(h, live_test=False):", out)   # flagged-line fact rides along
+
+    def test_an_import_rebinding_is_still_filtered(self):
+        ws = self._ws("import json\nimport os\nimport json\n")
+        raw = self._raw("x.py:3:1: redefinition of unused 'json' from line 1\nEXIT:1")
+        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        self.assertNotIn("redefinition", out)
+
+    def test_no_workspace_keeps_the_old_advisory_default(self):
+        raw = self._raw("x.py:5:1: redefinition of unused 'resolve_handle' from line 2\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertNotIn("redefinition", out)
 
 
 class FlaggedLineFactTests(unittest.TestCase):

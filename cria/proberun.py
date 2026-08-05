@@ -229,6 +229,23 @@ def select_completion_probes(root: str) -> list[ProbeCandidate]:
 # Execution via the injectable Runner seam
 # ---------------------------------------------------------------------------
 
+def source_line_reader(cwd: str):
+    """A ``(path, line_no) -> str | None`` reader rooted at the probe's working dir — the file
+    access probeparse's F811 discriminator needs (a def/class redefinition is a real shadow, an
+    import rebinding is cleanliness; see probeparse._ADVISORY_PHRASES). Missing file / bad line →
+    None, which keeps the pure advisory default."""
+    import os
+    from pathlib import Path
+
+    def read(path: str, line_no: int) -> Optional[str]:
+        p = Path(path) if os.path.isabs(path) else Path(cwd) / path
+        try:
+            return p.read_text(errors="replace").splitlines()[line_no - 1]
+        except (OSError, IndexError):
+            return None
+    return read
+
+
 def run_candidate(runner: Runner, c: ProbeCandidate, timeout_s: float) -> ProbeResult:
     """Run one candidate with a hard timeout via the injected runner.
 
@@ -249,7 +266,8 @@ def run_candidate(runner: Runner, c: ProbeCandidate, timeout_s: float) -> ProbeR
         # Rust status.code() is None for signal-kills; a Python subprocess
         # runner reports -signum — normalize so both worlds agree.
         exit_code = None
-    result = parse_output(joined, family_of(c.command), exit_code, stdout, stderr)
+    result = parse_output(joined, family_of(c.command), exit_code, stdout, stderr,
+                          read_source_line=source_line_reader(str(c.working_dir)))
     if timed_out:
         # upstream quirk, preserved: Duration::as_secs() TRUNCATES — a 0.4s
         # timeout reads "TIMEOUT after 0s". The summary is OVERWRITTEN but any
@@ -611,8 +629,10 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
     output = raw_output
     if exit_code is None:
         output, exit_code = scrape_exit(raw_output)
+    read_line = source_line_reader(str(c.working_dir))
     if exit_code == TIMEOUT_EXIT_CODE:
-        result = parse_output(joined, family_of(c.command), None, output, "")
+        result = parse_output(joined, family_of(c.command), None, output, "",
+                              read_source_line=read_line)
         # Same as_secs() truncation as run_candidate; findings kept.
         result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
         result.timed_out = True   # ran and did NOT finish → the completion gate fails CLOSED (M3)
@@ -623,4 +643,5 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
     # real exit 0 — not be flipped to a launch failure by a substring.
     if exit_code in LAUNCH_FAILURE_EXIT_CODES or (exit_code is None and NOT_FOUND_TEXT in output):
         return err_result(joined, LAUNCH_FAILURE_FMT.format(e=PROXY_LAUNCH_DETAIL))
-    return parse_output(joined, family_of(c.command), exit_code, output, "")
+    return parse_output(joined, family_of(c.command), exit_code, output, "",
+                        read_source_line=read_line)

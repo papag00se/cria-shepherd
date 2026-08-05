@@ -717,11 +717,11 @@ _ADVISORY_PHRASES = (
     "defined but never used",                # eslint no-unused-vars
     "declared but its value is never read",  # tsc TS6133 (unused local)
     "declared but never used",               # tsc TS6196 (unused type)
-    # THE SAME CLASS, and its absence cost a whole run. pyflakes emits
+    # THE SAME CLASS — for the IMPORT form. pyflakes emits
     # `redefinition of unused 'json' from line 14` when a name is bound twice and the first binding
-    # went unused. It changes nothing at runtime — it is the unused-import warning wearing different
-    # words, and the word "unused" is right there in it. pyflakes prints no code, so _STYLE_CODE
-    # cannot catch it either, and it sailed through as an ERROR.
+    # went unused. For imports it changes nothing at runtime — the unused-import warning wearing
+    # different words. pyflakes prints no code, so _STYLE_CODE cannot catch it either, and it once
+    # sailed through as an ERROR.
     #
     # Walked on ada-handles_mellum2_codex_poff_1785693138: for roughly 25 consecutive calls this was
     # the ONLY thing cria's gate reported, shipped under "[GROUND TRUTH — the repo's own checks
@@ -731,37 +731,68 @@ _ADVISORY_PHRASES = (
     # the program and then certified the result clean. It also taught the model to disbelieve the
     # gate: when pyflakes later reported a REAL error (`undefined name '_test'`) the model wrote
     # "The flags are false positives … The project's own checks are wrong."
-    # KNOWN COST, accepted deliberately: F811 also fires on two FUNCTIONS with the same name, where
-    # the second silently wins — a real bug this now suppresses. The message text is identical, so
-    # nothing here can tell the two apart. The discriminator exists but not at this layer: pyflakes
-    # reports the line of the second binding, and cria holds the file, so reading that line would say
-    # whether it is an `import` (cleanliness) or a `def`/`class` (a real shadow). That is the right
-    # fix and it needs a Finding with file access; this module is pure. Until then the trade is a
-    # rare missed shadow against a measured destroyed run, made with eyes open.
-    "redefinition of unused",                # pyflakes F811
+    #
+    # BUT F811 also fires on two FUNCTIONS/CLASSES with the same name, where the second silently
+    # wins — a REAL bug. The old "KNOWN COST, accepted deliberately" trade suppressed that form too,
+    # and the maple walk paid it: on ada-handles_maple-preview_codex_poff_1785956867 the coder wrote
+    # two `def resolve_handle` in one file, the second shadowed the network resolver, the "live"
+    # path recursed into its own simulator, and pyflakes' suppressed line was the only checker
+    # output naming the root cause. The discriminator the old comment called for now exists: the
+    # flagged line's on-disk text, INJECTED by callers that hold the file (``is_advisory``'s
+    # ``flagged_line`` / ``parse_output``'s ``read_source_line`` — this module stays pure). A
+    # def/class flagged line makes the F811 error-class; an import line (or no line available)
+    # keeps the advisory default.
+    "redefinition of unused",                # pyflakes F811 (import form; see discriminator above)
     "f-string is missing placeholders",      # pyflakes F541 · a cosmetic slip, runs fine
 )
 
+F811_PHRASE = "redefinition of unused"
 
-def is_advisory(message: str) -> bool:
+
+def f811_is_shadow(flagged_line: Optional[str]) -> bool:
+    """True when the line an F811 finding flags (the SECOND binding) is a ``def``/``class``
+    statement — the runtime-shadow form, a real bug. An import line or an unavailable line is the
+    cleanliness form. Pure: the caller supplies the line text."""
+    s = (flagged_line or "").lstrip()
+    return s.startswith(("def ", "async def ", "class "))
+
+
+def is_advisory(message: str, flagged_line: Optional[str] = None) -> bool:
     """True when a diagnostic is advisory/style — a ``note:``/``warning:`` severity prefix, a
     pycodestyle/pylint style code (``W###``/``C####``/``R####``, E9xx syntax kept), or an
     unused/never-used phrase (any linter). These must neither gate a step NOR reach the model as
     a "problem to fix" — the single predicate used by both the gate filter and the gate-output
-    cleaner, so the two can't diverge."""
+    cleaner, so the two can't diverge.
+
+    ``flagged_line`` is the on-disk text of the line the finding flags, supplied by callers with
+    file access: it refines exactly one case — an F811 redefinition whose second binding is a
+    ``def``/``class`` is a real shadow, NOT advisory. Without it the pure default is unchanged."""
     m = (message or "").lstrip()
     low = m.lower()
+    if F811_PHRASE in low and f811_is_shadow(flagged_line):
+        return False
     return (low.startswith(("note:", "warning:", "hint:", "info:", "convention:", "refactor:"))
             or bool(_STYLE_CODE.match(m))
             or any(p in low for p in _ADVISORY_PHRASES))
 
 
-def _error_class_only(findings: list) -> list:
-    return [f for f in findings if not is_advisory(f.message or "")]
+def _error_class_only(findings: list, read_source_line=None) -> list:
+    """Drop advisory findings. ``read_source_line(path, line) -> str | None`` — supplied by
+    callers with file access — lets the F811 discriminator see the flagged line (see the
+    _ADVISORY_PHRASES comment); only F811 findings trigger a read."""
+    out = []
+    for f in findings:
+        flagged = None
+        if (read_source_line is not None and f.file and f.line
+                and F811_PHRASE in (f.message or "").lower()):
+            flagged = read_source_line(f.file, f.line)
+        if not is_advisory(f.message or "", flagged):
+            out.append(f)
+    return out
 
 
 def parse_output(command: str, family: str, exit_code: Optional[int],
-                 stdout: str, stderr: str) -> ProbeResult:
+                 stdout: str, stderr: str, read_source_line=None) -> ProbeResult:
     """The public entry point: raw streams -> deduped findings + one-line summary."""
     combined = stdout + "\n" + stderr  # exactly one \n between, no strip
     findings = _FAMILY_PARSERS.get(family, lambda s: [])(combined)
@@ -787,7 +818,7 @@ def parse_output(command: str, family: str, exit_code: Optional[int],
             # tier-0 config-syntax floor: tomllib/json decode errors report location as prose
             # (`(at line N, column M)` / `line N column M`), not `file:line:col:`.
             findings = parse_config_syntax(combined)
-    findings = _error_class_only(findings)
+    findings = _error_class_only(findings, read_source_line)
     dedup(findings)
     summary = summarize(findings, exit_code, combined)
     return ProbeResult(command=command, exit_code=exit_code,

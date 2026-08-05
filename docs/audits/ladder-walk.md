@@ -4825,7 +4825,49 @@ every standing. Skipped per the evidence-not-living rule.
 - (Fixed already, from the partial pass: the 0083 transcript-TAG steer — the guard hole is
   closed; that finding stands.)
 
-Walk continues from chunk 05.
+Chunks 05–11 (calls 0018–0040):
+- **Calls 0018–0019 — both guard judges functioned on the 0017 dictation:** steer-code said
+  DICTATES (after a wobble, "But let me reconsider…"); the blames-service judge said GROUNDED
+  (correct — the directive doesn't blame the service). Delivered per the observe-only ruling.
+- **Call 0020 — the delivered steer carried ~21KB of dictated file content THREE times** plus
+  raw `}} }` JSON debris, injected as one user message. The coder shrugged it off (went and
+  read the real file — good model behavior), but steer-content hygiene is now a measured
+  problem: a steer should never be a triple-duplicated file body. Candidate (measure first).
+- **Calls 0023–0027 — the one-word edit-miss loop:** the coder's old_string said "Simulated
+  network request", the file says "Simulate network request". Four identical edit_file refusals;
+  the refusal quotes the file head but the coder never spotted the one-word diff. Candidate
+  (measure first): the edit refusal could state the FIRST DIVERGENCE deterministically ("your
+  old_string says 'Simulated…' where the file says 'Simulate…'") — string diff, no judgment.
+- **Call 0025 + 0030 + 0036 — the flail steer author had the /v1 evidence and missed it, three
+  times.** Its pane held BOTH the fetched-route ledger (no /v1) and the file text (/v1 in every
+  URL) — including at 0036 the runtime proof (`--live-test goose` → "Network error getting
+  stats: HTTP Error 404"). It never connected them. 0030's steer was pure vagueness ("read the
+  real files, make targeted changes") and measurably harmful: the coder misread "real files" as
+  "/tmp isn't the real project" and burned 0031–0034 on ls loops. 0036's SAY malformed into a
+  pseudo-tool-call; cria's answer-NOW retry (0037) recovered it — that protocol worked.
+- **Call 0037 — the steer channel co-authors the mock again:** "ensure the address is valid hex
+  after the addr1 prefix" — polishing the FAKE address to satisfy the test, deepening the
+  simulation instead of questioning it.
+- **Repetition guard: 2 clean fires** (0026 exact-call ×2, 0040-area read_file ×3) — both
+  produced a different next action. Working as designed.
+
+**CRIA FAULT FOUND AND FIXED — the F811 suppression (the walk's first landed fix).** The
+duplicate `def resolve_handle` (call 0011) is exactly pyflakes F811 — "redefinition of unused
+'resolve_handle' from line 27" — and cria's advisory filter dropped it: the phrase
+"redefinition of unused" was blanket-advisory (added after the mellum2 walk, where the IMPORT
+form destroyed a run). The probeparse comment recorded the trade — "KNOWN COST … a rare missed
+shadow" — and this run paid it: the suppressed line was the only checker output naming the
+run's structural root, and no channel ever surfaced the duplicate. Fixed as the comment itself
+prescribed: the flagged line on disk is the discriminator. `is_advisory(msg, flagged_line)` —
+a def/async def/class second binding is error-class; an import (or unreadable line) keeps the
+advisory default. Wired at every layer with file access: `parse_output(read_source_line=…)`
+via `proberun.source_line_reader` (both probe paths), and `clean_gate_output` reads the flagged
+line only for F811 findings (the kept finding then also gains the existing flagged-line fact,
+so the model sees the `def …` text). probeparse stays pure — the reader is injected. Tests:
+F811ShadowDiscriminatorTests + F811ShadowInGateOutputTests (fail-before verified); suite 2437
+passed.
+
+Walk continues from chunk 12.
 
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
