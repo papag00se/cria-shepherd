@@ -32,9 +32,13 @@ the other's runs.
    `cria/prompts/` while one runs — prompts load from disk on every call, so an edit changes the
    RUNNING system.
 3. **NEXT: WALK …** → walk that run before anything else runs. A walk is READING every call of the
-   capture in order — `NNNN-*.prompt.txt` paired with `NNNN-*.reasoning.txt` — not a grep, not a
-   sample, not a count. Write it into `docs/audits/ladder-walk.md` under `## <run_id>` with a
-   `cria fault: yes|none` line.
+   capture in order — not a grep, not a sample, not a count, and NEVER a shortened digest.
+   Materialize the capture with `python3 suite/walk.py <session> --out <dir>` — the ONE permitted
+   extractor; it emits every call's complete prompt (or its exact byte-delta), complete reasoning,
+   complete reply, and complete tool arguments, and it has no way to truncate. Read every chunk it
+   produces, in order. An ad-hoc script that cuts content at N chars is not a walk — one hid two
+   real defects on 1785893473. Write the walk into `docs/audits/ladder-walk.md` under `## <run_id>`
+   with a `cria fault: yes|none` line.
    - `cria fault: yes` → fix it per `docs/principles.md`: upstream cause, no fallbacks, no
      task-specific special cases, measure prevalence first, a test that fails before and passes
      after. `python3 -m pytest` stays green. Commit AND push. Restart `cria.service` and say what
