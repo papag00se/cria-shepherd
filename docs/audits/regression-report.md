@@ -112,6 +112,12 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
+- **2026-08-05 — nemotron planner-OFF, first ever (operator ask): 4/4 in 510 s / 52 calls,
+  clean exit.** Planner-on's best full pass took 1,934 s / 200 calls; its worst counted run
+  (2/4) was caused BY a planner-side channel (the replan-invented ValueError requirement).
+  One run, but ~4× faster with the same perfect score — strong evidence the planner path is
+  not earning its keep on the strong cohort. Next: two more poff runs for a 3-row standing
+  before any retire decision.
 - **2026-08-04 — gemma4 sampling sweep (post-walk):** 10 settings × 50 real captured prompts
   replayed against live gemma4 (suite/replay.py; tables in
   docs/audits/2026-08-04-gemma4-sampling-sweep-*.txt). Tool-call well-formedness ≈100% at every
