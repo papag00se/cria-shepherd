@@ -210,3 +210,51 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
   all-alphanumeric (a "." is not alnum), so EVERY input raises. The resolver is now a landmine
   for goose/papagoose. Model-authored, unprompted by any steer. Watch it detonate.
 
+### chunk 08 — calls 0052–0063 (two good steers, two more pathless edit_file calls)
+
+- **0052 reasoner** — a GROUNDED steer this time: real error, real field (`resolved_ur1` → the
+  real `resolved_addresses`), describes without dictating. The judge seat can do it.
+- **0053–0054** — coder "fixes" line 14 with a new_string that contains THE SAME broken text
+  (`str(data["resolved_ur1"]))`, two parens); old_string invents a `resolved_ur1."` variant →
+  edit-miss assist answers with the file's VERBATIM text — assist ✓. THINK then claims "I fixed
+  a typo (duplicate closing paren)" — false-done again; nothing changed.
+- **0055–0057** — poetry not found; bare `python` not found; venv created; pip install of
+  **`htpbx`** — identifier mutation of httpx at temp 1.0 — pip refuses (real error, good).
+- **0058 reasoner** — the best steer of the run: "remove the trailing ')'. Fix that single
+  character and run your resolve tests again." Exact, minimal, grounded.
+- **0059** — and the coder's response is a MALFORMED edit_file: `{"new_string": "… str(data[\"resolved_ur1\"])',\nold_string:"}`
+  — no path, old_string fused into the new_string tail → opaque "unsupported call: edit_file"
+  (pre-fix). The one-character fix evaporates; the coder's next THINK is about the htpbx typo
+  instead. **Pathless-call tally so far: 0007, 0039, 0059** (all covered by the new refusal).
+- **0060–0061** — installs httpx/pydantic/pytest fine (pydantic unused by the code); `python`
+  vs `.venv/bin/python` fumble, then the venv pytest runs.
+- **0062** — truth re-established by pytest: line 14 SyntaxError still there. THINK decides the
+  assert should target `original_address`. Then ANOTHER pathless edit_file (fused
+  `',old_string:` tail) → "unsupported call" — **tally: 0007, 0039, 0059, 0062**.
+- **0063** — reads the test file again. Two calls were burned by malformed edits that a plain
+  refusal would have named; the paren is still unfixed 14 calls after the gate flagged it.
+
+### chunks 09–12 — calls 0064–0069 (line 14 finally fixed; then a STALE steer un-fixes the story)
+
+- **0064** — cria's checks-reattached steer ("unchanged since you were last shown them — you
+  have not cleared them yet") re-anchors the coder. Right mechanism, right moment.
+- **0065** — at last a WELL-FORMED edit: the broken assert replaced with
+  `assert "your" in str(data["original_address"])` — syntax error AND phantom field both gone
+  in one edit. Confirmed by the next gate: the error class advances to `h2 not installed`
+  (import now reaches client.py).
+- **0066** — first HARNESS COMPACTION of the run (⟦ctx:compacted⟧, 4 turns); cria's compaction
+  summary rides in cleanly. Gate reports the h2 ImportError with install command verbatim.
+- **0067** — coder installs `httpx[http2]` ✓. Then THINK fabricates a result: "the test is now
+  fully green with 3 passed" — **no pytest ran between the install and this claim**. On that
+  invented green it moves to the README — whose usage example passes a bare hex string
+  (`d4ca958a02cdae17436b`) where a stake address belongs.
+- **0068 reasoner — A STALE steer, against its own fresh evidence.** The GROUND-TRUTH checks
+  block in its prompt shows ONLY the h2 ImportError — the paren error is cleared. The reasoner
+  re-litigates the transcript's dead paren error anyway and dictates a replacement assert
+  targeting `resolved_ur1` — a line that NO LONGER EXISTS in the file. Its THINK also invents
+  "the latest pgrep/uptime showing an older Python 3.10 process" — no such output exists
+  anywhere. The author's prompt explicitly forbids citing an old error the current checks no
+  longer report; request ≠ enforcement, again.
+- **0069 steer-code judge** — DICTATES, correctly; delivered per the observe-only ruling.
+  So the coder is about to receive an instruction to fix a line that is already fixed.
+
