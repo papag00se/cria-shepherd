@@ -37,8 +37,15 @@ MODEL_SAMPLING = {
     },
     # yuxinlu1 card: temp 1.0 / top_p 0.95 / top_k 64 / repeat_penalty 1.1, coding temp 0.
     # The rep-penalty is load-bearing — without it gemma4 leaks <|tool_call|>/<|channel|> tokens.
+    # Card (yuxinlu1 pinned discussion): temp 1.0 + rep_pen 1.1 — the pairing is the point.
+    # We ran the coder at temp 0.0 for the whole ladder+campaign era; the card never says temp 0
+    # anywhere (audited 2026-08-04, operator-directed). Greedy + rep-penalty is an identifier
+    # MUTATION engine: every reused name is logit-penalized /1.1, and at temp 0 any near-neighbor
+    # within ~10% flips the argmax — handler/handle, papagoose->papagoase, Pytest/pytest,
+    # __cria->__cira, 8ibs->8Ibs are all this, and every campaign walk's edit-spiral began with
+    # one. At temp 1.0 (the tuning point) the penalty shifts odds without deterministic flips.
     "gemma4": {
-        "coder":      {"temperature": 0.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
         "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
         "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
