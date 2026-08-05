@@ -37,13 +37,23 @@ CALLS = Path.home() / ".cria" / "calls"
 BASE = "http://127.0.0.1:18084/v1/chat/completions"
 REQUEST_TIMEOUT_S = 300
 
-# What cria sends today came from a DIFFERENT model family — cria.toml records it in the comment:
-# "ternary-bonsai (Qwen3.6 base): Qwen thinking rec". gemma4's own GGUF ships 1.0 / 64 / 1.0.
+# The sweep grid (2026-08-04, operator ask: "try different temps AND top params"). `card` is what
+# suite/sampling.py ships today for gemma4 — the model card's pair plus the 1.1 penalty. The rest
+# vary ONE axis at a time around it: temperature ladder (with/without penalty — greedy+penalty is
+# the known identifier-mutation engine, so every temp gets a no-penalty twin), a tightened top_k,
+# a tightened top_p, both together at 0.7, and a min_p run (llama.cpp's tail-cut sampler) with the
+# top caps released.
 SETTINGS = {
-    "cria-today": {"temperature": 0.2, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.1},
-    "gemma-default": {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
-    "greedy": {"temperature": 0.0, "repeat_penalty": 1.0},
-    "cria-no-penalty": {"temperature": 0.2, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.0},
+    "card":          {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+    "card-np":       {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
+    "t07":           {"temperature": 0.7, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+    "t07-np":        {"temperature": 0.7, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
+    "t05":           {"temperature": 0.5, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+    "t05-np":        {"temperature": 0.5, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0},
+    "tight-k20":     {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.1},
+    "tight-p90":     {"temperature": 1.0, "top_p": 0.90, "top_k": 64, "repeat_penalty": 1.1},
+    "t07-tight":     {"temperature": 0.7, "top_p": 0.90, "top_k": 20, "repeat_penalty": 1.1},
+    "minp10":        {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.10, "repeat_penalty": 1.1},
 }
 
 # A judge prompt demands a JSON object carrying one of these decision keys.
