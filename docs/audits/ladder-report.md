@@ -1,6 +1,6 @@
 # Language ladder — live report
 
-**Generated** 2026-08-04 10:14:05 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
+**Generated** 2026-08-04 10:48:55 PDT by `python3 suite/ladder_report.py` · **do not hand-edit** — every value here is read from disk or `ps` at generation time.
 
 Goal: **python** (`ada-handles`), 15 minutes per deliverable. A model repeats until it scores 4/4, then the next one starts.
 
@@ -8,14 +8,27 @@ Authority: `python3 suite/ladder_status.py` — 0 = language complete, 1 = work 
 
 ## Now
 
-**Nothing running. The language is COMPLETE.**
+**RUNNING — gemma4**, 33 min elapsed.
+
+| next checkpoint | at | must hold |
+|:--|--:|:--|
+| milestone 3 | 45 min | 3/4 |
+
+**Measured just now** (verifier run against a copy of the live workspace): **3/4**
+
+| deliverable | | detail |
+|:--|:--:|:--|
+| unit_tests | 🟢 | 6 passed in 0.96s |
+| live_test | 🟢 | live_test.py: real resolution (addr1+stake1 present) |
+| resolver_cli | 🔴 | resolve.py goose: exit=1 |
+| readme | 🟢 | README.md covers install/run/tests: True |
 
 ## Ladder
 
 | # | model | params | architecture | kind | planner | tries | best | state |
 |--:|:--|:--|:--|:--|:--|--:|:--:|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
-| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🟢 PASSED |
+| 2 | gemma4 | 12B | `gemma4` | dense | off | 1 | 4/4 | 🔵 RUNNING |
 | 3 | qwythos | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 4 | qwopus | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
 | 5 | ornith | 9B | `qwen35` | dense | off | 1 | 4/4 | 🟢 PASSED |
@@ -70,18 +83,14 @@ REGRESSION CAMPAIGN — python (ada-handles), 3 runs per model, note prefix REGR
 model              plan  runs  scores           verdict
 ------------------------------------------------------------------------
 ternary-bonsai     off      3  4 3 4            NOT STABLE 2/3
-gemma4             off      1  1                needs walk
+gemma4             off      0  —                RUNNING
 qwythos            off      2  4 0              2/3 run
 qwopus             off      2  4 1              2/3 run
 ornith             off      2  4 0              2/3 run
 mellum2            off      2  3 1              2/3 run
 nemotron-elastic   on       2  3 3              2/3 run
 
-NEXT: WALK ada-handles_gemma4_codex_poff_1785861503
-  read /home/jesse/.cria/calls/20260804T093834-019fcda4-239c-7cb1-a3a2-ddd599b83f6e — EVERY call, start to finish, pairing NNNN-*.prompt.txt with NNNN-*.reasoning.txt
-  A walk is READING, not searching. No grep, no sampling, no counting.
-  then write '## ada-handles_gemma4_codex_poff_1785861503' into docs/audits/ladder-walk.md with a 'cria fault: yes|none' line
-  a cria fault gets FIXED (docs/principles.md, fail-before test, pytest green, commit+push, restart cria.service), then mark this model's FAILED campaign rows superseded so its three runs measure the current code
+IN FLIGHT: gemma4 — do not start another run, and do not edit cria or its prompts (they load lazily; an edit changes the RUNNING system)
 ```
 
 Operator report: [`regression-report.md`](regression-report.md) · authority: `python3 suite/regression_status.py`.
@@ -89,6 +98,7 @@ Operator report: [`regression-report.md`](regression-report.md) · authority: `p
 ## Fixes landed during the ladder
 
 ```
+36e2861 fix(loop): the plan-off reading step CLEARS on a ledger-grounded DONE — the hand-back can now fire
 55df703 fix(research,steer): the authored step may not GUESS, and a steer may not name a phantom path
 12a3fcd chore(suite,docs): retire fabliq and zaya1 from every living surface
 90e684b fix(steer,loop,editrecovery): rebase five guards off blind-author-era evidence — the provenance retunes
@@ -103,7 +113,6 @@ fae111a docs(regression): mellum2 2/3 = 1/4 walked — cria fault none; pytest-m
 7ec52ff docs(regression): ternary-bonsai 2/3 = 3/4 walked — cria fault none; clock death mid-fix; row stands
 2ab7dcb docs(regression): nemotron 1/3 = 3/4 walked — cria fault none; refuted-by-disk guard fired 4x correctly in-run
 ccf601b docs(regression): nemotron-elastic 1/4 walked + superseded — confirm veto refuted-by-disk fixed; rerun on new code
-ecc40f1 fix(loop): a confirm veto claiming a file is MISSING is refuted by cria's own disk
 ```
 
 ---
