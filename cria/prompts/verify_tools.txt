@@ -7,6 +7,10 @@ answer_now = You have inspected enough. Answer NOW with ONLY the JSON verdict: {
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
+# read_file on a DIRECTORY must state the truth, not "does not exist" — walked on maple
+# 1785956867 call 0054: the steer author read __pycache__/ (which existed), was told it did
+# not exist, and built a wrong stale-cache theory on that false fact (rule 5b).
+is_directory = [{{PATH}} is a DIRECTORY, not a file — use list_dir to see what is inside it]
 empty_file = [{{PATH}} exists and is EMPTY (0 bytes)]
 # The CONFIRM judge answers after FIVE rounds of its own tool calls, and a JSON object is the
 # shape of the tool-call template it has been repeating — so it emits another one. Measured on

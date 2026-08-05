@@ -4793,7 +4793,7 @@ Voided by operator ruling during the campaign (caged-routing era) and superseded
 results.jsonl; it measured a code state that no longer exists and its row is excluded from
 every standing. Skipped per the evidence-not-living rule.
 
-## ada-handles_maple-preview_codex_poff_1785956867 — FULL WALK in progress (chunks 01–04 of 36 read; findings below supersede the scan entry)
+## ada-handles_maple-preview_codex_poff_1785956867 — FULL WALK COMPLETE (all 36 chunks, calls 0001–0098; supersedes the scan entry)
 
 **The scan's story was wrong at its center.** Full-fidelity findings so far:
 - **Call 0002 — cria gap (open):** the model's authored reading step was the bare string
@@ -4959,7 +4959,73 @@ Chunks 17–29 (calls 0048–0083) — the mock goes green and the endgame gates
 - 0083's transcript-syntax steer (raw <tool_call> JSON delivered as a steer) — already found
   in the partial pass and FIXED (RoleplaySteerTagDialectTests); confirmed in situ.
 
-Walk continues from chunk 30.
+Chunks 30–36 (calls 0084–0098) — the endgame, and how the run actually ended:
+- The coder's first attempt at the demanded live test was a malformed pytest flag
+  (`--live-test-test goose --live-test`, usage error), then more pytest re-runs.
+- **0086 — an ANTI-STEER got delivered:** the flail reasoner concluded on-track but never
+  emitted the ON_TRACK token; instead it shouted "ALL 17 TESTS PASS … THE CODER IS MAKING
+  GENUINE PROGRESS" (twice), and cria delivered it as ⟦ctx:steer⟧ [REDIRECT] — praise noise
+  reinforcing "done" while the satisfaction gate was simultaneously and correctly saying NOT
+  done. The verdict-sentence stripper keys on tokens; on-track MEANING without the token
+  passes through. Recorded as the clean-checks form of the second-opinion-junk class
+  (prevalence 1 here) — flagged, not built.
+- **0088 [exec-intent] again invented/weakened the probe** (`python3 -m pytest` — green
+  pytest proves the mock, not the task). Same gap as 0075: exec-intent never sees the file
+  list or the session, so its "exact command" is a guess by construction.
+- **0089–0097 — the satisfaction gate held the door shut, twice, for the right reason with a
+  wrong fact:** the judge tool-looped past its rounds (0095/0096 emitted tool calls as
+  answers, 0096 inventing an "execute" tool), the answer-NOW + noreason retry recovered a
+  verdict (the retry ladder worked), and satisfied=false landed both times on "live test not
+  performed" (TRUE, decisive) wrapped in "4 tests fail" (FALSE — 17/17 by then; sourced from
+  the stale step-1 continuation summary both times).
+- **0098 — the run ends mid-correction, not in false green:** steered by the satisfaction
+  fix, the coder was executing the REAL live test (`resolve_handle('goose', live_test=True)`)
+  when the 30-minute wall hit. Because of the self-shadowed double def, that call would have
+  returned simulated data labeled SUCCESS — but the session ended first. verify.py scored the
+  run 2/4 from the outside.
+
+### VERDICT (supersedes the scan verdict)
+The run died at call 0009: the coder probed goose/papagoose through a GUESSED `/v1/` prefix
+that appears nowhere in the spec it had just fetched, read its own 404s as "these handles
+don't exist," and architected a simulated mode around that false belief. Everything after —
+the double `def resolve_handle` shadow (born at 0011, named by pyflakes, suppressed by the
+F811 advisory filter), the test-expectation capitulation, the mock polished to 17/17 green,
+the README's fabricated live example and model-typed `gose` — is downstream. The model owns
+the guess (its own system prompt forbade exactly it, verbatim). cria's ledger held the
+correct route list in every prompt from 0002 on; SIX steer-author engagements had the
+mismatch in-pane and none saw it, three actively deepened the mock, and one anti-steer
+cheered. The deterministic layers were the run's best actors: the checks steer with
+flagged-line facts drove every real convergence, edit-recovery landed the edits, the
+repetition guard broke three loops, both compaction retries recovered, and the satisfaction
+gate refused the hand-back to the end — the run ended mid-live-test, not in a false green.
+
+**Fixes landed from this walk (all test-first, pushed, cria restarted):**
+1. F811 def/class shadow is error-class again — flagged-line-on-disk discriminator
+   (probeparse/probegate/proberun; the suppressed message named this run's root structural
+   defect).
+2. A ruminating steer reply is dropped like a truncated one — rumination.degenerate_tail
+   gates both author_steer branches (the delivered ~10KB repeated-paragraph steer at 0056).
+3. read_file on a directory now states "is a DIRECTORY — use list_dir" instead of the 5b
+   false fact "does not exist" (verifytools; fed the 0051–0054 phantom stale-cache theory).
+4. (Pre-walk, confirmed in situ:) the transcript-tag steer guard hole at 0083.
+
+**Measure-first candidates recorded (NOT built — operator visibility):**
+- Authored reading step with no read verb/source ("api.handle.me") — now measured at BOTH
+  ends of the run: it misled the coder every turn and unmoored the step critic (0068
+  done=true on claim-echo) and confirm-applies (0069). The strongest candidate.
+- Executed/coded route absent from the fetched-route ledger (the /v1 class) — deterministic
+  diff of URL paths in exec/write content vs the ledger; would have named the root cause at
+  call 0009.
+- Edit-refusal first-divergence fact ("your old_string says 'Simulated' where the file says
+  'Simulate'") — four identical misses on a one-word diff in this run.
+- Gate-result staleness stamp when the checks predate the newest write to a file they name —
+  misled the steer author twice and the satisfaction judge twice.
+- exec-intent should see the workspace file listing (it invented `resolve_handle.py`).
+- The step-1 ⟦ctx:continuation⟧ briefing should be refreshed/dropped once a newer rollup
+  supersedes it (its stale "4 tests fail" contaminated two satisfaction verdicts).
+- Self-compact with reasoning ON ruminated to finish=length 2/2 times on this model; the
+  noreason retry recovered both — a per-model straight-to-noreason shortcut would save one
+  full-window call per compaction.
 
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;

@@ -112,6 +112,11 @@ def _read_file(args: dict, root: str) -> str:
     real = _resolve(path, root)
     if real is None:
         return prompts.fill(_TD["outside"], path=path, root=root)
+    if os.path.isdir(real):
+        # A directory is not "missing" — saying so is a false fact the judge then reasons from
+        # (maple walk, call 0054: read_file on an existing __pycache__/ answered "does not
+        # exist" and fed a phantom stale-cache theory). State what it is; point at list_dir.
+        return prompts.fill(_TD["is_directory"], path=path)
     if not os.path.isfile(real):
         return prompts.fill(_TD["missing"], path=path)
     try:

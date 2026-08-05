@@ -44,6 +44,17 @@ class VerifyToolExecutorTests(unittest.TestCase):
                                       {"path": "sub/notes.md", "start_line": 2, "end_line": 3}, root)
         self.assertEqual(out, "2: line2\n3: line3")
 
+    def test_read_file_on_a_directory_states_the_truth_not_missing(self):
+        """Walked on maple 1785956867 call 0054: read_file on an existing __pycache__/ answered
+        "does not exist" — a 5b false fact the steer author then built a phantom stale-cache
+        theory on. A directory is a directory; say so and point at list_dir."""
+        d, root = self._ws()
+        with d:
+            out = verifytools.execute("read_file", {"path": "sub"}, root)
+        self.assertIn("DIRECTORY", out)
+        self.assertIn("list_dir", out)
+        self.assertNotIn("does not exist", out)
+
     def test_an_empty_file_is_reported_as_a_fact_not_blank_output(self):
         """A stub deliverable's emptiness must be STATED — blank output reads as a tool failure."""
         d, root = self._ws()
