@@ -136,3 +136,40 @@ class ACutReplyIsNotADirectiveTests(unittest.TestCase):
     def test_the_toolless_sibling_still_has_its_own_guard(self):
         import inspect
         self.assertIn("massage.is_truncated", inspect.getsource(loop.summarize))
+
+
+class ARuminatingReplyIsNotADirectiveTests(unittest.TestCase):
+    """The rumination guard is wired to the streaming coder path alone (classify.py says so
+    outright); the steer author's calls are non-streamed, so a ruminating reply that STOPPED
+    cleanly sailed through every guard. Walked on ada-handles_maple-preview_codex_poff_1785956867
+    call 0055: the answer-NOW retry returned one first-person paragraph repeated ~45 times
+    (finish=stop, not truncated), and cria injected the whole ~10KB blob verbatim as ⟦ctx:steer⟧
+    at call 0056. Same run, call 0020, delivered a triple-duplicated ~21KB dictation. A reply
+    whose tail is a periodic repetition of one block is the author looping, not directing —
+    the same pure detector the stream watcher uses (rumination.degenerate_tail) decides, and
+    the reply is dropped like a truncated one (a safe null, never delivered noise)."""
+
+    _PARA = ("The tests are failing - 4 tests fail because of test/source mismatch (missing "
+             "api_status key in simulated mode, overly strict hex validation). The tests don't "
+             "represent real progress. I need to fix these issues so tests pass, then run live "
+             "tests to verify the API integration works. After fixing these issues and running "
+             "live tests, I need to create a README. ")
+
+    def test_the_walked_blob_is_detected(self):
+        self.assertTrue(loop._ruminating_reply(self._PARA * 30))
+
+    def test_a_short_directive_is_not(self):
+        self.assertFalse(loop._ruminating_reply(
+            'You added api_status with the wrong value: the tests expect "simulated". '
+            'Change it in resolve_adaptive_handle.py and rerun pytest.'))
+
+    def test_a_long_but_varied_reply_is_not(self):
+        varied = "\n".join(f"tests/test_x.py:{n}: AssertionError: value {n} mismatch "
+                           f"in case {n * 7 % 13}" for n in range(80))
+        self.assertFalse(loop._ruminating_reply(varied))
+
+    def test_both_author_branches_drop_it_and_trace_it(self):
+        import inspect
+        src = inspect.getsource(loop.author_steer)
+        self.assertEqual(src.count("_ruminating_reply("), 2)   # tooled + toolless branch
+        self.assertIn("loop.steer_degenerate", src)

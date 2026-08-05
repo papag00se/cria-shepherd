@@ -5311,6 +5311,14 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         if reasoner_role is not None:
             text = reasoner_role.clean_content(text)
         text = strip_think(text or "").strip()
+        # A RUMINATING REPLY IS NOT A DIRECTIVE either. The rumination guard is wired to the
+        # streaming coder path alone; these calls are non-streamed, so a reply that looped to a
+        # clean stop passed every guard. Walked on ada-handles_maple-preview_codex_poff_1785956867
+        # call 0055: one first-person paragraph repeated ~45x (finish=stop), delivered verbatim as
+        # a ~10KB ⟦ctx:steer⟧. Same pure detector as the stream watcher; dropped like a cut reply.
+        if _ruminating_reply(text):
+            rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
+            return None
         evidence = user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
         directive = _steer_or_none(text) or _steer_from_reasoning(comp, text, _recover_ask, rlog)
@@ -5323,12 +5331,24 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     passes: list = []
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
                       phase="reasoner", coder_tools=coder_tools, capture=passes) or "").strip()
+    if _ruminating_reply(text):   # same guard as the tooled branch — see loop.steer_degenerate above
+        rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
+        return None
     directive = _steer_or_none(text)
     if directive is None and passes:
         directive = _steer_from_reasoning(passes[0], text, _recover_ask, rlog)
     return _grounded_steer_or_none(directive, user, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []),
                                    workspace_root=workspace_root)
+
+
+def _ruminating_reply(text: str) -> bool:
+    """True when a steer reply's tail is a periodic repetition of one block — the author looping,
+    not directing. Pure delegation to the stream watcher's detector (rumination.degenerate_tail):
+    short replies can never fire (the window is 2KB and a directive is asked for at <120 words),
+    and long-but-varied replies have no short period."""
+    from . import rumination
+    return rumination.degenerate_tail(text or "")
 
 
 def _steer_or_none(text: str) -> str | None:
