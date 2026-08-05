@@ -4746,5 +4746,8 @@ across all 76 calls. The finetune's entire failure texture is absent.
   clause off, and the satisfaction judge accepts the RUN as the deliverable ("They also performed
   a live test resolving 'goose'"). Run 1's own plan even named live_test.py; the file was never
   written. The judge prompt covers the artifact-without-run direction; this is the mirror
-  (run-without-artifact). Mirror-rule amendment measured per principle 8 (8 samples × 3 miss
-  cases + 1 complete control) — result recorded below.
+  (run-without-artifact). Mirror-rule amendment MEASURED per principle 8 (8 samples × 3 miss
+  cases + 1 complete control) and REJECTED: it flipped 0/24 miss samples (the live-run output in
+  evidence outweighs one added rule) and false-alarmed the complete control 2/8 (original 0/8).
+  Strictly worse in both directions — the dangerous failure mode. The 3/4 ceiling stands as model
+  interpretation with no admissible cria lever; do not re-propose as prompt prose.
