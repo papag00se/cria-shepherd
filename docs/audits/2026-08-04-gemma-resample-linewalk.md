@@ -150,3 +150,63 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
   in its evidence. Deterministically checkable from the steer session's own tool trace. Count
   across captures before adding a guard (high bar to ADD).
 
+### chunks 04–06 — calls 0032–0039 (line-fishing, the SECOND invented-range steer, first code)
+
+- **0032** — exact-repeat fetch nudge fires correctly ("made this exact call 2 times"). THINK
+  invents a new fishing range "1860-2045 … the resolve_handle response's exact fields" — lands
+  on /policies and /datum instead. The 0028 steer legitimized fishing by line number; the coder
+  is now doing it freely.
+- **0033** — /policies + /datum arrive. THINK has the RIGHT realization — "GET /handles/{handle}
+  already includes the holder field, so I only need one round trip" (straight from cria's shape
+  ledger) — then keeps fishing anyway (1789–2036). **In-run confirmation of the inline-bound
+  fix:** this read's result (under the old READ_INLINE_MAX=12000) shows `…386 tokens truncated…`
+  in every later prompt — Codex middle-cut a read cria had passed as inline-safe. The new
+  9,000-byte shared bound covers exactly this.
+- **0034 reasoner — the SECOND invented-range steer.** Its THINK misstates its own evidence
+  twice ("an invalid read at 1796–1803 … zero output" — that read SUCCEEDED and returned 8
+  lines), then the directive asserts "read … at lines 1789–2045 to get the actual
+  resolved_addresses and sibling fields" — while the evidence pane RIGHT ABOVE IT shows what
+  1789–2045 actually holds: mpt-root, /health, /policies, /datum. No resolved_addresses. The
+  claim contradicts text it was shown. Same shape as 0028: content-at-line-range asserted
+  without (or against) ground truth. That is now two poisoning steers of identical shape in one
+  run.
+- **0035** — coder obeys the steer, re-reads 1789–2045 (it had JUST read it) → repeat nudge.
+- **0036** — pivots to code at last: writes `src/client.py` (httpx async). The field names are
+  all CORRECT — `holder`, `resolved_addresses.ada`, `total_handles` — lifted straight from
+  cria's fetched-shapes ledger. The ledger did its job even through the flailing. THINK invents
+  handles "you're01397, gofamaji" (not acted on).
+- **0037** — writes `tests/test_wallet.__spec__.py` — THE file the skim-era walk falsely called
+  "never existed". Ground truth: created here, a nonsense stub (`async_main` returning
+  `asyncio.coroutine`, then `asyncio.run(async_main())` — would TypeError if ever run).
+- **0038** — update_plan with off-task items ("setup virtual env … completed", "add pytest and
+  pytest[qa]") — plan channel is noise, not deliverables.
+- **0039** — write_file with **NO `path` ARGUMENT AT ALL**: `{"content": "[tool.poetry]\ndev-dependencies
+  = [ … \"pycodegen==265937e4df5aabceaebe', …"}` — truncated content, phantom package `pycodegen`
+  pinned to a hex blob, no path. This is the missing-path malformation the new writeproxy
+  refusal now answers with a plain cause (pre-fix it drew "unsupported call: write_file").
+
+### chunk 07 — calls 0040–0051 (the dictated README steer with a FABRICATED wallet address; the gate works)
+
+- **0040 reasoner** — THINK claims false diligence: "I've read all relevant files (pyproject,
+  client, both test files) directly" — this authoring session made ZERO tool calls. Its
+  directive tells the coder to write the README **and dictates a full Python block** containing
+  a fabricated 86-char "wallet" (`1qWvS5Z89t67eEAtF0uCjH4N3K1LpQXStM2aYfAUPz7hBde8iPKEGUMmD36o/4OunHUnmrtbHzJAErIeeT7S5U`)
+  — not a Cardano address shape, appears in no evidence. Invented DATA riding inside dictated
+  code — a claim class none of the steer guards checks (URL ✓, system path ✓, file:line ✓,
+  auth-claim ✓ — but a bare fabricated VALUE sails).
+- **0047 steer-code judge** — correctly answers DICTATES. Per the operator's 2026-08-04
+  observe-only ruling the steer is logged (`loop.steer_dictated_code`, delivered=true) and
+  DELIVERED — working as ruled; this walk is part of that cohort's re-measure. Watch the
+  fabricated address's fate downstream.
+- **0048** — coder absorbs the steer as "the user's sample async main code" and plans to include
+  it. Re-reads client.py (its 2nd read — repeat pressure building).
+- **0049 — THE GATE FIRES, and it is excellent**: composed checks catch `tests/test_wallet.py:14
+  SyntaxError: unmatched ')'` with cria's counted-fact line ("line 14 on disk … contains 1 '('
+  and 2 ')'"), plus both pytest collection errors. Ground truth, exact lines, no judgment.
+- **0050–0051** — coder reads the real files (good), diagnoses line 14 correctly in THINK
+  (extra paren + phantom `resolved_ur1` field) — then "fixes" client.py by ADDING validation:
+  `if not handle_name or not all(c.isalnum() for c in handle_name) or "." not in handle_name:
+  raise ValueError("Invalid Handle format")` — **a self-contradiction**: it requires a "." AND
+  all-alphanumeric (a "." is not alnum), so EVERY input raises. The resolver is now a landmine
+  for goose/papagoose. Model-authored, unprompted by any steer. Watch it detonate.
+
