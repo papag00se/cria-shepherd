@@ -113,6 +113,21 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 
 ## Notable events
 
+- **2026-08-04 ~19:20 — FOLLOW-UP EXPERIMENT: gemma4 re-measure on card sampling (temp 1.0) — score
+  unchanged (1/4), failure texture transformed.** Run ada-handles_gemma4_codex_poff_1785893473
+  (note GEMMA-RESAMPLE, not a campaign row; shadowed live by the operator's request). Wire-level
+  verified temp 1.0/top_p 0.95/top_k 64/rep_pen 1.1. Results: green tests by minute 6 (fastest
+  gemma4 ever); one-glyph mutations still occur (htpbx, resolved_ur1, cardana) but SELF-CORRECT
+  within 1-2 calls instead of compounding — the deterministic mutation engine is gone. Died at
+  the 30-min wall at 1/4 anyway: an unforced src/-layout refactor broke its own imports, and the
+  walk's headline finding is that the model's KNOWLEDGE was right (it named the exact fix in its
+  reasoning) while its EDIT CALLS kept emitting malformed argument structure and stale
+  old_strings — a temperature-independent weights problem. Plus write-time fabrication
+  ([tool.pudupatch], poetry-tools==0.4.25, a zombie __spec__.py it and its self-judging steers
+  chased together). Verdict: keep the card sampling (strictly better behavior), but gemma4's
+  ceiling on this task is the model, not the config. The improved workspace refusal visibly
+  worked (its first write aimed at /home/jesse/Documents; the named-root message redirected it
+  in one call).
 - **2026-08-04 ~15:55 — gemma4 closes NOT STABLE (2/4, 1/4, 1/4), and the dictated-code
   re-measure has its answer.** All three counted runs reached a working state inside 15
   minutes and dismantled it during restructuring. The observe-only ledger now shows the
