@@ -36,6 +36,27 @@ from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
 
+# A tool-protocol tag line, any dialect seen in captures: XML-ish (</tool_call>, <function=...>,
+# <parameter=...>), gemma pipes (<|tool_call>, <tool_call|>, <|channel>thought), bare <think> forms.
+_PROTOCOL_TAG_LINE = re.compile(
+    r"^\s*(?:</?(?:tool_call|function|parameter|think|channel)\b[^\n]*?>?"
+    r"|<\|[^|>\n]+\|?>|<[a-z_]+\|>)\s*$")
+
+
+def _protocol_debris(content: str) -> bool:
+    """True when write content is a fused call's DEBRIS: at least one protocol-tag line, and every
+    other non-empty line a bare single token (the path the next call carried). Real file content —
+    even code that mentions these tags inside string literals with normal multi-word lines — never
+    classifies: one real line of prose or code defeats it."""
+    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
+    if not lines:
+        return False
+    tags = [ln for ln in lines if _PROTOCOL_TAG_LINE.match(ln)]
+    if not tags:
+        return False
+    return all(len(ln.split()) == 1 for ln in lines if ln not in tags)
+
+
 _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
 _READ_NAMES = {"read_file"}
@@ -305,6 +326,9 @@ if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
     sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after))
 if p.is_dir():
     sys.exit(base64.b64decode('{isdir}').decode().replace('%%NAME%%',str(p)))
+_bp=next((a for a in p.parents if a.exists()), None)
+if _bp is not None and not _bp.is_dir():
+    sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
 p.parent.mkdir(parents=True,exist_ok=True)
 tmp=str(p)+'{suffix}'
 try:
@@ -329,7 +353,13 @@ def _write_command(path: str, content: str) -> str:
                                            # is a directory. Nothing was written either way, so both
                                            # carry the did-not-run mark from the site that authors them.
                                            refused=_b64(denial.mark(prompts.load("write_refused"))),
-                                           isdir=_b64(denial.mark(prompts.load("write_isdir"))))
+                                           isdir=_b64(denial.mark(prompts.load("write_isdir"))),
+                                           # Walked on nemotron poff 1785946072: a mis-split fused
+                                           # call planted a junk FILE named `tests`; every later
+                                           # write below it died in this heredoc's mkdir with a raw
+                                           # FileExistsError traceback — cause invisible, three
+                                           # identical retries, tests never landed. Name the block.
+                                           parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -838,6 +868,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         cmd = _refusal_command(prompts.load("write_missing_content"))
                         if rlog is not None:
                             rlog.emit("writeproxy.write_missing_arg", tool=name, arg="content")
+                    elif _protocol_debris(str(body)):
+                        # Content that is NOTHING BUT tool-protocol tags (plus at most a bare
+                        # path token) is the mis-split half of a FUSED call, not a file. Walked
+                        # on nemotron poff 1785946072: cria wrote that soup as a file named
+                        # `tests` ("Wrote tests"), which then blocked the real tests/ directory
+                        # for the rest of the run. A file whose real lines merely MENTION a tag
+                        # never trips this — every line must be a tag or a bare token.
+                        cmd = _refusal_command(prompts.load("write_fused_content"))
+                        if rlog is not None:
+                            rlog.emit("writeproxy.write_fused_content", tool=name,
+                                      path=str(path))
                     else:
                         cmd = _write_command(str(path), _repair_double_escaped(str(body)))
             elif name in _EDIT_NAMES and name in injected:

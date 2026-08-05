@@ -1,0 +1,1 @@
+Cannot write %%NAME%%: %%BLOCK%% already exists as a FILE, not a directory, so the folder for this write cannot be created — nothing was written. That blocking file was most likely created by an earlier malformed write; read it to confirm, then move or delete it and re-send this write.

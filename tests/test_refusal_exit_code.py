@@ -61,7 +61,9 @@ class OneOwnerTests(unittest.TestCase):
         # (The read-path refusals — large range, large whole read, inverted range — live in the
         # _read_command/_ranged_read helpers, outside this function's source; InvertedRangeTests
         # holds their exit-code contract.)
-        self.assertEqual(src.count("_refusal_command("), 9)
+        # +1 (2026-08-05, nemotron poff 1785946072): write content that is fused-call protocol
+        # debris — the soup cria once wrote as a file named `tests`, blocking the real directory.
+        self.assertEqual(src.count("_refusal_command("), 10)
 
     @staticmethod
     def _lower_fetch(result):

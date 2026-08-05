@@ -1166,3 +1166,68 @@ class InvertedRangeTests(unittest.TestCase):
             self.assertIn("2: b", r.stdout)
         finally:
             os.unlink(f.name)
+
+
+class ParentIsAFileTests(unittest.TestCase):
+    """Walked on ada-handles_nemotron-elastic_codex_poff_1785946072 (scored 2/4): a mis-split fused
+    call wrote a junk FILE named `tests`, and every later write to tests/*.py then died in cria's
+    own lowering with a raw `FileExistsError` traceback — no cause, no cure, three identical
+    retries, and the coder declared done without tests. The failure must name the blocking file."""
+
+    def test_a_blocked_parent_gets_a_plain_cause_not_a_traceback(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as ws:
+            blocker = os.path.join(ws, "tests")
+            with open(blocker, "w") as fh:
+                fh.write("</parameter>\n</function>\n")
+            cmd = writeproxy._write_command(os.path.join(ws, "tests", "test_x.py"), "import x\n")
+            r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+            self.assertNotEqual(r.returncode, 0)
+            out = r.stdout + r.stderr
+            self.assertNotIn("Traceback", out)
+            self.assertIn("tests", out)
+            self.assertIn("FILE", out)          # names the real cause: parent exists as a file
+
+    def test_a_normal_nested_write_still_creates_parents(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as ws:
+            cmd = writeproxy._write_command(os.path.join(ws, "pkg", "mod.py"), "x = 1\n")
+            r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0)
+            self.assertTrue(os.path.exists(os.path.join(ws, "pkg", "mod.py")))
+
+
+class FusedContentRefusalTests(unittest.TestCase):
+    """Same run, one call earlier: the mis-split handed write_file a `content` that was NOTHING BUT
+    the model's own protocol tags plus the next call's path — and cria wrote it ('Wrote tests'),
+    planting the blocker. Content that is pure tool-syntax debris is a fused call, not a file."""
+
+    OBSERVED = ("</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=write_file>\n"
+                "<parameter=path>\n/tmp/ws/tests/test_resolve_handle.py")
+
+    @staticmethod
+    def _lower(args):
+        import json as _json
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "write_file", "arguments": _json.dumps(args)}}]}}]}
+        out = writeproxy.translate_outbound(
+            comp, {"name": "shell", "parameters": {"properties": {"command": {"type": "string"}},
+                                                   "required": ["command"]}},
+            injected={"write_file"})
+        return out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+
+    def test_the_observed_soup_is_refused_with_the_true_cause(self):
+        cmd = self._lower({"path": "tests", "content": self.OBSERVED})
+        self.assertIn("fused", cmd)
+        self.assertIn(f"exit {writeproxy.REFUSED_EXIT_CODE}", cmd)
+
+    def test_real_content_mentioning_a_tag_is_untouched(self):
+        code = ('MARKS = ("</tool_call>", "<function=")\n'
+                "def has_leak(text):\n    return any(m in text for m in MARKS)\n")
+        cmd = self._lower({"path": "leakcheck.py", "content": code})
+        self.assertNotIn("fused", cmd)
+
+    def test_an_empty_or_plain_file_is_untouched(self):
+        self.assertNotIn("fused", self._lower({"path": "a.txt", "content": "hello world\n"}))
+        self.assertNotIn("fused", self._lower({"path": "b.txt", "content": ""}))

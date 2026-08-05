@@ -1,0 +1,1 @@
+Your write_file content is tool-call protocol tags, not file content — two tool calls were fused into one turn and the split landed inside your arguments. Nothing was written and no file on disk was touched. Re-send each write as its OWN complete call: one path, that file's real content, then stop.
