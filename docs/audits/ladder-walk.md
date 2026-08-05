@@ -4867,7 +4867,40 @@ so the model sees the `def …` text). probeparse stays pure — the reader is i
 F811ShadowDiscriminatorTests + F811ShadowInGateOutputTests (fail-before verified); suite 2437
 passed.
 
-Walk continues from chunk 12.
+Chunks 12–16 (calls 0040–0047) — the compaction band:
+- **Call 0040 [self-compact] — rumination, caught and recovered:** the briefing writer's THINK
+  degenerated into "The assistant's output should be the briefing." repeated for hundreds of
+  lines until finish=length; ZERO briefing text was produced. cria's guard did its job: 0041
+  reran the compaction with reasoning OFF and got a clean, mostly-accurate briefing. The
+  noreason-retry protocol is working as designed.
+- **The briefing's one overclaim** — "the script is fully written and functional" — rode into
+  every later prompt via ⟦ctx:rollup⟧/⟦ctx:continuation⟧. The continuation frame correctly
+  brands it UNVERIFIED, and the coder did re-run the tests, so the damage stayed contained.
+  The briefing also canonized "simulated and live test modes" as the project's normal — the
+  compaction inherits the run's wrong architecture, faithfully.
+- **Call 0043–0044 — the Codex <<<LOCAL_COMPACT>>> path worked end to end:** classifier judged
+  it (a stray ``` fence after its JSON did not break routing), the toolless compactor role
+  produced the briefing, and the 0045 handover (⟦ctx:task⟧ north star, ⟦ctx:files⟧ disk list,
+  ⟦ctx:facts⟧ fetch ledger, continuation disclaimers) resumed the coder coherently. Minor note:
+  the compactor's transcript inlines the web_search results cria had DENIED to the coder
+  (off-target DaVinci-Resolve/goose-faucet noise) — harmless here, but the denied content is
+  not stripped from the compaction view.
+- **Call 0042 THINK — the coder invented task text:** it "quoted" instructions that exist
+  nowhere ("Your ONLY task for this turn is to … Include proper error handling and unit tests
+  in the same file. DO NOT create any additional files") and reasoned against them. It
+  discarded the invention itself; model-side, logged as maple behavior.
+- **Call 0047 — reasoner miss #4 on /v1, plus a fabricated fact:** trigger was read_file ×3
+  (counted across the compaction boundary). The steer author had the no-/v1 ledger AND the /v1
+  file text in-pane again; instead its THINK invented "the test references `result` before
+  it's defined" (false), its SAY was mis-addressed ("You should tell the coder to…" — spoken
+  ABOUT the coder, not TO it), and its advice both deepened the simulation (add api_status)
+  and pushed loosening the hex TEST — contradicting the checks-steer's own "changing the test
+  so it stops asking is not a fix."
+
+Running tally of the steer channel on this run: five reasoner engagements (0025, 0030,
+0036/0037, 0047), zero caught the /v1 route mismatch, three actively reinforced the mock.
+
+Walk continues from chunk 17.
 
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
