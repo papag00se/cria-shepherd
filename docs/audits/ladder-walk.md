@@ -4774,3 +4774,21 @@ CLOCK story, not the SCORE story. The 2/4's grounded decomposition:
   deterministically checkable against session evidence if it recurs.
 cria fault: none mechanical (zero cuts, zero unsupported-calls, zero plumbing tracebacks in 220
 calls); two judge-channel contributions recorded above.
+
+## ada-handles_nemotron-elastic_codex_pon_1785360304 — walked at full fidelity (155 calls)
+
+A July-29 row measuring six-generations-old code; walked for UNFIXED fault classes only.
+Findings: 14 prompts carry harness mid-cuts (the INLINE_RESULT_MAX_BYTES class — fixed
+2026-08-04; this run corroborates prevalence); one raw-JSON-shaped steer delivered (the
+transcript-syntax class — hard-dropped since the provenance retune); a swagger-path groping arc
+(fetched to ./tmp/read-only, coder probed absolute paths) that grounded steers resolved
+CORRECTLY — the steer chain here is a positive exhibit, every path claim checked against disk.
+The 3/4 miss at run time was the absent live-test file (pre-dates the scorer's live-probe
+fairness upgrades). Today's re-score shows live-data drift (holder/total missing at the CLI);
+the recorded 3.0 stands per the at-run-time rule. cria fault: none unfixed.
+
+## ada-handles_nemotron-elastic_codex_pon_1785834747 — NOT re-walked (superseded)
+
+Voided by operator ruling during the campaign (caged-routing era) and superseded in
+results.jsonl; it measured a code state that no longer exists and its row is excluded from
+every standing. Skipped per the evidence-not-living rule.
