@@ -112,6 +112,16 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
+- **2026-08-05 — nemotron planner-OFF standing complete: 4, 2, 4 (510 s / 370 s / 310 s;
+  52 / 44 / 42 calls) vs planner-on's counted 4, 4, 2 (1,934–3,624 s; 155–291 calls).** Same
+  score band at roughly a quarter of the wall clock. The 2/4 was walked (suite/walk.py, 44
+  calls): a fused native-syntax double call mis-split, cria wrote the leaked protocol tags as a
+  FILE named `tests`, and every later test write died on a raw FileExistsError traceback until
+  the coder declared done — **cria fault, fixed** (parent-blocked plain-cause refusal +
+  fused-debris content refusal, tests first). With that hole closed, planner-off's failure was
+  plumbing, not the model. Recommendation: planner-off as the default lane for the strong
+  cohort is now evidenced — same scores, ~4× cheaper, and it structurally removes the
+  replan-invention channel that caused planner-on's own 2/4.
 - **2026-08-05 — nemotron planner-OFF, first ever (operator ask): 4/4 in 510 s / 52 calls,
   clean exit.** Planner-on's best full pass took 1,934 s / 200 calls; its worst counted run
   (2/4) was caused BY a planner-side channel (the replan-invented ValueError requirement).
