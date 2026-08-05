@@ -113,6 +113,17 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 
 ## Notable events
 
+- **2026-08-04 ~19:35 — FOLLOW-UP EXPERIMENT 2: gemma4 planner-ON (card sampling) — 0/4 at the
+  15-min wall, the day's worst gemma4 result.** Run ada-handles_gemma4_codex_pon_1785896127
+  (GEMMA-RESAMPLE-PON; shadowed live). Prediction confirmed: planner-on multiplies self-judging
+  channels, and a hallucination-prone model poisons itself through them — a step critic invented
+  a `python_http_retry` package under a phantom site-packages path and the coder ABSORBED it into
+  real imports; step 1 was gold-plated with unrequested retries/HTTP-2 and never finished; 52
+  editrecovery escalations in 127 calls (worst thrash ratio of the day); no README, no tests.
+  CONFIGURATION VERDICT for gemma4: card sampling + planner OFF is final (temp0 campaign 2/4-1/4-1/4;
+  temp1 plan-off 1/4 with green-at-minute-6; temp1 plan-on 0/4). Remaining gap is the weights:
+  malformed edit-call structure, write-time fabrication, self-judge contamination. Config table
+  exhausted; levers left are the per-role steer-trust knob and the publisher's v3.
 - **2026-08-04 ~19:20 — FOLLOW-UP EXPERIMENT: gemma4 re-measure on card sampling (temp 1.0) — score
   unchanged (1/4), failure texture transformed.** Run ada-handles_gemma4_codex_poff_1785893473
   (note GEMMA-RESAMPLE, not a campaign row; shadowed live by the operator's request). Wire-level
