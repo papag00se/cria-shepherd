@@ -4726,3 +4726,25 @@ This is the planner-on overhead profile at its worst — the same machinery that
 clean 4/4s produced circular replans here; the difference was one invented requirement meeting
 one confusing API behavior. Nothing cria stated was false; nothing deterministic was missed.
 Row STANDS.
+
+## ada-handles_gemma4-stock_codex_poff_1785948232 / _1785948574 / _1785948838 (walked together — same arc)
+
+Full walks via suite/walk.py (29/25/22 calls). All three: clean research (openapi fetched, spilled,
+outline consumed), correct endpoint mapping on the first pass (/handles/{handle} → holder →
+/holders/{address} → total_handles), mocked unit tests that pass, a live CLI run against goose
+showing real chain data, README, clean exit at 3.3–4.7 min. Judge-seat reasoning (same stock model)
+is structured and grounded — zero fabricated values, zero malformed calls, zero protocol leakage
+across all 76 calls. The finetune's entire failure texture is absent.
+
+- **cria fault: yes (fixed)** — run 1 call 0005 grepped the spill for `GET /handles/{handle}`, the
+  exact label cria's own outline teaches, which cannot match the raw spec (the method is a key
+  INSIDE the route object); the finetune hit the identical trap (1785893473 call 0019). The spill
+  hint now seeds a real fixed-string example (`grep -n -F '/handles/{handle}' …`) plus the
+  method-matches-nothing warning; a test runs the hint's own example against a real spill.
+- **The 3/4 ceiling is one repeated interpretive miss, not chaos**: "Separately, create a live
+  test" is read as "test it live" — the coder runs the CLI against goose (real output), checks the
+  clause off, and the satisfaction judge accepts the RUN as the deliverable ("They also performed
+  a live test resolving 'goose'"). Run 1's own plan even named live_test.py; the file was never
+  written. The judge prompt covers the artifact-without-run direction; this is the mirror
+  (run-without-artifact). Mirror-rule amendment measured per principle 8 (8 samples × 3 miss
+  cases + 1 complete control) — result recorded below.
