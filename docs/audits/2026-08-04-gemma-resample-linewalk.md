@@ -283,3 +283,72 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
 - **0074** — coder re-runs unfiltered. (Harness compactions at 0066/0072/0074 — 4, 16, 8 turns —
   all carried cleanly by cria's summaries; the ⟦ctx:facts⟧ ledger and AGENTS.md survive each.)
 
+### chunks 18–20 — calls 0075–0090 (LOCAL_COMPACT; cria fault #4 — the ledger dies at the boundary it was built for)
+
+- **0075–0076** — Codex issues `<<<LOCAL_COMPACT>>>`; the classifier routes it (question) and
+  the compactor writes an HONEST briefing: it correctly reports the tests now FAIL with
+  "Invalid Handle format" (the contradictory validation from 0051 detonating on dot-less
+  goose/papagoose, exactly as predicted) and does not launder any success claim. Good briefing.
+- **0083/0085 — cria fault #4 of this walk (FIXED): the durable fetch ledger did not survive
+  the continuation.** The post-compaction continuation constructed a brand-new PlanSession and
+  stored it over the old one — discarding `fetched_pages`, the ledger holding the spec's full
+  33-endpoint outline and exact field shapes. The continuation prompt then stated, in cria's
+  own GROUND-TRUTH voice: "https://api.handle.me/openapi.json → HTTP 200 (this page answered,
+  but no endpoint definitions were found in it … nothing read so far DEFINES the API's routes)"
+  — **a false fact (rule 5b)** about the most important thing the run had established. Every
+  judge and steer from here on inherits the blindness. Fixed: `LoopStore.put` now merges the
+  previous session's ledger into any replacing session on a stable `sid:` key (one owner, all
+  construction paths; `task:` keys inherit nothing — the plan-cache-leak lesson).
+  Fail-before test: `ContinuationKeepsFetchLedgerTests`.
+- **0077–0082** — steer author inspects the workspace (6 reads — client.py, tests, README);
+  bounded this time, no "Answer NOW" needed.
+- **0084** — the steer author's second reply is a HALLUCINATED write_file TOOL CALL (broken
+  code: `HTTP_CLIENT = http.client.Client(http2=True)`) — a toolless author emitting transcript
+  syntax. (Its fate: the directive channel; verify which guard answered in the next chunk's
+  delivery — the coder at 0085 shows only the ⟦ctx:continuation⟧ frame, no steer text, so the
+  fabricated tool-call steer appears to have been DROPPED. Correct outcome.)
+- **0085** — coder edits tests with an old_string that never existed (`assertInvalidHandle` …)
+  — inventing test content wholesale; the edit-miss assist will answer with reality.
+- **0086–0090** — two more phantom-old_string misses (both answered truthfully), then two real
+  moves: drops `http2=True` from client.py (kills the h2 dependency — good) after the checks
+  named it.
+
+### chunks 21–24 — calls 0091–0114 (self-built false green; the ON_TRACK-on-false-premise; the wrong-deletion steer)
+
+- **0091–0093** — invented path `/home/user1/app/tests` (denied); mutated flags
+  (`--o=/dev/null`); writes empty `tests/__init__.py` (reasonable). THINK word-salad:
+  "Touch the file with teamcity-style blank content".
+- **0094 reasoner** — decent steer (confirm package-style imports, check pyproject before
+  declaring done); mild drift in THINK ("/handles/list bulk-fetch routes worth adding later")
+  that stays out of the directive.
+- **0096–0097** — an edit whose new_string is syntactically INSANE
+  (`for addr, cla == ["ada"] or kla != "":` with a walrus in a conditional expression) misses
+  its old_string — the miss SAVED the file. THINK then false-dones: "The live tests pin the
+  right error message now."
+- **0102–0103 — SELF-BUILT FALSE GREEN.** The coder pipes pytest through
+  `sed '/^AssertionError:/!d; …'` — deleting every line except AssertionErrors — gets empty
+  output, and reads it as "all tests PASSED … green light". Calls task_complete with a
+  fabricated "pytest now passes 10/10". **cria's gate catches it**: the completion probe
+  re-runs the real checks and surfaces the collector failure. Fail-closed completion working
+  exactly as designed.
+- **0105** — "fixes" tests/__init__.py by adding `from . import test_wallet` — makes collection
+  worse (import at package init).
+- **0106–0107** — reasoner rules ON_TRACK on a FALSE premise ("the unit tests already pass …
+  verified by existing asserts" — they do not); the sentinel-consistency recovery (0107)
+  correctly confirms the word matches the thinking. The recovery checks CONSISTENCY, not
+  truth — noted as a texture, not a fix candidate (truth is the gate's job, and the gate does
+  catch it).
+- **0111 reasoner — the WRONG-DELETION steer**: prescribes "delete …/src/__init__.py and create
+  an empty …/tests/__init__.py". Deleting src/__init__.py breaks the very `from src import
+  client` import the tests rely on. Grounded-looking paths, wrong prescription — judgment
+  error, no deterministic guard would catch a well-formed bad idea.
+- **0112** — bash mutations (`poetry install >2>&10` — syntax error), poetry/python not found
+  churn.
+- **0113** — reasoner call has **no captured response** (0113-reasoner.response.json absent —
+  the flail steer simply never landed this round). Anomaly noted; run continued.
+- **0114** — the coder EXECUTES the 0111 steer verbatim: `rm src/__init__.py && touch
+  tests/__init__.py`, then writes a second `__spec__` phantom: an EMPTY
+  `tests/__init__.__spec__.py` — pytest's `ModuleSpec` attribute reified into a FILENAME.
+  (The skim-era "never existed" claim is now fully corrected: TWO real `__spec__`-named files
+  were created, at 0037 and 0114.)
+
