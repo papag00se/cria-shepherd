@@ -4752,7 +4752,7 @@ across all 76 calls. The finetune's entire failure texture is absent.
   Strictly worse in both directions — the dangerous failure mode. The 3/4 ceiling stands as model
   interpretation with no admissible cria lever; do not re-propose as prompt prose.
 
-## ada-handles_nemotron-elastic_codex_pon_1785888803 — RE-WALKED at full fidelity (suite/walk.py, 220 calls)
+## ada-handles_nemotron-elastic_codex_pon_1785888803 — PARTIAL walk (targeted spans + full marker sweep; NOT yet a full read — flagged by the operator 2026-08-05)
 
 Supersedes the skim-era entry ("replan-invented ValueError requirement tarpit") — that was the
 CLOCK story, not the SCORE story. The 2/4's grounded decomposition:
@@ -4775,7 +4775,7 @@ CLOCK story, not the SCORE story. The 2/4's grounded decomposition:
 cria fault: none mechanical (zero cuts, zero unsupported-calls, zero plumbing tracebacks in 220
 calls); two judge-channel contributions recorded above.
 
-## ada-handles_nemotron-elastic_codex_pon_1785360304 — walked at full fidelity (155 calls)
+## ada-handles_nemotron-elastic_codex_pon_1785360304 — PARTIAL walk (marker sweep + extraction scan; NOT a full read)
 
 A July-29 row measuring six-generations-old code; walked for UNFIXED fault classes only.
 Findings: 14 prompts carry harness mid-cuts (the INLINE_RESULT_MAX_BYTES class — fixed
@@ -4793,7 +4793,7 @@ Voided by operator ruling during the campaign (caged-routing era) and superseded
 results.jsonl; it measured a code state that no longer exists and its row is excluded from
 every standing. Skipped per the evidence-not-living rule.
 
-## ada-handles_maple-preview_codex_poff_1785956867 — first maple run, walked (98 calls)
+## ada-handles_maple-preview_codex_poff_1785956867 — first maple run (full walk IN PROGRESS; the entry below was written from a scan and is being re-verified)
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
 milestone-15 resumes next run — same outcome either way here: it held 2 at 30 min). Protocol
