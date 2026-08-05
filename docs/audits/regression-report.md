@@ -87,10 +87,10 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | gemma4 | off | — | 3/4 | ada-handles_gemma4_codex_poff_1785869053 | 61242fc | milestone-miss-60min | SUPERSEDED by the case-typo refusal fix — walked, cria fault yes: 50+ refusals never named a one-letter case typo of the workspace; best gemma4 campaign score, new steer guards fired 4x correctly |
 | gemma4 | off | 1 | **2/4** | ada-handles_gemma4_codex_poff_1785873072 | 61242fc | milestone-miss-30min | walked: cria fault none — row STANDS; RESCORED 1/4→2/4 (operator, 2026-08-04): the README-probe scorer found its documented live command and proved it live; the true-facts steer that starved /holders remains in the observe ledger |
 | gemma4 | off | 2 | **1/4** | ada-handles_gemma4_codex_poff_1785875123 | 61242fc | milestone-miss-30min | walked: cria fault none — handler/handle typo warfare, self-typo'd handle, self-blinding pass/fail pipe; false-citation guard withheld 5 fabricated steers; row STANDS |
-| gemma4 | off | 3 | **1/4** | ada-handles_gemma4_codex_poff_1785881741 | 878c1b1 | milestone-miss-30min | walked: cria fault none-to-fix — delivered dictations seeded the dismantling (self.client rewrite, invalid signature prescription); gemma4 closes 2,1,1 NOT STABLE; per-role DICTATES knob recommended |
+| gemma4 | off | 3 | **2/4** | ada-handles_gemma4_codex_poff_1785881741 | 878c1b1 | milestone-miss-30min | walked: cria fault none-to-fix — delivered dictations seeded the dismantling (self.client rewrite, invalid signature prescription); gemma4 closes 2,1,1 NOT STABLE; per-role DICTATES knob recommended · RESCORED 1/4→2/4 (operator 2026-08-05: in-session live run counts) |
 | qwythos | off | 1 | **4/4** | ada-handles_qwythos_codex_poff_1785826280 | 2e7de81 | exited | 8/8 unit tests, live test, CLI, README — 14.7 min |
 | qwythos | off | — | 0/4 | ada-handles_qwythos_codex_poff_1785844343 (VOIDED) | 7ec52ff | milestone-miss-15min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
-| qwythos | off | 2 | **2/4** | ada-handles_qwythos_codex_poff_1785877469 | 61242fc | exited | walked: cria fault none — reports the stake address as the resolved address (no addr1 in output), no live-test artifact; guess-shape gate re-authored a poisoned step correctly; row STANDS |
+| qwythos | off | 2 | **3/4** | ada-handles_qwythos_codex_poff_1785877469 | 61242fc | exited | walked: cria fault none — reports the stake address as the resolved address (no addr1 in output), no live-test artifact; guess-shape gate re-authored a poisoned step correctly; row STANDS · RESCORED 2/4→3/4 (operator 2026-08-05: in-session live run counts) |
 | qwythos | off | 3 | **4/4** | ada-handles_qwythos_codex_poff_1785884041 | 878c1b1 | exited | 9/9 tests, working live_test.sh, CLI, README — 9 min; RESCORED 3/4→4/4 (scorer's live glob was *.py-only; the shell live test ran green in-session); qwythos closes 4,2,4 |
 | qwopus | off | 1 | **4/4** | ada-handles_qwopus_codex_poff_1785827212 | 81a4113 | exited | 17/17 unit tests, live test, CLI, README — 48 min |
 | qwopus | off | — | 1/4 | ada-handles_qwopus_codex_poff_1785845382 (VOIDED) | 98a4951 | milestone-miss-30min | VOIDED (operator, 2026-08-04): ran on the caged plan-off routing; walked as model variance, but the cage taints the row — reruns on current code |
@@ -110,6 +110,23 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 1 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): the live test worked with the task's handle as argument; the scorer now honours that shape, as its CLI check always did |
 | nemotron-elastic | on | 2 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): same argument-shape rescore as run 1; refutation guard 2x correct in-run |
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
+
+
+**Post-campaign experiments (2026-08-04 evening → 2026-08-05; not campaign-counted):**
+
+| model | plan | score | run_id | terminal | note |
+|---|---|---:|---|---|---|
+| gemma4 | off | 1/4 | ada-handles_gemma4_codex_poff_1785893473 | milestone-miss-30min | the FULL line walk run — 4 cria faults found+fixed from it; RESCORED 1/4→2/4 (live-evidence ruling) |
+| gemma4 | on | 0/4 | ada-handles_gemma4_codex_pon_1785896127 | milestone-miss-15min | planner-ON probe: critic→coder hallucination contamination; configuration verdict final |
+| gemma4 | off | 1/4 | ada-handles_gemma4_codex_poff_1785904860 | budget-killed | post-walk finetune re-measure — fixes held, weights ceiling confirmed; finetune retired after ablation |
+| nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785945326 | exited | first-ever nemotron planner-OFF: 4/4 in 8.5 min |
+| nemotron-elastic | off | 2/4 | ada-handles_nemotron-elastic_codex_poff_1785946072 | exited | walked: cria fault YES (fused-call junk file + traceback-only mkdir failure) — both fixed |
+| nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785946457 | exited | nemotron poff standing run 3 |
+| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948232 | exited | stock ablation run 1; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948574 | exited | stock ablation run 2; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948838 | exited | stock ablation run 3; RESCORED 3/4→4/4 (live-evidence ruling) |
+| nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785953902 | exited | post-fix rerun — fastest nemotron pass yet |
+| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
 - **2026-08-05 — operator scoring ruling: an in-session live run of the coder's OWN code
@@ -335,3 +352,50 @@ ornith's run-2 live point) · *.sh live tests (qwythos 3/4→4/4).
 signature matches the misconfig exactly; (2) per-role DICTATES knob — dictated steers carried
 the strong cohort and seeded three consecutive gemma4 destructions; (3) the planner-on replan
 channel can invent requirements — nemotron's only campaign failure came from one.
+
+## Final summary — addendum (2026-08-05)
+
+Everything below happened AFTER the campaign closed; the 08-04 summary above is preserved as
+written.
+
+**Current settled lanes (planner OFF, current main):**
+
+| model | standing | pace | note |
+|---|---|---|---|
+| gemma4-stock · 12B q4km | **4/4 × 4** | 3–5 min, 22–32 calls | replaced the finetune; its lone repeated "miss" became a pass under the live-evidence ruling |
+| nemotron-elastic · 12B-A2B | **4, 2*, 4, 4** | 3.5–8.5 min, 28–52 calls | *the 2/4 was cria's own write-path bug — walked, fixed, tested |
+
+**What changed since the campaign:**
+1. **The full line walk of gemma run 1785893473** (operator-ordered, all 284 calls, zero
+   truncation) produced suite/walk.py — the only permitted walk extractor now — and found four
+   cria faults, all fixed test-first: missing-path write/edit refusals, inverted-range refusal,
+   the 9,000-byte inline bound (the harness middle-cuts anything larger in history — 166 cuts
+   corpus-wide), and the fetch ledger surviving compaction.
+2. **Sampling closed as a cause.** A 10-setting replay sweep (temp ladder × penalty × top-k/p ×
+   min_p, 50 real prompts each) showed the card settings tie-or-win everywhere; cooling never
+   helps and heavy constraint collapses judge verdicts 8/20 → 3/20.
+3. **The finetune ablation.** Stock gemma-4-12b-it, identical lane: 3/4 × 3 against the
+   finetune's 2,1,1,1 — the finetune SUBTRACTED; retired from every living surface (fabliq
+   convention), gemma4-stock holds the ladder slot. Publisher's v3 is announced; re-evaluate
+   then.
+4. **Nemotron's planner verdict.** First-ever planner-off runs: same scores as planner-on at a
+   quarter of the wall clock, and its only poff loss was a cria write-path bug (fused-call junk
+   file blocking tests/ + a traceback-only mkdir failure) — both fixed test-first. Planner-off
+   is nemotron's lane.
+5. **Both failed nemotron planner-on runs re-walked at full fidelity.** The skim-era "ValueError
+   tarpit" verdict was superseded: the scored loss was a one-line argv collision
+   (unittest.main() in the CLI file) plus a steer-DICTATED test shipped with an impossible mock
+   — hard evidence for the dictated-code observe cohort. One fabricated-error steer
+   ("grep: Not found", corpus prevalence 1) recorded, below the guard bar.
+6. **Two judge-lever candidates measured and rejected** per principle 8: the goose-rejection
+   detector (prevalence 1, intent-reading — doctrinal kill) and the satisfaction mirror-rule
+   (0/24 flips, 2/8 false alarms on a clean control).
+7. **Operator scoring ruling (2026-08-05):** an in-session live run of the coder's OWN code
+   resolving a task handle counts as the live test. Implemented in _liveprobe with
+   adversarially-earned fences (exec-paired, runner-allowlist, placeholder-excluded); 13 rows
+   raised, raise-only, provenance in each row's `rescored` key. Bare curls of the API do not
+   count — flag if the spirit should be wider.
+
+**Standing recommendations, updated:** the per-role DICTATES knob remains open (now with one
+more data point against dictation: the impossible-mock test); the strong cohort should run
+planner-off; gemma4-stock's OFF-toggle recipe needs verification before any reasoning-off use.
