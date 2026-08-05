@@ -4900,7 +4900,66 @@ Chunks 12–16 (calls 0040–0047) — the compaction band:
 Running tally of the steer channel on this run: five reasoner engagements (0025, 0030,
 0036/0037, 0047), zero caught the /v1 route mismatch, three actively reinforced the mock.
 
-Walk continues from chunk 17.
+Chunks 17–29 (calls 0048–0083) — the mock goes green and the endgame gates engage:
+- **Call 0048 — edit-recovery WORKED:** after four old_string misses, the api_status edit landed
+  via the whole-rewrite fallback ("Wrote …", +37 bytes). The coder chose value "success" where
+  the tests expect "simulated" — one more lap — then 0058/0059 fixed the value and hex-encoded
+  the fake address. 17/17 green at 0065: the suite certified the simulation.
+- **Calls 0049–0055 — one flail engagement burned SEVEN reasoner calls** (author tool-loop
+  0049–0054, answer-NOW at 0055). Inside it: the author invented a stale-__pycache__ theory
+  because its GROUND-TRUTH pane predated the coder's just-landed edit (checks said "api_status
+  missing" while its own read_file showed it present). Candidate (measure first): stamp the
+  gate block when its result predates the newest write to a file it names. ALSO: read_file on
+  the __pycache__ DIRECTORY returned "[… does not exist]" — the dir existed; a 5b false fact
+  from cria's own inspection tool that fed the confusion. Fix queued: a directory should
+  answer "is a directory — use list_dir".
+- **CRIA FAULT FOUND AND FIXED — the delivered ruminating steer (the walk's second landed
+  fix).** 0055's reply was one first-person paragraph repeated ~45× (finish=stop, so the
+  truncation guard never fired) and 0056 delivered the whole ~10KB blob verbatim as
+  ⟦ctx:steer⟧. The rumination guard was wired to the streaming coder path alone (classify.py
+  said so). Fixed: rumination.degenerate_tail now gates both author_steer branches — a
+  ruminating reply is dropped like a cut one (loop.steer_degenerate). Tests:
+  ARuminatingReplyIsNotADirectiveTests (fail-before verified); suite 2441 passed. Prevalence
+  in this one run: 2 oversized degenerate steers (0020 ~21KB triple-dictation, 0056 ~10KB).
+- **0062 [steer-code]: DICTATES correctly caught** on the 0061 directive (it handed
+  `f"addr1{handle.encode().hex()}"` to copy) — observe-cohort, delivered; the coder pasted it.
+  The steer channel finished the run 0-for-6 on the /v1 mismatch and co-authored the mock to
+  the end.
+- **README born at 0065 with the `gose` typo — model-owned:** the coder itself typed
+  "python3 resolve_adaptive_handle.py gose" as the README example (no channel dictated it),
+  plus a FABRICATED live-output example ("Address: addr1gja...xyz").
+- **0067: task_complete with false claims** ("Live test validated … successfully resolves
+  handles like 'goose' against the live API" — the only live run exited 1 with a 404).
+- **0068 [critic] ruled the step done=true off the CONTENTLESS step:** with only
+  "api.handle.me" as the goal it had nothing to judge against, echoed the coder's summary
+  ("the live test mode successfully queried the API") — the exact claim-echo its prompt
+  forbids — and 0069 [confirm-applies] said NO disk artifacts for the same reason. The 0002
+  contentless-step gap is now measured at BOTH ends: it misled the coder all run and unmoored
+  both completion judges. The authored-step content check moves from measure-first to strong.
+- **0070/0071 — self-compact ruminated to finish=length AGAIN** (2 for 2 this session; this
+  time looping "the system prompt I received was from the user?"); the noreason retry
+  recovered again, producing a thin but honest briefing. The protocol holds; the first pass is
+  a reliably wasted call on this model.
+- **0072 — step 2 opens with BOTH briefings in one prompt:** the stale step-1
+  ⟦ctx:continuation⟧ ("13 of 17 pass, 4 fail") rides alongside the fresh ⟦ctx:rollup⟧ ("All 17
+  pass, README created"). Two contradictory summaries; the stale one then anchored the
+  satisfaction judge (below). Candidate: refresh/drop the continuation briefing when a newer
+  rollup supersedes it.
+- **0075 [exec-intent] invented a filename:** asked for "the exact command" with ONLY the task
+  text in-pane, it answered `python3 resolve_handle.py goose` — the real file is
+  resolve_adaptive_handle.py; its own THINK said "I don't have the script." Candidate:
+  exec-intent should see the workspace file list (deterministic, one line).
+- **0078 [satisfaction]: the RIGHT verdict on a STALE fact.** satisfied=false correctly
+  blocked the hand-back (live test genuinely never ran), but its stated reason — "The 4
+  failing tests indicate unresolved issues" — was false by then (17/17 green), sourced from
+  the stale continuation summary. The composed steer then opened "The repo's automated checks
+  pass, but … The 4 failing tests…" — cria contradicting itself inside one message (rule 5b).
+  The TRUE clause ("Live tests have not been executed") drove the correct next behavior: the
+  coder went off to actually run live tests.
+- 0083's transcript-syntax steer (raw <tool_call> JSON delivered as a steer) — already found
+  in the partial pass and FIXED (RoleplaySteerTagDialectTests); confirmed in situ.
+
+Walk continues from chunk 30.
 
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
