@@ -11,8 +11,8 @@ measured a model nobody was testing.
 A procedure that must be remembered before each run is a footgun. The runner now applies these on
 every swap, so a cell cannot silently inherit the last model's settings.
 
-    python3 suite/sampling.py --model gemma4          # show what would be written
-    python3 suite/sampling.py --model gemma4 --apply  # write it into ~/.cria/cria.toml
+    python3 suite/sampling.py --model gemma4-stock          # show what would be written
+    python3 suite/sampling.py --model gemma4-stock --apply  # write it into ~/.cria/cria.toml
 
 Roles: cria drives `coder` (writes the code), `reasoner` (planner + step/task critic), `classifier`
 (routing) and `compactor` (summarising). Where a card gives one set of numbers, the coding value
@@ -44,12 +44,6 @@ MODEL_SAMPLING = {
     # within ~10% flips the argmax — handler/handle, papagoose->papagoase, Pytest/pytest,
     # __cria->__cira, 8ibs->8Ibs are all this, and every campaign walk's edit-spiral began with
     # one. At temp 1.0 (the tuning point) the penalty shifts odds without deterministic flips.
-    "gemma4": {
-        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
-        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
-        "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
-        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
-    },
     # STOCK Gemma 4 12B it — identical sampling to the finetune so the
     # ablation isolates the WEIGHTS (operator ask 2026-08-05).
     "gemma4-stock": {

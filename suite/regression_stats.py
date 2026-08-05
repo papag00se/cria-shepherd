@@ -52,7 +52,8 @@ def state(r):
 # (⟦cria⟧ coder · <name> lines) and the llama-fleet service definitions in suite/run.py.
 MODEL_SPECS = {
     "ternary-bonsai": "27B q2_0",
-    "gemma4": "12B q4km",
+    "gemma4": "12B q4km (retired finetune)",
+    "gemma4-stock": "12B q4km stock",
     "qwythos": "9B q6",
     "qwopus": "9B q6",
     "ornith": "9B q6",

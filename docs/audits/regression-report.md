@@ -25,7 +25,7 @@ gates = check runs it triggered.
 | 🟡 qwythos · 9B q6 | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟡 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ²⁄₄ | 134.6 | 38 | 205 | 19 | 6 | 32 | 8 |
 | 🟡 mellum2 · 12B-MoE q4 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
-| 🔴 gemma4 · 12B q4km | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
+| 🔴 gemma4 · 12B q4km (retired finetune) | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 

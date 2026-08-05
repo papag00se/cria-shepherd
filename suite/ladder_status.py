@@ -43,7 +43,7 @@ MILESTONE_MINUTES = 15
 LADDER = [
     # name,              params,        arch/experts,        kind,    planner
     ("ternary-bonsai",   "27B",         "qwen35",            "dense", "off"),
-    ("gemma4",           "12B",         "gemma4",            "dense", "off"),
+    ("gemma4-stock",     "12B",         "gemma4-stock",      "dense", "off"),
     ("qwythos",          "9B",          "qwen35",            "dense", "off"),
     ("qwopus",           "9B",          "qwen35",            "dense", "off"),
     ("ornith",           "9B",          "qwen35",            "dense", "off"),
