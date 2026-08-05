@@ -134,8 +134,10 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
   walk's headline finding is that the model's KNOWLEDGE was right (it named the exact fix in its
   reasoning) while its EDIT CALLS kept emitting malformed argument structure and stale
   old_strings — a temperature-independent weights problem. Plus write-time fabrication
-  ([tool.pudupatch], poetry-tools==0.4.25, a zombie __spec__.py it and its self-judging steers
-  chased together). Verdict: keep the card sampling (strictly better behavior), but gemma4's
+  ([tool.pudupatch], poetry-tools==0.4.25, a mutated write target `test_wallet.__spec__.py` it CREATED at call 0037,
+  deleted mid-run, then chased as a half-remembered ghost for ~15 calls — operator caught the
+  earlier "never existed" claim as wrong; a stray `__init__.py'` (trailing quote IN the
+  filename) also landed on disk from a malformed shell quote). Verdict: keep the card sampling (strictly better behavior), but gemma4's
   ceiling on this task is the model, not the config. The improved workspace refusal visibly
   worked (its first write aimed at /home/jesse/Documents; the named-root message redirected it
   in one call).
