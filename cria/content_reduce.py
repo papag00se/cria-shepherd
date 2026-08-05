@@ -24,6 +24,21 @@ def est_tokens(s: str) -> int:
     return len(s) // 4
 
 
+# THE ONE BOUND for any content cria composes and hands back INLINE as a tool result. An inline
+# result outlives its turn: the harness re-renders it into every later prompt through its OWN
+# middle-cut — codex-local ships a per-model history budget of 10,000 BYTES per tool output
+# (protocol/openai_models.rs `TruncationPolicyConfig::bytes(10_000)`, applied in
+# context_manager/history.rs ×1.2) — so anything cria emits above that is silently holed
+# ("…N tokens truncated…") in EVERY subsequent turn, which no context floor on cria's side can see
+# or repair. Measured 2026-08-04: 166 distinct harness cuts across the capture corpus; the openapi
+# find slice of run 1785893473 (16,000 chars, sized by the old 4,000-token page cap) rode
+# middle-cut through 84 of that run's prompts. 9,000 leaves headroom under the 10,000-byte budget
+# for the harness's own framing lines (Chunk ID / Wall time / exit code / Output:). Bounding is
+# done by PAGING and spill files, never by dropping content — principle 5 (never truncate) holds;
+# this constant is what makes it hold on the far side of the harness too.
+INLINE_RESULT_MAX_BYTES = 9000
+
+
 # Magic-byte signatures for the binary-content fact line — named so the note can say WHAT was
 # omitted, not just that something was. Text-adjacent formats are absent on purpose.
 _BINARY_KINDS = ((b"\x89PNG", "PNG image"), (b"\xff\xd8\xff", "JPEG image"), (b"GIF8", "GIF image"),

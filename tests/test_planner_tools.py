@@ -245,8 +245,10 @@ class FullContentTests(unittest.TestCase):
 
     def test_web_fetch_returns_full_body_past_old_clip(self):
         """Under one page, the whole body still comes back inline — the old 6000/8000-char clip cut
-        exactly the endpoint signatures the planner was fetching FOR."""
-        big = ("B" * 10000) + "ENDPOINT_SIGNATURE"
+        exactly the endpoint signatures the planner was fetching FOR. (One page is now the shared
+        inline bound, content_reduce.INLINE_RESULT_MAX_BYTES — the body here sits past the old
+        clips but under that bound.)"""
+        big = ("B" * 8500) + "ENDPOINT_SIGNATURE"
         with self._urlopen(big):
             out = pt._web_fetch({"url": "https://x/api"}).text
         self.assertIn("ENDPOINT_SIGNATURE", out)      # the signature past 6000 survives

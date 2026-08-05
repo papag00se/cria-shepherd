@@ -1,9 +1,11 @@
 import email.message
 import io
 import json
+import re
 import unittest
 import urllib.error
 
+from cria import content_reduce
 from cria import webfetch as wf
 
 
@@ -1045,3 +1047,58 @@ class FindNeverDeletesADocumentThatFitsTests(unittest.TestCase):
         out = self._fetch('{"a":1}', truncated=True, find="nonexistentkey")
         self.assertIn("no match", out)
         self.assertIn("fetch limit", out)
+
+
+class HarnessHistoryBudgetTests(unittest.TestCase):
+    """Every inline result cria hands back OUTLIVES the turn: the harness re-renders it into all
+    later prompts through its own middle-cut (codex-local ships a 10,000-byte per-output history
+    budget). A cria page bigger than that is silently holed in every subsequent turn — measured:
+    the openapi find slice of run 1785893473 was middle-cut ("…1599 tokens truncated…") in 84 of
+    the run's prompts, and 166 distinct cuts exist across the capture corpus. So everything cria
+    composes inline must fit INLINE_RESULT_MAX_BYTES; the full document always lives in the spill
+    file and find/cursor navigation pages through it losslessly."""
+
+    def setUp(self):
+        wf.clear_cache()
+
+    @staticmethod
+    def _big_spec():
+        # Spec-shaped: enough routes to build a real (large) outline head, and a body far past
+        # one page, so page 1 = big head + windowed body — the worst inline case.
+        return json.dumps({
+            "openapi": "3.0.3", "info": {"title": "Big"},
+            "paths": {f"/route/number/{i}/with/a/longish/path/segment": {
+                "get": {"summary": f"operation {i}", "description": "x" * 300}}
+                for i in range(60)},
+        }, separators=(",", ":"))
+
+    def _nav(self, body, **kw):
+        orig = wf.fetch
+        wf.fetch = lambda url, ua=None: wf.FetchResult(200, url, "application/json", body, False)
+        try:
+            return wf.fetch_nav("https://api.example.test/openapi.json", **kw)
+        finally:
+            wf.fetch = orig
+
+    def test_page_one_of_a_big_spec_fits_the_history_budget(self):
+        out = self._nav(self._big_spec())
+        self.assertLessEqual(len(out.encode()), content_reduce.INLINE_RESULT_MAX_BYTES,
+                             f"page 1 is {len(out.encode())} bytes — the harness will middle-cut "
+                             "it in every later prompt")
+        self.assertIn("More remains", out)   # bounded by PAGING, not by dropping content
+
+    def test_every_cursor_page_fits_the_history_budget(self):
+        big = self._big_spec()
+        out = self._nav(big)
+        m = re.search(r'cursor="c(\d+)"', out)
+        self.assertIsNotNone(m)
+        page2 = self._nav(big, cursor=f"c{m.group(1)}")
+        self.assertLessEqual(len(page2.encode()), content_reduce.INLINE_RESULT_MAX_BYTES)
+
+    def test_an_oversized_find_slice_is_paged_under_the_budget(self):
+        # The exact incident shape: find matches a subtree far bigger than one page.
+        out = self._nav(self._big_spec(), find="paths")
+        self.assertLessEqual(len(out.encode()), content_reduce.INLINE_RESULT_MAX_BYTES,
+                             f"find slice is {len(out.encode())} bytes — this is the slice Codex "
+                             "middle-cut in 84 prompts of run 1785893473")
+        self.assertIn("narrow it", out.lower())   # the model is told how to see the rest

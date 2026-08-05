@@ -58,6 +58,9 @@ class OneOwnerTests(unittest.TestCase):
         # +1: edit_file with no new_string. +1: write_file with no content.
         # +2 (2026-08-04): write/edit with no usable PATH — malformed-argument calls used to fall
         # through un-lowered and draw the harness's opaque "unsupported call" reply.
+        # (The read-path refusals — large range, large whole read, inverted range — live in the
+        # _read_command/_ranged_read helpers, outside this function's source; InvertedRangeTests
+        # holds their exit-code contract.)
         self.assertEqual(src.count("_refusal_command("), 9)
 
     @staticmethod

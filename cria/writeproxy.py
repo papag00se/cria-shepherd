@@ -400,12 +400,14 @@ def _edit_command(path: str, old: str, new: str) -> str:
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
-# A whole read bigger than this many bytes is steered to grep / a line range instead of cat'd — a raw
-# cat of a big file is truncated HEAD+TAIL by the harness's exec-output cap (Codex kept only a few KB of
-# a 96 KB spec, eating the middle where the endpoints were), a silent lie the model then acts on. Chosen
-# below common harness caps; the whole size-check is lowered INSIDE the read_file call, so the sentinel
-# swap re-presents it as a plain read_file — the model never sees the `wc`/`if` plumbing.
-READ_INLINE_MAX = 12000
+# A whole read bigger than this is steered to grep / a line range instead of cat'd — a raw cat of a
+# big file is middle-cut by the harness (Codex kept only a few KB of a 96 KB spec, eating the middle
+# where the endpoints were), a silent lie the model then acts on. THE bound is the shared inline-result
+# bound (content_reduce.INLINE_RESULT_MAX_BYTES): the old local 12,000 sat exactly ON codex-local's
+# 10,000-byte×1.2 history budget, so borderline reads (~12–13 KB observed kept-sizes in the capture
+# corpus) still got holed in later prompts. The size-check is lowered INSIDE the read_file call, so
+# the sentinel swap re-presents it as a plain read_file — the model never sees the `wc`/`if` plumbing.
+READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 
 
 def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
@@ -497,6 +499,14 @@ def _read_command(args: dict) -> str | None:
         return None
     q = _qbash(path)
     start, end = args.get("start_line"), args.get("end_line")
+    # An INVERTED range is its own defect and gets its own answer. The old flow dropped the
+    # end_line silently (the `end >= start` guard below fails, so the start-only branch read
+    # start→EOF) and then refused THAT as "too large — narrow your window" — about a request the
+    # coder believed was already narrow. Walked on run 1785893473 call 0018 (start 1041, end 358);
+    # 100 inverted ranges across 3 captured sessions. Name the real cause instead.
+    if isinstance(start, int) and start > 0 and isinstance(end, int) and 0 < end < start:
+        return _refusal_command(prompts.render("inverted_range", path=str(path),
+                                               start=start, end=end))
     if isinstance(start, int) and start > 0 and isinstance(end, int) and end >= start:
         return _ranged_read(q, str(path), f"{start},{end}", start)
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)

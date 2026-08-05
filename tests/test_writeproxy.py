@@ -1,11 +1,13 @@
 import base64
 import json
+import subprocess
 import pathlib
 import tempfile
 import unittest
 from unittest import mock
 
 from cria import webfetch
+from cria import writeproxy
 
 from cria.config import CRIA_HOME
 from cria.writeproxy import (
@@ -1123,3 +1125,44 @@ class MissingPathRefusalTests(unittest.TestCase):
         self.assertIn("write_bytes", self._cmd("write_file", {"path": "a.py", "content": "x"}))
         edit = self._cmd("edit_file", {"path": "a.py", "old_string": "x", "new_string": "y"})
         self.assertNotIn("malformed", edit)
+
+
+class InvertedRangeTests(unittest.TestCase):
+    """Run 1785893473 call 0018: the coder sent start_line=1041, end_line=358. cria silently
+    dropped the end_line (the `end >= start` guard fails, so the start-only branch read 1041→EOF)
+    and then refused THAT as "too large — narrow your window", about a request the coder believed
+    was already narrow. The refusal must name the real defect: the range is inverted."""
+
+    def test_an_inverted_range_is_refused_with_the_true_cause(self):
+        cmd = writeproxy._read_command(
+            {"path": "spec.json", "start_line": 1041, "end_line": 358})
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertIn("1041", r.stdout)
+        self.assertIn("358", r.stdout)
+        self.assertIn("inverted", r.stdout.lower())
+
+    def test_a_sane_range_still_reads(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("a\nb\nc\nd\n")
+        try:
+            cmd = writeproxy._read_command({"path": f.name, "start_line": 2, "end_line": 3})
+            r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("2: b", r.stdout)
+            self.assertIn("3: c", r.stdout)
+        finally:
+            os.unlink(f.name)
+
+    def test_equal_start_and_end_is_a_one_line_read_not_an_inversion(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("a\nb\nc\n")
+        try:
+            cmd = writeproxy._read_command({"path": f.name, "start_line": 2, "end_line": 2})
+            r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("2: b", r.stdout)
+        finally:
+            os.unlink(f.name)

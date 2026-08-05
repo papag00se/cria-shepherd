@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from . import apidiscovery, brave, denial, prompts
-from .content_reduce import est_tokens, html_to_text
+from .content_reduce import INLINE_RESULT_MAX_BYTES, est_tokens, html_to_text
 from .searchloop import first_domain_in, normalize_search, searches_match
 
 try:  # structural YAML is best-effort — the Rust degrades YAML to text too when it can't parse
@@ -47,7 +47,10 @@ except ImportError:  # pragma: no cover - environment without PyYAML
 
 # --- constants (mirrored from web_fetch.rs / content_reduce.rs) ----------------------------
 MAX_BODY_BYTES = 8 * 1024 * 1024     # raw-body read cap; raised well past real specs (was 512 KiB in web_fetch.rs). A rare doc beyond this is DISCLOSED as truncated (FetchResult.truncated → render_page/find), never silently cut.
-CONTENT_CAP_TOKENS = 4000            # one page / one find response (WEB_FETCH_CONTENT_CAP_TOKENS)
+# One page / one find response (WEB_FETCH_CONTENT_CAP_TOKENS was 4000 → 16,000 chars, which the
+# harness's 10,000-byte history budget middle-cut in every later prompt — see INLINE_RESULT_MAX_BYTES).
+# Derived from the one inline bound so a page can never outgrow what survives the harness.
+CONTENT_CAP_TOKENS = INLINE_RESULT_MAX_BYTES // 4
 REQUEST_TIMEOUT_S = 30               # per-request (REQUEST_TIMEOUT_SECS)
 USER_AGENT = brave.USER_AGENT        # a real browser UA so ordinary sites don't 403 curl/8.x (curl_ua.rs)
 DOC_CACHE_CAP = 32                   # per-URL reduced-doc cache bound (DOC_CACHE_CAP)
@@ -1040,7 +1043,10 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         # A broad find (e.g. `paths` on a whole spec) can match a subtree far bigger than one page —
         # window it and tell the model to narrow, so a "filtered" fetch never dumps an unusable wall.
         if len(slice_) > OVERSIZE_CHARS:
-            body, nxt, total = page_from(slice_, 0, cap_tokens)
+            # Window it UNDER the inline bound with room for the find-header line and the
+            # find_large guard appended below — the un-reserved page was exactly the slice the
+            # harness middle-cut in 84 prompts of run 1785893473 (see INLINE_RESULT_MAX_BYTES).
+            body, nxt, total = page_from(slice_, 0, max(50, (INLINE_RESULT_MAX_BYTES - 800) // 4))
             # The message tells the model to "grep the saved ./tmp file". On this branch nothing was
             # ever saved — the spill lives on the no-find path — so cria was naming a file that did
             # not exist (principle 5b). Worse, the same branch skipped the route outline the plain
@@ -1094,37 +1100,57 @@ def page_from(content: str, offset: int, cap_tokens: int) -> tuple[str, int, int
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
                 offset: int, cap_tokens: int, truncated: bool = False) -> str:
     body, nxt, total = page_from(reduced, offset, cap_tokens)
-    head = f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
-    # A CATALOGUE names where other documents live, and is short enough to fit one page — so it is
-    # surfaced regardless of size, unlike the spec blocks below (which exist to navigate a doc too big
-    # to read). Without this its hrefs reached the model only as raw JSON body text.
-    if offset == 0 and parsed is not None:
-        catalog = _catalog_links(parsed)
-        if catalog:
-            # Relation-agnostic wording: the live api.handle.me catalogue files its openapi.json under
-            # `service-doc`, not `service-desc`, so naming one relation sent the model looking for a
-            # link that wasn't there.
-            head += (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
-                     "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
-    # For a large structured doc, lead with the shape so the model can `find=` a key instead
-    # of blindly paging a minified blob (the "summarize with top-level keys" ask).
-    if offset == 0 and parsed is not None and nxt < total:
-        keys = top_level_keys(parsed)
-        if keys:
-            head += (f"[structured doc — top-level keys: {', '.join(keys)}]\n"
-                     f'[use find="<key>" to jump to a section]\n')
-        # For an API spec, surface the actual ENDPOINT ROUTES up front — the single most useful thing
-        # and the one a model reaching for "the endpoint" keeps missing (it drills into component
-        # schemas and guesses the URL instead). Detected by SHAPE (a top-level object whose keys are
-        # mostly `/`-paths), so it works for OpenAPI and any spec dialect, keyed off real bytes.
-        routes = _endpoint_routes(parsed)
-        if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
-            head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
-            shapes = _endpoint_response_fields(parsed)
-            if shapes:  # the response FIELDS (dereferenced) — so the model extracts real names, not guesses
-                head += (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
-                         "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
-            head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
+
+    def _head(nxt_: int, total_: int) -> str:
+        head = f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
+        # A CATALOGUE names where other documents live, and is short enough to fit one page — so it is
+        # surfaced regardless of size, unlike the spec blocks below (which exist to navigate a doc too
+        # big to read). Without this its hrefs reached the model only as raw JSON body text.
+        if offset == 0 and parsed is not None:
+            catalog = _catalog_links(parsed)
+            if catalog:
+                # Relation-agnostic wording: the live api.handle.me catalogue files its openapi.json
+                # under `service-doc`, not `service-desc`, so naming one relation sent the model
+                # looking for a link that wasn't there.
+                head += (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
+                         "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
+        # For a large structured doc, lead with the shape so the model can `find=` a key instead
+        # of blindly paging a minified blob (the "summarize with top-level keys" ask).
+        if offset == 0 and parsed is not None and nxt_ < total_:
+            keys = top_level_keys(parsed)
+            if keys:
+                head += (f"[structured doc — top-level keys: {', '.join(keys)}]\n"
+                         f'[use find="<key>" to jump to a section]\n')
+            # For an API spec, surface the actual ENDPOINT ROUTES up front — the single most useful
+            # thing and the one a model reaching for "the endpoint" keeps missing (it drills into
+            # component schemas and guesses the URL instead). Detected by SHAPE (a top-level object
+            # whose keys are mostly `/`-paths), so it works for OpenAPI and any spec dialect.
+            routes = _endpoint_routes(parsed)
+            if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
+                head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
+                shapes = _endpoint_response_fields(parsed)
+                if shapes:  # the response FIELDS (dereferenced) — real names, not guesses
+                    head += (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
+                             "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
+                head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
+        return head
+
+    # THE WHOLE RENDERED RESULT must fit the inline bound, not just the body window: the head
+    # (routes/shapes outline) is data too, and head + body above INLINE_RESULT_MAX_BYTES is exactly
+    # what the harness middle-cuts out of every later prompt (see content_reduce). Shrink the BODY
+    # window until the sum fits — content is never dropped, the page boundary just moves earlier
+    # and the "More remains" cursor picks it up. Two passes suffice (the head has two states:
+    # with and without the paged-doc outline), plus one for the trailer reserve.
+    _TRAILER_RESERVE = 300  # the "--- (chars …) ---" line and the ⚠ More-remains / fetch-cut trailer
+    head = _head(nxt, total)
+    # page_from budgets in CHARS (tokens×4); the bound is BYTES, so multibyte content can need a
+    # second shrink — the divisor walk terminates instead of stalling on a same-size re-page.
+    for divisor in (4, 6, 8, 12, 16):
+        room = INLINE_RESULT_MAX_BYTES - len(head.encode()) - _TRAILER_RESERVE
+        if len(body.encode()) <= room:
+            break
+        body, nxt, total = page_from(reduced, offset, max(50, room // divisor))
+        head = _head(nxt, total)
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '
