@@ -139,10 +139,10 @@ def markdown(lines, models) -> str:
     legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
     icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
     out = ["### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)", ""]
-    out += ["| model | last 3 | avg tok/s | " + " | ".join(icons) + " | avg min | avg calls |",
-            "|---|---|---:|" + "---:|" * len(icons) + "---:|---:|"]
-    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
-            + " | ".join(str(s['fam'][i]) for i in icons) + f" | {s['min']} | {s['calls']} |"
+    out += ["| model | last 3 | avg tok/s | avg min | avg calls | " + " | ".join(icons) + " |",
+            "|---|---|---:|---:|---:|" + "---:|" * len(icons)]
+    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | {s['min']} | {s['calls']} | "
+            + " | ".join(str(s['fam'][i]) for i in icons) + " |"
             for s in models]
     out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
     out += ["| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |",

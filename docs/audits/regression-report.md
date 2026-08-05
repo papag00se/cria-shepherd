@@ -17,15 +17,15 @@ gates = check runs it triggered.
 
 ### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)
 
-| model | last 3 | avg tok/s | 🧭 | 🔁 | 🧪 | 🗜️ | avg min | avg calls |
+| model | last 3 | avg tok/s | avg min | avg calls | 🧭 | 🔁 | 🧪 | 🗜️ |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| 🟢 ornith | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 5 | 4 | 9 | 6 | 17 | 124 |
-| 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 9 | 4 | 11 | 5 | 23 | 114 |
-| 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 17 | 7 | 30 | 8 | 34 | 199 |
-| 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 3 | 1 | 5 | 3 | 60 | 58 |
-| 🟡 qwythos | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 12 | 2 | 7 | 4 | 13 | 95 |
-| 🟡 mellum2 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 9 | 2 | 14 | 2 | 8 | 76 |
-| 🔴 gemma4 | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 30 | 6 | 10 | 9 | 31 | 250 |
+| 🟢 ornith | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
+| 🟢 qwopus | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
+| 🟢 nemotron-elastic | ⁴⁄₄ ⁴⁄₄ | 131.8 | 34 | 199 | 17 | 7 | 30 | 8 |
+| 🟢 ternary-bonsai | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
+| 🟡 qwythos | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
+| 🟡 mellum2 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
+| 🔴 gemma4 | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
