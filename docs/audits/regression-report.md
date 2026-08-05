@@ -112,6 +112,16 @@ counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/2
 | nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
+- **2026-08-05 — FINETUNE ABLATION VERDICT: stock gemma-4-12b-it Q4_K_M scores 3/4, 3/4, 3/4
+  (280/240/200 s; 29/25/22 calls; all clean exits)** on the identical lane (same quant, same
+  gemma-toggle template, same card sampling, planner off) where the yuxinlu1 finetune scored
+  2/4, 1/4, 1/4, 1/4 (never a clean exit; 228–283 calls each). The finetune SUBTRACTED on this
+  workload: its tau2-bench 3.5× gain does not transfer, and the malformed-call/invention
+  texture is absent from all three stock runs. Stock's one consistent miss is identical every
+  time — it never creates the separate live-test file (it mocks the unit tests and stops), an
+  instruction-coverage gap, not a capability gap. Standing recommendation updated: gemma4
+  (finetune) retires from the ladder; gemma4-stock takes its slot; re-evaluate the finetune
+  only if the publisher's v3 lands.
 - **2026-08-05 — nemotron planner-OFF standing complete: 4, 2, 4 (510 s / 370 s / 310 s;
   52 / 44 / 42 calls) vs planner-on's counted 4, 4, 2 (1,934–3,624 s; 155–291 calls).** Same
   score band at roughly a quarter of the wall clock. The 2/4 was walked (suite/walk.py, 44
