@@ -128,6 +128,10 @@ def split_sections(text: str) -> dict[str, str]:
 
 _DELIM_PAIRS = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
 _UNMATCHED_RE = re.compile(r"^(.+?):(\d+):.*?\bunmatched\b.*?['\"]([()\[\]{}])")
+# Any finding that NAMES a position: `path:LINE[:COL]: …` (pyflakes/compileall style) or
+# `path: … (at line LINE, column COL)` (tomllib style).
+_FLAGGED_LINE_RE = re.compile(r"^(.+?):(\d+)(?::\d+)?:")
+_AT_LINE_RE = re.compile(r"^(.+?): .*\(at line (\d+), column \d+\)")
 
 
 def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
@@ -144,22 +148,44 @@ def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
     workspace = getattr(plan, "workspace", "") or ""
     for f in findings:
         out.append(f)
-        m = _UNMATCHED_RE.match(f)
-        if not m or not workspace:
+        if not workspace:
             continue
-        path, line_no, d = m.group(1), int(m.group(2)), m.group(3)
+        m = _UNMATCHED_RE.match(f)
+        if m:
+            path, line_no, d = m.group(1), int(m.group(2)), m.group(3)
+            p = Path(path) if os.path.isabs(path) else Path(workspace) / path
+            try:
+                line = p.read_text(errors="replace").splitlines()[line_no - 1]
+            except (OSError, IndexError):
+                continue
+            opener = d if d in "([{" else _DELIM_PAIRS[d]
+            closer = _DELIM_PAIRS[opener]
+            n_open, n_close = line.count(opener), line.count(closer)
+            if n_open == n_close:
+                continue
+            out.append(f"  counted fact: line {line_no} on disk is `{line.strip()}` — it contains "
+                       f"{n_open} '{opener}' and {n_close} '{closer}'.")
+            continue
+        # GENERAL case (walked on run 1785904860, ~call 0045): a finding that names a POSITION
+        # without quoting the line invites the model to GUESS the line's text — the checker said
+        # `pyproject.toml: Invalid value (at line 20, column 9)` and the model edited against an
+        # invented `build-backend = "python3"` that was never on disk or in context. Quote the
+        # flagged line's real bytes. Same contract as the counted fact: state the fact or be
+        # silent (missing file/line → silent; line already quoted in the finding → silent),
+        # and PRESCRIBE NOTHING.
+        m = _FLAGGED_LINE_RE.match(f) or _AT_LINE_RE.match(f)
+        if not m:
+            continue
+        path, line_no = m.group(1), int(m.group(2))
         p = Path(path) if os.path.isabs(path) else Path(workspace) / path
         try:
             line = p.read_text(errors="replace").splitlines()[line_no - 1]
         except (OSError, IndexError):
             continue
-        opener = d if d in "([{" else _DELIM_PAIRS[d]
-        closer = _DELIM_PAIRS[opener]
-        n_open, n_close = line.count(opener), line.count(closer)
-        if n_open == n_close:
+        text = line.strip()
+        if not text or text in f:      # nothing to quote, or the finding already shows it
             continue
-        out.append(f"  counted fact: line {line_no} on disk is `{line.strip()}` — it contains "
-                   f"{n_open} '{opener}' and {n_close} '{closer}'.")
+        out.append(f"  the flagged line on disk — line {line_no}: `{text[:200]}`")
     return out
 
 

@@ -691,3 +691,58 @@ class VerbatimMeansVerbatimTests(unittest.TestCase):
         out = self._clean(body)
         self.assertNotIn("imported but unused", out)
         self.assertIn("Boom", out)
+
+
+class FlaggedLineFactTests(unittest.TestCase):
+    """Walked on ada-handles_gemma4_codex_poff_1785904860 (~call 0045): the checker said
+    `pyproject.toml: Invalid value (at line 20, column 9)` — position, no text — and the model
+    GUESSED the line said `build-backend = "python3"` (never true, never shown anywhere) and
+    burned an edit-miss on the phantom. The cure is the delimiter-fact contract, generalized:
+    when a finding names file:line without quoting the line, append the line's on-disk bytes.
+    State the fact or be silent; prescribe nothing."""
+
+    def _ws(self, name, content):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, name), "w") as fh:
+            fh.write(content)
+        return d
+
+    def test_a_colon_line_finding_gains_the_flagged_line(self):
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        ws = self._ws("client.py", "import os\nresp = requests.get(url)\n")
+        out = _with_delimiter_facts(["client.py:2:8: undefined name 'requests'"],
+                                    GatePlan(workspace=ws))
+        self.assertEqual(len(out), 2)
+        self.assertIn("resp = requests.get(url)", out[1])
+        self.assertIn("line 2", out[1])
+
+    def test_an_AT_LINE_style_finding_gains_the_flagged_line(self):
+        # The exact tomllib shape from the walked run.
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        ws = self._ws("pyproject.toml",
+                      "\n" * 19 + 'build-backend = "setuptools.build"\n')
+        out = _with_delimiter_facts(
+            ["pyproject.toml: Invalid value (at line 20, column 9)"], GatePlan(workspace=ws))
+        self.assertEqual(len(out), 2)
+        self.assertIn('build-backend = "setuptools.build"', out[1])
+
+    def test_a_finding_already_quoting_its_line_stays_bare(self):
+        # compileall's SyntaxError echo already shows the line — no duplicate fact.
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        ws = self._ws("t.py", "assert x == 1\n")
+        f = ["t.py:1: SyntaxError near `assert x == 1`"]
+        self.assertEqual(_with_delimiter_facts(f, GatePlan(workspace=ws)), f)
+
+    def test_missing_file_or_line_stays_silent(self):
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        f = ["gone.py:9:1: undefined name 'x'"]
+        self.assertEqual(_with_delimiter_facts(f, GatePlan(workspace="/nonexistent-ws")), f)
+
+    def test_the_fact_prescribes_nothing(self):
+        from cria.probegate import GatePlan, _with_delimiter_facts
+        ws = self._ws("a.py", "y = foo(\n")
+        out = _with_delimiter_facts(["a.py:1:5: undefined name 'foo'"], GatePlan(workspace=ws))
+        joined = " ".join(out).lower()
+        self.assertNotIn("fix", joined)
+        self.assertNotIn("should", joined)
