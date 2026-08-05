@@ -4793,7 +4793,40 @@ Voided by operator ruling during the campaign (caged-routing era) and superseded
 results.jsonl; it measured a code state that no longer exists and its row is excluded from
 every standing. Skipped per the evidence-not-living rule.
 
-## ada-handles_maple-preview_codex_poff_1785956867 — first maple run (full walk IN PROGRESS; the entry below was written from a scan and is being re-verified)
+## ada-handles_maple-preview_codex_poff_1785956867 — FULL WALK in progress (chunks 01–04 of 36 read; findings below supersede the scan entry)
+
+**The scan's story was wrong at its center.** Full-fidelity findings so far:
+- **Call 0002 — cria gap (open):** the model's authored reading step was the bare string
+  `api.handle.me` (its THINK: "we output the task name"). cria delivered that contentless step
+  verbatim as "Do ONLY this step (1 of 2): api.handle.me". The step validation checks for
+  GUESSED content, not MISSING instruction — a step that never says "read" or what to learn
+  passed. Candidate check: the authored reading step must contain a read/learn verb + the
+  source; measure across captures before adding.
+- **Call 0009 — THE RUN'S ROOT CAUSE (model, with a cria-candidate attached):** the coder
+  probed goose/papagoose with a GUESSED `/v1/` prefix (`api.handle.me/v1/handles/goose`) —
+  no /v1 exists anywhere in the ledger IN ITS PROMPT — got 404s, printed its own "not found
+  (expected)", and at 0010 concluded "goose and papagoose are not valid Ada Handles in this
+  system". Everything else — the simulated mode, the "adaptive" reframe, mock-to-green — is
+  downstream of this single invented path segment. Candidate check (measure first): an
+  EXECUTED command targeting the task API on a route absent from the spec cria holds is
+  deterministically detectable (ledger routes × URL paths in exec commands).
+- **Call 0011 — the script is born self-broken:** TWO `def resolve_handle` definitions; the
+  second (sim/live wrapper) shadows the API caller, and its "live" branch calls
+  `resolve_handle(handle)` — now itself — defaulting live_test=False. Even live mode returns
+  simulated data. The "kent" live test "passing" was fake-backed.
+- **Call 0015 — honest pytest (7 failures), then capitulation:** the fix rewrites test
+  EXPECTATIONS to match broken behavior ("live mode should return a dict, not None").
+- **Call 0017 — the steer author identity-collapses and CO-AUTHORS the mock:** its output is
+  "Let me fix the test file:" + the ENTIRE test file as a JSON write payload (twice), with
+  `api_status: "simulated"` expectations baked in. Code-shaped → DICTATES observe-cohort →
+  delivered. Strong cross-cohort evidence: the dictated-steer channel actively reinforced the
+  simulation design. NOTE: through chunk 04, no judge channel has flagged the /v1 mismatch,
+  though the working no-/v1 fetch and the failing /v1 probe sit in the same evidence panes.
+- (Fixed already, from the partial pass: the 0083 transcript-TAG steer — the guard hole is
+  closed; that finding stands.)
+
+Walk continues from chunk 05.
+
 
 2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
 milestone-15 resumes next run — same outcome either way here: it held 2 at 30 min). Protocol
