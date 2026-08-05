@@ -4751,3 +4751,26 @@ across all 76 calls. The finetune's entire failure texture is absent.
   evidence outweighs one added rule) and false-alarmed the complete control 2/8 (original 0/8).
   Strictly worse in both directions — the dangerous failure mode. The 3/4 ceiling stands as model
   interpretation with no admissible cria lever; do not re-propose as prompt prose.
+
+## ada-handles_nemotron-elastic_codex_pon_1785888803 — RE-WALKED at full fidelity (suite/walk.py, 220 calls)
+
+Supersedes the skim-era entry ("replan-invented ValueError requirement tarpit") — that was the
+CLOCK story, not the SCORE story. The 2/4's grounded decomposition:
+- **resolver_cli FAIL = one structural line**: `unittest.main()` at the bottom of the resolver
+  file eats argv — `python3 ada_handles_resolver.py goose` errors on a test named "goose" and
+  exits 1 AFTER printing a correct live resolution (address+holder+15). Invisible to every
+  in-run check (gate = pytest+syntax; only the scorer runs `<cli> goose`).
+- **unit test FAIL #1 is the DICTATED one**: the "Add a TestNetworkErrorHandling class…" steer
+  (DICTATES observe-cohort) shipped an impossible mock (`setattr(resp.raise_for_status,
+  'side_effect', …)` on a real method → AttributeError). Direct cross-cohort evidence: a
+  dictated steer's design survived broken to scoring.
+- **unit test FAIL #2**: ValueError-on-unknown-handle expectation vs the API's real behavior —
+  the argument the steers spent the run on; the 45-min milestone wall killed it mid-fix.
+- **NEW cria finding (recorded, below bar)**: call 0020's steer-recover emitted a FABRICATED
+  tool error — `⟦ctx:steer⟧ grep: “grep”: Not found` — delivered verbatim; the coder then
+  believed grep absent from the environment (0021 THINK). Corpus prevalence of
+  fabricated-error-quoting steers: exactly 1 of 5 error-quoting steers ever. No guard (goose-
+  detector precedent); claim class recorded: "steer quotes tool output that never occurred" —
+  deterministically checkable against session evidence if it recurs.
+cria fault: none mechanical (zero cuts, zero unsupported-calls, zero plumbing tracebacks in 220
+calls); two judge-channel contributions recorded above.
