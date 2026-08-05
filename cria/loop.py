@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import callcapture, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
@@ -2171,6 +2171,7 @@ class Loop:
         facts = _fetched_facts_anchor(sess)  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
+            msgs = _elide_ledger_copies(msgs, sess, rlog)  # the anchor is the ONE copy — duplicates collapse
         steered = ""
         if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
@@ -3323,7 +3324,8 @@ class Loop:
         # path only.
         facts = _fetched_facts_anchor(sess)
         if facts is not None:
-            framed = {**framed, "messages": _insert_after_system(framed["messages"], facts)}
+            framed = {**framed, "messages": _elide_ledger_copies(   # the anchor is the ONE copy —
+                _insert_after_system(framed["messages"], facts), sess, rlog)}  # duplicates collapse
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
@@ -5139,6 +5141,22 @@ def _fetched_facts_anchor(sess) -> dict | None:
                                                        marker=selfcompact.FACTS_MARKER, ledger=ledger)}
 
 
+def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
+    """ONE copy of the fetch ledger per outbound view. The ⟦ctx:facts⟧ anchor just injected is the
+    owner; byte-identical copies elsewhere — the compaction summary's fetch-facts appendix (baked
+    in by server._harden_compaction_reply, redundant every call the anchor also rides), and the
+    identical field-shape lines inside the original fetched-page result — collapse to a one-line
+    pointer. Measured on the maple full walk: the ~2.4KB field block rode up to 3× per prompt.
+    Byte-exact, aggregate-lossless, identity when nothing matches (see cria/dedup.py)."""
+    ledger = _fetch_ground_truth([], sess, header="PAGES YOU HAVE ALREADY FETCHED")
+    out, n = dedup.elide_from_messages(msgs, dedup.ledger_units(ledger),
+                                       prompts.load("ledger_dedup_note"),
+                                       skip_prefix=selfcompact.FACTS_MARKER)
+    if n and rlog is not None:
+        rlog.emit("context.ledger_dedup", excised=n)
+    return out
+
+
 def _insert_after_system(msgs: list[dict], anchor: dict) -> list[dict]:
     """Place ``anchor`` right after the leading system/developer message(s) — in the protected head, so it
     is always visible to the model and never reads as the oldest droppable turn."""
@@ -5270,6 +5288,13 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # opened the checks section with fetch content and floated the checks below the endpoint list).
     fetch_truth = _fetch_ground_truth(body.get("messages", []), gs, header=CODER_FETCH_HEADER)
     truth = "\n\n".join(t for t in (truth, fetch_truth) if t)
+    # ONE copy of the ledger in the author's prompt too: the serialized session often still holds
+    # the original fetched-page result (and the compaction appendix) with the SAME field lines the
+    # labeled fetch-record block above re-states. The labeled block is the authority the template
+    # names ("trust these over any note"); byte-identical copies in the session collapse to a
+    # pointer (measured on the maple walk: every steer/judge prompt carried the ~2.4KB block 2×+).
+    session, _n_deduped = dedup.elide_text(session, dedup.ledger_units(fetch_truth),
+                                           prompts.load("ledger_dedup_note"))
     reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,

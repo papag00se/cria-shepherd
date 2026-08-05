@@ -1,0 +1,1 @@
+(identical fetched-spec content is shown once, IN FULL, in the fetch-record block of this conversation — it is not repeated here)
