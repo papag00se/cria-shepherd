@@ -50,6 +50,14 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
         "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
     },
+    # STOCK Gemma 4 12B it — identical sampling to the finetune so the
+    # ablation isolates the WEIGHTS (operator ask 2026-08-05).
+    "gemma4-stock": {
+        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+        "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
+        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
+    },
     # empero-ai (Qwen3.5 thinking): temp 0.6 / top_p 0.95 / top_k 20.
     "qwythos": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},

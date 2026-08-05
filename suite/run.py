@@ -53,6 +53,7 @@ SERVICES = {
     "qwopus": "llama-qwopus-q6",
     "ornith": "llama-ornith-q6",
     "gemma4": "llama-gemma4-q4km",
+    "gemma4-stock": "llama-gemma4-stock",  # STOCK weights — finetune-ablation baseline
     "mellum2": "llama-mellum2-q4",
     "nemotron-elastic": "llama-nemotron-elastic",
 }
