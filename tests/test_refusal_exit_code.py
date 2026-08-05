@@ -56,7 +56,9 @@ class OneOwnerTests(unittest.TestCase):
         import inspect
         src = inspect.getsource(writeproxy.translate_outbound)
         # +1: edit_file with no new_string. +1: write_file with no content.
-        self.assertEqual(src.count("_refusal_command("), 7)
+        # +2 (2026-08-04): write/edit with no usable PATH — malformed-argument calls used to fall
+        # through un-lowered and draw the harness's opaque "unsupported call" reply.
+        self.assertEqual(src.count("_refusal_command("), 9)
 
     @staticmethod
     def _lower_fetch(result):
