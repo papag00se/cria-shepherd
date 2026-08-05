@@ -21,9 +21,9 @@ gates = check runs it triggered.
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
-| 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ | 131.8 | 34 | 199 | 17 | 7 | 30 | 8 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
 | 🟡 qwythos · 9B q6 | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
+| 🟡 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ²⁄₄ | 134.6 | 38 | 205 | 19 | 6 | 32 | 8 |
 | 🟡 mellum2 · 12B-MoE q4 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
 | 🔴 gemma4 · 12B q4km | ²⁄₄ ¹⁄₄ ¹⁄₄ | 63.1 | 31 | 250 | 30 | 6 | 10 | 9 |
 
@@ -67,8 +67,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | qwopus | counted | 4/4 | 15 | 75 | 46 | 83.2 | 11 | 7 | exited |
 | ornith | counted | 4/4 | 17 | 94 | 51 | 82.5 | 5 | 4 | exited |
 | mellum2 | counted | 2/4 | 8 | 76 | 49 | 177.1 | 7 | 9 | exited |
+| nemotron-elastic | counted | 2/4 | 46 | 218 | 115 | 140.1 | 22 | 36 | milestone-miss-45min |
 
-counted runs: 20 · avg wall 26 min · avg coder calls 69 · full-pass rate 13/20
+counted runs: 21 · avg wall 27 min · avg coder calls 71 · full-pass rate 13/21
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -108,6 +109,7 @@ counted runs: 20 · avg wall 26 min · avg coder calls 69 · full-pass rate 13/2
 | nemotron-elastic | on | — | 1/4 | ada-handles_nemotron-elastic_codex_pon_1785834747 | 086dca6 | milestone-miss-30min | SUPERSEDED by the confirm-refuted-by-disk fix — walked, cria fault yes; does not count toward 3 |
 | nemotron-elastic | on | 1 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785837073 | ecc40f1 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): the live test worked with the task's handle as argument; the scorer now honours that shape, as its CLI check always did |
 | nemotron-elastic | on | 2 | **4/4** | ada-handles_nemotron-elastic_codex_pon_1785850908 | 7e4b167 | exited | RESCORED 3/4→4/4 (operator, 2026-08-04): same argument-shape rescore as run 1; refutation guard 2x correct in-run |
+| nemotron-elastic | on | 3 | **2/4** | ada-handles_nemotron-elastic_codex_pon_1785888803 | 878c1b1+ | milestone-miss-45min | walked: cria fault none — a replan-invented invalid-handle ValueError requirement met an API that returns 200 for unknown handles; 10 rumination aborts; nemotron closes 4,4,2 |
 
 ## Notable events
 
@@ -231,6 +233,35 @@ counted runs: 20 · avg wall 26 min · avg coder calls 69 · full-pass rate 13/2
   with the real findings. Fail-before test added, full suite green (2335), cria restarted 22:23,
   the failed row marked superseded. Full walk: [ladder-walk.md](ladder-walk.md#ada-handles_ternary-bonsai_codex_poff_1785818931).
 
-## Final summary
+## Final summary (campaign complete, 2026-08-04 ~18:15)
 
-- (campaign in progress)
+**Question asked:** did the 2026-08-03 changes regress the seven models that had passed the
+ladder 4/4? **Answer: the campaign became as much an audit of cria as of the models — five cria
+faults and three scorer blind spots were found and fixed along the way, and on the final code
+two models are perfectly stable, five are not.**
+
+| model | counted runs | verdict | one-line cause (from the walks) |
+|---|---|---|---|
+| qwopus · 9B q6 | 4/4, 4/4, 4/4 | **stable 3/3** | — |
+| ornith · 9B q6 | 4/4, 4/4, 4/4 | **stable 3/3** | — |
+| ternary-bonsai · 27B q2_0 | 4/4, 3/4, 4/4 | NOT STABLE 2/3 | run 2 died mid-fix of two mock-fixture tests at the hour wall — slow decode, not confusion |
+| nemotron-elastic · 12B-A2B | 4/4, 4/4, 2/4 | NOT STABLE 2/3 | run 3: a replan-invented "invalid handle must raise ValueError" requirement met an API that returns 200 for unknown handles — 25-minute tarpit |
+| qwythos · 9B q6 | 4/4, 2/4, 4/4 | NOT STABLE 2/3 | run 2 shipped the stake address as the "resolved address" and no live-test artifact — semantics, not process |
+| mellum2 · 12B-MoE q4 | 3/4, 4/4, 2/4 | NOT STABLE 1/3 | swagger-first habit lands it on the MCP endpoint (twice); run 3 burned 45 calls on jsonrpc:"2.0" and shipped an address-only CLI its own judge approved |
+| gemma4 · 12B q4km | 2/4, 1/4, 1/4 | NOT STABLE 0/3 | reaches a working state inside 15 min EVERY run, then dismantles it — post-campaign audit found OUR sampling misconfig (greedy + rep-penalty = identifier mutation); card sampling now applied, re-measure recommended |
+
+**Cria faults found by the walks and fixed mid-campaign** (each superseded the run that exposed it):
+completion-without-gates (a17a7c1) · confirm-brake coin-flip on artifact-free steps (fbc083c) ·
+false missing-file vetoes → gather-then-ask disk refutation (ecc40f1+) · plan-off step cage +
+unclearable reading step (ef0b771 fixes → 36e2861) · authored-step guess shapes + phantom paths
+(55df703) · steer false line-citations + invented auth requirement (61242fc) · workspace-typo
+refusal blind to case then dash/underscore (both widened).
+
+**Scorer fairness fixes** (operator-directed, applied to both verifiers via _liveprobe):
+handle-argument retry (nemotron 3/4→4/4 ×2) · README-guided live probe (gemma4 1/4→2/4;
+ornith's run-2 live point) · *.sh live tests (qwythos 3/4→4/4).
+
+**Standing recommendations:** (1) rerun gemma4 ×3 on the card sampling (temp 1.0) — its failure
+signature matches the misconfig exactly; (2) per-role DICTATES knob — dictated steers carried
+the strong cohort and seeded three consecutive gemma4 destructions; (3) the planner-on replan
+channel can invent requirements — nemotron's only campaign failure came from one.
