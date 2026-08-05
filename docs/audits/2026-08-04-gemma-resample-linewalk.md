@@ -352,3 +352,134 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
   (The skim-era "never existed" claim is now fully corrected: TWO real `__spec__`-named files
   were created, at 0037 and 0114.)
 
+### chunks 25–36 — calls 0115–0153 (the __spec__ tarpit; judges emitting raw tool syntax)
+
+- **0115–0121** — six consecutive reasoner inspection calls circling the same package puzzle;
+  THINKs invent freely ("pytest generates [the __spec__ file] when it fails to import" — false;
+  the CODER wrote both files). The 0121 directive is at least pointed at one file.
+- **0124–0127** — a steer DICTATES a full tests/__init__.py whose guard line is broken
+  (`if __main__ == "__main__":` — `__main__` where `__name__` belongs). Judged DICTATES,
+  delivered per ruling; coder transcribes the idea (its own version happens to use `__name__`).
+- **0128–0135** — edit-miss churn (all answered truthfully), ending in a full test rewrite
+  (0135) that plants TWO fresh landmines: `get_wallet_info("52167")` — the STATS example
+  number (total_holders: 52167) reified into a wallet ADDRESS — asserting
+  `total_handles == 52167`; and expectations that collide with the dot-validation landmine.
+- **0136–0144** — judge-seat degradation: 0142 and 0143 both emit RAW TOOL-CALL SYNTAX as
+  their steer (`<|tool_call>call:write_file{…}` — a toolless author "performing" a write).
+  The transcript-syntax guard drops those. But the 0144 recovery then authors a directive
+  containing PHANTOM WORKSPACE FILES — "in src/client/__init__.py delete the stray Import
+  line … rewrite tests/test_client.py" — neither exists on disk; the phantom-path guard is
+  system-root-scoped and the citation guard is line-scoped, so it DELIVERED (0145), pointing
+  the coder at files that aren't there while the gate output directly above named the real
+  one (`tests/test_wallet.__spec__.py`).
+- **0146–0153** — the steers finally converge on the truth: delete the `__spec__` files
+  (0150, 0152 both say it plainly); the coder deletes them (~0151/0153). Recovery arc real —
+  cost: ~40 calls in the tarpit.
+
+### chunks 37–48 — calls 0154–0194 (the fabricated-VALUE steers; README polish; pyproject thrash)
+
+- **0154–0157** — README fixes (the `cardana` typo); THINK invents `python -m handle`
+  (no such module) as the entry-point story.
+- **0158 — FABRICATED-VALUE STEER #2.** The reasoner instructs: "calls get_wallet_info("52167")
+  — asserting total == 49306 (the correct number for that public test wallet)". 49306 is PURE
+  INVENTION dressed as verified fact; 52167 is the stats example. Judged DICTATES, delivered
+  per ruling. (Fabricated-value steer #1 was 0040's 86-char wallet address.)
+- **0166–0170** — a steer invents a phantom API ("one pytest fixture (an async fget)");
+  judged DESCRIBES (defensibly — no pastable code); coder re-enters the __init__.py loop.
+- **0171–0177** — steers oscillate between "add tests/__init__.py" and "delete
+  tests/__init__.py" (0172 vs 0177) — mutually contradicting prescriptions a few calls apart.
+- **0178–0190** — new files appear (test_cli.py, test_async.py — scope growth); typo
+  `get_handle_daata` caught and fixed by the coder itself; 0183's ON_TRACK is authored on a
+  rosy fabricated narrative ("The project is converging") while checks still fail; 0184 is
+  the run's third PATHLESS edit_file (the malformed shape cited in the writeproxy fix).
+- **0191, 0194** — judge fabrications compound: "a stray parenthesis in tests/test_wallet.py
+  breaks every following write of pyproject.toml at line 18" (causal nonsense);
+  "[tool.cachetosserv3]" and "test_sanity.py" (invented TOML section, phantom file).
+
+### chunks 49–62 — calls 0195–0284 (endgame: the validation landmine survives because every judge believes it)
+
+- **0195–0209** — pyproject/build thrash; two steers emit tool-syntax SAYs again
+  (`<|tool_call>call:Read{…}` — an invented "Read" tool). Coder writes a phantom `build.py`
+  backend wrapper.
+- **0210–0226** — second LOCAL_COMPACT; the compactor's briefing is again honest (names the
+  `get_handle_daata` typo and the malformed pyproject line 15). Deletion of the last
+  `__spec__` file lands (~0222).
+- **0227–0249** — the async/await SyntaxError arc: steers dictate `@pytest.mark.asyncio` on a
+  SYNC def (0228 — code that reproduces the very error it explains), the coder fights
+  double-colon typos (`def test_wallet():::`) of its own making, eventually rewrites
+  test_async.py clean. pytest finally COLLECTS (0249: "zero collected tests instead of a
+  SyntaxError").
+- **0250–0251 — FABRICATED-VALUE STEER #3.** The steer hands over "a real wallet address …
+  use your fetched one: `JpX8Gf9SGrAuevAt6uKjWIKxRThNoFzC2i`" — base58-shaped, fetched
+  NOWHERE, not a Cardano address. Also dictates a broken character-class check
+  (`all(c in 'a-zA-Z0-9._' for c in handle_name)` — a literal string, so 'b' fails it) and
+  asserts the TYPO'd "papagoase" is the valid spelling. Judged DICTATES, delivered per ruling.
+- **0252–0275** — client.py rewritten with a NEW invented rule: handles must match
+  `^[a-zA-Z0-9._]+\.[A-Za-z]{2}$` — now a dot AND a TLD-like suffix are required. goose can
+  never pass. The wallet test still pins `total_handles == 52167` against the stats-example
+  number.
+- **0276 — the closing ON_TRACK, on the run's central falsehood.** The reasoner endorses the
+  coder's final diagnosis: "papagoase and goose are invalid handle formats (no dot) …
+  get_handle_data rightfully raises". goose IS valid; the dot rule was the coder's own 0051
+  invention, seeded by the ledger's example value `name(string, e.g. my.handle)` — an EXAMPLE
+  read as a FORMAT RULE. No judge ever checked the validation against the spec. The run dies
+  at the 30-minute wall (0284) still believing its own landmine, planning mock fixtures to
+  paper over "invalid" real handles.
+
+## Verdict
+
+**cria fault: yes — four found, four fixed** (this walk):
+1. Missing-path write/edit calls fell through RAW → opaque "unsupported call" (fixed pre-walk
+   completion: writeproxy refusals; calls 0007, 0039, 0059, 0062, 0184).
+2. Inverted read ranges silently reinterpreted, refused with a misleading cause (fixed:
+   `inverted_range` refusal; call 0018; 100 occurrences / 3 sessions).
+3. Inline results above the harness's 10,000-byte history budget were middle-cut in every later
+   prompt (fixed: `INLINE_RESULT_MAX_BYTES` shared bound; 166 cuts corpus-wide, 84 prompts in
+   this run alone).
+4. The durable fetch ledger was discarded by the post-compaction continuation → cria stated
+   "no endpoint definitions were found" about a fully-surfaced spec (fixed: `LoopStore.put`
+   ledger carry-over; call 0083).
+
+**Model faults (gemma4 v2 weights, not configuration)**: argument-structure collapse under
+load (fused/pathless tool calls, tool-syntax leakage into commands and judge SAYs); fabricated
+values in the judge seat (two invented wallet addresses, one invented "known correct" total,
+invented line ranges, phantom files/sections); false-done and false-green claims in reasoning;
+an example value read as a format rule and defended to the end.
+
+**Open guard candidates (prevalence to be measured before any ADD, per doctrine):**
+- Steer cites `file:lines-with-content-claim` it never read / its evidence contradicts
+  (0028, 0034 — two poisoning instances in one run).
+- Steer directs an edit INSIDE a workspace file absent from disk (0144's
+  src/client/__init__.py, test_client.py; 0194's test_sanity.py).
+- Steer ships a bare fabricated VALUE (address/number) present nowhere in evidence
+  (0040, 0158, 0251 — three in one run; the dictated-code observe cohort carries them).
+- Write-protect ./tmp/read-only spills (mode 0444) — one near-miss (0027's redirect).
+
+## Corrected problematic-calls index (supersedes the skim-era index)
+
+| call | what actually happened |
+|---|---|
+| 0007 | malformed write_file (no path, `<|"|>` in key, response-shape hallucinated into args) → "unsupported call" |
+| 0018 | inverted read range 1041→358; cria refused with wrong cause (now fixed) |
+| 0021 | 19.8K find match shipped → harness middle-cut, rode in 84 prompts (now fixed) |
+| 0028 | steer invented range 1745–1803 "for resolved_addresses" → sent coder to mpt-root; MPT scope poison |
+| 0034 | steer asserted resolved_addresses at 1789–2045 AGAINST its own evidence pane |
+| 0037 | tests/test_wallet.__spec__.py CREATED here (not "never existed") — nonsense stub |
+| 0039 | write_file with no path at all (phantom `pycodegen==<hex>` dep) |
+| 0040/0047 | dictated README steer carrying fabricated 86-char wallet address; DICTATES logged, delivered per ruling |
+| 0051 | THE LANDMINE: self-authored validation requiring dot AND all-alnum — every input raises |
+| 0059, 0062 | pathless edit_file × 2 → "unsupported call"; the one-character paren fix evaporated |
+| 0067 | "test is now fully green with 3 passed" — no pytest ran |
+| 0068 | stale steer re-litigating a FIXED error against fresh checks showing only the h2 error |
+| 0071–0072 | gate-parody script (`__cira`, `pygamedetect`); fabricated SUCCESS tool-response inside a command |
+| 0083 | continuation ledger regression — cria's false "no endpoint definitions" (now fixed) |
+| 0102–0103 | sed-filtered pytest → self-built false green → task_complete "10/10"; GATE CAUGHT IT |
+| 0111/0114 | wrong-deletion steer (rm src/__init__.py) executed verbatim |
+| 0114 | tests/__init__.__spec__.py created (second __spec__ file) |
+| 0144–0145 | recovery steer with phantom files (src/client/__init__.py, test_client.py) delivered |
+| 0158 | fabricated "total == 49306 (the correct number)" steer |
+| 0184 | third pathless edit_file (cited in the writeproxy fix) |
+| 0251 | fabricated "your fetched" address JpX8Gf9…; broken character-class dictation |
+| 0276 | final ON_TRACK endorsing "goose is invalid" — the landmine canonized |
+| 0284 | run ends at the wall; goose never resolved |
+
