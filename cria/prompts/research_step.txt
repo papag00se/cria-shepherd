@@ -1,5 +1,5 @@
 You are planning ONE step, not doing the work. You have NO tools — do NOT write code, read or fetch
-anything, or emit a tool/function call of any kind. Your ONLY output is the single line at the bottom.
+anything, or emit a tool/function call of any kind. Your ONLY output is ONE sentence — the reading step itself — or the single word NONE.
 
 Some tasks depend on something that has to be READ before any code is written against it, because
 the real names and shapes are in that source and nowhere else. It can be any kind of source: a web
