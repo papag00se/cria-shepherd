@@ -4670,3 +4670,30 @@ Re-verified against the preserved original workspace: **4/4**. Archive sweep: no
 run has a shell live-test, so no other score changes. The steer channel behaved (one DICTATES
 delivered — a correct monkeypatch→patch prescription the coder applied successfully; one
 roleplay-syntax drop). qwythos closes 4/4, 2/4, 4/4.
+
+## ada-handles_mellum2_codex_poff_1785887600
+
+REGRESSION1 campaign, mellum2 run 3/3. Score **2/4** (unit test 1/1, README), terminal `exited` —
+self-completed in 8 min, 76 calls. Capture
+`~/.cria/calls/20260804T165345-019fcf32-8f5a-7292-b0c0-bf368066815a` — walked in full. mellum2
+closes 3/4, 4/4, 2/4 — NOT STABLE 1/3.
+
+### cria fault: none — a one-token protocol blindness and a self-approved shortfall, both the model's
+
+1. The MCP fixation recurred (mellum2 reads the swagger YAML and lands on /mcp instead of the
+   plain REST endpoints every other model uses). ~45 calls died on `"jsonrpc":"2025-11-25"` —
+   the protocol version belongs in the MCP-Protocol-Version header; the FIELD must be "2.0".
+   Coder, critics, and steers were all blind to it (steer 0049 even prescribed the malformed
+   request verbatim — wrong, but not a checkable false fact); call 0051 finally sent "2.0" and
+   everything worked instantly. The rumination guard fired once and refocused correctly.
+2. The shipped CLI prints ONLY the resolved address — the task demands holder and total too —
+   and mellum2's own satisfaction judge approved it ("All deliverables are present"). The gate
+   was legitimately green (its one subprocess test passes), so completion stood on the judge's
+   quality miss: a self-judging weak model approving its own shortfall. No false fact from cria.
+3. The dash/underscore workspace typo appeared again briefly (0056) — and this time the model
+   spotted the difference itself within 3 calls (0061-0062). The widened refusal note lands on
+   file-tool paths; exec workdir misses route through the harness, out of cria's refusal path.
+
+Scoring note: the run's one unit test is ACTUALLY live (a subprocess call hitting the real API),
+but nothing names it "live" and the README's own section calls it a unit test — the probe
+(mellum2 judging) answered "no live-test command". The scorer behaved per spec. Row STANDS.
