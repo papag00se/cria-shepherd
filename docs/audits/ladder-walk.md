@@ -4792,3 +4792,24 @@ the recorded 3.0 stands per the at-run-time rule. cria fault: none unfixed.
 Voided by operator ruling during the campaign (caged-routing era) and superseded in
 results.jsonl; it measured a code state that no longer exists and its row is excluded from
 every standing. Skipped per the evidence-not-living rule.
+
+## ada-handles_maple-preview_codex_poff_1785956867 — first maple run, walked (98 calls)
+
+2/4, budget-killed at the flat 30-min wall still working (this experiment cohort ran flat-wall;
+milestone-15 resumes next run — same outcome either way here: it held 2 at 30 min). Protocol
+health is the headline: 100% well-formed tool calls, zero tag leaks in text, clean reasoning
+channel — a week-old ternary port behaving like a mature stack (55–57 tok/s on the 3080).
+
+- **cria fault: yes (fixed)** — call 0083 delivered a steer that was transcript fiction: "Let me
+  read the current files … <tool_call> {"name": "read_file", …} </tool_call>". The hard-drop's
+  tool-call arm knew only the `name({` shape; maple's TAG dialect lived one module away in
+  massage._LEAK_DEBRIS. The arm is now BUILT from that catalog (one owner) and nemotron/maple's
+  `<function=`/`<parameter=` joined it. Not a new guard — a dialect hole in a settled class.
+- **The score story is model-owned**: it read "Ada Handle" as "adaptive handle" (filename
+  `resolve_adaptive_handle.py`), built a SIMULATED mode with `api_status: "simulated"`, and when
+  its live tests hit real 404s it mocked them green (the m14 class — caught by the scorer's
+  blocked-network rule). The README documents a typo'd CLI usage (`gose goose`) whose two-arg
+  shape exits 2. 17 real unit tests pass — strong test discipline aimed at the wrong target.
+- **First-person steers** ("I understand — I'm at Step 2…", "I've repeatedly rewritten files…")
+  delivered per the observe-only provenance ruling — more truth-sample rows for that cohort;
+  several coached the SIMULATED field rather than away from it.
