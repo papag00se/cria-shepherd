@@ -47,6 +47,19 @@ def state(r):
     return "voided" if "void" in sup.lower() else "superseded"
 
 
+
+# Size + quant per fleet alias, from the served model names the runs actually logged
+# (⟦cria⟧ coder · <name> lines) and the llama-fleet service definitions in suite/run.py.
+MODEL_SPECS = {
+    "ternary-bonsai": "27B q2_0",
+    "gemma4": "12B q4km",
+    "qwythos": "9B q6",
+    "qwopus": "9B q6",
+    "ornith": "9B q6",
+    "mellum2": "12B-MoE q4",
+    "nemotron-elastic": "12B-A2B q4km",
+}
+
 # Assist families and their icons: 🧭 steers (a directive/redirect cria injected), 🔁 repetition
 # breaks (same-call loops interrupted), 🧪 gates (the repo's own checks run on the coder's behalf),
 # 🗜️ context work (self-compaction / window flooring). `*_result` keys are the same event's
@@ -141,7 +154,7 @@ def markdown(lines, models) -> str:
     out = ["### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)", ""]
     out += ["| model | last 3 | avg tok/s | avg min | avg calls | " + " | ".join(icons) + " |",
             "|---|---|---:|---:|---:|" + "---:|" * len(icons)]
-    out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | {s['min']} | {s['calls']} | "
+    out += [f"| {s['badge']} {s['model']} · {MODEL_SPECS.get(s['model'], '?')} | {s['trend']} | {s['tok_s']} | {s['min']} | {s['calls']} | "
             + " | ".join(str(s['fam'][i]) for i in icons) + " |"
             for s in models]
     out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
