@@ -129,6 +129,7 @@ def model_summary(lines):
             "tok_s": round(sum(s["tok_s"] for s in last3) / len(last3), 1),
             "fam": fam,
             "min": round(sum(s["min"] for s in last3) / len(last3)),
+            "calls": round(sum(s["calls"] for s in last3) / len(last3)),
         })
     # Operator's ranking: highest completion rate, then shortest time, then least assists.
     return sorted(out, key=lambda s: (-s["_avg"], s["min"], s["_assists"]))
@@ -138,10 +139,10 @@ def markdown(lines, models) -> str:
     legend = " · ".join(f"{icon} {label}" for icon, label, _m in ASSIST_FAMILIES)
     icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
     out = ["### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)", ""]
-    out += ["| model | last 3 | avg tok/s | " + " | ".join(icons) + " | avg min |",
-            "|---|---|---:|" + "---:|" * len(icons) + "---:|"]
+    out += ["| model | last 3 | avg tok/s | " + " | ".join(icons) + " | avg min | avg calls |",
+            "|---|---|---:|" + "---:|" * len(icons) + "---:|---:|"]
     out += [f"| {s['badge']} {s['model']} | {s['trend']} | {s['tok_s']} | "
-            + " | ".join(str(s['fam'][i]) for i in icons) + f" | {s['min']} |"
+            + " | ".join(str(s['fam'][i]) for i in icons) + f" | {s['min']} | {s['calls']} |"
             for s in models]
     out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
     out += ["| model | state | score | min | calls | coder | tok/s | steers | gates | terminal |",
@@ -182,11 +183,11 @@ def main() -> int:
     else:
         icons = [icon for icon, _l, _m in ASSIST_FAMILIES]
         print("MODEL PERFORMANCE — each model's last 3 STANDING runs (voided/superseded excluded)")
-        print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4}  "
+        print(f"{'':<3}{'model':<17}{'last 3':<12}{'tok/s':>6} {'min':>4} {'calls':>6}  "
               + " ".join(f"{i:>4}" for i in icons))
         for s in models:
             print(f"{s['badge']:<3}{s['model']:<17}{s['trend']:<12}"
-                  f"{s['tok_s']:>6} {s['min']:>4}  "
+                  f"{s['tok_s']:>6} {s['min']:>4} {s['calls']:>6}  "
                   + " ".join(f"{s['fam'][i]:>4}" for i in icons))
         print(f"\nassists per run: {legend}")
         print()
