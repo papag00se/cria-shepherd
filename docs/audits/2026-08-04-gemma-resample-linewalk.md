@@ -71,3 +71,82 @@ every judge-phase THINK block (classifier / research-step / reasoner private rea
   claim in reasoning. It then fetches `https://api.handle.me/openapi.json` — the right move.
   ("pydipotent" mutation token in THINK: transient temp-1.0 noise, self-corrected.)
 
+### chunk 02 — calls 0018–0023 (spec navigation; TWO cria faults found and fixed)
+
+- **0018** — the spill + outline machinery works beautifully: full spec saved, 33 endpoints and
+  exact response shapes (`holder`, `resolved_addresses.ada`, `total_handles`) put in front of the
+  model. THINK invents garbage line numbers ("list lines 100593867:248"), and the actual call is
+  `start_line=1041, end_line=358` — **INVERTED** (end before start).
+  **cria fault #2 of this walk (fixed):** cria silently dropped the end_line (the `end >= start`
+  guard fell through to the start-only branch, reading 1041→EOF) and refused THAT as "too large —
+  narrow it to a smaller start_line/end_line window" — a misleading cause for a request the coder
+  believed was already narrow. 100 inverted ranges across 3 captured sessions. Now refused with
+  the true cause (`cria/prompts/inverted_range.txt`, `InvertedRangeTests`).
+- **0019** — coder greps the spill file for `"GET /handles/"` — zero hits, exit 0. The literal
+  `GET /handles/` exists only in cria's OUTLINE rendering; the raw JSON keys are `"/handles/…"`
+  with `"get"` nested inside. The empty-but-successful grep then feeds the false THINK in 0020
+  ("the openapi file isn't at ./tmp/read-only/"). cria's `_HTTP_VERB` strip already handles this
+  for `find=` — the coder just grepped instead. Model error, seeded by cria's own `GET <path> →`
+  outline spelling; noted, no change (the outline wording already says "grep … FROM THAT LIST").
+- **0020** — coder tries `ls -F /tmp; grep -r … /tmp` (with mutated flag garbage
+  `sort -u07569077-t ':'`) — dirguard denies it with the correct, plain-cause message. Guard ✓.
+- **0021** — THINK confabulates history ("must have been from an earlier session … I
+  misremembered") — the false belief from 0019's empty grep compounding. Re-fetches with
+  `find="GET /handles/"`; cria's verb-strip answers with the real `/handles/…` sections.
+- **0021 result — cria fault #3 of this walk (fixed), THE BIG ONE:** the find match was 19,809
+  chars; cria windowed it to ~16,000 chars (4,000 est-tokens) and shipped it. Codex re-renders
+  every tool output into later prompts through a **10,000-byte middle-cut** — so the slice
+  arrived holed: `…1599 tokens truncated…` sits mid-payload, and that cut version rode in
+  **84 of this run's 283 prompts** (once in history, cut forever). Corpus-wide: 166 distinct
+  harness cuts. The never-truncate principle was being defeated on the far side of the harness.
+  Fixed: shared `content_reduce.INLINE_RESULT_MAX_BYTES = 9000`; fetch pages, find windows and
+  `READ_INLINE_MAX` (which sat exactly ON the budget at 12,000) all derive from it; bounding is
+  by paging/spill, never by dropping (`HarnessHistoryBudgetTests`).
+- **0022 reasoner steer** — fired while the coder was actually recovering. The directive is
+  half-grounded: "Read /tmp/read-only/…openapi.json with find=…" **fuses two tools** (`find=` is
+  a web_fetch argument; read_file has no such thing) and names an absolute `/tmp/read-only/…`
+  path (the real one is `./tmp/read-only/…` inside the workspace — the very path shape dirguard
+  denied two calls earlier). THINK also invents "The task's worth 100". The coder happened to
+  translate it into a sane `web_fetch find=` — but a weaker moment would have re-tripped
+  dirguard. Watch for recurrence before proposing an authoring guard.
+- **0023** — coder converts the confused steer into `web_fetch find="GET /holders/"` — fine.
+
+### chunk 03 — calls 0024–0031 (the invented-line-range steer poisons the run)
+
+- **0024** — `/holders/{address}` schema lands complete and correct (`total_handles` integer,
+  the exact fields). Then THINK derails: "I need to fetch a valid stake key … search for
+  top-ranking wallet addresses on Cardano" — the holder address comes FROM the
+  `/handles/{handle}` response; a web-ranked wallet is scope drift. Fires the search.
+- **0025 search-guard** — correctly rules the query off-target. Its THINK carries hallucinated
+  flavor ("GOOSE … whose holders get ranked as 'top wallets'"), but the verdict is right. The
+  recommendation, though, is `https://api.handle.me/openapi.json` — a URL the fetched-pages
+  ledger right in front of it says was ALREADY fetched. The coder dutifully re-fetches it (0026)
+  and burns a call on the repeat-gate denial. Small: the guard's recommendation should prefer a
+  NOT-yet-fetched target when the ledger marks it fetched. (The denial re-serves the outline, so
+  the cost stayed one call.)
+- **0026** — repeat-gate denial ✓ (outline re-served). THINK **fabricates tool history**:
+  "grep -n for 'resolved' gives lines 6508, 6791" — no grep ever ran. Reads 6508–6793.
+- **0027** — past-EOF read answered truthfully ("has 2,873 lines; 6508 is past the end") — the
+  missing-file/empty-file guard working. The recovery grep self-destructs on a mutated token:
+  `grep -n "\"type\":" .>./tmp/read-only/api.handle.me_openapi.json' 2>/dev/null` — note that is
+  a SHELL REDIRECT AIMED AT THE SPILL FILE; only the unmatched quote (exit 2) kept it from
+  clobbering the model's own ground-truth copy. The spill lives inside the workspace, so no
+  guard would have stopped it. **Candidate hardening (measure first): write-protect
+  ./tmp/read-only spills (mode 0444) so a stray redirect can't destroy fetched evidence.**
+- **0028 reasoner — THE POISONING STEER.** Detector fired fairly (fabricated-grep THINK). The
+  reasoner held read_file/list_dir and used NEITHER. Its THINK asserts "Read the file at lines
+  1745-1803 (the handle/resolved_addresses definition)" — an INVENTED range, never verified; and
+  the directive ships it as fact: "Read it at 1745-1803, then build a model from what's actually
+  in those lines:". Lines 1745–1803 are actually `/swagger/swagger.yml` and `/mpt-root`. The
+  range passes the beyond-EOF citation guard (1803 < 2873) — plausible, unread, wrong.
+- **0029** — coder obeys, reads 1745–1803, receives swagger/mpt-root schema.
+- **0030** — the poison blooms: THINK decides "I should add it ['verified'] to my resolver so
+  the caller knows when MPT checks are degraded" — a feature the task never asked for, planted
+  by the steer's wrong window. Re-reads 1796–1803.
+- **0031** — drift deepens: "I'll now fetch /health for live stats on sync status before
+  designing error handling." Re-fetches openapi.json verbatim (repeat gate will answer).
+- **Open finding for prevalence count: judge-seat INVENTED LINE RANGES** — a directive citing
+  `file:START-END` for a path the authoring session never read, where the numbers appear nowhere
+  in its evidence. Deterministically checkable from the steer session's own tool trace. Count
+  across captures before adding a guard (high bar to ADD).
+
