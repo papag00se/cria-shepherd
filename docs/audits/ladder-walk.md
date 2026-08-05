@@ -4697,3 +4697,32 @@ closes 3/4, 4/4, 2/4 — NOT STABLE 1/3.
 Scoring note: the run's one unit test is ACTUALLY live (a subprocess call hitting the real API),
 but nothing names it "live" and the README's own section calls it a unit test — the probe
 (mellum2 judging) answered "no live-test command". The scorer behaved per spec. Row STANDS.
+
+## ada-handles_nemotron-elastic_codex_pon_1785888803
+
+REGRESSION1 campaign, nemotron-elastic run 3/3 (planner ON — the campaign's final run). Score
+**2/4** (live test via README probe, README), terminal `milestone-miss-45min` (46 min, 218
+calls; milestones 2.0 → 2.0 → 2.0 — never climbed). Capture
+`~/.cria/calls/20260804T171348-019fcf44-eb9a-7b30-be2a-bc69459a63aa` — walked in full.
+nemotron closes 4/4, 4/4, 2/4 — NOT STABLE 2/3.
+
+### cria fault: none — a self-prescribed requirement became a tarpit
+
+The working core existed by call 47 (resolver returning all three fields, live-verified for
+goose and papagoose). The run then sank into ONE loop: a replan step (0026, re-prescribed at
+0095/0119/0170) invented a requirement the task never states — an invalid-handle test that must
+raise ValueError — and the API's real behavior (unknown handles return 200 with payload, not
+404) made it unsatisfiable as specified. The model re-probed the same endpoint eight ways,
+rewrote the same two files a dozen times, and the critics enforced the invented requirement
+with several vetoes that were flat-out vague-false ("No Python script was found in the
+workspace", "missing test file") — none naming a checkable path, so the disk-refutation guard
+had nothing exact to overturn (it DID fire both ways where a path was named: one STANDS, one
+correct REFUTED at 0168-0169). The rumination guard aborted and refocused nemotron 10 times;
+replan-noise suppression caught 8 circular re-plans. Final state: the invented test plus its
+sibling network-error test are the 2 failing tests; the CLI exits 1 on the same
+invented-validation path.
+
+This is the planner-on overhead profile at its worst — the same machinery that produced two
+clean 4/4s produced circular replans here; the difference was one invented requirement meeting
+one confusing API behavior. Nothing cria stated was false; nothing deterministic was missed.
+Row STANDS.
