@@ -1,2 +1,2 @@
-{{PATH}} is a large reference document — reading it whole gets truncated, so you would miss the middle.
+{{PATH}} is a large reference document — reading it whole gets truncated, so you would miss the middle.{{FORMAT}}
 {{OUTLINE}}Read it deliberately instead: grep the file for what you need (grep -n on {{PATH}}), or read a specific line range with read_file start_line/end_line.

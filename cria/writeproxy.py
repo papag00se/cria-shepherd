@@ -527,7 +527,9 @@ def _spill_read_command(path: str) -> str:
     # 500 of them (26%) had no outline anywhere in the prompt. "" when the doc is not cached
     # (rule 5b — no outline is invented); the steer's own instructions stand without it. The EDIT
     # refusal names no content, so it takes no outline — which is why it renders without one above.
+    fmt = webfetch.format_for_spill_path(path)
     steer = prompts.render("spill_read_steer", path=path,
+                           format=(f" It is {fmt}." if fmt else ""),
                            outline=webfetch.outline_for_spill_path(path))
     # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.
     return (f'if [ ! -e {q} ]; then printf "%s: No such file or directory\\n" {q}; exit 1; fi; '

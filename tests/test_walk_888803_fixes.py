@@ -305,3 +305,53 @@ class ThePromptsExistTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
+    """Two exact facts about a drafted step, both walked as run-killers on
+    ada-handles_nemotron-elastic_codex_pon_1785360304: a path the coder cannot use, and a step that
+    prescribes a tool instead of naming an outcome."""
+
+    def setUp(self):
+        from cria import planner
+        self.planner = planner
+        self.d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.d, "tmp/read-only"))
+        with open(os.path.join(self.d, "tmp/read-only/spec.yml"), "w") as fh:
+            fh.write("{}")
+
+    def test_an_ellipsis_path_is_repointed_at_the_real_file(self):
+        step, note = self.planner.repoint_unusable_paths("Read /tmp/.../spec.yml and note the fields", self.d)
+        self.assertEqual(step, "Read tmp/read-only/spec.yml and note the fields")
+        self.assertIn("->", note)
+
+    def test_a_path_in_crias_own_gather_dir_is_repointed(self):
+        step, _ = self.planner.repoint_unusable_paths("Read /tmp/cria-gather-abc/spec.yml now", self.d)
+        self.assertEqual(step, "Read tmp/read-only/spec.yml now")
+
+    def test_an_unresolvable_path_is_removed_not_guessed(self):
+        step, note = self.planner.repoint_unusable_paths("Read /etc/nope/missing.yml and do it", self.d)
+        self.assertNotIn("/etc/nope", step)
+        self.assertIn("removed", note)
+
+    def test_a_real_in_workspace_path_is_left_alone(self):
+        real = os.path.join(self.d, "tmp/read-only/spec.yml")
+        step, note = self.planner.repoint_unusable_paths(f"Read {real} and note the fields", self.d)
+        self.assertIn(real, step)
+        self.assertEqual(note, "")
+
+    def test_a_step_with_no_path_is_untouched(self):
+        s = "Write a Python script that resolves an Ada Handle"
+        self.assertEqual(self.planner.repoint_unusable_paths(s, self.d), (s, ""))
+
+    def test_the_walked_killer_step_is_flagged_as_tool_prescribing(self):
+        self.assertEqual(
+            self.planner.step_names_tool("use exec_command to locate the GET /handles/{handle} definition"),
+            "exec_command")
+        self.assertEqual(
+            self.planner.step_names_tool("edit_file at /tmp/x/test_r.py to add TestInvalidHandle"),
+            "edit_file")
+
+    def test_an_outcome_step_is_not_flagged(self):
+        self.assertEqual(self.planner.step_names_tool(
+            "Write a Python script that resolves an Ada Handle and prints the holder address"), "")

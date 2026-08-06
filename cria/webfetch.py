@@ -395,6 +395,39 @@ def outline_for_spill_path(path: str) -> str:
     return ""
 
 
+def _doc_format(content: str) -> str:
+    """What the spilled bytes ACTUALLY are — "JSON", "YAML", "HTML", or "" when it isn't one of those.
+
+    The spill FILENAME comes from the url (:func:`_spill_name`, stable on purpose so a re-fetch maps
+    to the same file), so a `.../swagger.yml` url whose server answers with JSON is stored — and
+    announced — as `.yml`. Walked on ada-handles_nemotron-elastic_codex_pon_1785360304: cria told the
+    coder to grep `api.handle.me_swagger_swagger.yml`, never saying it was JSON, and the coder spent
+    the run on patterns that cannot match a pretty-printed JSON document — `grep -n "paths.*/handles"`
+    six times for exit 1, `grep -A 20 "properties:"` (the file has `"properties": {`), and a hand-built
+    YAML tree in its reasoning. Renaming the file would break the url→path identity three call sites
+    depend on; saying what it is costs nothing and is the fact the model was missing."""
+    head = (content or "").lstrip()[:200]
+    if head.startswith(("{", "[")):
+        return "JSON"
+    if head.lower().startswith(("<!doctype", "<html", "<?xml")):
+        return "HTML"
+    if re.match(r"^(?:---\s*$|[A-Za-z_][\w.-]*:(?:\s|$))", head, re.M):
+        return "YAML"
+    return ""
+
+
+def format_for_spill_path(path: str) -> str:
+    """The sniffed format of the spilled doc at ``path`` — "" when it is not cached (rule 5b: cria
+    states the format it has actually seen, never a guess from the file extension)."""
+    base = os.path.basename(os.path.normpath((path or "").strip()))
+    if not base:
+        return ""
+    for url, cached in _DOC_CACHE.items():
+        if os.path.basename(_spill_name(url)) == base:
+            return _doc_format(_greppable(cached[2], cached[3], cached[1]))
+    return ""
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
     content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a
@@ -405,8 +438,10 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     status, ct, reduced, parsed, _trunc = cached
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
+    fmt = _doc_format(content)
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
+                     format=(f" It is {fmt}." if fmt else ""),
                      outline=_spill_outline(parsed, target))
     return status, target, content, msg
 

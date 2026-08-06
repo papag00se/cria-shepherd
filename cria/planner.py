@@ -12,6 +12,7 @@ per user task; phase 6 reuses it by the same key).
 
 from __future__ import annotations
 
+import os
 import json
 import re
 import shutil
@@ -803,6 +804,28 @@ class Planner:
                 steps = kept
         elif drop:
             rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
+        # DETERMINISTIC SCRUB, after the reasoned noise pass. Both facts below are EXACT — a path
+        # either exists or it doesn't, a tool name either appears or it doesn't — so code gathers
+        # them and nothing here is a judgment. Only the tool-step REWRITE goes to the reasoner
+        # (principle 8), and it fails safe: an unusable answer keeps the step as drafted.
+        scrubbed: list[str] = []
+        for st in steps:
+            fixed, note = repoint_unusable_paths(st, cwd or "")
+            if note:
+                rlog.emit("plan.step_path_unusable", level="warn", fix=note, step=st[:160])
+            tool = step_names_tool(fixed)
+            if tool and self._role is not None:
+                asked = strip_think(self._ask(prompts.render("plan_step_outcome", step=fixed),
+                                              "", rlog) or "").strip().strip('"').splitlines()
+                cand = asked[0].strip() if asked else ""
+                if cand and not step_names_tool(cand) and len(cand) > 12:
+                    rlog.emit("plan.step_tool_rewritten", level="info", tool=tool,
+                              was=fixed[:120], now=cand[:120])
+                    fixed = cand
+                else:
+                    rlog.emit("plan.step_tool_kept", level="warn", tool=tool, step=fixed[:160])
+            scrubbed.append(fixed)
+        steps = [st for st in scrubbed if st.strip()] or steps
         # The plan is the PLANNER's, minus the noise judgment above — cria adds no step of its own (see the
         # research-first note above the class).
         items = [PlanItem(text=s) for s in steps]
@@ -1290,6 +1313,92 @@ class Planner:
     def _new_id(self, key: str) -> str:
         return f"{self._clock().strftime('%Y%m%dT%H%M%S')}-{key[:8]}"
 
+
+
+# The coder's tool names, EXACT. A plan step is an OUTCOME; a step that names one of these has
+# prescribed the coder's mechanics, and cria's own plan_noise_steps.txt says so in three separate
+# clauses ("a RAW SHELL COMMAND or tool invocation rather than a goal", "the coder chooses its own
+# commands; a step states the OUTCOME, not the command"). The reasoned noise judge does not enforce
+# it: walked on ada-handles_nemotron-elastic_codex_pon_1785360304, it read that rule aloud, argued
+# "exec_command is a tool invocation, but it's not specifying a literal command like grep … Probably
+# keep", and kept `use exec_command to locate the GET /handles/{handle} operation definition` — a
+# step with no artifact, so nothing could ever mark it done. It was served 107 times and the run
+# never reached step 2. MEASURED over every captured session: 51 of 395 distinct plan steps (13%),
+# in 34 of 118 runs, name a coder tool; the other walked run's killer step ("edit_file at /tmp/… to
+# add TestInvalidHandle test…") is in that set too.
+#
+# A tool name is an exact match against a known set — no judgment, no verb list, nothing fuzzy. So
+# the DETECTION is deterministic and the REWRITE is the reasoner's (principle 8).
+_CODER_TOOLS = ("write_file", "edit_file", "read_file", "list_dir", "view_image", "web_search",
+                "web_fetch", "update_plan", "write_stdin", "exec_command", "task_complete",
+                "apply_patch")
+_TOOL_IN_STEP = re.compile(r"\b(?:" + "|".join(_CODER_TOOLS) + r")\b")
+
+# A path token with a literal ellipsis segment (`/tmp/.../spec.yml`, `/tmp/…/spec.yml`) is not a path
+# at all, and an absolute path outside the workspace is one the coder's dirguard refuses. Walked on
+# 1785360304: step 1 named the PLANNER's own spill dir, rendered as `/tmp/.../api.handle.me_swagger_
+# swagger.yml`. The coder's first four calls failed on it ("No such file or directory" twice,
+# "Reading outside the working directory is not permitted here" twice), it absorbed the ellipsis into
+# its own reasoning as fact, and the step stayed unsatisfiable for the whole run — while the same
+# file sat in the workspace at tmp/read-only/. cria HAS a phantom-path guard (loop._phantom_system_path)
+# and it covers steers only.
+_ELLIPSIS_PATH = re.compile(r"(?<![\w/])(/(?:[\w.-]+/)*(?:\.\.\.|…)(?:/[\w.-]+)*)")
+_ABS_PATH_TOKEN = re.compile(r"(?<![\w])(/(?:[\w.-]+/)+[\w.-]+)")
+
+
+def _workspace_match(basename: str, root: str) -> str:
+    """The single file under ``root`` with this basename, workspace-relative — else "".
+
+    EXACT, not a guess: one basename, one hit, or nothing. Two hits is ambiguous and cria says
+    nothing rather than pick."""
+    if not basename or not root or not os.path.isdir(root):
+        return ""
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
+        if basename in filenames:
+            hits.append(os.path.relpath(os.path.join(dirpath, basename), root))
+            if len(hits) > 1:
+                return ""
+    return hits[0] if len(hits) == 1 else ""
+
+
+def repoint_unusable_paths(step: str, root: str) -> tuple[str, str]:
+    """(step, note) — a plan step with any path the coder CANNOT use corrected or removed.
+
+    Two deterministic classes, both facts cria holds rather than judgments: a path with a literal
+    `...`/`…` segment is not a path, and an absolute path outside the workspace is one the dirguard
+    refuses. When exactly one file in the workspace carries that basename the token is REPOINTED at
+    it — an exact match, nothing invented. Otherwise the token is REMOVED: the step's outcome
+    survives and the falsehood does not (rule 5b), which is strictly better than handing the coder a
+    location that cannot be read."""
+    out, notes = step or "", []
+    root_prefix = (str(root).rstrip("/") + "/") if root else ""
+    for pat in (_ELLIPSIS_PATH, _ABS_PATH_TOKEN):
+        for m in list(pat.finditer(out)):
+            tok = m.group(1)
+            if tok not in out:
+                continue                       # already rewritten by an earlier match
+            elided = "..." in tok or "\u2026" in tok
+            inside = bool(root_prefix) and tok.startswith(root_prefix)
+            if not elided and inside and os.path.exists(tok):
+                continue                       # a real path the coder is allowed to read
+            if not elided and not root_prefix:
+                continue                       # no workspace to judge against — say nothing
+            real = _workspace_match(os.path.basename(tok), root)
+            if real:
+                out = out.replace(tok, real)
+                notes.append(f"{tok} -> {real}")
+            else:
+                out = re.sub(r"\s{2,}", " ", out.replace(tok, "")).strip()
+                notes.append(f"{tok} removed")
+    return out, "; ".join(notes)
+
+
+def step_names_tool(step: str) -> str:
+    """The coder tool name a plan step prescribes — else "". Exact match, no judgment."""
+    m = _TOOL_IN_STEP.search(step or "")
+    return m.group(0) if m else ""
 
 def _extract_cwd(messages: list[dict]) -> str | None:
     """The workspace path a harness advertises in its environment preamble (e.g. Codex's
