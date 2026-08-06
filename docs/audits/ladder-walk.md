@@ -4752,6 +4752,30 @@ across all 76 calls. The finetune's entire failure texture is absent.
   Strictly worse in both directions — the dangerous failure mode. The 3/4 ceiling stands as model
   interpretation with no admissible cria lever; do not re-propose as prompt prose.
 
+## ada-handles_nemotron-elastic_codex_pon_1785888803 — FULL WALK in progress (101 chunks; findings will supersede the PARTIAL entry below)
+
+PROVENANCE NOTE: this run predates every fix landed from the maple walk and today's orphan-test
+detector — findings here are candidates only after checking the current code (the rebase-guards
+rule). Checkpointed per band as chunks are read.
+
+Chunks 001–002 (calls 0001–0014) — planning phase:
+- Classifier clean. The planner searched instead of fetching first; the search returned mostly
+  Ada-SUPPORT/ADA.gov garbage plus two gold pointers (koralabs GitHub, api.handle.me/swagger/).
+  cria's pointers-not-the-source note and the ungrounded-hosts challenge both fired correctly.
+- Plan thrash, contained by the judges: attempt 1 was command-steps with an invented path
+  ("read_file /tmp/result/swagger.json") + a forbidden "run tests" step; attempt 2 was a
+  research-only 2-step plan (plan_coverage correctly flagged ALL deliverables missing);
+  attempt 3 was a GOOD 5-step outcome plan — coverage {"missing":[]}, noise-judge NONE, both
+  correct. Note the contrast with plan-off maple: this lane's step 1 is a real instruction.
+- 0012–0014: coder fetched the swagger UI page (HTML shell, no routes) — cria's ledger
+  correctly recorded "no endpoint definitions were found in it" (the swagger-shell third-case
+  note doing its job). 0013: the coder emitted `write_file /tmp/swagger_fetch.html` with
+  content literally `"$(cat)"` — a shell-substitution hallucination inside a tool arg;
+  dirguard denied it on the PATH (outside workspace), which stopped it, though nothing named
+  the `$(cat)` itself. 0014: correct pivot to fetching /swagger/swagger.yml.
+
+Walk continues from chunk 003.
+
 ## ada-handles_nemotron-elastic_codex_pon_1785888803 — PARTIAL walk (targeted spans + full marker sweep; NOT yet a full read — flagged by the operator 2026-08-05)
 
 Supersedes the skim-era entry ("replan-invented ValueError requirement tarpit") — that was the
