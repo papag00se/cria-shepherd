@@ -175,10 +175,40 @@ class VolatileKeyTests(unittest.TestCase):
         for runner, (a, b) in pairs.items():
             self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b), runner)
 
-    def test_the_jvm_spelling_of_an_address_is_noise_too(self):
+    def test_every_spelling_of_an_object_address_is_noise(self):
+        """Printed from the real runtimes on this box, not recalled. python's mock is the one that
+        does NOT use 0x — `<MagicMock id='125997213614208'>` — and it is the most common address in
+        these suites, since every mocked test that fails prints one."""
         from cria import dedup
-        self.assertEqual(dedup.volatile_key("at java.lang.Object@1b6d3586 boom"),
-                         dedup.volatile_key("at java.lang.Object@5f2050f6 boom"))
+        pairs = {
+            "python repr": ("<urllib.request.Request object at 0x729803290080>",
+                            "<urllib.request.Request object at 0x7cd31c34ac60>"),
+            "python mock": ("<MagicMock id='125997213614208'>", "<MagicMock id='125997213999999'>"),
+            "ruby":        ("#<Foo:0x000070a6e6366980>", "#<Foo:0x000070a6e63667a0>"),
+            "java object": ("java.lang.Object@2a139a55", "java.lang.Object@5f2050f6"),
+            "java array":  ("[I@14ae5a5", "[I@7f31245a"),
+            "java nested": ("java.util.HashMap$KeyIterator@7f31245a",
+                            "java.util.HashMap$KeyIterator@14ae5a5"),
+            "go":          ("&S{} at 0xc000124010", "&S{} at 0xc000999888"),
+            "rust":        ("0x61d3af242d60", "0x7f0011223344"),
+            "c":           ("0x7ffd01400414", "0x7ffd01400999"),
+        }
+        for lang, (a, b) in pairs.items():
+            self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b), lang)
+
+    def test_an_at_hex_that_is_not_a_jvm_address_survives(self):
+        """A miss is safer than a false merge. `user@abcdef.com` is six hex digits on a word
+        boundary; the unguarded rule turned it into `user.com`."""
+        from cria import dedup
+        for s in ("contact user@abcdef.com for help", "npm i @babel/core",
+                  "see release@fedcba for the tag", "docker pull img@sha256:9f2c"):
+            self.assertEqual(dedup.volatile_key(s), s, s)
+
+    def test_a_long_number_that_is_not_an_identity_survives(self):
+        from cria import dedup
+        for s in ("total_handles: 1000000000", "amount=125997213614208",
+                  "expected id=42 got id=43"):
+            self.assertEqual(dedup.volatile_key(s), s, s)
 
     def test_a_bare_integer_with_an_s_is_left_alone(self):
         # a duration needs a decimal point (or a sub-second unit); `30s` in a finding is content

@@ -131,21 +131,41 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
 # bug stays live on every non-python family in the suite. Operator caught it. What is actually noise
 # is an ADDRESS and a DURATION, in whatever way a runner spells them.
 #
+# A MISS IS SAFER THAN A FALSE MERGE, and the two costs are not symmetric: a miss shows the coder one
+# finding twice (duplicated information), a false merge replaces a DIFFERENT finding with a
+# back-reference (information destroyed). Every pattern below is therefore anchored tightly enough
+# that it cannot fire on content, and each entry names the runtimes whose real output it was checked
+# against — printed from this box, not recalled.
+#
 # Verified not to over-merge: applied to 777 distinct payloads across 20 captured sessions, the table
-# below merges nothing the narrow python-only version did not. A duration needs a decimal point to
-# count as one (or a sub-second unit), so `expected 30s` in a finding is left alone.
+# merges nothing the narrow python-only version did not.
 _VOLATILE = (
     # the harness exec envelope's per-run fields (whole lines)
-    re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"),
-    # an object address in a repr — python/go/c/c++/rust/ruby all spell it `0x…`
-    re.compile(r"0x[0-9a-fA-F]{6,}"),
-    # …and the JVM spells it `java.lang.Object@1b6d3586`
-    re.compile(r"@[0-9a-fA-F]{6,}\b"),
-    # a runner's elapsed time: pytest `in 0.36s`, cargo `finished in 0.00s`, go `0.003s`,
-    # JUnit `Time elapsed: 0.031 s`, RSpec `Finished in 0.0123 seconds`, jest `Time: 1.234 s`
-    re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b"),
+    (re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"), ""),
+
+    # ── an object's identity, in each spelling the suite's runtimes actually use ──
+    # `0x…` — python `<Request object at 0x729803290080>`, ruby `#<Foo:0x000070a6e6366980>`,
+    # go `0xc000124010`, rust `0x61d3af242d60`, c `0x7ffd01400414`
+    (re.compile(r"0x[0-9a-fA-F]{6,}"), ""),
+    # the JVM's `Type@hash` — `java.lang.Object@2a139a55`, `[I@14ae5a5`,
+    # `java.util.HashMap$KeyIterator@7f31245a`, `[Ljava.lang.String;@6d06d69c`.
+    # The type must look like a JVM type (an array descriptor, a dotted package, or a Capitalized
+    # class) and the hash must not be followed by a dot. Without that, `user@abcdef.com` is 6 hex
+    # digits ending on a word boundary and an email address becomes `user.com`.
+    (re.compile(r"((?:\[+[A-Z][\w$;./]*|(?:[\w$]+\.)*[A-Z][\w$]*(?:\$[\w$]+)*)@)[0-9a-fA-F]{4,}\b(?!\.)"),
+     r"\1"),
+    # python's mock prints a DECIMAL identity, no `0x` — `<MagicMock id='125997213614208'>`. The most
+    # common address in these suites, since every mocked test that fails prints one. Anchored to the
+    # `id=` key: a bare long number is content (a lovelace amount, an epoch) and must survive.
+    (re.compile(r"(\bid=['\"]?)\d{6,}"), r"\1"),
+
+    # ── a runner's elapsed time, in each spelling ──
+    # pytest `in 0.36s`, cargo `finished in 0.00s`, go `ok\ttick\t0.003s`,
+    # JUnit `Time elapsed: 0.031 s`, RSpec `Finished in 0.0123 seconds`, jest `Time: 1.234 s`.
+    # The decimal point is load-bearing: it keeps `expected 30s` in a finding out of the table.
+    (re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b"), ""),
     # …and sub-second units, where runners drop the decimal — mocha `(123ms)`
-    re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b"),
+    (re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b"), ""),
 )
 
 
@@ -157,6 +177,6 @@ def volatile_key(content) -> str:
     Not a normalizer for DISPLAY — the text the model reads is always the original bytes."""
     if not isinstance(content, str):
         return ""
-    for pat in _VOLATILE:
-        content = pat.sub("", content)
+    for pat, repl in _VOLATILE:
+        content = pat.sub(repl, content)
     return content.strip()

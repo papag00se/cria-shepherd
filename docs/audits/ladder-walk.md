@@ -5519,3 +5519,46 @@ table, since a bare integer plus `s` is content, not a stopwatch reading.
 
 Verified not to over-merge before landing: applied to 777 distinct payloads across the 20 most recent
 captured sessions, the shape-based table merges **nothing** the python-only version did not.
+
+### The address table, checked against the runtimes instead of recalled (same day)
+
+Operator again, on the address half of the same table: *"I meant matching memory addresses across
+languages."* So each runtime on this box was made to print one, rather than trusted from memory:
+
+| runtime | what it actually prints | `0x…` rule | `@hex` rule |
+|---|---|---|---|
+| python repr | `<urllib.request.Request object at 0x729803290080>` | ✓ | |
+| **python mock** | `<MagicMock id='125997213614208'>` | **MISSED** | |
+| ruby | `#<Foo:0x000070a6e6366980>` | ✓ | |
+| go | `0xc000124010` | ✓ | |
+| rust | `0x61d3af242d60` | ✓ | |
+| c | `0x7ffd01400414` | ✓ | |
+| java object | `java.lang.Object@2a139a55` | | ✓ |
+| java array | `[I@14ae5a5` | | ✓ |
+| java nested | `java.util.HashMap$KeyIterator@7f31245a` | | ✓ |
+| node | no address at all | n/a | n/a |
+
+**Python's mock does not use `0x`.** It prints a decimal identity, and it is the single most common
+address in these suites — every mocked test that fails prints one. The rule written "for python"
+missed the python case that actually matters. Anchored to the `id=` key so a bare long number stays
+content: a lovelace amount and an epoch must survive.
+
+**And the JVM rule as first written mangled email addresses.** `user@abcdef.com` is six hex digits
+ending on a word boundary, so `@[0-9a-fA-F]{6,}\b` turned it into `user.com`. The type before the `@`
+must now look like a JVM type (array descriptor, dotted package, or Capitalized class) and the hash
+must not be followed by a dot.
+
+That guard is not fussiness — **a miss is safer than a false merge, and the costs are not symmetric.**
+A miss shows the coder one finding twice. A false merge replaces a genuinely different finding with a
+back-reference and destroys it.
+
+Re-verified over 799 payloads from 20 sessions: 62 pairs merge that the python-only rule did not, and
+every one is the same three assertions differing only by MagicMock ids —
+
+```
+-E  AssertionError: assert <MagicMock name='mock.json().get()' id='139071868784080'> == 52167
++E  AssertionError: assert <MagicMock name='mock.json().get()' id='130689841975072'> == 52167
+```
+
+— from the maple-preview run that was still in flight while this was written. Its worst prompt carried
+three gate results that are two findings, 6,350 duplicated bytes the coder re-read for nothing.
