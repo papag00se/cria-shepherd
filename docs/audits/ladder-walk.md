@@ -5295,3 +5295,65 @@ times for a fact it had been handed.
 7. **Two reasoner steers prescribed `holder.address`** (0141, 0151) with the live body showing
    `holder` is a plain string in their own prompts, and cria's own ledger marking `holder_type(object)`
    but `holder` bare.
+
+## maple-preview 1785994846 (0/4) + mellum2 1785996352 (1/4) — FULL WALKS, both complete
+
+Walked 2026-08-05 across nine readers, every line of 42 chunks (~29k lines). Both runs are ON the
+post-walk fix batch, so a cria REGRESSION was in scope and one was found.
+
+### maple 0/4 — killed at the 15-minute wall, step never finished
+
+ROOT: **a same-day regression.** `bdd68bc` (08:51) made the checks digest quote "the flagged line on
+disk" for any file:line finding. `clean_gate_results` re-renders EVERY historical gate result on
+every prompt build and the quote is read at RENDER time, so a frozen traceback gets stamped with
+whatever that line says now. Three readers independently found the same finding annotated three
+different ways (calls 0027/0031/0032) with byte-identical MagicMock ids proving the checks never
+re-ran. The coder decided its landed fix had not landed, WEAKENED a correct assertion, re-applied an
+import it already had, and at 0053 "fixed" a correct URL into a double slash — breaking the only
+working file, which is the state at the kill. FIXED: newest gate result only, workspace-confined.
+
+Second: at call 0055 the `steer-code` guard read the pending directive — 2,800 characters of a fake
+DSML `write_file` tool call — and answered **DICTATES**, correctly. cria delivered it anyway, with
+every newline stripped, as the run's final steer. The guard is observe-only per the 2026-08-04
+ruling, whose stated condition was that the drop's harm evidence came from a blind-author era. This
+is non-blind-author evidence. Also unshipped: the reasoner has NO rumination guard — call 0052
+repeated one paragraph ~15× to the token cap, 2m16s of a 5.5-minute endgame, zero output. 62% of the
+final stretch was cria talking to itself.
+
+"adam" (`resolve_adam.py`) is the MODEL's, invented in one unreasoned tool call. cria's fault is that
+six surfaces echoed it and the compaction pinned it as "do not re-create them".
+
+### mellum 1/4 — accepted by cria's own satisfaction gate
+
+ROOT: **a documented, unfixed regression.** The model fetched the spec with `find="paths" raw=true`.
+That branch (`webfetch.py` ~1093) returns before `render_page`, so the `[API endpoints (N): …]`
+outline is never emitted, and `raw=true` additionally skips `apidiscovery.discover` (~1071).
+`_extract_fetches` harvests routes ONLY from that marker, so the fetch ledger told the model, in
+EVERY prompt of the run: "no endpoint definitions were found in it … nothing read so far DEFINES the
+API's routes" — with the route table twenty lines above it. The model built everything against the
+MCP JSON-RPC tool names. The comment directly above that branch describes this exact failure on an
+earlier mellum2 run of this exact task (`e72a0e9`, 2026-08-01, "four faults the mellum2 full walks
+exposed"); the spill-name half was reworded, the route-outline half was never fixed. NOT YET FIXED —
+highest-value item outstanding.
+
+The gate then accepted 1/4: cria's live-execution probe crashed on `python` (this box has python3
+only) and reported "the delivered program was not run" while the coder's own failing run sat 14
+lines above; the satisfaction judge wrote "if the JUDGE is picky, maybe note that the live test did
+not actually resolve a handle (it got 403) … The JUDGE should not be picky" and passed it. FIXED:
+`execcheck.resolve_interpreter`.
+
+`_verdict_nudge` (loop.py:6712) forwards a judge's `reason` to the coder VERBATIM with no grounding
+check — its comment says "The REASON always survives". A confirm judge that had never read the file
+said `resolve_handle.py` "has no imports, no function definitions, no API calls"; the coder read the
+file, saw cria was wrong, dismissed the steer and quit. The steer author has
+`_grounded_steer_or_none`; this path has nothing. NOT YET FIXED.
+
+### TWO DECISIONS FOR THE OPERATOR
+
+1. **Is "exited 0 and printed something" a clean signal?** `execcheck` marks that CONFIRMED, collects
+   the model's stated expectation and never compares it, and emits NO marker. mellum's CLI exits 0
+   printing `{"error": "HTTP Error 403: Forbidden"}`. A marker carrying command + expectation +
+   actual output was written and REVERTED: it fails three tests including
+   `Rule3_SilenceOverNoise` — silence on a clean signal is doctrine, and this is a doctrine change.
+2. **Flip `_dictates_code` out of observe-only?** Its ruling's stated condition — harm measured only
+   on a blind author — is now met by non-blind evidence (call 0055 above).
