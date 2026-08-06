@@ -1068,10 +1068,15 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     # tools/call, params {name, arguments}") that the run needed was never probed. It finally
     # surfaced at call 209, sixteen calls before the kill, from a plain fetch. `raw` still opts out —
     # that is the model explicitly asking for untouched bytes.
-    if not raw:
-        found = apidiscovery.discover(url, status, reduced, ct)
-        if found:
-            return _render_discovery(url, status, ct, found), status, True
+    # `raw` no longer opts out. It means "give me the untouched bytes", which is a request about the
+    # BODY cria returns — it was never a request to learn nothing about the API. mellum2 1785996352
+    # fetched the spec with find="paths" AND raw=true, the one combination that disabled both the
+    # route outline above and this probe, and cria then reported the document defines nothing.
+    # Discovery only REPLACES the body when it finds a real protocol contract; on a plain document it
+    # returns nothing and the raw bytes fall through exactly as before.
+    found = apidiscovery.discover(url, status, reduced, ct)
+    if found:
+        return _render_discovery(url, status, ct, found), status, True
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 "The response body was EMPTY. Retrying this exact URL returns the same empty "
@@ -1098,7 +1103,11 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             # Window it UNDER the inline bound with room for the find-header line and the
             # find_large guard appended below — the un-reserved page was exactly the slice the
             # harness middle-cut in 84 prompts of run 1785893473 (see INLINE_RESULT_MAX_BYTES).
-            body, nxt, total = page_from(slice_, 0, max(50, (INLINE_RESULT_MAX_BYTES - 800) // 4))
+            # Reserve for the find-header, the find_large guard AND the route outline appended
+            # below — the outline is the half this branch used to drop, and it must not push the
+            # result back over the bound the harness middle-cuts at.
+            reserve = 800 + len(outline_for_url(url))   # upper bound; the grep line is dropped below
+            body, nxt, total = page_from(slice_, 0, max(50, (INLINE_RESULT_MAX_BYTES - reserve) // 4))
             # The message tells the model to "grep the saved ./tmp file". On this branch nothing was
             # ever saved — the spill lives on the no-find path — so cria was naming a file that did
             # not exist (principle 5b). Worse, the same branch skipped the route outline the plain
@@ -1115,8 +1124,28 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             slice_ += (f"\n\n⚠ This document exceeded the {_BODY_CAP_LABEL} fetch limit and was cut; "
                        "the term you searched may lie in the un-fetched remainder. Fetch a more "
                        "specific URL/path or an alternate source.")
-        return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
-                f'find="{find.strip()}"\n\n---\n{slice_}'), status, False
+        # THE ROUTE OUTLINE RIDES ALONG. Without it this branch returns a sub-section carrying no
+        # `[API endpoints (N): …]` marker — and `loop._extract_fetches` harvests routes ONLY from
+        # that marker, so the fetch ledger then tells the model, in EVERY later prompt, "no endpoint
+        # definitions were found in it … nothing read so far DEFINES the API's routes". Walked on
+        # mellum2 1785996352: a `find="paths"` fetch of the OpenAPI spec produced exactly that
+        # sentence for the whole run, with the route table twenty lines above it, and the model built
+        # its entire deliverable against the MCP JSON-RPC tool names because /mcp was the one route
+        # it had ever been shown a full contract for. The comment above this block already records
+        # the same failure on 1785626379; the spill-name half was fixed then and this half was not.
+        # cria has the parsed document in hand, so the outline costs nothing to say.
+        # The ROUTE/SHAPE blocks only — never the `[grep <file>]` pointer. On this branch nothing was
+        # spilled (the write is gated on find is None and cursor is None), so naming that file would
+        # be the very 5b violation the 08-01 fix was written for. The route list is true either way.
+        outline = "\n".join(ln for ln in outline_for_url(url).splitlines()
+                            if not ln.lstrip().startswith("[grep ")).strip()
+        head = (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
+                f'find="{find.strip()}"\n\n---\n{slice_}')
+        # Only when it FITS. A pathological outline (hundreds of routes) must not push this past the
+        # inline bound — that is the wall the harness middle-cuts, and the slice is the payload.
+        if outline and len((head + "\n\n" + outline).encode()) <= INLINE_RESULT_MAX_BYTES:
+            head += "\n\n" + outline
+        return head, status, False
     offset = _parse_cursor(cursor) if cursor else 0
     return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated), status, False
 

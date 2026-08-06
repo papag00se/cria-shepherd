@@ -528,3 +528,39 @@ class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
         raw = self._raw("/usr/lib/python3.12/unittest/mock.py:1: in assert_called_once_with\nEXIT:1")
         out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
         self.assertNotIn("the flagged line on disk", out or "")
+
+
+class AFindScopedFetchStillNamesTheRoutesTests(unittest.TestCase):
+    """mellum2 1785996352 fetched the OpenAPI spec with find="paths" raw=true — the one combination
+    that disabled BOTH the route outline and the API probe. `_extract_fetches` harvests routes only
+    from the `[API endpoints (N): …]` marker, so the ledger told the model in EVERY prompt of the run
+    that nothing read so far DEFINES the API's routes, with the route table twenty lines above it. It
+    built the whole deliverable against the MCP tool names."""
+
+    def setUp(self):
+        from cria import webfetch
+        self.wf = webfetch
+        self.spec = json.dumps({"openapi": "3.0.0", "paths": {
+            "/handles/{handle}": {"get": {"summary": "x" * 9000}},
+            "/holders/{address}": {"get": {"summary": "y" * 9000}},
+            "/mcp": {"post": {"summary": "z" * 9000}}}})
+
+    def _fetch(self, **kw):
+        self.wf._DOC_CACHE.clear()
+        orig, body = self.wf.fetch, self.spec
+        self.wf.fetch = lambda url, ua=None: self.wf.FetchResult(
+            200, url, "application/json", body, False)
+        try:
+            return self.wf.fetch_nav("https://api.example.test/openapi.json", **kw)
+        finally:
+            self.wf.fetch = orig
+
+    def test_the_route_marker_the_ledger_reads_survives_a_find(self):
+        from cria import loop
+        out = self._fetch(find="paths")
+        self.assertTrue(loop._FETCH_ROUTES_RE.search(out),
+                        f"no [API endpoints] marker for the ledger to harvest:\n{out[:400]}")
+        self.assertIn("/handles/{handle}", out)
+
+    def test_it_does_not_name_a_spill_file_this_branch_never_wrote(self):
+        self.assertNotIn("[grep ", self._fetch(find="paths"))
