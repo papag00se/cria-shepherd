@@ -1,4 +1,9 @@
 THE ORIGINAL REQUEST:
 {{TASK}}
 
+THE FILES THAT ACTUALLY EXIST IN THE PROJECT DIRECTORY RIGHT NOW:
+{{FILES}}
+
 Does finishing it depend on running a program, and if so, what is the exact command and what does a correct run produce?
+
+The command must name a file from the list above, exactly as it is spelled there. Do not name a file that is not on the list.

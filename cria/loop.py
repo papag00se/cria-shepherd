@@ -1496,7 +1496,10 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
     if not root or not task.strip():
         return ""
     try:
-        system, user = execcheck.intent_prompt(task)
+        # The workspace listing rides along — see execcheck.intent_prompt. cria could always read it
+        # (the steer author and the step critic already get the same inventory); withholding it is
+        # what made this judge invent three filenames that never existed.
+        system, user = execcheck.intent_prompt(task, files=workspace_inventory(root))
         # REASONING OFF, and a cut answer is no answer. This asks for three JSON fields and nothing
         # else — there is nothing here to think about, and thinking is what killed it. Its first and
         # only live firing, ada-handles_mellum2_codex_poff_1785714194 call 0032: `finish_reason=length`,

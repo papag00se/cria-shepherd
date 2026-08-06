@@ -279,6 +279,14 @@ def run(root: str, command: str, timeout: int = RUN_TIMEOUT_S) -> tuple[int | No
         return None, f"{type(e).__name__}: {e}"
 
 
+# The `success` field asserting that a run IS required, in a verdict whose `runs` says it is not.
+# Deliberately literal — these are the phrasings captured, not a general sentiment reader.
+_ASSERTS_A_RUN = re.compile(
+    r"(?i)\b(?:yes\b[^.]{0,40}\b(?:depends|requires|needs)\b"
+    r"|(?:finishing|completing) it (?:depends on|requires) running"
+    r"|the (?:exact )?command would be)")
+
+
 def parse_intent(reply: str) -> dict:
     """The model's answer to 'does finishing this depend on running something, and what does success
     look like?'. Safe null on anything unreadable — an unparseable answer means cria simply does not
@@ -292,7 +300,18 @@ def parse_intent(reply: str) -> dict:
         obj = json.loads(m.group(0))
     except ValueError:
         return {}
-    return obj if isinstance(obj, dict) else {}
+    if not isinstance(obj, dict):
+        return {}
+    # A VERDICT THAT CONTRADICTS ITSELF IS NOT A VERDICT. `runs` is the field cria acts on, and
+    # `runs:false` switches the live-execution probe off entirely — so a false whose own `success`
+    # narrative describes a run is the fail-open shape, not a decision. Captured twice: run
+    # 1786047359 call 0087 answered {"runs": false, "command": "", "success": "Yes, finishing it
+    # depends on running a program. The exact command would be `python3 resolve_ada.py` …"}, and cria
+    # took the false. Same fail-CLOSED rule the unparseable verdict already gets (#13): an empty dict
+    # means INCONCLUSIVE, which says so out loud, rather than a silent "nothing to run here".
+    if not obj.get("runs") and _ASSERTS_A_RUN.search(str(obj.get("success") or "")):
+        return {}
+    return obj
 
 
 def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
@@ -357,6 +376,18 @@ def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
                            else f"it exited {code}"))
 
 
-def intent_prompt(task: str, coder_tools: str = "") -> tuple[str, str]:
-    """(system, user) for the one question cria asks the model here."""
-    return prompts.load("exec_intent"), prompts.render("exec_intent_user", task=task)
+def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[str, str]:
+    """(system, user) for the one question cria asks the model here.
+
+    THE FILE LIST IS NOT OPTIONAL CONTEXT. Without it this judge is asked to name "the exact command"
+    for a workspace it cannot see, and it does what any model does with a question it has no evidence
+    for: it invents. Across the two maple-preview runs it named `resolve_ada_handle.py`,
+    `resolve_handles.py` and `resolve_ada.py` — three files that never existed — and twice answered
+    `runs:false` while its own `success` field described a run ("Yes, finishing it depends on running
+    a program"). Its own reasoning gives it away: "I don't have the API details" … "I'll assume the
+    script is in the current directory". Each invented name disarmed the ⟦ctx:live-execution⟧ probe,
+    which is the ONE mechanism that runs the delivered program; one run of the real CLI would have
+    printed the handle name where an address belongs. cria's top rule for the coder is DO NOT GUESS —
+    it was cria's own probe author guessing, because cria withheld the answer."""
+    return prompts.load("exec_intent"), prompts.render(
+        "exec_intent_user", task=task, files=files or "(cria could not read the workspace)")
