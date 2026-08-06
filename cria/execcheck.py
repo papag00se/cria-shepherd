@@ -295,7 +295,7 @@ def parse_intent(reply: str) -> dict:
     return obj if isinstance(obj, dict) else {}
 
 
-def evaluate(root: str, intent: dict) -> ExecResult:
+def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
     """Corroborate, run when all three agree, and report — never block.
 
     `intent` is the parsed model answer: {"runs": bool, "command": str, "success": str}.
@@ -321,9 +321,34 @@ def evaluate(root: str, intent: dict) -> ExecResult:
                           output=output, entrypoints=entries, readme_commands=readme,
                           why=output)
     # Whether the OUTPUT satisfies `expect` is a judgment, and judgment is the reasoner's job
-    # (principle 8). cria settles only the part it can settle deterministically: the program either
-    # produced output or it did not, and it either exited cleanly or it did not.
+    # (principle 8) — so cria ASKS, rather than skipping the question. It used to stop here: exit 0
+    # plus any output was CONFIRMED, and CONFIRMED says nothing. cria collected the model's own
+    # statement of what success looks like BEFORE the run and then never compared it to anything.
+    #
+    # Walked on mellum2 1785996352: the delivered CLI exits 0 printing
+    # `{"error": "HTTP Error 403: Forbidden"}`. Exit 0, output present, CONFIRMED, silence — and the
+    # satisfaction judge, told nothing, passed the run. verify scored that deliverable 0. maple
+    # 1785994846 is the same shape: exit 0, `Address: None`.
+    #
+    # MEASURED before building (2026-08-06), 10 preserved workspaces, one per model per outcome, the
+    # real CLI re-run and its real output judged against verify.py's own verdict: nemotron 10/10,
+    # mellum2 8/10. An earlier prompt of mine that enumerated only failure modes scored 4/10 — it
+    # answered NO on six working programs — so the question is neutral by design.
+    #
+    # Rule 3 is untouched: a YES is still CONFIRMED and CONFIRMED still says nothing. Only what
+    # QUALIFIES as clean has changed. Every failure direction keeps today's behaviour — no reasoner,
+    # no stated expectation, or an unreadable answer all leave it CONFIRMED and silent, because a
+    # marker cria cannot ground would be the false fact rule 5b forbids.
     if code == 0 and output.strip():
+        if ask is not None and expect:
+            answer = str(ask(prompts.render("exec_output_matches", command=command, expect=expect,
+                                            code=str(code), output=output[:OUTPUT_CAP])) or "")
+            head = next((w for w in (l.strip().strip(".,:;`*\"'").upper()
+                                     for l in answer.splitlines()) if w), "")
+            if head.startswith("NO"):
+                return ExecResult(NOT_OBSERVED, command=command, expect=expect, exit_code=code,
+                                  output=output, entrypoints=entries, readme_commands=readme,
+                                  why="it exited 0, but what it printed is not that result")
         return ExecResult(CONFIRMED, command=command, expect=expect, exit_code=code, output=output,
                           entrypoints=entries, readme_commands=readme)
     return ExecResult(NOT_OBSERVED, command=command, expect=expect, exit_code=code, output=output,

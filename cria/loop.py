@@ -1510,7 +1510,15 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
         if massage.is_truncated(comp):
             rlog.emit("loop.exec_intent_truncated", level="warn")
             return ""   # a cut intent is not an intent; say nothing rather than guess a command
-        result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""))
+        # The output-vs-expectation question is the reasoner's (see execcheck.evaluate). Reasoning
+        # OFF and temperature 0: it answers one word from a fixed set, like every other closed
+        # question cria asks. No reasoner configured → evaluate() falls back to today's silence.
+        off = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
+        match_ask = (lambda sysm: summarize(reasoner_chat, off, sysm, "", rlog,
+                                            phase="exec-output", temperature=0.0) or "") \
+            if reasoner_role is not None else None
+        result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""),
+                                    ask=match_ask)
         rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
                   exit_code=result.exit_code)
         return result.marker

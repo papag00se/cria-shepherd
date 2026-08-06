@@ -630,3 +630,53 @@ class TheSupervisorIsWatchedTooTests(unittest.TestCase):
         self.assertFalse(rumination.degenerate_tail(
             "The test fails because the mock raises a bare Exception while the code catches "
             "requests.RequestException. Fix the side_effect to raise requests.HTTPError instead."))
+
+
+class ExitZeroIsNotTheSameAsWorkingTests(unittest.TestCase):
+    """cria collected the model's own statement of what success looks like and never compared it.
+    Exit 0 with any output was CONFIRMED, and CONFIRMED says nothing — so mellum2 1785996352's CLI,
+    which exits 0 printing {"error": "HTTP Error 403: Forbidden"}, was stamped clean and the
+    satisfaction judge was told nothing. verify scored that deliverable 0."""
+
+    def setUp(self):
+        from cria import execcheck
+        self.execcheck = execcheck
+        self.d = tempfile.mkdtemp()
+        with open(os.path.join(self.d, "resolve_handle.py"), "w") as fh:
+            fh.write("def main():\n    print('{\"error\": \"HTTP Error 403: Forbidden\"}')\n\n\n"
+                     "if __name__ == \"__main__\":\n    main()\n")
+        with open(os.path.join(self.d, "README.md"), "w") as fh:
+            fh.write("Run it:\n\n```\npython3 resolve_handle.py goose\n```\n")
+
+    def _eval(self, answer):
+        intent = {"runs": True, "command": "python3 resolve_handle.py goose",
+                  "success": "the resolved address, the holder address, and the total handles"}
+        return self.execcheck.evaluate(self.d, intent, ask=(lambda _p: answer) if answer else None)
+
+    def test_a_no_becomes_evidence_the_judge_can_see(self):
+        r = self._eval("NO")
+        self.assertEqual(r.verdict, self.execcheck.NOT_OBSERVED)
+        self.assertIn("live-execution", r.marker)
+        self.assertIn("not that result", r.marker)
+
+    def test_a_yes_is_still_confirmed_and_still_silent(self):
+        r = self._eval("YES")
+        self.assertEqual(r.verdict, self.execcheck.CONFIRMED)
+        self.assertEqual(r.marker, "")          # Rule 3 untouched
+
+    def test_no_reasoner_keeps_todays_behaviour(self):
+        r = self._eval(None)
+        self.assertEqual(r.verdict, self.execcheck.CONFIRMED)
+        self.assertEqual(r.marker, "")
+
+    def test_an_unreadable_answer_keeps_todays_behaviour(self):
+        r = self._eval("I am not sure, it depends")
+        self.assertEqual(r.verdict, self.execcheck.CONFIRMED)
+        self.assertEqual(r.marker, "")
+
+    def test_the_question_it_asks_is_neutral(self):
+        # the 4/10 version enumerated only failure modes; the 10/10 version does not
+        t = prompts.load("exec_output_matches")
+        self.assertIn("Answer YES if", t)
+        self.assertIn("Answer NO if", t)
+        self.assertNotIn("placeholder", t)
