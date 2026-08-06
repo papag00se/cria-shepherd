@@ -4957,6 +4957,50 @@ def gate_error_text(outcome) -> str:
     return ""
 
 
+# A cached finding that is a TEST failure — the only class a coder-run test suite can supersede. A
+# pyflakes or compileall finding is not cleared by pytest going green, so those are never dropped.
+_TEST_FINDING = re.compile(r"(?im)^[^\n]*\btest[\w.]*\.\w+:\d+:|\b\d+ failed\b|^FAILED\b")
+
+
+def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
+    """The tally from the coder's OWN test run, when it is newer than cria's cached findings and
+    green — else "". cria's cached failures are then stale and must not be restated as ground truth.
+
+    WHY THIS EXISTS. The coder has its own shell and runs pytest itself, and cria's gate cache has no
+    idea. So cria kept asserting failures the disk had already cleared, in prompts that carried the
+    contradiction: run 1786047359 call 0051 got "⟦ctx:steer⟧ The repo's checks report persistent test
+    failures on lines 44 and 109" two turns after the same prompt said "no error-class problems" and
+    "6 passed in 0.01s"; call 0057 stacked three mutually exclusive claims under the word GROUND
+    TRUTH ("executed NO tests", "6 passed", and three named failures). Run 1786053138 call 0142 said
+    "unchanged since you were last shown them — you have not cleared them yet" four calls after the
+    coder's own pytest printed "1 failed, 4 passed" with the named test PASSED. Five independent
+    walkers, both runs. Every one of them sent the coder back into a loop it had already left.
+
+    SCOPED TO TEST FINDINGS. A green pytest says nothing about a pyflakes finding, so a cached
+    non-test finding stands. And only results AFTER cria's last gate count — an older coder run is
+    not newer information."""
+    if not checks or not _TEST_FINDING.search(checks):
+        return ""
+    msgs = messages or []
+    last_gate = -1
+    for i, m in enumerate(msgs):
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, str) and probegate.SECTION_PREFIX in c:
+            last_gate = i
+    for m in msgs[last_gate + 1:]:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+            continue
+        c = m.get("content") if m.get("content") is not None else m.get("output")
+        if not isinstance(c, str) or probegate.SECTION_PREFIX in c:
+            continue
+        tally = probegate.runner_tally(c)
+        if tally and (tally.startswith("0f/") or tally.endswith("/OK")):
+            return tally
+    return ""
+
+
 def _checks_already_visible(body: dict, checks: str) -> bool:
     """Is the check output the guard assumes the coder can see actually in this request?
 
@@ -5447,6 +5491,15 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # character ("- addr1e000…0002  ?  -"). The check output is the better steer, it is already in
     # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
     checks_now = (truth_text or "").strip()
+    # STALE FAILURES ARE NOT GROUND TRUTH. The coder runs the tests itself, out of band, and cria's
+    # gate cache does not know — so cria kept restating failures the disk had already cleared, under
+    # the word GROUND TRUTH, in prompts that carried the contradiction (see the helper). Dropped, not
+    # reworded: cria has no fresh finding to offer, and silence beats a false one.
+    superseded = _checks_superseded_by_coder_run(body.get("messages", []), checks_now)
+    if superseded:
+        rlog.emit("loop.steer_checks_stale", level="info", condition=condition, tally=superseded,
+                  head=_clip(checks_now, 100))
+        checks_now, truth_text = "", ""
     if (checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", "")
             and not getattr(gs, "same_checks_relooked", False)):
         # ONE grounded SECOND LOOK per unchanged-findings streak (provenance audit 2026-08-04): the

@@ -474,7 +474,7 @@ _UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
 _CARGO_TALLY = re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed")
 
 
-def _tally(text: str) -> str:
+def runner_tally(text: str) -> str:
     """A runner's own pass/fail line, normalized — "" when it printed none.
 
     The PASSED count is the coverage signal, not decoration: a test that skips rather than fails
@@ -537,7 +537,7 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     offline_text, offline_code = proberun.scrape_exit(off)
     if online_code != 0 or offline_code != 0:
         return ""
-    on_tally, off_tally = _tally(online_text), _tally(offline_text)
+    on_tally, off_tally = runner_tally(online_text), runner_tally(offline_text)
     if on_tally and off_tally:
         if on_tally != off_tally:
             return ""      # a test stepped aside offline — cria cannot claim the suite is self-contained

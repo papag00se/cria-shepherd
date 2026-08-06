@@ -768,7 +768,7 @@ class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
     def test_cargo_sums_every_test_binary_not_just_the_first(self):
         two = ("test result: ok. 2 passed; 0 failed; 0 ignored\n"
                "test result: ok. 3 passed; 1 failed; 0 ignored\n")
-        self.assertEqual(probegate._tally(two), "1f/5p")
+        self.assertEqual(probegate.runner_tally(two), "1f/5p")
 
 
 class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
