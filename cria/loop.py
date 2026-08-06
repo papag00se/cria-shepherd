@@ -188,6 +188,7 @@ class GuardState:
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
+    step_checked_turn: int = -1     # the coder_turns tick the periodic STEP check last ran on
     drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     last_gate_red: bool = False  # the most recent gate/check-in found real error-class problems (RED). The
@@ -2149,6 +2150,12 @@ class Loop:
         advanced = self._research_check(sess, key, body, idx, total, rlog)
         if advanced is not None:
             return advanced
+        # PERIODIC STEP CHECK. The research check above can only clear a READING step; a build step
+        # still moves only when the coder volunteers "done". Ask the real critic on a cadence so a
+        # step cannot outlive the run (see the method — additive, fail-closed, same authority).
+        advanced = self._periodic_step_check(sess, key, body, idx, total, rlog)
+        if advanced is not None:
+            return advanced
         # PERIODIC SATISFACTION CHECK on the PLAN-ON path. It lived only on the single-item driver
         # until 2026-08-01, which is the path that needed it least: plan-off already ends the moment
         # the coder says done. With a plan, the session ends only when every STEP verifies — so a
@@ -2548,6 +2555,55 @@ class Loop:
         sess.critic_fails += 1
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
+
+    def _periodic_step_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
+        """Every STEP_CHECK_EVERY acting turns, ask THE STEP CRITIC whether the open step is done.
+
+        A step advances only when the CODER volunteers that it is finished — `_verify` runs on
+        `pending_coder_text`, i.e. a turn with no tool call, or `task_complete`. A coder that keeps
+        calling tools never volunteers, so the step is immortal and the plan cannot move. Walked
+        twice: 1785360304 held "step 1 of 7" for 107 injections and its critic did not run once in
+        the final 46 turns — nothing existed that COULD release it, and the run hit the wall clock
+        still on step 1; 1785888803 held step 6 from call 0174 past 0215 the same way. MEASURED
+        box-wide: 74% of all coder calls sit inside a stretch of 30+ turns with no critic call at all.
+
+        THIS IS NOT A SECOND COMPLETION AUTHORITY — that mistake is documented in `_research_check`
+        below, where a workspace-blind judge marked six build steps done in three minutes and turned
+        a 1.0 into a 0.0. This calls the SAME `_verify` every completion claim goes through: the same
+        critic, reading the same workspace inventory and the same check state, behind the same
+        `_confirm_completion` brake. The only thing that changes is WHO asked — cria's own
+        bookkeeping instead of the model's say-so.
+
+        ADDITIVE, and fail-closed in the direction that matters. NOT done → it returns None and
+        absolutely nothing changes: no steer, no nudge, no fail counter, no word to the coder. Only a
+        genuine pass advances, down the ordinary `_advance` path. So its false-positive cost is one
+        judge call per twelve turns, and its false-negative cost is the status quo."""
+        if sess.coder_turns <= 0 or sess.coder_turns % STEP_CHECK_EVERY:
+            return None
+        if sess.step_checked_turn == sess.coder_turns:
+            return None   # the driver recurses without advancing coder_turns — once per tick
+        sess.step_checked_turn = sess.coder_turns
+        item = sess.plan.current()
+        if item is None or item.done:
+            return None
+        msgs = body.get("messages", [])
+        ok, reason = self._verify(
+            item.text, prompts.load("periodic_step_claim"), prompts.load("probe_digest_none"),
+            self._grounded_evidence(sess, body, rlog), rlog, idx=idx, total=total, key=key,
+            coder_tools=_coder_tools_summary(body.get("tools")),
+            routes=known_routes(msgs, sess),
+            sources_read=research.sources_read(_extract_fetches(msgs), msgs),
+            workspace_root=sess.workspace_root or "",
+            gate_red=bool(sess.last_gate_red))
+        # SAY WHAT IT DID, always — the lesson _research_check records: a guard that is silent when it
+        # declines cannot be told apart from one that never ran.
+        rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), turns=sess.coder_turns,
+                  reason=_clip(reason or "", 160))
+        if not ok:
+            return None
+        rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, turns=sess.coder_turns,
+                  step_text=item.text[:160])
+        return self._advance(sess, key, body, idx, total, rlog)
 
     def _research_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
         """Every ``RESEARCH_CHECK_EVERY`` acting turns: has the reading THIS step asks for been done?
@@ -4624,6 +4680,15 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
     gs.probe_reissues += 1
     rlog.emit("loop.probe_reissued", plan_off=workspace_root is None, attempt=gs.probe_reissues)
     return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+
+
+# How many acting coder turns a STEP may run before cria asks its own critic whether it is done.
+# MEASURED over every captured session (2026-08-05), counting consecutive coder calls between two
+# critic calls: n=806 stretches, median 5, p90 56, max 282 — and 149 stretches of 30+ turns hold
+# 11,831 of the 15,896 coder calls on the box. 74% OF ALL CODER WORK HAPPENS IN A STRETCH WHERE CRIA
+# NEVER ONCE ASKS WHETHER THE STEP IS DONE. 12 sits far above the median, so ordinary work never
+# reaches it, and well below the tail this exists for.
+STEP_CHECK_EVERY = 12
 
 
 def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:

@@ -383,3 +383,26 @@ class GuardsThatCouldOnlyFailOneWayTests(unittest.TestCase):
             self.assertIn("not a fix", t)          # the prohibition stands
             self.assertIn("PREMISE is factually wrong", t)
             self.assertIn("CHECKED", t)            # and it must show its evidence
+
+
+class AStepCannotOutliveTheRunTests(unittest.TestCase):
+    """A step advanced only when the CODER volunteered "done" — so a coder that never stops calling
+    tools kept the step alive forever. 1785360304 held step 1 for 107 injections with zero critic
+    calls in its last 46 turns. Measured box-wide: 74% of all coder calls sit in a stretch of 30+
+    turns with no critic call at all."""
+
+    def test_the_cadence_sits_far_above_the_median_stretch(self):
+        self.assertGreater(loop.STEP_CHECK_EVERY, 5)     # median stretch is 5 — ordinary work is untouched
+        self.assertLess(loop.STEP_CHECK_EVERY, 30)       # the pathological tail starts well below 30
+
+    def test_the_claim_it_sends_is_honest_about_there_being_none(self):
+        t = prompts.load("periodic_step_claim")
+        self.assertIn("No completion claim", t)
+        self.assertIn("cadence", t)
+        self.assertNotIn("done", t.split(".")[0])        # it asserts nothing about the outcome
+
+    def test_the_session_carries_its_own_once_per_tick_guard(self):
+        sess = loop.PlanSession.__new__(loop.PlanSession)
+        self.assertEqual(loop.PlanSession.__dataclass_fields__["step_checked_turn"].default, -1)
+        self.assertIn("research_checked_turn", loop.PlanSession.__dataclass_fields__)
+        del sess
