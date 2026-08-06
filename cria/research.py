@@ -108,6 +108,22 @@ def files_read(messages: list) -> list[tuple[str, int]]:
 _READ_TOOLS = ("read_file", "view_file", "open_file", "cat_file")
 
 
+def fetch_succeeded(status) -> bool:
+    """Did this ledger entry actually return something?
+
+    ONE OWNER for the question, because the status has TWO spellings and reading only one of them
+    silently disabled a whole guard. A ledger built from the live window carries the RENDERED
+    ``"HTTP 200"``; a session's durable ledger can carry the bare int ``200``. `grounded_sources`
+    tested ``startswith("2")``, which matches the bare int and NEVER matches ``"HTTP 200"`` — so
+    every window-derived entry was invisible and the research exit answered NOT_DONE on a ledger
+    full of parsed routes. Journal, every firing today: ``loop.research_check … sources=0``, while
+    the same prompt carried ``api.handle.me/openapi.json → HTTP 200`` with ``resolved_addresses{ada}``
+    parsed out of it. Scan for the code instead of matching a prefix; loop._fetch_succeeded delegates
+    here so the two cannot drift apart again."""
+    m = re.search(r"\d{3}", str(status if status is not None else ""))
+    return bool(m) and 200 <= int(m.group(0)) < 300
+
+
 def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     """``(url, routes, shapes)`` for the fetches that came back 2xx AND defined something.
 
@@ -119,7 +135,7 @@ def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     out = []
     for url, entry in (ledger or {}).items():
         status, routes, shapes = (tuple(entry) + ("", "", ""))[:3]
-        if str(status).strip().startswith("2") and (str(routes).strip() or str(shapes).strip()):
+        if fetch_succeeded(status) and (str(routes).strip() or str(shapes).strip()):
             out.append((url, str(routes), str(shapes)))
     return out
 

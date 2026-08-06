@@ -2676,7 +2676,18 @@ class Loop:
         if item is None or item.done:
             return None
         msgs = body.get("messages", [])
-        sources = research.sources_read(_extract_fetches(msgs), msgs)
+        # THE DURABLE LEDGER, not just this window. `_extract_fetches` reads raw web_fetch TOOL
+        # RESULTS, and those are the first thing compaction drops — so from the first compaction on,
+        # this check saw zero sources and short-circuited to NOT_DONE with no model call, forever.
+        # The step it exists to clear could then never clear. Measured on maple-preview 1786053138:
+        # `research-check` ran 3 times across today's runs, every one `sources=0`, while the ledger
+        # in the very same prompt carried `api.handle.me/openapi.json → HTTP 200` with
+        # `resolved_addresses{ada}` parsed out of it — and the reading step stayed pinned for 27
+        # consecutive turns. Every OTHER consumer of the ledger already merges sess.fetched_pages
+        # (the steer author, the anchor composer, the judges); this one was the lone reader of the
+        # window alone. The exit that justifies re-adding a research step at all was inert.
+        sources = research.sources_read(
+            _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {})), msgs)
         verdict = research.step_reading_verdict(
             lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                         sysp, usr, rlog, phase="research-check"),
@@ -5162,11 +5173,9 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
     return dst
 
 
-def _fetch_succeeded(status) -> bool:
-    """Did this ledger entry actually return something? ``status`` is the rendered "HTTP <code>" from
-    the window, or the bare int a session's durable ledger carries — accept either."""
-    m = re.search(r"\d{3}", str(status if status is not None else ""))
-    return bool(m) and 200 <= int(m.group(0)) < 300
+# ONE OWNER (research.fetch_succeeded). Two copies of "did this fetch work?" is how the research
+# exit ended up reading only the bare-int spelling while every ledger in play carried "HTTP 200".
+_fetch_succeeded = research.fetch_succeeded
 
 
 def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:

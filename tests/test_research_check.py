@@ -342,3 +342,53 @@ class TheReadingStepMustActuallyBeDrivenTests(unittest.TestCase):
         blob = str(framed)
         self.assertIn(step, blob)
         self.assertIn("1 of 2", blob)
+
+
+class TheExitMustActuallyBeReachableTests(unittest.TestCase):
+    """The research step is only defensible because it HAS an exit — `_synthetic_plan`'s own comment
+    says so: "A step with an exit is a different object from a step without one." The exit was inert
+    from the day it shipped, in two independent ways, and the step it exists to clear stayed pinned
+    for 27 consecutive turns on maple-preview 1786053138. Journal, every firing today:
+    `loop.research_check … sources=0`, while the same prompt carried
+    `api.handle.me/openapi.json → HTTP 200` with `resolved_addresses{ada}` parsed out of it."""
+
+    LEDGER_RENDERED = {"https://api.handle.me/openapi.json":
+                       ("HTTP 200", "GET /handles/{handle}", "resolved_addresses{ada(string)}", "")}
+    LEDGER_BARE_INT = {"https://api.handle.me/openapi.json":
+                       (200, "GET /handles/{handle}", "resolved_addresses{ada(string)}", "")}
+
+    def test_the_rendered_HTTP_200_spelling_counts_as_a_success(self):
+        """`startswith("2")` matches the bare int and NEVER matches "HTTP 200" — so every ledger
+        built from the live window was invisible and the exit answered NOT_DONE forever."""
+        from cria import research
+        self.assertEqual(len(research.grounded_sources(self.LEDGER_RENDERED)), 1)
+        self.assertEqual(len(research.grounded_sources(self.LEDGER_BARE_INT)), 1)
+
+    def test_a_page_that_defined_nothing_is_still_not_a_source(self):
+        from cria import research
+        self.assertEqual(research.grounded_sources({"https://api.handle.me": ("HTTP 200", "", "", "")}), [])
+        self.assertEqual(research.grounded_sources({"https://x": ("HTTP 404", "GET /a", "b", "")}), [])
+
+    def test_loop_and_research_share_one_success_predicate(self):
+        from cria import loop, research
+        self.assertIs(loop._fetch_succeeded, research.fetch_succeeded)
+
+    def test_the_check_reads_the_DURABLE_ledger_not_just_the_window(self):
+        """Compaction drops raw web_fetch tool results first, so from the first compaction on the
+        window holds nothing — but sess.fetched_pages still does. Every other consumer already
+        merges it; this one read the window alone."""
+        import inspect
+        from cria import loop
+        src = inspect.getsource(loop.Loop._research_check)
+        self.assertIn("fetched_pages", src)
+        self.assertIn("_merge_fetches", src)
+
+    def test_end_to_end_a_compacted_window_still_clears_on_a_real_ledger(self):
+        from cria import loop, research
+        compacted = [{"role": "user", "content": "⟦ctx:facts⟧ …"}]     # no tool results survive
+        window = loop._extract_fetches(compacted)
+        self.assertEqual(len(window), 0, "precondition: the window really is empty")
+        merged = loop._merge_fetches(window, self.LEDGER_RENDERED)
+        web = [s for s in research.sources_read(merged, compacted) if s[0].startswith("http")]
+        self.assertEqual(len(web), 1)
+        self.assertIn("resolved_addresses", web[0][2])
