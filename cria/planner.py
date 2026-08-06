@@ -813,12 +813,12 @@ class Planner:
             fixed, note = repoint_unusable_paths(st, cwd or "")
             if note:
                 rlog.emit("plan.step_path_unusable", level="warn", fix=note, step=st[:160])
-            tool = step_names_tool(fixed)
+            tool = step_names_tool(fixed, task, cwd or "")
             if tool and self._role is not None:
                 asked = strip_think(self._ask(prompts.render("plan_step_outcome", step=fixed),
                                               "", rlog) or "").strip().strip('"').splitlines()
                 cand = asked[0].strip() if asked else ""
-                if cand and not step_names_tool(cand) and len(cand) > 12:
+                if cand and not step_names_tool(cand, task, cwd or "") and len(cand) > 12:
                     rlog.emit("plan.step_tool_rewritten", level="info", tool=tool,
                               was=fixed[:120], now=cand[:120])
                     fixed = cand
@@ -1395,10 +1395,63 @@ def repoint_unusable_paths(step: str, root: str) -> tuple[str, str]:
     return out, "; ".join(notes)
 
 
-def step_names_tool(step: str) -> str:
-    """The coder tool name a plan step prescribes — else "". Exact match, no judgment."""
+_GROUND_SCAN_MAX_BYTES = 2_000_000   # bounded sweep; a token this common is found long before here
+
+
+def _token_is_grounded(token: str, task: str, root: str) -> bool:
+    """True when this word belongs to the USER'S ask or to the WORKSPACE — not to cria's tool menu.
+
+    Operator, 2026-08-05: "those tool names are not highly unique words. If the user asks to work on
+    something that happens to also be a tool name, that breaks. Or if code contains one of those
+    names and the plan calls it out. I guess if it isn't in the user prompt and it isn't in the code,
+    then we're fine."
+
+    Exactly right, and both halves are facts cria already holds: it has the task text and it has the
+    workspace. `read_file`, `write_file`, `list_dir` are ordinary identifiers — a task that says
+    "add a read_file helper", or a repo that already defines one, makes that word the USER'S, and a
+    step naming it is describing the work rather than prescribing cria's mechanics. Grounded → the
+    step is left exactly as drafted."""
+    tok = (token or "").casefold()
+    if not tok:
+        return False
+    if tok in (task or "").casefold():
+        return True
+    if not root or not os.path.isdir(root):
+        return False
+    spent = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if not d.startswith(".") and d not in ("__pycache__", "node_modules",
+                                                              "venv", "dist", "build")]
+        for name in filenames:
+            if tok in name.casefold():
+                return True
+            path = os.path.join(dirpath, name)
+            try:
+                size = os.path.getsize(path)
+                if size > 1_000_000 or spent + size > _GROUND_SCAN_MAX_BYTES:
+                    continue
+                with open(path, "r", errors="ignore") as fh:
+                    body = fh.read(1_000_000)
+                spent += len(body)
+            except OSError:
+                continue
+            if tok in body.casefold():
+                return True
+    return False
+
+
+def step_names_tool(step: str, task: str = "", root: str = "") -> str:
+    """The coder tool name a plan step PRESCRIBES — else "".
+
+    The match is exact, and so is the exclusion: a token the user's own ask or the workspace already
+    uses is not cria prescribing a tool (see :func:`_token_is_grounded`). With neither task nor root
+    supplied the exclusion cannot run and the bare match stands — callers that have them must pass
+    them."""
     m = _TOOL_IN_STEP.search(step or "")
-    return m.group(0) if m else ""
+    if not m:
+        return ""
+    return "" if _token_is_grounded(m.group(0), task, root) else m.group(0)
 
 def _extract_cwd(messages: list[dict]) -> str | None:
     """The workspace path a harness advertises in its environment preamble (e.g. Codex's

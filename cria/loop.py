@@ -2574,10 +2574,10 @@ class Loop:
         `_confirm_completion` brake. The only thing that changes is WHO asked — cria's own
         bookkeeping instead of the model's say-so.
 
-        ADDITIVE, and fail-closed in the direction that matters. NOT done → it returns None and
-        absolutely nothing changes: no steer, no nudge, no fail counter, no word to the coder. Only a
-        genuine pass advances, down the ordinary `_advance` path. So its false-positive cost is one
-        judge call per twelve turns, and its false-negative cost is the status quo."""
+        ADDITIVE, and currently OBSERVE-ONLY: it asks the question and records the answer, and
+        NOTHING changes either way — no advance, no steer, no nudge, no fail counter, no word to the
+        coder. The measurement it produces is what decides whether it ever gets to advance a step;
+        see the note at the bottom of the method for exactly what flips it."""
         if sess.coder_turns <= 0 or sess.coder_turns % STEP_CHECK_EVERY:
             return None
         if sess.step_checked_turn == sess.coder_turns:
@@ -2599,11 +2599,21 @@ class Loop:
         # declines cannot be told apart from one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), turns=sess.coder_turns,
                   reason=_clip(reason or "", 160))
-        if not ok:
-            return None
-        rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, turns=sess.coder_turns,
-                  step_text=item.text[:160])
-        return self._advance(sess, key, body, idx, total, rlog)
+        # OBSERVE-ONLY (operator, 2026-08-05: "I'm not too comfortable with #16"). It ASKS and it
+        # RECORDS; it does not advance. The reasoning is the same one that governs the dictated-code
+        # guard beside it: this is new authority over when a plan MOVES, its documented predecessor
+        # turned a 1.0 into a 0.0, and it has never executed live — both runs on this code state were
+        # plan-off, where this path does not exist. A guard earns power on evidence, not on argument.
+        #
+        # WHAT FLIPS IT: `loop.periodic_step_check done=true` events across real planner-ON runs,
+        # each read against what the workspace actually held at that turn. If the critic is right
+        # about a step the coder never claimed, drop this block and return `self._advance(...)`. If
+        # it is wrong even once in a way the confirm brake did not catch, delete the whole method.
+        # Until then the cost is one judge call per twelve turns and the risk is zero.
+        if ok:
+            rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, turns=sess.coder_turns,
+                      observe_only=True, step_text=item.text[:160])
+        return None
 
     def _research_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
         """Every ``RESEARCH_CHECK_EVERY`` acting turns: has the reading THIS step asks for been done?

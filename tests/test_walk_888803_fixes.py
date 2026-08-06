@@ -406,3 +406,53 @@ class AStepCannotOutliveTheRunTests(unittest.TestCase):
         self.assertEqual(loop.PlanSession.__dataclass_fields__["step_checked_turn"].default, -1)
         self.assertIn("research_checked_turn", loop.PlanSession.__dataclass_fields__)
         del sess
+
+
+class TheToolTestIsGroundedInTheUserAndTheCodeTests(unittest.TestCase):
+    """Operator, 2026-08-05: those tool names are not unique words. If the user asked for one, or the
+    workspace already has one, the step is describing the work — not prescribing cria's mechanics."""
+
+    def setUp(self):
+        from cria import planner
+        self.planner = planner
+        self.d = tempfile.mkdtemp()
+        with open(os.path.join(self.d, "app.py"), "w") as fh:
+            fh.write("def read_file(p):\n    return open(p).read()\n")
+
+    def test_an_ungrounded_prescription_still_trips(self):
+        self.assertEqual(self.planner.step_names_tool(
+            "use exec_command to locate the GET /handles/{handle} definition", "", self.d),
+            "exec_command")
+
+    def test_a_word_the_user_asked_for_is_the_users(self):
+        task = "Write a resolver. Also add a write_file helper that saves the result."
+        self.assertEqual(self.planner.step_names_tool(
+            "Add a write_file helper that saves the result to disk", task, self.d), "")
+
+    def test_a_word_the_code_already_defines_is_the_codes(self):
+        self.assertEqual(self.planner.step_names_tool(
+            "Refactor read_file in app.py to stream instead of slurping", "", self.d), "")
+
+    def test_a_matching_filename_grounds_it_too(self):
+        with open(os.path.join(self.d, "edit_file.py"), "w") as fh:
+            fh.write("x = 1\n")
+        self.assertEqual(self.planner.step_names_tool("Finish edit_file.py", "", self.d), "")
+
+
+class ThePeriodicStepCheckIsObserveOnlyTests(unittest.TestCase):
+    """It asks and records; it does not move the plan. New authority over when a plan advances, whose
+    documented predecessor turned a 1.0 into a 0.0, and which has never run live."""
+
+    def test_the_method_records_rather_than_advances(self):
+        import inspect
+        src = inspect.getsource(loop.Loop._periodic_step_check)
+        self.assertIn("observe_only=True", src)
+        self.assertIn("OBSERVE-ONLY", src)
+        # No advance in the CODE. The one mention left is the note saying what would flip it.
+        code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("self._advance(", code)
+
+    def test_it_still_says_what_it_saw(self):
+        import inspect
+        src = inspect.getsource(loop.Loop._periodic_step_check)
+        self.assertIn("loop.periodic_step_check", src)
