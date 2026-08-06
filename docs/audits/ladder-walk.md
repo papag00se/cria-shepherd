@@ -4782,7 +4782,41 @@ Chunk 003 (calls 0015–0017) — research lands cleanly:
   guard denied the whole-file read while re-serving the outline + grep hints. Guardrails all
   behaved; the coder ended the band grepping the spec correctly.
 
-Walk continues from chunk 004.
+Chunks 004–008 (calls 0018–0030):
+- **0018–0020 — the fabricated "grep: Not found" steer, mechanism now walked at full
+  fidelity.** The flail detector false-fired on HEALTHY coder reasoning (it had just derived
+  the correct two-endpoint design). The steer author answered ON_TRACK; the answer-vs-thinking
+  recovery re-asked; the NOREASON retry's prompt quoted the author's thinking VERBATIM — and
+  that thinking ended with a leaked `<tool_call>grep …` block. A completion-shaped model
+  continuing a transcript that ends in a tool call answers with a tool RESULT: it invented
+  `grep: "grep": Not found`, and cria delivered the fabricated error as ⟦ctx:steer⟧ at 0021.
+  The coder absorbed it ("the environment may not have grep") and routed around it with sed.
+  FIX QUEUED (same family as the "single line at the bottom" bug — a dangling completion trap
+  cria itself composed): strip trailing transcript-syntax blocks from the quoted thinking in
+  steer_reasoning_recover, with a bracketed note.
+- **0021–0023:** the coder — still on step 1 — wrote the resolver with the CORRECT two-endpoint
+  architecture (the ledger worked), plus README. Landmine planted: ada_handles_resolver.py has
+  TWO `if __name__ == "__main__"` blocks (live prints, then unittest.main()) — unittest.main()
+  parses argv, the collision found in the earlier partial, now seen born. Live tests here hit
+  the real network from inside "unit" tests — no mocks.
+- **0024–0025 — the healthy counterpart to maple's blinded judges:** with a REAL step text,
+  the step critic ruled done=true on genuine evidence and confirm-applies correctly said NO
+  disk artifacts. Same judges, same model class — the difference was the step content.
+- **0026–0028 — a judge-charter contradiction, measured:** the living-plan reassess correctly
+  dropped the done README step, then plan-coverage — which judges plan TEXT only — re-flagged
+  "README" as missing, setting up a redo of finished work. The two judges need a shared
+  completed-work context; recorded as a candidate.
+- **0029:** self-compact briefing HONEST this time ("No tests have been run yet — functionality
+  not confirmed").
+- **CONSOLIDATION LANDED (from chunk 008's gate line):** the old run's checks steer already
+  carried "Test code in ada_handles_resolver.py will not run: pytest only runs tests named
+  test_*.py…" — probediscovery.undiscoverable_tests (the g20 mechanism) was the existing owner
+  of orphan-test detection, and yesterday's cria/orphantests.py was an accidental DUPLICATE.
+  Deleted it; fixed the owner's real gap instead (a discoverable test file no longer silences
+  the stranded-file sentence — the exact maple-run-2 failure), conftest.py exempted, and the
+  zero-tests-collected gate branch now sources findings from the owner. Suite 2461 green.
+
+Walk continues from chunk 009.
 
 ## ada-handles_nemotron-elastic_codex_pon_1785888803 — PARTIAL walk (targeted spans + full marker sweep; NOT yet a full read — flagged by the operator 2026-08-05)
 
