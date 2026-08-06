@@ -4774,7 +4774,15 @@ Chunks 001–002 (calls 0001–0014) — planning phase:
   dirguard denied it on the PATH (outside workspace), which stopped it, though nothing named
   the `$(cat)` itself. 0014: correct pivot to fetching /swagger/swagger.yml.
 
-Walk continues from chunk 003.
+Chunk 003 (calls 0015–0017) — research lands cleanly:
+- The swagger.yml fetch spilled to disk with the full endpoint/field outline — the
+  never-truncate spill + spec extraction produced the run's real ground truth here.
+- 0016: the coder's tool call leaked INSIDE its think block (finish=stop) with a wrong
+  absolute path (/tmp/read-only/…); the recovery chain re-emitted it, and the large-doc read
+  guard denied the whole-file read while re-serving the outline + grep hints. Guardrails all
+  behaved; the coder ended the band grepping the spec correctly.
+
+Walk continues from chunk 004.
 
 ## ada-handles_nemotron-elastic_codex_pon_1785888803 — PARTIAL walk (targeted spans + full marker sweep; NOT yet a full read — flagged by the operator 2026-08-05)
 
