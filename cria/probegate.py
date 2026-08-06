@@ -134,7 +134,7 @@ _FLAGGED_LINE_RE = re.compile(r"^(.+?):(\d+)(?::\d+)?:")
 _AT_LINE_RE = re.compile(r"^(.+?): .*\(at line (\d+), column \d+\)")
 
 
-def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
+def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True) -> list[str]:
     """For an unmatched-delimiter finding, append ONE counted fact: the flagged line's actual
     on-disk bytes plus how many openers and closers it holds. Code counts, the model applies —
     a small model provably cannot (run 0729-gemma4: 137 calls failing to remove one ')', its own
@@ -173,11 +173,24 @@ def _with_delimiter_facts(findings: list[str], plan) -> list[str]:
         # flagged line's real bytes. Same contract as the counted fact: state the fact or be
         # silent (missing file/line → silent; line already quoted in the finding → silent),
         # and PRESCRIBE NOTHING.
+        if not annotate:
+            continue        # HISTORY — see clean_gate_results; the quote would be read from a
+                            # file that has moved on since these findings were produced.
         m = _FLAGGED_LINE_RE.match(f) or _AT_LINE_RE.match(f)
         if not m:
             continue
         path, line_no = m.group(1), int(m.group(2))
         p = Path(path) if os.path.isabs(path) else Path(workspace) / path
+        # ONLY inside the workspace. An absolute finding can name a stdlib frame
+        # (/usr/lib/python3.12/unittest/mock.py:956 in a pytest traceback), and quoting it back
+        # presents CPython internals as "a line the repo's own checks flagged" — under a header
+        # telling the coder to fix what each one names. Walked: ~10 such annotations per checks
+        # block, each duplicating the traceback line printed directly beneath it.
+        try:
+            if workspace and not p.resolve().is_relative_to(Path(workspace).resolve()):
+                continue
+        except (OSError, ValueError):
+            continue
         try:
             line = p.read_text(errors="replace").splitlines()[line_no - 1]
         except (OSError, IndexError):
@@ -218,7 +231,7 @@ def _is_hard_failure(plan, sid: str) -> bool:
     return kind in proberun._HARD_FAILURE_KINDS
 
 
-def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
+def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True) -> str | None:
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
@@ -374,7 +387,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
             failed_no_detail = True
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
-    findings = _with_delimiter_facts(findings, plan)
+    findings = _with_delimiter_facts(findings, plan, annotate)
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         # Show EVERY error-class finding — a 40-line clip once hid findings 41+, so the model "fixed"
         # what it saw and claimed done while real errors remained invisible. The context floor
@@ -512,13 +525,30 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
     model stops re-reading the same error N times (which reinforced its fixation)."""
     out = []
     drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
-    for m in messages:
+    last_gate = max((i for i, m in enumerate(messages)
+                     if isinstance(m, dict)
+                     and (m.get("role") == "tool" or m.get("type") == "function_call_output")
+                     and isinstance(m.get("content") or m.get("output"), str)
+                     and SECTION_PREFIX in (m.get("content") or m.get("output"))), default=-1)
+    for i, m in enumerate(messages):
         if isinstance(m, dict):
             is_tool = m.get("role") == "tool" or m.get("type") == "function_call_output"
             key = "content" if m.get("content") is not None else "output"
             c = m.get(key)
             if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
-                cleaned = clean_gate_output(c, plan)
+                # ANNOTATE ONLY THE NEWEST GATE RESULT. This function re-renders every gate result
+                # in the history on EVERY prompt build, and the disk quote is read at render time —
+                # so a finding produced five calls ago gets stamped with whatever that line says
+                # NOW. Walked three times independently on maple-preview 1785994846: the same
+                # `test_resolve_adam.py:54` was annotated `mock_get.assert_called_once_with(` at
+                # call 0027, `self.assertEqual(result["address"], "tz1KqTp…")` at 0031, and
+                # `f"{API_BASE_URL}/handles/go.handle",` at 0032 — with byte-identical MagicMock ids
+                # proving the checks never re-ran in between. The coder read a stale failure carrying
+                # a freshly-wrong quote, concluded its landed fix had not landed, un-fixed a correct
+                # assertion and re-applied an import it already had. Three calls, on a 15-minute wall.
+                # The guard was added the same morning (bdd68bc) to stop the model GUESSING at an
+                # unquoted line; on a file that has moved it manufactures the guess instead.
+                cleaned = clean_gate_output(c, plan, annotate=(i == last_gate))
                 if cleaned is not None:
                     if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")

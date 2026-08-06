@@ -486,3 +486,45 @@ class TheLiveExecutionCheckRunsOnThisMachineTests(unittest.TestCase):
             code, out = self.execcheck.run(d, "python hi.py")
             self.assertEqual(code, 0)
             self.assertIn("addr1xyz", out)
+
+
+class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
+    """clean_gate_results re-renders EVERY gate result in the history on every prompt build, and the
+    disk quote was read at render time — so a finding from five calls ago got whatever that line says
+    now. Walked three times on maple-preview 1785994846: one finding, three different "flagged line
+    on disk" quotes across calls 0027/0031/0032, with byte-identical MagicMock ids proving the checks
+    never re-ran. The coder un-fixed a correct assertion because cria told it the fix had not landed."""
+
+    def _raw(self, body):
+        return "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, body) + tp._git() + "\n"
+
+    def _ws(self, text):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "t.py"), "w") as fh:
+            fh.write(text)
+        return d
+
+    def test_the_newest_gate_result_is_still_annotated(self):
+        from cria.probegate import GatePlan
+        ws = self._ws("import os\nx = 1\nTHE_REAL_LINE = 2\n")
+        raw = self._raw("t.py:3:1: undefined name 'zzz'\nEXIT:1")
+        out = probegate.clean_gate_results([{"role": "tool", "content": raw}], GatePlan(workspace=ws))
+        self.assertIn("THE_REAL_LINE", out[0]["content"])
+
+    def test_an_older_gate_result_is_not_annotated_from_todays_file(self):
+        from cria.probegate import GatePlan
+        ws = self._ws("import os\nx = 1\nTHE_REAL_LINE = 2\n")
+        stale = self._raw("t.py:3:1: undefined name 'zzz'\nEXIT:1")
+        fresh = self._raw("t.py:2:1: undefined name 'qqq'\nEXIT:1")
+        out = probegate.clean_gate_results(
+            [{"role": "tool", "content": stale}, {"role": "tool", "content": fresh}],
+            GatePlan(workspace=ws))
+        self.assertNotIn("THE_REAL_LINE", out[0]["content"])   # the stale one keeps its own words
+        self.assertIn("x = 1", out[1]["content"])              # the newest still gets the quote
+
+    def test_a_stdlib_frame_is_never_quoted_as_a_repo_finding(self):
+        from cria.probegate import GatePlan
+        ws = self._ws("x = 1\n")
+        raw = self._raw("/usr/lib/python3.12/unittest/mock.py:1: in assert_called_once_with\nEXIT:1")
+        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        self.assertNotIn("the flagged line on disk", out or "")
