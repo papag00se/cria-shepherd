@@ -2,4 +2,4 @@
 
 {{FINDINGS}}
 
-Read what each one names and fix exactly that. Make the smallest change that makes it actually work. If a test failed, fix what it caught — changing the assertion so it stops asking is not a fix. If you have already tried a fix for one of these and it did not work, read the file as it stands now before trying another — the version in your head may not be the version on disk.
+Read what each one names and fix exactly that. Make the smallest change that makes it actually work. If a test failed, fix what it caught — changing the assertion so it stops asking is not a fix. The ONE exception is a test whose PREMISE is factually wrong — it asserts something about the outside world that you have CHECKED and found untrue. In that case say in one line what you checked and what it actually returned, then correct the test to match reality. Weakening or deleting an assertion for any other reason is not a fix. If you have already tried a fix for one of these and it did not work, read the file as it stands now before trying another — the version in your head may not be the version on disk.

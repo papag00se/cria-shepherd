@@ -355,3 +355,31 @@ class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
     def test_an_outcome_step_is_not_flagged(self):
         self.assertEqual(self.planner.step_names_tool(
             "Write a Python script that resolves an Ada Handle and prints the holder address"), "")
+
+
+class GuardsThatCouldOnlyFailOneWayTests(unittest.TestCase):
+    """Three cria texts that were true in one direction and false in the other."""
+
+    def test_a_steer_that_is_a_bare_argument_object_is_withheld(self):
+        self.assertTrue(loop._is_argument_blob(
+            '{ "path": "/tmp/x/ada_handles_resolver.py", "start_line": 1, "end_line": 1 }'))
+        self.assertTrue(loop._is_argument_blob('[{"line_number": 1, "text": "paths"}]'))
+
+    def test_a_real_directive_is_not_mistaken_for_one(self):
+        self.assertFalse(loop._is_argument_blob(
+            "You are stuck on the failing test. Read the file, then make one targeted edit."))
+        self.assertFalse(loop._is_argument_blob(
+            "The step requires a README at README.md; write one describing installation."))
+
+    def test_the_summary_hedge_doubts_both_directions(self):
+        t = prompts.load("compaction_reframe")
+        self.assertIn("EITHER", t)
+        self.assertIn("still failing", t)
+        self.assertIn("do NOT redo work", t)
+
+    def test_the_checks_rule_allows_a_test_whose_premise_is_false(self):
+        for key in ("block_nudge_preamble", "steer_checks_repeat"):
+            t = prompts.load(key)
+            self.assertIn("not a fix", t)          # the prohibition stands
+            self.assertIn("PREMISE is factually wrong", t)
+            self.assertIn("CHECKED", t)            # and it must show its evidence

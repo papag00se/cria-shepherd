@@ -5566,6 +5566,28 @@ _ROLEPLAY_STEER = re.compile(
 _ROLEPLAY_FIRSTPERSON = re.compile(r"\b[Ii] will (?:write|create|implement|add|run|fix|build)\b")
 
 
+def _is_argument_blob(directive: str) -> bool:
+    """True when a 'directive' is really a tool call's ARGUMENTS — a bare JSON object or array.
+
+    Walked on ada-handles_nemotron-elastic_codex_pon_1785360304 call 0030, and again in the sibling
+    run at 0044. The steer author tried to CALL read_file; its reply content was the argument object,
+    and cria injected it verbatim:
+        ⟦ctx:steer⟧ { "path": "/tmp/…/ada_handles_resolver.py", "start_line": 1, "end_line": 1 }
+    and, at 0030, ~4,000 characters of fabricated grep output carrying an invented schema
+    ("holder": an object with an `address`) that the coder then believed and chased for two calls.
+    `holder` is a plain string.
+
+    _ROLEPLAY_STEER already hard-drops transcript syntax and `name({` tool-call syntax; a bare
+    argument object matches neither — it has no tool name in front of it. The test is EXACT (does the
+    whole directive parse as a JSON object/array?), not a judgment, and it is the same direction as
+    the guards beside it: a steer that is not a directive is withheld, and the caller falls back to
+    the grounded canned redirect or to silence."""
+    t = (directive or "").strip()
+    if not (t.startswith("{") or t.startswith("[")):
+        return False
+    return extract_json_object(t) is not None or t.endswith(("}", "]"))
+
+
 def _dedupe_doubled(text: str) -> str:
     """A weak reasoner sometimes emits its directive twice, verbatim, in one reply (run
     0729-mellum2: the identical paragraph back-to-back). Injecting the doubled text doubles the
@@ -5733,6 +5755,9 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     directive = _dedupe_doubled(directive)
     if _ROLEPLAY_STEER.search(directive):
         rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
+        return None
+    if _is_argument_blob(directive):
+        rlog.emit("loop.steer_argument_blob", level="warn", head=_clip(directive, 120))
         return None
     if _ROLEPLAY_FIRSTPERSON.search(directive):
         # OBSERVE-ONLY (provenance audit, 2026-08-04): the first-person arm's evidence is two
