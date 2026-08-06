@@ -693,33 +693,6 @@ class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
         from cria import proberun, probediscovery
         self.proberun, self.probediscovery = proberun, probediscovery
 
-    def _sections(self, online, offline):
-        return {"probe-0": online, "offline": offline}
-
-    def test_a_green_suite_that_is_identical_offline_is_reported(self):
-        fact = probegate._offline_fact(self._sections("2 passed in 0.1s\nEXIT:0",
-                                                      "2 passed in 0.1s\nEXIT:0"))
-        self.assertIn("network switched off", fact)
-        self.assertIn("2", fact)
-
-    def test_a_suite_failing_both_ways_says_nothing(self):
-        # the footgun found end-to-end: on a box with no outbound network everything matches
-        self.assertEqual(probegate._offline_fact(
-            self._sections("1 failed, 1 passed in 0.1s\nEXIT:1",
-                           "1 failed, 1 passed in 0.1s\nEXIT:1")), "")
-
-    def test_a_suite_that_really_needs_the_network_says_nothing(self):
-        self.assertEqual(probegate._offline_fact(
-            self._sections("2 passed in 0.4s\nEXIT:0",
-                           "1 failed, 1 passed in 0.1s\nEXIT:1")), "")
-
-    def test_no_offline_section_says_nothing(self):
-        self.assertEqual(probegate._offline_fact({"probe-0": "2 passed in 0.1s"}), "")
-
-    def test_unittest_output_is_read_too(self):
-        self.assertIn("network switched off", probegate._offline_fact(
-            self._sections("Ran 3 tests in 0.01s\n\nOK\n", "Ran 3 tests in 0.01s\n\nOK\n")))
-
     def _cand(self, kind, argv):
         import pathlib as _pl
         from cria.probediscovery import ProbeCandidate, ProbeCost
@@ -728,11 +701,146 @@ class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
                               mutates_code=False, may_hang=False, may_need_services=False,
                               reason="test")
 
-    def test_it_is_python_only_and_says_nothing_elsewhere(self):
-        go = self._cand(self.probediscovery.ProbeKind.Test, ["go", "test", "./..."])
-        self.assertEqual(self.proberun.offline_probe_command(go, 60), "")
+    def _plan(self, argv=("python3", "-m", "pytest", "-q")):
+        """A plan whose probe-0 IS the test — the index _offline_fact reads instead of guessing."""
+        return probegate.GatePlan(
+            workspace="", candidates=[self._cand(self.probediscovery.ProbeKind.Test, list(argv))])
+
+    def _sections(self, online, offline):
+        return {"probe-0": online, "offline": offline}
+
+    def _fact(self, online, offline, plan=None):
+        return probegate._offline_fact(self._sections(online, offline), plan or self._plan())
+
+    def test_a_green_suite_that_is_identical_offline_is_reported(self):
+        fact = self._fact("2 passed in 0.1s\nEXIT:0", "2 passed in 0.1s\nEXIT:0")
+        self.assertIn("network switched off", fact)
+        self.assertIn("2", fact)
+
+    def test_a_suite_failing_both_ways_says_nothing(self):
+        # the footgun found end-to-end: on a box with no outbound network everything matches
+        self.assertEqual(self._fact("1 failed, 1 passed in 0.1s\nEXIT:1",
+                                    "1 failed, 1 passed in 0.1s\nEXIT:1"), "")
+
+    def test_a_suite_that_really_needs_the_network_says_nothing(self):
+        self.assertEqual(self._fact("2 passed in 0.4s\nEXIT:0",
+                                    "1 failed, 1 passed in 0.1s\nEXIT:1"), "")
+
+    def test_no_offline_section_says_nothing(self):
+        self.assertEqual(probegate._offline_fact({"probe-0": "2 passed in 0.1s"}, self._plan()), "")
+
+    def test_unittest_output_is_read_too(self):
+        self.assertIn("network switched off",
+                      self._fact("Ran 3 tests in 0.01s\n\nOK\nEXIT:0",
+                                 "Ran 3 tests in 0.01s\n\nOK\nEXIT:0"))
 
     def test_a_lint_probe_is_never_re_run_offline(self):
         lint = self._cand(self.probediscovery.ProbeKind.Lint,
                           ["python3", "-m", "pyflakes", "x.py"])
         self.assertEqual(self.proberun.offline_probe_command(lint, 60), "")
+
+
+class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
+    """The block is a kernel network namespace, so it is not CPython's to grant.
+
+    The first cut wrote a sitecustomize on PYTHONPATH and skipped every non-python runner. Measured
+    over the preserved suite that abstained on 3 of the 5 task families: `go test -count=1 ./...`
+    (handles-go), `cargo test --no-fail-fast` (handles-rust, rust-toml-cli). A static Go binary
+    ignores LD_PRELOAD and every interpreter-level patch alike; an empty netns stops it dead."""
+
+    def setUp(self):
+        from cria import proberun, probediscovery
+        self.proberun, self.probediscovery = proberun, probediscovery
+
+    def _test_cand(self, argv):
+        import pathlib as _pl
+        from cria.probediscovery import ProbeCandidate, ProbeCost
+        return ProbeCandidate(kind=self.probediscovery.ProbeKind.Test, command=argv,
+                              working_dir=_pl.Path("/tmp"), confidence=1, expected_value=1,
+                              cost=ProbeCost.Cheap, mutates_code=False, may_hang=False,
+                              may_need_services=False, reason="test")
+
+    def test_go_and_cargo_suites_are_re_run_offline_too(self):
+        for argv in (["go", "test", "-count=1", "./..."], ["cargo", "test", "--no-fail-fast"]):
+            cmd = self.proberun.offline_probe_command(self._test_cand(argv), 60)
+            self.assertIn("unshare -rn", cmd, argv[0])
+            self.assertIn(argv[0], cmd)
+
+    def test_loopback_comes_back_up_so_a_mock_server_still_passes(self):
+        # a test that stands up its own server on 127.0.0.1 is exactly what this check must SEE pass
+        cmd = self.proberun.offline_probe_command(
+            self._test_cand(["python3", "-m", "pytest", "-q"]), 60)
+        self.assertIn("ip link set lo up", cmd)
+
+    def test_a_box_without_namespaces_prints_nothing_at_all(self):
+        cmd = self.proberun.offline_probe_command(
+            self._test_cand(["python3", "-m", "pytest", "-q"]), 60)
+        self.assertIn("if unshare -rn -- true", cmd)   # guarded, never assumed
+        self.assertTrue(cmd.rstrip().endswith("fi"))   # nothing printed outside the guard
+
+    def test_the_block_really_stops_a_non_python_process(self):
+        """Not a shape assertion — the composed command is RUN against curl."""
+        import subprocess
+        if subprocess.run(["unshare", "-rn", "--", "true"],
+                          capture_output=True).returncode != 0:
+            self.skipTest("this kernel does not grant unprivileged network namespaces")
+        cmd = self.proberun.offline_probe_command(
+            self._test_cand(["curl", "-s", "-m", "5", "-o", "/dev/null", "https://1.1.1.1"]), 30)
+        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=120).stdout
+        self.assertIn("EXIT:", out)
+        self.assertNotIn("EXIT:0", out)   # curl could not reach the outside world
+
+    def test_a_loopback_server_still_reaches_itself_under_the_block(self):
+        import subprocess
+        if subprocess.run(["unshare", "-rn", "--", "true"],
+                          capture_output=True).returncode != 0:
+            self.skipTest("this kernel does not grant unprivileged network namespaces")
+        script = ("import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);"
+                  "socket.create_connection(s.getsockname(),timeout=4).close()")
+        cmd = self.proberun.offline_probe_command(
+            self._test_cand(["python3", "-c", script]), 30)
+        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=120).stdout
+        self.assertIn("EXIT:0", out)
+
+
+class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
+    """The offline re-run is an instrument reading, not a check.
+
+    On a genuinely LIVE suite the offline leg is supposed to fail. clean_gate_output iterated every
+    section and skipped only `git`, so those failures were harvested as error-class findings and
+    handed to the coder as work — cria telling it to fix tests that pass. The false-red class,
+    produced by the leg built to expose a false green."""
+
+    P, S = probegate.SECTION_PREFIX, probegate.SECTION_SUFFIX
+
+    def _plan(self):
+        from cria import probediscovery
+        from cria.probediscovery import ProbeCandidate, ProbeCost
+        import pathlib as _pl
+        return probegate.GatePlan(workspace="", candidates=[ProbeCandidate(
+            kind=probediscovery.ProbeKind.Test, command=["python3", "-m", "pytest", "-q"],
+            working_dir=_pl.Path("/tmp"), confidence=1, expected_value=1, cost=ProbeCost.Cheap,
+            mutates_code=False, may_hang=False, may_need_services=False, reason="t")])
+
+    def test_a_live_suites_offline_failure_is_not_reported_as_a_problem(self):
+        raw = (f"{self.P}probe-0{self.S}\n2 passed in 0.4s\nEXIT:0\n"
+               f"{self.P}offline{self.S}\n"
+               "test_resolve.py:31: in test_live\n"
+               "    r = requests.get(URL)\n"
+               "E   OSError: [Errno 101] Network is unreachable\n"
+               "1 failed, 1 passed in 0.1s\nEXIT:1\n"
+               f"{self.P}git{self.S}\nabc123\n")
+        out = probegate.clean_gate_output(raw, self._plan()) or ""
+        self.assertNotIn("Network is unreachable", out)
+        self.assertNotIn("test_resolve.py:31", out)
+        self.assertIn("no error-class problems", out)
+
+    def test_an_empty_offline_section_does_not_wedge_the_gate(self):
+        # the kernel refused the namespace: the leg prints nothing, and that is not "could not run"
+        raw = (f"{self.P}probe-0{self.S}\n2 passed in 0.4s\nEXIT:0\n"
+               f"{self.P}offline{self.S}\n"
+               f"{self.P}git{self.S}\nabc123\n")
+        out = probegate.clean_gate_output(raw, self._plan()) or ""
+        self.assertIn("no error-class problems", out)
+        self.assertNotIn("could not", out.lower())
+        self.assertNotIn("network switched off", out)

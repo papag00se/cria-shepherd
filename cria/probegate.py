@@ -98,7 +98,7 @@ def plan_gate(workspace: str) -> GatePlan:
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
-    # The OFFLINE re-run of the test probe (python only) — see proberun.offline_probe_command.
+    # The OFFLINE re-run of the test probe — see proberun.offline_probe_command.
     # Emitted last among the probes so a failure here can never mask a real check result.
     test_c = next((c for c in plan.candidates
                    if c.kind is probediscovery.ProbeKind.Test), None)
@@ -265,6 +265,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     _sections = split_sections(raw)
     for sid, body in _sections.items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
+            continue
+        # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
+        # network taken away, so on a genuinely live suite it is SUPPOSED to fail — and this loop
+        # would have scraped that failure into the findings and told the coder to go fix passing
+        # tests (the false-red class, from the very leg built to expose a false green). Its exit
+        # code reaches exactly one reader: _offline_fact. Skipping it also keeps a namespace-less
+        # box honest — an empty section can no longer set could_not_run and wedge the whole gate.
+        if sid == "offline":
             continue
         saw_probe = True
         text, code = proberun.scrape_exit(body)
@@ -447,7 +455,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     # A suite that passes with the network blocked never touched the API it claims to test. FACT,
     # not verdict (principle 8) — plenty of tasks have no network in them, and which it is here is
     # the judge's call. Only on the CLEAN branch: with real findings the coder already has work.
-    offline = _offline_fact(_sections)
+    offline = _offline_fact(_sections, plan)
     if offline:
         clean += " " + offline
     return clean
@@ -474,27 +482,43 @@ def _tally(text: str) -> str:
     return ""
 
 
-def _offline_fact(sections: dict) -> str:
-    """One sentence when the test suite behaves IDENTICALLY with the network blocked — else "".
+def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
+    """One sentence when the test suite passes with the network taken away — else "".
 
-    Silent unless cria established it: no offline section, no readable tally on either side, or a
-    tally that differs all say nothing. A differing tally is the healthy case (the suite really does
-    reach the network) and needs no words."""
+    The comparison is the two EXIT CODES, not the two printed tallies. Every test runner on earth
+    exits 0 on pass and non-zero on fail, so exit codes read `go test` and `cargo test` — 3 of the
+    suite's 5 task families — exactly as well as pytest, whereas cria can only parse a pytest or
+    unittest tally. The tally survives as the WORDING when it happens to be readable; it is never
+    the discriminator. That split is what let the block go language-agnostic without cria having to
+    learn a tally format per ecosystem.
+
+    ONLY when the suite was GREEN online. Two runs that both FAIL say nothing about mocking — the
+    suite is just failing, and on a box with no outbound network the two agree trivially. Caught
+    end-to-end while building this: a genuinely live test failed on both sides, the results matched,
+    and the draft told the judge the suite never touches the service. That is the false fact rule 5b
+    forbids, produced by the very check built to expose one.
+
+    Silent unless cria established it. No offline section (the kernel refused the namespace, so no
+    block was applied), no plan to say WHICH probe was the test, a missing sentinel, or any non-zero
+    on either side — each one says nothing rather than guess."""
     off = sections.get("offline")
     if not off:
         return ""
-    online = next((t for sid, t in sections.items() if sid.startswith("probe-") and _tally(t)), "")
-    a, b = _tally(online), _tally(off)
-    if not a or not b or a != b:
+    # WHICH probe was the test is a fact the plan holds; without it cria will not guess. The offline
+    # leg is composed from this same candidate, so the index is exact, not a search over sections.
+    idx = next((i for i, c in enumerate(getattr(plan, "candidates", None) or [])
+                if c.kind is probediscovery.ProbeKind.Test), None)
+    if idx is None:
         return ""
-    # ONLY when the suite was GREEN online. Identical tallies where both runs FAIL say nothing about
-    # mocking — the suite is just failing, and on a box with no outbound network everything matches
-    # trivially. Caught end-to-end while building this: a genuinely live test failed on both sides,
-    # the tallies agreed, and the draft would have told the judge the suite never touches the service.
-    # That is the false fact rule 5b forbids, from the very check meant to expose one.
-    if a.startswith("0f/") or a.endswith("/OK"):
-        return prompts.render("tests_pass_offline", tally=a)
-    return ""
+    online = sections.get(f"probe-{idx}")
+    if not online:
+        return ""
+    online_text, online_code = proberun.scrape_exit(online)
+    _, offline_code = proberun.scrape_exit(off)
+    if online_code != 0 or offline_code != 0:
+        return ""
+    tally = _tally(online_text)
+    return prompts.render("tests_pass_offline", tally=f" ({tally})" if tally else "")
 
 
 def _zero_tests_marker(text: str) -> bool:

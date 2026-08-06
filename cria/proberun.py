@@ -592,22 +592,25 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     )
 
 
-# The socket-level block for the OFFLINE re-run. Written to a throwaway dir on PYTHONPATH, so
-# CPython imports it at startup and every TCP connect in the test process raises — requests, urllib,
-# http.client and a raw socket alike. Proxy env vars were the other option and are not airtight: a
-# library that ignores them would still reach the network and cria would then report "passes with the
-# network blocked" about a run that had one. cria states the fact it actually established.
-_OFFLINE_SITECUSTOMIZE = (
-    "import socket\n"
-    "def _cria_blocked(self, *a, **k):\n"
-    "    raise OSError('network disabled for this check')\n"
-    "socket.socket.connect = _cria_blocked\n"
-    "socket.create_connection = _cria_blocked\n"
-)
+# The network block for the OFFLINE re-run: an empty KERNEL network namespace, not a language shim.
+#
+# `unshare -rn` puts the test process in a namespace with no route to anywhere, so the block lands at
+# the syscall for EVERY runtime — measured against a static Go binary, which issues syscalls directly
+# and therefore walks straight through LD_PRELOAD, sitecustomize, and every other interpreter-level
+# patch. The earlier CPython-only sitecustomize was replaced by it: strictly weaker (blind to a test
+# that shells out to curl, to a C extension, to connect_ex, to UDP) and strictly narrower (silent on
+# `go test` and `cargo test`, which are 3 of the suite's 5 task families).
+#
+# Loopback is brought back UP inside the namespace. A test that stands up its own mock server on
+# 127.0.0.1 must still pass offline — that is precisely the shape this check exists to SEE. Only the
+# outside world is gone. (The sitecustomize version raised on loopback too, a latent false-red.)
+_NETNS_CAPABLE = "unshare -rn -- true"
+_NETNS_ENTER = "unshare -rn -- sh -c"
+_NETNS_LOOPBACK_UP = "ip link set lo up 2>/dev/null; exec "
 
 
 def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
-    """The same test command, re-run with the network blocked — or "" when that means nothing here.
+    """The same test command, re-run with the network blocked — or "" when cria cannot block it.
 
     A test suite that mocks the thing it is testing passes whether or not the network exists, and
     that is the shape behind the false greens: mellum2 1786047222 shipped five tests that patch
@@ -620,21 +623,22 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
     judge, never a verdict: an offline pass is not a defect on its own, because plenty of tasks have
     no network in them. Whether it matters for THIS task is the judge's call (principle 8).
 
-    PYTHON ONLY. sitecustomize is a CPython mechanism; for any other ecosystem cria has no equally
-    airtight block, and it says nothing rather than something it did not establish."""
+    LANGUAGE-AGNOSTIC — the block is a kernel namespace (see _NETNS_CAPABLE), so any Test probe
+    qualifies. Where the kernel refuses the namespace (no unprivileged user namespaces, no unshare)
+    the whole leg is skipped and prints NOTHING: an absent section is silence, and silence is the
+    only honest output for a block cria did not actually establish."""
     if c.kind is not probediscovery.ProbeKind.Test or not c.command:
         return ""
-    if "python" not in os.path.basename(str(c.command[0])).lower():
-        return ""
     argv = " ".join(shlex.quote(t) for t in c.command)
+    inner = _NETNS_LOOPBACK_UP + argv
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
-        f"__cria_off=$(mktemp -d 2>/dev/null) && "
-        f"printf '%s' {shlex.quote(_OFFLINE_SITECUSTOMIZE)} > \"$__cria_off/sitecustomize.py\" && "
-        f"__cria_out=$(PYTHONPATH=\"$__cria_off\" timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
-        f"{argv} </dev/null 2>&1); __cria_ec=$?; rm -rf \"$__cria_off\"; "
+        f"if {_NETNS_CAPABLE} >/dev/null 2>&1; then "
+        f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
+        f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __cria_ec=$?; "
         f"printf '%s' \"$__cria_out\" | tail -c 600; "
-        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
+        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\"; "
+        f"fi"
     )
 
 

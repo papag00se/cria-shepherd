@@ -5357,3 +5357,59 @@ file, saw cria was wrong, dismissed the steer and quit. The steer author has
    `Rule3_SilenceOverNoise` — silence on a clean signal is doctrine, and this is a doctrine change.
 2. **Flip `_dictates_code` out of observe-only?** Its ruling's stated condition — harm measured only
    on a blind author — is now met by non-blind evidence (call 0055 above).
+
+---
+
+## The offline re-run goes language-agnostic (2026-08-06)
+
+The false-green probe shipped CPython-only: it wrote a `sitecustomize.py` on `PYTHONPATH` that raised
+on `socket.socket.connect` / `create_connection`. Two things were wrong with that.
+
+**It was not airtight.** A CPython monkey-patch is invisible to a test that shells out to `curl`, to
+a C extension that syscalls directly, to `connect_ex`, and to UDP. The docstring claimed "no equally
+airtight block" existed elsewhere. That was wrong: `unshare -rn` puts the process in an empty kernel
+network namespace, and the block then lands at the syscall for every runtime. Measured against a
+static Go binary — which bypasses libc and therefore LD_PRELOAD and every interpreter-level patch —
+`net.DialTimeout` returned `network is unreachable`. It is strictly stronger, not merely equal.
+
+**It was silent on 3 of the suite's 5 task families.** Enumerated over the preserved workspaces, the
+selected Test probe is `go test -count=1 ./...` (handles-go), `cargo test --no-fail-fast`
+(handles-rust, rust-toml-cli), `python3 -m pytest -q` (ada-handles, sqlite-inventory). The python
+gate abstained on the first three.
+
+Loopback is brought back UP inside the namespace (`ip link set lo up`). A test that stands up its own
+mock server on 127.0.0.1 must still pass offline — that is exactly the shape the check exists to see.
+The sitecustomize version raised on loopback too, a latent false-red it never got to demonstrate.
+
+The **comparison** moved with it, from the printed tally to the two EXIT CODES. Every runner exits 0
+on pass, so exit codes read cargo and go as well as pytest, while cria can only parse a pytest or
+unittest tally. The tally survives as the wording when readable, never as the discriminator. The
+green-online guard is unchanged in effect and simpler in form: `online_code != 0` → silent, which is
+what keeps a no-outbound-network box from being told its live suite is mocked.
+
+Where the kernel refuses the namespace the whole leg is skipped and prints nothing. An absent section
+is silence, and silence is the only honest output for a block cria did not establish.
+
+### The leak this uncovered
+
+`clean_gate_output` iterated every section and skipped only `git`, so the **offline section was
+scraped as a check**. On a genuinely live suite the offline leg is *supposed* to fail — and its
+traceback was being harvested into the findings under "the repo's own checks report these error-class
+problems … If a test failed, fix what the test caught". cria unplugs the network itself, then tells
+the coder to go fix the passing tests that noticed. The false-red class, produced by the leg built to
+expose a false green. Reproduced before the fix; `sid == "offline"` now skips it, and the offline exit
+code reaches exactly one reader, `_offline_fact`. The same skip stops an empty section (namespace
+refused) from setting `could_not_run` and wedging a real green to "no usable result".
+
+### Verified end to end on preserved workspaces
+
+| workspace | online | offline | cria says |
+|---|---|---|---|
+| mellum2 1786047222 (known false green) | pass | pass | fires — `0f/5p` |
+| maple-preview 1786047359 | pass | pass | fires — `0f/6p` |
+| nemotron-elastic 1785989343 (genuinely live) | pass | fail | silent, and gate reads CLEAN |
+| rust-toml-cli 1785358393 (`cargo test`) | pass | pass | fires, no tally — was silent before |
+| handles-go 1785573260 (`go test`) | fail | fail | silent; the real findings come through |
+
+maple-preview 1786047359 scored 2/4 with six green tests. The probe says why: none of them reach the
+service.
