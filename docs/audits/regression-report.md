@@ -20,11 +20,11 @@ gates = check runs it triggered.
 | model | last 3 | avg tok/s | avg min | avg calls | 🧭 | 🔁 | 🧪 | 🗜️ |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 🟢 gemma4-stock · 12B q4km stock | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 56.6 | 4 | 26 | 1 | 0 | 2 | 1 |
+| 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 123.1 | 6 | 43 | 4 | 0 | 5 | 1 |
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
-| 🟡 nemotron-elastic · 12B-A2B q4km | ²⁄₄ ⁴⁄₄ ⁴⁄₄ | 116.1 | 5 | 38 | 3 | 1 | 4 | 1 |
 | 🟡 mellum2 · 12B-MoE q4 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
 | 🟠 maple-preview · ? | ²⁄₄ ²⁄₄ | 59.2 | 38 | 88 | 10 | 2 | 6 | 5 |
 
@@ -114,8 +114,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | gemma4-stock | counted | 4/4 | 4 | 32 | 16 | 55.7 | 2 | 3 | exited |
 | maple-preview | counted | 2/4 | 30 | 97 | 47 | 57.3 | 9 | 5 | budget-killed |
 | maple-preview | counted | 2/4 | 46 | 78 | 52 | 61.2 | 10 | 8 | milestone-miss-45min |
+| nemotron-elastic | counted | 4/4 | 8 | 58 | 36 | 137.8 | 6 | 6 | exited |
 
-counted runs: 65 · avg wall 23 min · avg coder calls 71 · full-pass rate 29/65
+counted runs: 66 · avg wall 23 min · avg coder calls 70 · full-pass rate 30/66
 
 ## Scoreboard (every run; counted rows bold)
 
