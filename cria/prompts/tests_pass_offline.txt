@@ -1,1 +1,1 @@
-The same tests{{TALLY}} pass with the network switched off, so nothing in them reaches the real service — they exercise the code against their own fixtures. Whether that is enough depends on what this task asked for.
+The same tests ({{TALLY}}) pass with the network switched off, so nothing in them reaches the real service — they exercise the code against their own fixtures. Whether that is enough depends on what this task asked for.

@@ -739,6 +739,37 @@ class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
                           ["python3", "-m", "pyflakes", "x.py"])
         self.assertEqual(self.proberun.offline_probe_command(lint, 60), "")
 
+    def test_a_test_that_SKIPS_when_the_service_is_gone_says_nothing(self):
+        """Exit codes alone cannot carry the claim. Reproduced against a real gate: a live test
+        wrapped in try/except that calls pytest.skip leaves BOTH runs at exit 0, and the sentence
+        asserted no test reaches the service while one of them was hitting example.com."""
+        self.assertEqual(self._fact("6 passed in 0.10s\nEXIT:0",
+                                    "5 passed, 1 skipped in 0.02s\nEXIT:0"), "")
+
+    def test_the_sentence_quotes_the_count_both_runs_agreed_on(self):
+        fact = self._fact("6 passed in 0.10s\nEXIT:0", "6 passed in 0.02s\nEXIT:0")
+        self.assertIn("(0f/6p)", fact)
+
+    def test_a_runner_with_no_readable_count_claims_only_the_exit_code(self):
+        # `go test` prints "ok <pkg> 0.01s" and no per-test tally — the weaker, true sentence
+        fact = self._fact("ok  \thandles-resolver/handles\t0.01s\nEXIT:0",
+                          "ok  \thandles-resolver/handles\t0.01s\nEXIT:0")
+        self.assertIn("still succeeds with the network switched off", fact)
+        self.assertNotIn("nothing in them reaches", fact)
+
+    def test_cargos_ignored_count_is_read_as_a_skip(self):
+        online = ("test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+                  "EXIT:0")
+        offline = ("test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n"
+                   "EXIT:0")
+        self.assertEqual(self._fact(online, offline), "")
+        self.assertIn("(0f/4p)", self._fact(online, online))
+
+    def test_cargo_sums_every_test_binary_not_just_the_first(self):
+        two = ("test result: ok. 2 passed; 0 failed; 0 ignored\n"
+               "test result: ok. 3 passed; 1 failed; 0 ignored\n")
+        self.assertEqual(probegate._tally(two), "1f/5p")
+
 
 class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
     """The block is a kernel network namespace, so it is not CPython's to grant.

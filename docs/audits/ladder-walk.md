@@ -5413,3 +5413,38 @@ refused) from setting `could_not_run` and wedging a real green to "no usable res
 
 maple-preview 1786047359 scored 2/4 with six green tests. The probe says why: none of them reach the
 service.
+
+### The skip that walks through an exit code (same day)
+
+Moving the comparison to exit codes cost a signal the tally had been carrying, and the operator
+named it from the other end: *"we don't know that all tests are network tests."* A live test does
+not have to FAIL when the service disappears — the common shape catches the error and skips:
+
+```python
+try:
+    out = resolver.resolve("goose")
+except OSError:
+    pytest.skip("network unavailable")
+```
+
+Reproduced against a real composed gate: six tests green online, `5 passed, 1 skipped` offline, exit
+0 on both sides, and cria said *"The same tests (0f/6p) pass with the network switched off, so
+nothing in them reaches the real service"* — while one of them was hitting example.com. It even
+quoted the ONLINE count next to a claim about the offline run.
+
+So exit codes gate the fact and the PASSED COUNTS decide how much of it can be said:
+
+| both counts readable | claim |
+|---|---|
+| equal | the strong sentence — nothing in them reaches the real service |
+| different | silence; coverage changed and cria cannot tell which half is true |
+| not readable | the weaker sentence — the command still succeeds, per-test coverage not established |
+
+`cargo test`'s `test result: ok. N passed; N failed; N ignored` joined the tally table (summed across
+test binaries — cargo prints one line per binary). Its `ignored` drops out of `passed` exactly as
+pytest's `skipped` does, which is what makes the passed count a coverage signal on its own. `go test`
+prints no per-test count by default and gets the weaker sentence, which is the honest one for it.
+
+Re-verified end to end: the skip workspace now silent, mellum2 1786047222 still fires (`0f/5p`),
+nemotron 1785989343 still silent, rust-toml-cli now fires with a real count (`0f/4p`) where it had
+only the weak sentence an hour earlier.

@@ -468,13 +468,24 @@ _ZERO_TESTS_MARKERS = ("no tests ran", "[no test files]", "no tests found")
 
 _PYTEST_TALLY = re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed")
 _UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
+# cargo prints one `test result:` line PER test binary, so the counts are summed, not first-matched.
+# Its "ignored" is a skip and drops out of `passed` exactly as pytest's "skipped" does — which is
+# what makes the passed count a usable coverage signal on its own.
+_CARGO_TALLY = re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed")
 
 
 def _tally(text: str) -> str:
-    """A runner's own pass/fail line, normalized — "" when it printed none."""
+    """A runner's own pass/fail line, normalized — "" when it printed none.
+
+    The PASSED count is the coverage signal, not decoration: a test that skips rather than fails
+    leaves the exit code at 0 and drops out of this count. That is the only thing standing between
+    "the suite is self-contained" and "one test quietly stepped aside" (see _offline_fact)."""
     m = _PYTEST_TALLY.search(text or "")
     if m:
         return f"{m.group(1) or 0}f/{m.group(2)}p"
+    cargo = _CARGO_TALLY.findall(text or "")
+    if cargo:
+        return f"{sum(int(f) for _, f in cargo)}f/{sum(int(p) for p, _ in cargo)}p"
     m = _UNITTEST_TALLY.search(text or "")
     if m:
         ok = "OK" if re.search(r"(?m)^OK\b", text or "") else "FAIL"
@@ -485,12 +496,21 @@ def _tally(text: str) -> str:
 def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     """One sentence when the test suite passes with the network taken away — else "".
 
-    The comparison is the two EXIT CODES, not the two printed tallies. Every test runner on earth
-    exits 0 on pass and non-zero on fail, so exit codes read `go test` and `cargo test` — 3 of the
-    suite's 5 task families — exactly as well as pytest, whereas cria can only parse a pytest or
-    unittest tally. The tally survives as the WORDING when it happens to be readable; it is never
-    the discriminator. That split is what let the block go language-agnostic without cria having to
-    learn a tally format per ecosystem.
+    TWO signals, and cria only says as much as it has.
+
+    The EXIT CODES gate it. Every test runner on earth exits 0 on pass and non-zero on fail, so exit
+    codes read `go test` and `cargo test` — 3 of the suite's 5 task families — exactly as well as
+    pytest. That is what let the block go language-agnostic without a tally format per ecosystem.
+
+    The PASSED COUNTS decide how much can be claimed. Exit codes alone are not enough to say "nothing
+    in them reaches the real service", because a live test can SKIP instead of fail when the service
+    is gone — a two-line try/except that leaves the exit code at 0. Reproduced against a real gate:
+    six tests green online, `5 passed, 1 skipped` offline, both exit 0, and the sentence asserted
+    that no test touches the service while one of them was hitting it. Operator caught the same hole
+    from the other end ("we don't know that all tests are network tests"). So: counts readable on
+    both sides and EQUAL → the strong sentence; readable and DIFFERENT → silence, because coverage
+    changed and cria cannot tell which half is the truth; not readable → the weaker sentence, which
+    claims only what the exit code established.
 
     ONLY when the suite was GREEN online. Two runs that both FAIL say nothing about mocking — the
     suite is just failing, and on a box with no outbound network the two agree trivially. Caught
@@ -514,11 +534,15 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     if not online:
         return ""
     online_text, online_code = proberun.scrape_exit(online)
-    _, offline_code = proberun.scrape_exit(off)
+    offline_text, offline_code = proberun.scrape_exit(off)
     if online_code != 0 or offline_code != 0:
         return ""
-    tally = _tally(online_text)
-    return prompts.render("tests_pass_offline", tally=f" ({tally})" if tally else "")
+    on_tally, off_tally = _tally(online_text), _tally(offline_text)
+    if on_tally and off_tally:
+        if on_tally != off_tally:
+            return ""      # a test stepped aside offline — cria cannot claim the suite is self-contained
+        return prompts.render("tests_pass_offline", tally=on_tally)
+    return prompts.render("tests_pass_offline_uncounted")
 
 
 def _zero_tests_marker(text: str) -> bool:
