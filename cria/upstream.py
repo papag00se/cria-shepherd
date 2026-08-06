@@ -448,7 +448,11 @@ class Upstream:
                 # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
                 # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
                 if aborted is None and rumination.degenerate_tail(gen_tail):
-                    aborted = {"degenerate": True, "hits": 0, "reasoning_tokens": len(gen_tail)}
+                    # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
+                    # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,
+                    # and the notice built from that told the coder it "hit 0 second-guessing phrases
+                    # after ~2048 reasoning tokens". A guard must not invent the numbers it fired on.
+                    aborted = {"degenerate": True, "chars": len(gen_tail)}
                     rlog.emit("rumination.abort", level="warning", degenerate=True, chars=len(gen_tail))
                     break
                 if watch is not None and aborted is None:

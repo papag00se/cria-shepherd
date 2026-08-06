@@ -107,13 +107,28 @@ def _single_call(m: dict) -> dict | None:
     return tcs[0] if m.get("role") == "assistant" and len(tcs) == 1 else None
 
 
-def _is_failure(content) -> bool:
+# The FILE tools. Their result is a PAYLOAD (a file's bytes, a directory listing, "Wrote <path>"),
+# never a lookup envelope — so a soft phrase inside one is the user's own source code, not a dead end.
+# Walked on ada-handles_nemotron-elastic_codex_pon_1785888803 calls 0159-0165: the coder's resolver
+# raises `ValueError("Handle not found or no holder address")`, so EVERY read_file of it, and every
+# ⟦ctx:edit⟧ recovery dump carrying its exact bytes, matched `\bnot found\b` and was squashed into a
+# note reading "each returned nothing usable (a dead-end lookup: not found / no match / empty
+# result) … don't repeat these". The sibling test file, whose source lacks the phrase, was never
+# folded once — same tool, same session, same directory. The coder was left unable to see the file it
+# was editing, guessed its old_string from a deleted memory eight calls running, and at 0162 answered
+# cria's "Read what it already returned above" by FABRICATING the file and writing it to disk.
+_FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "list_dir", "view_image"})
+
+
+def _is_failure(content, tool_name: str = "") -> bool:
     if not isinstance(content, str):
         return False
     if any(p.search(content) for p in _HARD_FAIL_SIGNATURES):
         return True
     if any(p.search(content) for p in _SUCCESS_MARKERS):
         return False   # the tool exited 0 / returned 2xx → a success whose body just mentions "not found"
+    if tool_name in _FILE_TOOLS:
+        return False   # a file payload: the phrase is the file's content, not the tool's verdict
     return any(p.search(content) for p in _SOFT_FAIL_SIGNATURES)
 
 
@@ -254,7 +269,8 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         tc = _single_call(messages[i])
         nxt = messages[i + 1]
         if (tc is not None and nxt.get("role") == "tool"
-                and nxt.get("tool_call_id") == tc.get("id") and _is_failure(nxt.get("content"))
+                and nxt.get("tool_call_id") == tc.get("id")
+                and _is_failure(nxt.get("content"), str((tc.get("function") or {}).get("name") or ""))
                 and not _is_hard_failure(nxt.get("content"))  # hard fail carries diagnostics — keep in full
                 and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
             failed.append((i, i + 1, tc))

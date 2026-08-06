@@ -1116,7 +1116,8 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # direction keeps the veto). Rule 5b: a "Missing <file>" the disk disproves must not reach
         # the coder in cria's voice.
         disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, "", rlog,
-                                           phase="confirm-disk") or "") if reasoner_role is not None else None
+                                           phase="confirm-disk", temperature=0.0) or "") \
+            if reasoner_role is not None else None
         refuted = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
         if refuted:
             rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
@@ -2968,7 +2969,8 @@ class Loop:
                 off_role = (replace(self._ctx.reasoner_role, reasoning="off")
                             if self._ctx.reasoner_role is not None else None)
                 applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm, "",
-                                                      rlog, phase="confirm-applies") or "") \
+                                                      rlog, phase="confirm-applies",
+                                                      temperature=0.0) or "") \
                     if self._ctx.reasoner_role is not None else None
                 if not _confirm_applies(item, red_findings, gate_red=gate_red,
                                         ask=applies_ask, rlog=rlog):
@@ -4677,7 +4679,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
               max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "",
-              capture: list | None = None) -> str:
+              capture: list | None = None, temperature: float | None = None) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -4706,6 +4708,18 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             r.apply(call, internal=True, rlog=rlog)
         elif reasoning_off:
             call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        if temperature is not None:
+            # AFTER role.apply, so it wins over the role's sampling. summarize is the primitive
+            # behind two very different jobs: writing prose (a briefing, a directive), where the
+            # role's temperature belongs, and answering a CLOSED question with one word from a fixed
+            # set (STANDS/REFUTED, DICTATES/DESCRIBES, ON_TRACK, YES/NO). The second is a
+            # classification, and cria already pins temperature 0 for every classification that goes
+            # through _judge_completion — these four had been running at the reasoner role's 0.6.
+            # MEASURED by replaying the captured guard prompts against a live model, 8 samples each:
+            # at 0.6 the steer-code guard answered correctly 7/8 and 6/8 on two real directives that
+            # were full of literal code; at 0 it answered correctly every time. A one-word verdict
+            # has no use for sampling diversity — the dice only ever cost accuracy.
+            call["temperature"] = temperature
         try:
             rlog.phase = phase + ("-noreason" if reasoning_off else "")
             applied = massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog)
@@ -5305,7 +5319,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
     def _steer_ask(system: str, _user: str) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-code") or ""
+        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-code",
+                         temperature=0.0) or ""
     # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
     def _recover_ask(system: str) -> str:
         return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-recover") or ""
@@ -6140,8 +6155,18 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         attempt += 1
         rlog.emit("loop.rumination", step=step, attempt=attempt,
                   hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens"))
-        conv = conv + [{"role": "user", "content": prompts.render(
-            "rumination_guard", hits=v.get("hits", "several"), tokens=v.get("reasoning_tokens", "many"))}]
+        # TWO detectors abort a turn, and they are not the same failure — so they do not get the same
+        # notice. The phrase watcher fires on second-guessing ("actually", "wait") and its notice says
+        # stop re-examining. The degenerate-tail backstop (upstream.py) fires on a stream that has
+        # locked into repeating one passage, where there is no second-guessing to stop. Rendering the
+        # phrase notice for it produced, five times in one walked run, "[RUMINATION GUARD] Your last
+        # reasoning pass hit 0 second-guessing phrases … after ~2048 reasoning tokens" — a stated
+        # cause of ZERO hits (self-refuting), a character count relabelled as tokens, and advice
+        # aimed at the wrong behaviour. Rule 5b: cria states the trigger it actually has.
+        conv = conv + [{"role": "user", "content": (
+            prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
+            prompts.render("rumination_guard", hits=v.get("hits", "several"),
+                           tokens=v.get("reasoning_tokens", "many")))}]
         rlog.phase = f"{phase}-focus{attempt}"
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)

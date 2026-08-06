@@ -4752,11 +4752,97 @@ across all 76 calls. The finetune's entire failure texture is absent.
   Strictly worse in both directions — the dangerous failure mode. The 3/4 ceiling stands as model
   interpretation with no admissible cria lever; do not re-propose as prompt prose.
 
-## ada-handles_nemotron-elastic_codex_pon_1785888803 — FULL WALK in progress (101 chunks; findings will supersede the PARTIAL entry below)
+## ada-handles_nemotron-elastic_codex_pon_1785888803 — FULL WALK COMPLETE (all 101 chunks, calls 0001–0220)
 
-PROVENANCE NOTE: this run predates every fix landed from the maple walk and today's orphan-test
+Read in full 2026-08-05: chunks 001–013 directly, 014–101 across thirteen parallel readers, one band
+each, every line at full fidelity. Supersedes the PARTIAL entry below.
+
+PROVENANCE NOTE: this run predates every fix landed from the maple walk and the orphan-test
 detector — findings here are candidates only after checking the current code (the rebase-guards
-rule). Checkpointed per band as chunks are read.
+rule). All six fixes recorded under VERDICT were checked against current code before landing.
+
+### VERDICT
+
+Outcome: killed by the 45-minute wall at call 0220, stuck on step 6 of 8, 2,675,512 tokens. Two of
+four deliverables genuinely met (resolver works; unit tests present but 2 of 4 failing). No separate
+live test, README present but documents a command that does not run the test file. The run did NOT
+end in a false green — it ended in a mechanical loop.
+
+**The run was not lost to the model. It was lost to cria telling the model false things about its own
+workspace and then deleting the evidence that would have corrected them.** Four independent
+mechanisms, each verified in the captures and then in the source:
+
+1. **A plan step whose premise the run had already disproved.** Step 5 ordered a test asserting that
+   `resolve_handle("doesnotexist")` raises — but `doesnotexist` is a REGISTERED Ada Handle: the coder
+   had already proved HTTP 200 with a real holder and a real `addr1…`, and had found a genuinely
+   unminted name (`nonexistenthandle` → 404) that would have made the test correct. The step was also
+   already satisfied on disk when issued. It was re-injected unchanged across ~40 calls.
+2. **The checks preamble then forbade the only correct repair.** "If a TEST is what failed, fix what
+   the test caught; changing the test so it stops asking is not a fix" — injected 26× in one band
+   alone. The coder reached "so the test is wrong" at least three separate times and talked itself
+   out of it every time.
+3. **Every unstick judge ruled against the evidence in its own prompt** (calls 0100, 0107, 0109,
+   0122, 0124, 0149, 0151, 0173, 0187, 0189, 0198) — prescribing 404 handling already on disk,
+   ordering a class visible six times in the same prompt, ordering a README listed in the same
+   prompt's do-not-recreate list. Two flail reasoners answered `ON_TRACK` (0203, 0211) on prompts
+   containing "I'm stuck" and forty repetitions of one sentence.
+4. **The recovery paths were broken in the same direction** — see the six landed fixes.
+
+### THE SIX FIXES LANDED (2026-08-05)
+
+- **A looking judge is no longer told to answer directly.** `Role.apply` appended
+  `nothink_directive` ("Do not think out loud… Respond directly.") to any reasoning-off template
+  body — including the confirm judge, whose own prompt says "list_dir the workspace … before you
+  answer". MEASURED across every captured confirm chain on the box: **142 of 168 vetoes (85%) were
+  emitted with zero inspection calls**, against 50 of 156 passes. In this run five confirm
+  invocations called a tool zero times and four invented a not-on-disk reason ("No Python script was
+  found in the workspace" at 0050, with the script at 5,279 B). Now withheld whenever the body offers
+  tools. This is the upstream cause of the false-veto class first logged at 0033/0036/0039.
+- **A file payload is no longer read as a dead-end lookup.** `focustrim` matched `\bnot found\b`
+  against tool CONTENT, so every `read_file` of `ada_handles_resolver.py` — whose source raises
+  `ValueError("Handle not found…")` — was squashed into "returned nothing usable … don't repeat
+  these". The sibling test file, lacking the phrase, was never folded once. The coder could not see
+  the file it was editing for eight calls, and at 0162 answered cria's "Read what it already returned
+  above" by FABRICATING the file and writing it to disk. File tools are now exempt from the soft
+  signatures; shell dead ends and hard failures are unchanged.
+- **An identical edit is diagnosed before the escalation clock.** `old_string == new_string` is
+  complete information. Ordering the escalation branch first meant calls 0160–0165 — five identical
+  edits — all got "you cannot pin its exact current text. STOP editing it," so the coder spent five
+  turns trying harder to pin text while the 145-line file was re-injected nine times. On the sibling
+  file, clean clock, the same mistake got the correct one-line answer at 0166.
+- **The edit anchor now windows the DIVERGENCE, not the head.** The 6-line window was centred on the
+  first line of `old_string` — the part that already matched — so a 10-line stale copy that differs
+  at line 7 got back six lines it already had, under "The file actually reads". ~8 firings in the
+  terminal band, each answered by resubmitting the same wrong `old_string`.
+- **The rumination notice states its real trigger.** Two detectors abort a turn; only one counts
+  phrases. The degenerate-tail backstop was reusing the phrase template, producing "hit 0
+  second-guessing phrases … after ~2048 reasoning tokens" — a self-refuting cause and a CHARACTER
+  count relabelled as tokens — nine times across the run, with advice aimed at the wrong behaviour.
+  It now has its own notice, and the abort marker no longer invents counts it never measured.
+- **A one-word verdict runs at temperature 0.** `summarize` never pinned a temperature, so three
+  closed-set guards (confirm-disk, confirm-applies, steer-code) ran at the reasoner role's 0.6 while
+  every `_judge_completion` classification runs at 0. Replaying the captured guard prompts against a
+  live model, 8 samples each: **7/8 and 6/8 correct at 0.6, correct every time at 0.** `steer-recover`
+  was deliberately left alone — it can emit a full directive, not one word, and is unmeasured.
+  (The empty-user-turn hypothesis was TESTED and REJECTED: moving the question out of the system turn
+  did not help and was slightly worse. The four guards still send an empty user turn; it is not the
+  fault it looked like.)
+
+### STILL OPEN — measured, not yet built
+
+- The replan pass (`reassess_remaining`) re-added or kept ALREADY-DONE steps at 0051, 0073, 0095,
+  0119, 0170 and 0194, every time against its own stated rule and its own in-prompt evidence, once
+  growing the plan from 6 steps to 8 after a step completed. This is the second-largest cause of lost
+  calls in the run and has no fix yet.
+- `_fresh_disk_facts` returns "(no files touched yet)" after a harness compaction, because
+  `_touched_paths` recovers write paths only from assistant `tool_calls` still in the history. Two
+  judges (0122, 0124) were blinded exactly when they most needed the disk.
+- `server.py`'s workspace listing excludes `tmp/`, which hides `tmp/read-only/` — the spill directory
+  cria's own fetch ledger points at. The 96 KB spec sat unlisted while the coder guessed at the API.
+- The fetch ledger's "its body is in the transcript above" is unconditional and is false whenever the
+  body has been compacted away — observed in ~20 prompts.
+- The flail trigger's "while no check is currently steering it" is a hard-coded string, false
+  whenever a check block is in the same prompt (0124, 0151, 0173, 0189, 0203).
 
 Chunks 001–002 (calls 0001–0014) — planning phase:
 - Classifier clean. The planner searched instead of fetching first; the search returned mostly

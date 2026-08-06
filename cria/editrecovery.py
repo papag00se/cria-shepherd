@@ -97,8 +97,21 @@ def compose(fail: dict, prior: int) -> str:
         return report("would_break", path=path, err=fail.get("err", "it no longer parses"))
     if mode in ("multi", "multi_flex"):
         return report("multi", n=fail.get("n", "several"), path=path)
+    if mode == "identical":
+        # SELF-RESOLVING, and it must be answered BEFORE the escalation clock. old_string ==
+        # new_string is complete information on its own: the model does not need the file's bytes,
+        # it needs to be told its two arguments are the same string. Walked on
+        # ada-handles_nemotron-elastic_codex_pon_1785888803 calls 0160-0165: five consecutive
+        # identical-string edits, every one answered with the escalate body ("you have failed to
+        # edit this file 3 times — you cannot pin its exact current text. STOP editing it. Here is
+        # its EXACT current content on disk") because the file's failure count had already passed
+        # ESCALATE_AFTER. The coder read the diagnosis, believed its problem was stale text, and
+        # answered by trying harder to pin the text — re-reading, re-dumping, view_image on a .py —
+        # for five turns, while the 145-line file body was re-injected nine times. On the sibling
+        # file, whose clock was clean, the SAME mistake got the correct one-line answer at 0166.
+        return report("identical")
 
-    # The "can't pin the exact current text" family: identical / anchor / close / no_anchor.
+    # The "can't pin the exact current text" family: anchor / close / no_anchor.
     if prior + 1 >= ESCALATE_AFTER:
         # COMMITTED escalation: stop editing this file, rewrite it whole from the exact bytes shown. One
         # directive from here on — no "copy the exact text" that the model keeps failing to do.
@@ -106,8 +119,6 @@ def compose(fail: dict, prior: int) -> str:
     # Surgical (early failures): hand over the exact text to copy, or point at the current file.
     if anchor:
         return report("anchor", anchor=anchor)
-    if mode == "identical":
-        return report("identical")
     return report("no_anchor")
 
 

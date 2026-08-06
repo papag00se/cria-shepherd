@@ -402,13 +402,25 @@ if toks:
         m=ms[0]; _w(s[:m.start()]+new+s[m.end():])
     if len(ms)>1:
         _fail('multi_flex',n=len(ms))
-key=next((l.strip() for l in old.split(chr(10)) if l.strip()),'')
+oldl=old.split(chr(10))
+o0=next((j for j,l in enumerate(oldl) if l.strip()),0)
+key=oldl[o0].strip() if oldl else ''
 new_first=next((l.strip() for l in new.split(chr(10)) if l.strip()),'')
 lines=s.split(chr(10)); ctx=''; close=''
 if key:
     for i,l in enumerate(lines):
         if key[:40] in l:
-            ctx=chr(10).join(lines[max(0,i-2):i+4]); break
+            # Window the DIVERGENCE, not the head. Anchoring on the first line of old_string put the
+            # 6-line window over the text that already MATCHED — so a 10-line old_string that differs
+            # at line 7 got back six lines it had verbatim, under "The file actually reads", and the
+            # coder resubmitted the same wrong old_string. Walk forward to the first line that
+            # actually differs and centre there.
+            d=i
+            for k in range(o0,len(oldl)):
+                fi=i+k-o0
+                if fi>=len(lines) or lines[fi]!=oldl[k]:
+                    d=min(fi,len(lines)-1); break
+            ctx=chr(10).join(lines[max(0,d-2):d+4]); break
     if not ctx:  # no substring anchor — find the file line the old_string is CLOSEST to (a near-miss)
         cm=difflib.get_close_matches(key, [l.strip() for l in lines if l.strip()], n=1, cutoff=0.75)
         if cm:

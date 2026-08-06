@@ -797,7 +797,11 @@ class EditRecoveryTests(unittest.TestCase):
         from cria import editrecovery
         fail = self._fail("anchor", anchor="a = 1")
         early = editrecovery.compose(fail, prior=0)
-        self.assertIn("VERBATIM", early)                              # surgical: copy the exact text
+        # Surgical: it hands over the file's REAL text at the point of difference and tells the model
+        # to use exactly that. Pinned on substance, not wording — the anchor body was reworded on
+        # 2026-08-05 when the window moved from the head of old_string to the first diverging line.
+        self.assertIn("a = 1", early)
+        self.assertRegex(early, r"(?i)verbatim")
         self.assertNotIn("FULL file", early)
         late = editrecovery.compose(fail, prior=editrecovery.ESCALATE_AFTER - 1)
         self.assertIn("produce the corrected FULL file", late)        # committed rewrite

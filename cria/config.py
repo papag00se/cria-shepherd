@@ -204,12 +204,29 @@ class Role:
         # Translate the ONE portable reasoning value into this backend's convention. reasoning.py
         # is the shared translator — same function for local template models and remote providers.
         reasoning.apply_reasoning(body, self.reasoning, self.think_protocol)
-        if self.reasoning == "off" and self.think_protocol == "chat_template":
+        if self.reasoning == "off" and self.think_protocol == "chat_template" and not body.get("tools"):
             # The empty-`<think></think>` prefill suppresses thinking on models TRAINED for it
             # (Qwen/gemma/mellum) but is inert for the LFM2 template family (retired fleet), which then
             # deliberate in `content`. A mild directive makes those answer directly instead —
             # so OFF works on ANY loaded local model. clean_content() strips any residual leak.
             # (Only for template backends; a remote provider gets its own off signal, not a prompt.)
+            #
+            # NEVER on a body that OFFERS TOOLS. A tool-bearing internal body is a LOOK-then-answer
+            # loop (_judge_completion): the judge is supposed to spend a round calling list_dir /
+            # read_file and only then answer. "Respond directly" is the exact instruction not to.
+            # MEASURED over every captured confirm chain on the box (2026-08-05): of 168 confirm
+            # VETOES, 142 (85%) were emitted without the judge making a single inspection call —
+            # against 50 of 156 passes. Walked on ada-handles_nemotron-elastic_codex_pon_1785888803,
+            # where five confirm invocations called a tool ZERO times and four of the five invented a
+            # not-on-disk reason: "No Python script was found in the workspace" (call 0050) with
+            # ada_handles_resolver.py at 5,279 B, "missing file test_ada_handles_resolver.py" (0086)
+            # with the file listed at 2,408 B in the same evidence, and "the coder's script extracts
+            # 'holder_address' instead of 'resolved_address'" (0039) about a script that extracts
+            # both. Each false veto reached the coder in cria's voice as a ⟦ctx:steer⟧ — the false
+            # fact rule 5b forbids — and 0039's cost the whole of call 0040 to a rumination abort.
+            # The judge's own prompt says "list_dir the workspace … before you answer"; cria was
+            # appending the contradiction to it. Reasoning stays OFF either way (the prefill still
+            # applies); only the narrate-nothing sentence is withheld where looking is the job.
             _inject_nothink_directive(body)
 
     def clean_content(self, text: str | None) -> str:
