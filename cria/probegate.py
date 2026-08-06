@@ -32,7 +32,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import jsontext
-from . import probediscovery, probeparse, prompts, proberun
+from . import orphantests, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -234,6 +234,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     if SECTION_PREFIX not in (raw or ""):
         return None
     workspace = getattr(plan, "workspace", "") or ""
+    orphan_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
     findings: list[str] = []
     seen: set[str] = set()
     could_not_run = False
@@ -278,7 +279,22 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
         # scraped as an error-class finding AND it doesn't set failed_no_detail; the OTHER probes that
         # ran decide the gate's verdict. saw_probe stays True, so a pytest-only gate reads clean-ish
         # ("checks that ran reported no problems"), never "one of the checks FAILED".
-        if proberun.is_no_tests_collected(code, output=text):
+        #
+        # UNLESS the disk says otherwise. Measured on maple run 2 (1785973706): a 19KB pytest suite
+        # named `pytest_da_resolvers.py` — a name pytest's pattern cannot collect — so "no tests ran"
+        # for the run's final 30 minutes while real tests sat on disk, and the benign rule kept the
+        # gate silent. Same discriminator shape as F811: keep the benign default, read the disk to
+        # tell the testless project from the mis-named suite; an orphan test file is a stated,
+        # checkable, error-class fact (the file, the count, the runner's pattern). Also applied to a
+        # PASSING test section whose runner said it collected nothing (go's "[no test files]" exits
+        # 0) — a green built on zero tests plus an orphan suite is the same false green.
+        if proberun.is_no_tests_collected(code, output=text) or \
+                (code == 0 and orphantests.zero_tests_marker(text)):
+            if orphan_findings is None:
+                orphan_findings = orphantests.findings(workspace)
+            if orphan_findings:
+                findings.extend(f for f in orphan_findings if f not in seen)
+                seen.update(orphan_findings)
             continue
         # A check that PASSED (exit 0) has, by definition, no error-class problem — its stdout is NOT a
         # diagnosis. Linters/typecheckers print nothing on success, but pytest prints "…. [100%]\nN

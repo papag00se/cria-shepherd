@@ -2201,10 +2201,17 @@ class CoderToolsSummaryTests(unittest.TestCase):
         # BOTH the step critic (verify) and the task critic (satisfaction) must define "reason"
         # (anti-parrot) and ask for "proposed_fix" in the reply schema.
         from cria import prompts
+        # Substance pins (the operator rewrites these prompts for concision — commit 926becd):
+        # "reason" must be DEFINED as an evidence-grounded finding (the anti-parrot rule), in
+        # whatever wording; "proposed_fix" must be asked for and sit in the reply schema line.
         for name in ("verify", "satisfaction"):
             p = prompts.load(name)
-            self.assertIn('"reason" is your SPECIFIC finding', p, name)   # reason DEFINED
-            self.assertIn('"proposed_fix"', p, name)                      # field asked for
+            low = p.lower()
+            self.assertIn("reason", low, name)
+            self.assertTrue('"reason" is your specific finding' in low
+                            or "evidence-based verdict" in low
+                            or "grounded in" in low, name)                # reason DEFINED, not free prose
+            self.assertIn('proposed_fix', low, name)                      # field asked for
             self.assertIn("proposed_fix", p.splitlines()[-1], name)       # in the reply schema line
 
     def test_summarize_prepends_coder_tools_when_given(self):

@@ -70,12 +70,18 @@ class PromptAgnosticismTests(unittest.TestCase):
                           f"{name}.txt does not forbid emitting a tool call")
         # The two judges with sanctioned READ-ONLY inspection tools (operator directive) keep the
         # fence's essence — they may LOOK, never act — in its reshaped form.
+        # Pinned on SUBSTANCE, not sentences — the operator rewrites these prompts for concision
+        # (commit 926becd) and the contract must survive rewording: tools are read-only, the judge
+        # never acts, and the reply is only the JSON verdict.
         for name in ("verify", "satisfaction"):
             body = prompts.load(name).lower()
             self.assertIn("read-only", body, f"{name}.txt does not mark its tools read-only")
             self.assertIn("never write code, run commands", body,
                           f"{name}.txt does not fence the judge out of acting")
-            self.assertIn("final output is only the json verdict", body)
+            self.assertTrue("final output is only the json verdict" in body
+                            or "output only" in body,
+                            f"{name}.txt does not restrict the reply to the JSON verdict")
+            self.assertIn('{"', body.splitlines()[-1])   # the schema is the last line
 
     def test_every_prompt_that_shapes_a_plan_says_research_is_not_runtime_discovery(self):
         # THE FOOTGUN (live run 0727-102822): the ungrounded-route challenge told the planner to
@@ -219,11 +225,14 @@ class PromptAgnosticismTests(unittest.TestCase):
         # Green-but-wrong (observed live): a resolver that 404s but CATCHES the error and exits 0 passed
         # the gate (compile+lint exit 0) and the step critic marked it "runs successfully". Both critics
         # must know exit-0/clean-compile is NOT proof the deliverable works; a printed runtime failure is.
+        # Substance pins (operator rewrites these prompts for concision — commit 926becd): the
+        # exit-0/clean-compile-is-not-proof rule and the printed-runtime-failure rule must be
+        # stated, in whatever wording.
         for name in ("verify", "satisfaction"):
-            p = prompts.load(name)
-            self.assertIn("EXIT 0", p, name)          # the explicit guidance is present
-            low = p.lower()
-            self.assertTrue("parses" in low and ("4xx" in low or "runtime failure" in p.lower()), name)
+            low = prompts.load(name).lower()
+            self.assertTrue("exit 0" in low or "exit code 0" in low, name)
+            self.assertTrue("not proof" in low or "does not prove" in low, name)
+            self.assertTrue("4xx" in low or "runtime failure" in low, name)
 
     def test_stuck_detector_veto_sentinel_is_positive_not_a_negation(self):
         # A weak reasoner reasoning "the coder is NOT progressing / IS stuck" collapses a NEGATION
