@@ -124,5 +124,49 @@ class WiringTests(unittest.TestCase):
         self.assertIn("dedup.elide_text", inspect.getsource(loop.author_steer))
 
 
+class VolatileKeyTests(unittest.TestCase):
+    """ONE answer to "is this the same payload again?".
+
+    Everything in the table was MEASURED as the sole difference between near-identical payloads —
+    10 such pairs across 2 of the 12 most recent captured sessions, every one of them an object
+    address or a runner duration. A wrong entry here silently MERGES two different findings, so the
+    table stays measured, never suspected."""
+
+    def test_two_renderings_of_one_finding_share_a_key(self):
+        from cria import dedup
+        a = ("x.py:92: undefined name 'pytest'\n"
+             "url = <urllib.request.Request object at 0x7cd31c34ac60>, args = ()\n"
+             "3 failed, 1 passed in 0.36s")
+        b = ("x.py:92: undefined name 'pytest'\n"
+             "url = <urllib.request.Request object at 0x740a465deed0>, args = ()\n"
+             "3 failed, 1 passed in 0.28s")
+        self.assertNotEqual(a, b)
+        self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b))
+
+    def test_the_exec_envelopes_per_run_fields_still_go(self):
+        from cria import dedup
+        a = "Chunk ID: 939a6a\nWall time: 0.13 seconds\nOriginal token count: 69\nOutput:\nhi"
+        b = "Chunk ID: aaaaaa\nWall time: 9.90 seconds\nOriginal token count: 71\nOutput:\nhi"
+        self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b))
+
+    def test_two_DIFFERENT_findings_keep_different_keys(self):
+        from cria import dedup
+        self.assertNotEqual(dedup.volatile_key("x.py:92: undefined name 'pytest'"),
+                            dedup.volatile_key("x.py:92: undefined name 'json'"))
+        self.assertNotEqual(dedup.volatile_key("1 failed, 3 passed in 0.10s"),
+                            dedup.volatile_key("2 failed, 2 passed in 0.10s"))
+
+    def test_a_line_number_is_never_treated_as_noise(self):
+        from cria import dedup
+        self.assertNotEqual(dedup.volatile_key("x.py:92: boom"), dedup.volatile_key("x.py:93: boom"))
+
+    def test_focustrim_and_probegate_share_the_one_owner(self):
+        from cria import dedup, focustrim
+        self.assertIs(focustrim._result_key, dedup.volatile_key)
+        import inspect
+        from cria import probegate
+        self.assertIn("dedup.volatile_key", inspect.getsource(probegate.clean_gate_results))
+
+
 if __name__ == "__main__":
     unittest.main()

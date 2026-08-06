@@ -782,3 +782,41 @@ class FlaggedLineFactTests(unittest.TestCase):
         joined = " ".join(out).lower()
         self.assertNotIn("fix", joined)
         self.assertNotIn("should", joined)
+
+
+class GateRepeatCollapseIgnoresPerRunNoiseTests(unittest.TestCase):
+    """A finding the coder has already read three times is not three findings.
+
+    mellum2 1786051505 carried `resolve_handle_and_test.py:92: undefined name 'pytest'` THREE times
+    in one coder prompt — on a file it had since cut to 7 lines, so it was hunting a line that no
+    longer existed. The collapse keys on the payload and never fired: the three copies differed only
+    by a `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`."""
+
+    M = probegate.CHECKS_MARKER
+
+    def _checks(self, addr, secs, tid):
+        return {"role": "tool", "tool_call_id": tid,
+                "content": (f"{self.M} the repo's own checks report these error-class problems:\n"
+                            f"x.py:92:10: undefined name 'pytest'\n"
+                            f"url = <urllib.request.Request object at {addr}>, args = ()\n"
+                            f"3 failed, 1 passed in {secs}")}
+
+    def test_three_renderings_of_one_finding_collapse_to_one(self):
+        msgs = [self._checks("0x7cd31c34ac60", "0.36s", "a"),
+                self._checks("0x740a465deed0", "0.28s", "b"),
+                self._checks("0x7b2ed94635f0", "0.31s", "c")]
+        out = probegate.clean_gate_results(msgs, None)
+        notes = [m for m in out if probegate.CHECKS_REPEAT_NOTE[:40] in m["content"]]
+        full = [m for m in out if probegate.CHECKS_REPEAT_NOTE[:40] not in m["content"]]
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(len(full), 1)
+        self.assertIs(out[-1]["content"], msgs[-1]["content"])   # the NEWEST copy is the kept one
+
+    def test_a_genuinely_different_finding_is_never_collapsed(self):
+        a = self._checks("0x1111111111", "0.10s", "a")
+        b = dict(a, tool_call_id="b", content=a["content"].replace("undefined name 'pytest'",
+                                                                   "undefined name 'json'"))
+        out = probegate.clean_gate_results([a, b], None)
+        self.assertEqual(sum(probegate.CHECKS_REPEAT_NOTE[:40] in m["content"] for m in out), 0)
+
+

@@ -5448,3 +5448,46 @@ prints no per-test count by default and gets the weaker sentence, which is the h
 Re-verified end to end: the skip workspace now silent, mellum2 1786047222 still fires (`0f/5p`),
 nemotron 1785989343 still silent, rust-toml-cli now fires with a real count (`0f/4p`) where it had
 only the weak sentence an hour earlier.
+
+---
+
+## The repeat-collapse that a memory address defeated (2026-08-06, mellum2 1786051505)
+
+`clean_gate_results` keeps the newest copy of a recurring gate finding and shortens the earlier
+identical ones to a back-reference, so the coder stops re-reading the same error and fixating. On
+mellum2 1786051505 it never fired, and the coder read
+
+```
+resolve_handle_and_test.py:92:10: undefined name 'pytest'
+resolve_handle_and_test.py:118:18: undefined name 'pytest'
+```
+
+THREE times inside one prompt — on a file it had already cut down to **7 lines**. cria was pointing
+at line 92 of a file that ends at line 7.
+
+The three copies were 5344 bytes each and differed in exactly two places:
+
+```
+-url = <urllib.request.Request object at 0x7cd31c34ac60>, args = ()
++url = <urllib.request.Request object at 0x740a465deed0>, args = ()
+-3 failed, 1 passed in 0.36s
++3 failed, 1 passed in 0.28s
+```
+
+A CPython object address and eight hundredths of a second. The collapse keys on the payload text, so
+byte-inequality meant three distinct keys and no collapse.
+
+This is the second time the same disease has been walked. `focustrim._result_key` was fixed earlier
+in the session for the exec envelope (`Chunk ID`, `Wall time`, `Original token count`) after a run
+where `sed -n '607,680p'` returned byte-identical output seven times in one prompt and never
+collapsed. Two mechanisms answering "is this the same thing again?" differently is one too many, so
+the table of per-run noise moved to **`dedup.volatile_key`** and both now key on it.
+
+Measured before writing the table: across the 12 most recent captured sessions, 10 near-identical
+gate-payload pairs turned up in 2 of them, and EVERY difference was an object address or a runner
+duration. Nothing is in the table on suspicion — a wrong entry silently merges two findings that are
+genuinely different.
+
+Replayed against the real capture (`0125-coder-s1`): gate results at message 13, 39, 43 and 61.
+Before, all four full. After, 13 and 39 become back-references, 43 (the newest copy of that finding)
+stays whole, and 61 — an unrelated result — is untouched.

@@ -38,7 +38,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import jsontext
+from . import dedup, jsontext
 from . import probegate, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -126,17 +126,12 @@ _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "list_dir", "vi
 # fire for exec_command at all. Walked on ada-handles_nemotron-elastic_codex_pon_1785360304: the
 # coder ran `sed -n '607,680p'` on the same file seven times inside one prompt and
 # `grep -n "#/components/schemas/Handle"` a dozen more, ~30 KB of byte-identical output per prompt,
-# and no duplicate collapse and no repetition notice ever fired across the whole run. Strip the
-# volatile envelope lines before keying; the command's actual output is what decides sameness.
-_ENVELOPE_VOLATILE = re.compile(
-    r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?")
-
-
-def _result_key(content) -> str:
-    """A tool result's identity for duplicate detection — the envelope's per-run fields removed."""
-    if not isinstance(content, str):
-        return ""
-    return _ENVELOPE_VOLATILE.sub("", content).strip()
+# and no duplicate collapse and no repetition notice ever fired across the whole run.
+#
+# The table of what counts as per-run noise now lives in dedup.volatile_key — ONE owner, because
+# probegate's gate repeat-collapse was failing the same way on a different shape (object addresses,
+# runner durations) and two answers to "is this the same thing again?" is one too many.
+_result_key = dedup.volatile_key
 
 
 def _is_failure(content, tool_name: str = "") -> bool:

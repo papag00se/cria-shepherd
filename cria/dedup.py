@@ -111,3 +111,37 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
                 continue
         out.append(m)
     return (out, total) if total else (msgs, 0)
+
+
+# ── Per-run noise ────────────────────────────────────────────────────────────────────────────────
+# Two payloads that differ ONLY here are the same payload. Everything in this table was MEASURED as
+# the sole difference between near-identical payloads across captured sessions — nothing is here on
+# suspicion, because a wrong entry silently merges two genuinely different findings.
+#
+# WHO IT HIT. mellum2 1786051505 carried the same gate finding THREE times in one coder prompt
+# (`resolve_handle_and_test.py:92: undefined name 'pytest'`, on a file the coder had since cut to 7
+# lines). The repeat-collapse keys on the payload text and never fired: the three copies differed by
+# a `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`. Scanned across the
+# 12 most recent sessions, 10 near-identical gate-payload pairs turned up in 2 of them and EVERY
+# difference was one of these two shapes.
+_VOLATILE = (
+    # the harness exec envelope's per-run fields (whole lines)
+    re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"),
+    # a CPython object address inside a repr — `<urllib.request.Request object at 0x7cd31c34ac60>`
+    re.compile(r"0x[0-9a-fA-F]{6,}"),
+    # a runner's elapsed time — pytest `in 0.36s`, cargo `finished in 0.00s`, unittest `in 0.012s`
+    re.compile(r"(?i)\bin \d+\.\d+\s*s\b"),
+)
+
+
+def volatile_key(content) -> str:
+    """A payload's identity for duplicate detection — per-run noise removed.
+
+    ONE owner. Both the tool-result duplicate groups (focustrim) and the gate's repeat-collapse
+    (probegate) key on this, so "is this the same thing again?" has a single answer across cria.
+    Not a normalizer for DISPLAY — the text the model reads is always the original bytes."""
+    if not isinstance(content, str):
+        return ""
+    for pat in _VOLATILE:
+        content = pat.sub("", content)
+    return content.strip()

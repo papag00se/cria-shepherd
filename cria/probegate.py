@@ -31,7 +31,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 
-from . import jsontext
+from . import dedup, jsontext
 from . import probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -666,16 +666,22 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
         out = [m for m in out if not (isinstance(m, dict) and m.get("role") == "assistant"
                and m.get("tool_calls") and len(m["tool_calls"]) == 1
                and (m["tool_calls"][0].get("id") in drop_ids))]
+    # Keyed on dedup.volatile_key, NOT the raw payload. Two renderings of the same finding differ by
+    # per-run noise the finding does not depend on, and keying on bytes meant the collapse never
+    # fired for them. mellum2 1786051505 carried `resolve_handle_and_test.py:92: undefined name
+    # 'pytest'` THREE times in one coder prompt — on a file the coder had since cut to 7 lines, so it
+    # was hunting a line that no longer existed — and the three copies differed only by a
+    # `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`.
     last_of: dict[str, int] = {}
     for i, m in enumerate(out):
         p = _checks_payload(m)
         if p is not None:
-            last_of[p[1]] = i
-    if any(idx != last_of[_checks_payload(out[idx])[1]]  # some earlier duplicate exists
+            last_of[dedup.volatile_key(p[1])] = i
+    if any(idx != last_of[dedup.volatile_key(_checks_payload(out[idx])[1])]
            for idx, m in enumerate(out) if _checks_payload(m) is not None):
         for i, m in enumerate(out):
             p = _checks_payload(m)
-            if p is not None and last_of[p[1]] != i:
+            if p is not None and last_of[dedup.volatile_key(p[1])] != i:
                 out[i] = {**m, p[0]: CHECKS_REPEAT_NOTE}
     return out
 
