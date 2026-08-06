@@ -5889,6 +5889,18 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     if phantom:
         rlog.emit("loop.steer_phantom_path", level="warn", path=phantom, head=_clip(directive, 120))
         return None
+    # A FALSE FACT ABOUT A SOURCE CRIA HAS READ. Same enforcement class as the phantom path and the
+    # false line citation above: cria stated the shape, so the check is exact, and a steer that
+    # contradicts it is refused rather than reworded. This is what separates the maple steer that
+    # wrote the shipped bug from the gemma4 steers that carried a 4/4 — both dictate code; only one
+    # names a field the ledger denies.
+    denied_field = _field_the_ledger_denies(
+        directive, _merge_fetches(_extract_fetches(messages or []),
+                                  (getattr(sess, "fetched_pages", None) or {})))
+    if denied_field:
+        rlog.emit("loop.steer_phantom_field", level="warn", field=denied_field,
+                  head=_clip(directive, 120))
+        return None
     if _dictates_code(directive, ask):
         # OBSERVE-ONLY (operator ruling, 2026-08-04). The drop's harm evidence was measured on a
         # BLIND author (pre-ab51e59: empty truth slot 6/6 runs — broken invented code); the
@@ -5986,6 +5998,69 @@ def _false_line_citation(directive: str, evidence: str) -> str | None:
         n = max(int(d) for d in re.findall(r"\d{1,5}", m.group(1)))
         if n > ceiling:
             return f"line {n} (no listed file has more than {ceiling} lines)"
+    return None
+
+
+# A field the steer tells the coder to read off an API response: `data.get("x")`, `data["x"]`, and
+# the same on the handful of names a response is conventionally bound to. Narrow ON PURPOSE — a bare
+# backtick is not enough, because a steer legitimately quotes local variables, dict keys the coder
+# invented, and column names. The access shape is what marks it as a claim ABOUT THE RESPONSE.
+_RESP_VAR = r"(?:data|response|resp|json|payload|body|result|res|r)"
+_FIELD_ACCESS = re.compile(rf"\b{_RESP_VAR}\s*(?:\.get\(\s*['\"]([A-Za-z_]\w*)['\"]|\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\])")
+# Field names inside a parsed shape entry: `name(string, …)`, `resolved_addresses{ada(string, …)}`.
+_SHAPE_FIELD = re.compile(r"([A-Za-z_]\w*)\s*[({]")
+
+
+def _ledger_field_names(ledger: dict) -> set[str]:
+    """Every field name cria actually PARSED out of a fetched response shape — "" when it parsed none.
+
+    Nested names count (`resolved_addresses{ada(…)}` yields both), because a steer naming the inner
+    one is telling the truth. Only the shapes block is read; routes and catalogs are paths, not
+    fields."""
+    names: set[str] = set()
+    for entry in (ledger or {}).values():
+        shapes = (tuple(entry) + ("", "", ""))[2]
+        for line in str(shapes).splitlines():
+            if "→" not in line:
+                continue                      # the header and the elision note carry no fields
+            names.update(m.group(1) for m in _SHAPE_FIELD.finditer(line.split("→", 1)[1]))
+    return names
+
+
+def _field_the_ledger_denies(directive: str, ledger: dict) -> str | None:
+    """A response field the steer tells the coder to read that cria's OWN parsed shapes do not have.
+
+    THE VERIFIED ROOT of both maple-preview misses. At call 0029 of run 1786053138 cria injected a
+    whole script as a steer, comment and all — "# - address (the resolved Cardano address) ... # -
+    total_holders" — and `resolved_address = data.get('address')`. That is the FIRST appearance of
+    `data.get('address')` anywhere in the run; the model never proposed it. Neither field exists on
+    GET /handles/{handle}; the address is `resolved_addresses.ada` and the holder's count comes from
+    a second call to /holders/{address}. cria's own ledger said so, in the same prompt, under the
+    words "use these EXACT names and nesting; do not guess". The shipped CLI prints the handle name
+    where the address belongs, in BOTH runs.
+
+    This is the discriminator the DICTATES guard cannot make. A steer that dictates code is not the
+    problem — the gemma4 4/4 runs were carried by them, and one of those wrote
+    `data.get("resolved_addresses", {}).get("ada")`, which is right. The problem is a steer that
+    states a FALSE FACT about a source cria has already read (rule 5b). Checked against what cria
+    parsed, the good steer passes and the bad one does not.
+
+    SILENT unless cria can actually check: no parsed shapes at all → None, always. A field cria did
+    parse → None. Only a field asserted on a response, when cria holds the response's real shape and
+    that name is not in it, is refused.
+
+    THE UNION OF ALL ENDPOINTS, not per-endpoint. `address` is a real field — on /holders/{address} —
+    so a steer using it against /handles/{handle} passes here even though it is wrong for that route.
+    Attributing a field access to a route needs the steer to name the route unambiguously, and
+    guessing wrong would refuse a TRUE steer. A miss shows the coder a bad field it may still catch;
+    a false refusal leaves it stuck with nothing. Under-refuse, deliberately (#5b, #3)."""
+    known = _ledger_field_names(ledger)
+    if not known:
+        return None                            # nothing parsed → nothing checkable → say nothing
+    for m in _FIELD_ACCESS.finditer(directive or ""):
+        field = m.group(1) or m.group(2)
+        if field and field not in known:
+            return field
     return None
 
 
