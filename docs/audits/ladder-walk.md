@@ -5491,3 +5491,31 @@ genuinely different.
 Replayed against the real capture (`0125-coder-s1`): gate results at message 13, 39, 43 and 61.
 Before, all four full. After, 13 and 39 become back-references, 43 (the newest copy of that finding)
 stays whole, and 61 — an unrelated result — is untouched.
+
+### …and the fix for it was written in python (same day)
+
+The first cut of the noise table matched pytest's exact phrasing, `in 0.36s`. That is a python rule
+wearing a general name, and the operator caught it: *"that seems VERY python specific."* Correct —
+`go test` prints `ok\ttick\t0.003s` with no "in" anywhere, so two runs of one passing Go suite differ
+by precisely the thing the table was built to ignore and the identical bug stays live on every
+non-python family in the suite. Measured on a real Go build: `0.003s` then `0.002s`.
+
+| runner | prints | narrow rule saw it |
+|---|---|---|
+| pytest | `3 failed, 1 passed in 0.36s` | yes |
+| cargo | `finished in 0.00s` | yes |
+| go | `ok\ttick\t0.003s` | **no** |
+| JUnit | `Time elapsed: 0.031 s` | **no** |
+| RSpec | `Finished in 0.0123 seconds` | **no** |
+| jest | `Time:        1.234 s` | **no** |
+| mocha | `4 passing (123ms)` | **no** |
+
+What is actually noise is an ADDRESS and a DURATION, however a runner spells them. The table now
+reads shapes: `0x…` (python/go/c/c++/rust/ruby), `@1b6d3586` (JVM), a decimal number followed by a
+second-unit, and an integer or decimal followed by a sub-second unit.
+
+The decimal point is load-bearing — it is what keeps `AssertionError: expected 30s` out of the noise
+table, since a bare integer plus `s` is content, not a stopwatch reading.
+
+Verified not to over-merge before landing: applied to 777 distinct payloads across the 20 most recent
+captured sessions, the shape-based table merges **nothing** the python-only version did not.

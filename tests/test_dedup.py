@@ -156,6 +156,36 @@ class VolatileKeyTests(unittest.TestCase):
         self.assertNotEqual(dedup.volatile_key("1 failed, 3 passed in 0.10s"),
                             dedup.volatile_key("2 failed, 2 passed in 0.10s"))
 
+    def test_every_runner_in_the_suite_has_its_duration_read(self):
+        """The first cut matched pytest's `in 0.36s` phrasing — a python rule wearing a general
+        name. Two runs of one passing Go suite print `ok\ttick\t0.003s` then `0.002s`, which it
+        could not see, leaving the identical bug live on every non-python family in the suite."""
+        from cria import dedup
+        pairs = {
+            "go":     ("ok  \ttick\t0.003s", "ok  \ttick\t0.002s"),
+            "cargo":  ("test result: ok. 4 passed; 0 failed; finished in 0.00s",
+                       "test result: ok. 4 passed; 0 failed; finished in 0.01s"),
+            "pytest": ("3 failed, 1 passed in 0.36s", "3 failed, 1 passed in 0.28s"),
+            "junit":  ("Tests run: 4, Failures: 0, Time elapsed: 0.031 s",
+                       "Tests run: 4, Failures: 0, Time elapsed: 0.044 s"),
+            "rspec":  ("Finished in 0.0123 seconds", "Finished in 0.0456 seconds"),
+            "jest":   ("Time:        1.234 s", "Time:        1.567 s"),
+            "mocha":  ("  4 passing (123ms)", "  4 passing (98ms)"),
+        }
+        for runner, (a, b) in pairs.items():
+            self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b), runner)
+
+    def test_the_jvm_spelling_of_an_address_is_noise_too(self):
+        from cria import dedup
+        self.assertEqual(dedup.volatile_key("at java.lang.Object@1b6d3586 boom"),
+                         dedup.volatile_key("at java.lang.Object@5f2050f6 boom"))
+
+    def test_a_bare_integer_with_an_s_is_left_alone(self):
+        # a duration needs a decimal point (or a sub-second unit); `30s` in a finding is content
+        from cria import dedup
+        self.assertNotEqual(dedup.volatile_key("AssertionError: expected 30s"),
+                            dedup.volatile_key("AssertionError: expected 45s"))
+
     def test_a_line_number_is_never_treated_as_noise(self):
         from cria import dedup
         self.assertNotEqual(dedup.volatile_key("x.py:92: boom"), dedup.volatile_key("x.py:93: boom"))

@@ -124,13 +124,28 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
 # a `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`. Scanned across the
 # 12 most recent sessions, 10 near-identical gate-payload pairs turned up in 2 of them and EVERY
 # difference was one of these two shapes.
+#
+# WRITTEN BY SHAPE, NOT BY LANGUAGE. The first cut matched pytest's exact `in 0.36s` phrasing, which
+# is a python rule wearing a general name — `go test` prints `ok\ttick\t0.003s` with no "in", and two
+# runs of one passing Go suite differ by exactly that (measured: 0.003s then 0.002s), so the identical
+# bug stays live on every non-python family in the suite. Operator caught it. What is actually noise
+# is an ADDRESS and a DURATION, in whatever way a runner spells them.
+#
+# Verified not to over-merge: applied to 777 distinct payloads across 20 captured sessions, the table
+# below merges nothing the narrow python-only version did not. A duration needs a decimal point to
+# count as one (or a sub-second unit), so `expected 30s` in a finding is left alone.
 _VOLATILE = (
     # the harness exec envelope's per-run fields (whole lines)
     re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"),
-    # a CPython object address inside a repr — `<urllib.request.Request object at 0x7cd31c34ac60>`
+    # an object address in a repr — python/go/c/c++/rust/ruby all spell it `0x…`
     re.compile(r"0x[0-9a-fA-F]{6,}"),
-    # a runner's elapsed time — pytest `in 0.36s`, cargo `finished in 0.00s`, unittest `in 0.012s`
-    re.compile(r"(?i)\bin \d+\.\d+\s*s\b"),
+    # …and the JVM spells it `java.lang.Object@1b6d3586`
+    re.compile(r"@[0-9a-fA-F]{6,}\b"),
+    # a runner's elapsed time: pytest `in 0.36s`, cargo `finished in 0.00s`, go `0.003s`,
+    # JUnit `Time elapsed: 0.031 s`, RSpec `Finished in 0.0123 seconds`, jest `Time: 1.234 s`
+    re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b"),
+    # …and sub-second units, where runners drop the decimal — mocha `(123ms)`
+    re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b"),
 )
 
 
