@@ -456,3 +456,33 @@ class ThePeriodicStepCheckIsObserveOnlyTests(unittest.TestCase):
         import inspect
         src = inspect.getsource(loop.Loop._periodic_step_check)
         self.assertIn("loop.periodic_step_check", src)
+
+
+class TheLiveExecutionCheckRunsOnThisMachineTests(unittest.TestCase):
+    """The one check built to catch a green gate over a broken program reported "the delivered
+    program was not run, because FileNotFoundError: 'python'" — because the model said `python` and
+    this box, like most, ships only `python3`. The satisfaction judge read that as no evidence and
+    passed a run that verify scores 1/4."""
+
+    def setUp(self):
+        from cria import execcheck
+        self.execcheck = execcheck
+
+    def test_the_ordinary_spelling_resolves_to_the_installed_one(self):
+        self.assertEqual(self.execcheck.resolve_interpreter(["python", "resolve_handle.py", "goose"]),
+                         ["python3", "resolve_handle.py", "goose"])
+
+    def test_an_already_correct_command_is_untouched(self):
+        self.assertEqual(self.execcheck.resolve_interpreter(["python3", "x.py"]), ["python3", "x.py"])
+
+    def test_a_non_interpreter_program_is_never_rewritten(self):
+        for argv in (["./resolver", "goose"], ["node", "x.js"], ["cargo", "run"]):
+            self.assertEqual(self.execcheck.resolve_interpreter(list(argv)), argv)
+
+    def test_the_delivered_program_actually_runs_now(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "hi.py"), "w") as fh:
+                fh.write("print('resolved addr1xyz')\n")
+            code, out = self.execcheck.run(d, "python hi.py")
+            self.assertEqual(code, 0)
+            self.assertIn("addr1xyz", out)

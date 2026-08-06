@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 
@@ -227,12 +228,49 @@ def _runnable(command: str) -> tuple[bool, str]:
     return True, ""
 
 
+# Interpreter spellings that mean the same thing, in preference order. cria RUNS the command, so
+# choosing an interpreter that exists on this box is cria's job, not the model's.
+_INTERPRETER_ALIASES = {
+    "python": ("python3", "python"),
+    "python3": ("python3", "python"),
+    "pip": ("pip3", "pip"),
+}
+
+
+def resolve_interpreter(argv: list[str]) -> list[str]:
+    """``argv`` with a missing interpreter swapped for the equivalent that IS installed.
+
+    Walked on ada-handles_mellum2_codex_poff_1785996352 call 0059. The model answered "run
+    `python resolve_handle.py goose`" — the ordinary spelling — and this box, like most, ships
+    `/usr/bin/python3` and no `python`. `subprocess.run` raised FileNotFoundError, `run` returned
+    None, and the marker cria handed the satisfaction judge read:
+
+        ⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run,
+        because FileNotFoundError: [Errno 2] No such file or directory: 'python'.
+
+    So the ONE check built to catch a green gate over a broken program reported no evidence — and
+    the judge, which had the coder's own `python3 live_test.py goose` -> exit 1, HTTP 403 sitting in
+    the same prompt, ruled the task satisfied. The run scored 1/4.
+
+    This is not guessing at the model's intent: `python foo.py` and `python3 foo.py` are the same
+    instruction, and which one runs is a fact about the machine that cria can read. Every other
+    failure direction is untouched — an unknown program is still a FileNotFoundError, and a command
+    cria cannot parse is still refused upstream in ``_runnable``."""
+    if not argv:
+        return argv
+    for name in _INTERPRETER_ALIASES.get(os.path.basename(argv[0]), ()):
+        if shutil.which(name):
+            return [name] + argv[1:]
+    return argv
+
+
 def run(root: str, command: str, timeout: int = RUN_TIMEOUT_S) -> tuple[int | None, str]:
     ok, why = _runnable(command)
     if not ok:
         return None, why
     try:
-        p = subprocess.run(shlex.split(command), cwd=root, capture_output=True, text=True,
+        p = subprocess.run(resolve_interpreter(shlex.split(command)), cwd=root,
+                           capture_output=True, text=True,
                            timeout=timeout)
         return p.returncode, ((p.stdout or "") + (p.stderr or ""))[:OUTPUT_CAP]
     except subprocess.TimeoutExpired:
