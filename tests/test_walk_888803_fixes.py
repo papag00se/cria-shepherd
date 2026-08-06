@@ -9,6 +9,7 @@ evidence that would have corrected them. Each test below pins one of those mecha
 import base64
 import json
 import os
+import pathlib
 import subprocess
 import tempfile
 import unittest
@@ -601,3 +602,31 @@ class AnEmptinessClaimIsRefutableByDiskTests(unittest.TestCase):
         self.assertEqual(out, "resolve_handle.py")
         self.assertIn("EXISTS on disk", seen["prompt"])
         self.assertIn("code lines", seen["prompt"])   # the fact an emptiness claim turns on
+
+
+class TheSupervisorIsWatchedTooTests(unittest.TestCase):
+    """The degenerate-run backstop lives in chat_watched and fires even with watch=None. The coder
+    had it; the reasoner did not. maple-preview 1785994846 call 0052: the steer author repeated one
+    ~250-word paragraph ~15 times, ran to finish_reason=length at 34,766 bytes, and burned 2m16s of a
+    5.5-minute endgame producing nothing."""
+
+    def test_the_reasoner_endpoint_is_wired_to_the_watched_call(self):
+        src = pathlib.Path("cria/server.py").read_text()
+        self.assertIn('reasoner_chat=_ep("reasoner").chat_watched,', src)
+        self.assertNotIn('reasoner_chat=_ep("reasoner").chat,', src)
+
+    def test_the_backstop_does_not_need_a_watcher_to_fire(self):
+        import inspect
+        from cria import upstream
+        src = inspect.getsource(upstream.Upstream.chat_watched)
+        i = src.index("degenerate_tail")
+        # the backstop must not sit inside the `if watch is not None` arm
+        self.assertNotIn("if watch is not None", src[:i].rsplit("\n", 6)[-1])
+        self.assertIn("aborted is None and rumination.degenerate_tail", src)
+
+    def test_a_degenerate_tail_is_still_what_it_detects(self):
+        from cria import rumination
+        self.assertTrue(rumination.degenerate_tail("Let me look at it again. " * 200))
+        self.assertFalse(rumination.degenerate_tail(
+            "The test fails because the mock raises a bare Exception while the code catches "
+            "requests.RequestException. Fix the side_effect to raise requests.HTTPError instead."))

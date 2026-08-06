@@ -429,7 +429,17 @@ class CriaServer(ThreadingHTTPServer):
                     # reasoner_chat/reasoner_role are wired UNCONDITIONALLY (even with no reasoner role,
                     # _ep resolves the shared endpoint and role is None) — the single-item off-ramps gate
                     # on `reasoner_role is not None`, so a plan-off Loop without a reasoner just skips them.
-                    reasoner_chat=_ep("reasoner").chat,
+                    # chat_watched, NOT chat — for the DEGENERATE-RUN BACKSTOP it already carries.
+                    # That backstop fires independently of the rumination watcher (watch=None here),
+                    # aborts a stream that has locked into repeating one passage, and returns the
+                    # same buffered completion every caller already expects. The reasoner had no
+                    # such protection: walked on maple-preview 1785994846 call 0052, the steer author
+                    # repeated one ~250-word paragraph about fifteen times, ran to finish_reason=
+                    # length at 34,766 bytes, and burned 2m16s of a 5.5-minute endgame producing
+                    # nothing — 62% of that run's final stretch was cria's own reasoning calls. The
+                    # coder has guard_rumination, but it keys on the CODER's finish_reason; nothing
+                    # watched the supervisor. Same mechanism, same owner, one more call path.
+                    reasoner_chat=_ep("reasoner").chat_watched,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,
