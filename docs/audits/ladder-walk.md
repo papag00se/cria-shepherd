@@ -5199,7 +5199,7 @@ channel — a week-old ternary port behaving like a mature stack (55–57 tok/s 
   delivered per the observe-only provenance ruling — more truth-sample rows for that cohort;
   several coached the SIMULATED field rather than away from it.
 
-## ada-handles_nemotron-elastic_codex_pon_1785360304 — FULL WALK (8 of 12 bands reported; 4 still reading)
+## ada-handles_nemotron-elastic_codex_pon_1785360304 — FULL WALK COMPLETE (all 65 chunks, calls 0001-0155)
 
 Read 2026-08-05 across twelve parallel readers, one band each, every line at full fidelity.
 
@@ -5261,3 +5261,37 @@ times for a fact it had been handed.
    fails pyflakes checks" with ten clean runs in its own prompt. cria then republished that verbatim
    to both the reasoner and the coder. The unverified-claim hedge wrapped around it only doubts
    OPTIMISTIC claims; a summary that falsely says the work is BROKEN passes untouched.
+
+### CLOSED SINCE THE FIRST WRITE-UP (all 12 bands now in)
+
+- **Plan step naming an unusable path** — FIXED (`planner.repoint_unusable_paths`).
+- **Plan step prescribing a tool** — FIXED (`planner.step_names_tool` + `plan_step_outcome.txt`).
+  13% of all captured plan steps, 34 of 118 runs.
+- **JSON spilled and announced as `.yml`** — FIXED (`webfetch._doc_format`); both notices state it.
+- **The checks digest deleting a second failure's diagnosis** — FIXED (consecutive-only collapse).
+- **Duplicate collapse never firing for exec_command** — FIXED (envelope's per-run fields stripped
+  before keying). This is why nothing interrupted ~40 identical greps.
+- **The compaction digest pidginising the user's task** — ALREADY FIXED upstream; verified at six
+  budgets down to 24 tokens. The run predates it. Not re-fixed.
+
+### STILL OPEN after the full walk
+
+1. **The completion critic stopped running entirely after the 16m50s replan** — 0 critic calls in the
+   final 46 turns. Nothing existed that COULD mark step 1 done, so the step recited to the wall
+   clock. This is the single largest unfixed item in the run.
+2. **`⟦ctx:checks⟧` "changing the test so it stops asking is not a fix"** is the 08-02 over-correction
+   of this run's "the smallest change that clears it". Both are wrong in one direction. The gate has
+   no way to say "this test's premise is false" — which was true in BOTH walked runs.
+3. **The compactor's whole system prompt was the nothink line** (call 0112): no role, no output
+   shape. It returned terminal-agent JSON instead of a summary and inverted the state ("still fails
+   pyflakes" with ten clean runs in its own prompt). cria republished it to the reasoner and coder.
+4. **The unverified-summary hedge is one-directional** — it doubts claims that the work is DONE and
+   passes a false claim that the work is BROKEN untouched. That false claim drove twelve calls.
+5. **`git status --porcelain | sha1sum` as the change fingerprint is content-blind** — same hash
+   observed with pyflakes failing and, after the fix, passing.
+6. **A steer may be raw tool-call debris** (call 0030): cria relayed a reasoner's fabricated tool call
+   and invented grep output verbatim, teaching the coder that `holder` is an object. It is a string.
+   The steer path has roleplay / URL / phantom-path guards; none rejects a JSON blob.
+7. **Two reasoner steers prescribed `holder.address`** (0141, 0151) with the live body showing
+   `holder` is a plain string in their own prompts, and cria's own ledger marking `holder_type(object)`
+   but `holder` bare.
