@@ -26,7 +26,7 @@ gates = check runs it triggered.
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
 | 🟡 nemotron-elastic · 12B-A2B q4km | ²⁄₄ ⁴⁄₄ ⁴⁄₄ | 116.1 | 5 | 38 | 3 | 1 | 4 | 1 |
 | 🟡 mellum2 · 12B-MoE q4 | ³⁄₄ ⁴⁄₄ ²⁄₄ | 174.6 | 8 | 76 | 9 | 2 | 14 | 2 |
-| 🟠 maple-preview · ? | ²⁄₄ | 57.3 | 30 | 97 | 9 | 2 | 5 | 4 |
+| 🟠 maple-preview · ? | ²⁄₄ ²⁄₄ | 59.2 | 38 | 88 | 10 | 2 | 6 | 5 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -113,8 +113,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | nemotron-elastic | counted | 4/4 | 4 | 28 | 14 | 115.1 | 0 | 3 | exited |
 | gemma4-stock | counted | 4/4 | 4 | 32 | 16 | 55.7 | 2 | 3 | exited |
 | maple-preview | counted | 2/4 | 30 | 97 | 47 | 57.3 | 9 | 5 | budget-killed |
+| maple-preview | counted | 2/4 | 46 | 78 | 52 | 61.2 | 10 | 8 | milestone-miss-45min |
 
-counted runs: 64 · avg wall 23 min · avg coder calls 71 · full-pass rate 29/64
+counted runs: 65 · avg wall 23 min · avg coder calls 71 · full-pass rate 29/65
 
 ## Scoreboard (every run; counted rows bold)
 
