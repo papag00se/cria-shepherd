@@ -56,18 +56,33 @@ def state(r):
 
 
 
-# Size + quant per fleet alias, from the served model names the runs actually logged
-# (⟦cria⟧ coder · <name> lines) and the llama-fleet service definitions in suite/run.py.
+# HOW EACH MODEL IS NAMED IN THE GRID: (display name, size + quant), keyed by fleet alias. Grounded
+# in the served model names the runs actually logged (⟦cria⟧ coder · <name> lines) and the
+# llama-fleet service definitions in suite/run.py — e.g. `maple_preview_20b_a1b_tq2_0` is a 20B
+# ternary-quantised MoE with ~1B active.
+#
+# THE DISPLAY NAME LIVES HERE, not just the spec, because the grid is regenerated in place by
+# `--write` and anything hand-edited into the file is destroyed on the next run. The operator
+# corrected two of these rows by hand on 2026-08-06 and the very next refresh would have reverted
+# them. A generated file cannot be the place a human records a fact; the generator has to hold it.
 MODEL_SPECS = {
-    "ternary-bonsai": "27B q2_0",
-    "gemma4-finetune": "12B q4km (retired finetune)",
-    "gemma4": "12B q4km",
-    "qwythos": "9B q6",
-    "qwopus": "9B q6",
-    "ornith": "9B q6",
-    "mellum2": "12B-MoE q4",
-    "nemotron-elastic": "12B-A2B q4km",
+    "ternary-bonsai":   ("ternary-bonsai", "27B q2_0"),
+    "gemma4-finetune":  ("gemma4-finetune", "12B q4km (retired finetune)"),
+    "gemma4":           ("gemma4", "12B q4km"),
+    "qwythos":          ("qwythos", "9B q6"),
+    "qwopus":           ("qwopus", "9B q6"),
+    "ornith":           ("ornith", "9B q6"),
+    "mellum2":          ("mellum2", "12B-A2.5B q4"),
+    "nemotron-elastic": ("nemotron-elastic", "12B-A2B q4km"),
+    "maple-preview":    ("maple (ternary)", "20B-A1B q2"),
 }
+
+
+def grid_name(alias: str) -> str:
+    """The model's name as the grid prints it. An unknown alias shows its own name and `?` for the
+    spec — visible as a gap to fill, never silently wrong."""
+    label, spec = MODEL_SPECS.get(alias, (alias, "?"))
+    return f"{label} · {spec}"
 
 # Assist families and their icons: 🧭 steers (a directive/redirect cria injected), 🔁 repetition
 # breaks (same-call loops interrupted), 🧪 gates (the repo's own checks run on the coder's behalf),
@@ -163,7 +178,7 @@ def markdown(lines, models) -> str:
     out = ["### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)", ""]
     out += ["| model | last 3 | avg tok/s | avg min | avg calls | " + " | ".join(icons) + " |",
             "|---|---|---:|---:|---:|" + "---:|" * len(icons)]
-    out += [f"| {s['badge']} {s['model']} · {MODEL_SPECS.get(s['model'], '?')} | {s['trend']} | {s['tok_s']} | {s['min']} | {s['calls']} | "
+    out += [f"| {s['badge']} {grid_name(s['model'])} | {s['trend']} | {s['tok_s']} | {s['min']} | {s['calls']} | "
             + " | ".join(str(s['fam'][i]) for i in icons) + " |"
             for s in models]
     out += ["", f"assists per run: {legend}", "", "### Per-run detail", ""]
