@@ -32,7 +32,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import jsontext
-from . import orphantests, probediscovery, probeparse, prompts, proberun
+from . import probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -234,7 +234,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     if SECTION_PREFIX not in (raw or ""):
         return None
     workspace = getattr(plan, "workspace", "") or ""
-    orphan_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
+    stranded_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
     findings: list[str] = []
     seen: set[str] = set()
     could_not_run = False
@@ -284,17 +284,20 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
         # named `pytest_da_resolvers.py` — a name pytest's pattern cannot collect — so "no tests ran"
         # for the run's final 30 minutes while real tests sat on disk, and the benign rule kept the
         # gate silent. Same discriminator shape as F811: keep the benign default, read the disk to
-        # tell the testless project from the mis-named suite; an orphan test file is a stated,
-        # checkable, error-class fact (the file, the count, the runner's pattern). Also applied to a
-        # PASSING test section whose runner said it collected nothing (go's "[no test files]" exits
-        # 0) — a green built on zero tests plus an orphan suite is the same false green.
+        # tell the testless project from the mis-named suite; a stranded test file is a stated,
+        # checkable, error-class fact (the files, the runner, its naming rule). The detector is the
+        # ONE existing owner (probediscovery's convention table — the g20 mechanism), not a second
+        # scanner. Also applied to a PASSING test section whose runner said it collected nothing
+        # (go's "[no test files]" exits 0) — a green built on zero tests plus a stranded suite is
+        # the same false green.
         if proberun.is_no_tests_collected(code, output=text) or \
-                (code == 0 and orphantests.zero_tests_marker(text)):
-            if orphan_findings is None:
-                orphan_findings = orphantests.findings(workspace)
-            if orphan_findings:
-                findings.extend(f for f in orphan_findings if f not in seen)
-                seen.update(orphan_findings)
+                (code == 0 and _zero_tests_marker(text)):
+            if stranded_findings is None:
+                stranded_findings = probediscovery.stranded_test_sentences(workspace) \
+                    if workspace else []
+            if stranded_findings:
+                findings.extend(f for f in stranded_findings if f not in seen)
+                seen.update(stranded_findings)
             continue
         # A check that PASSED (exit 0) has, by definition, no error-class problem — its stdout is NOT a
         # diagnosis. Linters/typecheckers print nothing on success, but pytest prints "…. [100%]\nN
@@ -407,6 +410,16 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
     if untested:
         clean += " " + prompts.render("no_tests_found", findings=" ".join(untested))
     return clean
+
+
+# The runner-said-nothing-ran shapes, per supported runner — consulted only to decide whether the
+# stranded-test disk scan is worth asking for; the scan result, not the marker, is the finding.
+_ZERO_TESTS_MARKERS = ("no tests ran", "[no test files]", "no tests found")
+
+
+def _zero_tests_marker(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in _ZERO_TESTS_MARKERS)
 
 
 CHECKS_MARKER = "⟦ctx:checks⟧"

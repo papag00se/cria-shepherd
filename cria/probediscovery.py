@@ -1052,6 +1052,11 @@ def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bo
     discoverable, stranded = False, []
     for p in paths:
         rel = _rel_to(root, p)
+        if rel.name == "conftest.py":
+            # pytest plumbing, loaded by the runner regardless of the naming globs — it typically
+            # imports pytest with no tests of its own, so the marker would call it stranded, and
+            # "conftest.py will not run" is a false fact (it always runs).
+            continue
         named = (any(part in conv.dirs for part in rel.parts[:-1])
                  or any(fnmatch.fnmatch(rel.name, g) for g in conv.globs))
         if not conv.globs:
@@ -1070,20 +1075,44 @@ def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -
     return _audit_tests(root, paths, conv)[0]
 
 
-def undiscoverable_tests(root: Path) -> list[str]:
-    """The test-file naming conventions cria LOOKED FOR and did not find, for each floor language whose
-    source files are present. Empty when a language has matching test files (or isn't present at all).
-
-    The mirror image of :func:`test_floor_candidates`, from the same table so the two can never drift:
-    that function says which tests cria can run, this one says which convention it searched by when it
-    found none. Measured need, g20 (gemma4, ada-handles): the coder put its unittest classes INSIDE
-    resolve_handle.py, so no file matched, no test probe was ever selected, and the gate reported "the
-    repo's own checks that ran reported no error-class problems" fifty-four times over a project whose
-    tests could not run at all. Naming what cria searched by is a FACT about cria's own check — it lets
-    a coder that did write tests make them reachable, and it says nothing about whether the task wants
-    tests, which cria cannot know."""
-    from . import linterprobe  # local import: linterprobe never imports this module
+def stranded_test_sentences(root: Path) -> list[str]:
+    """One complete sentence per language whose tree holds files that CONTAIN test code the
+    language's default runner will NEVER collect — the file names, the runner, and its naming rule.
+    Emitted whether or not OTHER test files are discoverable: a discoverable test_live_handle.py
+    does not make a stranded 19KB pytest_da_resolvers.py run (measured on maple run 2, 1785973706 —
+    the old discoverable→silence rule kept the gate quiet about it for the run's final 30 minutes).
+    Respects a project that re-pointed its own runner (conv.configs) and says nothing about absent
+    languages."""
     root = Path(root)
+    out: list[str] = []
+    for conv in TEST_CONVENTIONS:
+        paths = _language_files(root, conv)
+        if not paths:
+            continue                                   # language absent — say nothing about it
+        if any((root / cfg).exists() for cfg in conv.configs):
+            continue                                   # the project re-pointed its own runner
+        stranded = _audit_tests(root, paths, conv)[1]
+        if stranded:
+            # The strongest thing cria can say: the tests EXIST and will never run. Naming the file
+            # makes it checkable — g20 (unittest classes inside resolve_handle.py, gate clean 54×)
+            # and maple run 2 (pytest_da_resolvers.py, 19KB, zero collected) are both this class.
+            out.append(f"Test code in {', '.join(stranded[:4])} will not run: "
+                       f"{conv.runner} only runs tests {conv.label}.")
+    return out
+
+
+def undiscoverable_tests(root: Path) -> list[str]:
+    """Everything cria can factually say about tests its runners cannot see: the stranded-file
+    sentences (see :func:`stranded_test_sentences` — emitted even when other test files ARE
+    discoverable), plus, for a floor language with NO discoverable tests at all, the convention
+    cria searched by and found nothing for.
+
+    The mirror image of :func:`test_floor_candidates`, from the same table so the two can never
+    drift. Measured need, g20 (gemma4, ada-handles): the coder put its unittest classes INSIDE
+    resolve_handle.py, so no file matched, no test probe was ever selected, and the gate reported
+    "no error-class problems" fifty-four times over a project whose tests could not run at all.
+    Naming what cria searched by is a FACT about cria's own check — it says nothing about whether
+    the task wants tests, which cria cannot know."""
     root = Path(root)
     out: list[str] = []
     for conv in TEST_CONVENTIONS:
@@ -1093,19 +1122,14 @@ def undiscoverable_tests(root: Path) -> list[str]:
         if any((root / cfg).exists() for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         discoverable, stranded = _audit_tests(root, paths, conv)
-        if discoverable:
-            continue                                   # its tests are already discoverable
         # Each finding is a COMPLETE sentence. They are not interchangeable halves of one template:
         # "your tests exist and will not run" and "you have no tests" are different facts and read as
         # different instructions, and gluing either into a fixed "must be named {X}" frame produced a
         # sentence that said neither.
         if stranded:
-            # The strongest thing cria can say: the tests EXIST and will never run. Naming the file
-            # makes it checkable — this is g20, where unittest classes sat in resolve_handle.py and
-            # the gate reported "no error-class problems" fifty-four times.
             out.append(f"Test code in {', '.join(stranded[:4])} will not run: "
                        f"{conv.runner} only runs tests {conv.label}.")
-        else:
+        elif not discoverable:
             out.append(f"No {conv.runner} tests were found — to be run they must be {conv.label}.")
     return out
 
