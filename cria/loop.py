@@ -5291,6 +5291,17 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     touched = _touched_paths(body.get("messages", []))
     recent = list(getattr(gs, "recent_writes", None) or []) + touched if gs is not None else touched
     disk = _fresh_disk_facts(workspace_root, recent, getattr(gs, "spin_path", "") if gs is not None else "")
+    if not disk and workspace_root:
+        # The write history can be GONE: a harness compaction replaces the turns that carried the
+        # write tool_calls, so _touched_paths — the "durable" source above — recovers nothing. What
+        # then printed was "(no files touched yet)" under a header reading "trust this over the
+        # transcript", i.e. cria telling the judge to believe an empty workspace over a transcript
+        # that shows the files. Walked THREE times: 1785888803 calls 0122 and 0124 (both unstick
+        # judges blinded, both then prescribing code already on disk) and 1785360304 call 0088
+        # (`(no files touched yet)` while resolve_handle.py sat at 2,582 B, and the same prompt
+        # spoke of "your current edits" fourteen lines below). The disk is the answer cria could
+        # always have read — the same inventory the step critic is given.
+        disk = workspace_inventory(workspace_root)
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).

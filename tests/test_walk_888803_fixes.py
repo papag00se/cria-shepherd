@@ -213,6 +213,28 @@ class _Rlog:
         pass
 
 
+class TheSteerAuthorIsNeverToldTheWorkspaceIsEmptyTests(unittest.TestCase):
+    """When a harness compaction removes the turns carrying the write tool_calls, _touched_paths
+    recovers nothing and the on-disk section rendered "(no files touched yet)" — under a header that
+    says to trust it over the transcript. Walked three times across two runs; every judge so blinded
+    then ruled against reality. The disk itself is the answer."""
+
+    def test_a_lost_write_history_falls_back_to_the_real_inventory(self):
+        from cria import groundtruth
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "resolve_handle.py"), "w") as fh:
+                fh.write("x = 1\n")
+            # No recoverable writes: this is exactly the post-compaction state.
+            self.assertEqual(loop._fresh_disk_facts(d, [], ""), "")
+            inv = groundtruth.workspace_inventory(d)
+            self.assertIn("resolve_handle.py", inv)
+
+    def test_a_genuinely_empty_workspace_says_so_rather_than_nothing(self):
+        from cria import groundtruth
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn("none", groundtruth.workspace_inventory(d).lower())
+
+
 class ThePromptsExistTests(unittest.TestCase):
     def test_the_degenerate_notice_is_a_file_not_an_inline_string(self):
         self.assertTrue(prompts.load("rumination_guard_degenerate").strip())
