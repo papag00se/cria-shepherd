@@ -37,13 +37,13 @@ def rows():
         r = json.loads(line)
         # Scope widened 2026-08-05 (operator: report brought current): the campaign closed and
         # the lanes moved on — a grid keyed to the REGRESSION1 note prefix showed nemotron on
-        # its retired planner-on lane and omitted gemma4-stock entirely. The grid is THE
+        # its retired planner-on lane and omitted gemma4 entirely. The grid is THE
         # operator view, so it now covers every ada-handles row; superseded/voided rows are
         # still excluded downstream by state().
         # RETIRED models never render: fabliq/zaya1 (operator call 2026-08-04) and the gemma4
         # finetune (operator call 2026-08-05, "replace the finetune in all places"). Their rows
         # stay in results.jsonl as evidence; the grid is a living surface.
-        if r.get("task") == "ada-handles" and r.get("model") not in ("fabliq", "zaya1", "gemma4"):
+        if r.get("task") == "ada-handles" and r.get("model") not in ("fabliq", "zaya1", "gemma4-finetune"):
             out.append(r)
     return out
 
@@ -60,8 +60,8 @@ def state(r):
 # (⟦cria⟧ coder · <name> lines) and the llama-fleet service definitions in suite/run.py.
 MODEL_SPECS = {
     "ternary-bonsai": "27B q2_0",
-    "gemma4": "12B q4km (retired finetune)",
-    "gemma4-stock": "12B q4km stock",
+    "gemma4-finetune": "12B q4km (retired finetune)",
+    "gemma4": "12B q4km",
     "qwythos": "9B q6",
     "qwopus": "9B q6",
     "ornith": "9B q6",

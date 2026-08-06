@@ -29,7 +29,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 |-------|-------|----------------------|--------|-------|
 | **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
-| **gemma4-stock** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05: stock scored 3/4 ×3 on the lane where the finetune never beat 2/4 — the finetune's history rows keep its name as evidence |
+| **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05: stock scored 3/4 ×3 on the lane where the finetune never beat 2/4 — the finetune's history rows keep its name as evidence |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
 | **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
@@ -228,9 +228,9 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **mellum2** | ✅ | ✅ clean direct answer | trained for it (embedded template) |
 | **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
-| **gemma4** (retired finetune) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4-stock NOT yet verified for the OFF recipe |
+| **gemma4-finetune** (retired) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4 NOT yet verified for the OFF recipe |
 
-**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; gemma4 verified in its finetune era — re-verify gemma4-stock before relying on OFF).
+**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF).
 Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet
 still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) —
 a model limitation to check when adding a model, not a missing manipulation.
@@ -248,7 +248,7 @@ Per request cria applies THREE things so OFF works on any loaded model without p
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
 **Honest result (verified end-to-end 2026-07-08):**
-- **Native-off models** (mellum2, qwopus, ornith, qwythos; gemma4 verified in its finetune era — re-verify gemma4-stock before relying on OFF) → OFF is **clean**.
+- **Native-off models** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
 - On a prose-deliberating template family, OFF engages and is clean on direct tasks, but
   reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never
   breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a

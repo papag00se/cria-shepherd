@@ -19,7 +19,7 @@ gates = check runs it triggered.
 
 | model | last 3 | avg tok/s | avg min | avg calls | 🧭 | 🔁 | 🧪 | 🗜️ |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| 🟢 gemma4-stock · 12B q4km stock | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 56.6 | 4 | 26 | 1 | 0 | 2 | 1 |
+| 🟢 gemma4 · 12B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 56.6 | 4 | 26 | 1 | 0 | 2 | 1 |
 | 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 123.1 | 6 | 43 | 4 | 0 | 5 | 1 |
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
@@ -107,11 +107,11 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | nemotron-elastic | counted | 4/4 | 8 | 52 | 28 | 115.8 | 5 | 4 | exited |
 | nemotron-elastic | counted | 2/4 | 6 | 44 | 24 | 116.8 | 4 | 3 | exited |
 | nemotron-elastic | counted | 4/4 | 5 | 42 | 20 | 116.4 | 5 | 5 | exited |
-| gemma4-stock | counted | 4/4 | 5 | 29 | 14 | 54.9 | 2 | 2 | exited |
-| gemma4-stock | counted | 4/4 | 4 | 25 | 13 | 56.2 | 0 | 2 | exited |
-| gemma4-stock | counted | 4/4 | 3 | 22 | 10 | 57.9 | 0 | 2 | exited |
+| gemma4 | counted | 4/4 | 5 | 29 | 14 | 54.9 | 2 | 2 | exited |
+| gemma4 | counted | 4/4 | 4 | 25 | 13 | 56.2 | 0 | 2 | exited |
+| gemma4 | counted | 4/4 | 3 | 22 | 10 | 57.9 | 0 | 2 | exited |
 | nemotron-elastic | counted | 4/4 | 4 | 28 | 14 | 115.1 | 0 | 3 | exited |
-| gemma4-stock | counted | 4/4 | 4 | 32 | 16 | 55.7 | 2 | 3 | exited |
+| gemma4 | counted | 4/4 | 4 | 32 | 16 | 55.7 | 2 | 3 | exited |
 | maple-preview | counted | 2/4 | 30 | 97 | 47 | 57.3 | 9 | 5 | budget-killed |
 | maple-preview | counted | 2/4 | 46 | 78 | 52 | 61.2 | 10 | 8 | milestone-miss-45min |
 | nemotron-elastic | counted | 4/4 | 8 | 58 | 36 | 137.8 | 6 | 6 | exited |
@@ -170,11 +170,11 @@ counted runs: 67 · avg wall 23 min · avg coder calls 70 · full-pass rate 30/6
 | nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785945326 | exited | first-ever nemotron planner-OFF: 4/4 in 8.5 min |
 | nemotron-elastic | off | 2/4 | ada-handles_nemotron-elastic_codex_poff_1785946072 | exited | walked: cria fault YES (fused-call junk file + traceback-only mkdir failure) — both fixed |
 | nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785946457 | exited | nemotron poff standing run 3 |
-| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948232 | exited | stock ablation run 1; RESCORED 3/4→4/4 (live-evidence ruling) |
-| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948574 | exited | stock ablation run 2; RESCORED 3/4→4/4 (live-evidence ruling) |
-| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948838 | exited | stock ablation run 3; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948232 | exited | stock ablation run 1; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948574 | exited | stock ablation run 2; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785948838 | exited | stock ablation run 3; RESCORED 3/4→4/4 (live-evidence ruling) |
 | nemotron-elastic | off | 4/4 | ada-handles_nemotron-elastic_codex_poff_1785953902 | exited | post-fix rerun — fastest nemotron pass yet |
-| gemma4-stock | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
+| gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
 - **2026-08-05 — operator scoring ruling: an in-session live run of the coder's OWN code
@@ -183,7 +183,7 @@ counted runs: 67 · avg wall 23 min · avg coder calls 70 · full-pass rate 30/6
   (paired exec results only; runner-allowlist commands naming a handle or pytest — curl fetches,
   file greps and hardcoded-value file reads all rejected; real-marker output, placeholders
   excluded). run.py passes the capture dir to both verifiers. 13 recorded rows raised
-  (raise-only; provenance in each row's `rescored` key). Headline: **gemma4-stock is now
+  (raise-only; provenance in each row's `rescored` key). Headline: **gemma4 is now
   4/4 × 4** — its "miss" was always this interpretation; nemotron poff standing 4, 2*, 4, 4.
 - **2026-08-05 — FINETUNE ABLATION VERDICT: stock gemma-4-12b-it Q4_K_M scores 3/4, 3/4, 3/4
   (280/240/200 s; 29/25/22 calls; all clean exits)** on the identical lane (same quant, same
@@ -193,7 +193,7 @@ counted runs: 67 · avg wall 23 min · avg coder calls 70 · full-pass rate 30/6
   texture is absent from all three stock runs. Stock's one consistent miss is identical every
   time — it never creates the separate live-test file (it mocks the unit tests and stops), an
   instruction-coverage gap, not a capability gap. Standing recommendation updated: gemma4
-  (finetune) retires from the ladder; gemma4-stock takes its slot; re-evaluate the finetune
+  (finetune) retires from the ladder; gemma4 takes its slot; re-evaluate the finetune
   only if the publisher's v3 lands.
 - **2026-08-05 — nemotron planner-OFF standing complete: 4, 2, 4 (510 s / 370 s / 310 s;
   52 / 44 / 42 calls) vs planner-on's counted 4, 4, 2 (1,934–3,624 s; 155–291 calls).** Same
@@ -410,7 +410,7 @@ written.
 
 | model | standing | pace | note |
 |---|---|---|---|
-| gemma4-stock · 12B q4km | **4/4 × 4** | 3–5 min, 22–32 calls | replaced the finetune; its lone repeated "miss" became a pass under the live-evidence ruling |
+| gemma4 · 12B q4km | **4/4 × 4** | 3–5 min, 22–32 calls | replaced the finetune; its lone repeated "miss" became a pass under the live-evidence ruling |
 | nemotron-elastic · 12B-A2B | **4, 2*, 4, 4** | 3.5–8.5 min, 28–52 calls | *the 2/4 was cria's own write-path bug — walked, fixed, tested |
 
 **What changed since the campaign:**
@@ -424,7 +424,7 @@ written.
    helps and heavy constraint collapses judge verdicts 8/20 → 3/20.
 3. **The finetune ablation.** Stock gemma-4-12b-it, identical lane: 3/4 × 3 against the
    finetune's 2,1,1,1 — the finetune SUBTRACTED; retired from every living surface (fabliq
-   convention), gemma4-stock holds the ladder slot. Publisher's v3 is announced; re-evaluate
+   convention), gemma4 holds the ladder slot. Publisher's v3 is announced; re-evaluate
    then.
 4. **Nemotron's planner verdict.** First-ever planner-off runs: same scores as planner-on at a
    quarter of the wall clock, and its only poff loss was a cria write-path bug (fused-call junk
@@ -446,4 +446,4 @@ written.
 
 **Standing recommendations, updated:** the per-role DICTATES knob remains open (now with one
 more data point against dictation: the impossible-mock test); the strong cohort should run
-planner-off; gemma4-stock's OFF-toggle recipe needs verification before any reasoning-off use.
+planner-off; gemma4's OFF-toggle recipe needs verification before any reasoning-off use.

@@ -53,7 +53,7 @@ big ones have passed.
 | # | model | params | architecture | experts | kind | planner |
 |--:|:--|:--|:--|:--|:--|:--|
 | 1 | ternary-bonsai | 27B | `qwen35` | — | dense | off |
-| 2 | gemma4-stock | 12B | `gemma4-stock` | — | dense | off |
+| 2 | gemma4 | 12B | `gemma4` | — | dense | off |
 | 3 | qwythos | 9B | `qwen35` | — | dense | off |
 | 4 | qwopus | 9B | `qwen35` | — | dense | off |
 | 5 | ornith | 9B | `qwen35` | — | dense | off |

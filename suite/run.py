@@ -52,7 +52,7 @@ SERVICES = {
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "ornith": "llama-ornith-q6",
-    "gemma4-stock": "llama-gemma4-stock",  # STOCK weights — finetune-ablation baseline
+    "gemma4": "llama-gemma4",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
     "mellum2": "llama-mellum2-q4",
     "nemotron-elastic": "llama-nemotron-elastic",
