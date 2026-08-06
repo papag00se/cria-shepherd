@@ -13,8 +13,9 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import config, editrecovery, focustrim, loop, prompts
+from cria import config, editrecovery, focustrim, loop, probegate, prompts
 from cria.writeproxy import translate_outbound
+import tests.test_probegate as tp
 import tests.test_writeproxy as tw
 
 
@@ -233,6 +234,68 @@ class TheSteerAuthorIsNeverToldTheWorkspaceIsEmptyTests(unittest.TestCase):
         from cria import groundtruth
         with tempfile.TemporaryDirectory() as d:
             self.assertIn("none", groundtruth.workspace_inventory(d).lower())
+
+
+class TwoFailuresThatShareALineAreTwoFactsTests(unittest.TestCase):
+    """clean_gate_output deduped finding lines GLOBALLY, so a line identical to one already printed
+    for an earlier failure was deleted from the later one. Walked twice, independently, on
+    1785360304 calls 0145/0147/0148/0152/0153/0155: pytest reported two failing tests whose bodies
+    share `self.assertIsNotNone(...)` and `E AssertionError: unexpectedly None`; both lines were
+    printed for the first test and DELETED from the second, so the coder was handed
+    `test_resolve_handle.py:24: AssertionError` with no assertion and no reason — under a header
+    that promises "each is the checker's OWN message"."""
+
+    def _pytest_output(self):
+        block = ("_____ TestResolveHandle.test_{name} _____\n"
+                 "    def test_{name}(self):\n"
+                 "        result = resolve_handle(\"{name}\")\n"
+                 ">       self.assertIsNotNone(result[\"holder_address\"])\n"
+                 "E       AssertionError: unexpectedly None\n"
+                 "test_resolve_handle.py:24: AssertionError\n")
+        return block.format(name="goose") + block.format(name="papagoose") + "2 failed in 0.5s\nEXIT:1"
+
+    def test_the_second_failure_keeps_its_assertion_and_its_reason(self):
+        from cria.probegate import GatePlan
+        raw = "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, self._pytest_output()) + tp._git() + "\n"
+        out = probegate.clean_gate_output(raw, GatePlan(workspace=""))
+        self.assertEqual(out.count("E       AssertionError: unexpectedly None"), 2, out)
+        self.assertEqual(out.count(">       self.assertIsNotNone(result[\"holder_address\"])"), 2, out)
+
+    def test_a_line_repeated_back_to_back_still_collapses(self):
+        from cria.probegate import GatePlan
+        spam = "app.py:1:1: E999 SyntaxError: bad\n" * 5 + "EXIT:1"
+        raw = "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, spam) + tp._git() + "\n"
+        out = probegate.clean_gate_output(raw, GatePlan(workspace=""))
+        self.assertEqual(out.count("E999 SyntaxError: bad"), 1, out)
+
+
+class AReRunCommandIsStillARepeatTests(unittest.TestCase):
+    """The harness exec envelope stamps a fresh `Chunk ID` on every result, so keying a duplicate
+    group on the raw result text meant two byte-identical re-runs of one command never shared a key
+    — duplicate collapse could not fire for exec_command at all, and the repetition notice built on
+    it stayed silent through ~40 identical greps in one walked run."""
+
+    def _msgs(self, chunk_ids):
+        out = []
+        for i, cid_hex in enumerate(chunk_ids):
+            out.append({"role": "assistant", "tool_calls": [
+                {"id": f"c{i}", "type": "function",
+                 "function": {"name": "exec_command",
+                              "arguments": '{"cmd": "sed -n \'607,680p\' spec.yml"}'}}]})
+            out.append({"role": "tool", "tool_call_id": f"c{i}",
+                        "content": f"Chunk ID: {cid_hex}\nWall time: 0.0{i} seconds\n"
+                                   f"Original token count: 259\nOutput:\n\"/handles/{{handle}}\": {{\n"})
+        return out
+
+    def test_identical_reruns_collapse_despite_a_fresh_chunk_id(self):
+        msgs, report = focustrim._collapse_duplicates(self._msgs(["aa11", "bb22", "cc33"]))
+        self.assertGreater(report.dropped_calls, 0)
+
+    def test_genuinely_different_output_is_not_collapsed(self):
+        m = self._msgs(["aa11", "bb22"])
+        m[3]["content"] = "Chunk ID: bb22\nWall time: 0.1 seconds\nOutput:\nsomething else entirely\n"
+        _out, report = focustrim._collapse_duplicates(m)
+        self.assertEqual(report.dropped_calls, 0)
 
 
 class ThePromptsExistTests(unittest.TestCase):

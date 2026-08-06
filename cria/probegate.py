@@ -310,6 +310,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
             continue
         had_content = False
         section_findings: list[str] = []
+        prev_kept = ""   # consecutive-repeat collapse only — see the note at the append below
         for ln in text.splitlines():
             s = ln.strip()
             if not s or s.startswith(proberun.PROBE_EXIT_SENTINEL):   # blank / EXIT:<n> sentinel
@@ -343,8 +344,20 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None) -> str | None:
             # every prompt for 45 straight calls, and the coder copied the DE-INDENTED text into
             # edit_file old_strings that could never match. Two earlier walks named this their top
             # fix. Dedupe on the stripped form; emit the original.
-            if s not in seen:
-                seen.add(s)
+            #
+            # CONSECUTIVE-ONLY, not global — the same walk family, one organ deeper. A GLOBAL `seen`
+            # deletes a line because an IDENTICAL line appeared in a DIFFERENT failure block, and two
+            # failures that share an assertion are not duplicates: they are two facts. Walked on
+            # ada-handles_nemotron-elastic_codex_pon_1785360304 calls 0152/0153/0155, where pytest
+            # reported two failing tests whose bodies share `self.assertIsNotNone(result[...])` and
+            # `E  AssertionError: unexpectedly None`. Both lines were printed for test_goose and
+            # therefore DELETED from test_papagoose, so the coder was handed
+            # `test_resolve_handle.py:24: AssertionError` with no assertion and no reason under a
+            # header promising "each is the checker's OWN message". The same global rule also ate a
+            # docstring's closing `\"\"\"`. Collapsing a line repeated back-to-back is still worth
+            # doing (that is the spam this was built for); collapsing across blocks is data loss.
+            if s != prev_kept:
+                prev_kept = s
                 section_findings.append(ln.rstrip())
         findings.extend(section_findings)
         # a check that exited NON-ZERO but printed NOTHING usable (empty output) still FAILED — don't

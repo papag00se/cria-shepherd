@@ -120,6 +120,25 @@ def _single_call(m: dict) -> dict | None:
 _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "list_dir", "view_image"})
 
 
+# The harness exec envelope stamps fields that differ on EVERY run of the same command — a fresh
+# `Chunk ID: <hex>`, a wall time, a token count. Keying a duplicate group on the raw result text
+# therefore means two BYTE-IDENTICAL re-runs of one command never share a key, and rule A can never
+# fire for exec_command at all. Walked on ada-handles_nemotron-elastic_codex_pon_1785360304: the
+# coder ran `sed -n '607,680p'` on the same file seven times inside one prompt and
+# `grep -n "#/components/schemas/Handle"` a dozen more, ~30 KB of byte-identical output per prompt,
+# and no duplicate collapse and no repetition notice ever fired across the whole run. Strip the
+# volatile envelope lines before keying; the command's actual output is what decides sameness.
+_ENVELOPE_VOLATILE = re.compile(
+    r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?")
+
+
+def _result_key(content) -> str:
+    """A tool result's identity for duplicate detection — the envelope's per-run fields removed."""
+    if not isinstance(content, str):
+        return ""
+    return _ENVELOPE_VOLATILE.sub("", content).strip()
+
+
 def _is_failure(content, tool_name: str = "") -> bool:
     if not isinstance(content, str):
         return False
@@ -192,7 +211,7 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
                 # as the failure-squash exemption).
                 if cid is not None and not _call_is_gate(tc):
                     name, norm = _fingerprint(tc)
-                    occ.setdefault((name, norm, result_by_id.get(cid, "")), []).append(cid)
+                    occ.setdefault((name, norm, _result_key(result_by_id.get(cid, ""))), []).append(cid)
     drop_ids = {cid for cids in occ.values() if len(cids) > 1 for cid in cids[:-1]}
     if not drop_ids:
         return messages, TrimReport()
