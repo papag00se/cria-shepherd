@@ -5308,7 +5308,92 @@ def _fetch_ground_truth(messages: list[dict], sess=None,
     window, so the correction survives even after the result scrolls out; in-window status wins. ``header``
     re-frames the subject for a non-coder reader (the step critic)."""
     latest = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(messages))
-    return _format_fetches(latest, header)
+    out = _format_fetches(latest, header)
+    mismatch = _route_mismatch_fact(latest, messages,
+                                    getattr(sess, "workspace_root", "") or "")
+    return f"{out}\n\n{mismatch}" if mismatch else out
+
+
+# An HTTP failure the CODER's own process hit, as its runtime prints it: python's
+# `HTTP Error 403: Forbidden` and `HTTPError: 404`, requests' `403 Client Error`, curl/node/go's
+# bare `HTTP 500`. Paired with a host anywhere in the same tool result.
+_CODER_HTTP_FAIL = re.compile(
+    r"(?i)(?:HTTP\s*(?:Error\s*)?|HTTPError:\s*|status(?:\s*code)?[:= ]\s*)([45]\d{2})\b"
+    r"|\b([45]\d{2})\s+(?:Client|Server)\s+Error\b")
+_HOST_IN_TEXT = re.compile(r"https?://([A-Za-z0-9.-]+)")
+
+
+def _host_in_workspace_code(root: str, host: str) -> bool:
+    """Does the coder's OWN source name this host? The grounded link between "cria reached H" and a
+    bare `HTTP 403` in the coder's output, which carries no URL of its own (measured: every one of
+    run 1786047359's eight failures printed only `Error resolving handle: HTTP 403: Forbidden`).
+    Searching the conversation instead would be circular — cria's own ledger puts the host there."""
+    if not root or not host or not os.path.isdir(root):
+        return False
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in execcheck._SKIP_DIRS]
+        for name in filenames:
+            if not name.endswith((".py", ".js", ".mjs", ".ts", ".go", ".rs", ".rb", ".java", ".php",
+                                  ".sh", ".json", ".toml", ".yaml", ".yml")):
+                continue
+            try:
+                if host in open(os.path.join(dirpath, name), errors="replace").read():
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _route_mismatch_fact(ledger: dict, messages: list[dict], workspace_root: str = "") -> str:
+    """One stated fact when cria reached a host that the coder's OWN code could not — else "".
+
+    THE DIAGNOSIS cria held and never said, in run 1786047359. Its ledger recorded
+    `https://api.handle.me → HTTP 200` in every prompt; the coder's script got `HTTP Error 403:
+    Forbidden` from that same host, eight times. The difference is the User-Agent — cria's fetcher
+    sends a browser one, urllib sends `Python-urllib/3.12`, and Cloudflare refuses the second. cria's
+    own tool description already warns about exactly this, and the reasoner's own prompt already
+    carries the rule in prose ("that mismatch IS the diagnosis"). Prose is not a computation: four
+    separate steers instead told the coder the sandbox blocked the network, a satisfaction judge
+    certified it, and the coder wrote that falsehood into two shipped documents. live_test MISS.
+
+    Both halves are things cria OBSERVED — its own fetch outcome, and the coder's own tool output —
+    so this states them, names the one difference cria actually knows about, and prescribes nothing
+    beyond "compare the two". It cannot fire on a host cria never reached, and it cannot fire on a
+    coder failure with no host attached."""
+    ok_hosts = {}
+    for url, entry in (ledger or {}).items():
+        status = (tuple(entry) + ("", "", ""))[0]
+        m = _HOST_IN_TEXT.match(str(url))
+        if m and research.fetch_succeeded(status):
+            ok_hosts.setdefault(m.group(1), str(status))
+    if not ok_hosts:
+        return ""
+    for m in messages or []:
+        if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+            continue
+        c = m.get("content") if m.get("content") is not None else m.get("output")
+        if not isinstance(c, str):
+            continue
+        # NOT CRIA'S OWN FETCH. A `HTTP 500 err · <url>` line is cria's fetcher reporting its own
+        # attempt — the ledger already owns that outcome, and reading it as "the coder's code
+        # failed" would let a superseded fetch of a host that later answered 200 fire the mismatch
+        # against itself. The ` · ` render is exactly what _extract_fetches keys on, so the two
+        # readers agree on what a cria fetch result looks like.
+        if "·" in c:
+            continue
+        fail = _CODER_HTTP_FAIL.search(c)
+        if not fail:
+            continue
+        code = fail.group(1) or fail.group(2)
+        # The host is USUALLY absent from the failure line itself, so prefer one named in the same
+        # result and fall back to the coder's own source naming it. Never to "cria reached exactly
+        # one host, so it must be that one" — that is a guess, and a wrong attribution would send
+        # the coder at the wrong request.
+        named = [h for h in _HOST_IN_TEXT.findall(c) if h in ok_hosts]
+        for host in named or [h for h in ok_hosts if _host_in_workspace_code(workspace_root, h)]:
+            return prompts.render("fetch_route_mismatch", host=host,
+                                  ok_status=ok_hosts[host], fail_status=f"HTTP {code}")
+    return ""
 
 
 # Derived from the ONE canonical shell-tool family (shelltool.SHELL_TOOL_NAMES) so it can't drift — a
