@@ -936,8 +936,19 @@ def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = Fal
 
 # The veto shapes that assert ABSENCE — the one claim class cria can refute with a stat() of its
 # own. A trigger, not a verdict: the file check below is the verdict.
-_VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not found|missing|no such file|absent|"
-                           r"no file (?:or artifact )?named|was not found)\b")
+_VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such files?|absent|"
+                           r"no files? (?:or artifact )?named|was not found"
+                           # EMPTINESS is the same class as ABSENCE: a claim that the artifact is
+                           # there but holds nothing. Walked on mellum2 1785996352 call 0060, where
+                           # the confirm judge called list_dir, never read_file, and then asserted
+                           # resolve_handle.py "is a 1.8 KB file with no imports, no function
+                           # definitions, no API calls, and no evidence of any Ada Handles
+                           # integration" — about a file with four imports, two defs and a urllib
+                           # POST. None of the old alternatives matched, so the disk refuter never
+                           # ran and cria forwarded the falsehood to the coder as its own steer. The
+                           # coder read the file, saw cria was wrong, dismissed the steer and quit.
+                           r"|no (?:imports|functions?|function definitions|code|content|evidence)"
+                           r"|is empty|are empty|contains nothing|no actual)\b")
 # Path tokens including ABSOLUTE ones — _STEP_ARTIFACT starts at \w and silently drops a leading
 # slash, which would re-root an absolute path under the workspace and miss the file.
 _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
@@ -973,7 +984,19 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
             exists = os.path.isfile(path)
         except (OSError, ValueError):
             exists = False
-        facts.append(f"- {tok}: {'EXISTS on disk' if exists else 'NOT on disk'}")
+        # SIZE AND SHAPE, not just existence — an emptiness claim is settled by what the file HOLDS.
+        detail = "NOT on disk"
+        if exists:
+            try:
+                body = open(path, errors="replace").read(200_000)
+            except OSError:
+                body = ""
+            n_lines = body.count("\n") + 1 if body else 0
+            code = sum(1 for ln in body.splitlines()
+                       if ln.strip() and not ln.lstrip().startswith("#"))
+            detail = (f"EXISTS on disk — {len(body):,} bytes, {n_lines} lines, "
+                      f"{code} non-comment code lines")
+        facts.append(f"- {tok}: {detail}")
         if exists and not first_existing:
             first_existing = tok
     if not first_existing:

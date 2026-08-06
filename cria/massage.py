@@ -86,7 +86,14 @@ _LFM2_TC_CLOSE = "<|tool_call_end|>"
 _LEAK_DEBRIS = (_GEMMA_TC_OPEN, _GEMMA_TC_CLOSE, _GEMMA_STR, _LFM2_TC_OPEN, _LFM2_TC_CLOSE,
                 "<tool_call>", "</tool_call>",
                 # nemotron/maple XML-function dialect (fused-call walks 1785946072, 1785956867)
-                "<function=", "<parameter=")
+                "<function=", "<parameter=",
+                # DeepSeek-style DSML, which maple-preview emits. Walked on 1785994846 call 0055:
+                # the steer author produced 2,800 characters of `｜DSML｜invoke name="write_file"`
+                # carrying a whole file, the steer-code guard read it and answered DICTATES —
+                # correctly — and cria shipped it as the run's final steer with every newline
+                # stripped, because that guard is observe-only and NO hard-drop arm knew this
+                # dialect. Transcript syntax is not a judgment call; it is self-evidently fiction.
+                "DSML｜invoke", "DSML｜tool_calls", "DSML｜parameter")
 
 
 def has_tool_call_leak(text: str) -> bool:

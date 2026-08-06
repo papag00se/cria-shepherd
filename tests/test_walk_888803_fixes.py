@@ -564,3 +564,40 @@ class AFindScopedFetchStillNamesTheRoutesTests(unittest.TestCase):
 
     def test_it_does_not_name_a_spill_file_this_branch_never_wrote(self):
         self.assertNotIn("[grep ", self._fetch(find="paths"))
+
+
+class AnEmptinessClaimIsRefutableByDiskTests(unittest.TestCase):
+    """mellum2 1785996352 call 0060: the confirm judge called list_dir, never read_file, then said
+    resolve_handle.py "is a 1.8 KB file with no imports, no function definitions, no API calls". The
+    file had all three. `_VETO_MISSING` matched none of that wording, so the disk refuter never ran
+    and cria forwarded the falsehood to the coder as its own steer. It read the file, saw cria was
+    wrong, and quit."""
+
+    WHY = ("the verdict claims the script resolves handles, but the workspace has no evidence that "
+           "resolve_handle.py actually contains any code — it is a 1.8 KB file with no imports, no "
+           "function definitions, no API calls, and no evidence of any Ada Handles integration.")
+
+    def test_the_walked_wording_now_trips_the_refuter(self):
+        self.assertTrue(loop._VETO_MISSING.search(self.WHY))
+
+    def test_a_plural_absence_claim_trips_it_too(self):
+        self.assertTrue(loop._VETO_MISSING.search("no such files are present in the workspace"))
+
+    def test_a_real_contradiction_still_does_not_trip_it(self):
+        self.assertIsNone(loop._VETO_MISSING.search(
+            "the reason says the README still needs a usage section, which contradicts a completion"))
+
+    def test_the_facts_it_gathers_can_settle_emptiness(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "resolve_handle.py"), "w") as fh:
+            fh.write("import json\nimport urllib.request\n\n\ndef resolve_handle(h):\n    return 1\n")
+        seen = {}
+
+        def ask(prompt):
+            seen["prompt"] = prompt
+            return "REFUTED"
+
+        out = loop._veto_refuted_by_disk(self.WHY, d, ask=ask)
+        self.assertEqual(out, "resolve_handle.py")
+        self.assertIn("EXISTS on disk", seen["prompt"])
+        self.assertIn("code lines", seen["prompt"])   # the fact an emptiness claim turns on
