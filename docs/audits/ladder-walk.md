@@ -5198,3 +5198,66 @@ channel — a week-old ternary port behaving like a mature stack (55–57 tok/s 
 - **First-person steers** ("I understand — I'm at Step 2…", "I've repeatedly rewritten files…")
   delivered per the observe-only provenance ruling — more truth-sample rows for that cohort;
   several coached the SIMULATED field rather than away from it.
+
+## ada-handles_nemotron-elastic_codex_pon_1785360304 — FULL WALK (8 of 12 bands reported; 4 still reading)
+
+Read 2026-08-05 across twelve parallel readers, one band each, every line at full fidelity.
+
+### VERDICT (from the 8 bands in hand)
+
+The run never left **step 1 of 6/7** — "locate the GET /handles/{handle} operation definition" — across
+40+ coder calls. Final workspace: one `resolve_handle.py` with a one-character bug cria's own edit
+guard blocked the fix for. No unit tests, no live test, no README.
+
+**cria had the answer to step 1 in its own fetch ledger from call 0011 and spent the whole run
+telling the model to go find it.** Every prompt carried the parsed field list under "use these EXACT
+names and nesting; do not guess" — and, three lines below it, the sentence
+"the source that DEFINES them is still unread". That sentence is what kept the hunt alive: two
+critics vetoed on it, the replan re-issued the step on it, and the coder grepped a JSON file ~40
+times for a fact it had been handed.
+
+### CONFIRMED, FIXED 2026-08-05
+
+- **The steer author's "(no files touched yet)"** under a "trust this over the transcript" banner —
+  seen at 0045, 0051, 0056, 0058, 0064, 0079, 0088, 0093, 0106, 0113, 0140. Root cause: a harness
+  compaction removes the turns `_touched_paths` reads. Now falls back to the real workspace
+  inventory. (Same fault the 888803 walk found at 0122/0124.)
+
+### CONFIRMED, NOT FIXED — these need a decision
+
+1. **A plan step may name a path the coder cannot use.** Step 1 named the PLANNER's spill dir
+   (`/tmp/cria-gather-…/`), rendered to the coder as a literal `/tmp/…/api.handle.me_swagger_swagger.yml`.
+   The coder's dirguard blocks `/tmp`, so the step was unsatisfiable from birth; the same file sat in
+   the workspace at `tmp/read-only/` the whole time. cria HAS a phantom-path guard
+   (`_phantom_system_path`, applied in `_grounded_steer_or_none`) — it covers steers only. Extending
+   it to plan steps is a small change; what to DO on a hit is the open question (drop the step, send
+   it back to the planner, or rewrite the path to the same basename inside the workspace).
+2. **12% of all plan steps ever captured name a coder TOOL** (51 of 395 distinct steps, 34 of 118
+   sessions). Both walked runs are in that 12%: "use exec_command to locate…" and "edit_file at
+   /tmp/… to add TestInvalidHandle…". `plan_noise_steps.txt` has THREE separate clauses that cover
+   this and the judge waved it through every time. A tool name is an EXACT match against a known
+   set — deterministic, no judgment — so this is a candidate for a deterministic trigger feeding the
+   existing rewrite, not a new judge.
+3. **The fetch ledger's "the source that DEFINES them is still unread"** printed under that source's
+   own parsed field list. `loop.py:5099-5105` already drops it when any fetch yielded routes — this
+   run predates that fix; VERIFY it covers the `/handles/goose` case (a DATA page whose body is the
+   answer) before closing.
+4. **The user's own request is function-word-stripped into pidgin by the compaction digest.**
+   "I would like you write Python script that accepts Ada Handle input and resolves it Cardano
+   address" — word order intact, articles and prepositions deleted. It is `content_reduce` reached
+   via `contextfloor._note`'s dropped-turn digest, and it compounds on every pass. The task statement
+   is the one string in the window that must never be reduced.
+5. **A JSON document saved and announced as `.yml`.** cria fetched `swagger.yml`, got JSON, spilled
+   it under the `.yml` name, and told the model to grep it — the model then used YAML patterns
+   (`properties:`, `paths.*/handles`) that cannot match, ~15 times.
+6. **cria relayed a reasoner's fabricated tool call and invented grep output verbatim as a steer**
+   (call 0030), teaching the coder that `holder` is an object. It is a plain string. The steer path
+   has roleplay/URL/phantom-path guards; none rejects a steer body that is raw JSON tool debris.
+7. **`git status --porcelain | sha1sum` as the change fingerprint is content-blind** — it hashes the
+   changed-path list, so an edit to an existing file never moves it. Same hash observed with pyflakes
+   failing and, after the fix, passing.
+8. **The compactor ran with "Do not think out loud… Respond directly." as its ENTIRE system prompt**
+   (call 0112) and returned a terminal-agent JSON instead of a summary, asserting the script "still
+   fails pyflakes checks" with ten clean runs in its own prompt. cria then republished that verbatim
+   to both the reasoner and the coder. The unverified-claim hedge wrapped around it only doubts
+   OPTIMISTIC claims; a summary that falsely says the work is BROKEN passes untouched.
