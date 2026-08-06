@@ -98,6 +98,14 @@ def plan_gate(workspace: str) -> GatePlan:
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
+    # The OFFLINE re-run of the test probe (python only) — see proberun.offline_probe_command.
+    # Emitted last among the probes so a failure here can never mask a real check result.
+    test_c = next((c for c in plan.candidates
+                   if c.kind is probediscovery.ProbeKind.Test), None)
+    offline = proberun.offline_probe_command(test_c, COMPLETION_PROBE_TIMEOUT_S) if test_c else ""
+    if offline:
+        parts.append(f"echo {_marker('offline')}")
+        parts.append(offline)
     parts.append(f"echo {_marker('git')}")
     # Changed-files signal: one line summarizing the working tree (porcelain is stable);
     # hashing keeps it tiny and diffable across gate runs. Absent git → empty (no signal).
@@ -254,7 +262,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     failed_no_detail = False
     saw_probe = False
     timed_out_output: list[str] = []
-    for sid, body in split_sections(raw).items():
+    _sections = split_sections(raw)
+    for sid, body in _sections.items():
         if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
             continue
         saw_probe = True
@@ -435,12 +444,57 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
     if untested:
         clean += " " + prompts.render("no_tests_found", findings=" ".join(untested))
+    # A suite that passes with the network blocked never touched the API it claims to test. FACT,
+    # not verdict (principle 8) — plenty of tasks have no network in them, and which it is here is
+    # the judge's call. Only on the CLEAN branch: with real findings the coder already has work.
+    offline = _offline_fact(_sections)
+    if offline:
+        clean += " " + offline
     return clean
 
 
 # The runner-said-nothing-ran shapes, per supported runner — consulted only to decide whether the
 # stranded-test disk scan is worth asking for; the scan result, not the marker, is the finding.
 _ZERO_TESTS_MARKERS = ("no tests ran", "[no test files]", "no tests found")
+
+
+_PYTEST_TALLY = re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed")
+_UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
+
+
+def _tally(text: str) -> str:
+    """A runner's own pass/fail line, normalized — "" when it printed none."""
+    m = _PYTEST_TALLY.search(text or "")
+    if m:
+        return f"{m.group(1) or 0}f/{m.group(2)}p"
+    m = _UNITTEST_TALLY.search(text or "")
+    if m:
+        ok = "OK" if re.search(r"(?m)^OK\b", text or "") else "FAIL"
+        return f"{m.group(1)}ran/{ok}"
+    return ""
+
+
+def _offline_fact(sections: dict) -> str:
+    """One sentence when the test suite behaves IDENTICALLY with the network blocked — else "".
+
+    Silent unless cria established it: no offline section, no readable tally on either side, or a
+    tally that differs all say nothing. A differing tally is the healthy case (the suite really does
+    reach the network) and needs no words."""
+    off = sections.get("offline")
+    if not off:
+        return ""
+    online = next((t for sid, t in sections.items() if sid.startswith("probe-") and _tally(t)), "")
+    a, b = _tally(online), _tally(off)
+    if not a or not b or a != b:
+        return ""
+    # ONLY when the suite was GREEN online. Identical tallies where both runs FAIL say nothing about
+    # mocking — the suite is just failing, and on a box with no outbound network everything matches
+    # trivially. Caught end-to-end while building this: a genuinely live test failed on both sides,
+    # the tallies agreed, and the draft would have told the judge the suite never touches the service.
+    # That is the false fact rule 5b forbids, from the very check meant to expose one.
+    if a.startswith("0f/") or a.endswith("/OK"):
+        return prompts.render("tests_pass_offline", tally=a)
+    return ""
 
 
 def _zero_tests_marker(text: str) -> bool:

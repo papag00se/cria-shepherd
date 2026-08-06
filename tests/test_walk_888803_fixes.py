@@ -680,3 +680,59 @@ class ExitZeroIsNotTheSameAsWorkingTests(unittest.TestCase):
         self.assertIn("Answer YES if", t)
         self.assertIn("Answer NO if", t)
         self.assertNotIn("placeholder", t)
+
+
+class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
+    """The false-green shape: a suite that mocks the thing it tests passes whether or not the service
+    exists. mellum2 1786047222 shipped five tests patching requests.get and asserting the fixture the
+    test itself supplied; the gate said "no error-class problems" and the satisfaction judge — which
+    had read all three files and cannot run anything — passed a run verify scores 2/4. Running the
+    suite twice settles it: same discriminator verify.py uses."""
+
+    def setUp(self):
+        from cria import proberun, probediscovery
+        self.proberun, self.probediscovery = proberun, probediscovery
+
+    def _sections(self, online, offline):
+        return {"probe-0": online, "offline": offline}
+
+    def test_a_green_suite_that_is_identical_offline_is_reported(self):
+        fact = probegate._offline_fact(self._sections("2 passed in 0.1s\nEXIT:0",
+                                                      "2 passed in 0.1s\nEXIT:0"))
+        self.assertIn("network switched off", fact)
+        self.assertIn("2", fact)
+
+    def test_a_suite_failing_both_ways_says_nothing(self):
+        # the footgun found end-to-end: on a box with no outbound network everything matches
+        self.assertEqual(probegate._offline_fact(
+            self._sections("1 failed, 1 passed in 0.1s\nEXIT:1",
+                           "1 failed, 1 passed in 0.1s\nEXIT:1")), "")
+
+    def test_a_suite_that_really_needs_the_network_says_nothing(self):
+        self.assertEqual(probegate._offline_fact(
+            self._sections("2 passed in 0.4s\nEXIT:0",
+                           "1 failed, 1 passed in 0.1s\nEXIT:1")), "")
+
+    def test_no_offline_section_says_nothing(self):
+        self.assertEqual(probegate._offline_fact({"probe-0": "2 passed in 0.1s"}), "")
+
+    def test_unittest_output_is_read_too(self):
+        self.assertIn("network switched off", probegate._offline_fact(
+            self._sections("Ran 3 tests in 0.01s\n\nOK\n", "Ran 3 tests in 0.01s\n\nOK\n")))
+
+    def _cand(self, kind, argv):
+        import pathlib as _pl
+        from cria.probediscovery import ProbeCandidate, ProbeCost
+        return ProbeCandidate(kind=kind, command=argv, working_dir=_pl.Path("/tmp"),
+                              confidence=1, expected_value=1, cost=ProbeCost.Cheap,
+                              mutates_code=False, may_hang=False, may_need_services=False,
+                              reason="test")
+
+    def test_it_is_python_only_and_says_nothing_elsewhere(self):
+        go = self._cand(self.probediscovery.ProbeKind.Test, ["go", "test", "./..."])
+        self.assertEqual(self.proberun.offline_probe_command(go, 60), "")
+
+    def test_a_lint_probe_is_never_re_run_offline(self):
+        lint = self._cand(self.probediscovery.ProbeKind.Lint,
+                          ["python3", "-m", "pyflakes", "x.py"])
+        self.assertEqual(self.proberun.offline_probe_command(lint, 60), "")

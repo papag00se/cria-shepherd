@@ -47,6 +47,7 @@ fires and cria sees a harness-level failure instead of exit 124.
 from __future__ import annotations
 
 import re
+import os
 import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
@@ -588,6 +589,52 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
         f"\"$((__cria_n - {PROBE_OUTPUT_CAP_BYTES}))\"; "
         f"printf '%s' \"$__cria_out\" | tail -c {half}; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
+    )
+
+
+# The socket-level block for the OFFLINE re-run. Written to a throwaway dir on PYTHONPATH, so
+# CPython imports it at startup and every TCP connect in the test process raises — requests, urllib,
+# http.client and a raw socket alike. Proxy env vars were the other option and are not airtight: a
+# library that ignores them would still reach the network and cria would then report "passes with the
+# network blocked" about a run that had one. cria states the fact it actually established.
+_OFFLINE_SITECUSTOMIZE = (
+    "import socket\n"
+    "def _cria_blocked(self, *a, **k):\n"
+    "    raise OSError('network disabled for this check')\n"
+    "socket.socket.connect = _cria_blocked\n"
+    "socket.create_connection = _cria_blocked\n"
+)
+
+
+def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
+    """The same test command, re-run with the network blocked — or "" when that means nothing here.
+
+    A test suite that mocks the thing it is testing passes whether or not the network exists, and
+    that is the shape behind the false greens: mellum2 1786047222 shipped five tests that patch
+    `requests.get` and assert the fixture the test itself supplied ("addr1x456..."), the gate said
+    "no error-class problems", and cria's satisfaction judge — which had read all three files and
+    could not run anything — passed a run verify scores 2/4.
+
+    Running the suite twice settles it deterministically. This is the same discriminator verify.py
+    already uses ("passed with network, fails without — provably live"). It produces a FACT for the
+    judge, never a verdict: an offline pass is not a defect on its own, because plenty of tasks have
+    no network in them. Whether it matters for THIS task is the judge's call (principle 8).
+
+    PYTHON ONLY. sitecustomize is a CPython mechanism; for any other ecosystem cria has no equally
+    airtight block, and it says nothing rather than something it did not establish."""
+    if c.kind is not probediscovery.ProbeKind.Test or not c.command:
+        return ""
+    if "python" not in os.path.basename(str(c.command[0])).lower():
+        return ""
+    argv = " ".join(shlex.quote(t) for t in c.command)
+    return (
+        f"cd {shlex.quote(str(c.working_dir))} && "
+        f"__cria_off=$(mktemp -d 2>/dev/null) && "
+        f"printf '%s' {shlex.quote(_OFFLINE_SITECUSTOMIZE)} > \"$__cria_off/sitecustomize.py\" && "
+        f"__cria_out=$(PYTHONPATH=\"$__cria_off\" timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
+        f"{argv} </dev/null 2>&1); __cria_ec=$?; rm -rf \"$__cria_off\"; "
+        f"printf '%s' \"$__cria_out\" | tail -c 600; "
+        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
 
 
