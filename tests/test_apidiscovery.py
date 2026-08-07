@@ -102,7 +102,7 @@ class McpDiscoveryTests(unittest.TestCase):
         self.assertIn("mcp tool resolve_handle(handle: string, verbose?: boolean)"
                       " — Resolve an Ada Handle to its address.", d.routes)
         # ...and NOT in the shape block, whose ledger label states its entries are what a call RETURNS.
-        self.assertFalse(any('"handle": "string"' in s for s in d.shapes))
+        self.assertFalse(any('"handle?": "string"' in s for s in d.shapes))
 
     def test_only_a_declared_output_schema_becomes_a_shape(self):
         _posts, d = self._run()
@@ -235,15 +235,15 @@ class SwaggerAndBasePathTests(unittest.TestCase):
 
     def test_swagger2_definitions_are_dereferenced(self):
         shapes = wf._endpoint_response_fields(self.SWAGGER2)
-        self.assertTrue(any('"holder": "string"' in s and '"ada": "string"' in s for s in shapes),
+        self.assertTrue(any('"holder?": "string"' in s and '"ada?": "string"' in s for s in shapes),
                         shapes)
-        self.assertTrue(any('"total_handles": "integer"' in s for s in shapes), shapes)
+        self.assertTrue(any('"total_handles?": "integer"' in s for s in shapes), shapes)
 
     def test_json_schema_defs_are_dereferenced(self):
         spec = {"paths": {"/a": {"get": {"responses": {"200": {"schema": {"$ref": "#/$defs/A"}}}}},
                           "/b": {"get": {"responses": {"200": {"schema": {"$ref": "#/$defs/A"}}}}}},
                 "$defs": {"A": {"type": "object", "properties": {"x": {"type": "string"}}}}}
-        self.assertTrue(any('"x": "string"' in s for s in wf._endpoint_response_fields(spec)))
+        self.assertTrue(any('"x?": "string"' in s for s in wf._endpoint_response_fields(spec)))
 
     def test_the_declared_base_path_prefixes_routes_AND_shapes(self):
         # Listing a spec's bare `paths` keys said /handles/{handle} where the real route is
@@ -266,7 +266,7 @@ class SwaggerAndBasePathTests(unittest.TestCase):
                           "/b": {"get": {"responses": {"200": {"$ref": "#/responses/Ok"}}}}},
                 "responses": {"Ok": {"schema": {"$ref": "#/definitions/A"}}},
                 "definitions": {"A": {"type": "object", "properties": {"y": {"type": "integer"}}}}}
-        self.assertTrue(any('"y": "integer"' in s for s in wf._endpoint_response_fields(spec)))
+        self.assertTrue(any('"y?": "integer"' in s for s in wf._endpoint_response_fields(spec)))
 
 
 class ApiCatalogTests(unittest.TestCase):

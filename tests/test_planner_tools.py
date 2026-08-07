@@ -478,9 +478,9 @@ class LedgerShapeFormatTests(unittest.TestCase):
         self.assertEqual(shapes.count("```jsonc"), 2, "each shape is its own fenced jsonc block")
         self.assertEqual(shapes.count("```"), 4, "every fence is closed")
         # the fixture declares no type for `ada`, so it renders "?" — the nesting is the point
-        self.assertTrue(any('"ada":' in ln for ln in shapes.splitlines()),
+        self.assertTrue(any('"ada?":' in ln for ln in shapes.splitlines()),
                         "the nested field is visible as real JSON nesting")
-        self.assertIn('"resolved_addresses": {', shapes)
+        self.assertIn('"resolved_addresses?": {', shapes)
 
 
 class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):

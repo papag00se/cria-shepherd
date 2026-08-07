@@ -649,6 +649,16 @@ def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0
     there is no translation step between what it reads and what it must type. `"resolved_addresses":
     {"ada": …}` and `data["resolved_addresses"]["ada"]` are the same structure twice.
 
+
+    OPTIONAL FIELDS CARRY `?`, the TypeScript convention. The spec says which: the Ada Handles
+    `Handle` schema declares `required: ["name"]` — ONE of its 34 properties — and the live
+    `/handles/goose` response returns 30 keys with `original_address` absent. cria had that array
+    parsed and threw it away, rendering all 34 identically under a header promising "the fields each
+    endpoint RETURNS". maple-preview 1786081695 read that as a contract and wrote
+    `required_fields = ["resolved_addresses", "holder", "original_address"]`, so its CLI exited 1 on
+    every handle — `Error: Missing required field: original_address` — before it ever reached the
+    address extraction it had, for once, got right. Two independent walkers reached the same cause.
+
     Types go where the VALUE goes, which is how a schema block is written in practically every API
     reference: `"length": "integer"`. The declared example rides in the same string, because a type
     alone cannot tell two string fields apart and the whole task turned on which one held a stake
@@ -657,9 +667,14 @@ def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0
     props = (sch or {}).get("properties")
     if not isinstance(props, dict):
         return {}
+    req = {str(r) for r in ((sch or {}).get("required") or []) if isinstance(r, (str, int))}
     out: dict = {}
     items = list(props.items())
     for k, v in items[:max_fields]:
+        # A schema with NO `required` array declares nothing mandatory — every key is then optional
+        # and every key gets the marker. Saying "all optional" is the spec's own answer; assuming
+        # the opposite is what shipped a CLI that dies on a field the API omits.
+        k = k if k in req else f"{k}?"
         v = _deref(v if isinstance(v, dict) else {}, schemas)
         if _depth == 0 and (v.get("type") == "object" or "properties" in v):
             out[k] = _schema_json_shape(v, schemas, max_fields, _depth + 1) or ("object", "")
@@ -873,8 +888,9 @@ def _spill_outline(parsed: Any, target: str) -> str:
     routes = _endpoint_routes(parsed)
     if routes:
         shapes = _endpoint_response_fields(parsed)
-        shape_block = (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
-                       "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
+        shape_block = (f"{SHAPE_MARKER} the fields each endpoint MAY return — `?` marks a field the spec does NOT "
+                       "guarantee, so read it defensively; use these EXACT names and nesting, "
+                       "and do not guess:\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
         # The grep example is a REAL route as a FIXED string — and it must be the PATH alone.
         # Walked twice, on two different model families (finetune run 1785893473 call 0019, stock
         # run 1785948232 call 0005): the shape lines above read "GET /handles/{handle} → …", both
@@ -1337,8 +1353,10 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
                 head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
                 shapes = _endpoint_response_fields(parsed)
                 if shapes:  # the response FIELDS (dereferenced) — real names, not guesses
-                    head += (f"{SHAPE_MARKER} the fields each endpoint RETURNS (extract these; don't guess "
-                             "field names or nesting):\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
+                    head += (f"{SHAPE_MARKER} the fields each endpoint MAY return — `?` marks a field the "
+                             "spec does NOT guarantee, so read it defensively; use these EXACT names "
+                             "and nesting, and do not guess:\n"
+                             + "\n".join(f"  {s}" for s in shapes) + "]\n")
                 head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
         return head
 

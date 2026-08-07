@@ -462,7 +462,7 @@ class FetchNavSeedTests(unittest.TestCase):
         msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
         self.assertIn("response shape", msg)
         self.assertIn("holder", msg)
-        self.assertIn('"resolved_addresses": {\n    "ada": "string",\n    "eth": "string"', msg)
+        self.assertIn('"resolved_addresses?": {\n    "ada?": "string",\n    "eth?": "string"', msg)
         self.assertIn("```jsonc", msg)
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
@@ -1185,3 +1185,54 @@ class NestedGroupsGetTheirOwnLineTests(unittest.TestCase):
             self.assertIn(f, out)
         self.assertLess(out.index("v.a: int"), out.index("r.ada: string"))   # spec order kept
         self.assertLess(out.index("hex: string"), out.index("name: string"))
+
+
+class OptionalFieldsAreMarkedTests(unittest.TestCase):
+    """A field the spec does not guarantee must not read as one that comes back every time.
+
+    maple-preview 1786081695 shipped `required_fields = ["resolved_addresses", "holder",
+    "original_address"]` and its CLI exited 1 on EVERY handle — `Error: Missing required field:
+    original_address` — before it ever reached the address extraction it had, for once, got right.
+    The Ada Handles `Handle` schema declares `required: ["name"]`: ONE of 34 properties. The live
+    /handles/goose response returns 30 keys and `original_address` is not among them. cria parsed
+    that array and dropped it, then headed the block "the fields each endpoint RETURNS", which reads
+    as a guarantee. Four independent walkers landed on the same cause."""
+
+    SPEC = {"type": "object", "required": ["name"], "properties": {
+        "name": {"type": "string"},
+        "holder": {"type": "string"},
+        "original_address": {"type": "string"}}}
+
+    def test_only_the_declared_required_field_is_unmarked(self):
+        shape = wf._schema_json_shape(self.SPEC, {}, 30)
+        self.assertIn("name", shape)
+        self.assertIn("holder?", shape)
+        self.assertIn("original_address?", shape)
+        self.assertNotIn("name?", shape)
+
+    def test_a_schema_declaring_nothing_marks_everything_optional(self):
+        """No `required` array means the spec guarantees nothing. Saying so is its own answer;
+        assuming the opposite is what shipped a CLI that dies on a field the API omits."""
+        shape = wf._schema_json_shape({"properties": {"a": {"type": "string"}}}, {}, 30)
+        self.assertEqual(list(shape), ["a?"])
+
+    def test_nested_objects_carry_their_own_required_list(self):
+        spec = {"required": ["outer"], "properties": {
+            "outer": {"type": "object", "required": ["kept"], "properties": {
+                "kept": {"type": "string"}, "maybe": {"type": "string"}}}}}
+        shape = wf._schema_json_shape(spec, {}, 30)
+        self.assertIn("outer", shape)
+        self.assertEqual(sorted(shape["outer"]), ["kept", "maybe?"])
+
+    def test_the_header_no_longer_promises_every_field_comes_back(self):
+        import inspect
+        src = inspect.getsource(wf)
+        self.assertNotIn("the fields each endpoint RETURNS (extract these", src)
+        self.assertIn("MAY return", src)
+        self.assertIn("`?` marks a field the spec does NOT", src)
+
+    def test_the_marker_survives_into_the_rendered_block(self):
+        out = wf.render_jsonc(wf._schema_json_shape(self.SPEC, {}, 30))
+        self.assertIn('"name": "string"', out)
+        self.assertIn('"original_address?": "string"', out)
+        self.assertIn("```jsonc", out)
