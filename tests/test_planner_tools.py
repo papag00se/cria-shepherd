@@ -467,8 +467,19 @@ class LedgerShapeFormatTests(unittest.TestCase):
                          "application/json")
         shapes = facts["https://api.example.com/openapi.json"][2]
         self.assertIn("/holders/{address}", shapes)
-        self.assertEqual(len(shapes.splitlines()), 2,
-                         "the planner runs every endpoint's shape together on one line")
+        # ONE UNINDENTED LINE PER ENDPOINT. A nested group now gets its own INDENTED continuation
+        # line (see webfetch._lay_out_fields — the flat run was burying resolved_addresses 74% into
+        # a 1,486-char line and every maple run read `name` as the address instead). The invariant
+        # the original assertion was protecting — the planner must not smash all endpoints onto one
+        # line — is unchanged and now stated directly, rather than as a raw line count that also
+        # forbade an endpoint's own shape from wrapping.
+        heads = [ln for ln in shapes.splitlines() if not ln.startswith(" ")]
+        self.assertEqual(len(heads), 2, "each endpoint starts its own unindented line")
+        self.assertTrue(all(ln.lstrip().startswith(("GET ", "POST ", "PUT ", "DELETE ", "PATCH "))
+                            for ln in heads), heads)
+        self.assertTrue(any(ln.startswith(" ") and "resolved_addresses{" in ln
+                            for ln in shapes.splitlines()),
+                        "a nested group is broken out where the coder can see it")
 
 
 class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):

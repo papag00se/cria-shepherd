@@ -628,6 +628,34 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 FIELD_CAP = 40
 
 
+def _lay_out_fields(fields: list[str]) -> str:
+    """The endpoint's fields, with NESTED GROUPS on their own lines and flat scalars run together.
+
+    THE FLAT LINE WAS TEACHING THE WRONG FIELD. Joined with ", " the Ada Handles response came out as
+    one unbroken 1,486-character run of ~40 fields in spec order. In it `name(string, e.g. my.handle)`
+    sat at character 91 — second field, clean plausible example — and
+    `resolved_addresses{ada(string, e.g. addr1e000000000…0001)}` at character 1,101, 74% of the way
+    through, nested in braces, its example a row of zeros because that is what the spec declares.
+
+    So a model asked for "the Cardano address" met a findable field that looks like an answer and a
+    buried one that does not. Every maple run today wrote
+    `resolved_address = handle_data.get('name', …)` and shipped a CLI printing `"address": "goose"`.
+    Three runs, two models, the same field — the operator's read was that a failure this consistent
+    is something in the context pushing it there, and it was: cria's own layout.
+
+    A nested group is the part a coder CANNOT guess — it is structure, and structure earns a line.
+    Scalars stay packed, because a wall of one-per-line is its own kind of unreadable. No field is
+    promoted or reordered: cria does not decide which field answers the task (that would be overfit
+    to this API), it just stops hiding the ones with shape."""
+    nested = [f for f in fields if "{" in f]
+    flat = [f for f in fields if "{" not in f]
+    if not nested:
+        return ", ".join(fields)
+    out = [", ".join(flat)] if flat else []
+    out += nested
+    return ("\n" + " " * 6).join(x for x in out if x)
+
+
 def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = FIELD_CAP) -> list[str]:
     """For an OpenAPI/Swagger-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through
     the response schema's ``$ref`` (see :func:`_ref_map`) — so a coder knows WHAT an endpoint returns
@@ -691,7 +719,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                     # where every earlier run had built the path form correctly. Say plainly that
                     # the placeholder is part of the URL and must be replaced in place.
                     head += f" (replace in the URL path: {'; '.join(params)})"
-                lines.append(f"{head} → {', '.join(fields)}")
+                lines.append(f"{head} → {_lay_out_fields(fields)}")
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint
     if capped:

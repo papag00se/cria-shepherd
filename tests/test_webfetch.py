@@ -1135,3 +1135,50 @@ class SpillGrepHintTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, "the hint's own example must find a line")
         finally:
             os.unlink(fh.name)
+
+
+class NestedGroupsGetTheirOwnLineTests(unittest.TestCase):
+    """The flat field line was teaching the wrong field.
+
+    Joined with ", " the Ada Handles response came out as one unbroken 1,486-character run of ~40
+    fields in spec order. `name(string, e.g. my.handle)` sat at character 91 — second field, clean
+    plausible example — and `resolved_addresses{ada(string, e.g. addr1e000000000…0001)}` at
+    character 1,101, 74% through, nested in braces, its example a row of zeros (the spec's own).
+
+    Three maple runs, two models, the same result: `resolved_address = handle_data.get('name', …)`
+    and a CLI printing `"address": "goose"`. The operator's read was that a failure this consistent
+    is something in the context pushing it there. It was cria's layout.
+    """
+
+    def test_a_nested_group_is_broken_onto_its_own_line(self):
+        from cria.webfetch import _lay_out_fields
+        out = _lay_out_fields(["hex(string)", "name(string, e.g. my.handle)", "holder(string)",
+                               "resolved_addresses{ada(string), eth(string), btc(string)}"])
+        lines = out.split("\n")
+        self.assertEqual(len(lines), 2)
+        self.assertIn("name(string, e.g. my.handle)", lines[0])
+        self.assertTrue(lines[1].strip().startswith("resolved_addresses{"))
+
+    def test_every_nested_group_gets_a_line_of_its_own(self):
+        from cria.webfetch import _lay_out_fields
+        out = _lay_out_fields(["a(string)", "virtual{x(number), y(boolean)}",
+                               "resolved_addresses{ada(string)}"])
+        self.assertEqual(len([l for l in out.split("\n") if l.strip().startswith(("virtual{",
+                                                                                  "resolved_addr"))]), 2)
+
+    def test_a_flat_shape_is_left_exactly_as_it_was(self):
+        from cria.webfetch import _lay_out_fields
+        flat = ["total_handles(integer)", "address(string)", "type(string)"]
+        self.assertEqual(_lay_out_fields(flat), ", ".join(flat))
+        self.assertNotIn("\n", _lay_out_fields(flat))
+
+    def test_nothing_is_reordered_promoted_or_dropped(self):
+        """cria does not decide which field answers the task — that would overfit to this API. It
+        only stops hiding the ones with shape."""
+        from cria.webfetch import _lay_out_fields
+        fields = ["hex(string)", "name(string)", "v{a(int)}", "holder(string)", "r{ada(string)}"]
+        out = _lay_out_fields(fields)
+        for f in fields:
+            self.assertIn(f, out)
+        self.assertLess(out.index("v{a(int)}"), out.index("r{ada(string)}"))   # spec order kept
+        self.assertLess(out.index("hex(string)"), out.index("name(string)"))
