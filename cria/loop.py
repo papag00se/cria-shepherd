@@ -2092,7 +2092,8 @@ class Loop:
         # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
         # (Parity with _replan_tail, which already judges against sess.plan.task.)
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
-        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
+        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                     gate_plan=getattr(sess, "gate_plan", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
         # tests; none of that can tell you the delivered program does anything. This check existed and
@@ -2977,7 +2978,8 @@ class Loop:
         held files (run 0728-m1). Additive: every section only ever tells the critic MORE about the real
         state; none claims work that wasn't done."""
         messages = body.get("messages", [])
-        log = _bound_evidence(_work_log(messages, rlog=rlog))
+        log = _bound_evidence(_work_log(messages, rlog=rlog,
+                                        gate_plan=getattr(sess, "gate_plan", None)))
         facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
         inventory = workspace_inventory(sess.workspace_root)
         return "\n\n".join(part for part in (log, facts, inventory) if part)
@@ -3228,7 +3230,8 @@ class Loop:
             f"{i + 1}. [{'done' if it.done else 'incomplete'}] {it.text}"
             for i, it in enumerate(sess.plan.items)
         )
-        log = _work_log(body.get("messages", []), rlog=rlog)
+        log = _work_log(body.get("messages", []), rlog=rlog,
+                        gate_plan=getattr(sess, "gate_plan", None))
         prior = (prompts.render("done_summary_prior", prior_work=sess.prior_work) + "\n\n") if sess.prior_work else ""
         user = prompts.render("done_summary_user", prior=prior, task=sess.plan.task,
                               checklist=checklist, log=log or "(no tool activity captured)")
@@ -3285,7 +3288,8 @@ class Loop:
             return None
         task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
                 else _history_root(body.get("messages", []))[0])
-        evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
+        evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                           gate_plan=getattr(sess, "gate_plan", None))
         evidence += _gate_notes(sess)
         # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
         # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
@@ -3519,7 +3523,8 @@ class Loop:
         incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
         task = _history_root(body.get("messages", []))[0]
-        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog)
+        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                     gate_plan=getattr(sess, "gate_plan", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
         # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
@@ -3731,7 +3736,8 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     return "", ""
 
 
-def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None) -> str:
+def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
+              gate_plan=None) -> str:
     """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
@@ -3765,7 +3771,14 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None) -> 
     # `$ shell {"command": "cd … || exit 97\necho ___CRIA_GATE_…\npytest …"}` — and its raw output as
     # something the coder's tool returned. This log feeds the step critic, the re-derivation, the
     # satisfaction judge and the completion briefing, so the orchestration was being judged as work.
-    scrubbed = list(probegate.clean_gate_results(_reasoner_session(messages)))
+    # THE PLAN IS WHAT MAKES THE GATE TEXT HONEST. Without it `clean_gate_output` has no workspace
+    # and no `untested` list, so the stranded-test sentence and the disk-quoted findings are dropped
+    # and the same gate renders as a bare "no error-class problems". Measured on maple-preview
+    # 1786138747: 8 of 8 CODER-side gate blocks carried "Test code in testAdaHandleResolver.py will
+    # not run: pytest only runs tests named test_*.py or *_test.py"; 0 of 8 reasoner-side ones did.
+    # cria then asked those reasoners what the coder should do next and got "implement the API
+    # calls" — the rename the coder had just decided on was dropped and never came back.
+    scrubbed = list(probegate.clean_gate_results(_reasoner_session(messages), gate_plan))
     denied_ids = {tid for m in scrubbed
                   if m.get("role") == "tool" and (tid := m.get("tool_call_id"))
                   and denial.is_denied(str(m.get("content") or ""))}
@@ -3832,7 +3845,7 @@ def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
             or proberun.PROBE_EXIT_SENTINEL in text)
 
 
-def _satisfaction_evidence(messages: list[dict], rlog=None) -> str:
+def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None) -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -3844,7 +3857,8 @@ def _satisfaction_evidence(messages: list[dict], rlog=None) -> str:
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _bound_evidence(_work_log(messages, keep_checks=True, rlog=rlog))
+    log = _bound_evidence(_work_log(messages, keep_checks=True, rlog=rlog,
+                                    gate_plan=gate_plan))
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
@@ -5594,7 +5608,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # copies of one function at g2-0159 — and it asserted "current state" from the pile instead of
     # reading (the latest tool-call turn keeps its full arguments: the live working set).
     session = selfcompact.serialize(selfcompact.stub_old_write_args(
-        _drop_harness_frame(probegate.clean_gate_results(_reasoner_session(body.get("messages", []))))))
+        _drop_harness_frame(probegate.clean_gate_results(
+            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None)))))
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
