@@ -129,7 +129,7 @@ class NestedFieldDisclosureTests(unittest.TestCase):
         out = wf._schema_field_summary(sch, {}, 30)
         self.assertTrue(any("more field(s)" in x for x in out), out)
         # …and it survives INSIDE the braces, which is where the slice used to remove it.
-        self.assertTrue(any(x.startswith("nested{") and "…+5 more field(s)}" in x for x in out), out)
+        self.assertTrue(any(x == "nested: …+5 more field(s)" for x in out), out)
 
 
 class FieldTypeTruthTests(unittest.TestCase):
@@ -151,19 +151,19 @@ class FieldTypeTruthTests(unittest.TestCase):
 
     def test_ref_to_a_scalar_is_not_called_an_object(self):
         out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
-        self.assertIn("holder_type(string)", out)
-        self.assertNotIn("holder_type(object)", out)
+        self.assertIn("holder_type: string", out)
+        self.assertNotIn("holder_type: object", out)
 
     def test_scalars_carry_their_declared_type(self):
         out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
-        self.assertIn("holder(string)", out)
-        self.assertIn("length(integer)", out)
-        self.assertIn("og(boolean)", out)
+        self.assertIn("holder: string", out)
+        self.assertIn("length: integer", out)
+        self.assertIn("og: boolean", out)
 
     def test_objects_and_arrays_keep_their_existing_notation(self):
         out = wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30)
-        self.assertIn("resolved_addresses{ada(string)}", out)
-        self.assertIn("tags[]", out)
+        self.assertIn("resolved_addresses.ada: string", out)
+        self.assertIn("tags: array", out)
 
     def test_an_undeclared_type_is_left_alone_not_guessed(self):
         self.assertIn("untyped", wf._schema_field_summary(self.SPEC, self.SCHEMAS, 30))
@@ -462,7 +462,7 @@ class FetchNavSeedTests(unittest.TestCase):
         msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
         self.assertIn("response shape", msg)
         self.assertIn("holder", msg)
-        self.assertIn("resolved_addresses{ada(string), eth(string)}", msg)  # $ref dereffed, nesting + types
+        self.assertIn("resolved_addresses.ada: string, resolved_addresses.eth: string", msg)  # $ref dereffed, nesting + types
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
     def test_response_shape_collapses_subpaths_so_distinct_resources_survive(self):
@@ -966,14 +966,14 @@ class FieldExamplesTests(unittest.TestCase):
 
     def test_the_two_fields_that_mattered_are_now_distinguishable(self):
         out = " | ".join(self.summary())
-        self.assertIn("holder(string, e.g. stake1u", out)
-        self.assertIn("ada(string, e.g. addr1e", out)
+        self.assertIn("holder: string (e.g. stake1u", out)
+        self.assertIn("resolved_addresses.ada: string (e.g. addr1e", out)
 
     def test_a_field_with_no_example_is_unchanged(self):
-        self.assertIn("hex(string)", self.summary())
+        self.assertIn("hex: string", self.summary())
 
     def test_a_non_string_example_still_rides(self):
-        self.assertIn("length(integer, e.g. 9)", self.summary())
+        self.assertIn("length: integer (e.g. 9)", self.summary())
 
     def test_a_long_example_keeps_BOTH_ends_so_it_cannot_read_as_endless(self):
         """A head-only cut ending in `…` reads as "and it continues". Spec placeholders are mostly a
@@ -981,19 +981,20 @@ class FieldExamplesTests(unittest.TestCase):
         `addr1e00000000000000000000000000000000000001`, which TERMINATES, and cutting it at 32 gave
         `addr1e00000000000000000000000000…`. Walked on run 1785714194 call 0015 — the model copied
         that and emitted exactly 2,048 zeros before a guard stopped it."""
-        holder = next(f for f in self.summary() if f.startswith("holder("))
+        holder = next(f for f in self.summary() if f.startswith("holder:"))
         self.assertIn("…", holder)
-        self.assertFalse(holder.endswith("…)"), "the example still reads as open-ended")
+        self.assertFalse(holder.rstrip(")").endswith("…"),
+                         "the example still reads as open-ended")
         self.assertLess(len(holder), 80)
 
     def test_a_terminated_placeholder_keeps_its_terminator(self):
         out = wf._example_hint({"example": "addr1e00000000000000000000000000000000000001"})
-        self.assertTrue(out.startswith(", e.g. addr1e"))
-        self.assertTrue(out.endswith("0001"))
+        self.assertTrue(out.startswith(" (e.g. addr1e"))
+        self.assertTrue(out.endswith("0001)"))
 
     def test_a_structural_example_is_dropped(self):
         # A list/dict example restates the shape; it is not a discriminating value.
-        self.assertIn("tags[]", self.summary())
+        self.assertIn("tags: array", self.summary())
         self.assertNotIn("e.g. ['a'", " ".join(self.summary()))
 
     def test_a_multiline_example_never_breaks_the_field_list(self):
@@ -1152,23 +1153,24 @@ class NestedGroupsGetTheirOwnLineTests(unittest.TestCase):
 
     def test_a_nested_group_is_broken_onto_its_own_line(self):
         from cria.webfetch import _lay_out_fields
-        out = _lay_out_fields(["hex(string)", "name(string, e.g. my.handle)", "holder(string)",
-                               "resolved_addresses{ada(string), eth(string), btc(string)}"])
+        out = _lay_out_fields(["hex: string", "name: string (e.g. my.handle)", "holder: string",
+                               "resolved_addresses.ada: string", "resolved_addresses.eth: string"])
         lines = out.split("\n")
         self.assertEqual(len(lines), 2)
-        self.assertIn("name(string, e.g. my.handle)", lines[0])
-        self.assertTrue(lines[1].strip().startswith("resolved_addresses{"))
+        self.assertIn("name: string (e.g. my.handle)", lines[0])
+        self.assertTrue(lines[1].strip().startswith("resolved_addresses.ada: string"))
 
     def test_every_nested_group_gets_a_line_of_its_own(self):
         from cria.webfetch import _lay_out_fields
-        out = _lay_out_fields(["a(string)", "virtual{x(number), y(boolean)}",
-                               "resolved_addresses{ada(string)}"])
-        self.assertEqual(len([l for l in out.split("\n") if l.strip().startswith(("virtual{",
-                                                                                  "resolved_addr"))]), 2)
+        out = _lay_out_fields(["a: string", "virtual.x: number", "virtual.y: boolean",
+                               "resolved_addresses.ada: string"])
+        self.assertEqual(len([l for l in out.split("\n")
+                              if l.strip().startswith(("virtual.", "resolved_addresses."))]), 2,
+                         "siblings share a line; each PARENT gets its own")
 
     def test_a_flat_shape_is_left_exactly_as_it_was(self):
         from cria.webfetch import _lay_out_fields
-        flat = ["total_handles(integer)", "address(string)", "type(string)"]
+        flat = ["total_handles: integer", "address: string", "type: string"]
         self.assertEqual(_lay_out_fields(flat), ", ".join(flat))
         self.assertNotIn("\n", _lay_out_fields(flat))
 
@@ -1176,9 +1178,9 @@ class NestedGroupsGetTheirOwnLineTests(unittest.TestCase):
         """cria does not decide which field answers the task — that would overfit to this API. It
         only stops hiding the ones with shape."""
         from cria.webfetch import _lay_out_fields
-        fields = ["hex(string)", "name(string)", "v{a(int)}", "holder(string)", "r{ada(string)}"]
+        fields = ["hex: string", "name: string", "v.a: int", "holder: string", "r.ada: string"]
         out = _lay_out_fields(fields)
         for f in fields:
             self.assertIn(f, out)
-        self.assertLess(out.index("v{a(int)}"), out.index("r{ada(string)}"))   # spec order kept
-        self.assertLess(out.index("hex(string)"), out.index("name(string)"))
+        self.assertLess(out.index("v.a: int"), out.index("r.ada: string"))   # spec order kept
+        self.assertLess(out.index("hex: string"), out.index("name: string"))

@@ -533,7 +533,7 @@ def _example_hint(v: dict) -> str:
     if not s:
         return ""
     if len(s) <= EXAMPLE_CHARS:
-        return f", e.g. {s}"
+        return f" (e.g. {s})"
     # ELIDE THE MIDDLE, never the tail. A head-only cut ending in `…` reads as "and it continues",
     # and spec placeholders are mostly a long run of one character: the Ada Handles spec's `ada`
     # example is `addr1e00000000000000000000000000000000000001`, which TERMINATES, and cutting it at
@@ -542,7 +542,7 @@ def _example_hint(v: dict) -> str:
     # it emitted exactly 2,048 zeros before a guard caught it. Keeping both ends shows the shape and
     # the terminator, cannot be read as open-ended, and is shorter than the head-only form was.
     keep = max(4, (EXAMPLE_CHARS - 1) // 2)
-    return f", e.g. {s[:keep]}…{s[-4:]}"
+    return f" (e.g. {s[:keep]}…{s[-4:]})"
 
 
 def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> list[str]:
@@ -570,17 +570,26 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
     for k, v in items[:max_fields]:
         v = _deref(v if isinstance(v, dict) else {}, schemas)
         if _depth == 0 and (v.get("type") == "object" or "properties" in v):
+            # A NESTED FIELD IS NAMED BY ITS ACCESS PATH — `resolved_addresses.ada`, not
+            # `resolved_addresses{ada}`. The brace form asks the coder to infer that `{}` means
+            # nesting, and it infers wrong: walked verbatim, a coder read `holder(string)` as an
+            # object and went looking for `holder.address` on a field the spec declares a plain
+            # string, 404ing every second lookup. The dotted path IS what it must type.
             # NB: pass the WHOLE `sub` through. It already ends with its own "…+N more field(s)"
-            # marker when the nested object was capped, and slicing it here (`sub[:8]`) threw that
-            # marker away — the one case it exists for. A nested field past the cap then read to the
-            # coder as "the API does not return it", under a prompt that says "use these EXACT names
-            # ... do not guess". Same rule as the sibling cap below: never a silent slice.
+            # marker when the nested object was capped, and slicing it here threw that marker away —
+            # a nested field past the cap then read as "the API does not return it", under a prompt
+            # that says "use these EXACT names … do not guess". Never a silent slice.
             sub = _schema_field_summary(v, schemas, max_fields, _depth + 1)
-            out.append(f"{k}{{{', '.join(sub)}}}" if sub else f"{k}(object)")
+            if not sub:
+                out.append(f"{k}: object")
+            else:
+                # The cap disclosure is a NOTE, not a field — `nested.…+5 more field(s)` reads as a
+                # field literally named `…`. It keeps the parent, with a separator that says so.
+                out.extend(f"{k}: {s}" if s.startswith("…") else f"{k}.{s}" for s in sub)
         elif v.get("type") == "array":
-            out.append(f"{k}[]")
+            out.append(f"{k}: array")
         elif v.get("type"):
-            out.append(f"{k}({v['type']}{_example_hint(v)})")
+            out.append(f"{k}: {v['type']}{_example_hint(v)}")
         else:
             out.append(str(k))   # the spec itself declares no type — say nothing rather than guess
     # DISCLOSE the cap. A silently-cut field list reads as the complete set, so a coder looking for a
@@ -647,12 +656,23 @@ def _lay_out_fields(fields: list[str]) -> str:
     Scalars stay packed, because a wall of one-per-line is its own kind of unreadable. No field is
     promoted or reordered: cria does not decide which field answers the task (that would be overfit
     to this API), it just stops hiding the ones with shape."""
-    nested = [f for f in fields if "{" in f]
-    flat = [f for f in fields if "{" not in f]
-    if not nested:
+    parents = {f.split(".", 1)[0] for f in fields if "." in f.split(":", 1)[0]}
+    if not parents:
         return ", ".join(fields)
-    out = [", ".join(flat)] if flat else []
-    out += nested
+
+    def _owner(f):
+        """The nested group this entry belongs to, or "" for a plain scalar. A cap disclosure
+        (`stats: …+3 more field(s)`) belongs with its own group, not stranded among the scalars."""
+        head = f.split(":", 1)[0]
+        if "." in head:
+            return head.split(".", 1)[0]
+        return head.strip() if head.strip() in parents else ""
+
+    out = [", ".join(f for f in fields if not _owner(f))]
+    # Siblings under one parent share a line — `resolved_addresses.*` is one thing to look at, and
+    # one leaf per line would bury it again under its own verbosity.
+    for parent in dict.fromkeys(_owner(f) for f in fields if _owner(f)):
+        out.append(", ".join(f for f in fields if _owner(f) == parent))
     return ("\n" + " " * 6).join(x for x in out if x)
 
 
