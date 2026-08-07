@@ -508,13 +508,26 @@ def _deref(sch: Any, schemas: dict) -> dict:
     return sch if isinstance(sch, dict) else {}
 
 
-# How much of a field's declared example rides along. Long enough to carry a distinguishing PREFIX
-# (`stake1u…` vs `addr1…`, `ipfs://…`), short enough that the block roughly doubles rather than
-# quadrupling. Measured on the Ada Handles spec, 24 fields: names+types 471 chars, +examples 997,
-# +descriptions 2,072. Descriptions were measured and deliberately left out — in that spec they
-# mostly restate the field name ("Current Holder of the Handle" for `holder`), so they cost 4.4×
-# for prose the name already carries, while the example is the one thing the name cannot say.
+# How much of a field's declared example rides along, when the example is what gets shown. Long
+# enough to carry a distinguishing PREFIX (`stake1u…` vs `addr1…`, `ipfs://…`).
 EXAMPLE_CHARS = 32
+
+# THE DESCRIPTION WINS WHERE THERE IS ONE (operator ruling, 2026-08-07: "I would prefer description
+# over example. It is much more helpful"). This reverses an earlier measured call that left
+# descriptions out because they "mostly restate the field name" and cost 4.4×. What that measurement
+# missed is the case where the example is not merely redundant but WRONG-SIGNALLING: in the Ada
+# Handles `Handle` schema, `resolved_addresses.ada` and `original_address` declare the SAME example,
+# `addr1e00000000000000000000000000000000000001`, and cria printed them adjacent with nothing else
+# to tell them apart. maple-preview 1786081695 read them as one thing, made `original_address`
+# mandatory, and its CLI exited 1 on every handle. The description cria was holding says exactly
+# what the example could not: "If enabled by the root Handle owner, this will show the address that
+# the SubHandles was originally sent to on mint".
+#
+# Cost, measured on that spec (37 leaf fields, 32 with a description): examples ~573 chars,
+# descriptions uncapped ~3,523 (6.1x). Capped at 96 it is ~1,960 (3.4x) — the cap is what makes the
+# preference affordable, and it is generous enough to carry a full sentence. The two 407-character
+# outliers (`characters`, `sub_characters`) are prose with embedded <br /> markup; they truncate.
+DESCRIPTION_CHARS = 96
 
 
 def _example_hint(v: dict) -> str:
@@ -526,6 +539,13 @@ def _example_hint(v: dict) -> str:
     `(string)`. Run after run chained the payment address into `/holders/{address}` and got a 404 —
     with the answer sitting in a document cria had fetched, parsed, and dropped this line from.
     25 of that spec's 34 response fields carry one."""
+    # THE DESCRIPTION FIRST. It says what the field IS; an example only ever hints at it, and when
+    # two fields share one example it hints wrong. See DESCRIPTION_CHARS.
+    d = " ".join(str(v.get("description") or "").split())
+    d = re.sub(r"<[^>]{1,20}>", " ", d)        # specs embed <br /> and friends in prose
+    d = " ".join(d.split())
+    if d:
+        return f" ({d[:DESCRIPTION_CHARS - 1]}…)" if len(d) > DESCRIPTION_CHARS else f" ({d})"
     ex = v.get("example")
     if ex is None or isinstance(ex, (dict, list)):
         return ""    # a structural example is the shape again, not a discriminating value
