@@ -37,7 +37,11 @@ the other's runs.
    extractor; it emits every call's complete prompt (or its exact byte-delta), complete reasoning,
    complete reply, and complete tool arguments, and it has no way to truncate. Read every chunk it
    produces, in order. An ad-hoc script that cuts content at N chars is not a walk — one hid two
-   real defects on 1785893473. Write the walk into `docs/audits/ladder-walk.md` under `## <run_id>`
+   real defects on 1785893473. Chunks are held under a line budget as well as a byte one so each
+   fits a single read; when one call is too big for even that, walk.py prints `OVERSIZED <chunk>`
+   with the line count, and that chunk must be paged to its last line. A walker once read the head
+   of a 3,318-line chunk and moved on, leaving 2,406 lines unwalked with nothing saying so.
+   Write the walk into `docs/audits/ladder-walk.md` under `## <run_id>`
    with a `cria fault: yes|none` line.
    - `cria fault: yes` → fix it per `docs/principles.md`: upstream cause, no fallbacks, no
      task-specific special cases, measure prevalence first, a test that fails before and passes

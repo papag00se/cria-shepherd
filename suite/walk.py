@@ -22,8 +22,10 @@ For each call NNNN-<phase> in the capture directory it prints:
   --- TOOL CALL <name> ---  the complete raw argument string of every tool call, unabridged.
   [finish: <reason>]
 
-Output goes to stdout, or to numbered chunk files with --out (default ~64 KB per chunk so a
-reader can take the run in order without any single file being unloadable).
+Output goes to stdout, or to numbered chunk files with --out (default ~64 KB AND ~1800 lines per
+chunk so a reader can take the run in order without any single file being unloadable). Bytes alone
+were not enough: a chunk of many short lines came to 3,318 lines, a reader capped at 2,000 read the
+head and moved on, and 2,406 lines went unwalked without anything saying so.
 
     python3 suite/walk.py ~/.cria/calls/<session>            # whole run to stdout
     python3 suite/walk.py <session-name> --out /tmp/lw       # chunked into /tmp/lw/chunkNN.txt
@@ -41,6 +43,7 @@ from pathlib import Path
 
 CALLS_ROOT = Path.home() / ".cria" / "calls"
 CHUNK_BYTES_DEFAULT = 64_000
+CHUNK_LINES_DEFAULT = 1_800   # under a 2,000-line read cap, with room for the reader's own framing
 _CALL_RE = re.compile(r"^(\d{4})-(.+)\.json$")
 
 
@@ -125,6 +128,8 @@ def main():
     ap.add_argument("--out", help="write numbered chunk files into this directory instead of stdout")
     ap.add_argument("--chunk-bytes", type=int, default=CHUNK_BYTES_DEFAULT,
                     help=f"target size per chunk file with --out (default {CHUNK_BYTES_DEFAULT})")
+    ap.add_argument("--chunk-lines", type=int, default=CHUNK_LINES_DEFAULT,
+                    help=f"target lines per chunk file with --out (default {CHUNK_LINES_DEFAULT})")
     ap.add_argument("--full-prompts", action="store_true",
                     help="print every prompt whole; no common-prefix dedup")
     args = ap.parse_args()
@@ -144,21 +149,34 @@ def main():
 
     outdir = Path(os.path.expanduser(args.out))
     outdir.mkdir(parents=True, exist_ok=True)
-    chunks, cur, size = [], [], 0
+    chunks, cur, size, lines = [], [], 0, 0
     for b in blocks:
-        # A call never splits across chunks — every chunk is a whole number of calls.
-        if cur and size + len(b) > args.chunk_bytes:
+        n = b.count("\n") + 1
+        # A call never splits across chunks — every chunk is a whole number of calls. Both budgets
+        # bind: bytes so a chunk stays loadable, lines so it stays READABLE by a line-capped reader.
+        if cur and (size + len(b) > args.chunk_bytes or lines + n > args.chunk_lines):
             chunks.append("".join(cur))
-            cur, size = [], 0
+            cur, size, lines = [], 0, 0
         cur.append(b)
         size += len(b)
+        lines += n
     if cur:
         chunks.append("".join(cur))
     width = max(2, len(str(len(chunks))))
+    over = []
     for i, text in enumerate(chunks, 1):
-        (outdir / f"chunk{i:0{width}d}.txt").write_text(text)
+        name = f"chunk{i:0{width}d}.txt"
+        (outdir / name).write_text(text)
+        n = text.count("\n") + 1
+        if n > args.chunk_lines:
+            over.append((name, n))
     total = sum(len(c) for c in chunks)
     print(f"{len(calls)} calls → {len(chunks)} chunks, {total:,} bytes, in {outdir}")
+    # One call can exceed the budget on its own, and splitting a call is worse than a long chunk.
+    # Saying so is the difference between a reader paging it and a reader silently missing it.
+    for name, n in over:
+        print(f"  OVERSIZED {name}: {n:,} lines — one call exceeds --chunk-lines; PAGE IT, "
+              f"read offset {args.chunk_lines}+ as well")
 
 
 if __name__ == "__main__":
