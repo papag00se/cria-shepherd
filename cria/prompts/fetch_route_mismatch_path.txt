@@ -1,0 +1,1 @@
+SAME HOST, DIFFERENT PATHS — {{HOST}}. cria's own fetch of {{OK_URL}} returned {{OK_STATUS}}. Your code requested {{FAIL_URL}} and got {{FAIL_STATUS}}. The host answers, so this is about the path, not the network and not your headers. Compare the two URLs against the routes the fetched document actually defines.

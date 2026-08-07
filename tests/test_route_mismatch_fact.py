@@ -105,12 +105,13 @@ class OnlyARuntimeFailureCountsTests(unittest.TestCase):
         return bool(loop._route_mismatch_fact(LEDGER, [{"role": "tool", "content": text}], ""))
 
     def test_the_runtime_forms_are_read(self):
-        for s in ("urllib.error.HTTPError: HTTP Error 403: Forbidden · https://api.handle.me/x",
-                  "403 Client Error: Forbidden for url: https://api.handle.me/x",
-                  "HTTP/1.1 500 Internal Server Error from https://api.handle.me"):
-            # the ` · ` render marks a cria fetch, so use a plain runtime line for the first case
-            s = s.replace(" · ", " from ")
+        # only the classes cria can DIAGNOSE fire; the matcher itself reads all runtime forms
+        for s in ("urllib.error.HTTPError: HTTP Error 403: Forbidden from https://api.handle.me/x",
+                  "403 Client Error: Forbidden for url: https://api.handle.me/x"):
             self.assertTrue(self._fires(s), s)
+        for shape in ("HTTP Error 403: Forbidden", "403 Client Error: Forbidden",
+                      "HTTP/1.1 500 Internal Server Error"):
+            self.assertTrue(loop._CODER_HTTP_FAIL.search(shape), shape)
 
     def test_source_code_mentioning_a_status_is_never_an_observation(self):
         for s in ('Output:\n    """Test handling when a handle is not found (HTTP 404)."""\n'
@@ -132,6 +133,44 @@ class OnlyARuntimeFailureCountsTests(unittest.TestCase):
         for s in ("Output:\n    assert resp.status_code == 404  # https://api.handle.me",
                   "Output:\n    RETRY_ON = [500, 502, 503]  # https://api.handle.me"):
             self.assertFalse(self._fires(s), s)
+
+
+class TheStatusDecidesTheDiagnosisTests(unittest.TestCase):
+    """The first cut named the User-Agent whatever the code was.
+
+    mellum2 1786064398 got a REAL 404 — `Error: 404 Client Error: Not Found for url:
+    https://api.handle.me/v1/handles/goose` — because it invented a `/v1/handles` route the API does
+    not have. cria told it 23 times that the difference was its User-Agent. A 404 is a wrong path; a
+    401/403/429 is a rejected request. One cause for both sent the coder at its headers while the
+    path stayed broken. Everything else gets silence — cria has no cause it can name."""
+
+    L = {"https://api.handle.me/openapi.json": ("HTTP 200", "", "", "")}
+
+    def _fact(self, out):
+        return loop._route_mismatch_fact(self.L, [{"role": "tool", "content": "Output:\n" + out}], "")
+
+    def test_a_404_names_the_two_PATHS_and_never_the_user_agent(self):
+        f = self._fact("Error: 404 Client Error: Not Found for url: "
+                       "https://api.handle.me/v1/handles/goose")
+        self.assertIn("DIFFERENT PATHS", f)
+        self.assertIn("https://api.handle.me/v1/handles/goose", f)
+        self.assertIn("https://api.handle.me/openapi.json", f)
+        self.assertNotIn("User-Agent", f)
+        self.assertIn("not your headers", f)
+
+    def test_a_403_still_names_the_user_agent(self):
+        f = self._fact("urllib.error.HTTPError: HTTP Error 403: Forbidden\n"
+                       "from https://api.handle.me/handles/goose")
+        self.assertIn("User-Agent", f)
+        self.assertNotIn("DIFFERENT PATHS", f)
+
+    def test_a_class_cria_cannot_diagnose_says_nothing(self):
+        self.assertEqual(self._fact("HTTP/1.1 500 Internal Server Error https://api.handle.me/x"), "")
+        self.assertEqual(self._fact("HTTP Error 418: I am a teapot https://api.handle.me/x"), "")
+
+    def test_a_404_on_the_SAME_url_cria_fetched_is_not_a_path_difference(self):
+        f = self._fact("404 Client Error: Not Found for url: https://api.handle.me/openapi.json")
+        self.assertEqual(f, "")
 
 
 class WiringTests(unittest.TestCase):

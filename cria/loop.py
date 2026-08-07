@@ -5459,9 +5459,30 @@ def _route_mismatch_fact(ledger: dict, messages: list[dict], workspace_root: str
         # the coder at the wrong request.
         named = [h for h in _HOST_IN_TEXT.findall(c) if h in ok_hosts]
         for host in named or [h for h in ok_hosts if _host_in_workspace_code(workspace_root, h)]:
-            return prompts.render("fetch_route_mismatch", host=host,
-                                  ok_status=ok_hosts[host], fail_status=f"HTTP {code}")
+            # THE STATUS DECIDES THE DIAGNOSIS. The first cut named the User-Agent whatever the
+            # code was. mellum2 1786064398 got a REAL 404 — `Error: 404 Client Error: Not Found for
+            # url: https://api.handle.me/v1/handles/goose` — because it invented a `/v1` prefix the
+            # API does not have, and cria told it 23 times that the difference was its User-Agent.
+            # A 404 is a wrong path; a 401/403/429 is a rejected request. Naming one cause for both
+            # sent the coder at its headers while the path stayed broken.
+            fail_url = next((u for u in _URL_IN_TEXT.findall(c) if host in u), "")
+            ok_url = next((u for u in ledger if host in u), f"https://{host}")
+            if code in _ROUTING_CODES and fail_url and fail_url != ok_url:
+                return prompts.render("fetch_route_mismatch_path", host=host, ok_url=ok_url,
+                                      ok_status=ok_hosts[host], fail_url=fail_url,
+                                      fail_status=f"HTTP {code}")
+            if code in _REJECTION_CODES:
+                return prompts.render("fetch_route_mismatch", host=host,
+                                      ok_status=ok_hosts[host], fail_status=f"HTTP {code}")
+            return ""   # any other class — cria has no cause it can name, so it says nothing
     return ""
+
+
+# A wrong PATH (the route does not exist) versus a rejected REQUEST (the route does, the caller is
+# refused). cria only speaks where it can name the difference; every other 4xx/5xx gets silence.
+_ROUTING_CODES = frozenset({"404", "410"})
+_REJECTION_CODES = frozenset({"401", "403", "407", "429"})
+_URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9.\-]+(?:/[^\s'\"),]*)?")
 
 
 # Derived from the ONE canonical shell-tool family (shelltool.SHELL_TOOL_NAMES) so it can't drift — a
