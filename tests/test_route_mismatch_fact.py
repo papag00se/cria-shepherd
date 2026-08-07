@@ -45,7 +45,9 @@ class ItFiresOnTheRealShapeTests(unittest.TestCase):
         self.assertIn("User-Agent", fact)
 
     def test_the_host_named_in_the_failure_itself_needs_no_disk_read(self):
-        msgs = [{"role": "tool", "content": "urlopen('https://api.handle.me/handles/goose') -> HTTP 403"}]
+        msgs = [{"role": "tool", "content": "Output:\n"
+                 "urlopen('https://api.handle.me/handles/goose')\n"
+                 "urllib.error.HTTPError: HTTP Error 403: Forbidden"}]
         self.assertIn("api.handle.me", loop._route_mismatch_fact(LEDGER, msgs, ""))
 
     def test_it_states_both_observations_and_prescribes_only_a_comparison(self):
@@ -86,6 +88,50 @@ class ItStaysSilentWithoutBothHalvesTests(unittest.TestCase):
         launder a claimed failure into cria's voice."""
         said = [{"role": "assistant", "content": "I got HTTP 403 from https://api.handle.me"}]
         self.assertEqual(loop._route_mismatch_fact(LEDGER, said, ""), "")
+
+
+class OnlyARuntimeFailureCountsTests(unittest.TestCase):
+    """The first cut matched a bare `HTTP 404` and shipped a false fact.
+
+    Test files are full of status codes that were never received. Counted over maple-preview
+    1786062317: `(HTTP 404)` appears 148 times and `HTTP 404` 24 times, ALL of them inside the test
+    file — docstrings, `HTTPError("url", 404, ...)` mock constructors, `assertIn("404", ...)`. A cat
+    or read_file of that file is a tool result, so the scraper read source as observation. cria told
+    its own reasoner "Your code got HTTP 404 from that same host" in FOUR prompts. No request in
+    that run ever returned 404; the real failures were 403. Rule 5b, broken by the check written to
+    uphold it."""
+
+    def _fires(self, text):
+        return bool(loop._route_mismatch_fact(LEDGER, [{"role": "tool", "content": text}], ""))
+
+    def test_the_runtime_forms_are_read(self):
+        for s in ("urllib.error.HTTPError: HTTP Error 403: Forbidden · https://api.handle.me/x",
+                  "403 Client Error: Forbidden for url: https://api.handle.me/x",
+                  "HTTP/1.1 500 Internal Server Error from https://api.handle.me"):
+            # the ` · ` render marks a cria fetch, so use a plain runtime line for the first case
+            s = s.replace(" · ", " from ")
+            self.assertTrue(self._fires(s), s)
+
+    def test_source_code_mentioning_a_status_is_never_an_observation(self):
+        for s in ('Output:\n    """Test handling when a handle is not found (HTTP 404)."""\n'
+                  "    # https://api.handle.me/handles/x",
+                  'Output:\n    http_error = HTTPError("https://api.handle.me/x", 404, "Not Found", {}, None)',
+                  'Output:\n    self.assertIn("404", str(result))  # https://api.handle.me',
+                  "Output:\n    # just check it contains HTTP 404 from https://api.handle.me"):
+            self.assertFalse(self._fires(s), s)
+
+    def test_a_programs_own_prose_still_counts_when_it_carries_the_reason(self):
+        """The discriminator is the REASON PHRASE, so the original walked case survives:
+        run 1786047359 printed `Error resolving handle: HTTP 403: Forbidden`."""
+        self.assertTrue(self._fires("Output:\nError resolving handle: HTTP 403: Forbidden\n"
+                                    "from https://api.handle.me"))
+        self.assertTrue(self._fires("Output:\nError: Handle not found (HTTP 403): Forbidden\n"
+                                    "at https://api.handle.me"))
+
+    def test_a_status_with_no_reason_phrase_is_not_an_observation(self):
+        for s in ("Output:\n    assert resp.status_code == 404  # https://api.handle.me",
+                  "Output:\n    RETRY_ON = [500, 502, 503]  # https://api.handle.me"):
+            self.assertFalse(self._fires(s), s)
 
 
 class WiringTests(unittest.TestCase):

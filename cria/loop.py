@@ -5358,12 +5358,36 @@ def _fetch_ground_truth(messages: list[dict], sess=None,
     return f"{out}\n\n{mismatch}" if mismatch else out
 
 
-# An HTTP failure the CODER's own process hit, as its runtime prints it: python's
-# `HTTP Error 403: Forbidden` and `HTTPError: 404`, requests' `403 Client Error`, curl/node/go's
-# bare `HTTP 500`. Paired with a host anywhere in the same tool result.
+# An HTTP failure the CODER's own process ACTUALLY HIT, in the exact form a RUNTIME prints it.
+#
+# THE FIRST CUT MATCHED A BARE `HTTP 404` AND SHIPPED A FALSE FACT. Test files are full of status
+# codes that were never received: docstrings ("""Test handling when a handle is not found (HTTP
+# 404)."""), mock constructors (HTTPError("url", 404, "Not Found", {}, None)), assertions
+# (self.assertIn("404", ...)). A `cat` or `read_file` of such a file is a tool result, so the
+# scraper read source as observation. Measured on maple-preview 1786062317: `(HTTP 404)` appears
+# 148 times and `HTTP 404` 24 times — ALL from the test file — while the coder's real failures were
+# 403. cria told its own reasoner "Your code got HTTP 404 from that same host" in four prompts. No
+# request in that run ever returned 404. That is rule 5b broken by the check written to uphold it.
+#
+# So: only the shapes a runtime emits, never a shape source code can contain.
+#   urllib   `urllib.error.HTTPError: HTTP Error 403: Forbidden`  → "HTTP Error <code>"
+#   requests `403 Client Error: Forbidden for url: …`             → "<code> Client/Server Error"
+#   curl/httpx/go `HTTP/1.1 403 Forbidden`                        → "HTTP/x.y <code>"
+# Counted over that same capture: 18 hits, every one a real 403; zero false hits.
+# A program that catches the error and prints its own prose ("Error: … (HTTP 403)") is MISSED on
+# purpose — a miss shows the coder nothing, a false fact sends it somewhere wrong.
+# THE DISCRIMINATOR IS THE REASON PHRASE. A status a server really returned is printed with the
+# reason it came back with — `403: Forbidden`, `(HTTP 403): Forbidden`, `500 Internal Server Error`.
+# A status in source code is not: a docstring ends `(HTTP 404).`, a mock constructor writes
+# `404, "Not Found"` with a COMMA, an assertion writes `assertIn("404", …)`. Requiring `<code>:` +
+# a capitalised reason keeps every observed failure in both walked runs — 1786047359's
+# `Error resolving handle: HTTP 403: Forbidden` and 1786062317's
+# `urllib.error.HTTPError: HTTP Error 403: Forbidden` — and rejects all 172 source mentions.
 _CODER_HTTP_FAIL = re.compile(
-    r"(?i)(?:HTTP\s*(?:Error\s*)?|HTTPError:\s*|status(?:\s*code)?[:= ]\s*)([45]\d{2})\b"
-    r"|\b([45]\d{2})\s+(?:Client|Server)\s+Error\b")
+    r"(?:HTTP\s+Error\s+([45]\d{2})\b"                       # urllib runtime
+    r"|\b([45]\d{2})\s+(?:Client|Server)\s+Error\b"          # requests runtime
+    r"|\bHTTP/\d(?:\.\d)?\s+([45]\d{2})\b"                   # a raw status line
+    r"|\b([45]\d{2})\)?:\s+[A-Z][A-Za-z]{2,}(?:\s[A-Za-z]+){0,3})")   # <code>: Reason Phrase
 _HOST_IN_TEXT = re.compile(r"https?://([A-Za-z0-9.-]+)")
 
 
@@ -5428,7 +5452,7 @@ def _route_mismatch_fact(ledger: dict, messages: list[dict], workspace_root: str
         fail = _CODER_HTTP_FAIL.search(c)
         if not fail:
             continue
-        code = fail.group(1) or fail.group(2)
+        code = next(g for g in fail.groups() if g)
         # The host is USUALLY absent from the failure line itself, so prefer one named in the same
         # result and fall back to the coder's own source naming it. Never to "cria reached exactly
         # one host, so it must be that one" — that is a guess, and a wrong attribution would send
