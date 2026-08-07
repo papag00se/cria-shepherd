@@ -712,39 +712,61 @@ def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0
     return out
 
 
-def _jsonc_rows(shape: dict, indent: int) -> list[tuple[str, str]]:
+# A key TypeScript can write bare. Anything else gets quoted, which TS also accepts.
+_TS_IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+# OpenAPI's type names -> TypeScript's. `?` means the spec declared none; `unknown` is TS's word
+# for exactly that, and it is honest where `any` would be a shrug.
+_TS_TYPES = {"integer": "number", "number": "number", "string": "string", "boolean": "boolean",
+             "array": "unknown[]", "object": "object", "null": "null", "?": "unknown"}
+
+
+def _ts_rows(shape: dict, indent: int) -> list[tuple[str, str]]:
     """(code, comment) per line, so the comment column can be aligned once over the whole block."""
     pad = " " * indent
     rows: list[tuple[str, str]] = []
-    keys = list(shape)
-    for n, k in enumerate(keys):
+    for k in shape:
         v = shape[k]
-        tail = "" if n == len(keys) - 1 else ","
+        opt = k.endswith("?")
+        name = k[:-1] if opt else k
+        if name.startswith("…"):                       # the cap disclosure is a note, not a field
+            rows.append((f"{pad}// {name}", ""))
+            continue
+        key = (name if _TS_IDENT.match(name) else f'"{name}"') + ("?" if opt else "")
         if isinstance(v, dict):
-            rows.append((f'{pad}"{k}": {{', ""))
-            rows.extend(_jsonc_rows(v, indent + 2))
-            rows.append((f"{pad}}}{tail}", ""))
+            rows.append((f"{pad}{key}: {{", ""))
+            rows.extend(_ts_rows(v, indent + 2))
+            rows.append((f"{pad}}};", ""))
         else:
-            typ, ex = v if isinstance(v, tuple) else (str(v), "")
-            rows.append((f'{pad}"{k}": "{typ}"{tail}', ex))
+            typ, note = v if isinstance(v, tuple) else (str(v), "")
+            rows.append((f"{pad}{key}: {_TS_TYPES.get(typ, typ)};", note))
     return rows
 
 
 def render_jsonc(shape: dict) -> str:
-    """The shape as JSONC — real JSON, with the declared example as a trailing `//` comment.
+    """The shape as a fenced TypeScript object type — `{ field?: type; }`, no interface name.
 
-    JSONC, and FENCED as ```jsonc, because that is a thing the coder has seen a million times and it
-    says unambiguously "here is a JSON object's shape". Everything before it was a cria dialect:
-    first `name(string, e.g. my.handle)`, then `name: string (e.g. my.handle)` — invented notations
-    no model was trained on, as the operator pointed out about both.
+    THE `?` HAS TO LIVE OUTSIDE THE KEY. The version before this marked optionality inside a JSON
+    key — `"holder?": "string"` — which in JSON means the key is literally `holder?`. It is valid
+    JSON and completely wrong, and maple-preview 1786129064 read it exactly as written:
 
-    The comment is what buys the clean value. `"name": "string",  // e.g. my.handle` keeps the type
-    a bare type; the earlier `"name": "string (e.g. my.handle)"` read as though the parenthetical
-    were part of it."""
-    rows = _jsonc_rows(shape, 2)
+        resolved_address = data.get('hex?')
+        holder_address = data.get('holder?')      # "field is 'holder?', not 'holder'"
+
+    Every lookup returned None and the CLI raised `Handle not found` on every handle. I had borrowed
+    TypeScript's `field?: type` and then written it in a notation where that convention does not
+    exist. Operator's call: use TypeScript itself, where the `?` sits outside the key by
+    construction and cannot be pasted into a lookup.
+
+    Per-field marking is also the only general answer. A one-line header ("only `name` is
+    guaranteed") happens to be short for this spec; a spec with twenty required fields would need a
+    paragraph. TS marks each field where it stands.
+
+    No `interface Foo` wrapper (operator: "just start with the open curly brace") — cria would have
+    to invent a name per endpoint, and an invented name is one more thing that can be believed."""
+    rows = _ts_rows(shape, 2)
     width = max((len(c) for c, m in rows if m), default=0)
     body = "\n".join(c + (f"{' ' * (width - len(c) + 2)}// {m}" if m else "") for c, m in rows)
-    return "```jsonc\n{\n" + body + "\n}\n```"
+    return "```ts\n{\n" + body + "\n}\n```"
 
 
 def _lay_out_fields(fields: list[str]) -> str:

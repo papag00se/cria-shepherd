@@ -462,8 +462,8 @@ class FetchNavSeedTests(unittest.TestCase):
         msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
         self.assertIn("response shape", msg)
         self.assertIn("holder", msg)
-        self.assertIn('"resolved_addresses?": {\n    "ada?": "string",\n    "eth?": "string"', msg)
-        self.assertIn("```jsonc", msg)
+        self.assertIn('resolved_addresses?: {\n    ada?: string;\n    eth?: string;', msg)
+        self.assertIn("```ts", msg)
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
     def test_response_shape_collapses_subpaths_so_distinct_resources_survive(self):
@@ -1233,6 +1233,59 @@ class OptionalFieldsAreMarkedTests(unittest.TestCase):
 
     def test_the_marker_survives_into_the_rendered_block(self):
         out = wf.render_jsonc(wf._schema_json_shape(self.SPEC, {}, 30))
-        self.assertIn('"name": "string"', out)
-        self.assertIn('"original_address?": "string"', out)
-        self.assertIn("```jsonc", out)
+        self.assertIn('name: string;', out)
+        self.assertIn('original_address?: string;', out)
+        self.assertIn("```ts", out)
+
+
+class TheOptionalMarkerCannotBecomeAKeyTests(unittest.TestCase):
+    """maple-preview 1786129064 read `"holder?": "string"` exactly as written.
+
+        resolved_address = data.get('hex?')
+        holder_address = data.get('holder?')      # "field is 'holder?', not 'holder'"
+
+    Every lookup returned None and the CLI raised `Handle not found` on every handle. The `?` was
+    borrowed from TypeScript and written inside a JSON key, where it is not a convention — it is a
+    character in the key name. In TypeScript the `?` sits outside the key by construction."""
+
+    SPEC = {"required": ["name"], "properties": {
+        "name": {"type": "string"},
+        "holder": {"type": "string"},
+        "count": {"type": "integer"},
+        "tags": {"type": "array"},
+        "nested": {"type": "object", "properties": {"inner": {"type": "string"}}}}}
+
+    def _out(self):
+        return wf.render_jsonc(wf._schema_json_shape(self.SPEC, {}, 30))
+
+    def test_no_key_carries_a_question_mark_inside_quotes(self):
+        self.assertNotIn('?":', self._out())
+        self.assertNotIn("?':", self._out())
+
+    def test_the_optional_marker_sits_after_the_bare_key(self):
+        out = self._out()
+        self.assertIn("holder?: string;", out)
+        self.assertIn("name: string;", out)      # required — no marker
+        self.assertNotIn("name?:", out)
+
+    def test_it_is_fenced_as_typescript_with_no_interface_name(self):
+        out = self._out()
+        self.assertTrue(out.startswith("```ts\n{"))
+        self.assertNotIn("interface", out)
+
+    def test_openapi_types_become_typescript_types(self):
+        out = self._out()
+        self.assertIn("count?: number;", out)      # integer -> number
+        self.assertIn("tags?: unknown[];", out)    # array of unknown element type
+        self.assertNotIn("integer", out)
+
+    def test_nesting_survives_with_its_own_braces(self):
+        out = self._out()
+        self.assertIn("nested?: {", out)
+        self.assertIn("inner?: string;", out)
+        self.assertIn("};", out)
+
+    def test_a_key_typescript_cannot_write_bare_is_quoted(self):
+        out = wf.render_jsonc(wf._schema_json_shape(
+            {"properties": {"content-type": {"type": "string"}}}, {}, 30))
+        self.assertIn('"content-type"?: string;', out)
