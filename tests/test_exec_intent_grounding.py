@@ -15,17 +15,18 @@ from cria import execcheck, prompts
 
 class TheProbeIsGivenTheWorkspaceTests(unittest.TestCase):
     def test_the_file_list_reaches_the_prompt(self):
-        _, user = execcheck.intent_prompt("resolve an ada handle", files="resolve_handle.py\nREADME.md")
+        _, user = execcheck.intent_prompt("resolve an ada handle",
+                                          files="  resolve_handle.py (100 B)\n  README.md (10 B)")
         self.assertIn("resolve_handle.py", user)
-        self.assertIn("README.md", user)
+        self.assertNotIn("README.md", user)   # a document is not a program to run
 
     def test_the_prompt_forbids_naming_a_file_that_is_not_listed(self):
-        _, user = execcheck.intent_prompt("t", files="a.py")
-        self.assertIn("Do not name a file that is not on the list", user)
+        _, user = execcheck.intent_prompt("t", files="  a.py (10 B)")
+        self.assertIn("never a file that is not on it", user)
 
     def test_an_unreadable_workspace_says_so_rather_than_leaving_a_hole(self):
         _, user = execcheck.intent_prompt("t")
-        self.assertIn("could not read the workspace", user)
+        self.assertIn("nothing in the workspace is a program", user)
         self.assertNotIn("{{FILES}}", user)
 
     def test_the_loop_passes_the_real_inventory(self):
@@ -33,6 +34,40 @@ class TheProbeIsGivenTheWorkspaceTests(unittest.TestCase):
         from cria import loop
         src = inspect.getsource(loop.live_execution_marker)
         self.assertIn("workspace_inventory(root)", src)
+
+
+class CriasOwnSpillIsNotTheDeliverableTests(unittest.TestCase):
+    """maple-preview 1786062317 call 0035: the workspace held ZERO coder files, so the only entry
+    cria listed was its own 96 KB spilled spec — and the rule said the command MUST name a file from
+    the list. The probe argued with itself for ~2,000 tokens ("it's a JSON file, not a script. That
+    would be incorrect.") and then named the spec anyway."""
+
+    REAL = ("WORKSPACE FILES in /tmp/suite-x (on-disk ground truth at judging time, newest first):\n"
+            "  tmp/read-only/api.handle.me_openapi.json (96221 B)\n"
+            "This list is complete — a file not listed here does not exist in the workspace.")
+
+    def test_the_spill_artifact_is_not_offered_as_a_program(self):
+        self.assertEqual(execcheck.runnable_listing(self.REAL), "")
+        _, user = execcheck.intent_prompt("resolve a handle", files=self.REAL)
+        self.assertNotIn("openapi.json", user)
+        self.assertIn("nothing in the workspace is a program", user)
+
+    def test_an_empty_list_makes_runs_false_a_legal_answer(self):
+        _, user = execcheck.intent_prompt("t", files=self.REAL)
+        self.assertIn("nothing runnable has been written yet", user)
+
+    def test_real_programs_survive_the_filter(self):
+        listing = ("  resolve_handle.py (4389 B)\n  README.md (1200 B)\n"
+                   "  tmp/read-only/api.handle.me_openapi.json (96221 B)\n  live_test.py (666 B)")
+        kept = execcheck.runnable_listing(listing)
+        self.assertIn("resolve_handle.py", kept)
+        self.assertIn("live_test.py", kept)
+        self.assertNotIn("openapi.json", kept)
+        self.assertNotIn("README.md", kept)
+
+    def test_the_naming_rule_still_binds_when_there_are_programs(self):
+        _, user = execcheck.intent_prompt("t", files="  resolve_handle.py (4389 B)")
+        self.assertIn("never a file that is not on it", user)
 
 
 class AVerdictThatContradictsItselfIsNotAVerdictTests(unittest.TestCase):

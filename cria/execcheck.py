@@ -390,4 +390,50 @@ def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[st
     printed the handle name where an address belongs. cria's top rule for the coder is DO NOT GUESS —
     it was cria's own probe author guessing, because cria withheld the answer."""
     return prompts.load("exec_intent"), prompts.render(
-        "exec_intent_user", task=task, files=files or "(cria could not read the workspace)")
+        "exec_intent_user", task=task,
+        files=runnable_listing(files) or "(nothing in the workspace is a program)")
+
+
+# cria's OWN scratch dir for spilled reference material (webfetch.SPILL_DIR). Listing it as the
+# coder's workspace told the probe that cria's 96 KB fetched spec was the deliverable.
+_SPILL_MARK = "tmp/read-only/"
+# Extensions that are DATA, never a program to run. Not exhaustive by design — the point is only to
+# stop the probe being handed a document and told it must name a file from the list.
+_NOT_A_PROGRAM = (".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".md", ".txt", ".csv", ".lock",
+                  ".log", ".xml", ".html", ".rst")
+
+
+def runnable_listing(files: str) -> str:
+    """The workspace listing with cria's own spill artifacts and obvious data files removed.
+
+    WHAT THIS PREVENTS, verbatim from maple-preview 1786062317 call 0035. The workspace held ZERO
+    coder files; the only entry cria listed was its own spill:
+
+        WORKSPACE FILES … tmp/read-only/api.handle.me_openapi.json (96221 B)
+        The command must name a file from the list above … Do not name a file that is not on the
+        list.
+
+    The probe answered `{"runs": true, "command": "tmp/read-only/api.handle.me_openapi.json"}` after
+    arguing with itself for ~2,000 tokens — "it's a JSON file, not a script. That would be
+    incorrect." … "I'll assume that the file is a Python script … That's a stretch." cria listed its
+    own scratch output as the deliverable and then forbade the probe from saying otherwise.
+
+    An empty result is the honest answer and the prompt now allows it."""
+    out, kept_any = [], False
+    for line in (files or "").splitlines():
+        entry = _INVENTORY_ENTRY.match(line)
+        if not entry:
+            out.append(line)          # a header or footer — carried only if an entry survives
+            continue
+        path = entry.group(1)
+        if _SPILL_MARK in path or path.lower().endswith(_NOT_A_PROGRAM):
+            continue
+        out.append(line)
+        kept_any = True
+    return "\n".join(out) if kept_any else ""
+
+
+# An inventory ENTRY line: indented, a path, then its size — `  resolve_handle.py (4389 B)`.
+# Header and footer lines ("WORKSPACE FILES in …", "This list is complete …") do not match, so they
+# are never mistaken for a program and never left behind alone.
+_INVENTORY_ENTRY = re.compile(r"^\s+(\S+)\s*\(\d[\d,]*\s*B\)\s*$")
