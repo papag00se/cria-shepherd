@@ -2210,7 +2210,7 @@ class Loop:
                                gate_plan=getattr(sess, "gate_plan", None),
                                workspace_root=sess.workspace_root,
                                gate_red=bool(getattr(sess, "last_gate_red", False)))
-        facts = _fetched_facts_anchor(sess)  # durable fetch ledger → the coder keeps the real endpoints it
+        facts = _fetched_facts_anchor(sess, body.get("messages", []))  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
             msgs = _elide_ledger_copies(msgs, sess, rlog)  # the anchor is the ONE copy — duplicates collapse
@@ -3435,7 +3435,7 @@ class Loop:
         # came back, for the 25 prompts to the end of the run, while the reasoner kept being given
         # them. cria held those facts in its own memory the whole time and re-injected them on one
         # path only.
-        facts = _fetched_facts_anchor(sess)
+        facts = _fetched_facts_anchor(sess, framed.get("messages", []))
         if facts is not None:
             framed = {**framed, "messages": _elide_ledger_copies(   # the anchor is the ONE copy —
                 _insert_after_system(framed["messages"], facts), sess, rlog)}  # duplicates collapse
@@ -5299,7 +5299,7 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
-def _fetched_facts_anchor(sess) -> dict | None:
+def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | None:
     """A ⟦ctx:facts⟧ anchor carrying cria's DURABLE fetch ledger (url→status→endpoints), re-injected into
     the coder's OUTBOUND view every turn there are facts — so the coder KEEPS the real endpoints/fields it
     already fetched even after the HARNESS compacts the raw tool result out of its OWN history. cria's own
@@ -5309,8 +5309,19 @@ def _fetched_facts_anchor(sess) -> dict | None:
     surfaced (observed live: 370 calls re-reading api.handle.me/openapi.json, its /handles/{handle} outline
     scrolled off; 0 of the last 20 coder prompts still held it). GENERAL: fires only when real fetches exist
     (sess.fetched_pages); a task with no web_fetch (a bash/git chore) has an empty ledger → nothing injected.
-    Additive ground truth — the real tool results, never a claim about work not done."""
-    ledger = _fetch_ground_truth([], sess, header="PAGES YOU HAVE ALREADY FETCHED")
+    Additive ground truth — the real tool results, never a claim about work not done.
+
+    ``messages`` IS NOT OPTIONAL IN PRACTICE. It was `[]` here, and that made the same-host mismatch
+    fact — the one that says "cria's own fetch of this host returned 200, your code got 403, compare
+    the two requests" — structurally unable to reach the coder: `_route_mismatch_fact` finds the
+    coder's HTTP failure by scanning the messages, so an empty list always yields "". Every other
+    caller of `_fetch_ground_truth` passes real messages, and every one of them is a cria-INTERNAL
+    reader: the step critic, the steer author, the blames-the-service guard. Walked on mellum2
+    1786137318: the diagnosis appears in reasoner prompts 0037, 0038, 0045 and 0046 and in ZERO
+    coder prompts, while the coder spent 24 calls concluding the sandbox had no network. The fix's
+    own docstring says it exists because "four separate steers instead told the coder the sandbox
+    blocked the network" — and it could never have prevented that from here."""
+    ledger = _fetch_ground_truth(messages or [], sess, header="PAGES YOU HAVE ALREADY FETCHED")
     if not ledger.strip():
         return None
     return {"role": "user", "content": prompts.render("fetched_facts_anchor",

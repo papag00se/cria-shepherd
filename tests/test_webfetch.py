@@ -965,10 +965,15 @@ class FieldExamplesTests(unittest.TestCase):
         return wf._schema_field_summary(
             {"$ref": "#/components/schemas/H"}, self.SPEC["components"]["schemas"], max_fields)
 
-    def test_the_two_fields_that_mattered_are_now_distinguishable(self):
+    def test_the_two_fields_that_mattered_are_still_distinguishable(self):
+        """Both carry placeholder examples, so neither shows one now — and they never told the two
+        apart anyway: in the real spec `resolved_addresses.ada` and `original_address` declare the
+        SAME placeholder. The description is what separates them, and it is what rides."""
         out = " | ".join(self.summary())
-        self.assertIn("holder: string (e.g. stake1u", out)
-        self.assertIn("resolved_addresses.ada: string (e.g. addr1e", out)
+        self.assertIn("holder: string", out)
+        self.assertIn("resolved_addresses.ada: string", out)
+        self.assertNotIn("stake1uxxx", out)
+        self.assertNotIn("addr1e0000", out)
 
     def test_a_field_with_no_example_is_unchanged(self):
         self.assertIn("hex: string", self.summary())
@@ -976,22 +981,36 @@ class FieldExamplesTests(unittest.TestCase):
     def test_a_non_string_example_still_rides(self):
         self.assertIn("length: integer (e.g. 9)", self.summary())
 
-    def test_a_long_example_keeps_BOTH_ends_so_it_cannot_read_as_endless(self):
-        """A head-only cut ending in `…` reads as "and it continues". Spec placeholders are mostly a
-        long run of one character: the Ada Handles `ada` example is
-        `addr1e00000000000000000000000000000000000001`, which TERMINATES, and cutting it at 32 gave
-        `addr1e00000000000000000000000000…`. Walked on run 1785714194 call 0015 — the model copied
-        that and emitted exactly 2,048 zeros before a guard stopped it."""
-        holder = next(f for f in self.summary() if f.startswith("holder:"))
-        self.assertIn("…", holder)
-        self.assertFalse(holder.rstrip(")").endswith("…"),
-                         "the example still reads as open-ended")
-        self.assertLess(len(holder), 80)
+    def test_a_placeholder_run_is_dropped_entirely(self):
+        """STRONGER than the elision it replaces. The first answer to this was to cut the MIDDLE
+        (`addr1e000000000…0001`) so the value could not read as open-ended. Not enough: on mellum2
+        1786137318 the coder was writing a README example, expanded cria's placeholder back into a
+        full zero-run, and hit the generation cap — `[finish: rumination]`, one call lost. The
+        recovered README still carries `addr1e0000000000000000000000000000000000000000` as BOTH the
+        holder and the resolved address, and `my.handle` came back as `my.handle.handle.me`. That
+        README was the run's one failing deliverable.
 
-    def test_a_terminated_placeholder_keeps_its_terminator(self):
-        out = wf._example_hint({"example": "addr1e00000000000000000000000000000000000001"})
-        self.assertTrue(out.startswith(" (e.g. addr1e"))
-        self.assertTrue(out.endswith("0001)"))
+        A run of one character says "string" and nothing more, so it is not an example — it is a
+        loop seed. 20 of the Ada Handles spec's 74 examples are this shape, including every address
+        field the task needs."""
+        holder = next(f for f in self.summary() if f.startswith("holder:"))
+        self.assertEqual(holder, "holder: string")      # no example at all
+        for junk in ("xxxxxx", "000000", "…"):
+            self.assertNotIn(junk, holder)
+
+    def test_the_placeholder_shapes_the_spec_actually_uses(self):
+        for ex in ("stake1uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                   "addr1e00000000000000000000000000000000000001",
+                   "ipfs://Q2de4Fg56tNHy82300000001"):
+            self.assertEqual(wf._example_hint({"example": ex}), "", ex)
+
+    def test_a_real_example_still_rides(self):
+        self.assertEqual(wf._example_hint({"example": "my.handle"}), " (e.g. my.handle)")
+        self.assertEqual(wf._example_hint({"example": "ultra_rare"}), " (e.g. ultra_rare)")
+        self.assertEqual(wf._example_hint({"example": 1421}), " (e.g. 1421)")
+
+    def test_a_non_string_example_still_rides(self):
+        self.assertIn("length: integer (e.g. 9)", self.summary())
 
     def test_a_structural_example_is_dropped(self):
         # A list/dict example restates the shape; it is not a discriminating value.

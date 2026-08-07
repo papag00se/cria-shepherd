@@ -530,6 +530,24 @@ EXAMPLE_CHARS = 32
 DESCRIPTION_CHARS = 96
 
 
+# A "placeholder" example — one character repeated. `stake1uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+# `addr1e00000000000000000000000000000000000001`. 20 of the Ada Handles spec's 74 examples are this
+# shape, including every address field the task needs.
+#
+# THESE MUST NOT BE SHOWN. A small model copies them, and a run of one character is the classic seed
+# for a degenerate generation. This was walked once before and answered by eliding the MIDDLE
+# (`addr1e000000000…0001`), which was not enough: on mellum2 1786137318 the coder was writing a
+# README example, expanded cria's placeholder back into a full zero-run, and hit the generation cap
+# — `[finish: rumination]`, one whole call lost. The recovered README still carries
+# `addr1e00000000000000000000000000000000000000000000000` as both the holder and the resolved
+# address, and cria's other example `my.handle` came back as `my.handle.handle.me`. The README was
+# that run's ONE failing deliverable and it is largely made of cria's placeholder strings.
+#
+# A placeholder carries no information the type does not already carry — `addr1e000…0001` says
+# "string" and nothing else. Dropping it costs the coder nothing and stops handing it a loop seed.
+_PLACEHOLDER_RUN = re.compile(r"(.)\1{5,}")
+
+
 def _example_hint(v: dict) -> str:
     """`, e.g. <value>` from a field's declared example, or "" when the spec gives none.
 
@@ -550,8 +568,8 @@ def _example_hint(v: dict) -> str:
     if ex is None or isinstance(ex, (dict, list)):
         return ""    # a structural example is the shape again, not a discriminating value
     s = " ".join(str(ex).split())     # one line: a multi-line example would break the field list
-    if not s:
-        return ""
+    if not s or _PLACEHOLDER_RUN.search(s):
+        return ""    # a run of one character is a loop seed, not an example — see above
     if len(s) <= EXAMPLE_CHARS:
         return f" (e.g. {s})"
     # ELIDE THE MIDDLE, never the tail. A head-only cut ending in `…` reads as "and it continues",
