@@ -25,8 +25,8 @@ gates = check runs it triggered.
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
-| 🟡 mellum2 · 12B-A2.5B q4 | ⁴⁄₄ ²⁄₄ ⁴⁄₄ | 157.6 | 23 | 137 | 19 | 4 | 12 | 4 |
-| 🟠 maple (ternary) · 20B-A1B q2 | ⁰⁄₄ ²⁄₄ ³⁄₄ | 63.2 | 35 | 127 | 12 | 2 | 14 | 3 |
+| 🟡 mellum2 · 12B-A2.5B q4 | ⁴⁄₄ ¹⁄₄ ⁴⁄₄ | 158.4 | 23 | 154 | 23 | 6 | 13 | 4 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ¹⁄₄ ²⁄₄ ⁴⁄₄ | 63.0 | 29 | 108 | 11 | 1 | 6 | 3 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -124,8 +124,13 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 3/4 | 53 | 185 | 112 | 64.0 | 19 | 33 | exited |
 | mellum2 | counted | 2/4 | 9 | 71 | 41 | 160.0 | 9 | 5 | exited |
 | mellum2 | counted | 4/4 | 32 | 200 | 125 | 159.4 | 29 | 15 | exited |
+| maple-preview | counted | 1/4 | 32 | 107 | 77 | 63.6 | 15 | 5 | milestone-miss-30min |
+| mellum2 | counted | 1/4 | 19 | 112 | 72 | 147.6 | 20 | 10 | milestone-miss-15min |
+| mellum2 | counted | 4/4 | 17 | 151 | 102 | 168.3 | 20 | 15 | exited |
+| maple-preview | counted | 2/4 | 33 | 122 | 72 | 62.3 | 11 | 9 | exited |
+| maple-preview | counted | 4/4 | 22 | 95 | 32 | 63.0 | 7 | 5 | exited |
 
-counted runs: 75 · avg wall 23 min · avg coder calls 69 · full-pass rate 32/75
+counted runs: 80 · avg wall 23 min · avg coder calls 69 · full-pass rate 34/80
 
 ## Scoreboard (every run; counted rows bold)
 
