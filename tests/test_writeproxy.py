@@ -718,8 +718,10 @@ class EditCommandTests(unittest.TestCase):
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
         b = lambda x: base64.b64encode(x.encode()).decode()
+        from cria import content_reduce
         script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new),
-                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL)
+                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL,
+                                                  cap=content_reduce.INLINE_RESULT_MAX_BYTES)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         msg = (r.stdout + r.stderr).strip()

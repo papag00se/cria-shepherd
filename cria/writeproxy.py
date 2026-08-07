@@ -380,7 +380,11 @@ new=base64.b64decode('{new}').decode()
 s=p.read_text()
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
-    sys.exit('{editfail}'+base64.b64encode(json.dumps(kw).encode()).decode())
+    _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
+    _r=_b(kw)
+    if len('{editfail}')+len(_r)>{cap}:
+        kw.pop('current',None); _r=_b(kw)
+    sys.exit('{editfail}'+_r)
 if old==new:
     _fail('identical')
 _before=_v(str(p),s)
@@ -438,7 +442,8 @@ else:
 
 def _edit_command(path: str, old: str, new: str) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
-                                          wrote=_WROTE, editfail=editrecovery.EDITFAIL)
+                                          wrote=_WROTE, editfail=editrecovery.EDITFAIL,
+                                          cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 

@@ -115,7 +115,17 @@ def compose(fail: dict, prior: int) -> str:
     if prior + 1 >= ESCALATE_AFTER:
         # COMMITTED escalation: stop editing this file, rewrite it whole from the exact bytes shown. One
         # directive from here on — no "copy the exact text" that the model keeps failing to do.
-        return report("escalate", prior=prior + 1, cur=cur)
+        #
+        # …UNLESS the bytes were too big to travel. writeproxy drops `current` from the report rather
+        # than let it exceed the harness's per-result budget, because the alternative is what shipped
+        # before: a ~13.7 KB base64 payload, middle-cut by the harness INSIDE the base64, that then
+        # fails to decode and reaches the coder as a 10 KB wall of noise. Measured on maple-preview
+        # 1786138747: `⟦ctx:edit⟧` appears ZERO times in the whole 105-call run while the raw marker
+        # appears 13 times — the recovery never ran once, on the files where edits fail most.
+        # A directive to go read the file is worth something; an empty quote block is worth less
+        # than nothing.
+        return (report("escalate", prior=prior + 1, cur=cur) if cur
+                else report("escalate_unread", prior=prior + 1, path=path))
     # Surgical (early failures): hand over the exact text to copy, or point at the current file.
     if anchor:
         return report("anchor", anchor=anchor)
