@@ -477,7 +477,7 @@ class LedgerShapeFormatTests(unittest.TestCase):
         self.assertEqual(len(heads), 2, "each endpoint starts its own unindented line")
         self.assertTrue(all(ln.lstrip().startswith(("GET ", "POST ", "PUT ", "DELETE ", "PATCH "))
                             for ln in heads), heads)
-        self.assertTrue(any(ln.startswith(" ") and "resolved_addresses.ada" in ln
+        self.assertTrue(any(ln.startswith(" ") and '"ada"' in ln
                             for ln in shapes.splitlines()),
                         "a nested group is broken out where the coder can see it")
 

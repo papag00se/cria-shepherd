@@ -78,18 +78,18 @@ class FieldCapTests(unittest.TestCase):
         absent. One cap, one rule, both levels."""
         line = wf._endpoint_response_fields(self._health_spec(14))[0]
         self.assertNotIn("more field(s)", line)
-        self.assertIn("stats.n13: integer", line)          # the last field the old `8` hid
-        self.assertIn("stats.n0: integer", line)
+        self.assertIn('"n13": "integer"', line)          # the last field the old `8` hid
+        self.assertIn('"n0": "integer"', line)
         # the group closes by ending its own line, not with a brace
-        self.assertTrue(line.rstrip().endswith("stats.n13: integer"), line)
+        self.assertTrue(line.rstrip().endswith("}"), line)   # a JSON object closes
 
     def test_a_NESTED_object_is_still_BOUNDED_and_still_discloses(self):
         """Sharing the cap is not removing it. A pathological nested object is still cut at
         FIELD_CAP, and the cut is still disclosed — inside the braces, where it describes the
         object it applies to rather than the endpoint."""
         line = wf._endpoint_response_fields(self._health_spec(wf.FIELD_CAP + 3))[0]
-        self.assertIn("stats: …+3 more field(s)", line)
-        self.assertIn("stats.n0: integer", line)
+        self.assertIn("…+3 more field(s)", line)
+        self.assertIn('"n0": "integer"', line)
 
     @unittest.skipUnless(os.path.exists(SPEC), "captured spec not present")
     def test_the_real_spec_now_renders_with_no_elision_at_all(self):

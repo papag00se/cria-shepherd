@@ -637,6 +637,45 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 FIELD_CAP = 40
 
 
+def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> dict:
+    """The response schema as a JSON OBJECT — the form every API doc on the internet uses.
+
+    THE NOTATION HAD NO TRAINING DATA BEHIND IT. cria invented `hex(string), name(string, e.g.
+    my.handle), resolved_addresses{ada(string)}` and then, when that was shown to bury the nested
+    field, invented `resolved_addresses.ada: string (e.g. …)`. Both are cria dialects. No model was
+    ever trained on either, and the operator called it: pick something common in real languages.
+
+    A JSON object is what the coder is actually holding — `json.load()` returns this shape — so
+    there is no translation step between what it reads and what it must type. `"resolved_addresses":
+    {"ada": …}` and `data["resolved_addresses"]["ada"]` are the same structure twice.
+
+    Types go where the VALUE goes, which is how a schema block is written in practically every API
+    reference: `"length": "integer"`. The declared example rides in the same string, because a type
+    alone cannot tell two string fields apart and the whole task turned on which one held a stake
+    address (see :func:`_example_hint`). Costs 8% more characters than the flat line it replaces."""
+    sch = _deref(sch, schemas)
+    props = (sch or {}).get("properties")
+    if not isinstance(props, dict):
+        return {}
+    out: dict = {}
+    items = list(props.items())
+    for k, v in items[:max_fields]:
+        v = _deref(v if isinstance(v, dict) else {}, schemas)
+        if _depth == 0 and (v.get("type") == "object" or "properties" in v):
+            out[k] = _schema_json_shape(v, schemas, max_fields, _depth + 1) or "object"
+        elif v.get("type") == "array":
+            out[k] = ["…"]
+        else:
+            ex = _example_hint(v).strip()
+            out[k] = f"{v.get('type') or '?'}{' ' + ex if ex else ''}"
+    # DISCLOSE the cap — a silently-cut list reads as the complete set, and a coder looking for a
+    # field that sits past it concludes the API does not return it, under a header saying "do not
+    # guess". Same rule as the endpoint list and the find residual: never a silent slice.
+    if len(items) > max_fields:
+        out[f"…+{len(items) - max_fields} more field(s)"] = ""
+    return out
+
+
 def _lay_out_fields(fields: list[str]) -> str:
     """The endpoint's fields, with NESTED GROUPS on their own lines and flat scalars run together.
 
@@ -723,8 +762,8 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                         break
             if schema is None and isinstance(r, dict):
                 schema = r.get("schema")   # Swagger 2.0 hangs the schema straight off the response
-            fields = _schema_field_summary(schema, schemas, max_fields)
-            if fields:
+            shape = _schema_json_shape(schema, schemas, max_fields)
+            if shape:
                 # PATH PARAMETERS carry the other half of "how do I call this": what to PUT IN. Across
                 # 13 measured runs the outline listed /holders/{address}'s OUTPUT fields but never that
                 # {address} means "The stake/enterprise/script/other address of the Holder" — so the
@@ -739,7 +778,11 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                     # where every earlier run had built the path form correctly. Say plainly that
                     # the placeholder is part of the URL and must be replaced in place.
                     head += f" (replace in the URL path: {'; '.join(params)})"
-                lines.append(f"{head} → {_lay_out_fields(fields)}")
+                # The JSON body is INDENTED under its endpoint line. The caller prefixes each
+                # entry with two spaces, so an unindented body would make every `{`, every field
+                # and every `}` look like a new endpoint to anything reading the block by line.
+                body = json.dumps(shape, indent=2, ensure_ascii=False)
+                lines.append(f"{head} returns:\n" + "\n".join("    " + b for b in body.split("\n")))
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint
     if capped:
