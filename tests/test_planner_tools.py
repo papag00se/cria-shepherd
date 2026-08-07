@@ -473,13 +473,14 @@ class LedgerShapeFormatTests(unittest.TestCase):
         # the original assertion was protecting — the planner must not smash all endpoints onto one
         # line — is unchanged and now stated directly, rather than as a raw line count that also
         # forbade an endpoint's own shape from wrapping.
-        heads = [ln for ln in shapes.splitlines() if not ln.startswith(" ")]
-        self.assertEqual(len(heads), 2, "each endpoint starts its own unindented line")
-        self.assertTrue(all(ln.lstrip().startswith(("GET ", "POST ", "PUT ", "DELETE ", "PATCH "))
-                            for ln in heads), heads)
-        self.assertTrue(any(ln.startswith(" ") and '"ada"' in ln
-                            for ln in shapes.splitlines()),
-                        "a nested group is broken out where the coder can see it")
+        heads = [ln for ln in shapes.splitlines() if ln.lstrip().startswith(("GET ", "POST "))]
+        self.assertEqual(len(heads), 2, "one endpoint header per endpoint")
+        self.assertEqual(shapes.count("```jsonc"), 2, "each shape is its own fenced jsonc block")
+        self.assertEqual(shapes.count("```"), 4, "every fence is closed")
+        # the fixture declares no type for `ada`, so it renders "?" — the nesting is the point
+        self.assertTrue(any('"ada":' in ln for ln in shapes.splitlines()),
+                        "the nested field is visible as real JSON nesting")
+        self.assertIn('"resolved_addresses": {', shapes)
 
 
 class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):

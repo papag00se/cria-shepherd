@@ -662,18 +662,54 @@ def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0
     for k, v in items[:max_fields]:
         v = _deref(v if isinstance(v, dict) else {}, schemas)
         if _depth == 0 and (v.get("type") == "object" or "properties" in v):
-            out[k] = _schema_json_shape(v, schemas, max_fields, _depth + 1) or "object"
+            out[k] = _schema_json_shape(v, schemas, max_fields, _depth + 1) or ("object", "")
         elif v.get("type") == "array":
-            out[k] = ["…"]
+            out[k] = ("array", "")
         else:
-            ex = _example_hint(v).strip()
-            out[k] = f"{v.get('type') or '?'}{' ' + ex if ex else ''}"
+            # (type, example) — kept APART so the example can be a comment rather than being
+            # crammed into the value, where it read as part of the type.
+            out[k] = (str(v.get("type") or "?"), _example_hint(v).strip().lstrip("(").rstrip(")"))
     # DISCLOSE the cap — a silently-cut list reads as the complete set, and a coder looking for a
     # field that sits past it concludes the API does not return it, under a header saying "do not
     # guess". Same rule as the endpoint list and the find residual: never a silent slice.
     if len(items) > max_fields:
-        out[f"…+{len(items) - max_fields} more field(s)"] = ""
+        out[f"…+{len(items) - max_fields} more field(s)"] = ("", "")
     return out
+
+
+def _jsonc_rows(shape: dict, indent: int) -> list[tuple[str, str]]:
+    """(code, comment) per line, so the comment column can be aligned once over the whole block."""
+    pad = " " * indent
+    rows: list[tuple[str, str]] = []
+    keys = list(shape)
+    for n, k in enumerate(keys):
+        v = shape[k]
+        tail = "" if n == len(keys) - 1 else ","
+        if isinstance(v, dict):
+            rows.append((f'{pad}"{k}": {{', ""))
+            rows.extend(_jsonc_rows(v, indent + 2))
+            rows.append((f"{pad}}}{tail}", ""))
+        else:
+            typ, ex = v if isinstance(v, tuple) else (str(v), "")
+            rows.append((f'{pad}"{k}": "{typ}"{tail}', ex))
+    return rows
+
+
+def render_jsonc(shape: dict) -> str:
+    """The shape as JSONC — real JSON, with the declared example as a trailing `//` comment.
+
+    JSONC, and FENCED as ```jsonc, because that is a thing the coder has seen a million times and it
+    says unambiguously "here is a JSON object's shape". Everything before it was a cria dialect:
+    first `name(string, e.g. my.handle)`, then `name: string (e.g. my.handle)` — invented notations
+    no model was trained on, as the operator pointed out about both.
+
+    The comment is what buys the clean value. `"name": "string",  // e.g. my.handle` keeps the type
+    a bare type; the earlier `"name": "string (e.g. my.handle)"` read as though the parenthetical
+    were part of it."""
+    rows = _jsonc_rows(shape, 2)
+    width = max((len(c) for c, m in rows if m), default=0)
+    body = "\n".join(c + (f"{' ' * (width - len(c) + 2)}// {m}" if m else "") for c, m in rows)
+    return "```jsonc\n{\n" + body + "\n}\n```"
 
 
 def _lay_out_fields(fields: list[str]) -> str:
@@ -781,8 +817,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 # The JSON body is INDENTED under its endpoint line. The caller prefixes each
                 # entry with two spaces, so an unindented body would make every `{`, every field
                 # and every `}` look like a new endpoint to anything reading the block by line.
-                body = json.dumps(shape, indent=2, ensure_ascii=False)
-                lines.append(f"{head} returns:\n" + "\n".join("    " + b for b in body.split("\n")))
+                lines.append(f"{head} returns:\n" + render_jsonc(shape))
                 shaped.append(path)
                 break  # one method per path is enough for the shape hint
     if capped:

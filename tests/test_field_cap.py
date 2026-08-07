@@ -81,7 +81,7 @@ class FieldCapTests(unittest.TestCase):
         self.assertIn('"n13": "integer"', line)          # the last field the old `8` hid
         self.assertIn('"n0": "integer"', line)
         # the group closes by ending its own line, not with a brace
-        self.assertTrue(line.rstrip().endswith("}"), line)   # a JSON object closes
+        self.assertTrue(line.rstrip().endswith("```"), line)   # the jsonc fence closes
 
     def test_a_NESTED_object_is_still_BOUNDED_and_still_discloses(self):
         """Sharing the cap is not removing it. A pathological nested object is still cut at

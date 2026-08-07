@@ -462,7 +462,8 @@ class FetchNavSeedTests(unittest.TestCase):
         msg = self._spill_msg("https://api.handle.me/openapi.json", json.dumps(spec), "application/json")
         self.assertIn("response shape", msg)
         self.assertIn("holder", msg)
-        self.assertIn('"resolved_addresses": {\n        "ada": "string",\n        "eth": "string"', msg)
+        self.assertIn('"resolved_addresses": {\n    "ada": "string",\n    "eth": "string"', msg)
+        self.assertIn("```jsonc", msg)
         self.assertNotIn("$ref", msg)                        # the ref is resolved, not shown raw
 
     def test_response_shape_collapses_subpaths_so_distinct_resources_survive(self):
