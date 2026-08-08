@@ -25,8 +25,8 @@ gates = check runs it triggered.
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
-| 🟡 mellum2 · 12B-A2.5B q4 | ⁴⁄₄ ²⁄₄ ³⁄₄ | 165.8 | 11 | 98 | 12 | 3 | 10 | 2 |
-| 🟡 maple (ternary) · 20B-A1B q2 | ⁴⁄₄ ²⁄₄ ³⁄₄ | 62.7 | 28 | 88 | 9 | 1 | 5 | 2 |
+| 🟠 mellum2 · 12B-A2.5B q4 | ²⁄₄ ³⁄₄ ²⁄₄ | 167.2 | 8 | 74 | 9 | 2 | 7 | 2 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ²⁄₄ ³⁄₄ ¹⁄₄ | 63.2 | 29 | 92 | 11 | 2 | 6 | 3 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -133,8 +133,10 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 3/4 | 46 | 101 | 65 | 62.3 | 16 | 4 | milestone-miss-45min |
 | mellum2 | counted | 2/4 | 4 | 53 | 32 | 172.8 | 5 | 7 | exited |
 | mellum2 | counted | 3/4 | 11 | 91 | 54 | 156.3 | 12 | 7 | exited |
+| maple-preview | counted | 1/4 | 23 | 105 | 56 | 64.7 | 11 | 8 | exited |
+| mellum2 | counted | 2/4 | 9 | 78 | 50 | 172.5 | 9 | 7 | exited |
 
-counted runs: 84 · avg wall 23 min · avg coder calls 68 · full-pass rate 34/84
+counted runs: 86 · avg wall 23 min · avg coder calls 68 · full-pass rate 34/86
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -194,6 +196,16 @@ counted runs: 84 · avg wall 23 min · avg coder calls 68 · full-pass rate 34/8
 | gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
+- **2026-08-07 ~22:50 — mellum2 2/4 on `10c9e6c`, the first run under the rewritten steer prompt.**
+  Run `ada-handles_mellum2_codex_poff_1786167643`, 8.6 min, 78 calls, terminal `exited`. Unit tests
+  and the live test both pass — the resolver itself works and provably talks to the network. What is
+  missing is the CLI (`handle_resolver.py goose` exits 1) and the README. The coder declared itself
+  finished with two of the four deliverables absent, which is the same early-exit shape as its
+  earlier 2/4. Not walked yet. Code state: the shape matcher that refused non-directive steers was
+  REMOVED in this commit; `steer_diagnose.txt` now carries the rule instead ("output a SHORT
+  IMPERATIVE DIRECTIVE … do not merely diagnose, explain, suggest, or describe possibilities"), so
+  this run measures the prompt, not the matcher.
+
 - **2026-08-05 — operator scoring ruling: an in-session live run of the coder's OWN code
   resolving a task handle counts as the live test** ("the spirit is there and the interpretation
   is fair"). Implemented in _liveprobe.session_live_evidence with adversarially-tested fences
