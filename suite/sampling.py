@@ -68,6 +68,15 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
+    # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
+    # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
+    # the weights.
+    "qwen35": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
     # ⚠ INFERRED from Qwen3.5, not stated on the card — docs/model-settings.md flags it unverified.
     "qwopus": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
