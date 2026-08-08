@@ -26,7 +26,7 @@ gates = check runs it triggered.
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
 | 🟡 mellum2 · 12B-A2.5B q4 | ³⁄₄ ²⁄₄ ⁴⁄₄ | 159.9 | 22 | 146 | 19 | 5 | 14 | 4 |
-| 🟠 maple (ternary) · 20B-A1B q2 | ¹⁄₄ ²⁄₄ ²⁄₄ | 64.8 | 19 | 86 | 8 | 1 | 7 | 1 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ²⁄₄ ²⁄₄ ¹⁄₄ | 64.1 | 22 | 72 | 6 | 1 | 5 | 4 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -138,8 +138,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 2/4 | 21 | 92 | 36 | 67.6 | 8 | 8 | exited |
 | mellum2 | counted | 4/4 | 45 | 269 | 174 | 150.8 | 37 | 27 | exited |
 | maple-preview | counted | 2/4 | 14 | 61 | 22 | 62.1 | 4 | 5 | exited |
+| maple-preview | counted | 1/4 | 31 | 64 | 46 | 62.7 | 7 | 3 | milestone-miss-30min |
 
-counted runs: 89 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/89
+counted runs: 90 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/90
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -199,6 +200,30 @@ counted runs: 89 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/8
 | gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
+- **2026-08-08 ~13:30 — maple-preview 1/4 on `715b26e`, and the loss is upstream of everything the
+  fixes touch.** Run `ada-handles_maple-preview_codex_poff_1786218955`, 31.2 min, 64 calls, 63 tok/s,
+  terminal `milestone-miss-30min`. Only the README passed.
+
+  **The coder decided `GET /handles/{handle}` returns a LIST.** `resolve_handle` opens with
+  `if not response or not isinstance(response, list): raise ValueError("Handle not found or could
+  not be resolved")` — the API returns an object, so every call raises before any field is read.
+  That is the CLI's exit 1 verbatim and all 7 test failures. Its own words at call 0058: *"Now I
+  understand the issues. The API returns a LIST for `/handles/{handle}` as well."* The "as well"
+  looks like generalization from the plural `/handles`, which is in the route list with no shape of
+  its own. MODEL fault: cria's shape block renders an object, `{ hex?: string; … }`, and was in 23
+  of the first 25 coder prompts.
+
+  **So the TS-shape restoration was live and never exercised** — the coder failed upstream of the
+  field question and never reached `resolved_addresses` OR `hex` in any delivered code. This run
+  measures nothing about that fix.
+
+  **One real cria fault, and it is the class the shape-matcher was removed for.** Call 0066 shipped
+  the reasoner's raw deliberation as a `[REDIRECT]`: *"Looking at this situation, I need to decide
+  if the coder is stuck or making progress… I'll give the imperative directive to fix these concrete
+  issues. {"* — verdict essay, first person, trailing into a JSON fragment. Calls 0058 and 0064 also
+  used the ⟦ctx:steer⟧ channel to re-deliver a ⟦ctx:checks⟧ dump with no directive in it. The
+  rewritten steer prompt did not stop this shape; not walked in full yet.
+
 - **2026-08-08 ~11:35 — the five walk fixes measured: mellum2 4/4, maple-preview 2/4, both on
   `763b2f3`.** The pair was re-run against the same config as the 2/4 pair the night before.
 
