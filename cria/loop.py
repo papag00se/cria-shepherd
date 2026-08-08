@@ -5574,6 +5574,15 @@ def _host_in_workspace_code(root: str, host: str) -> bool:
     return False
 
 
+def _diagnosis_clause(url: str, ledger: dict) -> str:
+    """`_failed_fetch_diagnosis` as its own sentence, or "" — ONE owner of route-vs-value.
+
+    The ledger appends it to `→ HTTP 404`, so it is written to follow a status and opens with a dash.
+    Here it follows a full stop. Same words, re-punctuated — not a second wording to keep in step."""
+    d = _failed_fetch_diagnosis(url, ledger).lstrip(" —-").strip()
+    return f" {d[0].upper()}{d[1:]}" if d else ""
+
+
 def _route_mismatch_fact(ledger: dict, messages: list[dict], workspace_root: str = "") -> str:
     """One stated fact when cria reached a host that the coder's OWN code could not — else "".
 
@@ -5630,9 +5639,21 @@ def _route_mismatch_fact(ledger: dict, messages: list[dict], workspace_root: str
             fail_url = next((u for u in _URL_IN_TEXT.findall(c) if host in u), "")
             ok_url = next((u for u in ledger if host in u), f"https://{host}")
             if code in _ROUTING_CODES and fail_url and fail_url != ok_url:
+                # WHICH HALF IS WRONG IS NOT THIS ANCHOR'S TO GUESS. It used to end "so this is
+                # about the path", which is true of a route that does not exist and false of a real
+                # route given a bad parameter. mellum2 1786167643 was the second kind —
+                # /holders/{address} IS defined, and the coder had put a payment address where the
+                # spec asks for the holder's stake address. Told to compare the URLs against the
+                # route list, it concluded "So /holders/{address} is not a valid endpoint", then
+                # caught cria contradicting itself: "The fetch record says /holders/{address}
+                # returns 404, but the endpoint list shows it. That's confusing."
+                # `_failed_fetch_diagnosis` already answers this from the parsed route list and is
+                # the ledger's owner of the question; both places now say the same sentence, or
+                # (no routes parsed) neither says anything.
                 return prompts.render("fetch_route_mismatch_path", host=host, ok_url=ok_url,
                                       ok_status=ok_hosts[host], fail_url=fail_url,
-                                      fail_status=f"HTTP {code}")
+                                      fail_status=f"HTTP {code}",
+                                      diagnosis=_diagnosis_clause(fail_url, ledger))
             if code in _REJECTION_CODES:
                 return prompts.render("fetch_route_mismatch", host=host,
                                       ok_status=ok_hosts[host], fail_status=f"HTTP {code}")
