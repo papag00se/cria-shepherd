@@ -744,6 +744,26 @@ _ADVISORY_PHRASES = (
     # keeps the advisory default.
     "redefinition of unused",                # pyflakes F811 (import form; see discriminator above)
     "f-string is missing placeholders",      # pyflakes F541 · a cosmetic slip, runs fine
+    # PARITY ACROSS THE ECOSYSTEM (2026-08-08). Seven phrases covered pyflakes/ruff/flake8/eslint/
+    # tsc and nothing else, so the same dead local that is advisory in Python gated a step in Rust,
+    # Ruby, PHP, C# or Java. The rule is per-LANGUAGE, not per-tool: it belongs here only when the
+    # program still parses, compiles and RUNS with the finding present.
+    "unused variable",                       # rustc/clippy · gcc/clang -Wunused-variable · swiftc
+    "unused import",                         # rustc · scalac · kotlinc
+    "unused mut",                            # rustc
+    "never used",                            # rustc "field is never read" · "method is never used"
+    "is never read",                         # rustc dead_code · C# IDE0052
+    "useless assignment to variable",        # rubocop Lint/UselessAssignment
+    "assigned but never used",               # go vet's staticcheck SA4006 wording · rubocop
+    "is assigned a value but never used",    # C# CS0219
+    "was declared but never used",           # phpstan/psalm · kotlinc
+    "unused parameter",                      # clang/gcc -Wunused-parameter · phpmd
+    "unused local variable",                 # phpstan · elixir mix compile
+    # NOT HERE, DELIBERATELY: Go's own compiler. `declared and not used: x` and
+    # `"fmt" imported and not used` are COMPILE ERRORS in Go — the program does not build, so the
+    # finding is error-class by the language's own rule and gating on it is correct. The identical
+    # English in another language's linter is a warning; in Go it is a wall. Any phrase added above
+    # must be checked against this: it is advisory only where the program still runs.
 )
 
 F811_PHRASE = "redefinition of unused"

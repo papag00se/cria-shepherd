@@ -505,29 +505,108 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
 _ZERO_TESTS_MARKERS = ("no tests ran", "[no test files]", "no tests found")
 
 
-_PYTEST_TALLY = re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed")
+# EVERY RUNNER'S OWN TALLY LINE, one row each. The passed count is a COVERAGE signal — a test that
+# skips rather than fails leaves the exit code at 0 and drops out of it — so a runner cria cannot
+# count is a runner whose green is unverified. Three were covered (pytest, unittest, cargo) and the
+# rest of the ecosystem was not: a Go, Java, JS, Ruby, Elixir, PHP or .NET suite could step aside
+# entirely and `_offline_fact` would fall through to the uncounted wording, while
+# `_checks_superseded_by_coder_run` would never recognise a coder's own green run.
+#
+# A ROW IS DATA, NOT CODE: (name, pattern, how to read the groups, whether to sum every match).
+# Summing is for runners that print one line PER package or binary (cargo, go, .NET per-project);
+# first-match is for runners that print one summary. Ordered most-specific first — the guard is that
+# every pattern is anchored on that runner's own distinctive words, so two cannot claim one line.
+_TALLY_FAILED_PASSED = "fp"     # groups are (failed, passed)
+_TALLY_PASSED_FAILED = "pf"     # groups are (passed, failed)
+_TALLY_TOTAL_FAILED = "tf"      # groups are (total, failed) — passed is total - failed
+
+_TALLIES = (
+    # pytest · `2 failed, 7 passed in 0.05s`  (the leading `=` is its banner)
+    ("pytest", re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    # cargo · one `test result:` line per test binary
+    ("cargo", re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed"), _TALLY_PASSED_FAILED, True),
+    # jest / vitest · `Tests:       1 failed, 11 passed, 12 total`
+    ("jest", re.compile(r"(?im)^\s*Tests:\s+(?:(\d+) failed,\s+)?(?:\d+ skipped,\s+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`
+    ("junit", re.compile(r"(?im)^\s*Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"), _TALLY_TOTAL_FAILED, True),
+    # gradle · `12 tests completed, 1 failed`
+    ("gradle", re.compile(r"(?im)^\s*(\d+) tests? completed(?:,\s*(\d+) failed)?"), _TALLY_TOTAL_FAILED, False),
+    # go test -v · one `--- PASS:` / `--- FAIL:` per test (counted below, not by a group pair)
+    # rspec · `12 examples, 1 failure, 2 pending`
+    ("rspec", re.compile(r"(?im)^\s*(\d+) examples?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    # ExUnit · `12 tests, 1 failure` (also `doctests`)
+    ("exunit", re.compile(r"(?im)^\s*(?:\d+ doctests?,\s*)?(\d+) tests?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    # phpunit · `Tests: 12, Assertions: 30, Failures: 1`
+    ("phpunit", re.compile(r"(?im)^\s*Tests:\s*(\d+),\s*Assertions:\s*\d+(?:,\s*Failures:\s*(\d+))?"), _TALLY_TOTAL_FAILED, False),
+    # dotnet test · `Failed:     1, Passed:    12, Skipped:     0`
+    ("dotnet", re.compile(r"(?im)^.*?Failed:\s*(\d+),\s*Passed:\s*(\d+)"), _TALLY_FAILED_PASSED, True),
+    # mocha · `11 passing` / `1 failing`, on separate lines
+    ("mocha", re.compile(r"(?im)^\s*(\d+) passing\b"), None, False),
+)
+
+# go test -v prints no summary count — the per-test lines ARE the tally.
+_GO_PASS = re.compile(r"(?m)^\s*--- PASS: ")
+_GO_FAIL = re.compile(r"(?m)^\s*--- FAIL: ")
+# Plain `go test` prints one verdict PER PACKAGE and no per-test count, so it is deliberately NOT
+# a tally: a package whose only live test calls t.Skip() still prints `ok`, and returning a package
+# count here would let _offline_fact claim "nothing in them reaches the real service" on evidence
+# that cannot support it. No count → the weaker sentence, which claims only what the exit code
+# established. Same rule for every runner: a number cria cannot read as TESTS is not a tally.
+_MOCHA_FAILING = re.compile(r"(?im)^\s*(\d+) failing\b")
 _UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
-# cargo prints one `test result:` line PER test binary, so the counts are summed, not first-matched.
-# Its "ignored" is a skip and drops out of `passed` exactly as pytest's "skipped" does — which is
-# what makes the passed count a usable coverage signal on its own.
-_CARGO_TALLY = re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed")
+
+
+def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
+    """(failed, passed) from one match's groups, by the row's reading — None when unreadable."""
+    g = [int(x) if x else 0 for x in groups]
+    try:
+        if kind == _TALLY_FAILED_PASSED:
+            return g[0], g[1]
+        if kind == _TALLY_PASSED_FAILED:
+            return g[1], g[0]
+        if kind == _TALLY_TOTAL_FAILED:
+            bad = sum(g[1:])                      # failures + errors, where the runner reports both
+            return bad, max(g[0] - bad, 0)
+    except IndexError:
+        return None
+    return None
 
 
 def runner_tally(text: str) -> str:
-    """A runner's own pass/fail line, normalized — "" when it printed none.
+    """A runner's own pass/fail line, normalized to `Nf/Np` — "" when it printed none.
 
     The PASSED count is the coverage signal, not decoration: a test that skips rather than fails
     leaves the exit code at 0 and drops out of this count. That is the only thing standing between
-    "the suite is self-contained" and "one test quietly stepped aside" (see _offline_fact)."""
-    m = _PYTEST_TALLY.search(text or "")
+    "the suite is self-contained" and "one test quietly stepped aside" (see _offline_fact).
+
+    Every runner in _TALLIES, plus the two that need counting rather than reading: `go test -v`,
+    which prints no summary but one line per test, and unittest, whose "Ran N tests" says nothing
+    about outcome and keeps its own `Nran/OK` shape so the two callers can tell a counted result
+    from an outcome-only one. Plain `go test` counts PACKAGES, not tests, and returns "" — see the
+    note at _GO_PASS."""
+    body = text or ""
+    for _name, pat, kind, summed in _TALLIES:
+        matches = pat.findall(body)
+        if not matches:
+            continue
+        if kind is None:                                    # mocha: two separate lines
+            passed = sum(int(x) for x in matches)
+            failed = sum(int(x) for x in _MOCHA_FAILING.findall(body))
+            return f"{failed}f/{passed}p"
+        rows = [_tally_counts(kind, m if isinstance(m, tuple) else (m,)) for m in matches]
+        rows = [r for r in rows if r is not None]
+        if not rows:
+            continue
+        if summed:
+            return f"{sum(f for f, _ in rows)}f/{sum(p for _, p in rows)}p"
+        return f"{rows[0][0]}f/{rows[0][1]}p"
+    # Go: `-v` gives one line per test; plain `go test` gives one verdict per package.
+    go_pass, go_fail = len(_GO_PASS.findall(body)), len(_GO_FAIL.findall(body))
+    if go_pass or go_fail:
+        return f"{go_fail}f/{go_pass}p"
+    m = _UNITTEST_TALLY.search(body)
     if m:
-        return f"{m.group(1) or 0}f/{m.group(2)}p"
-    cargo = _CARGO_TALLY.findall(text or "")
-    if cargo:
-        return f"{sum(int(f) for _, f in cargo)}f/{sum(int(p) for p, _ in cargo)}p"
-    m = _UNITTEST_TALLY.search(text or "")
-    if m:
-        ok = "OK" if re.search(r"(?m)^OK\b", text or "") else "FAIL"
+        ok = "OK" if re.search(r"(?m)^OK\b", body) else "FAIL"
         return f"{m.group(1)}ran/{ok}"
     return ""
 
