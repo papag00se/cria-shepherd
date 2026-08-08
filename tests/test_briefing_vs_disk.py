@@ -35,35 +35,44 @@ ROLLUP = ("The openapi.json has been read and analyzed.\n"
 
 
 class TheDiskRefutesTheBriefingTests(unittest.TestCase):
-    def test_a_denial_of_a_file_on_disk_is_dropped(self):
-        dropped = loop._briefing_denies_real_files(ROLLUP, FILES)
-        self.assertEqual(len(dropped), 2)
-        self.assertTrue(any("ada_handle_resolver.py has not been written" in d for d in dropped))
-        self.assertTrue(any("test_da_hash_resolver.py" in d for d in dropped))
+    def test_it_names_the_files_the_briefing_denies(self):
+        named = loop._briefing_denies_real_files(ROLLUP, FILES)
+        self.assertEqual(sorted(named), ["ada_handle_resolver.py", "test_da_hash_resolver.py"])
 
-    def test_a_TRUE_denial_survives(self):
-        """No live-test file existed — that sentence was right and must not be scrubbed."""
-        kept = loop._scrub_briefing(ROLLUP, FILES)
-        self.assertIn("A live test for the handles goose and papagoose has not been created", kept)
+    def test_it_appends_and_never_deletes(self):
+        """The first cut DELETED the offending sentences and stress-testing found it erasing a TRUE
+        one — "resolver.py: the main() function has not been written" — because the FILE exists. A
+        regex cannot tell a claim about a file from a claim about something inside it, and hiding
+        real remaining work is the fault this whole fix exists to stop. So it appends."""
+        out = loop._briefing_disk_truth(ROLLUP, FILES)
+        for sentence in ROLLUP.splitlines():
+            self.assertIn(sentence, out)                       # every word survives
+        self.assertIn("GROUND TRUTH — these files DO exist", out)
+        self.assertIn("ada_handle_resolver.py", out.split("GROUND TRUTH")[1])
 
-    def test_the_rest_of_the_briefing_survives(self):
-        kept = loop._scrub_briefing(ROLLUP, FILES)
-        self.assertIn("The openapi.json has been read", kept)
-        self.assertIn("The resolver returns the raw payload", kept)
-        self.assertNotIn("has not been written", kept)
+    def test_a_true_denial_about_a_function_keeps_its_meaning(self):
+        out = loop._briefing_disk_truth("resolver.py: the main() function has not been written.",
+                                        "resolver.py (100 B)")
+        self.assertIn("the main() function has not been written", out)
 
-    def test_with_no_file_list_nothing_is_touched(self):
-        """No listing → cria cannot refute anything → the briefing stands whole."""
-        self.assertEqual(loop._scrub_briefing(ROLLUP, ""), ROLLUP)
+    def test_with_no_file_list_nothing_is_added(self):
+        """No listing → cria cannot refute anything → the briefing stands untouched."""
+        self.assertEqual(loop._briefing_disk_truth(ROLLUP, ""), ROLLUP)
         self.assertEqual(loop._briefing_denies_real_files(ROLLUP, ""), [])
 
-    def test_a_file_not_on_the_listing_is_left_alone(self):
+    def test_a_file_not_on_the_listing_gets_no_override(self):
         b = "The deployment script deploy.sh has not been written."
-        self.assertEqual(loop._scrub_briefing(b, FILES), b)
+        self.assertEqual(loop._briefing_disk_truth(b, FILES), b)
 
     def test_a_positive_statement_about_a_file_is_untouched(self):
         b = "ada_handle_resolver.py is written and the CLI parses its argument."
-        self.assertEqual(loop._scrub_briefing(b, FILES), b)
+        self.assertEqual(loop._briefing_disk_truth(b, FILES), b)
+
+    def test_a_repeated_sentence_is_not_mangled(self):
+        """The deleting cut left "A.  B." behind when a sentence appeared twice."""
+        b = "A. resolver.py has not been written. B. resolver.py has not been written."
+        self.assertIn("A. resolver.py has not been written. B.",
+                      loop._briefing_disk_truth(b, "resolver.py (10 B)"))
 
 
 class TheDanglingJsonSteerTests(unittest.TestCase):
@@ -90,6 +99,15 @@ class TheDanglingJsonSteerTests(unittest.TestCase):
     def test_a_brace_in_prose_survives(self):
         d = "Replace the placeholder {handle} in the URL with the real value, then run it."
         self.assertIsNotNone(loop._steer_or_none(d))
+
+    def test_directives_about_braces_survive(self):
+        """A bare unbalanced-`{` test killed these. `{` is ordinary code in every brace language and
+        an ordinary placeholder in a URL template; reading it as JSON is a Python-corpus artifact."""
+        for d in ("You are missing a closing brace. Add { after the if on line 12, then rerun.",
+                  "Replace the literal {handle in the URL — it is missing its closing brace.",
+                  "Run: pytest tests/{unit,live} -q and read the failure.",
+                  "Add the field to the struct: cfg := Config{Timeout: 30"):
+            self.assertIsNotNone(loop._steer_or_none(d), d)
 
 
 if __name__ == "__main__":

@@ -413,8 +413,13 @@ if toks:
         # the coder to "Fix new_string" — for an edit that was right. The same fix, resubmitted with
         # a one-line old_string, applied verbatim at 0215, 120 calls later. So: old_string indented →
         # consume the file's indent back to line start and let new_string supply its own.
+        # ...and only when new_string carries indentation of its OWN to replace it with. Gating on
+        # old_string alone regressed the sloppy case the flexible matcher exists for: indented old +
+        # FLUSH new used to land after the file's indent (valid) and would now land at column 0
+        # (broken, then refused as would_break). Both sides indented is the 0190 shape and the only
+        # one where the file's indent is redundant.
         m=ms[0]; a=m.start()
-        if old[:1] in ' \t':
+        if old[:1] in ' \t' and new[:1] in ' \t':
             ls=s.rfind(chr(10),0,a)+1
             if not s[ls:a].strip():
                 a=ls

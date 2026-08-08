@@ -5,3 +5,6 @@
 # the mechanism instead of coding). {{FINDINGS}} is the red gate's own output.
 red = ⟦ctx:checks⟧ GROUND TRUTH — the repo's own checks were run and they currently FAIL:\n{{FINDINGS}}\nTrust this over any claim above that the work is done or the tests pass.
 testless = ⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but executed NO tests, so the tests are UNVERIFIED. Run them before treating them as passing.
+# Same shape as `red`, for a briefing that says a file is missing which cria's own disk
+# listing shows exists. Additive: the briefing keeps its words, the disk gets the last one.
+files_exist = ⟦ctx:checks⟧ GROUND TRUTH — these files DO exist on disk right now: {{FILES}}. Trust this over any claim above that they are missing or were never written; read them before recreating anything.

@@ -1558,8 +1558,9 @@ def _exec_finding_line(sess) -> str:
     return f"\n\n{line}" if line else ""
 
 
-# "has not been written", "was never created", "does not exist yet" — a briefing DENYING a file.
-# Shape, not phrase list: a filename token, then a negation, then a creation verb, in one sentence.
+# A briefing sentence DENYING that a named file exists: a filename token, a negation, a creation
+# verb, one sentence. Used ONLY to decide whether to append cria's file list as an override — never
+# to delete text. See _briefing_disk_truth.
 _DENIES_FILE = re.compile(
     r"\b([\w./-]+\.\w{1,5})\b[^.\n]{0,80}?\b(?:not|never|no|n't|yet\s+to)\b[^.\n]{0,40}?"
     r"\b(?:written|created|added|implemented|exists?|started)\b"
@@ -1568,45 +1569,43 @@ _DENIES_FILE = re.compile(
 
 
 def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
-    """Sentences in a briefing that say a file does not exist which cria's OWN listing shows it does.
-
-    THE 2026-08-08 maple ROLLUP, three times in one run. At call 0029 cria injected "The Python
-    script that resolves an Ada Handle to a Cardano address has not been written. Unit tests have
-    not been added. … The implementation has not yet been started" over a ⟦ctx:files⟧ block six
-    hundred lines above it in the SAME prompt listing `ada_handle_resolver.py (4633 B)` and
-    `test_da_hash_resolver.py (6968 B)`, and over a real run of `2 failed, 7 passed`. Repeated at
-    0059 with three files on disk including the README.
-
-    cria composes both halves, so this is arithmetic: the file list is ground truth read off the
-    disk this turn, the briefing is a small model's prose about the past. Where they disagree the
-    disk wins, and the sentence goes. Only sentences naming a file cria can SEE are touched —
-    a denial about something not on the list may well be true and is left alone."""
+    """Files the briefing says are missing that cria's OWN disk listing shows exist."""
     present = {m.lower() for m in re.findall(r"[\w./-]+\.\w{1,5}", files_list or "")}
     if not present:
         return []
-    bad = []
+    named = []
     for sent in re.split(r"(?<=[.!?])\s+|\n+", briefing or ""):
         m = _DENIES_FILE.search(sent)
         if not m:
             continue
-        named = (m.group(1) or m.group(2) or "").lower()
-        if named and any(named == p or p.endswith("/" + named) for p in present):
-            bad.append(sent.strip())
-    return bad
+        f = (m.group(1) or m.group(2) or "").lower()
+        if f and any(f == q or q.endswith("/" + f) for q in present) and f not in named:
+            named.append(f)
+    return named
 
 
-def _scrub_briefing(briefing: str, files_list: str, rlog=None) -> str:
-    """The briefing with its disk-refuted denials removed (rule 5b)."""
-    bad = _briefing_denies_real_files(briefing, files_list)
-    if not bad:
+def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
+    """The briefing, plus a ground-truth line when it denies a file cria can see. NEVER deletes.
+
+    THE maple 1786218955 ROLLUP, twice: "The Python script … has not been written. Unit tests have
+    not been added. … The implementation has not yet been started" over a ⟦ctx:files⟧ block in the
+    SAME prompt listing both files, and a real `2 failed, 7 passed`.
+
+    The first cut of this DELETED the offending sentences, and stress-testing it found exactly the
+    fault it was written to fix: "resolver.py: the main() function has not been written" — a TRUE
+    statement about missing work — was erased because the FILE exists, and a repeated sentence left
+    "A.  B." behind. A regex cannot tell a claim about a file from a claim about something inside
+    it, and the cost of guessing wrong is hiding real remaining work. So it appends instead, exactly
+    as _briefing_gate_ground_truth already does for the check state: cria states its fact, the
+    briefing keeps its words, and the reader is told which to trust. Same mechanism, same file,
+    additive in both cases."""
+    named = _briefing_denies_real_files(briefing, files_list)
+    if not named:
         return briefing
-    out = briefing
-    for sent in bad:
-        out = out.replace(sent, "")
     if rlog is not None:
-        rlog.emit("context.briefing_denial_dropped", level="warn", n=len(bad),
-                  head=_clip(bad[0], 120))
-    return re.sub(r"\n{3,}", "\n\n", out).strip()
+        rlog.emit("context.briefing_denies_disk", level="warn", files=",".join(named[:6]))
+    return briefing + "\n\n" + prompts.fill(
+        prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
 
 # The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
@@ -2465,7 +2464,7 @@ class Loop:
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
-            lambda mm: _scrub_briefing(summarize(
+            lambda mm: _briefing_disk_truth(summarize(
                                  self._ctx.compactor_chat or self._ctx.reasoner_chat,
                                  self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
@@ -6022,20 +6021,29 @@ def _steer_or_none(text: str) -> str | None:
                 return None
         except ValueError:
             pass
-    # A DANGLING JSON OBJECT means the author was emitting a structured call, not a directive, and
-    # stopped mid-object. Walked on maple-preview 1786218955 call 0065 (finish_reason `stop`, not a
-    # length cut): the author wrote a first-person verdict essay — "Looking at this situation, I need
-    # to decide if the coder is stuck or making progress… I'll give the imperative directive to fix
-    # these concrete issues." — then opened `{ "Fix the ada_handle_resolver.py code: …` and never
-    # closed it. cria shipped the whole thing as `⟦ctx:steer⟧ [REDIRECT]`. Inside the fragment sat the
-    # false claim that ended the run ("a list with 2 items is returned instead of 1"); the coder had
-    # just reasoned its way to the real bug, deferred to cria, and wrote nothing more before the wall.
+    # A REPLY THAT ENDS INSIDE AN UNTERMINATED JSON OBJECT was a structured emission that stopped
+    # mid-object, not a directive. Walked on maple-preview 1786218955 call 0065 (finish_reason
+    # `stop`, not a length cut): the author wrote a first-person verdict essay — "Looking at this
+    # situation, I need to decide if the coder is stuck or making progress… I'll give the imperative
+    # directive to fix these concrete issues." — then opened `{ "Fix the ada_handle_resolver.py
+    # code: …` and never closed it. cria shipped all of it as `⟦ctx:steer⟧ [REDIRECT]`. Inside the
+    # fragment sat the false claim that ended the run ("a list with 2 items is returned instead of
+    # 1"); the coder had just reasoned its way to the real bug, deferred to cria, and wrote nothing
+    # more before the wall.
     #
-    # Refusing the WHOLE reply, not salvaging the prose: the prose here is the deliberation the author
-    # was told not to emit, and the instruction is inside the fragment. Half of a broken emission is
-    # not a directive. Measured over the 99 distinct steers cria has delivered across the last 18
-    # captured sessions, this refuses exactly one — that one. Structural, so no wording can dodge it.
-    if body.count("{") > body.count("}"):
+    # KEYED ON WHAT FOLLOWS THE BRACE, NOT THE BRACE. A bare unbalanced-`{` test refuses real directives —
+    # measured: "You are missing a closing brace. Add { after the if on line 12" and "Replace the
+    # literal {handle in the URL" both died. `{` is ordinary code in every brace language and an
+    # ordinary placeholder in a URL template, so a rule that reads it as JSON is a Python-corpus
+    # artifact that would misfire the moment the task is Go or Java. What is NOT ordinary prose is
+    # an unclosed `{` whose very next token is a quoted string — `{ "Fix the …`. Prose after a brace
+    # does not open with a quote; a serialized object does. Over the 99 distinct steers cria has
+    # delivered across 18 captured sessions this refuses exactly one — call 0065.
+    #
+    # Refusing the WHOLE reply, not salvaging the prose: the prose is the deliberation the author was
+    # told not to emit, and the instruction is inside the fragment. Half a broken emission is not a
+    # directive; the caller falls back to its grounded canned text.
+    if body.count("{") > body.count("}") and body.rsplit("{", 1)[1].lstrip()[:1] == '"':
         return None
     body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
     # Drop every SENTENCE that carries a verdict token, rather than excising the token and keeping the
