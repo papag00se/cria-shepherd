@@ -185,6 +185,7 @@ class GuardState:
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    exec_finding: str = ""  # cria RAN the deliverable and it failed — ground truth, owed to the coder
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
@@ -1524,10 +1525,35 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
                                     ask=match_ask)
         rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
                   exit_code=result.exit_code)
+        # THE CODER GETS IT TOO. Walked on both 2026-08-07 runs, and it is the whole resolver_cli
+        # failure in each. cria ran `handle_resolver.py goose`, watched it exit 1, wrote the finding
+        # correctly — and put it in the satisfaction judge's evidence and nowhere else. All three
+        # call sites feed `ev`/`evidence`; none feeds the coder. So the one party that could fix the
+        # command-line entry point was never told cria had run it and it failed, while the judge —
+        # invited by the marker's own closing hedge to treat it as "evidence, not a verdict" —
+        # discounted it and ended the session. Twice, on two different models.
+        #
+        # NOT_OBSERVED only. That verdict is a defect in the coder's program, stated from an exit
+        # code cria observed itself; `inconclusive` is a gap in what CRIA could establish, and
+        # telling the coder "I could not work out how to run your program" is noise it cannot act on
+        # (principle 3). Still never a gate — the marker rides along with whatever cria was already
+        # going to say, and if cria was going to say nothing this changes nothing.
+        sess.exec_finding = result.marker if result.verdict == execcheck.NOT_OBSERVED else ""
         return result.marker
     except Exception as e:  # noqa: BLE001
         rlog.emit("loop.exec_check_error", level="warn", error=f"{type(e).__name__}: {e}")
         return ""   # a check that cannot run must never affect a completion
+
+
+def _exec_finding_line(sess) -> str:
+    """cria's own run of the deliverable, as a line for the coder — or "" when there is nothing to say.
+
+    Consumed once. The finding is true of the workspace as it stood when cria ran it; leaving it
+    parked would re-assert a failure the coder may have just fixed, which is the stale-ground-truth
+    fault this same walk found four times over."""
+    line = getattr(sess, "exec_finding", "") or ""
+    sess.exec_finding = ""
+    return f"\n\n{line}" if line else ""
 
 
 # The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
@@ -2150,7 +2176,8 @@ class Loop:
                 sess.plan.items.append(fix)
         sess.plan.status = "in_progress"
         sess.nudge_reason = prompts.render("done_incomplete", reason=reason,
-                                           check_state=prompts.load_map("done_check_state")["passed"])
+                                           check_state=prompts.load_map("done_check_state")["passed"],
+                                           exec_finding=_exec_finding_line(sess))
         sess.steer_source = "completion critic (task not fully done)"
         self._persist_plan(sess.plan, rlog)
         return reason
@@ -3352,7 +3379,8 @@ class Loop:
                 # actually satisfied. cria never lets a still-incomplete task exit early — the model
                 # finishes the real work on its own; there is no "give up after one look".
                 sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
-                                                   check_state=prompts.load_map("done_check_state")["passed"])
+                                                   check_state=prompts.load_map("done_check_state")["passed"],
+                                                   exec_finding=_exec_finding_line(sess))
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
@@ -3512,7 +3540,8 @@ class Loop:
             # No shell → the gate never ran; say so rather than claiming the checks passed.
             return self._renudge(sess, key, body, prompts.render(
                 "done_incomplete", reason=critic_reason,
-                check_state=prompts.load_map("done_check_state")["never_ran"]), rlog)
+                check_state=prompts.load_map("done_check_state")["never_ran"],
+                exec_finding=_exec_finding_line(sess)), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:

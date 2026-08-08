@@ -1,4 +1,4 @@
 {{CHECK_STATE}}, but the task is NOT fully done yet:
-{{REASON}}
+{{REASON}}{{EXEC_FINDING}}
 
 Re-read the ORIGINAL task and confirm EVERY deliverable it named is present and genuinely works (the code, tests that actually test it, the docs, any live check the task required). Do NOT declare done, rationalize a missing piece as impossible, or stop — finish exactly what is called out above, then continue.
