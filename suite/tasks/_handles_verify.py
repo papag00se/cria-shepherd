@@ -38,9 +38,36 @@ TIMEOUT = 300           # a cold cargo/maven build is slow; a hang is caught by 
 LIVE_TIMEOUT = 180
 
 # Real Cardano artifacts in the output = the resolution actually happened against the real API.
+# The address and holder prefixes are self-identifying: nothing else in a program's output looks
+# like `addr1…` or `stake1…`, so their presence IS the evidence.
 ADDR_RE = re.compile(r"addr1[0-9a-z]{20,}")
 HOLDER_RE = re.compile(r"stake1[0-9a-z]{20,}")
-COUNT_RE = re.compile(r"\d+")
+
+# THE COUNT IS NOT SELF-IDENTIFYING, and `\d+` was scoring it. Any digit anywhere passed — a slot
+# number, a byte length, a timestamp. Walked on maple-preview 1786228135: the delivered program
+# printed the address and the holder and NEVER the count (neither file it shipped ever calls
+# /holders/{address}, the only endpoint that has one), and the run scored 4/4 because its JSON dump
+# contained `"created_slot_number": 145829`. A run that did not deliver a third of the task looked
+# identical to one that did — qwen35 1786230527 printed `Total Handles: 15` and scored the same.
+#
+# So the count must be LABELLED. A bare number proves nothing; a number the program itself calls a
+# handle count is the deliverable. Kept language-neutral: any of the words a program would use,
+# any separator, the number on either side of it (`Total Handles: 15`, `total_handles=15`,
+# `"total_handles": 15`, `15 handles held`).
+_COUNT_WORD = r"(?:total[_\s-]*handles?|handles?[_\s-]*(?:count|total|held)|handle[_\s-]*count)"
+COUNT_RE = re.compile(rf"{_COUNT_WORD}\W{{0,4}}(\d+)|(\d+)\s+{_COUNT_WORD}", re.I)
+
+
+def positive_count(out: str) -> bool:
+    """A LABELLED, positive handle count in the program's output. THE one owner of this question.
+
+    ada-handles/verify.py had its own copy that stripped address-shaped tokens and then accepted any
+    positive integer left over. That fixed the run it was written for (`total_handles: 0`) and left
+    the general hole open: maple-preview 1786228135 printed the address and the holder, never the
+    count — neither file it shipped calls /holders/{address}, the only endpoint that has one — and
+    scored 4/4 on `"created_slot_number": 145829`. Two verifiers, one question, and the weaker
+    answer was the one scoring the ladder's main task."""
+    return any(int(n) > 0 for m in COUNT_RE.finditer(out or "") for n in m.groups() if n)
 
 SKIP_DIRS = ("__pycache__", ".git", "node_modules", "target", "vendor", ".venv", "venv",
              "build", "dist", ".gradle", ".m2")
@@ -191,7 +218,7 @@ def cli(ws, spec):
         if code == -3:
             continue
         shown = " ".join(cmd)
-        if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and COUNT_RE.search(out):
+        if code == 0 and ADDR_RE.search(out) and HOLDER_RE.search(out) and positive_count(out):
             return True, f"{shown} → address+holder+count"
         if code == 0 and ADDR_RE.search(out):
             detail = f"{shown}: ran, but holder/total missing (address only)"

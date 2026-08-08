@@ -21,12 +21,13 @@ gates = check runs it triggered.
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 🟢 gemma4 · 12B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 56.6 | 4 | 26 | 1 | 0 | 2 | 1 |
 | 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 123.1 | 6 | 43 | 4 | 0 | 5 | 1 |
+| 🟢 qwen35 (base) · 9B q6 | ⁴⁄₄ | 78.2 | 16 | 77 | 5 | 0 | 7 | 4 |
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
-| 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
-| 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
+| 🟢 qwopus · 9B q6 | ³⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
+| 🟡 ternary-bonsai · 27B q2_0 | ³⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
 | 🟡 mellum2 · 12B-A2.5B q4 | ³⁄₄ ²⁄₄ ⁴⁄₄ | 159.9 | 22 | 146 | 19 | 5 | 14 | 4 |
-| 🟠 maple (ternary) · 20B-A1B q2 | ²⁄₄ ²⁄₄ ¹⁄₄ | 64.1 | 22 | 72 | 6 | 1 | 5 | 4 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ²⁄₄ ¹⁄₄ ³⁄₄ | 62.9 | 27 | 96 | 7 | 1 | 5 | 5 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -55,7 +56,7 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | superseded | 0/4 | 16 | 91 | 40 | 166.4 | 4 | 47 | milestone-miss-15min |
 | mellum2 | superseded | 1/4 | 31 | 225 | 176 | 142.9 | 23 | 28 | milestone-miss-30min |
 | mellum2 | superseded | 0/4 | 16 | 101 | 62 | 145.6 | 6 | 27 | milestone-miss-15min |
-| nemotron-elastic | counted | 4/4 | 60 | 291 | 173 | 114.1 | 15 | 53 | budget-killed |
+| nemotron-elastic | counted | 3/4 | 60 | 291 | 173 | 114.1 | 15 | 53 | budget-killed |
 | mellum2 | counted | 3/4 | 26 | 195 | 104 | 165.4 | 7 | 80 | exited |
 | mellum2 | counted | 3/4 | 12 | 111 | 45 | 178.3 | 4 | 18 | exited |
 | mellum2 | counted | 0/4 | 16 | 145 | 84 | 171.4 | 5 | 35 | milestone-miss-15min |
@@ -79,9 +80,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 2/4 | 8 | 34 | 24 | 165.7 | 1 | 3 | exited |
 | mellum2 | counted | 4/4 | 15 | 111 | 73 | 173.5 | 12 | 11 | exited |
 | ternary-bonsai | superseded | 3/4 | 12 | 40 | 12 | 43.7 | 0 | 0 | exited |
-| ternary-bonsai | counted | 4/4 | 60 | 69 | 33 | 39.1 | 4 | 9 | budget-killed |
+| ternary-bonsai | counted | 3/4 | 60 | 69 | 33 | 39.1 | 4 | 9 | budget-killed |
 | qwythos | counted | 4/4 | 15 | 116 | 45 | 76.4 | 14 | 12 | exited |
-| qwopus | counted | 4/4 | 48 | 232 | 130 | 75.6 | 14 | 23 | exited |
+| qwopus | counted | 3/4 | 48 | 232 | 130 | 75.6 | 14 | 23 | exited |
 | ornith | superseded | 0/4 | 16 | 114 | 58 | 75.7 | 4 | 11 | milestone-miss-15min |
 | ornith | counted | 4/4 | 31 | 237 | 121 | 76.5 | 9 | 18 | exited |
 | mellum2 | counted | 3/4 | 9 | 72 | 38 | 170.4 | 7 | 26 | exited |
@@ -92,7 +93,7 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | qwopus | voided | 1/4 | 31 | 71 | 38 | 76.4 | 6 | 5 | milestone-miss-30min |
 | ornith | voided | 0/4 | 16 | 74 | 43 | 78.4 | 7 | 4 | milestone-miss-15min |
 | mellum2 | voided | 1/4 | 31 | 234 | 119 | 167.1 | 25 | 62 | milestone-miss-30min |
-| nemotron-elastic | counted | 4/4 | 32 | 200 | 104 | 132.2 | 14 | 29 | exited |
+| nemotron-elastic | counted | 3/4 | 32 | 200 | 104 | 132.2 | 14 | 29 | exited |
 | ternary-bonsai | counted | 4/4 | 60 | 61 | 35 | 41.7 | 2 | 4 | budget-killed |
 | qwythos | counted | 3/4 | 15 | 112 | 68 | 83.1 | 13 | 6 | exited |
 | qwopus | counted | 4/4 | 5 | 34 | 17 | 85.4 | 3 | 3 | exited |
@@ -107,7 +108,7 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | nemotron-elastic | counted | 4/4 | 8 | 52 | 28 | 115.8 | 5 | 4 | exited |
 | nemotron-elastic | counted | 2/4 | 6 | 44 | 24 | 116.8 | 4 | 3 | exited |
 | nemotron-elastic | counted | 4/4 | 5 | 42 | 20 | 116.4 | 5 | 5 | exited |
-| gemma4 | counted | 4/4 | 5 | 29 | 14 | 54.9 | 2 | 2 | exited |
+| gemma4 | counted | 2/4 | 5 | 29 | 14 | 54.9 | 2 | 2 | exited |
 | gemma4 | counted | 4/4 | 4 | 25 | 13 | 56.2 | 0 | 2 | exited |
 | gemma4 | counted | 4/4 | 3 | 22 | 10 | 57.9 | 0 | 2 | exited |
 | nemotron-elastic | counted | 4/4 | 4 | 28 | 14 | 115.1 | 0 | 3 | exited |
@@ -128,7 +129,7 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 1/4 | 19 | 112 | 72 | 147.6 | 20 | 10 | milestone-miss-15min |
 | mellum2 | counted | 4/4 | 17 | 151 | 102 | 168.3 | 20 | 15 | exited |
 | maple-preview | counted | 2/4 | 33 | 122 | 72 | 62.3 | 11 | 9 | exited |
-| maple-preview | counted | 4/4 | 22 | 95 | 32 | 63.0 | 7 | 5 | exited |
+| maple-preview | counted | 3/4 | 22 | 95 | 32 | 63.0 | 7 | 5 | exited |
 | maple-preview | counted | 2/4 | 17 | 69 | 26 | 62.7 | 5 | 5 | exited |
 | maple-preview | counted | 3/4 | 46 | 101 | 65 | 62.3 | 16 | 4 | milestone-miss-45min |
 | mellum2 | counted | 2/4 | 4 | 53 | 32 | 172.8 | 5 | 7 | exited |
@@ -139,8 +140,10 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 4/4 | 45 | 269 | 174 | 150.8 | 37 | 27 | exited |
 | maple-preview | counted | 2/4 | 14 | 61 | 22 | 62.1 | 4 | 5 | exited |
 | maple-preview | counted | 1/4 | 31 | 64 | 46 | 62.7 | 7 | 3 | milestone-miss-30min |
+| maple-preview | counted | 3/4 | 36 | 164 | 77 | 63.9 | 11 | 7 | exited |
+| qwen35 | counted | 4/4 | 16 | 77 | 38 | 78.2 | 5 | 7 | exited |
 
-counted runs: 90 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/90
+counted runs: 92 · avg wall 23 min · avg coder calls 67 · full-pass rate 30/92
 
 ## Scoreboard (every run; counted rows bold)
 
