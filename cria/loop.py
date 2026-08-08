@@ -1558,6 +1558,57 @@ def _exec_finding_line(sess) -> str:
     return f"\n\n{line}" if line else ""
 
 
+# "has not been written", "was never created", "does not exist yet" — a briefing DENYING a file.
+# Shape, not phrase list: a filename token, then a negation, then a creation verb, in one sentence.
+_DENIES_FILE = re.compile(
+    r"\b([\w./-]+\.\w{1,5})\b[^.\n]{0,80}?\b(?:not|never|no|n't|yet\s+to)\b[^.\n]{0,40}?"
+    r"\b(?:written|created|added|implemented|exists?|started)\b"
+    r"|\b(?:not|never|no)\b[^.\n]{0,60}?\b(?:written|created|added)\b[^.\n]{0,40}?"
+    r"\b([\w./-]+\.\w{1,5})\b", re.I)
+
+
+def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
+    """Sentences in a briefing that say a file does not exist which cria's OWN listing shows it does.
+
+    THE 2026-08-08 maple ROLLUP, three times in one run. At call 0029 cria injected "The Python
+    script that resolves an Ada Handle to a Cardano address has not been written. Unit tests have
+    not been added. … The implementation has not yet been started" over a ⟦ctx:files⟧ block six
+    hundred lines above it in the SAME prompt listing `ada_handle_resolver.py (4633 B)` and
+    `test_da_hash_resolver.py (6968 B)`, and over a real run of `2 failed, 7 passed`. Repeated at
+    0059 with three files on disk including the README.
+
+    cria composes both halves, so this is arithmetic: the file list is ground truth read off the
+    disk this turn, the briefing is a small model's prose about the past. Where they disagree the
+    disk wins, and the sentence goes. Only sentences naming a file cria can SEE are touched —
+    a denial about something not on the list may well be true and is left alone."""
+    present = {m.lower() for m in re.findall(r"[\w./-]+\.\w{1,5}", files_list or "")}
+    if not present:
+        return []
+    bad = []
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", briefing or ""):
+        m = _DENIES_FILE.search(sent)
+        if not m:
+            continue
+        named = (m.group(1) or m.group(2) or "").lower()
+        if named and any(named == p or p.endswith("/" + named) for p in present):
+            bad.append(sent.strip())
+    return bad
+
+
+def _scrub_briefing(briefing: str, files_list: str, rlog=None) -> str:
+    """The briefing with its disk-refuted denials removed (rule 5b)."""
+    bad = _briefing_denies_real_files(briefing, files_list)
+    if not bad:
+        return briefing
+    out = briefing
+    for sent in bad:
+        out = out.replace(sent, "")
+    if rlog is not None:
+        rlog.emit("context.briefing_denial_dropped", level="warn", n=len(bad),
+                  head=_clip(bad[0], 120))
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
 # The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
 # not something the coder reads — and principle #5's counter-nuance is explicit that bounding a composed
 # prompt breaks no rule, while over-applying never-truncate to one is itself a documented footgun.
@@ -2414,7 +2465,8 @@ class Loop:
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
-            lambda mm: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
+            lambda mm: _scrub_briefing(summarize(
+                                 self._ctx.compactor_chat or self._ctx.reasoner_chat,
                                  self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
                                  # CRIA'S ASK GOES LAST. Without it the transcript ends on the
@@ -2430,7 +2482,9 @@ class Loop:
                                  # This is the SAME fix as da35f4e, which landed on the harness path
                                  # (server.py) and never reached its sibling here.
                                  selfcompact.compaction_request(mm), rlog,
-                                 phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS) + _briefing_gate_ground_truth(sess),
+                                 phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
+                                 workspace_inventory(sess.workspace_root or "", flavor="coder"),
+                                 rlog) + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
@@ -5968,6 +6022,21 @@ def _steer_or_none(text: str) -> str | None:
                 return None
         except ValueError:
             pass
+    # A DANGLING JSON OBJECT means the author was emitting a structured call, not a directive, and
+    # stopped mid-object. Walked on maple-preview 1786218955 call 0065 (finish_reason `stop`, not a
+    # length cut): the author wrote a first-person verdict essay — "Looking at this situation, I need
+    # to decide if the coder is stuck or making progress… I'll give the imperative directive to fix
+    # these concrete issues." — then opened `{ "Fix the ada_handle_resolver.py code: …` and never
+    # closed it. cria shipped the whole thing as `⟦ctx:steer⟧ [REDIRECT]`. Inside the fragment sat the
+    # false claim that ended the run ("a list with 2 items is returned instead of 1"); the coder had
+    # just reasoned its way to the real bug, deferred to cria, and wrote nothing more before the wall.
+    #
+    # Refusing the WHOLE reply, not salvaging the prose: the prose here is the deliberation the author
+    # was told not to emit, and the instruction is inside the fragment. Half of a broken emission is
+    # not a directive. Measured over the 99 distinct steers cria has delivered across the last 18
+    # captured sessions, this refuses exactly one — that one. Structural, so no wording can dodge it.
+    if body.count("{") > body.count("}"):
+        return None
     body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
     # Drop every SENTENCE that carries a verdict token, rather than excising the token and keeping the
     # wreckage of the sentence around it. Both prompts end by teaching the exact bigram "is NOT

@@ -11,4 +11,9 @@ Rules:
 - Name FILES and concrete ERRORS precisely — those are stable ground truth the agent should trust.
 - Only state that tests PASS or the build WORKS if the transcript shows the check ACTUALLY RAN and passed (a real command with passing output). If the coder merely ASSERTED success without a passing run in the transcript, record it as an unverified claim ("the coder reported the tests pass — not verified by a run"), never as established fact. A confident claim is not a passing test.
 - Do NOT present any function name, variable name, or code shape as "done — don't change it." The agent may be mid-refactor; a briefing that freezes a name it is in the middle of renaming makes it thrash between the old and new name.
+- Do NOT restate the API's endpoints, routes, or response fields. Those are not session progress —
+  they are durable facts that travel separately and are re-stated in full, from the real fetch, in
+  every turn. A briefing that paraphrases them can only degrade them, and the paraphrase then
+  competes with the real thing. Say WHICH source was read and what the code does with it; never
+  which fields an endpoint returns.
 - Do NOT invent progress. Output only the briefing, no preamble.

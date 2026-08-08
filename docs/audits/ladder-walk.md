@@ -5615,3 +5615,50 @@ nothing at 0010 before any spec was read. The exec finding reached the coder at 
 - The exec finding the coder received was therefore about the wrong thing (usage exit vs the real
   print-nothing bug).
 - Fields anchor truncated for a judge (same class as mellum 0021).
+
+## ada-handles_maple-preview_codex_poff_1786218955 (maple-preview 1/4, 2026-08-08, sha 715b26e)
+
+**cria fault: yes.** Walked in full: 32 chunks, 24,305 lines, 4 walkers, per-chunk counts verified.
+Terminal `milestone-miss-30min` — the suite killed it; it did not finish.
+
+**THE MODEL'S OWN ROOT:** `resolve_handle` opens `if not response or not isinstance(response, list):
+raise ValueError("Handle not found…")`. The API returns an object, so every call raises before a
+field is read — that is the CLI's exit 1 and all 7 test failures. cria never showed an array
+anywhere: I swept every coder prompt for `[]`, `unknown[]` and "array" — zero hits. The injected
+shape is `{ hex?: string; name: string; … }`, in ~30 prompts. The coder never fetched a live handle.
+
+**WHAT CRIA CONTRIBUTED — the compaction/rollup layer manufactured false facts and injected them as
+anchors that outranked the truth in the same prompt.** Three independent walkers, same finding:
+
+- **0016→0017 rollup:** *"The `/handles/{handle}` endpoint returns resolved addresses, holder
+  addresses, and total handles."* False — `total_handles` is on `/holders/{address}`, per cria's own
+  ⟦ctx:facts⟧ in the same prompt. Its "exact fields needed" list is all `/holders` fields and omits
+  `resolved_addresses.ada` and `holder`. This is why no version of the resolver ever calls the
+  holders endpoint. FIXED: selfcompact_summary.txt now forbids restating the API's endpoints or
+  fields — the ledger carries them verbatim every turn and a paraphrase can only degrade them.
+- **0029 and 0059 rollups:** *"The Python script … has not been written. Unit tests have not been
+  added. … The implementation has not yet been started"* — over a ⟦ctx:files⟧ block in the SAME
+  prompt listing the files at 4,633 B and 6,968 B, and a real `2 failed, 7 passed`. FIXED:
+  `_scrub_briefing` drops a briefing sentence that denies a file cria's own disk listing shows.
+  A TRUE denial (no live-test file existed) survives.
+- **0065→0066 steer:** the author emitted a first-person verdict essay then an unterminated JSON
+  object (finish_reason `stop`, not a length cut); cria shipped all of it as `[REDIRECT]`. Inside
+  the fragment: *"a list with 2 items is returned instead of 1"* — false. The coder had just reached
+  the real bug in its own words (*"the resolver returns `first_handle` which is a dict"*), deferred
+  to the steer, and wrote nothing more. FIXED: `_steer_or_none` refuses a reply with an unbalanced
+  `{`. Measured over 99 delivered steers it refuses exactly that one.
+
+**Still open, ranked:**
+- **Stale checks asserted as CURRENT.** 0058: *"These are the repo's own checks, unchanged since you
+  were last shown them"* over output three file-writes old; the coder re-fixed a dead problem.
+  0039/0040 fed the reasoner the call-0030 gate as GROUND TRUTH after three rewrites — the
+  mechanical cause of two bad steers. The annotation guard (`_paths_written_after`) suppresses the
+  disk QUOTE but not the "unchanged" claim.
+- **Four reasoner calls in 0001–0019 produced three empty outputs** (two `[finish: length]`
+  rumination loops, one malformed tool call) and one backwards steer.
+- **A steer that is a raw ⟦ctx:checks⟧ dump wearing the steer label** — 0024, 0045, 0058, 0064. The
+  coder gets the same failure list twice in one prompt, once labelled checks, once labelled steer.
+- **The same 45-line shape block rendered six times in one prompt** (0020, 0029) — cria's own
+  composition driving the compactions where the false facts entered.
+- **The plan is two steps** — "read the source" then the entire task verbatim — so no deliverable
+  has its own gate. Same shape as every other 1/4 and 2/4 on this model.
