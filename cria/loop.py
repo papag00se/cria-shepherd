@@ -22,12 +22,14 @@ Simplifications (flagged; both are refinements, not correctness holes):
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -5268,6 +5270,109 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
 _fetch_succeeded = research.fetch_succeeded
 
 
+# `{param}` in a route template stands for one path segment, never a slash.
+_ROUTE_PARAM = re.compile(r"\{[^{}/]*\}")
+# "(replace in the URL path: {address} = The stake/enterprise/script/other address of the Holder)"
+_PARAM_DESC = re.compile(r"\(replace in the URL path:\s*(\{[^}]+\}[^)]*)\)")
+
+
+def _route_templates(latest: dict) -> list[str]:
+    """Every route the spec defined, across every fetch this session. cria parsed these itself."""
+    seen: list[str] = []
+    for entry in (latest or {}).values():
+        for r in (_fetch_facts(entry)[1] or "").split(","):
+            r = r.strip()
+            if r.startswith("/") and r not in seen:
+                seen.append(r)
+    return seen
+
+
+def _param_descriptions(latest: dict) -> dict[str, str]:
+    """route template -> the spec's own description of its path parameter, where cria rendered one."""
+    out: dict[str, str] = {}
+    for entry in (latest or {}).values():
+        for line in str(_fetch_facts(entry)[2] or "").splitlines():
+            m = _PARAM_DESC.search(line)
+            if not m:
+                continue
+            route = line.strip().split()[1] if len(line.strip().split()) > 1 else ""
+            if route.startswith("/"):
+                out.setdefault(route, m.group(1).strip())
+    return out
+
+
+def _failed_fetch_diagnosis(url: str, latest: dict) -> str:
+    """The one narrow true sentence about THIS failed URL — wrong route, wrong value, or silence.
+
+    THE 2026-08-07 DOUBLE MISS. The `failed` label used to name one cause for every failure, "check
+    the VALUE you put in the path", and on one day it was wrong in both directions:
+
+      maple-preview 0014   /handle/goose       the ROUTE was wrong (singular) — cria said check the value
+      mellum2       0019   /holders/addr1q…    the VALUE was wrong — a sibling note said compare the routes
+
+    Both times cria sent the coder to inspect the half that was already right. maple's coder decided
+    "goose is not a valid Ada handle", never recovered, and the live test scored zero.
+
+    cria never had to guess. It composed this ledger, so it holds the spec's route list and the URL
+    that failed, and matching one against the other is arithmetic. When no fetch this session yielded
+    a route list there is nothing to match and this says NOTHING — silence over a guess (principle 3).
+    """
+    routes = _route_templates(latest)
+    if not routes:
+        return ""
+    try:
+        path = urllib.parse.urlsplit(url).path or "/"
+    except ValueError:
+        return ""
+    labels = prompts.load_map("fetched_facts_sections")
+    for tmpl in routes:
+        if re.fullmatch(_ROUTE_PARAM.sub("[^/]+", re.escape(tmpl).replace("\\{", "{").replace("\\}", "}")),
+                        path.rstrip("/") or "/"):
+            desc = _param_descriptions(latest).get(tmpl, "")
+            return (prompts.fill(labels["bad_value"], param=desc) if desc
+                    else labels["bad_value_bare"])
+    # Not a route. Name the closest real one ONLY when it is a near miss — a wrong guess at "closest"
+    # is the phantom-path fault, and "/handles/{handle}" for "/handle/goose" is worth its own sentence
+    # while a scattershot suggestion is worth none.
+    near = _nearest_route(path, routes)
+    nearest = (prompts.fill(labels["bad_route_nearest"], route=near) if near
+               else labels["bad_route_bare"])
+    return prompts.fill(labels["bad_route"], nearest=nearest)
+
+
+# A literal segment must be THIS close to the route's to count as a typo of it. `handle`/`handles`
+# scores 0.92; `handle`/`holders` scores 0.62 and must not be offered as "the closest one".
+_TYPO_RATIO = 0.8
+
+
+def _nearest_route(path: str, routes: list[str]) -> str:
+    """The one route a failed path is plainly a typo of, or "".
+
+    Same segment count, exactly one literal segment differing, and that segment close enough to be a
+    slip rather than a different word. Ties return "" — naming one of two equally-close routes is the
+    invented-path fault, and this whole helper exists because cria guessed."""
+    segs = [p for p in path.split("/") if p]
+    scored: list[tuple[float, str]] = []
+    for tmpl in routes:
+        t = [p for p in tmpl.split("/") if p]
+        if len(t) != len(segs):
+            continue
+        differing = [(a, b) for a, b in zip(segs, t)
+                     if not (a == b or (b.startswith("{") and b.endswith("}")))]
+        if len(differing) != 1:
+            continue
+        a, b = differing[0]
+        ratio = difflib.SequenceMatcher(None, a, b).ratio()
+        if ratio >= _TYPO_RATIO:
+            scored.append((ratio, tmpl))
+    scored.sort(reverse=True)
+    if not scored:
+        return ""
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return ""    # two equally-close candidates — naming one would be a guess
+    return scored[0][1]
+
+
 def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
     """The durable fetch ledger, SPLIT by whether the fetch actually returned anything.
 
@@ -5284,7 +5389,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     ok, failed = [], []
     for url, entry in latest.items():
         status, routes, shapes, catalog = _fetch_facts(entry)
-        line = f"- {url} → {status}" + (f"; endpoints: {routes}" if routes else "")
+        line = f"- {url} \u2192 {status}" + (f"; endpoints: {routes}" if routes else "")
         # THIRD case. The anchor explains an entry WITH facts and an entry that ERRORED; a 2xx whose
         # page had no readable structure looks identical to a successful spec read. Measured (run
         # 0727-142536): the planner fetched the swagger UI SHELL, the coder's entire fetch record was
@@ -5321,6 +5426,9 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         cat = [ln.strip() for ln in catalog.splitlines() if "→" in ln or ln.strip().startswith("…")]
         if cat:
             line += f"\n  {labels['descriptions']}\n" + "\n".join(f"  {c}" for c in cat)
+        if not _fetch_succeeded(status):
+            diagnosis = _failed_fetch_diagnosis(url, latest)
+            line += f" {diagnosis}" if diagnosis else ""
         (ok if _fetch_succeeded(status) else failed).append(line)
     blocks = []
     if ok:

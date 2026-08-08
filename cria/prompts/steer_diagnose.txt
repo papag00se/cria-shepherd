@@ -21,6 +21,8 @@ Use `read_file` when file contents matter; trust current disk contents over tran
 
 Ground every claim in the TASK, current checks, tool results, transcript, or files you actually read. Never invent paths, commands, values, APIs, causes, or errors. If a location is unknown, command the coder to locate or inspect it instead of guessing.
 
+Smaller models often hallucinate or mangle file paths, http paths, or class/function/property names.  Use your evidence to double check (remember you have `read_file` and `list_dir` as well as context evidence).
+
 If one access method succeeds and another fails for the same target, treat that mismatch as evidence: command the coder to compare them and make the failing path match the working behavior. Do not blame external causes contradicted by a successful access.
 
 Never claim the task is complete or that passing checks prove behavior.

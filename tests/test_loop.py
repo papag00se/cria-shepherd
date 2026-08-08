@@ -623,7 +623,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # and wants a key; a 429/5xx says come back. Blacklisting those is how a real endpoint gets
         # abandoned, so the label states what cria knows (no content came back) and hands the status
         # to the model to read.
-        self.assertIn("CAME BACK WITH AN ERROR", body)
+        self.assertIn("THESE FETCHES FAILED", body)
         self.assertIn("ada-handles.github.io", body)              # still remembered, so it isn't re-fetched
         self.assertNotIn("SUCCEEDED", body)                       # no success section — nothing succeeded
         low = body.lower()
@@ -636,7 +636,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}"),
                               "https://api.handle.me/resolve-handle": (404, "")}
         body = _fetched_facts_anchor(sess)["content"]
-        ok_at, dead_at = body.index("SUCCEEDED"), body.index("CAME BACK WITH AN ERROR")
+        ok_at, dead_at = body.index("SUCCEEDED"), body.index("THESE FETCHES FAILED")
         self.assertLess(ok_at, dead_at)                                       # successes lead
         self.assertLess(body.index("/handles/{handle}"), dead_at)             # the real route is in the OK block
         self.assertGreater(body.index("resolve-handle → 404"), dead_at)       # the 404 is below the error label

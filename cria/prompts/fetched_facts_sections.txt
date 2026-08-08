@@ -7,13 +7,31 @@
 # 5xx mean try later". Walked on ada-handles_mellum2_codex_poff_1785714194 call 0023 — the model's very
 # next reasoning proposed "the API is rate-limiting" and "maybe the holder endpoint requires
 # authentication", cria's own two examples read straight back, for a 404 whose actual cause was a wrong
-# value in the path. A menu of causes is a menu a stuck model orders from. It now points at the one
-# thing that is checkable and was true: compare the value you sent against the parameter description.
-# The "you have no content from them" clause is also gone — it was false. cria HAD the 404's 89-byte
-# body, `{"error":"holder_not_found","message":"Holder not found"}`, and had replaced it with a key list.
+# value in the path. A menu of causes is a menu a stuck model orders from.
+#
+# It then went the other way and named ONE cause for every failure — "check the VALUE you put in the
+# path". That is a guess too, and on 2026-08-07 it guessed wrong in both directions on the same day:
+#   maple-preview 0014  /handle/goose        the ROUTE was wrong (singular); cria said check the value
+#   mellum2      0019  /holders/addr1q…     the VALUE was wrong; a sibling note said compare the routes
+# Each time cria sent the coder to inspect the half that was already correct. maple's coder concluded
+# "goose is not a valid Ada handle" and never recovered; the live test scored zero.
+#
+# cria does not have to guess: it composed this ledger, so it holds the route list the spec defines and
+# it holds the URL that failed. `_failed_fetch_diagnosis` matches one against the other and appends the
+# narrow true sentence per URL — wrong route, or wrong value, or (when no spec was ever read) nothing
+# at all. So the label above the list now says ONE thing, and each line below it says what to do about
+# that one URL.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
-failed = THESE FETCHES CAME BACK WITH AN ERROR — do not write code against them on the strength of a guess. Read the status and decide: re-request one when the status says that would help, and stop re-requesting one that keeps refusing. A 404 on one path says nothing about the others, and says nothing about whether the SERVICE works — if another fetch below succeeded, it works. Before concluding anything about the service, check the VALUE you put in the path against what that route's parameter description above says it wants:
+failed = THESE FETCHES FAILED — they returned no content, so there is nothing here to code against. Fix or drop each one; do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
+# Appended to a failed URL whose path is NOT one of the routes the spec defines. The route list is
+# cria's own parsed output, so naming it is a fact rather than advice.
+bad_route = — no such route.{{NEAREST}}
+bad_route_nearest =  The closest one this API defines is `{{ROUTE}}` — use that.
+bad_route_bare =  Use one from the route list above.
+# Appended when the route IS real: the path is not the problem, so the substituted value is.
+bad_value = — this route exists, so the path is right and what you put in it is what to check. {{PARAM}}
+bad_value_bare = — this route exists, so the path is right and what you put in it is what to check.
 # Header for the per-URL RESPONSE-SHAPE block. The ledger used to carry only the endpoint routes, so
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
