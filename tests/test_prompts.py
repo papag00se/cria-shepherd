@@ -18,9 +18,14 @@ class PromptAgnosticismTests(unittest.TestCase):
 
     def test_verifier_investigative_step_accepts_non_web_sources(self):
         v = prompts.load("verify")
-        # a file read / --help / schema must be able to satisfy an investigative step, not only a web_fetch
-        self.assertTrue(any(w in v for w in ("a file's actual contents", "--help", "schema's columns")),
-                        "verify.txt still defines a research step only in API/web terms")
+        # A file read, a --help, a schema must be able to satisfy an investigative step, not only a
+        # web_fetch. Pinned as the PROPERTY, not a word list: the old test named three example
+        # phrasings and went red the moment the operator rewrote the prompt for concision, even
+        # though the concision made it MORE source-agnostic than the examples ever did.
+        low = v.lower()
+        for web_only in ("api", "url", "endpoint", "web_fetch", "web page", "website"):
+            self.assertNotIn(web_only, low, f"verify.txt frames research around {web_only}")
+        self.assertIn("source", low)                         # …and it still names a source at all
         self.assertNotIn("resolved_addresses", v)            # the Ada-specific proposed_fix example is gone
 
     def test_research_step_done_when_facts_obtained_not_when_used_in_code(self):
@@ -30,8 +35,11 @@ class PromptAgnosticismTests(unittest.TestCase):
         # re-fetching a spec it already had (churn). The critic is now the ONLY thing that says so — cria no
         # longer injects a research step of its own to carry the rule.
         v = prompts.load("verify").lower()
-        self.assertIn("obtained", v)                              # done = facts obtained/visible in evidence
-        self.assertIn("does not require", v)                      # ...NOT that any code used them
+        # Substance pins, in whatever wording: the facts must APPEAR in tool output (obtained), and
+        # the judgement is about what the source contains — not about any code consuming it.
+        self.assertTrue("obtained" in v or "must actually appear in tool output" in v, v)
+        self.assertNotIn("used in code", v)
+        self.assertNotIn("uses the facts", v)
 
     def test_research_step_is_not_held_open_for_facts_the_source_lacks(self):
         # THE TRAP (measured, 3 runs): a step lists what to find BEFORE anyone has read the source, so
@@ -44,10 +52,14 @@ class PromptAgnosticismTests(unittest.TestCase):
         # Both halves must hold together — the loosening may not swallow the guard that a research step
         # requires reading the REAL source, or "it isn't there" becomes an excuse for never looking.
         v = prompts.load("verify").lower()
-        self.assertIn("cannot be obtained", v)              # a missing fact does not block the step
-        self.assertTrue(any(w in v for w in ("demonstrably lacks", "not there")),
+        # A fact the source does not have cannot hold the step open…
+        self.assertTrue(any(w in v for w in ("cannot be obtained", "demonstrably lacks",
+                                             "demonstrably does not provide", "not there")),
                         "verify.txt does not say a sought fact the source lacks can't hold a step open")
-        self.assertIn("never actually read the real source", v)   # ...and the guard is still there
+        # …and the loosening still may not swallow the guard that the REAL source must be read.
+        self.assertTrue(any(w in v for w in ("never actually read the real source",
+                                             "from the real source")),
+                        "verify.txt no longer requires the real source to have been read")
 
     def test_every_prompt_that_asks_for_a_verdict_fences_the_model_out_of_the_work(self):
         # MEASURED, twice. plan_coverage.txt asked "does this plan cover the request?" without a
@@ -122,11 +134,15 @@ class PromptAgnosticismTests(unittest.TestCase):
         # parameters, and response schema" was drafted, survived every re-derivation verbatim, and was
         # rejected by cria's own critic forever: the coder searched, was refused, searched again, for the
         # whole run. Three prompts, one rule — they must not drift apart again.
+        # Pinned on the RULE, not the tool name: verify.txt now says "Search results, snippets,
+        # guesses, or landing pages are not enough", which carries the rule for any search tool
+        # rather than only the one named web_search. Demanding the literal token would fail a
+        # rewrite that made the prompt MORE general — the opposite of what this test protects.
         for name in ("plan", "replan", "verify"):
             p = prompts.load(name).lower()
-            self.assertIn("web_search", p, f"{name}.txt says nothing about searching-vs-reading")
+            self.assertIn("search", p, f"{name}.txt says nothing about searching-vs-reading")
             self.assertTrue(any(w in p for w in ("not satisfy", "is not obtaining", "never search",
-                                                 "not the source")),
+                                                 "not the source", "are not enough")),
                             f"{name}.txt does not say a search fails to satisfy a research step")
 
     def test_no_model_facing_string_carries_the_literal_project_name(self):
@@ -272,9 +288,12 @@ class PromptLoaderTests(unittest.TestCase):
 
     def test_render_leaves_literal_single_braces_untouched(self):
         # the critic must be told to emit `{"done": true}` — a single-brace literal that
-        # must survive rendering (only {{TOKEN}} is substituted).
-        self.assertIn('{"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}',
-                      prompts.render("verify"))
+        # must survive rendering (only {{TOKEN}} is substituted). The SCHEMA is what must survive,
+        # not the placeholder prose inside it, which the operator rewrites for concision.
+        rendered = prompts.render("verify")
+        self.assertIn('{"done": true|false, "reason": "', rendered)
+        self.assertIn('"proposed_fix": "', rendered)
+        self.assertTrue(rendered.rstrip().endswith("}"), rendered[-120:])
 
     def test_unknown_token_is_left_in_place(self):
         self.assertIn("{{STEP}}", prompts.render("step_framing", idx=1, total=3, completed=""))

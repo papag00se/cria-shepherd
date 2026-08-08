@@ -6062,56 +6062,6 @@ def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
     return ""
 
 
-# WHAT A DIRECTIVE IS NOT. Every other check on an outgoing steer is a negative — not roleplay, not
-# a JSON blob, not a phantom path, not a phantom field, not a false line citation — and none of them
-# asks whether the text is a directive at all. Anything over eight characters ships. What shipped:
-#
-#   "It's been a while — happy to be here whenever you're ready to dive back in."   (0100, maple)
-#   "<code> </code>"                                                                (0089, maple)
-#   "I have completed the research step and implemented the solution."              (0027, mellum)
-#   "I don't have any information about a previous coding session… Please provide"  (0032, maple)
-#   "I see the tests are passing and the repository checks pass with no errors."    (0086, maple)
-#
-# The last one landed one line after cria's OWN warning that those tests could not run, wearing the
-# [REDIRECT] label, and the coder's next thought was "the test file is named testAdaHandleResolver.py
-# (which pytest does match)". cria overwrote its own correct warning with a false one.
-#
-# FIVE SHAPES, each keyed to a captured example, each measured. Over the 75 distinct steers cria has
-# actually delivered across the last 14 sessions these refuse 5, and all 5 are from the class the
-# walks found ending runs: four completion certificates and one bare "assistant". Zero real
-# directives are lost. The "about the coder" rule fires only when the text ALSO never addresses the
-# coder — "You are stuck. The coder is repeating actions…" is a real directive and survives.
-_STEER_MARKUP = re.compile(r"</?[\w/ -]{0,32}>")
-_STEER_ROLE_TOKEN = frozenset({"assistant", "user", "system", "tool", "think", "answer"})
-_STEER_DONE = re.compile(r"(?i)^\W{0,4}(?:i(?:'ve| have)\s+(?:completed|created|implemented|finished)"
-                         r"|understood[.,]?\s+i'm\s+completing|the coder is done)")
-_STEER_ASKS = re.compile(r"(?i)\b(?:please provide|i don't have any information|let me know what)\b")
-_STEER_PREAMBLE = re.compile(r"(?i)^\W{0,4}(?:looking at the session"
-                             r"|i see the tests|based on (?:my|the) (?:analysis|review))")
-_STEER_ABOUT_CODER = re.compile(r"(?i)\bthe coder (?:is|appears|has|was)\b")
-_STEER_TO_CODER = re.compile(r"(?i)\byou(?:'re|'ve|r)?\b")
-
-
-def _not_a_directive(text: str) -> str:
-    """The shape name when this is not a directive at all, else "". See the table above."""
-    t = (text or "").strip()
-    # "empty" means EMPTY, not "short". A one-line directive is the best kind — "Run the script."
-    # is nine words shorter than anything a reasoner writes and worth more than all of it. So the
-    # test is what remains once markup is gone, and the one bare word that is never an instruction.
-    bare = _STEER_MARKUP.sub(" ", t).strip()
-    if not bare or bare.strip(":").lower() in _STEER_ROLE_TOKEN:
-        return "empty"
-    if _STEER_DONE.search(t):
-        return "completion-claim"
-    if _STEER_ASKS.search(t):
-        return "asks-for-input"
-    if _STEER_PREAMBLE.search(t):
-        return "verdict-preamble"
-    if _STEER_ABOUT_CODER.search(t) and not _STEER_TO_CODER.search(t):
-        return "about-the-coder"
-    return ""
-
-
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
                             sess=None, messages: list | None = None,
                             workspace_root: str | None = None) -> str | None:
@@ -6181,14 +6131,6 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         rlog.emit("loop.steer_false_citation", level="warn", cite=cite)
         return None
     if _steer_auth_refuted(directive, evidence, sess, ask, rlog):
-        return None
-    # LAST. Every check above names a specific falsehood in the text; this one asks whether the text
-    # is an instruction at all, so only what cleared all of them reaches it and the sharper
-    # diagnosis always wins the log line.
-    shape = _not_a_directive(directive)
-    if shape:
-        rlog.emit("loop.steer_not_a_directive", level="warn", shape=shape,
-                  head=_clip(directive, 120))
         return None
     return directive
 

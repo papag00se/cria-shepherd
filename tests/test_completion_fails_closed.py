@@ -25,18 +25,26 @@ class VerifyDefaultTests(unittest.TestCase):
         self.assertNotIn("Otherwise default to DONE", self.TEXT)
         self.assertNotIn("default to DONE", self.TEXT)
 
+    # Substance pins, not exact wording — the operator rewrites these prompts for concision and an
+    # exact-phrase assertion goes red on a rewrite that keeps every protection intact. What must
+    # survive any rewrite is the RULE; the sentence carrying it may change.
     def test_done_now_requires_positive_evidence(self):
-        self.assertIn("POSITIVELY SHOWS", self.TEXT)
+        low = self.TEXT.lower()
+        self.assertIn("positively", low)
+        self.assertTrue("done=true" in low or "done` only when" in low, self.TEXT)
 
     def test_undecidable_is_explicitly_NOT_done(self):
-        self.assertIn('"I cannot tell" is NOT done', self.TEXT)
-        self.assertIn("absence of evidence is not an achievement", self.TEXT)
+        low = self.TEXT.lower()
+        self.assertTrue(any(w in low for w in ('"i cannot tell" is not done',
+                                               "missing evidence means `done=false`",
+                                               "missing evidence means done=false")), self.TEXT)
 
     def test_the_two_real_protections_survive(self):
         # The line existed to stop an over-strict judge wedging the plan. Both halves of that intent
         # are kept — only the fail-open default went.
-        self.assertIn("Do not invent requirements the step doesn't state", self.TEXT)
-        self.assertIn("do not hold a step open for failures unrelated to its goal", self.TEXT)
+        low = self.TEXT.lower()
+        self.assertIn("do not invent requirements", low)
+        self.assertTrue("unrelated to its goal" in low or "unrelated to this step" in low, self.TEXT)
 
 
 class NoSiblingFailOpenTests(unittest.TestCase):

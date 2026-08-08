@@ -2210,6 +2210,7 @@ class CoderToolsSummaryTests(unittest.TestCase):
             self.assertIn("reason", low, name)
             self.assertTrue('"reason" is your specific finding' in low
                             or "evidence-based verdict" in low
+                            or "specific evidence" in low
                             or "grounded in" in low, name)                # reason DEFINED, not free prose
             self.assertIn('proposed_fix', low, name)                      # field asked for
             self.assertIn("proposed_fix", p.splitlines()[-1], name)       # in the reply schema line
@@ -5964,10 +5965,7 @@ class SteerDedupeAndFirstPersonTests(unittest.TestCase):
         # blind-author-era MoE incidents; it killed whole steers for a pronoun. Logged, delivered.
         from cria.loop import _grounded_steer_or_none
         rlog = _Rlog()
-        # The fixture used to open "The coder is making progress." — two properties in one string,
-        # and only the pronoun is this arm's business. The catch-all now refuses a pure third-person
-        # verdict (see test_steer_not_a_directive), so the first-person plan is isolated here.
-        text = "You are looping. I will write resolve.py with the correct endpoints; do that now."
+        text = "The coder is making progress. I will write resolve.py with the correct endpoints."
         self.assertEqual(_grounded_steer_or_none(text, "evidence", rlog), text)
         self.assertIn(("loop.steer_roleplay_firstperson",), [(k,) for k, _ in rlog.events])
         self.assertNotIn(("loop.steer_roleplay_dropped",), [(k,) for k, _ in rlog.events])
