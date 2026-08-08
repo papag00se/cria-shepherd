@@ -403,7 +403,22 @@ toks=old.split()
 if toks:
     ms=list(re.compile(r'\s+'.join(map(re.escape,toks))).finditer(s))
     if len(ms)==1:
-        m=ms[0]; _w(s[:m.start()]+new+s[m.end():])
+        # The token match starts at the first NON-WHITESPACE character, so the file's leading indent
+        # sits in the prefix. When old_string starts flush (coder gave bare statements), that is the
+        # point: the file's indent survives and a bare new_string lands after it. But when old_string
+        # CARRIES its own leading indent, new_string carries the same indent — and splicing after the
+        # file's indent doubles it. Walked on mellum2 1786196176 call 0190: a correct side_effect fix
+        # (12-space old, 12-space new, off-disk only by a blank line the flexible match forgives)
+        # became a 24-space line, the syntax guard caught cria's own wreckage, and the report told
+        # the coder to "Fix new_string" — for an edit that was right. The same fix, resubmitted with
+        # a one-line old_string, applied verbatim at 0215, 120 calls later. So: old_string indented →
+        # consume the file's indent back to line start and let new_string supply its own.
+        m=ms[0]; a=m.start()
+        if old[:1] in ' \t':
+            ls=s.rfind(chr(10),0,a)+1
+            if not s[ls:a].strip():
+                a=ls
+        _w(s[:a]+new+s[m.end():])
     if len(ms)>1:
         _fail('multi_flex',n=len(ms))
 oldl=old.split(chr(10))

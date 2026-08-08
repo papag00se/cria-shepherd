@@ -743,6 +743,38 @@ class EditCommandTests(unittest.TestCase):
         rc, msg, out, _ = self._run("    x = 1\n", "x = 1", "x = 2")
         self.assertEqual(rc, 0); self.assertEqual(out, "    x = 2\n")   # file's indent preserved
 
+    def test_indented_old_string_does_not_double_the_indent(self):
+        """THE 91-ESCALATION ROOT (mellum2 1786196176, walked 2026-08-08). The coder's old_string
+        carried the block's real 12-space indent and differed from disk only by a whitespace-only
+        line — which the flexible match forgives. But the token match starts at the first
+        non-whitespace char, so the file's indent stayed in the prefix and new_string's own indent
+        landed after it: 24 spaces, "unexpected indent", and a would_break report telling the coder
+        to fix a new_string that was correct (call 0190). The identical fix with a one-line
+        old_string applied verbatim at call 0215 — 120 calls later."""
+        content = ("        with patch('requests.get') as mock_get:\n"
+                   "            mock_get.return_value = mock_handle_resp\n"
+                   "            \n"
+                   "            # Mock /holders response\n"
+                   "            mock_get.return_value = mock_holder_resp\n")
+        old = ("            mock_get.return_value = mock_handle_resp\n"
+               "            # Mock /holders response\n"
+               "            mock_get.return_value = mock_holder_resp")
+        new = "            mock_get.side_effect = [mock_handle_resp, mock_holder_resp]"
+        rc, msg, out, fail = self._run(content, old, new)
+        self.assertIsNone(fail, msg)                                    # applied, not would_break
+        self.assertIn("\n            mock_get.side_effect", out)        # exactly 12 spaces…
+        self.assertNotIn("                        mock_get", out)        # …never 24
+
+    def test_bare_old_string_still_inherits_the_file_indent(self):
+        # the complementary case the fix must NOT break: coder gave flush-left statements
+        rc, msg, out, _ = self._run("    if a:\n        x = 1\n", "x = 1", "x = 2")
+        self.assertEqual(rc, 0); self.assertEqual(out, "    if a:\n        x = 2\n")
+
+    def test_flexible_match_midline_is_untouched(self):
+        # a match that starts mid-line (non-space before it on the same line) must not eat the line
+        rc, msg, out, _ = self._run("v = alpha +  beta\n", "alpha  +  beta", "gamma")
+        self.assertEqual(rc, 0); self.assertEqual(out, "v = gamma\n")
+
     def test_ambiguous_reports_multi(self):
         rc, msg, out, fail = self._run("x\nx\n", "x", "y")
         self.assertNotEqual(rc, 0); self.assertEqual(fail["mode"], "multi"); self.assertEqual(fail["n"], 2)
