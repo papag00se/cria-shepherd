@@ -1291,7 +1291,10 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     # That value appears in ZERO of the run's 34 prompts. The same narrowing replaced a 404's
     # 89-character body, `{"error":"holder_not_found","message":"Holder not found",…}`, with
     # "no match. Available top-level keys: error, message, docs" — while cria told the model
-    # elsewhere "you have no content from them". It had the content and threw it away.
+    # elsewhere "you have no content from them". It had the content and threw it away. (That second
+    # claim is gone from every model-facing prompt as of 2026-08-08 — a 404 body is often the
+    # diagnosis, and api.handle.me's names the wrong route outright. See
+    # tests/test_failed_fetch_has_no_content_claim.py, which keeps it gone.)
     #
     # Principle 5: cria never truncates what the model reads. A find on a document that fits was
     # truncation wearing a search's clothes.

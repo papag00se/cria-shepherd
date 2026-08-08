@@ -16,6 +16,11 @@
 # Each time cria sent the coder to inspect the half that was already correct. maple's coder concluded
 # "goose is not a valid Ada handle" and never recovered; the live test scored zero.
 #
+# The label also claimed the failures "returned no content". False, and cria's own code says so at
+# webfetch.py: api.handle.me answers a 404 with `{"error":"route_not_found","message":"Route not
+# found: /handle/goose"}` — the message that names the fault. Operator, 2026-08-08: drop the
+# no-content claim rather than explain when it does not hold.
+#
 # cria does not have to guess: it composed this ledger, so it holds the route list the spec defines and
 # it holds the URL that failed. `_failed_fetch_diagnosis` matches one against the other and appends the
 # narrow true sentence per URL — wrong route, or wrong value, or (when no spec was ever read) nothing
@@ -23,7 +28,7 @@
 # that one URL.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
-failed = THESE FETCHES FAILED — they returned no content, so there is nothing here to code against. Fix or drop each one; do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
+failed = THESE FETCHES FAILED. An error is not proof that nothing is there — read each one's status, and whatever the server sent back with it, before deciding what it means. Do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
 # Appended to a failed URL whose path is NOT one of the routes the spec defines. The route list is
 # cria's own parsed output, so naming it is a fact rather than advice.
 bad_route = — no such route.{{NEAREST}}
