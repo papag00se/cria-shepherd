@@ -467,9 +467,14 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         # The judge's OWN object comes first when one absent brace is all that is wrong with it
         # (verdict_from_unclosed) — same one-way NOT-satisfied contract, but it carries the reason
         # and proposed_fix the judge actually wrote. 3 of this phase's replies on this box.
+        recover = (lambda sysm: summarize(reasoner_chat,
+                                          replace(reasoner_role, reasoning="off")
+                                          if reasoner_role is not None else None,
+                                          sysm, "", rlog, phase=ph + "-recover", temperature=0.0)
+                   or "") if reasoner_role is not None else None
         return (verdict_from_unclosed(vtext, "satisfied", rlog, ph)
-                or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph)
-                or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose"))
+                or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph, recover)
+                or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose", recover))
     except Exception as e:
         rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
         return None
@@ -1164,16 +1169,30 @@ _JUDGE_ACTION_CLAIM = re.compile(
     r"|\bconfirmed by (?:curl|runn?)ing\b")
 
 
-def _claims_impossible_action(obj: dict | None, rlog, phase: str) -> bool:
+def _claims_impossible_action(obj: dict | None, rlog, phase: str, ask=None) -> bool:
     """True (and traced) when a parsed verdict's reason claims a judge-performed action the judge
     cannot perform — the caller treats the verdict as unusable, which routes to the normal
-    reasoning-off retry / fail-closed path instead of letting fabricated evidence stand."""
+    reasoning-off retry / fail-closed path instead of letting fabricated evidence stand.
+
+    TRIGGER, THEN JUDGE (operator, 2026-08-08). `_JUDGE_ACTION_CLAIM` stays as the cheap pre-filter
+    — it costs nothing and most verdicts never mention an action — but WHETHER the sentence claims
+    the judge's own act is a reading, not a pattern. The regex alone cannot tell "I ran the tests"
+    from "I ran through the checklist" or "we tested the assumption that…", and a false hit throws
+    away a good verdict and burns a retry. With no reasoner the trigger decides alone, exactly as
+    before; an unreadable answer keeps the verdict (CLEAN is the safe direction — a fabricated
+    reason that slips through still faces every other guard, while a discarded good verdict is a
+    lost turn)."""
     reason = str((obj or {}).get("reason") or "")
-    if _JUDGE_ACTION_CLAIM.search(reason):
-        rlog.emit("loop.verdict_fabricated_action", level="warn", phase=phase,
-                  head=_clip(reason, 120))
-        return True
-    return False
+    if not _JUDGE_ACTION_CLAIM.search(reason):
+        return False
+    if ask is not None:
+        answer = strip_think(ask(prompts.render("judge_claimed_an_action", reason=reason)) or "")
+        head = answer.strip().upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
+        if head != "FABRICATED":
+            return False
+    rlog.emit("loop.verdict_fabricated_action", level="warn", phase=phase,
+              head=_clip(reason, 120))
+    return True
 
 
 # A judge's own THINKING, when its final answer was not a verdict. Recovers ONLY a NOT-satisfied
@@ -1194,20 +1213,9 @@ def _claims_impossible_action(obj: dict | None, rlog, phase: str) -> bool:
 #
 # ONE DIRECTION ONLY. An approval recovered from prose would be failing OPEN on completion, which
 # principle 13 forbids outright. A recovered NOT-satisfied can only ever mean "keep working", so a
-# false positive costs a turn and never a false finish. That asymmetry is what makes a lexical read
-# acceptable here at all.
-_VERDICT_NEGATIVE = re.compile(
-    r"\b(?:"
-    r"task is not (?:done|complete|finished|satisfied)"
-    r"|(?:is|are) not (?:yet )?(?:done|complete|finished|satisfied)"
-    r"|not (?:fully )?satisfied"
-    r"|(?:remains?|still) (?:incomplete|unfinished|missing)"
-    r"|no (?:live[- ]?test|readme|tests?) (?:file )?(?:was )?(?:exists?|found|written|created)"
-    # The CONFIRM phase's own negative wording — it rules on `consistent`, not `satisfied`, and
-    # says so in prose: "The claim is inconsistent. ... Fix: add src/__init__.py".
-    r"|(?:claim|verdict|reason) is inconsistent"
-    r"|\bis inconsistent\b"
-    r")\b", re.I)
+# false positive costs a turn and never a false finish. That asymmetry is why a recovery is safe to
+# attempt at all — and the reading itself is now a reasoner's job, not a phrase list's
+# (see verdict_from_reasoning).
 
 
 # Tool names a judge EMITS that it was never given. Its menu is exactly list_dir + read_file; across
@@ -1349,26 +1357,52 @@ def _is_a_finding(reason: str) -> bool:
     return not (r.startswith("<") and r.endswith(">") and ">" not in r[1:-1])
 
 
-def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict | None:
+# Sentinel that opens a recovered ruling. A POSITIVE token, like ON_TRACK: the alternative is
+# UNCLEAR, so a model that cannot decide does not accidentally emit the recovery.
+_RECOVERED = "NOT_DONE"
+
+
+def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None) -> dict | None:
     """A NOT-satisfied verdict recovered from a judge's thinking OR its prose answer, or None.
 
     `flag` is the phase's own key — "satisfied", "done" or "consistent" — so the caller's existing
     reading path is untouched.
-    """
+
+    THE REASONER READS THE THINKING (operator, 2026-08-08). This used to decide with
+    `_VERDICT_NEGATIVE`, a regex of ruling phrasings — "task is not done", "remains incomplete",
+    "no readme was found". It is the single most fragile matcher cria had: every other word-hunter
+    reads text cria composed or a tool emitted, and this one reads a model's UNCONSTRAINED private
+    prose, in whatever words that model reaches for, and turns the answer into a verdict. A miss
+    loses a real not-done ruling and the session can end on work that is not finished; a false hit
+    reopens finished work on a sentence the judge never meant as a ruling.
+
+    It is also the cheapest possible place to spend a call: this path only runs when the judge's
+    reply ALREADY failed to parse, so the alternative to one focused question is a wasted turn.
+
+    Every failure direction keeps today's safe answer — no reasoner, an unreadable reply, or any
+    doubt on the model's part all return None, which routes to the caller's existing fail-closed
+    retry. Approval is never recovered from thinking, in either implementation."""
     text = (reasoning or "").strip()
-    if not text:
+    if not text or ask is None:
         return None
-    m = _VERDICT_NEGATIVE.search(text)
-    if not m:
+    answer = strip_think(ask(prompts.render("verdict_in_reasoning", thinking=text)) or "").strip()
+    head = answer.split(":", 1)
+    if head[0].strip().upper() != _RECOVERED:
         return None
+    recovered = head[1].strip() if len(head) > 1 else ""
     # The sentence carrying the ruling IS the reason — the coder needs the diagnosis, not "the judge
     # said no". Bounded because this is a prompt cria COMPOSES, not content the coder reads.
     # From the ruling sentence ONWARD, not the ruling alone. "The task is not done." tells the coder
     # nothing; the sentences after it carry the diagnosis ("Holder: unknown and Total Handles: 0 ...
     # resolve_handle is not correctly extracting the holder"), which is the whole value of the
     # recovery. Bounded because this is a prompt cria COMPOSES, not content the coder reads.
+    # The reasoner reports the judge's reason IN THE JUDGE'S WORDS; anchor the excerpt on it so the
+    # sentences AFTER the ruling — which carry the diagnosis the coder needs — ride along, exactly as
+    # the regex version did from its match onward.
     sentences = re.split(r"(?<=[.!?])\s+", text)
-    start = next((i for i, sn in enumerate(sentences) if _VERDICT_NEGATIVE.search(sn)), 0)
+    key = " ".join(recovered.split()[:6]).lower()
+    start = next((i for i, sn in enumerate(sentences) if key and key in " ".join(sn.split()).lower()),
+                 0)
     # WHOLE SENTENCES up to the budget, never a hard character slice. `reason[:300]` cut a judge's
     # thinking mid-word and handed the fragment onward as the diagnosis the coder must act on — an
     # instruction that stops mid-sentence is one the coder completes by guessing. The budget bounds
@@ -1376,7 +1410,7 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str) -> dict 
     reason = _cut_on_a_word(_first_sentences(sentences[start:], REASON_BUDGET_CHARS) or text,
                             REASON_HARD_CEILING)
     rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase,
-              matched=_clip(m.group(0), 60), reason=_clip(reason, 120))
+              matched=_clip(recovered, 60), reason=_clip(reason, 120))
     return {flag: False, "reason": reason, "proposed_fix": ""}
 
 
@@ -1437,7 +1471,12 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                 workspace_root=workspace_root)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
-    if obj is not None and _claims_impossible_action(obj, rlog, "satisfaction"):
+    fab_ask = (lambda sysm: summarize(reasoner_chat,
+                                      replace(reasoner_role, reasoning="off")
+                                      if reasoner_role is not None else None,
+                                      sysm, "", rlog, phase="satisfaction-action", temperature=0.0)
+               or "") if reasoner_role is not None else None
+    if obj is not None and _claims_impossible_action(obj, rlog, "satisfaction", fab_ask):
         obj = None   # fabricated evidence → same path as an unparseable verdict (retry, fail closed)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
@@ -3255,7 +3294,7 @@ class Loop:
             # 'goose' in the file." What the coder got instead was `unverified_step`, a generic
             # keep-working line carrying none of that.
             #
-            # ONE DIRECTION ONLY, and for the same reason stated above _VERDICT_NEGATIVE: a recovered
+            # ONE DIRECTION ONLY, and for the same reason given at verdict_from_reasoning: a recovered
             # NOT-done can only ever mean "keep working", so a false positive costs a turn and never a
             # false finish (principle 13). The mirror case was measured and DELIBERATELY not built —
             # see the note in _verify.
@@ -3266,9 +3305,15 @@ class Loop:
             # same reason; it just recovers what the judge wrote instead of paraphrasing it. Mostly
             # this spares the reasoning-off retry below and lets the CAREFUL pass speak; twice in the
             # corpus both passes were unclosed and the coder read nothing at all.
+            recover = (lambda sysm: summarize(
+                self._ctx.reasoner_chat,
+                replace(self._ctx.reasoner_role, reasoning="off")
+                if self._ctx.reasoner_role is not None else None,
+                sysm, "", rlog, phase=ph + "-recover", temperature=0.0) or "") \
+                if self._ctx.reasoner_role is not None else None
             return (verdict_from_unclosed(vtext, "done", rlog, ph)
-                    or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph)
-                    or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose")), vtext
+                    or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph, recover)
+                    or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose", recover)), vtext
         except Exception as e:
             rlog.emit("loop.verify_error", level="warn", error=str(e))
             return None, ""

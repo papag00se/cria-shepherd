@@ -1,4 +1,14 @@
-"""A judge's thinking often holds the verdict its answer did not. Recover it — one direction only."""
+"""A judge's thinking often holds the verdict its answer did not. Recover it — one direction only.
+
+THE READING IS A REASONER'S JOB (operator, 2026-08-08). This used to decide with a regex of ruling
+phrasings — "task is not done", "remains incomplete". It was the most fragile matcher in cria: every
+other word-hunter reads text cria composed or a tool emitted; this one reads a model's unconstrained
+private prose and turns the answer into a verdict. It now asks.
+
+`_ask` below stands in for the reasoner and answers the way the prompt asks it to, so these tests
+pin the CONTRACT — what cria does with each answer — not the model's judgement. The one-direction
+guarantee is still structural: the function can only ever return {flag: False}, whatever comes back.
+"""
 import unittest
 
 from cria import loop
@@ -7,6 +17,24 @@ from cria import loop
 class _Rlog:
     def __init__(self): self.events = []
     def emit(self, kind, **kw): self.events.append((kind, kw))
+
+
+def _ask(answer):
+    """A stub reasoner returning one fixed line."""
+    return lambda _prompt: answer
+
+
+def _reads(text):
+    """A stub that behaves like the prompt asks: rules NOT_DONE on an unfinished-work conclusion.
+
+    Deliberately crude — its job is to feed the contract, not to be a judge. The fixtures below are
+    the real captured thinkings, so what is exercised is cria's handling of each answer shape."""
+    low = (text or "").lower()
+    if any(w in low for w in ("not done", "not complete", "inconsistent", "still missing",
+                              "unfinished", "no readme", "no live test")):
+        first = (text or "").strip().split(". ")[0]
+        return _ask(f"NOT_DONE: {first}.")
+    return _ask("UNCLEAR")
 
 
 # Verbatim from run 20260729T224807/0130-satisfaction. cria's prompt ended "Answer NOW with ONLY the
@@ -20,24 +48,24 @@ REAL = ("The task is not done. The live test output shows Holder: unknown and To
 
 class RecoveryTests(unittest.TestCase):
     def test_the_real_discarded_verdict_is_recovered(self):
-        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "satisfaction")
+        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "satisfaction", _reads(REAL))
         self.assertIsNotNone(out)
         self.assertIs(out["satisfied"], False)
         self.assertIn("not done", out["reason"])
 
     def test_the_reason_carries_the_DIAGNOSIS_not_just_a_refusal(self):
-        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "satisfaction")
+        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "satisfaction", _reads(REAL))
         self.assertIn("Holder: unknown", out["reason"])
 
     def test_it_is_traced_never_silent(self):
         rlog = _Rlog()
-        loop.verdict_from_reasoning(REAL, "satisfied", rlog, "satisfaction")
+        loop.verdict_from_reasoning(REAL, "satisfied", rlog, "satisfaction", _reads(REAL))
         self.assertIn("loop.verdict_from_reasoning", [k for k, _ in rlog.events])
 
     def test_the_phase_key_is_whatever_the_caller_needs(self):
         for flag in ("satisfied", "done", "consistent"):
             with self.subTest(flag=flag):
-                self.assertIs(loop.verdict_from_reasoning(REAL, flag, _Rlog(), "x")[flag], False)
+                self.assertIs(loop.verdict_from_reasoning(REAL, flag, _Rlog(), "x", _reads(REAL))[flag], False)
 
 
 class OneDirectionOnlyTests(unittest.TestCase):
@@ -54,25 +82,62 @@ class OneDirectionOnlyTests(unittest.TestCase):
     def test_no_approval_is_EVER_recovered(self):
         for text in self.APPROVALS:
             with self.subTest(text=text[:40]):
-                self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x"))
+                self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x", _reads(text)))
 
     def test_a_recovered_verdict_is_always_False(self):
         for text in (REAL, "The README does not exist.", "The task is not complete."):
-            out = loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x")
+            out = loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x", _reads(text))
             if out is not None:
                 self.assertIs(out["satisfied"], False)
+
+
+class TheContractWithTheReasonerTests(unittest.TestCase):
+    """What cria does with each answer shape. The reasoner's judgement is its own; these pin cria's."""
+
+    def test_no_reasoner_recovers_nothing(self):
+        self.assertIsNone(loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", None))
+
+    def test_UNCLEAR_recovers_nothing(self):
+        self.assertIsNone(loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x",
+                                                      _ask("UNCLEAR")))
+
+    def test_an_unreadable_answer_recovers_nothing(self):
+        for junk in ("", "  ", "I think probably the task is not done?", "{\"done\": false}"):
+            self.assertIsNone(loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x",
+                                                          _ask(junk)), junk)
+
+    def test_a_bare_NOT_DONE_with_no_reason_still_recovers(self):
+        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _ask("NOT_DONE"))
+        self.assertIsNotNone(out)
+        self.assertIs(out["satisfied"], False)
+        self.assertTrue(out["reason"])            # falls back to the judge's own text
+
+    def test_the_answer_can_never_produce_an_approval(self):
+        """Structural, not prompt-dependent: even a reasoner that says the work is DONE cannot make
+        this return one — the function only ever emits {flag: False}."""
+        for answer in ("NOT_DONE: the work is complete and every test passes.",
+                       "NOT_DONE: everything is satisfied."):
+            out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _ask(answer))
+            self.assertIs(out["satisfied"], False)
+
+    def test_the_prompt_offers_only_the_two_answers(self):
+        from cria import prompts
+        text = prompts.load("verdict_in_reasoning")
+        self.assertIn("NOT_DONE", text)
+        self.assertIn("UNCLEAR", text)
+        self.assertIn("Approval is never recovered from thinking", text)
 
 
 class QuietWhenThereIsNothingTests(unittest.TestCase):
     def test_empty_reasoning_recovers_nothing(self):
         for text in ("", "   ", None):
-            self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x"))
+            self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x", _reads(text)))
 
     def test_reasoning_with_no_ruling_recovers_nothing(self):
         # 10 of the 46 measured cases look like this — thinking present, no verdict in it.
         text = ("Let me look at the workspace. There is a handle_client.py and a test file. "
                 "The API base URL is https://api.handle.me and the client uses requests.")
-        self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x"))
+        self.assertIsNone(loop.verdict_from_reasoning(text, "satisfied", _Rlog(), "x", _reads(text)))
 
     def test_a_mere_mention_of_a_failing_test_is_not_a_ruling(self):
         # "the tests fail" inside a description must not become a verdict on the whole task.
@@ -97,14 +162,14 @@ class ProseVerdictTests(unittest.TestCase):
              "Fix: add src/__init__.py and rename tests' imports.")
 
     def test_a_prose_ruling_is_recovered(self):
-        out = loop.verdict_from_reasoning(self.PROSE, "consistent", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(self.PROSE, "consistent", _Rlog(), "x", _reads(self.PROSE))
         self.assertIsNotNone(out)
         self.assertIs(out["consistent"], False)
 
     def test_prose_approval_is_still_never_recovered(self):
         approve = ("All six tests pass and the real API resolves goose/papagoose correctly; "
                    "the work is complete and the claim matches reality.")
-        self.assertIsNone(loop.verdict_from_reasoning(approve, "consistent", _Rlog(), "x"))
+        self.assertIsNone(loop.verdict_from_reasoning(approve, "consistent", _Rlog(), "x", _reads(approve)))
 
 
 class PhantomToolTests(unittest.TestCase):
@@ -144,33 +209,33 @@ class NeverCutMidWordTests(unittest.TestCase):
         for i in range(1, 12)))
 
     def test_the_reason_ends_on_a_sentence(self):
-        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", _reads(self.LONG))
         self.assertTrue(out["reason"].rstrip().endswith((".", "!", "?", "…")),
                         f"cut mid-text: …{out['reason'][-60:]!r}")
 
     def test_no_partial_word_survives_the_bound(self):
-        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", _reads(self.LONG))
         words = {w.strip(".!?…,") for w in self.LONG.split()}
         self.assertIn(out["reason"].split()[-1].strip(".!?…,"), words)
 
     def test_it_is_still_bounded(self):
-        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", _reads(self.LONG))
         self.assertLessEqual(len(out["reason"]), loop.REASON_HARD_CEILING)
         self.assertLess(len(out["reason"]), len(self.LONG))
 
     def test_a_single_long_sentence_rides_WHOLE_rather_than_amputated(self):
         one = "The task is not done because " + "the resolver mishandles the holder field " * 12
-        out = loop.verdict_from_reasoning(one.strip() + ".", "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(one.strip() + ".", "satisfied", _Rlog(), "x", _reads(one.strip() + "."))
         self.assertTrue(out["reason"].endswith("."))
         self.assertGreater(len(out["reason"]), loop.REASON_BUDGET_CHARS)
 
     def test_text_with_no_punctuation_at_all_cuts_on_a_word_and_says_so(self):
         run_on = "the task is not done " + "and the resolver still returns the wrong holder " * 20
-        out = loop.verdict_from_reasoning(run_on, "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(run_on, "satisfied", _Rlog(), "x", _reads(run_on))
         self.assertTrue(out["reason"].endswith("…"))          # the cut is DISCLOSED
         self.assertNotIn("  ", out["reason"])
         self.assertTrue(all(w in run_on.split() for w in out["reason"].rstrip("…").split()))
 
     def test_the_short_real_case_is_untouched(self):
-        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x")
+        out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _reads(REAL))
         self.assertEqual(out["reason"], REAL)                 # fits the budget: carried whole

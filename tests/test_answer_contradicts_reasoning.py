@@ -63,6 +63,14 @@ def _scripted(replies):
 # Verbatim from run 20260802T020433/0172-critic — finish_reason=tool_calls, content "". The judge
 # inspected for five rounds, answered nothing, and cria handed the coder its generic keep-working
 # line instead of this.
+# What the RECOVERY reasoner answers when handed CRITIC_REAL. The reading is a reasoner's job now
+# (operator, 2026-08-08) — a regex of ruling phrasings was the most fragile matcher in cria, because
+# it read a model's unconstrained private prose and turned the answer into a verdict. Scripting its
+# reply here keeps these tests on cria's CONTRACT: what it does with the answer it gets.
+CRITIC_RECOVERY_ANSWER = (
+    'NOT_DONE: the step "Write a live test that runs resolve_handle.py with handle goose" '
+    'is not done — there is no test for "goose" in the file.')
+
 CRITIC_REAL = (
     'So the step "Write a live test that runs resolve_handle.py with handle goose" is not done — '
     "there is no test for \"goose\" in the file. The coder has not written this test. The coder's "
@@ -79,13 +87,13 @@ def _loop_with(reasoner_chat):
 
 class StepCriticReadsItsOwnThinkingTests(unittest.TestCase):
     def test_a_verdict_only_the_thinking_holds_is_recovered(self):
-        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls")]))
+        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls"), _comp(CRITIC_RECOVERY_ANSWER)]))
         obj, _raw = lp._verdict("sys", "user", _Rlog(), reasoning_off=False)
         self.assertIsNotNone(obj, "the critic's own diagnosis was discarded")
         self.assertIs(obj["done"], False)
 
     def test_the_recovered_reason_carries_the_DIAGNOSIS_the_coder_needs(self):
-        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls")]))
+        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls"), _comp(CRITIC_RECOVERY_ANSWER)]))
         obj, _raw = lp._verdict("sys", "user", _Rlog(), reasoning_off=False)
         self.assertIn("goose", obj["reason"])
         # and it survives into the exact string the coder is re-nudged with
@@ -93,7 +101,7 @@ class StepCriticReadsItsOwnThinkingTests(unittest.TestCase):
 
     def test_it_is_traced_under_the_critic_phase_never_silent(self):
         rlog = _Rlog()
-        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls")]))
+        lp = _loop_with(_scripted([_comp("", CRITIC_REAL, finish="tool_calls"), _comp(CRITIC_RECOVERY_ANSWER)]))
         lp._verdict("sys", "user", rlog, reasoning_off=False)
         self.assertIn("loop.verdict_from_reasoning", rlog.kinds())
         self.assertTrue(any(kw.get("phase", "").startswith("critic")
