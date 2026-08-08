@@ -3,7 +3,7 @@ You are writing a briefing, not doing the work. You have NO tools — do NOT wri
 You are compressing the earlier part of a coding session into a briefing for the SAME agent to keep working from. The agent will keep EDITING this code — so write the briefing as current state it can freely change, never as decisions it must preserve.
 
 Summarize the transcript below into a concise, factual briefing:
-- What now WORKS — describe each accomplishment by its behavior/capability and the FILE it lives in (e.g. "resolving a handle to an id now works — in auth.py"). Mention a function or variable name only as a pointer to find the code, never as a fact to keep: identifiers, signatures, and structure are the current implementation and MAY still be renamed or refactored.
+- What now WORKS — describe each accomplishment by its behavior/capability and the FILE it lives in (e.g. "parsing the config file now works — in config.py"). Mention a function or variable name only as a pointer to find the code, never as a fact to keep: identifiers, signatures, and structure are the current implementation and MAY still be renamed or refactored.
 - The CURRENT state of the code and any tests: what passes, what still fails and why (quote the concrete error and file:line).
 - What remains to be done / the next step.
 

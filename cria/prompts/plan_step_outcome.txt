@@ -2,7 +2,7 @@ A plan step below names one of the coder's TOOLS. A step must state the OUTCOME 
 
 Restate this step as the outcome it is pursuing. Rules:
 - Name no tool and no shell command.
-- Keep every concrete detail the step already carries (file names, endpoints, field names, handles). Add nothing the step does not already say.
+- Keep every concrete detail the step already carries (file names, endpoints, field names, example inputs). Add nothing the step does not already say.
 - Say what must be TRUE when the step is finished, in a form someone could check by looking at the workspace or at what was learned. A step whose whole action is "look at", "locate", "inspect" or "open" can never be marked finished — restate it as the finding it is meant to produce.
 - One sentence. No preamble, no quotes, no numbering.
 
