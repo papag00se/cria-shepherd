@@ -16,6 +16,17 @@
 # Each time cria sent the coder to inspect the half that was already correct. maple's coder concluded
 # "goose is not a valid Ada handle" and never recovered; the live test scored zero.
 #
+# THE DEFENCE OF THE URL, dropped 2026-08-08. The label and the anchor tail both reassured the model
+# that a failure was "not proof the address is wrong" / "not proof that nothing is there". Written
+# against a real fear — a coder abandoning a working service after one 404 — but on maple-preview
+# 0014 the URL WAS wrong (`/handle/goose`, singular) and cria was defending it. The coder's very next
+# reasoning: "The goose handle returned 404, so it's not a valid Ada handle." One call later it
+# recorded "Confirmed live endpoints exist" — it had taken cria's word that the endpoint was fine and
+# moved the blame to the handle name. The reasoner inherited that at 0017 and shipped it as the steer
+# that ended the run. "address" is doubly bad wording in a task whose subject noun is an address.
+# The real fear is already covered, exactly and without defending anything, by the last clause:
+# a failure on one URL says nothing about any other URL, and nothing about whether the service works.
+#
 # The label also claimed the failures "returned no content". False, and cria's own code says so at
 # webfetch.py: api.handle.me answers a 404 with `{"error":"route_not_found","message":"Route not
 # found: /handle/goose"}` — the message that names the fault. Operator, 2026-08-08: drop the
@@ -28,7 +39,7 @@
 # that one URL.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
 ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
-failed = THESE FETCHES FAILED. An error is not proof that nothing is there — read each one's status, and whatever the server sent back with it, before deciding what it means. Do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
+failed = THESE FETCHES FAILED. Read each one's status, and whatever the server sent back with it, before deciding what it means. Do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
 # Appended to a failed URL whose path is NOT one of the routes the spec defines. The route list is
 # cria's own parsed output, so naming it is a fact rather than advice.
 bad_route = — no such route.{{NEAREST}}

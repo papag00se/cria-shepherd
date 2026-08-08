@@ -65,5 +65,44 @@ class WhatReplacedItTests(unittest.TestCase):
             self.assertRegex(text, r"(?i)anything|whatever")   # …and whatever came back with it
 
 
+class NoPromptDefendsAFailedURLTests(unittest.TestCase):
+    """A 404 sometimes IS proof the URL is wrong, and reassuring the model otherwise moves the blame.
+
+    maple-preview 0014 fetched `/handle/goose` — singular, not a route. The anchor told it the error
+    was "not proof the address is wrong". Its very next reasoning: "The goose handle returned 404, so
+    it's not a valid Ada handle." One call later: "Confirmed live endpoints exist". It took cria's
+    word that the endpoint was fine and moved the blame to the handle name; the reasoner inherited
+    that at 0017 and shipped it as the steer that ended the run. `address` is doubly bad wording in a
+    task whose subject noun is an address.
+
+    The real fear — a coder abandoning a working service over one 404 — is covered exactly and
+    without defending anything by "a failure on one URL says nothing about any other URL, and nothing
+    about whether the service works". Route-vs-value is now settled per URL from the parsed route
+    list, which is a fact rather than a reassurance."""
+
+    _DEFENCE = re.compile(r"(?i)not\s+(?:by itself\s+)?proof\s+(?:that|the)\b")
+
+    def test_every_prompt_file(self):
+        offenders = []
+        for f in sorted(PROMPTS.glob("*.txt")):
+            for n, line in enumerate(f.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if self._DEFENCE.search(line):
+                    offenders.append(f"{f.name}:{n}: {line.strip()[:110]}")
+        self.assertEqual(offenders, [], "a prompt tells the model a failed fetch does not mean the "
+                                        "URL is wrong — sometimes it does:\n" + "\n".join(offenders))
+
+    def test_the_matcher_catches_both_removed_wordings(self):
+        for old in ("is a fact about that fetch, not proof the address is wrong",
+                    "An error is not by itself proof that nothing is there."):
+            self.assertTrue(self._DEFENCE.search(old), old)
+
+    def test_the_scoping_fact_that_replaced_them_survives(self):
+        from cria import prompts
+        self.assertIn("says nothing about any other URL",
+                      prompts.load_map("fetched_facts_sections")["failed"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ domain_steer = \nThis query names a domain — stop searching ABOUT it and FETCH
 fetch_repeat = You already fetched web_fetch {{URL}} with these exact params, and re-fetching returns the same content you were given earlier in this conversation. Use what it returned, or narrow it with a different find= to get just the part you need.
 # Same repeat, but cria KNOWS the earlier fetch failed. Telling the model to "use it" sent it back to a
 # dead URL as though the answer were sitting above; nothing is there to use.
-fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact params and it returned {{STATUS}}. Re-sending it unchanged returns the same thing. Read that status, and anything the server returned with it, and decide: come back to this address later, correct the path, or use a different source. An error is not by itself proof that nothing is there.
+fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact params and it returned {{STATUS}}. Re-sending it unchanged returns the same thing. Read that status, and anything the server returned with it, and decide: come back to this address later, correct the path, or use a different source.
 # Same repeat, but the doc was oversized and cria SPILLED it to a file — it is NOT above, it is on disk.
 # The refusal CARRIES the document's outline ({{OUTLINE}}, empty when nothing is cached for the url), so
 # it ANSWERS instead of only denying: "go grep it" is unusable when the coder does not yet know what to
