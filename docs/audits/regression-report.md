@@ -25,8 +25,8 @@ gates = check runs it triggered.
 | 🟢 qwopus · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
-| 🟠 mellum2 · 12B-A2.5B q4 | ²⁄₄ ³⁄₄ ²⁄₄ | 167.2 | 8 | 74 | 9 | 2 | 7 | 2 |
-| 🟠 maple (ternary) · 20B-A1B q2 | ³⁄₄ ¹⁄₄ ²⁄₄ | 64.9 | 30 | 99 | 12 | 2 | 7 | 3 |
+| 🟡 mellum2 · 12B-A2.5B q4 | ³⁄₄ ²⁄₄ ⁴⁄₄ | 159.9 | 22 | 146 | 19 | 5 | 14 | 4 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ¹⁄₄ ²⁄₄ ²⁄₄ | 64.8 | 19 | 86 | 8 | 1 | 7 | 1 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -136,8 +136,10 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 1/4 | 23 | 105 | 56 | 64.7 | 11 | 8 | exited |
 | mellum2 | counted | 2/4 | 9 | 78 | 50 | 172.5 | 9 | 7 | exited |
 | maple-preview | counted | 2/4 | 21 | 92 | 36 | 67.6 | 8 | 8 | exited |
+| mellum2 | counted | 4/4 | 45 | 269 | 174 | 150.8 | 37 | 27 | exited |
+| maple-preview | counted | 2/4 | 14 | 61 | 22 | 62.1 | 4 | 5 | exited |
 
-counted runs: 87 · avg wall 23 min · avg coder calls 67 · full-pass rate 34/87
+counted runs: 89 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/89
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -197,6 +199,33 @@ counted runs: 87 · avg wall 23 min · avg coder calls 67 · full-pass rate 34/8
 | gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
+- **2026-08-08 ~11:35 — the five walk fixes measured: mellum2 4/4, maple-preview 2/4, both on
+  `763b2f3`.** The pair was re-run against the same config as the 2/4 pair the night before.
+
+  **mellum2 `ada-handles_mellum2_codex_poff_1786196176` — 4/4**, 44.6 min, 269 calls, 151 tok/s,
+  `exited`. Its first clean run of the campaign (was 3/4, 2/4, 2/4). All four: unit tests, a real
+  in-session live resolution (call 0082 printed `addr1qxsfzsmy6y2s…`), `resolve_handle.py goose`
+  returning address + holder + count, and a README covering install/run/tests. The exec finding
+  reached a CODER prompt at call 0258 — the first time that has happened; before `2315c43` it only
+  ever reached the satisfaction judge, and `resolver_cli` was the check it lost in both prior runs.
+  Not proof of cause on one run. Worth reading in the walk: **91 edit-recovery escalations** against
+  a prior record of 17, plus 14 flail steers and 8 answer-contradicted recoveries — the score is
+  right but that is a lot of thrash to reach it.
+
+  **maple-preview `ada-handles_maple-preview_codex_poff_1786198877` — 2/4**, 13.7 min, 61 calls,
+  62 tok/s, `exited`. Same score as the night before, but a different failure and a third of the
+  assists (8 steers vs 12). The CLI no longer crashes — `resolve_handle.py goose` exits 0 — it just
+  does not print the three values. The route diagnosis fired from call 0013: a self-invented
+  `https://api.handle.me/v1/resolve → HTTP 404` was labelled `no such route. Use one from the route
+  list above`, and correctly said nothing at call 0010 when no spec had been read yet. Contrast the
+  night before, where the same class of failure got "check the VALUE you put in the path" and the
+  coder concluded goose was not a real handle.
+
+  **Still open, and visible in maple's own row:** the live probe chose `python resolve_handle.py`
+  with no argument — twice. `exec_intent`'s own prompt says "A command that needs an argument and is
+  given none proves nothing", and cria ran it anyway, then reported the result as evidence. Same
+  probe fault the 2026-08-07 walk recorded on this model. Not walked yet.
+
 - **2026-08-07 ~23:12 — maple-preview 2/4 on `10c9e6c`.** Run
   `ada-handles_maple-preview_codex_poff_1786168295`, 21.1 min, 92 calls, terminal `exited`, 67.6
   tok/s. Unit tests (4 passed) and the README pass. Missing: nothing ever provably reached the
