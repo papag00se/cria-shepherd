@@ -26,7 +26,7 @@ gates = check runs it triggered.
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 ternary-bonsai · 27B q2_0 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
 | 🟠 mellum2 · 12B-A2.5B q4 | ²⁄₄ ³⁄₄ ²⁄₄ | 167.2 | 8 | 74 | 9 | 2 | 7 | 2 |
-| 🟠 maple (ternary) · 20B-A1B q2 | ²⁄₄ ³⁄₄ ¹⁄₄ | 63.2 | 29 | 92 | 11 | 2 | 6 | 3 |
+| 🟠 maple (ternary) · 20B-A1B q2 | ³⁄₄ ¹⁄₄ ²⁄₄ | 64.9 | 30 | 99 | 12 | 2 | 7 | 3 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -135,8 +135,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 3/4 | 11 | 91 | 54 | 156.3 | 12 | 7 | exited |
 | maple-preview | counted | 1/4 | 23 | 105 | 56 | 64.7 | 11 | 8 | exited |
 | mellum2 | counted | 2/4 | 9 | 78 | 50 | 172.5 | 9 | 7 | exited |
+| maple-preview | counted | 2/4 | 21 | 92 | 36 | 67.6 | 8 | 8 | exited |
 
-counted runs: 86 · avg wall 23 min · avg coder calls 68 · full-pass rate 34/86
+counted runs: 87 · avg wall 23 min · avg coder calls 67 · full-pass rate 34/87
 
 ## Scoreboard (every run; counted rows bold)
 
@@ -196,6 +197,16 @@ counted runs: 86 · avg wall 23 min · avg coder calls 68 · full-pass rate 34/8
 | gemma4 | off | **4/4** | ada-handles_gemma4-stock_codex_poff_1785954136 | exited | post-fix rerun; grep-hint fix live; RESCORED 3/4→4/4 (live-evidence ruling) |
 
 ## Notable events
+- **2026-08-07 ~23:12 — maple-preview 2/4 on `10c9e6c`.** Run
+  `ada-handles_maple-preview_codex_poff_1786168295`, 21.1 min, 92 calls, terminal `exited`, 67.6
+  tok/s. Unit tests (4 passed) and the README pass. Missing: nothing ever provably reached the
+  network — `no live-test file found; live probe: unparseable reply; no in-session live execution
+  evidence` — and `ada_address_resolver.py goose` exits 1. Same broken-CLI-plus-early-exit shape as
+  mellum2 an hour earlier, from the opposite direction: mellum shipped a working live path with no
+  README, maple shipped a README with no live path. Both quit with the CLI broken. Walk in progress.
+  One cria-side item to settle in the walk: `live probe: unparseable reply` is cria's own probe
+  failing to parse its own reasoner's answer, which is a harness fault regardless of the model.
+
 - **2026-08-07 ~22:50 — mellum2 2/4 on `10c9e6c`, the first run under the rewritten steer prompt.**
   Run `ada-handles_mellum2_codex_poff_1786167643`, 8.6 min, 78 calls, terminal `exited`. Unit tests
   and the live test both pass — the resolver itself works and provably talks to the network. What is
