@@ -5562,3 +5562,56 @@ every one is the same three assertions differing only by MagicMock ids —
 
 — from the maple-preview run that was still in flight while this was written. Its worst prompt carried
 three gate results that are two findings, 6,350 duplicated bytes the coder re-read for nothing.
+
+## ada-handles_mellum2_codex_poff_1786196176 (mellum2 4/4, 2026-08-08, sha 763b2f3)
+
+**cria fault: yes** — the score is clean; the 44.6-minute grind is not. Walked in full: 128 chunks,
+~80K lines, 10 walkers, per-chunk line counts verified against wc -l.
+
+The run's first 4/4 for mellum2, and the first run where cria's own execution finding
+(`⟦ctx:live-execution⟧`) reached a coder prompt (call 0258). The two prior 2/4s lost resolver_cli
+with that finding stuck in the judge's prompt.
+
+**ROOT, verified by reconstruction and replay — the flexible-splice indent bug (FIXED, same day).**
+The whitespace-flexible edit fallback matches non-whitespace tokens, so its match starts after the
+file's leading indent. old_string carrying the block's real indent + new_string carrying the same
+indent = doubled indent, "unexpected indent", and a would_break report saying "Fix new_string" about
+a correct new_string. Call 0190's side_effect fix — off-disk only by a whitespace-only blank line,
+the exact drift the fallback exists to forgive — bounced there and at 0095/0098/0126/0194, and the
+identical fix landed verbatim at 0215 with a one-line old_string, 120 calls later. This is the bulk
+of the 91 editrecovery.escalated events (prior record 17).
+
+**Still open, in damage order:**
+- **Steer stated four false facts at 0144** — "they fixed the mock setup to use side_effect …
+  The test suite passes (1 passed, 1 failed…)". No side_effect edit had landed (all bounced on the
+  bug above), pytest was failing, and its own parenthetical contradicts "passes". Contradicts the
+  ⟦ctx:checks⟧ two messages earlier; the coder carried "the fix landed" for ~30 calls.
+- **Write-recovery steer fired twice on research summaries** (0013, 0020): "your last message
+  contained the file's contents as text" — false both times; the detector reads markdown code
+  fences in a step summary as un-persisted file content. Drove one attempt to overwrite the
+  read-only spec spill.
+- **"the flagged line on disk" annotates STALE checker output with CURRENT disk lines**
+  (0036/0045/0054): checker says line 42 col 61 has `requests`, cria's own quote of disk line 42
+  shows a line with no `requests`. Self-contradictory anchor, three instances.
+- **"response fields it defines:" delivered EMPTY to two judges** (0021 research-check, 0028
+  critic): the promise ends at the colon; the 0021 judge hallucinated field names and ruled
+  partially blind.
+- Elision note asserts a REJECTED edit's new_string "is on disk" (0182; repeated in two reasoner
+  prompts) — false disk-state claim feeding the 0144-class hallucinations.
+
+## ada-handles_maple-preview_codex_poff_1786198877 (maple-preview 2/4, 2026-08-08, sha 763b2f3)
+
+**cria fault: yes.** Walked in full: 15 chunks, ~27K lines, 2 walkers.
+
+Same 2/4 as the night before but a different failure: the CLI runs (exit 0) and prints nothing
+useful; the "live" test is mocked. The route diagnosis WORKED — call 0013's self-invented
+`/v1/resolve → HTTP 404` got "no such route. Use one from the route list above" and correctly said
+nothing at 0010 before any spec was read. The exec finding reached the coder at 0052.
+
+**Still open:**
+- **The run probe accepted an argless command AGAIN** — `python resolve_handle.py`, twice, against
+  its own prompt's "A command that needs an argument and is given none proves nothing". Third
+  occurrence across walks (also 2026-08-07 maple). The probe's rule is prose; nothing enforces it.
+- The exec finding the coder received was therefore about the wrong thing (usage exit vs the real
+  print-nothing bug).
+- Fields anchor truncated for a judge (same class as mellum 0021).
