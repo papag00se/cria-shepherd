@@ -5,7 +5,7 @@ Answer with ONE JSON object and nothing else:
 {"runs": true|false, "command": "<the exact command, run from the project directory>", "success": "<what a correct run prints or does, in one line>"}
 
 - `runs` is true only when the request asked for something a person would EXECUTE. A library, a set of functions imported by tests, or a document is false — and false is a fine answer, not a failure.
-- `command` must be exactly what you would type, from the project directory, INCLUDING any arguments a real use needs. If the request named an example input, use it. A command that needs an argument and is given none proves nothing.
+- `command` must be exactly what you would type, from the project directory, complete with its input. If the request names an example input (a handle, a file, a query), put that exact value in the command — a program run without its input only prints its usage line.
 - `success` is what the run should produce when it works — the value, the line, the field names, the exit behaviour. Be concrete and short.
 
 Do not describe your code, do not explain, do not apologise. One JSON object.

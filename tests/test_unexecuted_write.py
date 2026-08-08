@@ -156,3 +156,41 @@ class NestedFenceTests(unittest.TestCase):
     def test_prose_with_inline_backticks_is_not_a_paste(self):
         self.assertFalse(loop.unexecuted_write(
             "The `old_string` is not in `README.md`; re-read it and try `edit_file` again."))
+
+
+class SelfQuoteExemptionTests(unittest.TestCase):
+    """A fence the coder copied out of cria's own prompt is not an unsaved file.
+
+    Walked on mellum2 1786196176 calls 0013/0020: two research summaries quoted the injected
+    response-shape block, the nudge fired both times — "your last message contained the file's
+    contents as text" (false both times) — and the coder tried to persist cria's own schema over
+    the read-only spec spill. cria holds every string it injected; identity is a comparison."""
+
+    SHAPE = ("GET /handles/{handle} (replace in the URL path: {handle} = The Handle name) returns:\n"
+             "```ts\n{\n" + "\n".join(f"  field{i}?: string;" for i in range(20)) + "\n}\n```")
+
+    def test_a_quoted_shape_block_does_not_fire(self):
+        summary = "Step 1 complete. The endpoint returns these fields:\n\n" + self.SHAPE
+        self.assertFalse(loop.unexecuted_write(summary, [self.SHAPE]))
+
+    def test_a_real_pasted_file_still_fires(self):
+        pasted = "```python\n" + "\n".join(f"x{i} = {i}" for i in range(20)) + "\n```"
+        self.assertTrue(loop.unexecuted_write(pasted, [self.SHAPE]))
+
+    def test_indentation_drift_in_the_quote_still_matches(self):
+        # models re-indent when quoting; the comparison is whitespace-normalized
+        requoted = "\n".join("   " + l.strip() for l in self.SHAPE.splitlines())
+        self.assertFalse(loop.unexecuted_write(requoted, [self.SHAPE]))
+
+    def test_a_tiny_overlap_cannot_exempt_a_real_file(self):
+        pasted = "```python\nimport os\n" + "\n".join(f"y{i} = {i}" for i in range(20)) + "\n```"
+        self.assertTrue(loop.unexecuted_write(pasted, ["import os"]))
+
+    def test_mixed_message_fires_on_the_real_file_not_the_quote(self):
+        both = (self.SHAPE + "\n\nAnd here is my implementation:\n\n```python\n"
+                + "\n".join(f"z{i} = {i}" for i in range(20)) + "\n```")
+        self.assertTrue(loop.unexecuted_write(both, [self.SHAPE]))
+
+    def test_the_gather_reads_the_same_ledger_the_anchor_renders(self):
+        class S: fetched_pages = {"u": ("HTTP 200", "/a, /b", "the shapes text", "")}
+        self.assertEqual(loop._injected_fence_texts(S()), ["the shapes text"])

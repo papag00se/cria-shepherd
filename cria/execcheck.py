@@ -314,6 +314,32 @@ def parse_intent(reply: str) -> dict:
     return obj
 
 
+# The usage-complaint shape, cross-runtime: argparse/click print `usage: prog …`, Go's flag package
+# prints `Usage of prog:`, Node's commander/yargs print `Usage: prog …`. A shape, not a tool's phrase.
+_USAGE_LINE = re.compile(r"(?im)^\s*usage(?: of \S+)?\s*:")
+
+
+def _readme_extension(command: str, readme: list[str], entries: list[str]) -> str:
+    """The one README command that EXTENDS the probe's bare command with arguments, or "".
+
+    Fires only when the probe's command ENDS AT THE PROGRAM — its last token names an entrypoint on
+    disk — so a command that already carries an input is never rewritten. Prefix means token-prefix:
+    `python resolve_handle.py` extends to `python resolve_handle.py goose`, never to a command for a
+    different program. Two different extensions → "" (picking one would be a guess)."""
+    toks = command.split()
+    progs = {os.path.basename(e) for e in entries}
+    if not toks or os.path.basename(toks[-1]) not in progs:
+        return ""
+    exts = []
+    for rc in readme:
+        rt = rc.split()
+        if len(rt) > len(toks) and rt[:len(toks)] == toks:
+            exts.append(rc)
+    if len({tuple(e.split()) for e in exts}) == 1:
+        return exts[0]
+    return ""
+
+
 def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
     """Corroborate, run when all three agree, and report — never block.
 
@@ -329,6 +355,18 @@ def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
 
     command = str(intent.get("command") or "").strip()
     expect = str(intent.get("success") or "").strip()
+    # THE DROPPED INPUT. Third walked occurrence (maple 1786198877 twice, maple 1786168295 once):
+    # the probe answers a bare `python resolve_handle.py` against its own instruction to include
+    # the input a real use needs, cria runs it, and the program exits on its usage guard — a result
+    # that proves nothing, reported as if it proved something. cria holds a grounded fuller form:
+    # the README documents the run command, and the README is the coder's own artifact. When the
+    # probe's command is a PREFIX of a README command that carries more tokens, run the README's —
+    # both sources agree on the program; only the input the probe dropped is restored. Nothing is
+    # invented: no README command extends it → the bare command stands and (b) below bounds what
+    # its result may claim.
+    fuller = _readme_extension(command, readme, entries)
+    if fuller:
+        command = fuller
     agreed, why = corroborate(command, readme, entries)
     if not agreed:
         return ExecResult(INCONCLUSIVE, command=command, expect=expect, entrypoints=entries,
@@ -370,6 +408,18 @@ def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
                                   why="it exited 0, but what it printed is not that result")
         return ExecResult(CONFIRMED, command=command, expect=expect, exit_code=code, output=output,
                           entrypoints=entries, readme_commands=readme)
+    if code != 0 and _USAGE_LINE.search(output or ""):
+        # The program refused its arguments and said so — the run demonstrates the usage guard and
+        # nothing else. NOT_OBSERVED here would state "the delivered program did not show the result
+        # it was meant to", which is a claim about the program from a run that never exercised it
+        # (rule 5b): both prior maple runs shipped exactly that misleading fact to the judge, and
+        # once to the coder. A usage line is a cross-runtime shape (argparse, Go's flag, Node
+        # commander all print `usage:`/`Usage:`), not a phrase list keyed to one tool.
+        return ExecResult(INCONCLUSIVE, command=command, expect=expect, exit_code=code,
+                          output=output, entrypoints=entries, readme_commands=readme,
+                          why=(f"`{command}` exited {code} with a usage complaint — the command "
+                               "lacked the input a real use needs, so the run demonstrates nothing "
+                               "about the program"))
     return ExecResult(NOT_OBSERVED, command=command, expect=expect, exit_code=code, output=output,
                       entrypoints=entries, readme_commands=readme,
                       why=("it exited cleanly but printed nothing" if code == 0

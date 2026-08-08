@@ -27,6 +27,7 @@ the pre-existing don't-wedge semantics instead of inventing a verdict.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -142,7 +143,41 @@ _FLAGGED_LINE_RE = re.compile(r"^(.+?):(\d+)(?::\d+)?:")
 _AT_LINE_RE = re.compile(r"^(.+?): .*\(at line (\d+), column \d+\)")
 
 
-def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True) -> list[str]:
+def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
+    """Basenames of files a LANDED write/edit touched in messages after ``start``.
+
+    The newest gate result is re-annotated at every prompt build, and "the flagged line on disk" is
+    read at render time — so a check that ran before an edit gets stamped with the post-edit line.
+    Walked on mellum2 1786196176 (0036/0045/0054): pyflakes said line 42 col 61 has `requests`;
+    cria's own quote of disk line 42 showed a line with no `requests` — a self-contradictory anchor,
+    three times, because the file moved under the still-newest gate. The write ledger in the same
+    message list says exactly which files moved; their findings keep the checker's line, unquoted."""
+    from cria import selfcompact
+    calls: dict = {}
+    changed = set()
+    for m in messages[start + 1:]:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") in ("write_file", "edit_file"):
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except ValueError:
+                    continue
+                path = str((args or {}).get("path") or (args or {}).get("file_path") or "")
+                if path and tc.get("id"):
+                    calls[tc["id"]] = os.path.basename(path)
+        if m.get("role") == "tool" or m.get("type") == "function_call_output":
+            tid = m.get("tool_call_id") or m.get("call_id")
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if tid in calls and isinstance(c, str) and selfcompact.write_landed(c):
+                changed.add(calls[tid])
+    return frozenset(changed)
+
+
+def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
+                          changed_paths: "frozenset[str]" = frozenset()) -> list[str]:
     """For an unmatched-delimiter finding, append ONE counted fact: the flagged line's actual
     on-disk bytes plus how many openers and closers it holds. Code counts, the model applies —
     a small model provably cannot (run 0729-gemma4: 137 calls failing to remove one ')', its own
@@ -188,6 +223,9 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True) -> l
         if not m:
             continue
         path, line_no = m.group(1), int(m.group(2))
+        if os.path.basename(path) in changed_paths:
+            continue        # the file moved since this check ran — quoting today's line under
+                            # yesterday's finding manufactures the contradiction; the finding stands
         p = Path(path) if os.path.isabs(path) else Path(workspace) / path
         # ONLY inside the workspace. An absolute finding can name a stdlib frame
         # (/usr/lib/python3.12/unittest/mock.py:956 in a pytest traceback), and quoting it back
@@ -239,7 +277,8 @@ def _is_hard_failure(plan, sid: str) -> bool:
     return kind in proberun._HARD_FAILURE_KINDS
 
 
-def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True) -> str | None:
+def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
+                      changed_paths: "frozenset[str]" = frozenset()) -> str | None:
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
@@ -404,7 +443,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             failed_no_detail = True
     if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
         could_not_run = True
-    findings = _with_delimiter_facts(findings, plan, annotate)
+    findings = _with_delimiter_facts(findings, plan, annotate, changed_paths)
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         # Show EVERY error-class finding — a 40-line clip once hid findings 41+, so the model "fixed"
         # what it saw and claimed done while real errors remained invisible. The context floor
@@ -650,7 +689,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
                 # assertion and re-applied an import it already had. Three calls, on a 15-minute wall.
                 # The guard was added the same morning (bdd68bc) to stop the model GUESSING at an
                 # unquoted line; on a file that has moved it manufactures the guess instead.
-                cleaned = clean_gate_output(c, plan, annotate=(i == last_gate))
+                cleaned = clean_gate_output(c, plan, annotate=(i == last_gate),
+                                            changed_paths=_paths_written_after(messages, i)
+                                            if i == last_gate else frozenset())
                 if cleaned is not None:
                     if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")

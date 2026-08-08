@@ -4,3 +4,8 @@
 # what exists, not the bytes, so one file's content stops appearing six times in one prompt).
 # Parsed by prompts.load_map.
 write_stub = [elided {{CHARS}} chars — this exact content is on disk at {{PATH}}; read_file to view it]
+# The stub above is only true of a write that LANDED. Stamped on a REFUSED edit it asserts content
+# is on disk that never got there — walked on mellum2 1786196176 call 0182, where the claim fed the
+# steer author's "the side_effect fix landed" hallucination (0144), which the coder believed for
+# ~30 calls. The refused form keeps the elision and drops the claim.
+write_stub_refused = [elided {{CHARS}} chars — this write was REFUSED (see the tool result below); the content never reached disk]

@@ -283,8 +283,9 @@ class CompactedViewTests(unittest.TestCase):
         import json as j
         from cria.selfcompact import stub_old_write_args
         big = "x = 1\n" * 200                     # >400 chars
+        from cria.writeproxy import _WROTE
         msgs = [self._write_call("old.py", big, "w1"),
-                {"role": "tool", "tool_call_id": "w1", "content": "ok"},
+                {"role": "tool", "tool_call_id": "w1", "content": _WROTE + " old.py"},
                 self._write_call("new.py", big, "w2")]
         out = stub_old_write_args(msgs)
         old_args = j.loads(out[0]["tool_calls"][0]["function"]["arguments"])
@@ -294,6 +295,47 @@ class CompactedViewTests(unittest.TestCase):
         self.assertEqual(new_args["content"], big)                # the LAST tool call keeps content
         self.assertEqual(msgs[0]["tool_calls"][0]["function"]["arguments"],
                          j.dumps({"path": "old.py", "content": big}))  # originals never mutated
+
+    def test_a_refused_write_is_never_claimed_to_be_on_disk(self):
+        """Rule 5b. Walked on mellum2 1786196176: call 0182's REFUSED new_string was elided as
+        'this exact content is on disk', two reasoner prompts repeated the claim, and the 0144
+        steer told the coder the fix had landed — it believed that for ~30 calls."""
+        import json as j
+        from cria.selfcompact import stub_old_write_args
+        from cria import editrecovery
+        big = "x = 1\n" * 200
+        msgs = [self._write_call("f.py", big, "e1"),
+                {"role": "tool", "tool_call_id": "e1",
+                 "content": editrecovery.EDITFAIL + "eyJtb2RlIjogIndvdWxkX2JyZWFrIn0="},
+                self._write_call("new.py", big, "w2")]
+        out = stub_old_write_args(msgs)
+        stub = j.loads(out[0]["tool_calls"][0]["function"]["arguments"])["content"]
+        self.assertIn("REFUSED", stub)
+        self.assertIn("never reached disk", stub)
+        self.assertNotIn("on disk at", stub)
+
+    def test_a_write_with_no_paired_result_keeps_its_content(self):
+        # no result in the span → cria cannot claim landed OR refused; the full text stays
+        import json as j
+        from cria.selfcompact import stub_old_write_args
+        big = "x = 1\n" * 200
+        msgs = [self._write_call("f.py", big, "orphan"),
+                self._write_call("new.py", big, "w2")]
+        out = stub_old_write_args(msgs)
+        self.assertEqual(j.loads(out[0]["tool_calls"][0]["function"]["arguments"])["content"], big)
+
+    def test_stub_head_matches_writeproxys_confirm_token(self):
+        # the landed/refused split keys on writeproxy's confirm head — they must never drift apart
+        from cria import selfcompact, writeproxy
+        self.assertEqual(selfcompact._WROTE_HEAD, writeproxy._WROTE)
+
+    def test_the_model_facing_confirm_counts_as_landed_too(self):
+        # transcripts carry the RENDERED confirm ("Wrote t.py"), not the raw heredoc token
+        from cria import selfcompact
+        self.assertTrue(selfcompact.write_landed("Wrote t.py"))
+        self.assertTrue(selfcompact.write_landed("⟦ctx:wrote⟧ t.py"))
+        self.assertFalse(selfcompact.write_landed("⟦ctx:edit⟧ t.py — your old_string is not an exact match"))
+        self.assertFalse(selfcompact.write_landed("⟦ctx:denied⟧ that write left the workspace"))
 
     def test_tool_results_are_never_touched(self):
         from cria.selfcompact import stub_old_write_args

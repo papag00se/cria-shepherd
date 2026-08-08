@@ -2283,7 +2283,7 @@ class Loop:
         # verification-only work, so the cria adaptation counts ANY tool activity this step.)
         # BEFORE reading this as a completion claim: a turn that pasted a whole file did not finish
         # the step, it failed to emit the call. See unexecuted_write().
-        if (unexecuted_write(_completion_text(coder))
+        if (unexecuted_write(_completion_text(coder), _injected_fence_texts(sess))
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
@@ -3511,7 +3511,7 @@ class Loop:
         tags from ``framed``)."""
         # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
         # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
-        if (unexecuted_write(_completion_text(comp))
+        if (unexecuted_write(_completion_text(comp), _injected_fence_texts(sess))
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
@@ -4372,7 +4372,19 @@ UNEXECUTED_WRITE_LINES = 12
 MAX_UNEXECUTED_NUDGES = 2   # bounded: after this the turn falls through to the completion gate
 
 
-def unexecuted_write(content: str) -> bool:
+def _injected_fence_texts(sess) -> list[str]:
+    """Every response-shape block cria has injected this session — the strings a coder's fenced
+    "file" might merely be quoting back. Read from the same ledger the anchor renders from, so the
+    two cannot drift. Deterministic gather; the comparison happens in unexecuted_write()."""
+    out: list[str] = []
+    for entry in (getattr(sess, "fetched_pages", None) or {}).values():
+        shapes = (tuple(entry) + ("", "", ""))[2]
+        if str(shapes).strip():
+            out.append(str(shapes))
+    return out
+
+
+def unexecuted_write(content: str, injected=None) -> bool:
     """Did this tool-call-less turn CONTAIN the work instead of doing it?
 
     The branch below reads a coder turn with no tool call as "it thinks the step is done". That
@@ -4398,22 +4410,40 @@ def unexecuted_write(content: str) -> bool:
     # `pip install requests pytest` section — the exact content whose absence cost the run its
     # fourth point. The coder wrote it three times and never called a write tool.
     body = content or ""
-    depth, run = 0, 0
+    injected_norm = ["".join(t.split()) for t in (injected or []) if t and t.strip()]
+
+    def _is_self_quote(fence_lines: list[str]) -> bool:
+        # A fence the coder copied out of cria's own prompt is not an unsaved file. Walked on
+        # mellum2 1786196176 calls 0013/0020: two research summaries quoted the ⟦ctx⟧ response-shape
+        # block (the ```ts schema cria itself injected), the nudge fired both times — "your last
+        # message contained the file's contents as text" — and the coder, told to persist a file it
+        # never drafted, tried to overwrite the read-only spec spill. cria HOLDS every string it
+        # injected, so identity is a comparison, not a judgment: whitespace-normalized containment,
+        # with a floor so a two-token overlap cannot exempt a real file.
+        blob = "".join("".join(l.split()) for l in fence_lines)
+        return len(blob) >= 80 and any(blob in inj for inj in injected_norm)
+
+    depth, run, fence = 0, 0, []
     for line in body.splitlines():
         t = line.lstrip()
         if t.startswith("```"):
             if t[3:].strip():              # ```lang → opening (the tag, not the fence)
                 depth += 1
             elif depth > 0:                # bare ``` → closing
-                if depth == 1 and run >= UNEXECUTED_WRITE_LINES:
+                if depth == 1 and run >= UNEXECUTED_WRITE_LINES and not _is_self_quote(fence):
                     return True
                 depth -= 1
+                if depth == 0:
+                    run, fence = 0, []
             else:                          # bare ``` with nothing open → an opening fence
                 depth = 1
             continue
-        if depth > 0 and line.strip():
-            run += 1
-    return depth > 0 and run >= UNEXECUTED_WRITE_LINES   # unclosed fence, e.g. cut off mid-file
+        if depth > 0:
+            fence.append(line)
+            if line.strip():
+                run += 1
+    return (depth > 0 and run >= UNEXECUTED_WRITE_LINES   # unclosed fence, e.g. cut off mid-file
+            and not _is_self_quote(fence))
 
 
 def _has_tool_calls(completion: dict) -> bool:
@@ -5202,8 +5232,27 @@ def _marker_block(text: str, start: int, marker: str) -> str:
         return ""
     lines = text[i:].splitlines()
     out = [lines[0][len(marker):].strip()] if lines else []
+    # Two entry grammars, ONE reader. The old render is one `GET /x → f1, f2{a,b}` line per
+    # endpoint. The 2026-08-07 render (operator's format) is an endpoint head ending `returns:`
+    # followed by a ```ts fence of `name?: type;` lines. The day that format landed, this reader —
+    # keyed on `→` alone — kept the marker's header and dropped every field: the durable ledger
+    # carried routes and ZERO response shapes, the judges' sources block promised "response fields
+    # it defines:" and delivered nothing after the colon (walked, mellum2 1786196176 calls
+    # 0021/0028 — one judge hallucinated the fields), and the phantom-field steer guard went blind.
+    # Fence state makes the TS block self-delimiting; everything else keeps the old rule.
+    fence = False
     for ln in lines[1:]:
-        if "→" in ln or ln.strip().startswith("…"):
+        t = ln.strip()
+        if fence:
+            out.append(ln.rstrip())
+            if t.rstrip("]") == "```":     # the render closes the whole block as ````]` — one line
+                fence = False
+            continue
+        if t.startswith("```") and t != "```":
+            fence = True
+            out.append(ln.rstrip())
+            continue
+        if "→" in ln or t.startswith("…") or t.endswith("returns:"):
             out.append(ln.rstrip())
             continue
         break
@@ -5416,8 +5465,16 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.
-        entries = [ln.strip() for ln in shapes.splitlines()
-               if "→" in ln or ln.strip().startswith("…")]   # keep the "…+more" cap note too
+        entries, fence = [], False
+        for ln in shapes.splitlines():
+            t = ln.strip()
+            if fence:
+                entries.append(ln.rstrip())
+                fence = t != "```"
+            elif t.startswith("```") and t != "```":
+                entries.append(ln.rstrip()); fence = True
+            elif "→" in ln or t.startswith("…") or t.endswith("returns:"):   # old render + cap note
+                entries.append(t)
         if entries:
             line += f"\n  {labels['fields']}\n" + "\n".join(f"  {e}" for e in entries)
         # A catalogue names WHERE each API's spec lives. Without this the durable ledger recorded the
@@ -6377,8 +6434,10 @@ def _false_line_citation(directive: str, evidence: str) -> str | None:
 # invented, and column names. The access shape is what marks it as a claim ABOUT THE RESPONSE.
 _RESP_VAR = r"(?:data|response|resp|json|payload|body|result|res|r)"
 _FIELD_ACCESS = re.compile(rf"\b{_RESP_VAR}\s*(?:\.get\(\s*['\"]([A-Za-z_]\w*)['\"]|\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\])")
-# Field names inside a parsed shape entry: `name(string, …)`, `resolved_addresses{ada(string, …)}`.
+# Field names inside a parsed shape entry. Old render: `name(string, …)`,
+# `resolved_addresses{ada(string, …)}`. TS render: `  name?: type;` and nested `parent?: {`.
 _SHAPE_FIELD = re.compile(r"([A-Za-z_]\w*)\s*[({]")
+_TS_FIELD = re.compile(r"^\s*([A-Za-z_]\w*)\??:\s")
 
 
 def _ledger_field_names(ledger: dict) -> set[str]:
@@ -6391,9 +6450,12 @@ def _ledger_field_names(ledger: dict) -> set[str]:
     for entry in (ledger or {}).values():
         shapes = (tuple(entry) + ("", "", ""))[2]
         for line in str(shapes).splitlines():
-            if "→" not in line:
-                continue                      # the header and the elision note carry no fields
-            names.update(m.group(1) for m in _SHAPE_FIELD.finditer(line.split("→", 1)[1]))
+            if "→" in line:                   # old render: fields follow the arrow
+                names.update(m.group(1) for m in _SHAPE_FIELD.finditer(line.split("→", 1)[1]))
+                continue
+            m = _TS_FIELD.match(line)         # TS render: one `name?: type;` per line
+            if m:
+                names.add(m.group(1))
     return names
 
 

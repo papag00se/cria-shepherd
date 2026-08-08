@@ -270,9 +270,29 @@ _WRITE_ARG_KEYS = ("content", "new_string")
 _STUB_MIN_CHARS = 400
 
 
-def _stub_write_args(m: dict) -> dict:
-    """A COPY of message ``m`` with big write-tool argument bodies replaced by an on-disk reference
-    (prompts/compact_view.txt: write_stub). Returns ``m`` unchanged when nothing qualifies."""
+# A write that landed confirms in one of two shapes: the raw heredoc token (writeproxy._WROTE,
+# pre-render) or the model-facing render of prompts/write_confirm ("Wrote <path>") that transcripts
+# actually carry. Anything else — an ⟦ctx:editfail⟧ report, a denial, an error — did NOT reach
+# disk. Kept in sync with both owners by tests.
+_WROTE_HEAD = "⟦ctx:wrote⟧"
+
+
+def write_landed(result_text: str) -> bool:
+    head = prompts.render("write_confirm", path="").strip()
+    t = result_text.lstrip()
+    return _WROTE_HEAD in result_text or (bool(head) and t.startswith(head))
+
+
+def _stub_write_args(m: dict, landed=None) -> dict:
+    """A COPY of message ``m`` with big write-tool argument bodies replaced by an elision stub.
+
+    ``landed`` maps tool_call_id -> bool (the paired tool result confirmed the write). The on-disk
+    stub is a CLAIM — "this exact content is on disk" — and stamping it on a refused edit states a
+    false fact (rule 5b): walked on mellum2 1786196176, call 0182's refused new_string was elided as
+    "on disk", two reasoner prompts repeated it, and the 0144 steer told the coder the fix had
+    landed. A refused write gets the refused stub; an UNKNOWN outcome (no paired result in the span)
+    keeps the full text rather than risk either claim. Returns ``m`` unchanged when nothing
+    qualifies."""
     changed = False
     new_calls = []
     for tc in m.get("tool_calls") or []:
@@ -287,11 +307,15 @@ def _stub_write_args(m: dict) -> dict:
         if not isinstance(args, dict):
             new_calls.append(tc); continue
         path = str(args.get("path") or args.get("file_path") or "?")
+        outcome = (landed or {}).get(tc.get("id"))
+        if outcome is None:
+            new_calls.append(tc); continue      # no paired result → no claim in either direction
+        stub_key = "write_stub" if outcome else "write_stub_refused"
         touched = False
         for key in _WRITE_ARG_KEYS:
             v = args.get(key)
             if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
-                args[key] = prompts.fill(prompts.load_map("compact_view")["write_stub"],
+                args[key] = prompts.fill(prompts.load_map("compact_view")[stub_key],
                                          chars=str(len(v)), path=path)
                 touched = True
         if touched:
@@ -302,12 +326,28 @@ def _stub_write_args(m: dict) -> dict:
     return {**m, "tool_calls": new_calls} if changed else m
 
 
+def _write_outcomes(msgs: list[dict]) -> dict:
+    """tool_call_id -> did the paired tool result confirm the write reached disk."""
+    landed: dict = {}
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool" or m.get("type") == "function_call_output":
+            tid = m.get("tool_call_id") or m.get("call_id")
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if tid and isinstance(c, str):
+                landed[tid] = write_landed(c)
+    return landed
+
+
 def stub_old_write_args(msgs: list[dict]) -> list[dict]:
     """Post-compaction view of a message span: every write-tool call OLDER than the last tool-call
-    turn gets its big argument bodies replaced by on-disk references; the LAST tool-call turn keeps
-    its full arguments (the live working set). Copies — never mutates the caller's messages."""
+    turn gets its big argument bodies replaced by an elision stub — the on-disk reference for a
+    write that landed, the refused form for one that did not; the LAST tool-call turn keeps its
+    full arguments (the live working set). Copies — never mutates the caller's messages."""
     last_tc = max((i for i, m in enumerate(msgs) if m.get("tool_calls")), default=None)
-    return [m if (i == last_tc or not m.get("tool_calls")) else _stub_write_args(m)
+    landed = _write_outcomes(msgs)
+    return [m if (i == last_tc or not m.get("tool_calls")) else _stub_write_args(m, landed)
             for i, m in enumerate(msgs)]
 
 
