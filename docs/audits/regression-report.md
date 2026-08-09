@@ -21,8 +21,8 @@ gates = check runs it triggered.
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 🟢 gemma4 · 12B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 56.6 | 4 | 26 | 1 | 0 | 2 | 1 |
 | 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 123.1 | 6 | 43 | 4 | 0 | 5 | 1 |
-| 🟢 qwen35 (base) · 9B q6 | ⁴⁄₄ | 78.2 | 16 | 77 | 5 | 0 | 7 | 4 |
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
+| 🟢 qwen3.5 · 9B q6 | ⁴⁄₄ ⁴⁄₄ | 77.8 | 20 | 99 | 8 | 1 | 8 | 4 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 qwopus · 9B q6 | ³⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟡 ternary-bonsai · 27B q2_0 | ³⁄₄ ³⁄₄ ⁴⁄₄ | 39.8 | 60 | 58 | 3 | 1 | 5 | 3 |
@@ -142,8 +142,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 1/4 | 31 | 64 | 46 | 62.7 | 7 | 3 | milestone-miss-30min |
 | maple-preview | counted | 3/4 | 36 | 164 | 77 | 63.9 | 11 | 7 | exited |
 | qwen35 | counted | 4/4 | 16 | 77 | 38 | 78.2 | 5 | 7 | exited |
+| qwen35 | counted | 4/4 | 24 | 121 | 72 | 77.4 | 11 | 9 | exited |
 
-counted runs: 92 · avg wall 23 min · avg coder calls 67 · full-pass rate 30/92
+counted runs: 93 · avg wall 23 min · avg coder calls 68 · full-pass rate 31/93
 
 ## Scoreboard (every run; counted rows bold)
 

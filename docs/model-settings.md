@@ -31,9 +31,20 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05: stock scored 3/4 ×3 on the lane where the finetune never beat 2/4 — the finetune's history rows keep its name as evidence |
 | **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
-| **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`); V2 sampling + reasoning-toggle UNVERIFIED — check on first launch |
+| **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`). The UNVERIFIED flag this row carried until 2026-08-08 is retired: V2 has run the ladder repeatedly at these values, and its newest capture (20260804T155422) shows `reasoning_content` on 20/20 sampled coder replies |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
-| **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template, toggle UNVERIFIED |
+| **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
+| **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
+| **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
+
+### Still in `models.toml`, NOT on the ladder
+
+- **fabliq-reasoning** (8B) — `mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF`, `fabliq-toggle.jinja`.
+  Retired from the suite; its unit is `disabled` and `inactive`, and it is in no sampling or SERVICES
+  table. The entry stays so the launch config is reproducible. It auto-started on :18084 once after a
+  WSL restart and had to be stopped by hand — if you see an unexpected model serving, check this one.
+- **zaya1** (8B) — draft-PR arch, launchable but never laddered. See §Server launch for its fork.
+- **gemma4-finetune** (12B) — replaced by stock `gemma4` on 2026-08-05; kept for its history rows.
 
 ### Considered and DROPPED: **Moonlight-16B-A3B-Instruct** (2026-08-01)
 
@@ -229,6 +240,8 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
 | **gemma4-finetune** (retired) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4 NOT yet verified for the OFF recipe |
+| **qwen3.5** | ✅ | ✅ clean direct answer | Qwen3.5 base — **verified at load 2026-08-08**: `enable_thinking=false` → 0 chars of `reasoning_content`, `true` → 649, both answered correctly |
+| **maple-preview** | ✅ | ⚠ UNVERIFIED | embedded template, no `*-toggle.jinja` earned yet. ON is certain — 25/25 sampled coder replies carried `reasoning_content`. OFF has never been exercised |
 
 **Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF).
 Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet
@@ -267,15 +280,20 @@ Per request cria applies THREE things so OFF works on any loaded model without p
 ## Server launch (`models.toml`) — uniform except model + template
 
 All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto
--sm none -mg 0` · `-ctk q8_0 -ctv q8_0` · `-fa on --no-host --no-mmproj --no-warmup --jinja` ·
+-sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` ·
 `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) ·
 `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
-Per-model differ only by source + chat template (all templates in `~/shepherd-eval/templates/`) —
-**except `ternary-bonsai`**, which also overrides `binary` + `lib_dir` to the **PrismML llama.cpp fork**
-(its `libggml-cuda.so` carries the `Q2_0_g128` kernels the stock CUDA build lacks; `lib_dir` must LEAD
-with the prism dir, then `cuda-12.8-local/lib64` + `/usr/lib/wsl/lib`). Fork binary:
-`/home/jesse/src/llama.cpp-prism/llama-prism-b9596-9fcaed7/llama-server`.
+Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three
+override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does
+not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64`
+and `/usr/lib/wsl/lib`.
+
+| Model | Fork | Why |
+|-------|------|-----|
+| ternary-bonsai | `~/src/llama.cpp-tq-prism/llama-v0.0.0/` | `Q2_0_g128` kernels **+ TurboQuant `tbq3` KV**. Also the only model overriding `-ctk`/`-ctv` (see below). Rollback, known-good and ~4× slower at depth: `~/src/llama.cpp-prism/llama-prism-b9596-9fcaed7/` with `-ctk q8_0 -ctv q4_0` and `--spec-type ngram-cache` |
+| maple-preview | `~/src/llama.cpp-maple-prism/build-cuda/bin/` | `tq2_0` ternary kernels (stamsam fork @ prism 9ee03ee); mainline cannot load the arch |
+| zaya1 | `~/src/llama.cpp-zaya/build/bin/` | draft-PR build for the `zaya` arch — exists in no release |
 
 | Model | Source | Template |
 |-------|--------|----------|
@@ -284,7 +302,11 @@ with the prism dir, then `cuda-12.8-local/lib64` + `/usr/lib/wsl/lib`). Fork bin
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
 | ornith | `-hf deepreinforce-ai/Ornith-1.0-9B-GGUF:Q6_K` | `ornith-toggle.jinja` |
 | qwopus | `-hf Jackrong/Qwopus3.5-9B-v3-GGUF:Q6_K` | `qwopus-toggle.jinja` |
-| qwythos | `-m …/Qwythos-…-Q6_K.gguf` | *(embedded)* |
+| qwythos | `-m …/Qwythos-9B-v2-Q6_K.gguf` | *(embedded)* |
+| qwen3.5 | `-m …/Qwen3.5-9B-Q6_K.gguf` | *(embedded)* |
+| maple-preview | `-m …/maple/maple-tq2_0.gguf` **(stamsam fork binary + lib_dir)** | *(embedded)* |
+| nemotron-elastic | `-m …/Nemotron-Elastic-12B/…gguf` | *(embedded)* |
+| zaya1 | `-m …/ZAYA1-8B/ZAYA1-8B-Q6_K.gguf` **(zaya draft-PR binary + lib_dir)** | *(embedded)* |
 
 - **`-ub 512` is required** — a larger prefill micro-batch overflows the 10 GB 3080.
 - **All fit the single 3080** (9Bs ~7.3 GB Q6_K; the 12B MoEs ~7–8 GB).
