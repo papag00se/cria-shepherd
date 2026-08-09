@@ -70,6 +70,8 @@ class Upstream:
         # match), so a wrong alias in the config silently runs the WRONG model — this lets cria
         # compare and warn. None for a cloud endpoint (no single loaded model).
         self._loaded_model = None if api_key else _UNSET
+        self._props: dict | None = None   # last successful /props payload — the compat banner's
+        self._props_seen = False          # source (chat_template + chat_template_caps)
         self._window = context_window if context_window else _UNSET
         self._window_final = bool(context_window)  # a configured value is authoritative — no probe
         self._props_attempts = 0
@@ -109,6 +111,29 @@ class Upstream:
             rlog.emit("upstream.models", level="info", error=str(e))
         return self._loaded_model
 
+    def props(self, rlog) -> dict | None:
+        """The local server's ``/props`` payload — chat template + capability flags — fetched at
+        most once and cached. ``None`` for a cloud endpoint or when it can't be read.
+
+        Separate from :meth:`_resolve_window` on purpose, even though that method populates the same
+        cache for free on its own probe. The window has an authoritative-config shortcut
+        (``context_window`` in the toml → ``_window_final`` → no probe ever), so a banner that piggy-
+        backed on it would silently vanish the day someone pinned a window — one mechanism quietly
+        disabled by an unrelated setting. This asks for what it needs.
+
+        ONE attempt, no retry budget: the compat banner is decoration, and a decoration that costs a
+        probe per call on a sick endpoint is worse than no decoration (#3)."""
+        if self._props_seen or self._api_key:
+            return self._props
+        self._props_seen = True          # attempted — never probe twice for the banner
+        try:
+            req = urllib.request.Request(self._base_url + "/props", method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self._props = json.loads(resp.read())
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            rlog.emit("compat.props", level="info", error=str(e))
+        return self._props
+
     def _resolve_window(self, rlog) -> int | None:
         """The loaded model's context window (n_ctx), discovered from the local server's /props.
         A configured value or a cloud endpoint is authoritative (no probe). On a LOCAL endpoint
@@ -124,6 +149,7 @@ class Upstream:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 props = json.loads(resp.read())
+            self._props, self._props_seen = props, True   # the compat banner reads this — no 2nd probe
             n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
             if isinstance(n_ctx, int) and n_ctx > 0:
                 self._window = n_ctx

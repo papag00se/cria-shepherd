@@ -21,7 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import callcapture, focustrim, massage, probegate, prompts, responses, rumination, selfcompact
+from . import callcapture, compat, focustrim, massage, probegate, prompts, responses, rumination, selfcompact
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -751,11 +751,33 @@ class CriaHandler(BaseHTTPRequestHandler):
         # role's one portable reasoning value into its backend's convention — served or remote alike.)
         # Show the "which model" line only when the classification is fresh (first
         # turn of a task); on cached turns just the tok/s line, to avoid repeating it.
+        shown = banner_model(route.provider, route.model or str(body.get("model") or "?"))
         return route.provider, Indicator(
             ic.enabled, ic.metrics,
-            model=banner_model(route.provider, route.model or str(body.get("model") or "?")), role=route.role,
+            model=shown, role=route.role,
             show_route=not classification.cached, route=ic.route, assists=ic.assists,
+            connect=self._connect_lines(route.provider, shown, rlog) if ic.connect else None,
         )
+
+    def _connect_lines(self, provider, shown: str, rlog) -> list[str] | None:
+        """The once-per-PROCESS connect banner: what cria is fronting, and whether this model's
+        template is one it can drive (cria/compat.py). Emitted on the first turn only — after that
+        the model behind the endpoint cannot change without a cria restart (the same assumption
+        `loaded_model` already makes), so repeating it every turn would be noise (#3).
+
+        Silent whenever it would be guessing: a provider with no /props (cloud), an unreadable
+        /props, or a payload carrying neither capability flags nor a template. A banner is
+        decoration; a WRONG banner is a false fact about the world (#5b)."""
+        if getattr(self.server, "_connect_done", False) or not hasattr(provider, "props"):
+            return None
+        self.server._connect_done = True   # per PROCESS: the handler is rebuilt every request
+        coder = self.server.cfg.routing.roles.get("coder")
+        lines = compat.banner(provider.props(rlog), model=shown,
+                              merge_turns=bool(coder and coder.merge_consecutive_turns),
+                              collapse_system=bool(coder and coder.collapse_system_prompt))
+        if lines:
+            rlog.emit("compat.connect", model=shown, checks=len(lines))
+        return lines or None
 
     def _apply_route_role(self, pbody: dict, indic) -> dict:
         """Attach the routed role's sampling + reasoning (temp/top_p/top_k/repeat_penalty + the

@@ -379,6 +379,11 @@ class IndicatorsConfig:
     metrics: bool = True  # the trailing "· N tok/s" suffix on the route banner
     assists: bool = True  # the "⟦cria⟧ <note>" guard/assist lines
     stats: bool = True    # a terse end-of-turn "⟦cria⟧ turn done · ⏱ … · 🛡 …" summary line
+    connect: bool = True  # the ONE-TIME "⟦cria⟧ cria connected · <model>" line plus the compat
+                          # check glyphs (cria/compat.py) — emitted on the first turn of a
+                          # session so a template cria cannot drive is visible BEFORE the run,
+                          # not after a walk (nemotron-nano cost two runs proving what its
+                          # template said up front). Reports; never gates (#19).
     status: bool = True   # the LIVE "⟦cria⟧ <phase>" ticker streamed while cria works (planner
                           # rounds, judges, compaction) — the first-minutes black box, narrated
     reasoning: bool = True  # forward the model's reasoning on the native Responses reasoning channel
@@ -572,6 +577,7 @@ def _safety(d: dict) -> SafetyConfig:
 def _indicators(d: dict) -> IndicatorsConfig:
     return IndicatorsConfig(
         enabled=bool(d.get("enabled", True)),
+        connect=bool(d.get("connect", True)),
         route=bool(d.get("route", True)),
         metrics=bool(d.get("metrics", True)),
         assists=bool(d.get("assists", True)),
