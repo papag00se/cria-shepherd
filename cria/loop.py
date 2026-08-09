@@ -467,11 +467,9 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         # The judge's OWN object comes first when one absent brace is all that is wrong with it
         # (verdict_from_unclosed) — same one-way NOT-satisfied contract, but it carries the reason
         # and proposed_fix the judge actually wrote. 3 of this phase's replies on this box.
-        recover = (lambda sysm: summarize(reasoner_chat,
-                                          replace(reasoner_role, reasoning="off")
-                                          if reasoner_role is not None else None,
-                                          sysm, "", rlog, phase=ph + "-recover", temperature=0.0)
-                   or "") if reasoner_role is not None else None
+        recover = ((lambda sysm: ask_closed(reasoner_chat, reasoner_role, sysm, rlog,
+                                            phase=ph + "-recover"))
+                   if reasoner_role is not None else None)
         return (verdict_from_unclosed(vtext, "satisfied", rlog, ph)
                 or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph, recover)
                 or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose", recover))
@@ -816,7 +814,21 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
         if rounds == verifytools.VERIFY_MAX_ROUNDS or \
                 sum(len(str(m.get("content") or "")) for m in messages) >= verifytools.VERIFY_MAX_CHARS:
-            messages.append({"role": "user", "content": answer_now or verifytools.ANSWER_NOW})
+            # THE CLOSER MUST ASK FOR THE SCHEMA THIS JUDGE DECLARES. Three judges share this loop and
+            # they answer under three different keys — `done`, `satisfied`, `consistent` — while the
+            # default closer demands `{"done": …}`. The confirm judge passes answer_now_simple with
+            # its own one-word ask, but only the leaked-tool-call branch above ever reached it; the
+            # round cap, which is the path a five-round inspection actually takes, sent the wrong
+            # template every time.
+            #
+            # Walked on maple-preview 1786228135. Four gate cycles, ~40 calls, roughly 20 of the run's
+            # 35 minutes, and NOT ONE BYTE was written to the workspace after the first. Three cycles
+            # answered `{"done": true}` — the shape cria asked for and the shape cria then failed to
+            # recognise — and each time cria said "not yet verified" and started again. The fourth
+            # ignored the closer, answered `{"consistent": true}`, and the run ended. Same workspace,
+            # same verdict, four times; the only variable was which key came back.
+            messages.append({"role": "user",
+                             "content": answer_now_simple or answer_now or verifytools.ANSWER_NOW})
 
 
 def _consistent_word(text: str) -> bool | None:
@@ -1147,7 +1159,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # survives them (see _veto_refuted_by_disk — the regex is only the trigger; every failure
         # direction keeps the veto). Rule 5b: a "Missing <file>" the disk disproves must not reach
         # the coder in cria's voice.
-        disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, "", rlog,
+        disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
                                            phase="confirm-disk", temperature=0.0) or "") \
             if reasoner_role is not None else None
         refuted = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
@@ -1454,7 +1466,8 @@ def _fix_text(obj: dict) -> str:
 
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
-                       workspace_root: str = "", routes: str = "") -> tuple[bool, str]:
+                       workspace_root: str = "", routes: str = "",
+                       gate_findings: str = "") -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -1471,11 +1484,9 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                 workspace_root=workspace_root)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
-    fab_ask = (lambda sysm: summarize(reasoner_chat,
-                                      replace(reasoner_role, reasoning="off")
-                                      if reasoner_role is not None else None,
-                                      sysm, "", rlog, phase="satisfaction-action", temperature=0.0)
-               or "") if reasoner_role is not None else None
+    fab_ask = ((lambda sysm: ask_closed(reasoner_chat, reasoner_role, sysm, rlog,
+                                        phase="satisfaction-action"))
+               if reasoner_role is not None else None)
     if obj is not None and _claims_impossible_action(obj, rlog, "satisfaction", fab_ask):
         obj = None   # fabricated evidence → same path as an unparseable verdict (retry, fail closed)
     if obj is not None:
@@ -1508,7 +1519,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # Fail closed — but the CODER-facing reason is a plain instruction, never cria's internal
         # bookkeeping: "unverified (no parseable verdict)" injected as a steer made one model
         # confabulate a meaning for it and leap ahead to another file (run 0729-gemma4 pon2 0243).
-        return False, prompts.load("unverified_step"), ""
+        return False, prompts.load("unverified_step") + _named_gap(gate_findings), ""
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
@@ -1559,7 +1570,7 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
         # OFF and temperature 0: it answers one word from a fixed set, like every other closed
         # question cria asks. No reasoner configured → evaluate() falls back to today's silence.
         off = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
-        match_ask = (lambda sysm: summarize(reasoner_chat, off, sysm, "", rlog,
+        match_ask = (lambda sysm: summarize(reasoner_chat, off, sysm, _ASK_USER_TURN, rlog,
                                             phase="exec-output", temperature=0.0) or "") \
             if reasoner_role is not None else None
         result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""),
@@ -2225,7 +2236,8 @@ class Loop:
         satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools")),
                                                workspace_root=sess.workspace_root or "",
-                                               routes=known_routes(body.get("messages", []), sess))
+                                               routes=known_routes(body.get("messages", []), sess),
+                                               gate_findings=getattr(sess, "last_gate_flag", "") or "")
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -3202,7 +3214,8 @@ class Loop:
                 # fails toward running the brake.
                 off_role = (replace(self._ctx.reasoner_role, reasoning="off")
                             if self._ctx.reasoner_role is not None else None)
-                applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm, "",
+                applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm,
+                                                      _ASK_USER_TURN,
                                                       rlog, phase="confirm-applies",
                                                       temperature=0.0) or "") \
                     if self._ctx.reasoner_role is not None else None
@@ -3237,7 +3250,7 @@ class Loop:
             retry = None
         if retry is None:
             # Same fail-closed / plain-instruction contract as the satisfaction judge above.
-            reason = prompts.load("unverified_step")
+            reason = prompts.load("unverified_step") + _named_gap(red_findings)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
         reason = _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-done is trustworthy
@@ -3305,12 +3318,9 @@ class Loop:
             # same reason; it just recovers what the judge wrote instead of paraphrasing it. Mostly
             # this spares the reasoning-off retry below and lets the CAREFUL pass speak; twice in the
             # corpus both passes were unclosed and the coder read nothing at all.
-            recover = (lambda sysm: summarize(
-                self._ctx.reasoner_chat,
-                replace(self._ctx.reasoner_role, reasoning="off")
-                if self._ctx.reasoner_role is not None else None,
-                sysm, "", rlog, phase=ph + "-recover", temperature=0.0) or "") \
-                if self._ctx.reasoner_role is not None else None
+            recover = ((lambda sysm: ask_closed(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                sysm, rlog, phase=ph + "-recover"))
+                        if self._ctx.reasoner_role is not None else None)
             return (verdict_from_unclosed(vtext, "done", rlog, ph)
                     or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph, recover)
                     or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose", recover)), vtext
@@ -3435,7 +3445,8 @@ class Loop:
             task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
             workspace_root=sess.workspace_root or "",
-            routes=known_routes(body.get("messages", []), sess))
+            routes=known_routes(body.get("messages", []), sess),
+            gate_findings=getattr(sess, "last_gate_flag", "") or "")
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
                   satisfied=satisfied)
         if not satisfied:
@@ -3674,7 +3685,8 @@ class Loop:
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools")),
             workspace_root=sess.workspace_root or "",
-            routes=known_routes(body.get("messages", []), sess))
+            routes=known_routes(body.get("messages", []), sess),
+            gate_findings=getattr(sess, "last_gate_flag", "") or "")
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
 
@@ -4970,6 +4982,23 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     return prompts.render("periodic_gate", truth=err)
 
 
+# A closed question cria asks a reasoner. THE QUESTION GOES IN THE USER TURN. cria used to put the
+# whole thing in `system` and send `user: ""` — walked on maple-preview 1786228135 call 0092, where
+# the prompt was `system(2658 chars) + user(0 chars)` and the model answered "We need to parse the
+# user's message. It's just a single period." A model looks for the ask where an ask lives; an empty
+# user turn is cria asking nothing and grading the answer.
+_ASK_USER_TURN = "Answer the question above."
+
+
+def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: int = 1024) -> str:
+    """ONE primitive for every closed question cria puts to a reasoner — reasoning off, temperature
+    0, the question in the user turn where the model looks for it. Returns "" on anything unreadable,
+    which every caller already treats as "no answer"."""
+    return summarize(chat_fn, replace(role, reasoning="off") if role is not None else None,
+                     question, _ASK_USER_TURN, rlog, phase=phase, max_tokens=max_tokens,
+                     temperature=0.0) or ""
+
+
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
               max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "",
               capture: list | None = None, temperature: float | None = None) -> str:
@@ -5970,11 +5999,12 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
     def _steer_ask(system: str, _user: str) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-code",
+        return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog, phase="steer-code",
                          temperature=0.0) or ""
     # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
     def _recover_ask(system: str) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, "", rlog, phase="steer-recover") or ""
+        return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog,
+                         phase="steer-recover") or ""
     if workspace_root and os.path.isdir(workspace_root):
         # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
         # lists names/sizes only, and the author holds the same read-only tools the judges hold —
@@ -6111,6 +6141,24 @@ def _steer_or_none(text: str) -> str | None:
     # progress ... This is not stuck." and the coder was handed "... This is ." as its rescue; the same
     # regex turns "You are not stuck on the import, you are stuck on the missing live test" into "You are
     # on the import, ..." — cria asserting the opposite of what the reasoner ruled.
+    # A SENTINEL AT THE END IS A DECISION, NOT A HEDGE. The hedge this function exists for puts the
+    # sentinel FIRST — Fabliq's "ON_TRACK. You keep re-fetching; write it now." — and the directive
+    # follows it. When the sentinel is LAST, everything before it is the reasoning that produced the
+    # decision, and delivering that reasoning ships a verdict as a directive.
+    #
+    # Walked twice on maple-preview 1786228135. Call 0085 answered, verbatim:
+    #     "The coder has already completed the task—files are created, tests pass, and live tests
+    #      succeed. No indication of being stuck.\n\nON_TRACK"
+    # ON_TRACK means SAY NOTHING. cria stripped it and shipped the sentence before it, so the coder
+    # was told it was finished — while cria's own gate said the opposite 23 calls later. Call 0057 is
+    # the same shape ("You're making forward progress on all fronts. OUT"), and the reasoner's own
+    # thinking there reads "the coder is NOT stuck. I should output ON_TRACK."
+    #
+    # Position, not phrasing: no word list, and the hedge keeps working. Only a reply whose LAST
+    # non-empty line is the bare sentinel is read as a decision.
+    _lines = [ln for ln in body.strip().splitlines() if ln.strip()]
+    if _lines and re.fullmatch(r"(?i)\W{0,4}(?:on[_ ]track|not_stuck)\W{0,4}", _lines[-1].strip()):
+        return None
     _SENTINEL = r"on[_ ]track|not_stuck"
     negated = re.compile(rf"(?i)\b(?:not|never|isn't|aren't)\s+(?:{_SENTINEL})\b")
     kept = [s for s in re.split(r"(?<=[.!?])\s+|\n+", body) if not negated.search(s)]
@@ -7376,6 +7424,28 @@ def session_research_facts(messages: list, sess=None) -> str:
     are also asked to spot a guessed FIELD name and could not."""
     merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
     return groundtruth.researched_facts(merged)
+
+
+def _named_gap(findings: str) -> str:
+    """cria's most concrete unresolved finding, as a sentence for the coder — or "".
+
+    A STEER MUST NAME SOMETHING. When the completion judges cannot produce a usable verdict, cria
+    falls back to `unverified_step`, which names nothing: "This step is not yet verified as complete.
+    Keep working: re-check the step's goal against the files on disk." Walked on maple-preview
+    1786228135, where the coder received that same paragraph THREE TIMES, verbatim, and answered the
+    only way it could — re-read the same five files and re-declare done. Four gate cycles, no bytes
+    written.
+
+    In all three cases cria was holding a concrete finding. Its own execution probe had reported "the
+    README documents no command that runs handle_resolver.py"; its own offline re-run had reported the
+    tests never touch the service. Both went to a judge and neither to the coder.
+
+    NOT "facts outrank prose" (operator, 2026-08-08: a fact about the code is not a fact about the
+    task, and only a reasoner relates the two). This fires ONLY where the authored text names nothing
+    at all, and it appends rather than replaces — the generic instruction still ships, with something
+    actionable attached. Empty when cria holds nothing, which keeps silence the honest answer."""
+    f = (findings or "").strip()
+    return ("\n\nWhat cria's own checks currently report, unresolved:\n" + f) if f else ""
 
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:
