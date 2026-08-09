@@ -138,6 +138,47 @@ def _inject_nothink_directive(body: dict) -> None:
         body["messages"] = [{"role": "system", "content": directive}] + list(msgs)
 
 
+def _collapse_system_into_user(body: dict) -> None:
+    """Fold every leading system message into the front of the first user turn, in place.
+
+    For a template that has no place to put a system message, sending one is not a no-op — it is
+    text delivered outside the structure the model was trained on. DeepSeek-R1's template emits it
+    bare after BOS, before any role marker.
+
+    Order is preserved and nothing is dropped: the instruction still arrives first, now inside a
+    turn the model has a marker for. A body with no user turn at all gets one (a judge asked with
+    system-only would otherwise lose its whole question). Multiple system messages are joined in
+    order — some templates keep only the last, which silently discards the rest.
+    """
+    msgs = body.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return
+    heads, rest = [], []
+    for m in msgs:
+        c = m.get("content") if isinstance(m, dict) else None
+        if not rest and isinstance(m, dict) and m.get("role") == "system":
+            if isinstance(c, str) and c.strip():
+                heads.append(c.strip())
+            continue        # a system message with no text carries nothing to move
+        rest.append(m)
+    if len(rest) == len(msgs):
+        return                    # no leading system message at all — nothing to do
+    if not heads:
+        body["messages"] = rest   # an EMPTY one still has nowhere to go on this template
+        return
+    lead = "\n\n".join(heads)
+    first = next((i for i, m in enumerate(rest)
+                  if isinstance(m, dict) and m.get("role") == "user"
+                  and isinstance(m.get("content"), str)), None)
+    if first is None:
+        body["messages"] = [{"role": "user", "content": lead}] + rest
+        return
+    merged = dict(rest[first])
+    body_text = merged.get("content") or ""
+    merged["content"] = f"{lead}\n\n{body_text}".strip()
+    body["messages"] = rest[:first] + [merged] + rest[first + 1:]
+
+
 @dataclass(frozen=True)
 class Role:
     """HOW cria uses a backend: the backend binding + the sampling + reasoning cria attaches to
@@ -167,6 +208,20 @@ class Role:
     #   * output_reserve— the INPUT-side window reserve. The context floor trims input to
     #                     `window − output_reserve − margin`, GUARANTEEING the model ≥ this much room
     #                     to generate — without capping it. Also seeds the rumination budget.
+    # WHERE THE INSTRUCTION GOES — the second portability knob, alongside think_protocol.
+    # cria puts every instruction it writes in a `system` message: the coder frame, every judge, the
+    # steer author, the compactor, the classifier. That is correct for most chat templates and wrong
+    # for some. DeepSeek-R1's distills are the case that forced this: their card says put everything
+    # in the user turn, and their template explains why — it captures the system message and emits it
+    # as `{{bos_token}}{{ns.system_prompt}}`, BARE, before the first `<｜User｜>` marker. The text does
+    # reach the model, but as an unframed preamble outside the conversation structure it was trained
+    # on, and cria's system prompts are thousands of characters.
+    #
+    # A ROLE knob, not a backend one: cria's backends are ENDPOINTS and the model swaps behind them
+    # (one llama.cpp server on :18084 serves every ladder model in turn), so a backend-level setting
+    # would outlive the model it was set for. suite/sampling.py already writes per-model, per-role
+    # values into cria.toml on every swap — this rides the same path.
+    collapse_system_prompt: bool = False
     max_tokens: int | None = None
     output_reserve: int | None = None
 
@@ -183,6 +238,8 @@ class Role:
         at once — and an empty answer reads as "nothing to report", so the judgement disappears with
         no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
         the cap stands: capping the coder is what the operator knob is for."""
+        if self.collapse_system_prompt:
+            _collapse_system_into_user(body)
         asked = body.get("max_tokens") if internal else None
         floor = asked if isinstance(asked, int) and asked > 0 else None
         # Sampling is translated into this backend's dialect (same portability fix as reasoning): a
@@ -567,6 +624,7 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
         top_k=_int("top_k"),
         repeat_penalty=_num("repeat_penalty"),
         min_p=_num("min_p"),
+        collapse_system_prompt=bool(spec.get("collapse_system_prompt", False)),
         max_tokens=_int("max_tokens"),
         output_reserve=_int("output_reserve"),
     )

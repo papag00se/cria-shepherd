@@ -72,10 +72,10 @@ MODEL_SAMPLING = {
     # top_p 0.95, and NO system prompt — everything in the user turn. 0.6 is the midpoint it names.
     # top_k is left off because the card does not publish one.
     "r1-llama": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
-        "classifier": {"temperature": 0.0},
-        "compactor":  {"temperature": 0.0},
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "collapse_system_prompt": True},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "collapse_system_prompt": True},
+        "classifier": {"temperature": 0.0, "collapse_system_prompt": True},
+        "compactor":  {"temperature": 0.0, "collapse_system_prompt": True},
     },
     # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
     # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
@@ -116,7 +116,10 @@ MODEL_SAMPLING = {
     },
 }
 
-KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty")
+# `collapse_system_prompt` is not sampling, but it is the same KIND of thing: a per-model, per-role
+# value cria.toml carries and run.py rewrites on every swap. Listed here so a stale one from the
+# previous model is dropped, exactly like a stale temperature.
+KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "collapse_system_prompt")
 
 
 def render(model: str) -> dict:
@@ -151,7 +154,11 @@ def apply(model: str, toml_path: Path = CRIA_TOML) -> dict:
             if key in KNOBS and not line.lstrip().startswith("#"):
                 continue                       # drop every sampling line; re-add this model's below
             kept.append(line)
-        added = [f"{k} = {v}" for k, v in knobs.items()]
+        # TOML booleans are lowercase; Python's repr of True is not valid TOML and cria's loader
+        # would fail to parse the file it was handed.
+        def _lit(v):
+            return "true" if v is True else "false" if v is False else v
+        added = [f"{k} = {_lit(v)}" for k, v in knobs.items()]
         # keep the header first, then the surviving keys, then this model's sampling
         text = text[:i] + "\n".join([kept[0]] + kept[1:] + added).rstrip() + "\n" + text[j:]
     toml_path.write_text(text)

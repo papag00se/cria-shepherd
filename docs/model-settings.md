@@ -36,7 +36,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
-| **r1-llama** (8B) | Q6_K | `temp 0.6, top_p 0.95` (no top_k), **no system prompt** | DeepSeek-R1's own card (states 0.5–0.7; 0.6 is its midpoint) | DeepSeek-R1 reasoning distilled onto `meta-llama/Llama-3.1-8B`. Added 2026-08-08. **The first LLAMA-architecture model on the ladder** — every other entry is Qwen-, Gemma-, Nemotron- or ternary-derived, so this is the first read on whether cria's assists carry to another family. Chosen over Dolphin 3.0 (same base, same size, instruct-only) because a REASONING tune holds the thinking channel constant while changing the family; instruct-only would have confounded the two. R1 emits `<think>…</think>` as ordinary CONTENT, not a `reasoning_content` field — check how `--reasoning` parsing handles that on first launch. `unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:Q6_K`, 6.6 GB |
+| **r1-llama** (8B) | Q6_K | `temp 0.6, top_p 0.95` (no top_k), **`collapse_system_prompt = true`** | DeepSeek-R1's own card (states 0.5–0.7; 0.6 is its midpoint) | DeepSeek-R1 reasoning distilled onto `meta-llama/Llama-3.1-8B`. Added 2026-08-08. **The first LLAMA-architecture model on the ladder** — every other entry is Qwen-, Gemma-, Nemotron- or ternary-derived, so this is the first read on whether cria's assists carry to another family. Chosen over Dolphin 3.0 (same base, same size, instruct-only) because a REASONING tune holds the thinking channel constant while changing the family; instruct-only would have confounded the two. R1 emits `<think>…</think>` as ordinary CONTENT, not a `reasoning_content` field — check how `--reasoning` parsing handles that on first launch. `unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:Q6_K`, 6.6 GB |
 
 ### Still in `models.toml`, NOT on the ladder
 
@@ -218,6 +218,33 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > temperature = 0.0
 > repeat_penalty = 1.1
 > ```
+
+---
+
+## `collapse_system_prompt` — where the instruction goes
+
+cria writes every instruction it gives into a **system** message: the coder frame, every judge, the
+steer author, the compactor, the classifier. Right for most chat templates, wrong for some, and
+until 2026-08-08 nothing in cria knew the difference — 12 construction sites, no owner.
+
+`[roles.<name>] collapse_system_prompt = true` folds every leading system message into the front of
+the first user turn. One place (`Role.apply`, the same hook that translates sampling and reasoning),
+so it covers every request that role makes. Off by default; `suite/sampling.py` writes it per model
+on each swap, exactly like sampling, so a stale value cannot survive a model change.
+
+**When to set it.** Read the model's chat template, not its card alone. The question is whether the
+template has somewhere to PUT a system message:
+
+- **r1-llama** — needs it. The template captures the message and emits it as
+  `{{bos_token}}{{ns.system_prompt}}` — bare, after BOS, before the first `<｜User｜>` marker. The
+  text reaches the model but lands outside the conversation structure it was trained on, and cria's
+  system prompts run to thousands of characters. Its loop also keeps only the LAST system message,
+  so a second one is discarded silently; the fold joins them in order instead.
+- **Everything else on the ladder** — does not. Qwen-, Gemma-, Nemotron- and ternary-derived
+  templates all have a real system slot.
+
+The fold preserves order, never drops text, and creates a user turn when a body has none (a judge
+asked system-only would otherwise lose its whole question).
 
 ---
 
