@@ -2399,7 +2399,13 @@ class Loop:
             # The nudge says "send that same content again" — so the content must be IN the frame.
             # The re-framed view rebuilds from the harness body, which never saw this internal prose
             # turn; without the reply the model is ordered to resend text it cannot see.
-            sess.nudge_reply = _completion_text(coder)
+            # …unless it was CUT OFF, in which case carrying it is the worse lie: "send that same
+            # content again as a write tool call" over a fragment asks for a COMPLETE write of
+            # incomplete content, and guard_truncation cannot catch that one — the tool call would
+            # be whole, only its payload short (the self-truncated-write footgun, from the other
+            # end). Measured: the truncated replies are also the two largest ever carried
+            # (15,044 and 33,638 est tokens), so skipping them removes the size risk with the lie.
+            sess.nudge_reply = "" if massage.is_truncated(coder) else _completion_text(coder)
             return self._renudge(sess, key, body, prompts.load("unexecuted_write_nudge"), rlog)
         if sess.step_tool_calls == 0 and not sess.leg0_nudged:
             sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
@@ -3638,9 +3644,11 @@ class Loop:
             rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
             # The reply the nudge refers to rides in front of it — `framed` is what the coder was
             # SENT, so its own prose answer is not in there, and "send that same content again"
-            # about an invisible message is unactionable (see the multi-step sibling).
-            conv = framed["messages"] + [
-                {"role": "assistant", "content": _completion_text(comp)},
+            # about an invisible message is unactionable (see the multi-step sibling, including why
+            # a CUT-OFF reply is carried by neither).
+            carried = ([] if massage.is_truncated(comp)
+                       else [{"role": "assistant", "content": _completion_text(comp)}])
+            conv = framed["messages"] + carried + [
                 {"role": "user", "content": prompts.render(
                     "nudge", reason=prompts.load("unexecuted_write_nudge"))}]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
