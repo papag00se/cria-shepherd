@@ -5984,7 +5984,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # is still there as a tool_call (paths survive compaction stubs).
     touched = _touched_paths(body.get("messages", []))
     recent = list(getattr(gs, "recent_writes", None) or []) + touched if gs is not None else touched
-    disk = _fresh_disk_facts(workspace_root, recent, getattr(gs, "spin_path", "") if gs is not None else "")
+    disk = _label_spill_entries(
+        _fresh_disk_facts(workspace_root, recent, getattr(gs, "spin_path", "") if gs is not None else ""))
     if not disk and workspace_root:
         # The write history can be GONE: a harness compaction replaces the turns that carried the
         # write tool_calls, so _touched_paths — the "durable" source above — recovers nothing. What
@@ -5999,7 +6000,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         # "THE FILES IT HAS BEEN CHANGING", and on nemotron-nano 1786243834 the only entry was the
         # spilled openapi reference — file activity where the coder had produced NOTHING, feeding
         # five ON_TRACK verdicts over an untouched workspace (rule 5b, in cria's own prompt).
-        disk = _label_spill_entries(workspace_inventory(workspace_root))
+        disk = _label_spill_entries(workspace_inventory(workspace_root))  # same label on BOTH branches
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
@@ -7478,23 +7479,36 @@ def _named_gap(findings: str) -> str:
 
 
 def _label_spill_entries(disk: str) -> str:
-    """Inventory lines under cria's own spill dir get the ``spill_note`` label — the entry stays
-    (the completeness clause must hold), but it no longer reads as the coder's file activity. Only
-    the steer-author path uses this: its template says "THE FILES IT HAS BEEN CHANGING", and a
-    spill copy under that header is a false fact about who changed what. The critic's header
-    ("WORKSPACE FILES") makes no such claim, so its inventory is left alone."""
-    if not disk:
-        return disk
+    """Disk-section lines naming a file under cria's own spill dir get the ``spill_note`` label —
+    the entry STAYS (the "not listed = does not exist" clause must keep holding), it just stops
+    reading as the coder's own file activity.
+
+    WHY, and why only here: the steer author's template heads this section "THE FILES IT HAS BEEN
+    CHANGING", and on nemotron-nano 1786243834 the only entry was the spilled openapi reference —
+    file activity where the coder had produced nothing, feeding five ON_TRACK verdicts over an
+    untouched workspace. The critic's header ("WORKSPACE FILES") claims no authorship, so its
+    inventory is left alone.
+
+    BOTH branches of that section are labelled. The first cut did only the `workspace_inventory`
+    fallback, while the PRIMARY source (`_fresh_disk_facts`) can list the same spilled file — the
+    coder attempts an edit on it, cria refuses, but the refusal still lowers a tool_call that
+    `_touched_paths` picks up — and the primary wins whenever it is non-empty. One path and not its
+    twin is the failure mode `groundtruth` names in its own docstring.
+
+    The two branches render differently (``  tmp/read-only/x (96221 B)`` vs
+    ``FILE ./tmp/read-only/x — 96,221 bytes, 1 line``), so the test is containment of the spill
+    directory as a path segment, not a prefix on the stripped line.
+
+    The note says what the DIRECTORY is, never who wrote a given file into it: cria refuses
+    SYNTHETIC writes there but cannot stop a raw `curl -o tmp/read-only/…`, so "the coder did not
+    write this" is a claim cria cannot always support — and asserting it would be the same rule-5b
+    fault this function exists to remove, pointing the other way."""
     note = prompts.load_map("workspace_inventory").get("spill_note", "").strip()
-    prefix = webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/"
-    if not note:
+    if not disk or not note:
         return disk
-    out = []
-    for line in disk.splitlines():
-        if line.strip().split(" (")[0].startswith(prefix):
-            line = f"{line} {note}"
-        out.append(line)
-    return "\n".join(out)
+    seg = os.path.normpath(webfetch.SPILL_DIR).strip("/") + "/"
+    return "\n".join(f"{line} {note}" if seg in line.replace("\\", "/") else line
+                     for line in disk.splitlines())
 
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:

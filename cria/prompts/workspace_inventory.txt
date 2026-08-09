@@ -18,4 +18,4 @@ planner_empty = WORKSPACE FILES in {{ROOT}}: none — the workspace is empty; no
 # tmp/read-only/, so the one prompt that needed "the coder has produced nothing" read as file
 # activity instead (the unstick reasoner answered ON_TRACK over an untouched workspace, five
 # times). Spill entries are LABELLED, never removed: the completeness clause stays true.
-spill_note = — a reference copy the environment saved for re-reading, NOT something the coder wrote
+spill_note = — reference material saved into the read-only scratch directory for re-reading, not a deliverable
