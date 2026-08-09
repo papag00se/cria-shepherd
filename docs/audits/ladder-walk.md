@@ -5713,55 +5713,89 @@ directive/collapse mechanisms all verified working on the wire). 8.0 min, `exite
    dropped.** 0073's body: 12 messages, the coder's 7,996-char prose reply ABSENT (a no-tool-call
    assistant text never enters the work log), while the nudge says "send that same content again."
    Told to resend text it could no longer see, the model re-read the spill file a 7th time.
-9. **The proxy path then 400-looped the run to death (0075-0081).** server.py:891 applies the role
-   (alternation merge) FIRST and focustrim SECOND — so the trim's appended user note landed after a
-   tool message unmerged → `Conversation roles must alternate` → six identical 400s → harness exit.
-   The drive path (loop.py:2358→2365) orders these correctly; at 0073 the same note was merged into
-   the tool message (the "]]" artifact in the rendered prompt).
+9. **A 400 loop then killed the run (0075-0081).** The alternation merge ran inside `Role.apply`,
+   mid-pipeline, so anything appended afterwards undid it: focustrim appends its repeat-note as a
+   `user` turn, the body went out `…, tool, user`, and the template answered `Conversation roles
+   must alternate` six times until the harness exited. FOUR call sites append user-side turns after
+   the role — the plan-off driver, `guard_rumination`, `guard_truncation`, and the streaming proxy
+   (which never trims). (First diagnosed here as a *proxy-path ordering* bug; that was wrong — the
+   run made ZERO proxy calls, every one of 0075-0081 was phase `coder-s1` from the plan-off driver.
+   Corrected below.)
 
 Crew-role duties on this model: the unstick reasoner answered the bare sentinel ON_TRACK five times
 (0015, 0046, 0069, 0074, 0080) over a textbook loop + empty workspace — the cheap-token exit, same
 family as the sentinel-negation trap. The prose-dump at 0072 was in the 0074 unstick prompt and was
 blessed as progress.
 
-### Fix candidates (ranked) — ALL SEVEN LANDED 2026-08-08 (a11f907..49df0d1), each with a fail-before test; suite 2,834 green
+### Fix candidates (ranked) — landed, then adversarially reviewed 2026-08-08; TWO REVERTED
+
+Seven landed (a11f907..49df0d1). A seven-agent refutation pass over the diffs then found that one
+fixed the wrong path, two would have HURT previously-working models, and two more were incomplete.
+Net after review: five mechanisms stand, two faults are re-opened. Suite 2,830 green. The review's
+own standard is worth keeping: every finding below carries a reproduction against the real corpus,
+not a reading of the diff.
 
 1. **server.py:891 order swap** — focustrim BEFORE role.apply on the proxy path, matching the drive
    path. This alone killed the run's tail; it will 400 any alternation-enforcing template again.
-   FIXED: a11f907 (tests/test_proxy_trim_order.py pins the ordering both behaviorally and in source).
+   **FIXED — but not that way.** a11f907 reordered `server.py` on a mis-read and is REVERTED: the
+   run made zero proxy calls. The real fix (4e5f790) moves the merge to the WIRE
+   (`Upstream._prep` → `massage.merge_for_alternation`) as the last message transform, so no call
+   site can defeat it; `Role.apply` only sets a hint. Verified against the captured 0075 body:
+   tail was `assistant,tool,user` (rejected) → now alternates, repeat-note preserved.
 2. **Echo arm in `research.step_defect`** — an authored step that substantially restates cria's own
    instruction text (long n-gram overlap with the prompt cria itself sent) is a defect ("it restates
    the instruction rather than authoring a step"); retry-once-then-"" contract unchanged.
-   FIXED: 24ee334 — two arms (third-person "the coder" + the instruction's closing clause derived
-   live from the prompt file), measured over all 106 authored steps on disk: 4 echoes refused,
-   0 legitimate steps touched.
+   FIXED: 24ee334, completed in 2ee6467 — two arms (third-person "the coder" + the instruction's
+   closing clause derived live from the prompt file), measured over all 106 authored steps: 4
+   echoes refused, 0 legitimate steps touched. Review added the task-owns-its-words exemption every
+   sibling arm has, and the UPSTREAM half: cria's prompt used to ask for "one sentence instructing
+   the coder", modelling the very phrasing that was echoed back — reworded to ask for an imperative
+   sentence. The arms stay, because r1-llama produced third person on the retry path where that
+   wording was never present.
 3. **Collapse duplicate denial records in composed frames/work-logs** — a denied call repeated N×
    contributes its denial text ONCE plus "same denial ×N". Directly shrinks the 61K step frame and
    the 1200-line unstick prompts (the ON_TRACK amplifier).
-   FIXED: 3e4e9d0 — the six copies were byte-identical ⟦ctx:denied⟧ messages each classified as a
-   spec ANCHOR (the digest contains the _SPEC_*_MARKERs); identical anchors now collapse to one
-   verbatim copy in selfcompact.compact.
+   FIXED: 3e4e9d0, refined in 7506490 — the six copies were byte-identical ⟦ctx:denied⟧ messages
+   each classified as a spec ANCHOR (the digest contains the _SPEC_*_MARKERs); identical anchors
+   now collapse to one verbatim copy. Keyed on `msg_digest` so two anchors differing only in their
+   tool_calls cannot fold, and the drop is reported (`context.anchor_dedup`). Note it covers the
+   FOLDED span only — on an ordinary size-triggered compaction, duplicates in the verbatim band and
+   tail still ship.
 4. **Carry the drafted content with the unexecuted-write nudge** — the coder's no-tool-call prose
    must ride into the re-frame (it is the one thing the nudge is about), either as the kept
    assistant turn or quoted in the nudge.
-   FIXED: 64a3baa — sess.nudge_reply carries the prose into the re-frame ahead of the nudge, in
-   BOTH drive paths.
+   FIXED: 64a3baa, hardened in 4a64bd4 — a CUT-OFF reply is never carried: pasting a fragment next
+   to "send that same content again as a write tool call" asks for a complete write of incomplete
+   content, and `guard_truncation` cannot catch that (the call would be whole, only its payload
+   short). Confirmed on a real mellum2 capture. The truncated replies are also the two largest ever
+   carried, so skipping them removes the size risk too.
 5. **Inverse arm for `_briefing_disk_truth`** — append-only: files the briefing NAMES that the
    complete disk listing lacks get "GROUND TRUTH — these files do NOT exist on disk: …".
-   FIXED: c70b90e — measured first (459 captured briefings: a lexical arm alone would flag
-   requests.get 408× and resolved_addresses.ada 204×), so code gathers candidates and ONE closed
-   reasoner question selects which the briefing asserts exist; append-only, both arms compose.
+   **REVERTED (c70b90e → 0aad55e), STILL OPEN.** Three disqualifying faults, all measured: the
+   append lands in the PERMANENT accumulated rollup and fires on the file about to be written, so
+   it keeps asserting "these files do NOT exist right now" after the coder creates them
+   (reproduced end-to-end); the judge is wrong ~29% of the time on real briefings, which would make
+   cria call library calls and API fields missing deliverables; and it fired with no workspace
+   listing at all. Whatever replaces it must be re-evaluated per turn against live disk, never
+   frozen into the summary.
 6. **proposed_fix × denial-ledger cross-check** — a relayed fix that names a call cria has already
    denied/repeat-blocked is dropped (the not-done verdict stands; the steer just doesn't
    re-recommend the blocked call).
-   FIXED: 2124f43 — the denial record is read from cria's own work_log_denied labels; a fix is
-   dropped only on denied-tool-name + that call's own argument value at a boundary (the 0024
-   longer-url fetch and the 0034 grep both survive, as walked).
+   **REVERTED (2124f43 → f92a7ac), STILL OPEN.** It dropped the escape hatch cria's OWN refusal
+   text prescribes — every spill refusal says "read a specific line range with read_file
+   start_line/end_line", which names the denied tool and the denied path. Base rate on the real
+   corpus: 2 firings across 67 fix-carrying verdicts, 1 of the 2 a false drop. It also withheld a
+   fix whose text AGREED with the guard, and never held on the strongest path anyway
+   (`judge_satisfaction` returns proposed_fix unfiltered as its third value, which becomes a plan
+   step). Per #9's corollary the honest shape is one focused question, not a lexical same-ness rule.
 7. **Stop listing cria's own spill under "THE FILES IT HAS BEEN CHANGING"** — tmp/read-only/ is
    cria's artifact; presenting it as coder file activity nudged the unstick reasoner toward
    ON_TRACK over an untouched workspace.
-   FIXED: 49df0d1 — spill entries are labelled ("NOT something the coder wrote"), never removed,
-   steer-author path only.
+   FIXED: 49df0d1, completed in 3f13bfc — the first cut labelled only the `workspace_inventory`
+   fallback while the PRIMARY source (`_fresh_disk_facts`) renders the same file differently and
+   wins whenever non-empty; both branches are covered now. The note also no longer claims "NOT
+   something the coder wrote" — cria cannot stop a raw `curl -o` into that directory, so it
+   describes the directory instead, which is true by construction.
 
 Server-side (not cria): the llama.cpp tool-grammar crash on `<TOOLCALL>[]` (56×). Track against
 llama.cpp upstream / a newer build before re-running this model; with a third of calls dying at the
