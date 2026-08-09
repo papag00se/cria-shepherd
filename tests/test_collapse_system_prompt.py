@@ -234,6 +234,13 @@ class TheThirdReasoningConventionTests(unittest.TestCase):
         self.assertEqual(body["messages"][0]["content"], "CODER FRAME")
 
     def test_the_suite_writes_the_protocol_and_clears_it_on_swap(self):
+        """The write-then-clear contract for a per-model knob, exercised through a SYNTHETIC entry.
+
+        This used to name nemotron-nano, the only model that ever set `think_protocol`. It was
+        retired 2026-08-09 (a llama.cpp grammar crash no model choice can fix) and the test broke
+        with it — so it now injects its own spec. The mechanism is what matters and it outlives any
+        one model: the knob must be written on a model that declares it and CLEARED on the next
+        swap, or a stale protocol silently rides the following run."""
         import sys, pathlib, tempfile, tomllib, shutil
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
         import sampling
@@ -242,11 +249,17 @@ class TheThirdReasoningConventionTests(unittest.TestCase):
             self.skipTest("no cria.toml on this box")
         tmp = pathlib.Path(tempfile.mkdtemp()) / "cria.toml"
         shutil.copy(src, tmp)
-        sampling.apply("nemotron-nano", tmp)
-        self.assertEqual(tomllib.load(open(tmp, "rb"))["roles"]["coder"]["think_protocol"],
-                         "system_directive")
-        sampling.apply("qwen35", tmp)                       # a model that does not use it
-        self.assertNotIn("think_protocol", tomllib.load(open(tmp, "rb"))["roles"]["coder"])
+        probe = {r: {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive"}
+                 for r in ("coder", "reasoner", "classifier", "compactor")}
+        sampling.MODEL_SAMPLING["_probe_system_directive"] = probe
+        try:
+            sampling.apply("_probe_system_directive", tmp)
+            self.assertEqual(tomllib.load(open(tmp, "rb"))["roles"]["coder"]["think_protocol"],
+                             "system_directive")
+            sampling.apply("qwen35", tmp)                   # a model that does not use it
+            self.assertNotIn("think_protocol", tomllib.load(open(tmp, "rb"))["roles"]["coder"])
+        finally:
+            sampling.MODEL_SAMPLING.pop("_probe_system_directive", None)
 
     def test_folding_the_system_prompt_would_delete_the_switch(self):
         """Why nemotron-nano must never set collapse_system_prompt. Pinned so the interaction is
