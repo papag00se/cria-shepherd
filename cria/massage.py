@@ -464,6 +464,57 @@ def _menu_schemas(tools) -> dict:
     return out
 
 
+def coerce_args(name: str, args: dict, schemas: dict) -> dict:
+    """Cast recovered arguments to the types the tool's OWN schema declares.
+
+    A dialect recovered out of text arrives all-strings — `<parameter=yield_time_ms>30000` gives
+    `"30000"`, not `30000` — because XML has no types. The harness does: Codex answers
+    ``invalid type: string "30000", expected u64`` and DISCARDS the call. Measured on the qwen35
+    253-call run: 148 rejections of exactly that argument, and the discarded calls were
+    disproportionately the live-run attempts — the ones that would have produced ground truth. The
+    run finished 4/4 after ~2.5x its usual calls, re-emitting work the harness had thrown away. Zero
+    such rejections in that model's 77-call run, 74 in its 121-call run: the exposure scales with how
+    often the model drifts into a text dialect, so it grows exactly when a run is already struggling.
+
+    THE SCHEMA IS THE ONLY AUTHORITY. A value is cast only where the tool declares a type and the
+    string is an exact, total match for it — `int("30000")`, not `int(float("30000.7"))`. Anything
+    the schema does not type, or that does not parse cleanly, is left EXACTLY as it arrived: a wrong
+    guess here forges an argument the model never wrote, which is worse than the rejection this
+    fixes. Non-string values (a JSON body already parsed) are never touched."""
+    schema = schemas.get(name) or {}
+    props = schema.get("properties")
+    if not isinstance(props, dict) or not isinstance(args, dict):
+        return args
+    out = dict(args)
+    for key, val in args.items():
+        if not isinstance(val, str):
+            continue                      # already typed — a parsed JSON body, leave it alone
+        declared = (props.get(key) or {}).get("type") if isinstance(props.get(key), dict) else None
+        types = declared if isinstance(declared, list) else [declared]
+        text = val.strip()
+        if "integer" in types:
+            try:
+                out[key] = int(text, 10)
+            except ValueError:
+                pass                      # not an exact integer → leave the string, refuse to guess
+        elif "number" in types:
+            # An exact integer stays an INT even under `number`. JSON does not distinguish the two,
+            # but the harness's deserializer does: Codex declares `yield_time_ms` as `number` in the
+            # schema and parses it as `u64`, so `30000.0` is rejected exactly like `"30000"` was.
+            # Emitting `30000` satisfies both readings; only a genuinely fractional value becomes a
+            # float.
+            try:
+                out[key] = int(text, 10)
+            except ValueError:
+                try:
+                    out[key] = float(text)
+                except ValueError:
+                    pass
+        elif "boolean" in types and text.lower() in ("true", "false"):
+            out[key] = text.lower() == "true"
+    return out
+
+
 def _sole_required(schema: dict) -> str | None:
     """The one property this tool requires, if there is exactly one — so a bare-string argument
     (`"arguments": "ls -la"`) can be placed by reading the SCHEMA rather than guessing a field name."""
@@ -723,7 +774,7 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
                      calls=[c["function"]["name"] for c in env])
                 continue
         else:
-            calls, cleaned = _extract_leaked(content)
+            calls, cleaned = _extract_leaked(content, _menu_schemas(tools))
         event = "massage.leaked_recovered"
         if not calls:
             # Neither dialect above. The call may still be here in CALL SYNTAX — `edit_file({…})` —
@@ -1068,6 +1119,7 @@ def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dic
             continue
         # gate 4. Every call in the span must be admitted; one stranger refuses the lot, because a
         # partly-forwarded list is an action sequence the model never asked for.
+        parsed = [(n, coerce_args(n, a, schemas)) for n, a in parsed]  # XML has no types; the schema does
         if not all(_menu_admits(n, a, schemas) for n, a in parsed):
             _log(rlog, "massage.reasoning_call_off_menu", dialect=dialect,
                  calls=[n for n, _a in parsed])
@@ -1117,7 +1169,7 @@ def _strip_lfm2_sentinels(content: str) -> str:
     return out.replace(_LFM2_TC_OPEN, "").replace(_LFM2_TC_CLOSE, "").strip()
 
 
-def _extract_leaked(content: str) -> tuple[list[dict], str]:
+def _extract_leaked(content: str, schemas: dict | None = None) -> tuple[list[dict], str]:
     calls: list[dict] = []
     cleaned = content
 
@@ -1133,7 +1185,8 @@ def _extract_leaked(content: str) -> tuple[list[dict], str]:
         if args is None:
             params = {k: v.strip() for k, v in _XML_PARAM.findall(body)}
             args = params if params else {}
-        calls.append(_toolcall(_alias(name), args))
+        resolved = _alias(name)
+        calls.append(_toolcall(resolved, coerce_args(resolved, args, schemas or {})))
         cleaned = cleaned.replace(m.group(0), "")
 
     gemma_calls, cleaned = _extract_gemma(cleaned)
