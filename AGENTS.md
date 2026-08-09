@@ -46,6 +46,13 @@ derails on its own.
 - **Assists are footguns** — the bar to ADD is high; interventions are additive / regression-only
   (never block the first fix, never delete correct content); silence over noise; **no fallbacks —
   fix upstream.**
+- **A wire invariant belongs at the wire** — if a property must be true of the body the model
+  RECEIVES (strict role alternation, no orphan `tool`, no malformed historical tool_call), enforce it
+  in `Upstream._prep`, the last point before serialization. A transform run at a call site is undone
+  by anything appended downstream, and ordering two lines per call site is a band-aid per site. Carry
+  the role's intent as a cria-internal body hint, consume and strip it at the wire, keep it opt-in so
+  models that don't need it ship byte-identical bodies. And fix the path that PRODUCED the incident,
+  not the one that resembles it — the phase is on every captured body; a census takes one command.
 - **Invisible & agnostic** — the model never sees the literal token "cria" (`⟦ctx:…⟧` markers only);
   agnostic across harness, model, prompt, and language.
 

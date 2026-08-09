@@ -382,6 +382,31 @@ zero. Nothing short of reading would have reached that.
 `cria/loop.py::verdict_from_reasoning` — the fix that only reading found.
 
 
+### 24. An invariant that must hold on the WIRE belongs at the wire
+**Rule.** If a property must be true of the body the model actually receives — strict role
+alternation, no orphan `tool`, no malformed historical tool_call — enforce it at the last point
+before serialization (`Upstream._prep`), not at a call site. A transform that runs mid-pipeline is
+undone by anything appended downstream, and the next appender will not know it exists.
+**Why.** `merge_consecutive_turns` performed the alternation merge inside `Role.apply`. Four call
+sites append user-side turns AFTER the role is applied — the plan-off driver (focustrim's
+repeat-note), `guard_rumination`, `guard_truncation`, and the streaming proxy, which skips the trim
+entirely — so the body went out `…, tool, user` and a Llama-lineage template rejected it six times
+in a row, ending nemotron-nano run 1786243834 on an empty workspace. The wire already held two
+transforms for exactly this reason (the unconditional orphan-`tool` repair, which the floor's
+over-budget-only strip used to miss, and the assistant-side merge); this was the third and it was
+in the wrong place. **Ordering two lines per call site is a band-aid per site (#4).** Carry the
+role's intent as a cria-internal body hint (the `cria_output_reserve` pattern), consume and strip it
+at the wire, and keep it opt-in so every model that does not need it ships a byte-identical body.
+**Corollary — fix the path that produced the incident, not the one that resembles it.** The first
+fix for the above reordered `server.py`'s proxy path, which made ZERO calls in that run; every one
+of the failing calls was phase `coder-s1`. The phase is recorded on every captured body and in every
+`upstream.dump` — a census takes one command, and skipping it cost a commit whose message, comment,
+test docstring and audit entry all asserted the same wrong path (#23b, at the level of code paths
+rather than model output).
+**Embodied.** `cria/upstream.py::Upstream._prep` (the three wire normalizations),
+`cria/massage.py::merge_for_alternation`, `cria/config.py::Role.apply` (hint only);
+`tests/test_alternation_at_the_wire.py`; docs/audits/ladder-walk.md (the nemotron-nano walk).
+
 ## F. Conventions that hardened into rules
 
 ### 22. Model-facing strings live in prompt files, never inline f-strings
