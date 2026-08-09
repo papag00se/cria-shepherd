@@ -47,7 +47,6 @@ class Indicator:
     role: str | None = None  # None → passthrough (no routing)
     show_route: bool = True  # show the "which model" line this turn (else metrics only)
     note: str | None = None  # an extra one-off line, e.g. "planned 5 steps → …"
-    connect: list | None = None  # the one-time "cria connected · <model>" + compat check lines
     route: bool = True  # config: the "⟦cria⟧ <role> · <model>" banner is enabled
     assists: bool = True  # config: the "⟦cria⟧ <note>" guard/assist lines are enabled
 
@@ -143,8 +142,6 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
     # that the harness stores and re-summarizes. Flushed inline, the banner rides the content and
     # is stripped inbound with it.
     pending = []
-    for line in (indic.connect or []):   # the once-per-session connect + compat lines, first
-        pending.append(MARKER + line + "\n")
     if indic.route and indic.show_route:  # the ongoing route banner (config: [indicators] route)
         pending.append(route_line(indic) + "\n")
     if indic.assists and indic.note:  # a guard/assist note line (config: [indicators] assists)
@@ -176,7 +173,7 @@ def inject_buffered(raw: bytes, indic: Indicator) -> bytes:
     tok/s — a buffered response carries no timing.)"""
     if not indic.enabled:
         return raw
-    header_lines = [MARKER + l for l in (indic.connect or [])]  # connect + compat lines lead
+    header_lines = []
     if indic.route and indic.show_route:  # config: [indicators] route
         header_lines.append(route_line(indic))
     if indic.assists and indic.note:  # config: [indicators] assists

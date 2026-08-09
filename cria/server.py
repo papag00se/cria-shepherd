@@ -644,7 +644,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # (it once became an entire compaction summary). A banner must decorate a real turn or wait
         # for one.
         if ic.enabled and ic.connect and _has_visible_output(completion):
-            for line in reversed(self._connect_lines(self.server.upstream, self._connect_model(rlog), rlog) or []):
+            for line in reversed(self._take_connect_lines(rlog)):
                 _prepend_content_line(completion, f"{MARKER}{line}")
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
         if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
@@ -770,45 +770,56 @@ class CriaHandler(BaseHTTPRequestHandler):
             ic.enabled, ic.metrics,
             model=shown, role=route.role,
             show_route=not classification.cached, route=ic.route, assists=ic.assists,
-            connect=self._connect_lines(route.provider, shown, rlog) if ic.connect else None,
         )
 
-    def _connect_model(self, rlog) -> str:
-        """The name the connect banner shows on the drive path: the model ACTUALLY loaded at the
-        server, exactly as `_compute_banner` resolves it.
+    def _take_connect_lines(self, rlog) -> list[str]:
+        """The connect banner's lines, ONCE per process — and the once is spent when they are
+        PRINTED, not when they are built.
 
-        Via the public `loaded_model()` accessor, not the private attribute. Reading the attribute
-        was wrong on the turn that matters — it is still the unset sentinel until something calls
-        the accessor, and on the drive path `_finalize` runs BEFORE `_compute_banner` does, so the
-        first (and only) banner of the process would have shown a config backend label instead of
-        the model. That is the "config label that may not match" this file already warns about
-        fourteen lines below (#5b). The accessor caches, so this costs one /v1/models call per
-        process, on a path that already makes it."""
-        loaded = self.server.upstream.loaded_model(rlog)
-        if loaded:
-            return loaded
+        That distinction is the whole bug this method exists to end. The first two attempts set the
+        flag inside the builder, which `_route` called on every routed turn; five different
+        renderers can each decline to print what the builder returned (a tool-call-only turn holds
+        `pending` and never flushes, `inject_buffered` drops a header on empty content, an upstream
+        error 502s the turn, a keyed cloud provider has no /props, and the Responses adapter — the
+        API Codex actually speaks — renders only a route STRING and throws the lines away). Any one
+        of those spent the process's only chance and the operator saw nothing, forever. Measured on
+        the day's own log: 359 of 372 requests were Responses turns and not one carried a banner.
+
+        So there is now exactly ONE caller, `_finalize`, which prepends the lines itself and calls
+        this only when it is about to. Every surface that returns a completion goes through it —
+        the plan/drive loop, the buffered proxy, and the Responses adapter via `_produce_completion`.
+        The streaming CHAT proxy does not, and is deliberately not covered: neither Codex nor the
+        suite speaks it, and a second emitter is what caused this in the first place.
+
+        THE SUBJECT IS THE CODER'S ENDPOINT, not `[defaults]`. The banner answers "can cria drive
+        the model that does the work", and a role may carry its own base_url, so asking the shared
+        upstream could describe a different server than the one answering (#5b)."""
+        if getattr(self.server, "_connect_done", False):
+            return []
+        provider = self._coder_endpoint()
+        if provider is None or not hasattr(provider, "props"):
+            return []
         coder = self.server.cfg.routing.roles.get("coder")
-        return (coder.backend if coder else "") or "?"
-
-    def _connect_lines(self, provider, shown: str, rlog) -> list[str] | None:
-        """The once-per-PROCESS connect banner: what cria is fronting, and whether this model's
-        template is one it can drive (cria/compat.py). Emitted on the first turn only — after that
-        the model behind the endpoint cannot change without a cria restart (the same assumption
-        `loaded_model` already makes), so repeating it every turn would be noise (#3).
-
-        Silent whenever it would be guessing: a provider with no /props (cloud), an unreadable
-        /props, or a payload carrying neither capability flags nor a template. A banner is
-        decoration; a WRONG banner is a false fact about the world (#5b)."""
-        if getattr(self.server, "_connect_done", False) or not hasattr(provider, "props"):
-            return None
-        self.server._connect_done = True   # per PROCESS: the handler is rebuilt every request
-        coder = self.server.cfg.routing.roles.get("coder")
-        lines = compat.banner(provider.props(rlog), model=shown,
+        loaded = provider.loaded_model(rlog) if hasattr(provider, "loaded_model") else None
+        if not loaded:
+            # No answer from /v1/models → say nothing rather than print a config label as if it
+            # were the model. The same file warns about exactly that substitution.
+            return []
+        lines = compat.banner(provider.props(rlog), model=loaded,
                               merge_turns=bool(coder and coder.merge_consecutive_turns),
                               collapse_system=bool(coder and coder.collapse_system_prompt))
-        if lines:
-            rlog.emit("compat.connect", model=shown, checks=len(lines))
-        return lines or None
+        if not lines:
+            return []
+        self.server._connect_done = True   # spent only now, with the lines on their way out
+        rlog.emit("compat.connect", model=loaded, lines=len(lines))
+        return lines
+
+    def _coder_endpoint(self):
+        """The Upstream the CODER role actually runs on — the subject of the compat report."""
+        try:
+            return self.server.router.endpoint_for("coder") if self.server.router else self.server.upstream
+        except (AttributeError, KeyError):
+            return self.server.upstream
 
     def _apply_route_role(self, pbody: dict, indic) -> dict:
         """Attach the routed role's sampling + reasoning (temp/top_p/top_k/repeat_penalty + the

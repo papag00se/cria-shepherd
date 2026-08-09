@@ -66,7 +66,12 @@ def probe(props: dict | None, *, merge_turns: bool = False) -> list[tuple[str, s
     # the fallback for a build that predates chat_template_caps. cria's coder path is ~100% tool
     # calls, so a model without this cannot do the job at all — the r1-llama outcome.
     if "supports_tools" in caps or "supports_tool_calls" in caps:
-        has_tools = bool(caps.get("supports_tools")) and bool(caps.get("supports_tool_calls", True))
+        # Absent key → True, so a server that answers only ONE of the pair is not read as a denial.
+        # The earlier form demanded `supports_tools` while the guard accepted either, which made a
+        # build exposing only `supports_tool_calls` print a red 'no tool-call branch' over a template
+        # that plainly has one — a false fact about a working model, the exact outcome this module
+        # was written to avoid (#5b).
+        has_tools = bool(caps.get("supports_tools", True)) and bool(caps.get("supports_tool_calls", True))
     else:
         has_tools = ("tools" in tmpl) or ("tool_calls" in tmpl)
     out.append((OK, "tools", "") if has_tools else
@@ -74,8 +79,13 @@ def probe(props: dict | None, *, merge_turns: bool = False) -> list[tuple[str, s
 
     # TURN ORDER. Meta's Llama lineage raises on non-alternating roles; cria's ⟦ctx:…⟧ anchors are
     # consecutive user turns, so the FIRST coder call is already a violation.
+    # Reported ONLY when there is a template to read. A /props carrying capability flags but no
+    # chat_template would otherwise yield a green asserted from absence of evidence — cria stating a
+    # fact it never checked (#5b). No template, no line.
     strict = ("must alternate" in tmpl) or ("loop.index0 % 2" in tmpl)
-    if not strict:
+    if not tmpl:
+        pass
+    elif not strict:
         out.append((OK, "turn order", ""))
     elif merge_turns:
         out.append((HANDLED, "turn order", "strict alternation — merging consecutive turns"))

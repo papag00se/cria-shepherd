@@ -140,97 +140,110 @@ class ItRidesTheMarkerRailTests(unittest.TestCase):
         self.assertNotIn("cria connected", out[0]["content"])
 
 
-class TheIndicatorCarriesItTests(unittest.TestCase):
-    def test_the_field_exists_and_defaults_to_nothing(self):
+class SpentOnPrintNotOnBuildTests(unittest.TestCase):
+    """THE bug, twice over. The first two attempts set the once-per-process flag inside the BUILDER,
+    which `_route` called on every routed turn — while five separate renderers can each decline to
+    print what the builder returned:
+
+      * a tool-call-only turn: `wrap_stream` holds its pending lines until the first content delta,
+        which never comes;
+      * `inject_buffered` returns the body untouched when content is empty;
+      * an upstream error 502s the turn;
+      * a keyed cloud provider has no /props, so there are no lines;
+      * the Responses adapter — the API Codex actually speaks — renders only a route STRING and
+        throws the lines away.
+
+    Any one of those spent the process's only chance and the operator saw nothing, ever. Measured on
+    the day's own log: 359 of 372 requests were Responses turns, and not one carried a banner.
+
+    The fix is structural, not another patched path: ONE emitter (`_finalize`, which every surface
+    returning a completion goes through), and the flag is spent at the moment the lines are
+    prepended."""
+
+    def test_the_flag_is_not_spent_by_building(self):
+        import inspect
+        from cria import server
+        h = next(v for v in vars(server).values()
+                 if isinstance(v, type) and hasattr(v, "_take_connect_lines"))
+        src = inspect.getsource(h._take_connect_lines)
+        # the flag is set AFTER the lines are known non-empty, on the way out
+        self.assertLess(src.index("if not lines:"), src.index("_connect_done = True"))
+
+    def test_there_is_exactly_one_emitter(self):
+        import inspect
+        from cria import server
+        src = inspect.getsource(server)
+        self.assertEqual(src.count("_take_connect_lines(rlog)"), 1,
+                         "a second emitter is what caused this bug twice")
+
+    def test_the_indicator_no_longer_carries_it(self):
+        """Dead wiring misleads the next reader; the Indicator path is gone, not just unused."""
+        import dataclasses
         from cria.indicators import Indicator
-        self.assertIsNone(Indicator(True, True, "m").connect)
+        self.assertNotIn("connect", {f.name for f in dataclasses.fields(Indicator)})
 
-    def test_both_render_paths_emit_it(self):
-        import inspect
-        from cria import indicators
-        self.assertIn("indic.connect", inspect.getsource(indicators.wrap_stream))
-        self.assertIn("indic.connect", inspect.getsource(indicators.inject_buffered))
-
-    def test_the_operator_can_turn_it_off(self):
-        from cria.config import IndicatorsConfig
-        self.assertTrue(IndicatorsConfig().connect)
-        self.assertFalse(IndicatorsConfig(connect=False).connect)
-
-
-class ItReachesTheDRIVEPathTests(unittest.TestCase):
-    """The bug this class exists for: the banner shipped wired ONLY into the Indicator that
-    `_route` builds — and when cria's loop engages (every suite run, every real coding turn)
-    `_produce_stream` returns before `_route` is ever reached. It was verified with a curl, which
-    takes the proxy path, so it looked correct and was invisible in production. Same
-    one-path-not-its-twin shape as four other faults fixed this week.
-
-    `_finalize` is this file's stated single completion-finalization chokepoint and the drive path
-    does go through it, so that is where the banner is emitted; the Indicator keeps the streaming
-    proxy covered, and one shared flag stops a double print."""
-
-    def test_finalize_emits_the_banner(self):
+    def test_it_asks_the_CODERs_endpoint_not_the_shared_default(self):
+        """A role may carry its own base_url, so the shared upstream can be a different server than
+        the one doing the work (#5b)."""
         import inspect
         from cria import server
-        src = inspect.getsource(server.CriaHandler._finalize) if hasattr(server, "CriaHandler") else ""
-        if not src:
-            handler = next(v for k, v in vars(server).items()
-                           if isinstance(v, type) and hasattr(v, "_finalize"))
-            src = inspect.getsource(handler._finalize)
-        self.assertIn("_connect_lines", src,
-                      "the drive path's chokepoint does not emit the connect banner")
+        h = next(v for v in vars(server).values()
+                 if isinstance(v, type) and hasattr(v, "_coder_endpoint"))
+        self.assertIn('endpoint_for("coder")', inspect.getsource(h._coder_endpoint))
 
-    def test_it_is_gated_on_visible_output(self):
-        """A header-only completion is stored and re-summarized by the harness as if it were the
-        model's answer — the lesson inject_buffered records in full."""
-        import inspect
-        from cria import server
-        handler = next(v for k, v in vars(server).items()
-                       if isinstance(v, type) and hasattr(v, "_finalize"))
-        src = inspect.getsource(handler._finalize)
-        i = src.index("_connect_lines")
-        self.assertIn("_has_visible_output", src[:i],
-                      "the banner must not turn an empty turn into a visible one")
-
-    def test_one_shot_flag_is_shared_by_both_paths(self):
-        import inspect
-        from cria import server
-        handler = next(v for k, v in vars(server).items()
-                       if isinstance(v, type) and hasattr(v, "_connect_lines"))
-        src = inspect.getsource(handler._connect_lines)
-        self.assertIn("_connect_done", src)
-        self.assertIn("self.server", src, "the flag must live on the SERVER, not the per-request handler")
-
-
-
-class TheBannerNamesTheREALModelTests(unittest.TestCase):
-    """`_finalize` runs BEFORE `_compute_banner` on the Responses path, so the connect banner is the
-    FIRST thing that needs the loaded-model name — and on that turn the private `_loaded_model`
-    attribute is still the unset sentinel. Reading it directly printed a config backend label on the
-    one banner the process ever emits, which is the "config label that may not match" the neighbouring
-    code warns about (#5b). The public accessor fetches and caches instead."""
-
-    def test_it_uses_the_public_accessor_not_the_private_attribute(self):
-        import inspect
-        from cria import server
-        handler = next(v for v in vars(server).values()
-                       if isinstance(v, type) and hasattr(v, "_connect_model"))
-        src = inspect.getsource(handler._connect_model)
-        self.assertIn("loaded_model(rlog)", src)
-        self.assertNotIn('getattr(self.server.upstream, "_loaded_model"', src)
-
-    def test_it_falls_back_only_when_the_server_did_not_answer(self):
+    def test_no_loaded_model_means_no_banner_rather_than_a_config_label(self):
         import types as _t
         from cria import server
-        handler = next(v for v in vars(server).values()
-                       if isinstance(v, type) and hasattr(v, "_connect_model"))
-        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
-        role = _t.SimpleNamespace(backend="local")
+        h = next(v for v in vars(server).values()
+                 if isinstance(v, type) and hasattr(v, "_take_connect_lines"))
+        up = _t.SimpleNamespace(props=lambda r: {"chat_template": "tool_calls"},
+                                loaded_model=lambda r: None)
         fake = _t.SimpleNamespace(server=_t.SimpleNamespace(
-            upstream=_t.SimpleNamespace(loaded_model=lambda r: "qwen35_9b_q6"),
-            cfg=_t.SimpleNamespace(routing=_t.SimpleNamespace(roles={"coder": role}))))
-        self.assertEqual(handler._connect_model(fake, rlog), "qwen35_9b_q6")
-        fake.server.upstream.loaded_model = lambda r: None
-        self.assertEqual(handler._connect_model(fake, rlog), "local")
+            _connect_done=False, router=None, upstream=up,
+            cfg=_t.SimpleNamespace(routing=_t.SimpleNamespace(roles={}))))
+        fake._coder_endpoint = lambda: h._coder_endpoint(fake)
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        self.assertEqual(h._take_connect_lines(fake, rlog), [])
+        self.assertFalse(fake.server._connect_done, "a silent turn must not spend the one shot")
+
+    def test_a_real_banner_spends_the_shot_exactly_once(self):
+        import types as _t
+        from cria import server
+        h = next(v for v in vars(server).values()
+                 if isinstance(v, type) and hasattr(v, "_take_connect_lines"))
+        up = _t.SimpleNamespace(
+            props=lambda r: {"chat_template": TOOLS_BRANCH, "chat_template_caps": CAPS_GOOD},
+            loaded_model=lambda r: "qwen35_9b_q6")
+        fake = _t.SimpleNamespace(server=_t.SimpleNamespace(
+            _connect_done=False, router=None, upstream=up,
+            cfg=_t.SimpleNamespace(routing=_t.SimpleNamespace(roles={}))))
+        fake._coder_endpoint = lambda: h._coder_endpoint(fake)
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        first = h._take_connect_lines(fake, rlog)
+        self.assertTrue(first and "qwen35_9b_q6" in first[0])
+        self.assertEqual(h._take_connect_lines(fake, rlog), [], "printed twice")
+
+
+class TruthfulnessRepairsTests(unittest.TestCase):
+    def test_a_server_answering_only_supports_tool_calls_is_not_called_broken(self):
+        """The guard accepted either capability key while the formula demanded `supports_tools`, so
+        such a build printed a red 'no tool-call branch' over a template that plainly has one."""
+        out = compat.probe(props(TOOLS_BRANCH, {"supports_tool_calls": True}))
+        self.assertEqual([g for g, l, _ in out if l == "tools"], [compat.OK])
+
+    def test_the_mirror_case_also_passes(self):
+        out = compat.probe(props(TOOLS_BRANCH, {"supports_tools": True}))
+        self.assertEqual([g for g, l, _ in out if l == "tools"], [compat.OK])
+
+    def test_an_explicit_denial_is_still_believed(self):
+        out = compat.probe(props(TOOLS_BRANCH, {"supports_tools": False}))
+        self.assertEqual([g for g, l, _ in out if l == "tools"], [compat.BROKEN])
+
+    def test_turn_order_is_not_claimed_green_without_a_template(self):
+        """caps but no chat_template → a green asserted from absence of evidence."""
+        labels = [l for _, l, _ in compat.probe(props("", CAPS_GOOD))]
+        self.assertNotIn("turn order", labels)
+        self.assertIn("turn order", [l for _, l, _ in compat.probe(props(TOOLS_BRANCH, CAPS_GOOD))])
 
 
 if __name__ == "__main__":
