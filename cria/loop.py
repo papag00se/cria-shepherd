@@ -1513,7 +1513,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # The ACTION comes back separately so a caller building a plan step can use the fix alone —
         # the old single string (framing + reason essay + fix) became a whole step verbatim
         # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
-        return satisfied, _verdict_nudge(obj, satisfied, routes), _fix_text(obj)
+        return satisfied, _verdict_nudge(obj, satisfied, routes,
+                                         denied=_denied_calls_in_log(evidence)), _fix_text(obj)
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -1528,7 +1529,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
-    return False, _verdict_nudge(retry, False, routes), str(retry.get("proposed_fix") or "").strip()
+    return False, _verdict_nudge(retry, False, routes,
+                                 denied=_denied_calls_in_log(evidence)), str(retry.get("proposed_fix") or "").strip()
 
 
 def satisfaction_done_note(reason: str, exec_marker: str = "") -> str:
@@ -3317,7 +3319,7 @@ class Loop:
                     if not confirmed:
                         done = False
                         obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
-            reason = _verdict_nudge(obj, done, routes)
+            reason = _verdict_nudge(obj, done, routes, denied=_denied_calls_in_log(evidence))
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -3335,7 +3337,8 @@ class Loop:
             reason = prompts.load("unverified_step") + _named_gap(red_findings)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
-        reason = _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-done is trustworthy
+        reason = _verdict_nudge(retry, False, routes,   # a reasoning-off NOT-done is trustworthy
+                                denied=_denied_calls_in_log(evidence))
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
@@ -7535,7 +7538,7 @@ def _named_gap(findings: str) -> str:
     return ("\n\nWhat cria's own checks currently report, unresolved:\n" + f) if f else ""
 
 
-def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:
+def _verdict_nudge(obj: dict, done: bool, routes: str = "", denied: tuple | list = ()) -> str:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
@@ -7553,7 +7556,53 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:
     # was not done; only the invented move is dropped.
     if routes and urlgrounding.ungrounded_routes(fix, routes):
         return reason
+    # Same bar, other guard: never RECOMMEND a call cria itself refused. nemotron-nano 1786243834
+    # call 0056: the relayed fix was `read_file {'path': './tmp/read-only/…openapi.json'}` — the
+    # exact call the repeat-guard was blocking, three denials deep. The coder obeyed the steer over
+    # the guard (0056, 0062, 0068) and the loop persisted: two cria voices in direct conflict. The
+    # denial record is read from cria's own labels in the work log, never from wording.
+    if _fix_recommends_denied(fix, denied):
+        return reason
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
+
+
+def _denied_calls_in_log(log: str) -> list[tuple[str, list[str]]]:
+    """``(tool, [its argument values])`` for every call the work log labels as refused — cria's own
+    ``work_log_denied`` label, applied by ``_work_log`` at the site that knows, is the ONLY signal
+    read (rule 12: the authoritative event, never a wording match on the result body)."""
+    label = prompts.load("work_log_denied")
+    out: list[tuple[str, list[str]]] = []
+    for line in (log or "").splitlines():
+        if label not in line:
+            continue
+        m = re.match(r"\s*\$\s+([\w.-]+)\s+(\{.*\})\s*$", line.split(label)[0])
+        if not m:
+            continue
+        try:
+            args = jsontext.loads(m.group(2))
+        except (ValueError, TypeError):
+            args = None
+        values = ([str(v) for v in args.values() if isinstance(v, str) and len(str(v)) >= 8]
+                  if isinstance(args, dict)
+                  else [v for v in re.findall(r'"([^"]{8,})"', m.group(2))])
+        pair = (m.group(1), values)
+        if values and pair not in out:
+            out.append(pair)
+    return out
+
+
+def _fix_recommends_denied(fix: str, denied) -> bool:
+    """Does this proposed fix spell out a call cria already refused — the denied tool BY NAME plus
+    one of that call's own argument values? The value must end at a boundary: the dup-fetch guard
+    denied `https://api.handle.me/`, and a fix fetching the LONGER `…/handles/{handle}` is a
+    different, legitimate call (walked at 0024) — as is a `grep` of the denied file's path, which
+    names the path but not the tool (walked at 0034, a sensible pointer that must survive)."""
+    for tool, values in denied or ():
+        if tool and tool in (fix or ""):
+            for v in values:
+                if re.search(re.escape(v) + r"(?![\w/\-{])", fix):
+                    return True
+    return False
 
 
 def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str,
