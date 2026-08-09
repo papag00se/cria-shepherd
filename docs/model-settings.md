@@ -36,7 +36,7 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
-| **nemotron-nano** (8B) | Q6_K | reasoning ON `temp 0.6, top_p 0.95`; OFF greedy — **the card gives them per mode**, and cria's coder+reasoner run ON while classifier+compactor run OFF, so it maps straight onto the four roles. Also `think_protocol = "system_directive"` | NVIDIA's own card | `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`, a derivative of meta-llama/Llama-3.1-8B-Instruct post-trained for reasoning **and tool calling** (SFT covers "Math, Code, Reasoning, and Tool Calling"; BFCL v2 Live 63.9% off / 63.6% on). **The first Llama-architecture model on the ladder** and the only 8B Llama derivative with both halves cria needs — see the two rejected below. Reasoning is a SYSTEM-PROMPT SENTENCE, not a parameter. Never set `collapse_system_prompt` here: folding the system prompt away deletes the switch |
+| **nemotron-nano** (8B) | Q6_K | reasoning ON `temp 0.6, top_p 0.95`; OFF greedy — **the card gives them per mode**, and cria's coder+reasoner run ON while classifier+compactor run OFF, so it maps straight onto the four roles. Also `think_protocol = "system_directive"` and `merge_consecutive_turns = true` | NVIDIA's own card | `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`, a derivative of meta-llama/Llama-3.1-8B-Instruct post-trained for reasoning **and tool calling** (SFT covers "Math, Code, Reasoning, and Tool Calling"; BFCL v2 Live 63.9% off / 63.6% on). **The first Llama-architecture model on the ladder** and the only 8B Llama derivative with both halves cria needs — see the two rejected below. Reasoning is a SYSTEM-PROMPT SENTENCE, not a parameter. Never set `collapse_system_prompt` here: folding the system prompt away deletes the switch |
 
 ### Considered and REJECTED for the Llama-family slot (2026-08-08)
 
@@ -236,6 +236,39 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > temperature = 0.0
 > repeat_penalty = 1.1
 > ```
+
+---
+
+## `merge_consecutive_turns` — strict role alternation
+
+Meta's Llama chat-template lineage enforces alternation literally:
+
+```jinja
+{%- if (message['role'] in ['user','tool']) != (loop.index0 % 2 == 0) -%}
+  {{- raise_exception('Conversation roles must alternate between user/tool and assistant') -}}
+```
+
+Every even position must be user-or-tool, every odd one assistant. **cria's whole anchor mechanism
+is consecutive user turns** — ⟦ctx:checks⟧, ⟦ctx:steer⟧, ⟦ctx:facts⟧ each arrive as their own
+message — so a Llama-lineage model rejects cria outright. Measured on nemotron-nano: the FIRST coder
+call, system plus three user turns, returned 400 twice and the run died in 24 seconds having made
+two calls.
+
+`[roles.<name>] merge_consecutive_turns = true` collapses each run of consecutive same-SIDE messages
+into one. Side, not role: the template renders a `tool` result as a user turn, so `{user, tool}` is
+one side and `{assistant}` the other — merging by role alone would miss the common tool-result-then-
+anchor pair. Nothing is dropped or reordered; cria's anchors are self-delimiting blocks so
+concatenation reads exactly as separate turns did. A merged run keeps its first message's role, so a
+leading tool result keeps its `<TOOL_RESPONSE>` framing, and an assistant turn carrying `tool_calls`
+is never folded into or out of.
+
+**Who needs it.** Only Llama-lineage templates. Checked in the GGUFs: Qwen3.5, Qwythos and
+Nemotron-H carry zero alternation guards. Note the two Nemotrons are unrelated — `nemotron-elastic`
+is NVIDIA's own mamba-hybrid architecture with its own permissive template; `nemotron-nano` is a
+Llama-3.1 derivative and inherits Meta's convention.
+
+Every shape was verified against the live server, 400 before and 200 after: three stacked anchors, a
+tool result followed by an anchor, and two consecutive assistant turns.
 
 ---
 

@@ -258,3 +258,102 @@ class TheThirdReasoningConventionTests(unittest.TestCase):
              reasoning="on", collapse_system_prompt=True).apply(body)
         self.assertEqual(body["messages"][0]["role"], "user")
         self.assertIn("detailed thinking on", body["messages"][0]["content"])
+
+
+class StrictRoleAlternationTests(unittest.TestCase):
+    """Meta's Llama chat-template lineage enforces alternation literally:
+
+        {%- if (message['role'] in ['user','tool']) != (loop.index0 % 2 == 0) -%}
+          {{- raise_exception('Conversation roles must alternate between user/tool and assistant')
+
+    cria's whole anchor mechanism is consecutive user turns, so a Llama-lineage model rejects it
+    outright. Measured on Llama-3.1-Nemotron-Nano: the FIRST coder call — system plus three user
+    turns — returned 400 twice and the run died in 24 seconds with two calls.
+
+    Nothing on the ladder had hit it because Qwen, Gemma and Nemotron-H templates carry zero
+    alternation guards (checked in the GGUFs). Note the two Nemotrons are unrelated: nemotron-elastic
+    is NVIDIA's own mamba-hybrid architecture, nemotron-nano is a Llama-3.1 derivative and inherits
+    Meta's template convention.
+
+    Every shape below was verified against the LIVE server: 400 before, 200 after.
+    """
+    from cria.config import Role as _R
+    S = {"role": "system", "content": "detailed thinking on\n\nFRAME"}
+    U = staticmethod(lambda t: {"role": "user", "content": t})
+    A = staticmethod(lambda t: {"role": "assistant", "content": t})
+    TC = {"role": "assistant", "content": None,
+          "tool_calls": [{"id": "c1", "type": "function",
+                          "function": {"name": "read_file", "arguments": '{"p":"a"}'}}]}
+    T = {"role": "tool", "tool_call_id": "c1", "content": "file body"}
+
+    def _merged(self, msgs):
+        from cria.config import Role
+        body = {"messages": [dict(m) for m in msgs]}
+        Role(name="coder", backend="local", merge_consecutive_turns=True).apply(body)
+        return body["messages"]
+
+    def _alternates(self, msgs):
+        rest = msgs[1:] if msgs and msgs[0]["role"] == "system" else msgs
+        for i, m in enumerate(rest):
+            if (m["role"] in ("user", "tool")) != (i % 2 == 0):
+                return False
+        return True
+
+    def test_the_body_that_actually_crashed_the_run(self):
+        out = self._merged([self.S, self.U("AGENTS"), self.U("task"), self.U("⟦ctx:steer⟧ do X")])
+        self.assertTrue(self._alternates(out))
+        self.assertEqual(len(out), 2)
+
+    def test_no_anchor_text_is_lost(self):
+        out = self._merged([self.S, self.U("AGENTS"), self.U("task"), self.U("⟦ctx:steer⟧ do X")])
+        for piece in ("AGENTS", "task", "⟦ctx:steer⟧ do X"):
+            self.assertIn(piece, out[1]["content"])
+
+    def test_a_tool_result_followed_by_an_anchor(self):
+        """The same violation, and the one merging by ROLE alone would miss — the template treats
+        `tool` as a user turn, so tool+user is already two on the same side."""
+        out = self._merged([self.S, self.U("task"), self.TC, self.T, self.U("⟦ctx:checks⟧ green")])
+        self.assertTrue(self._alternates(out))
+        self.assertIn("file body", out[-1]["content"])
+        self.assertIn("⟦ctx:checks⟧ green", out[-1]["content"])
+
+    def test_a_merged_run_keeps_the_role_of_its_first_message(self):
+        """So a leading tool result keeps its <TOOL_RESPONSE> framing."""
+        out = self._merged([self.S, self.U("t"), self.TC, self.T, self.U("anchor")])
+        self.assertEqual(out[-1]["role"], "tool")
+
+    def test_two_assistant_text_turns_merge(self):
+        out = self._merged([self.S, self.U("a"), self.A("x"), self.A("y"), self.U("b")])
+        self.assertTrue(self._alternates(out))
+        self.assertIn("x", out[2]["content"]); self.assertIn("y", out[2]["content"])
+
+    def test_a_tool_CALL_turn_is_never_folded(self):
+        """A structured emission is not text — folding either side of it would corrupt the call."""
+        out = self._merged([self.S, self.U("a"), self.TC, self.T, self.A("done"), self.U("next")])
+        tc = [m for m in out if m.get("tool_calls")]
+        self.assertEqual(len(tc), 1)
+        self.assertEqual(tc[0]["tool_calls"][0]["function"]["name"], "read_file")
+
+    def test_an_already_alternating_body_is_untouched(self):
+        msgs = [self.S, self.U("a"), self.TC, self.T, self.A("done"), self.U("next")]
+        self.assertEqual(len(self._merged(msgs)), len(msgs))
+
+    def test_order_is_never_changed(self):
+        out = self._merged([self.S, self.U("one"), self.U("two"), self.A("mid"), self.U("three")])
+        self.assertLess(out[1]["content"].index("one"), out[1]["content"].index("two"))
+
+    def test_off_by_default_and_other_models_untouched(self):
+        from cria.config import Role
+        body = {"messages": [self.S, self.U("a"), self.U("b")]}
+        Role(name="coder", backend="local").apply(body)
+        self.assertEqual(len(body["messages"]), 3)
+
+    def test_the_suite_sets_it_for_nemotron_nano_only(self):
+        import sys, pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
+        import sampling
+        self.assertIn("merge_consecutive_turns", sampling.KNOBS)
+        for model, roles in sampling.MODEL_SAMPLING.items():
+            for role, knobs in roles.items():
+                want = model == "nemotron-nano"
+                self.assertEqual(knobs.get("merge_consecutive_turns", False), want, f"{model}/{role}")

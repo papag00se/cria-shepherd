@@ -78,10 +78,14 @@ MODEL_SAMPLING = {
     # convention is the MODEL's rather than the endpoint's — the same llama.cpp server on :18084
     # serves parameter-toggled models the rest of the week. Listed in KNOBS so it is dropped on swap.
     "nemotron-nano": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive"},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive"},
-        "classifier": {"temperature": 0.0, "think_protocol": "system_directive"},
-        "compactor":  {"temperature": 0.0, "think_protocol": "system_directive"},
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive",
+                       "merge_consecutive_turns": True},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive",
+                       "merge_consecutive_turns": True},
+        "classifier": {"temperature": 0.0, "think_protocol": "system_directive",
+                       "merge_consecutive_turns": True},
+        "compactor":  {"temperature": 0.0, "think_protocol": "system_directive",
+                       "merge_consecutive_turns": True},
     },
     # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
     # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
@@ -126,7 +130,7 @@ MODEL_SAMPLING = {
 # value cria.toml carries and run.py rewrites on every swap. Listed here so a stale one from the
 # previous model is dropped, exactly like a stale temperature.
 KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
-         "collapse_system_prompt", "think_protocol")
+         "collapse_system_prompt", "think_protocol", "merge_consecutive_turns")
 
 
 def render(model: str) -> dict:
