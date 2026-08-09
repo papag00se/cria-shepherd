@@ -68,12 +68,12 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
-    # Dolphin 3.0 ships no sampling on its card; meta's Llama-3.1 defaults are temp 0.6 / top_p 0.9,
-    # and top_k is left off because Llama-3.1 does not publish one. NOT a reasoning model — the
-    # classifier/compactor zeros still apply, they just have nothing to suppress.
-    "dolphin3": {
-        "coder":      {"temperature": 0.6, "top_p": 0.9},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.9},
+    # DeepSeek-R1's card is explicit and unusually strict: temperature 0.5-0.7 (0.6 recommended),
+    # top_p 0.95, and NO system prompt — everything in the user turn. 0.6 is the midpoint it names.
+    # top_k is left off because the card does not publish one.
+    "r1-llama": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },

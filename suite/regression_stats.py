@@ -70,7 +70,7 @@ MODEL_SPECS = {
     "gemma4-finetune":  ("gemma4-finetune", "12B q4km (retired finetune)"),
     "gemma4":           ("gemma4", "12B q4km"),
     "qwen35":           ("qwen3.5", "9B q6"),
-    "dolphin3":         ("dolphin3 (llama)", "8B q6"),
+    "r1-llama":         ("r1-distill (llama)", "8B q6"),
     "qwythos":          ("qwythos", "9B q6"),
     "qwopus":           ("qwopus", "9B q6"),
     "ornith":           ("ornith", "9B q6"),
