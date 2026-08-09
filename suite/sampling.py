@@ -68,6 +68,15 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
+    # Dolphin 3.0 ships no sampling on its card; meta's Llama-3.1 defaults are temp 0.6 / top_p 0.9,
+    # and top_k is left off because Llama-3.1 does not publish one. NOT a reasoning model — the
+    # classifier/compactor zeros still apply, they just have nothing to suppress.
+    "dolphin3": {
+        "coder":      {"temperature": 0.6, "top_p": 0.9},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.9},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
     # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
     # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
     # the weights.

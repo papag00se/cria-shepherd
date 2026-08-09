@@ -52,6 +52,7 @@ SERVICES = {
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "qwen35": "llama-qwen35",
+    "dolphin3": "llama-dolphin3",
     "ornith": "llama-ornith-q6",
     "gemma4": "llama-gemma4",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
