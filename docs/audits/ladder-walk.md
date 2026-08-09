@@ -5797,6 +5797,20 @@ not a reading of the diff.
    something the coder wrote" — cria cannot stop a raw `curl -o` into that directory, so it
    describes the directory instead, which is true by construction.
 
-Server-side (not cria): the llama.cpp tool-grammar crash on `<TOOLCALL>[]` (56×). Track against
-llama.cpp upstream / a newer build before re-running this model; with a third of calls dying at the
-server no harness verdict on the model is clean.
+Server-side (not cria): the llama.cpp tool-grammar crash on `<TOOLCALL>[]` (56×). **RESEARCHED AND
+REPRODUCED 2026-08-09 — it is a known, unfixed llama.cpp bug and there is no config lever for it.**
+Two root causes combine: the single token `>[]` both completes the auto-derived `<TOOLCALL>` trigger
+and carries text past it, AND llama.cpp's generated tool-call grammar has no production for an empty
+array. Measured directly against a fresh nemotron server: 3/3 crashes on "answer without a tool"; a
+build 1,275 commits newer (2026-07-28) crashes IDENTICALLY, so the upgrade I had assumed would fix it
+does not; `--jinja` off does not help; `detailed thinking off` does not help. Upstream #14413 has been
+open since 2025-06-27, fix PR #19503 was rejected as "too invasive", and llama.cpp has no native
+`<TOOLCALL>` parser (PR #15083 closed unmerged) and no flag to disable the lazy tool-call grammar.
+The public runs this model's tool calling on vLLM with an NVIDIA out-of-tree plugin, never on
+llama.cpp. cria itself is CLEAR here: zero `upstream.retry` in the run — the repeated identical
+bodies were the harness re-sending, and cria surfaced each failure cleanly.
+
+**The lesson for the ladder: a model can be blocked by its RUNTIME, and that is invisible from the
+score.** nemotron-nano's 0/4 measures llama.cpp's grammar, not the model. Before a new model's score
+is treated as model form, check the server journal for the run — one `grep -c` over
+`journalctl -u llama-<model>` would have caught this on day one.
