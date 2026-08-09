@@ -5975,9 +5975,17 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # read_file). Without this the author's session carried every historical version whole — 49
     # copies of one function at g2-0159 — and it asserted "current state" from the pile instead of
     # reading (the latest tool-call turn keeps its full arguments: the live working set).
-    session = selfcompact.serialize(selfcompact.stub_old_write_args(
+    # DEFANGED, and with cria's OWN past output marked as such. Two measured faults, one call:
+    # mellum2 1786302864 call 0060 was shown tool-call syntax 50× and answered with a fabricated
+    # exec_command plus an invented Chunk ID and addr1q… address; call 0166 read the CODER's guess
+    # ("the endpoint only supports search_handles") as established fact and reversed a correct
+    # earlier directive, starting a four-way flip-flop that cost 83 edits. The first is imitation
+    # of a copyable template; the second is provenance — a wall of undifferentiated text in which
+    # a real endpoint response and a stuck model's speculation look identical.
+    session = _mark_own_notes(selfcompact.serialize(selfcompact.stub_old_write_args(
         _drop_harness_frame(probegate.clean_gate_results(
-            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None)))))
+            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None)))),
+        defang=True))
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
@@ -7477,6 +7485,32 @@ def _named_gap(findings: str) -> str:
     actionable attached. Empty when cria holds nothing, which keeps silence the honest answer."""
     f = (findings or "").strip()
     return ("\n\nWhat cria's own checks currently report, unresolved:\n" + f) if f else ""
+
+
+def _mark_own_notes(session: str) -> str:
+    """Tag every line of the serialized session that is cria's OWN earlier output.
+
+    The steer author is handed one flat transcript containing real tool results, the coder's
+    speculation, and cria's previous steers — and nothing distinguishes them. mellum2 1786302864
+    call 0166 read a claim out of that wall ("the MCP endpoint only supports search_handles"),
+    treated it as endpoint evidence, and reversed call 0134's CORRECT directive; 0134 had cited the
+    real `tools":[{"name":"get_handle"…}]` response. The claim it believed was the coder's own
+    stuck reasoning, quoted back. That reversal began a four-way flip-flop and cost 83 edits.
+
+    A prior steer re-entering as evidence is the worst case, because it is a FEEDBACK LOOP: cria's
+    wrong answer becomes the grounds for cria's next wrong answer, with more confidence each round.
+    The prompt tells the author to discount anything marked this way; this is what does the marking.
+    Keyed on cria's own marker namespace, which is applied at the sites that inject (#12), never on
+    wording."""
+    if not session:
+        return session
+    out = []
+    for line in session.splitlines():
+        if indicators.SENTINEL in line or selfcompact.SUMMARY_MARKER in line or "⟦ctx:steer⟧" in line:
+            out.append(f"{line}   [EARLIER NOTE FROM THIS SYSTEM — not evidence]")
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def _label_spill_entries(disk: str) -> str:

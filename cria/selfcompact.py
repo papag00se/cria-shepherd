@@ -28,7 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import probegate, prompts
+from . import jsontext, probegate, prompts
 from .content_reduce import est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -147,9 +147,78 @@ def msg_digest(m: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-def serialize(messages: list[dict]) -> str:
-    """The transcript span → one string fed to the summarizer."""
-    return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
+def serialize(messages: list[dict], defang: bool = False) -> str:
+    """The transcript span → one string fed to a model.
+
+    ``defang`` renders the same facts with nothing a model can COPY. Measured over 717 reasoner
+    calls in the captures: a prompt demonstrating 0-9 tool-call/output shapes was answered by
+    imitating one 1% of the time, 10-29 3%, 30-59 **8%**. The worst case shipped: mellum2
+    1786302864 call 0060 was shown tool-call syntax 50 times and tool OUTPUT blocks 24 times, and
+    answered with a fabricated `exec_command(...)` plus an invented `Chunk ID`, wall time, exit
+    code and `addr1q…` address — which cria then delivered to the coder as a steer, in cria's voice.
+
+    The default rendering is the copyable one: `name({"arg": …})` is a complete template for how to
+    open a call, and the harness's `Chunk ID: / Wall time: / Process exited with code / Output:`
+    envelope is a complete template for how to fake its result. Defanged, a call reads
+    `the coder ran a shell command: pytest -q` and a result reads `→ failed, exit 1: …` — same
+    facts, no syntax to continue.
+
+    This is the lesson cria already recorded for the compaction path ("a weak model continues the
+    pattern and answers with a tool call, whatever the system prompt says", cria/server.py), where
+    the fix was to FLATTEN the history. This path was already flat and still failed, because
+    flattening kept the syntax. Flattening was necessary and not sufficient.
+
+    Opt-in, and currently taken only by the steer-author path — the one the 717-call measurement
+    covers. The summarizer keeps the verbatim rendering until the same base rate is taken for it
+    (#15)."""
+    if not defang:
+        return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
+    out = []
+    for i, m in enumerate(messages, 1):
+        line = _defanged_line(m)
+        if line:
+            out.append(f"[{i:02d}] {line}")
+    return "\n".join(out)
+
+
+# The harness's exec envelope, whose shape is the thing a model copies when it fakes a result.
+# `Process exited with code N` is stripped WITH the rest even though the code itself is kept — the
+# defanged line already states it as `→ exit N`, so leaving the original both duplicates the fact
+# and preserves the exact phrase a model copies when it fabricates a result.
+_ENVELOPE = re.compile(r"(?im)^\s*(?:Chunk ID|Wall time|Original token count|Output)\s*:.*$"
+                       r"|Process exited with code\s+\d+")
+_EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
+
+
+def _defanged_line(m: dict) -> str:
+    """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax."""
+    role = m.get("role")
+    text = _text(m).strip()
+    calls = m.get("tool_calls") or []
+    if calls:
+        bits = []
+        for tc in calls:
+            fn = tc.get("function") or {}
+            args = fn.get("arguments")
+            try:
+                d = jsontext.loads(args) if isinstance(args, str) else (args or {})
+            except (ValueError, TypeError, AttributeError):
+                d = {}
+            detail = "; ".join(f"{k}={str(v)[:160]}" for k, v in d.items()) if isinstance(d, dict) \
+                else str(args)[:160]
+            bits.append(f"the coder called {fn.get('name', '?')} — {detail}" if detail
+                        else f"the coder called {fn.get('name', '?')}")
+        return " / ".join(bits)
+    if role == "tool":
+        exit_m = _EXIT.search(text)
+        body = _ENVELOPE.sub("", text).strip()
+        head = f"→ exit {exit_m.group(1)}" if exit_m else "→ result"
+        return f"{head}: {' '.join(body.split())[:400]}" if body else head
+    if not text:
+        return ""
+    who = {"user": "the task/context said", "assistant": "the coder said",
+           "system": "the frame said"}.get(role, f"{role} said")
+    return f"{who}: {' '.join(text.split())[:400]}"
 
 
 def compaction_request(messages: list[dict]) -> str:
