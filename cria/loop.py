@@ -187,6 +187,11 @@ class GuardState:
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    nudge_reply: str = ""  # the coder's own no-tool-call reply the pending nudge is ABOUT — re-framed
+    # views rebuild history from the harness body, which never saw an internal prose turn, so without
+    # this the unexecuted-write nudge says "your last message contained the file's contents" about a
+    # message that is not there (nemotron-nano 1786243834 call 0073: told to resend content the frame
+    # had dropped, the model re-read the spec a 7th time instead)
     exec_finding: str = ""  # cria RAN the deliverable and it failed — ground truth, owed to the coder
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
@@ -2347,6 +2352,9 @@ class Loop:
             msgs = _elide_ledger_copies(msgs, sess, rlog)  # the anchor is the ONE copy — duplicates collapse
         steered = ""
         if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
+            if sess.nudge_reply:  # the reply the nudge refers to rides in front of it, as itself
+                msgs = msgs + [{"role": "assistant", "content": sess.nudge_reply}]
+                sess.nudge_reply = ""
             msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
             sess.nudge_reason = ""
             steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
@@ -2388,6 +2396,10 @@ class Loop:
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
+            # The nudge says "send that same content again" — so the content must be IN the frame.
+            # The re-framed view rebuilds from the harness body, which never saw this internal prose
+            # turn; without the reply the model is ordered to resend text it cannot see.
+            sess.nudge_reply = _completion_text(coder)
             return self._renudge(sess, key, body, prompts.load("unexecuted_write_nudge"), rlog)
         if sess.step_tool_calls == 0 and not sess.leg0_nudged:
             sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
@@ -3624,8 +3636,13 @@ class Loop:
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
-            conv = framed["messages"] + [{"role": "user", "content": prompts.render(
-                "nudge", reason=prompts.load("unexecuted_write_nudge"))}]
+            # The reply the nudge refers to rides in front of it — `framed` is what the coder was
+            # SENT, so its own prose answer is not in there, and "send that same content again"
+            # about an invisible message is unactionable (see the multi-step sibling).
+            conv = framed["messages"] + [
+                {"role": "assistant", "content": _completion_text(comp)},
+                {"role": "user", "content": prompts.render(
+                    "nudge", reason=prompts.load("unexecuted_write_nudge"))}]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
                 return comp  # it emitted the write after the nudge
