@@ -234,19 +234,19 @@ def authored_research_step(ask, task: str, *, domain: str = "", files: str = "")
                      or "").split())
     if not text or _is_none(text):
         return ""   # NONE is an ANSWER, not a defect; an empty reply leaves nothing to correct
-    defect = step_defect(text, task)
+    defect = step_defect(text, task, instruction=system)
     if defect is None:
         return text
     retry = " ".join((ask(system,
                       prompts.render("research_step_retry", task=task, context=ctx_block,
                                      answer=text, defect=defect))
                       or "").split())
-    if not retry or _is_none(retry) or step_defect(retry, task) is not None:
+    if not retry or _is_none(retry) or step_defect(retry, task, instruction=system) is not None:
         return ""
     return retry
 
 
-def step_defect(text: str, task: str) -> str | None:
+def step_defect(text: str, task: str, instruction: str = "") -> str | None:
     """Why this sentence cannot be the reading step — a plain-words reason for the retry prompt to
     quote — or None when it can. Each reason is the lesson of a run that paid for it:
 
@@ -257,13 +257,33 @@ def step_defect(text: str, task: str) -> str | None:
       directory", which returns denied, so the step could never be satisfied and 114 of 195 calls
       died against it. A step naming WHAT to learn cannot be unsatisfiable that way; WHERE can.
     * over-LONG — a paragraph is the model writing the plan or the work, not one step.
+    * THIRD-PERSON "the coder" — nemotron-nano run 1786243834 echoed the authoring instruction back
+      as the step: "Read the external source … AND INSTRUCT THE CODER to identify …". The step is
+      handed TO the coder; a sentence about the coder tells the executing model it is NOT the coder,
+      and that run's coder spent 81 calls saying so ("it involves verifying the completion of a task
+      created by another model") and wrote nothing. Measured over all 106 authored steps on disk:
+      only the two echo steps contain the phrase.
+    * the INSTRUCTION'S OWN CLOSING CLAUSE — the same echo carried "Output nothing else." into the
+      step, an author-facing constraint that reads as a gag order to the coder executing it (that
+      run's coder went silent for seven straight calls). The clause is derived from the live prompt
+      text (`_instruction_tail`), so rewording the prompt file moves the matcher with it. Measured:
+      3 echoes carry it, 0 of the 103 legitimate steps do.
 
     These are refusals of cria's OWN injected content, failing in the safe direction — no step, the
-    plan cria would have built anyway. Not a judgement about the coder's work, which is where a
-    lexical rule would be out of place (#9)."""
+    plan cria would have built anyway (a defective first answer still gets its one named retry).
+    Not a judgement about the coder's work, which is where a lexical rule would be out of place
+    (#9); "the coder" and the closing clause are both cria's own strings, compared against cria's
+    own prompt, and `tests/test_step_echo_defect.py` pins the sync so a prompt rename breaks loudly."""
     if len(text) > STEP_MAX_CHARS:
         return "it is far longer than one step"
     lowered, task_l = text.lower(), (task or "").lower()
+    if re.search(r"(?i)\bthe coder\b", text):
+        return ("it speaks about the coder in the third person — this sentence is handed TO the "
+                "coder, who cannot execute an instruction addressed to someone else")
+    tail = _instruction_tail(instruction)
+    if tail and tail in " ".join(lowered.split()):
+        return (f"it restates the planning instructions ('{tail}') instead of authoring a step — "
+                "those words are addressed to the step's author, not to the coder")
     for token in _LOCATION_TOKENS:
         if token in lowered and token not in task_l:
             return ("it names a location the task itself never named, which the coder may be "
@@ -281,6 +301,26 @@ def step_defect(text: str, task: str) -> str | None:
 
 def _is_none(text: str) -> bool:
     return text.strip().upper().rstrip(".") == "NONE"
+
+
+def _instruction_tail(instruction: str) -> str:
+    """The closing clause of the authoring instruction, normalized for containment matching.
+
+    By construction that clause is author-facing — both instruction prompts end on the output
+    constraint ("…and output nothing else." / "Output only that sentence or NONE.") and neither
+    ends on the step's content, which the instruction states mid-sentence. Deriving it from the
+    live prompt text keeps the matcher and the prompt from drifting apart: reword the prompt and
+    the matcher follows. Under 3 words → "" (no arm), so a radically restructured prompt fails
+    toward not-matching rather than matching prose it never contained."""
+    lines = [ln for ln in (instruction or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    norm = " ".join(lines[-1].lower().split())
+    tail = re.split(r"[;,:]", norm)[-1].strip(" .")
+    for lead in ("and ", "or "):
+        if tail.startswith(lead):
+            tail = tail[len(lead):]
+    return tail if len(tail.split()) >= 3 else ""
 
 
 # Verbs that make a sentence a BUILD instruction rather than a reading one. Refusing on these costs
