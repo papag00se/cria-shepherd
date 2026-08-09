@@ -644,7 +644,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # (it once became an entire compaction summary). A banner must decorate a real turn or wait
         # for one.
         if ic.enabled and ic.connect and _has_visible_output(completion):
-            for line in reversed(self._connect_lines(self.server.upstream, self._connect_model(), rlog) or []):
+            for line in reversed(self._connect_lines(self.server.upstream, self._connect_model(rlog), rlog) or []):
                 _prepend_content_line(completion, f"{MARKER}{line}")
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
         if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
@@ -773,12 +773,19 @@ class CriaHandler(BaseHTTPRequestHandler):
             connect=self._connect_lines(route.provider, shown, rlog) if ic.connect else None,
         )
 
-    def _connect_model(self) -> str:
-        """The name the connect banner shows on the drive path. The loaded model is the truth (#5b)
-        — `loaded_model` is already cached from /v1/models — and the configured coder backend name
-        is the fallback when the server did not answer."""
-        loaded = getattr(self.server.upstream, "_loaded_model", None)
-        if isinstance(loaded, str) and loaded:
+    def _connect_model(self, rlog) -> str:
+        """The name the connect banner shows on the drive path: the model ACTUALLY loaded at the
+        server, exactly as `_compute_banner` resolves it.
+
+        Via the public `loaded_model()` accessor, not the private attribute. Reading the attribute
+        was wrong on the turn that matters — it is still the unset sentinel until something calls
+        the accessor, and on the drive path `_finalize` runs BEFORE `_compute_banner` does, so the
+        first (and only) banner of the process would have shown a config backend label instead of
+        the model. That is the "config label that may not match" this file already warns about
+        fourteen lines below (#5b). The accessor caches, so this costs one /v1/models call per
+        process, on a path that already makes it."""
+        loaded = self.server.upstream.loaded_model(rlog)
+        if loaded:
             return loaded
         coder = self.server.cfg.routing.roles.get("coder")
         return (coder.backend if coder else "") or "?"

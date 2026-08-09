@@ -202,5 +202,36 @@ class ItReachesTheDRIVEPathTests(unittest.TestCase):
 
 
 
+class TheBannerNamesTheREALModelTests(unittest.TestCase):
+    """`_finalize` runs BEFORE `_compute_banner` on the Responses path, so the connect banner is the
+    FIRST thing that needs the loaded-model name — and on that turn the private `_loaded_model`
+    attribute is still the unset sentinel. Reading it directly printed a config backend label on the
+    one banner the process ever emits, which is the "config label that may not match" the neighbouring
+    code warns about (#5b). The public accessor fetches and caches instead."""
+
+    def test_it_uses_the_public_accessor_not_the_private_attribute(self):
+        import inspect
+        from cria import server
+        handler = next(v for v in vars(server).values()
+                       if isinstance(v, type) and hasattr(v, "_connect_model"))
+        src = inspect.getsource(handler._connect_model)
+        self.assertIn("loaded_model(rlog)", src)
+        self.assertNotIn('getattr(self.server.upstream, "_loaded_model"', src)
+
+    def test_it_falls_back_only_when_the_server_did_not_answer(self):
+        import types as _t
+        from cria import server
+        handler = next(v for v in vars(server).values()
+                       if isinstance(v, type) and hasattr(v, "_connect_model"))
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        role = _t.SimpleNamespace(backend="local")
+        fake = _t.SimpleNamespace(server=_t.SimpleNamespace(
+            upstream=_t.SimpleNamespace(loaded_model=lambda r: "qwen35_9b_q6"),
+            cfg=_t.SimpleNamespace(routing=_t.SimpleNamespace(roles={"coder": role}))))
+        self.assertEqual(handler._connect_model(fake, rlog), "qwen35_9b_q6")
+        fake.server.upstream.loaded_model = lambda r: None
+        self.assertEqual(handler._connect_model(fake, rlog), "local")
+
+
 if __name__ == "__main__":
     unittest.main()
