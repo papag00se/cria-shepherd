@@ -888,12 +888,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 {"role": "system", "content": prompts.load("selfcompact_summary")},
                 {"role": "user", "content": _compaction_transcript(pbody.get("messages", []))},
             ]}
-        # Trim BEFORE the role applies: focustrim may APPEND a user-side repeat-note, and the
-        # role's alternation merge (merge_consecutive_turns) must see the final message list. The
-        # reverse order left that note dangling after a tool turn — `tool, user` — which a strict
-        # Llama-lineage template rejects with `Conversation roles must alternate`: six identical
-        # 400s ended nemotron-nano run 1786243834. The drive path already orders it this way.
-        pbody = self._apply_route_role(self._focus_trim(pbody, rlog)[0], indic)
+        pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)

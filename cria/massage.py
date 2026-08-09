@@ -1747,3 +1747,66 @@ def _fix_hunk_lines(body: str) -> str:
         else:
             out.append(line)
     return "\n".join(out)
+
+
+# --- strict-template turn alternation (a WIRE normalization) -----------------------------------
+#
+# The template groups `tool` WITH `user`: a tool result is rendered as a user turn wrapping
+# <TOOL_RESPONSE>[…]. So the two sides that must alternate are {user, tool} and {assistant}.
+_USER_SIDE = ("user", "tool")
+
+# The cria-internal body hint that turns this on, set by `Role.apply` from the role's
+# `merge_consecutive_turns` and consumed + stripped by `Upstream._prep`. Same contract as
+# `cria_output_reserve`: a hint cria carries on the body, never a wire field.
+MERGE_TURNS_KEY = "cria_merge_turns"
+
+
+def merge_for_alternation(messages: list) -> list:
+    """Collapse each run of consecutive same-side messages into one, so roles strictly alternate.
+
+    For a Llama-lineage template the sides are {user, tool} and {assistant} — a tool result IS a
+    user turn to that template, which is why merging by ROLE alone is not enough: cria commonly
+    emits `tool` then a ⟦ctx:…⟧ `user` anchor, and that pair is already a violation.
+
+    Nothing is dropped and nothing is reordered. cria's anchors are self-delimiting blocks — each
+    opens with its own ⟦ctx:…⟧ marker — so concatenating them reads exactly as it did when they were
+    separate turns. A merged run keeps the role of its FIRST message, which preserves the
+    <TOOL_RESPONSE> framing when a tool result leads.
+
+    The system message is left where it is: the template consumes messages[0] as the system prompt
+    before the alternation loop ever runs, so it is outside the rule.
+
+    THIS RUNS AT THE WIRE, and that placement is the whole fix. It lived in `Role.apply`, which runs
+    mid-pipeline — so every later append defeated it. nemotron-nano run 1786243834 died on exactly
+    that: `focustrim` appends its repeat-note as a `user` turn AFTER the role was applied, the body
+    went out as `…, tool, user`, and the template answered `Conversation roles must alternate` six
+    times until the harness gave up (calls 0075-0081, workspace empty). Four call sites append
+    user-side turns after `Role.apply` — the plan-off driver, `guard_rumination`, `guard_truncation`,
+    and the streaming proxy, which skips the trim entirely — so ordering them one by one is a
+    band-aid per site (#4). At the wire there is no "later": this is the last transform before the
+    body is serialized, alongside its assistant-side twin `_merge_consecutive_assistant` and the
+    unconditional orphan-`tool` repair, both of which live here for the identical reason."""
+    if not isinstance(messages, list) or len(messages) < 2:
+        return messages
+
+    def side(m):
+        r = m.get("role") if isinstance(m, dict) else None
+        return "u" if r in _USER_SIDE else ("a" if r == "assistant" else None)
+
+    head = list(messages[:1]) if isinstance(messages[0], dict) and messages[0].get("role") == "system" else []
+    out: list = []
+    for m in messages[len(head):]:
+        sd = side(m)
+        prev = out[-1] if out else None
+        # An assistant turn carrying tool_calls is a structured emission — never fold another
+        # message into it, and never fold it into one. Only its TEXT siblings merge.
+        mergeable = (sd is not None and prev is not None and side(prev) == sd
+                     and not (prev.get("tool_calls") or m.get("tool_calls"))
+                     and isinstance(prev.get("content"), str) and isinstance(m.get("content"), str))
+        if mergeable:
+            merged = dict(prev)
+            merged["content"] = f"{prev['content']}\n\n{m['content']}".strip()
+            out[-1] = merged
+        else:
+            out.append(dict(m) if isinstance(m, dict) else m)
+    return head + out

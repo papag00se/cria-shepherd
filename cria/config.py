@@ -138,52 +138,6 @@ def _inject_nothink_directive(body: dict) -> None:
         body["messages"] = [{"role": "system", "content": directive}] + list(msgs)
 
 
-# The template groups `tool` WITH `user`: a tool result is rendered as a user turn wrapping
-# <TOOL_RESPONSE>[…]. So the two sides that must alternate are {user, tool} and {assistant}.
-_USER_SIDE = ("user", "tool")
-
-
-def _merge_for_alternation(body: dict) -> None:
-    """Collapse each run of consecutive same-side messages into one, so roles strictly alternate.
-
-    For a Llama-lineage template the sides are {user, tool} and {assistant} — a tool result IS a
-    user turn to that template, which is why merging by ROLE alone is not enough: cria commonly
-    emits `tool` then a ⟦ctx:…⟧ `user` anchor, and that pair is already a violation.
-
-    Nothing is dropped and nothing is reordered. cria's anchors are self-delimiting blocks — each
-    opens with its own ⟦ctx:…⟧ marker — so concatenating them reads exactly as it did when they were
-    separate turns. A merged run keeps the role of its FIRST message, which preserves the
-    <TOOL_RESPONSE> framing when a tool result leads.
-
-    The system message is left where it is: the template consumes messages[0] as the system prompt
-    before the alternation loop ever runs, so it is outside the rule."""
-    msgs = body.get("messages")
-    if not isinstance(msgs, list) or len(msgs) < 2:
-        return
-
-    def side(m):
-        r = m.get("role") if isinstance(m, dict) else None
-        return "u" if r in _USER_SIDE else ("a" if r == "assistant" else None)
-
-    head = list(msgs[:1]) if msgs and isinstance(msgs[0], dict) and msgs[0].get("role") == "system" else []
-    rest, out = msgs[len(head):], []
-    for m in rest:
-        sd = side(m)
-        prev = out[-1] if out else None
-        # An assistant turn carrying tool_calls is a structured emission — never fold another
-        # message into it, and never fold it into one. Only its TEXT siblings merge.
-        mergeable = (sd is not None and prev is not None and side(prev) == sd
-                     and not (prev.get("tool_calls") or m.get("tool_calls"))
-                     and isinstance(prev.get("content"), str) and isinstance(m.get("content"), str))
-        if mergeable:
-            merged = dict(prev)
-            merged["content"] = f"{prev['content']}\n\n{m['content']}".strip()
-            out[-1] = merged
-        else:
-            out.append(dict(m) if isinstance(m, dict) else m)
-    body["messages"] = head + out
-
-
 def _set_reasoning_directive(body: dict, want: str | None) -> None:
     """Put this role's reasoning switch into the system message, for a backend whose switch IS text.
 
@@ -330,7 +284,12 @@ class Role:
         no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
         the cap stands: capping the coder is what the operator knob is for."""
         if self.merge_consecutive_turns:
-            _merge_for_alternation(body)
+            # A HINT, not the transform. The merge itself runs at the wire (`Upstream._prep` →
+            # massage.merge_for_alternation) because `apply` runs mid-pipeline and every later
+            # append — focustrim's repeat-note, a rumination/truncation retry turn — defeated a
+            # merge done here. That is what 400-looped nemotron-nano run 1786243834 to death.
+            from .massage import MERGE_TURNS_KEY  # deferred: massage → writeproxy → config cycles
+            body[MERGE_TURNS_KEY] = True
         if self.think_protocol == "system_directive":
             _set_reasoning_directive(body, self.reasoning)
         if self.collapse_system_prompt:

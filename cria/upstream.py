@@ -184,8 +184,21 @@ class Upstream:
             msgs, deorphaned = contextfloor.ensure_tool_integrity(msgs)
             if deorphaned:
                 rlog.emit("context.deorphaned", count=deorphaned, level="info")
-            out["messages"] = _merge_consecutive_assistant(msgs)
+            msgs = _merge_consecutive_assistant(msgs)
+            # THE LAST message transform, and last is the point. A template that enforces strict
+            # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
+            # the merge that satisfies it used to run in `Role.apply` — mid-pipeline, where every
+            # later append undid it (focustrim's repeat-note, a rumination/truncation retry turn).
+            # nemotron-nano run 1786243834 died that way: six `Conversation roles must alternate`
+            # 400s, calls 0075-0081, empty workspace. Here nothing comes after, so no call site can
+            # defeat it — the same reasoning that put the orphan-`tool` repair above at the wire.
+            # Opt-in per role (`merge_consecutive_turns`); without the hint this is identity, so
+            # every model that does not need it ships a byte-identical body.
+            if body.get(massage.MERGE_TURNS_KEY):
+                msgs = massage.merge_for_alternation(msgs)
+            out["messages"] = msgs
         out.pop("cria_output_reserve", None)  # cria-internal reserve hint — never goes on the wire
+        out.pop(massage.MERGE_TURNS_KEY, None)  # ditto — the alternation hint is cria's, not the API's
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call

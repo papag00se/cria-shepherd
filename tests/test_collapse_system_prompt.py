@@ -287,10 +287,19 @@ class StrictRoleAlternationTests(unittest.TestCase):
     T = {"role": "tool", "tool_call_id": "c1", "content": "file body"}
 
     def _merged(self, msgs):
+        """The real pipeline: the role sets the hint, the WIRE performs the merge.
+
+        It used to happen inside `Role.apply`, and that placement is what let nemotron-nano run
+        1786243834 400 six times — focustrim appends a user-side note after the role is applied, so
+        the merge had already run. `Upstream._prep` is now the one place it happens, as the last
+        message transform; this helper mirrors that pair so the properties below still describe
+        what actually reaches the model."""
+        from cria import massage
         from cria.config import Role
         body = {"messages": [dict(m) for m in msgs]}
         Role(name="coder", backend="local", merge_consecutive_turns=True).apply(body)
-        return body["messages"]
+        self.assertTrue(body.get(massage.MERGE_TURNS_KEY), "the role must carry the hint")
+        return massage.merge_for_alternation(body["messages"])
 
     def _alternates(self, msgs):
         rest = msgs[1:] if msgs and msgs[0]["role"] == "system" else msgs
