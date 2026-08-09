@@ -5662,3 +5662,90 @@ anchors that outranked the truth in the same prompt.** Three independent walkers
   composition driving the compactions where the false facts entered.
 - **The plan is two steps** — "read the source" then the entire task verbatim — so no deliverable
   has its own gate. Same shape as every other 1/4 and 2/4 on this model.
+
+## ada-handles_nemotron-nano_codex_poff_1786243834 (nemotron-nano 0/4, 2026-08-08, sha fe44ccf)
+
+FULL WALK COMPLETE — all 15 chunks (81 calls), plus the cria journal, the llama-server journal, and
+the raw bodies. First fair run of the first Llama-lineage model on the ladder (the merge/system-
+directive/collapse mechanisms all verified working on the wire). 8.0 min, `exited`, workspace EMPTY.
+
+### The causal chain to the empty workspace, in order
+
+1. **The research-step author ECHOED its own instruction (call 0002).** cria's prompt says "output
+   one sentence instructing the coder to read the external source … and output nothing else." The
+   model returned that sentence itself, mangled: *"Read the external source named 'api.handle.me'
+   **and instruct the coder** to identify the task-specific names… **Output nothing else.**"*
+   `research.step_defect` vets length / locations / build-verbs / guess-shapes — it has NO echo arm,
+   so the parroted meta-instruction became step 1 of 2. Every later coder turn carried a step that
+   (a) casts the executing model as NOT-the-coder and (b) orders it to output nothing. The coder's
+   own words track the poison exactly: "I need to know the specific task" (0019) → "outside the
+   capabilities of this environment" (0025) → "it involves verifying the completion of a task
+   created by another model" (0042) → "I'm done with this step" (0051).
+2. **llama.cpp's tool-call grammar crashed on the model's empty `<TOOLCALL>[]` (56× in the server
+   journal).** `Unexpected empty grammar stack after accepting piece: >[] (71510)` → HTTP 500 →
+   identical-body retries (bursts of 6–9: 0008-0013, 0057-0067). ~34 of 81 calls died this way.
+   Server-side (llama.cpp grammar × Nemotron template), not cria — but it ate the wall clock.
+3. **Verdict plumbing churned on a step the ledger had already satisfied.** The critic ruled
+   done:false with reasons contradicting cria's grounding block in the SAME prompt ("was denied /
+   was not successfully read / returned a 404" — all false; the ledger says `each of these returned
+   content`); a correct done:true at 0039 arrived in decorated markdown and was rightly discarded by
+   recovery; recovery at 0032/0033 dropped a verbatim `done: false` as UNCLEAR. The deterministic
+   research exit (research_check, cadence 10) finally cleared the step at 0070 — the mechanism that
+   worked. ~40 of 81 calls were critic/recovery/steer plumbing on step 1.
+4. **cria relayed a critic proposed_fix that its OWN repeat-guard was blocking (0056).** ⟦ctx:steer⟧
+   "…denied by the context. Proposed fix: read_file {'path': './tmp/read-only/…openapi.json'}" — the
+   exact call the dup-guard had refused 3×. The coder obeyed the steer; reads 4-7 followed. Two cria
+   voices in direct conflict; no cross-check of a proposed_fix against the denial ledger.
+5. **The self-compact briefing FABRICATED files (0071).** "The real files created so far are
+   `script.py` and `tests.py`." No file was ever written. `_briefing_disk_truth` refutes a briefing
+   that DENIES a file the disk shows — it has no inverse arm for a briefing that INVENTS a file the
+   complete disk listing lacks. The coder absorbed it at 0072: "the user mentioned that the script
+   is in progress."
+6. **Step 2's opening frame carried the same 7,216-char denial block SIX times (0072: one 61,424-char
+   user message; 'API endpoints (33)' ×7).** The composed work-log records each denied read with the
+   FULL denial text, once per attempt. focustrim can't reach text inside one composed message. The
+   same duplication filled the unstick prompts (~8 copies, ~1000 of 1200 lines at 0074) — the
+   evidence that mattered (empty workspace, refusal turns) sat under kilobytes of repeated schema.
+7. **At 0072 the model finally produced everything — as chat prose.** Complete script + tests +
+   README in fences, "Create a test file … and copy the following code", zero tool calls, finish
+   stop. Chat-assistant prior, the exact shape unexecuted_write exists for.
+8. **The unexecuted-write nudge fired (attempt 1, 19:58:17) and pointed at content the re-frame had
+   dropped.** 0073's body: 12 messages, the coder's 7,996-char prose reply ABSENT (a no-tool-call
+   assistant text never enters the work log), while the nudge says "send that same content again."
+   Told to resend text it could no longer see, the model re-read the spill file a 7th time.
+9. **The proxy path then 400-looped the run to death (0075-0081).** server.py:891 applies the role
+   (alternation merge) FIRST and focustrim SECOND — so the trim's appended user note landed after a
+   tool message unmerged → `Conversation roles must alternate` → six identical 400s → harness exit.
+   The drive path (loop.py:2358→2365) orders these correctly; at 0073 the same note was merged into
+   the tool message (the "]]" artifact in the rendered prompt).
+
+Crew-role duties on this model: the unstick reasoner answered the bare sentinel ON_TRACK five times
+(0015, 0046, 0069, 0074, 0080) over a textbook loop + empty workspace — the cheap-token exit, same
+family as the sentinel-negation trap. The prose-dump at 0072 was in the 0074 unstick prompt and was
+blessed as progress.
+
+### Fix candidates (ranked)
+
+1. **server.py:891 order swap** — focustrim BEFORE role.apply on the proxy path, matching the drive
+   path. This alone killed the run's tail; it will 400 any alternation-enforcing template again.
+2. **Echo arm in `research.step_defect`** — an authored step that substantially restates cria's own
+   instruction text (long n-gram overlap with the prompt cria itself sent) is a defect ("it restates
+   the instruction rather than authoring a step"); retry-once-then-"" contract unchanged.
+3. **Collapse duplicate denial records in composed frames/work-logs** — a denied call repeated N×
+   contributes its denial text ONCE plus "same denial ×N". Directly shrinks the 61K step frame and
+   the 1200-line unstick prompts (the ON_TRACK amplifier).
+4. **Carry the drafted content with the unexecuted-write nudge** — the coder's no-tool-call prose
+   must ride into the re-frame (it is the one thing the nudge is about), either as the kept
+   assistant turn or quoted in the nudge.
+5. **Inverse arm for `_briefing_disk_truth`** — append-only: files the briefing NAMES that the
+   complete disk listing lacks get "GROUND TRUTH — these files do NOT exist on disk: …".
+6. **proposed_fix × denial-ledger cross-check** — a relayed fix that names a call cria has already
+   denied/repeat-blocked is dropped (the not-done verdict stands; the steer just doesn't
+   re-recommend the blocked call).
+7. **Stop listing cria's own spill under "THE FILES IT HAS BEEN CHANGING"** — tmp/read-only/ is
+   cria's artifact; presenting it as coder file activity nudged the unstick reasoner toward
+   ON_TRACK over an untouched workspace.
+
+Server-side (not cria): the llama.cpp tool-grammar crash on `<TOOLCALL>[]` (56×). Track against
+llama.cpp upstream / a newer build before re-running this model; with a third of calls dying at the
+server no harness verdict on the model is clean.
