@@ -277,7 +277,11 @@ def step_defect(text: str, task: str, instruction: str = "") -> str | None:
     if len(text) > STEP_MAX_CHARS:
         return "it is far longer than one step"
     lowered, task_l = text.lower(), (task or "").lower()
-    if re.search(r"(?i)\bthe coder\b", text):
+    if re.search(r"(?i)\bthe coder\b", text) and "the coder" not in task_l:
+        # Silenced when the TASK's own words carry the phrase — the same exemption the location and
+        # guess-shape arms below already make, and for the same reason: a word the user wrote is a
+        # fact, not the model echoing cria. A task about a component literally named "the coder"
+        # ("update the coder to emit the new event fields") must still get its reading step.
         return ("it speaks about the coder in the third person — this sentence is handed TO the "
                 "coder, who cannot execute an instruction addressed to someone else")
     tail = _instruction_tail(instruction)

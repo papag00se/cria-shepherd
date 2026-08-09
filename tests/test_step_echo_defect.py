@@ -12,13 +12,18 @@ Every later coder turn carried a step that (a) casts the executing model as NOT-
 the specific task" → "outside the capabilities of this environment" → "it involves verifying the
 completion of a task created by another model" → seven consecutive silent calls.
 
-MEASURED before building (principle 15), over all 106 research-step responses in ~/.cria/calls:
-third-person "the coder" appears ONLY in the two nemotron echo steps; the instruction's closing
-clause ("output nothing else") ONLY in three echoes (the two nemotron runs + maple 1786068407,
-which shipped "…and output nothing else" plus a literal unresolved "(named below)"). Zero of the
-~100 legitimate steps trip either arm — including the many that legitimately borrow the
-instruction's vocabulary ("identify the task-specific names, structures, and requirements needed
-before coding"), which MUST stay accepted: models that scored 4/4 authored exactly those.
+MEASURED before building (principle 15), over all 106 research-step responses in ~/.cria/calls.
+Third-person "the coder" appears in exactly two steps — nemotron-nano 20260808T195044 (the walked
+run) and r1-llama 20260808T185545. The instruction's closing clause ("output nothing else") appears
+in three — those two plus maple-preview 20260806T190731, which also shipped a literal unresolved
+"(named below)". Zero of the ~100 legitimate steps trip either arm, including the many that
+legitimately borrow the instruction's vocabulary ("identify the task-specific names, structures,
+and requirements needed before coding"), which MUST stay accepted: models that scored 4/4 authored
+exactly those. (The OTHER nemotron run, 20260808T193637, authored a clean step and is not an echo.)
+
+cria's own prompt induced the surface form — it used to ask for "one sentence instructing the coder
+to read the external source" — so it was reworded to ask for an imperative sentence. The arms stay:
+r1-llama produced third person on the RETRY path, where that wording was never in front of it.
 """
 import unittest
 
@@ -36,10 +41,11 @@ NEMO_ECHO = ('Read the external source named "api.handle.me" and instruct the co
              "the task-specific names, structures, and requirements needed before coding. Do not "
              "include any other information or invent additional paths, files, URLs, or endpoints "
              "not named in the task. Output nothing else.")
-# verbatim, the earlier nemotron run's retry (20260808T185545 call 0003)
-NEMO_THIRD_PERSON = ("The coder must first read the API documentation at api.handle.me to "
-                     "understand the available endpoints, required parameters, and response "
-                     "structures.")
+# verbatim, r1-llama's RETRY answer (20260808T185545 call 0003) — third person produced where
+# cria's wording was never in front of the model, which is why the arm stands on its own
+R1_THIRD_PERSON = ("The coder must first read the API documentation at api.handle.me to "
+                   "understand the available endpoints, required parameters, and response "
+                   "structures.")
 # verbatim head of maple-preview 1786068407 call 0002 (scored 2/4 with this step in place)
 MAPLE_ECHO = ("Please read the external source (named below) and identify the task-specific "
               "names, structures, and requirements needed before coding; do not invent paths, "
@@ -62,6 +68,24 @@ GOOD_STEPS = (
 )
 
 
+class TheTaskOwnsItsOwnWordsTests(unittest.TestCase):
+    """Every sibling arm is silenced when the TASK's own words carry the match (a word the user
+    wrote is a fact, not the model echoing cria). The third-person arm now makes that exemption
+    too, so a task about a component literally called "the coder" still gets its reading step."""
+
+    CODER_TASK = ("Our repo has two services, the coder and the runner. Read the shared schema "
+                  "docs at schema.internal and update the coder to emit the new event fields.")
+
+    def test_a_task_that_names_the_coder_keeps_its_step(self):
+        self.assertIsNone(step_defect(
+            "Read schema.internal to learn the event field names the coder must emit.",
+            self.CODER_TASK, instruction=KNOWN))
+
+    def test_an_ordinary_task_still_refuses_third_person(self):
+        self.assertIsNotNone(step_defect(
+            "Read schema.internal to learn what the coder must emit.", TASK, instruction=KNOWN))
+
+
 class TheEchoIsADefectTests(unittest.TestCase):
     def test_the_walked_echo_is_refused(self):
         d = step_defect(NEMO_ECHO, TASK, instruction=KNOWN)
@@ -69,7 +93,7 @@ class TheEchoIsADefectTests(unittest.TestCase):
         self.assertIn("third person", d)
 
     def test_a_step_about_the_coder_is_refused_even_without_the_tail(self):
-        d = step_defect(NEMO_THIRD_PERSON, TASK, instruction=KNOWN)
+        d = step_defect(R1_THIRD_PERSON, TASK, instruction=KNOWN)
         self.assertIsNotNone(d)
         self.assertIn("third person", d)
 
@@ -122,12 +146,16 @@ class TheRetryContractStillHoldsTests(unittest.TestCase):
 
 
 class ThePromptAndTheMatcherStaySyncedTests(unittest.TestCase):
-    """The arms compare the answer against cria's OWN strings. If the prompt files stop saying
-    'the coder' or stop closing on a constraint clause, these fail loudly so the arms are
-    re-derived rather than left matching vocabulary cria no longer uses."""
+    """The TAIL arm compares the answer against cria's OWN prompt text, so it must stay derivable.
 
-    def test_the_instruction_still_says_the_coder(self):
-        self.assertIn("the coder", KNOWN)
+    There is deliberately NO pin that the instruction says "the coder": an earlier draft asserted
+    it, which would have blocked the upstream fix — the prompt used to ask for "one sentence
+    instructing the coder to read the external source", modelling the very phrasing the walked run
+    echoed back. The wording is gone; the arm stays, because a step written in the third person is
+    unexecutable by the model holding it however it got there."""
+
+    def test_the_instruction_no_longer_models_third_person(self):
+        self.assertNotIn("instructing the coder", KNOWN)
 
     def test_both_instruction_tails_are_derivable(self):
         self.assertEqual(_instruction_tail(KNOWN), "output nothing else")
