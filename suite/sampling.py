@@ -71,11 +71,17 @@ MODEL_SAMPLING = {
     # DeepSeek-R1's card is explicit and unusually strict: temperature 0.5-0.7 (0.6 recommended),
     # top_p 0.95, and NO system prompt — everything in the user turn. 0.6 is the midpoint it names.
     # top_k is left off because the card does not publish one.
+    # `collapse_system_prompt` is deliberately OFF for the first run. The card says no system prompt,
+    # but the evidence is split: one of the model's own developers measured a system prompt at temp
+    # 0.7 as "close to the 'no system prompt'" result, and another user reports it fine — against one
+    # credible report of the model "second guessing itself in a loop". Turning it on here would
+    # confound the question this model is on the ladder to answer (does cria carry to a non-Qwen
+    # family?) with an untested prompt transformation. Flip it and re-run if the loop symptom shows.
     "r1-llama": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95, "collapse_system_prompt": True},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "collapse_system_prompt": True},
-        "classifier": {"temperature": 0.0, "collapse_system_prompt": True},
-        "compactor":  {"temperature": 0.0, "collapse_system_prompt": True},
+        "coder":      {"temperature": 0.6, "top_p": 0.95},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
     },
     # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
     # below were made FROM, so all three 9B rows share one sampling shape and a score difference is

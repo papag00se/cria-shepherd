@@ -125,23 +125,25 @@ class TheKnobTests(unittest.TestCase):
 
 
 class TheSuiteWritesItPerModelTests(unittest.TestCase):
-    def test_r1_llama_sets_it_on_every_role(self):
-        import sys, pathlib
-        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
-        import sampling
-        for role, knobs in sampling.MODEL_SAMPLING["r1-llama"].items():
-            with self.subTest(role=role):
-                self.assertTrue(knobs.get("collapse_system_prompt"), role)
+    """NO model sets it today, r1-llama included — and that is the researched position, not an
+    oversight. The card says no system prompt; the evidence is split. One of the model's own
+    developers measured a system prompt at temp 0.7 as "close to the 'no system prompt'" result and
+    another user reports it working fine, against one credible report of the model "hung up
+    repeatedly second guessing itself in a loop". cria also never sends a second system message —
+    527 of 527 captured bodies — so the multi-message discard is hypothetical here. Turning it on
+    for r1-llama's first run would confound the question that model is on the ladder to answer.
 
-    def test_no_other_model_sets_it(self):
+    This test exists so enabling it is a DELIBERATE edit with a reason attached, not a default that
+    drifted in."""
+
+    def test_nothing_enables_it_yet(self):
         import sys, pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
         import sampling
         for model, roles in sampling.MODEL_SAMPLING.items():
-            if model == "r1-llama":
-                continue
             for role, knobs in roles.items():
-                self.assertNotIn("collapse_system_prompt", knobs, f"{model}/{role}")
+                self.assertNotIn("collapse_system_prompt", knobs,
+                                 f"{model}/{role} enables the fold — record WHY here")
 
     def test_a_stale_value_from_the_previous_model_is_dropped(self):
         import sys, pathlib
@@ -149,20 +151,27 @@ class TheSuiteWritesItPerModelTests(unittest.TestCase):
         import sampling
         self.assertIn("collapse_system_prompt", sampling.KNOBS)
 
-    def test_it_is_written_as_a_TOML_boolean_not_a_python_one(self):
-        """`True` is not valid TOML and cria's loader would fail on the file it was handed."""
+    def test_it_would_be_written_as_a_TOML_boolean_not_a_python_one(self):
+        """`True` is not valid TOML and cria's loader would fail on the file it was handed. Tested
+        against a synthetic model so it holds the day a real one turns the fold on."""
         import sys, pathlib, tempfile, tomllib, shutil
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
         import sampling
         src = pathlib.Path.home() / ".cria" / "cria.toml"
         if not src.exists():
             self.skipTest("no cria.toml on this box")
-        tmp = pathlib.Path(tempfile.mkdtemp()) / "cria.toml"
-        shutil.copy(src, tmp)
-        sampling.apply("r1-llama", tmp)
-        self.assertIn("collapse_system_prompt = true", tmp.read_text())
-        parsed = tomllib.load(open(tmp, "rb"))          # must round-trip
-        self.assertIs(parsed["roles"]["coder"]["collapse_system_prompt"], True)
+        sampling.MODEL_SAMPLING["_toml_bool_probe"] = {
+            r: {"temperature": 0.6, "collapse_system_prompt": True}
+            for r in ("coder", "reasoner", "classifier", "compactor")}
+        try:
+            tmp = pathlib.Path(tempfile.mkdtemp()) / "cria.toml"
+            shutil.copy(src, tmp)
+            sampling.apply("_toml_bool_probe", tmp)
+            self.assertIn("collapse_system_prompt = true", tmp.read_text())
+            parsed = tomllib.load(open(tmp, "rb"))       # must round-trip
+            self.assertIs(parsed["roles"]["coder"]["collapse_system_prompt"], True)
+        finally:
+            sampling.MODEL_SAMPLING.pop("_toml_bool_probe", None)
 
 
 if __name__ == "__main__":
