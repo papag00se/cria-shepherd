@@ -356,7 +356,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
             boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
             files_list: str = "", refold=None,
-            refold_tokens: int = REFOLD_TOKENS) -> tuple[list[dict], CompactState, bool]:
+            refold_tokens: int = REFOLD_TOKENS, rlog=None) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
@@ -435,7 +435,11 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     # same 7,216-char denial SIX times in one 61K step frame (the prompt the coder answered with
     # prose instead of a write). The anchor guarantee is ONE verbatim surviving copy; byte-identical
     # repeats add zero information and drown the frame for a small model.
-    anchors = _dedup_identical([m for m in messages[head_end:covered] if _has_anchor(m)])
+    anchors, dup_anchors = _dedup_identical([m for m in messages[head_end:covered] if _has_anchor(m)])
+    if dup_anchors and rlog is not None:
+        # Every sibling dedup in cria emits its count (context.ledger_dedup, context.focus_trim,
+        # context.deorphaned); a silent drop makes a future misfire invisible in the run log.
+        rlog.emit("context.anchor_dedup", dropped=dup_anchors)
     band = messages[covered:tail_start]                                   # old-but-unfolded, verbatim
     # The pinned task leads the compacted view (right after cria's system prompt) so the north star is
     # the first thing the coder reads — never summarized, re-emitted fresh from the caller each turn.
@@ -458,19 +462,29 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     return out, state, True
 
 
-def _dedup_identical(msgs: list[dict]) -> list[dict]:
-    """Byte-identical message contents collapse to the first occurrence — order and bytes of every
-    distinct message untouched. Exact match only: two renderings of the same fact are NOT the same
-    message, and deciding they mean the same thing would be a judgment this function must not make."""
+def _dedup_identical(msgs: list[dict]) -> tuple[list[dict], int]:
+    """Identical anchor messages collapse to the first occurrence → ``(kept, dropped_count)``.
+    Order and bytes of every distinct message are untouched.
+
+    The key is :func:`msg_digest`, which covers the tool CALL as well as the text. Keying on text
+    alone would fold two anchors that differ only in their tool_calls, and the survivor's sibling
+    call would vanish from the view entirely — anchors are excluded from the summarizer input, so
+    nothing downstream would carry it. (Prevalence of that shape today: zero across 17,912 captured
+    coder bodies — no anchor message carries tool_calls at all. Keyed correctly anyway, because the
+    cost is one function call and the failure is silent.)
+
+    Exact match only: two renderings of the same fact are NOT the same message, and deciding they
+    mean the same thing would be a judgment this function must not make."""
     seen: set[str] = set()
-    out = []
+    out, dropped = [], 0
     for m in msgs:
-        key = _text(m)
+        key = msg_digest(m)
         if key in seen:
+            dropped += 1
             continue
         seen.add(key)
         out.append(m)
-    return out
+    return out, dropped
 
 
 def _is_files_msg(m: dict) -> bool:

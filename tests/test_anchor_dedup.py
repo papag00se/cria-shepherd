@@ -60,6 +60,37 @@ class IdenticalAnchorsCollapseTests(unittest.TestCase):
         self.assertIn("spec.json is a large reference document", texts)
         self.assertIn("openapi.yaml is a large reference document", texts)
 
+class TheKeyCoversTheToolCallTests(unittest.TestCase):
+    """Keying on TEXT alone would fold two anchors that differ only in their tool_calls, and the
+    survivor's sibling call would vanish from the view entirely — anchors are excluded from the
+    summarizer input, so nothing downstream would carry it. Prevalence of that shape today is zero
+    (no anchor message in 17,912 captured coder bodies carries tool_calls), but the failure is
+    silent, so the key is msg_digest, which covers the call."""
+
+    def _two_anchors_differing_only_by_call(self):
+        base = {"role": "assistant", "content": DIGEST}
+        mk = lambda i, path: {**base, "tool_calls": [
+            {"id": f"c{i}", "type": "function",
+             "function": {"name": "read_file", "arguments": '{"path": "%s"}' % path}}]}
+        return [{"role": "system", "content": "s"},
+                mk(0, "a.py"), {"role": "user", "content": "x" * 4000},
+                mk(1, "b.py"), {"role": "user", "content": "y" * 4000}]
+
+    def test_both_calls_survive(self):
+        out, _, applied = selfcompact.compact(
+            self._two_anchors_differing_only_by_call(), lambda mm: "summary",
+            selfcompact.CompactState(), force=True, pinned_task="t")
+        self.assertTrue(applied)
+        calls = [tc["function"]["arguments"] for m in out for tc in (m.get("tool_calls") or [])]
+        self.assertTrue(any("a.py" in c for c in calls), calls)
+        self.assertTrue(any("b.py" in c for c in calls), calls)
+
+    def test_the_drop_is_reported(self):
+        events = []
+        selfcompact.compact(_msgs(), lambda mm: "summary", selfcompact.CompactState(),
+                            force=True, pinned_task="t",
+                            rlog=type("R", (), {"emit": lambda self, k, **kw: events.append((k, kw))})())
+        self.assertIn(("context.anchor_dedup", {"dropped": 5}), events)
 
 if __name__ == "__main__":
     unittest.main()

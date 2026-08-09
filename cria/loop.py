@@ -2565,7 +2565,8 @@ class Loop:
             refold=lambda text: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
                                           self._ctx.compactor_role or self._ctx.reasoner_role,
                                           prompts.load("selfcompact_refold"), text, rlog,
-                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS))
+                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS),
+            rlog=rlog)
         if applied:
             rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
             return out
