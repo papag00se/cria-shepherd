@@ -1639,12 +1639,13 @@ def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
     return named
 
 
-def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
-    """The briefing, plus a ground-truth line when it denies a file cria can see. NEVER deletes.
+def _briefing_disk_truth(briefing: str, files_list: str, rlog=None, *, ask=None, task: str = "") -> str:
+    """The briefing, plus a ground-truth line when it contradicts the disk in EITHER direction.
+    NEVER deletes.
 
-    THE maple 1786218955 ROLLUP, twice: "The Python script … has not been written. Unit tests have
-    not been added. … The implementation has not yet been started" over a ⟦ctx:files⟧ block in the
-    SAME prompt listing both files, and a real `2 failed, 7 passed`.
+    DENIAL ARM — the maple 1786218955 ROLLUP, twice: "The Python script … has not been written. Unit
+    tests have not been added. … The implementation has not yet been started" over a ⟦ctx:files⟧
+    block in the SAME prompt listing both files, and a real `2 failed, 7 passed`.
 
     The first cut of this DELETED the offending sentences, and stress-testing it found exactly the
     fault it was written to fix: "resolver.py: the main() function has not been written" — a TRUE
@@ -1653,14 +1654,75 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
     it, and the cost of guessing wrong is hiding real remaining work. So it appends instead, exactly
     as _briefing_gate_ground_truth already does for the check state: cria states its fact, the
     briefing keeps its words, and the reader is told which to trust. Same mechanism, same file,
-    additive in both cases."""
+    additive in both cases.
+
+    INVENTION ARM (``ask`` set) — the same fault mirrored: nemotron-nano 1786243834's rollup wrote
+    "The real files created so far are `script.py` and `tests.py`" over a workspace containing
+    NOTHING, and the coder absorbed it ("the user mentioned that the script is in progress") and
+    never called write_file. Deterministic code gathers the candidates — file-shaped names the
+    briefing mentions that the complete disk listing lacks — and ONE closed reasoner question picks
+    which of them the briefing asserts already exist (#8: swept over all 459 captured briefings, a
+    lexical rule alone would fire on `requests.get` 408× and the API field `resolved_addresses.ada`
+    204× — whether a name is claimed AS AN EXISTING FILE is a judgment). The reasoner SELECTS from
+    cria's list, never authors; an unreadable/NONE answer appends nothing (safe null)."""
+    out = briefing
     named = _briefing_denies_real_files(briefing, files_list)
-    if not named:
-        return briefing
-    if rlog is not None:
-        rlog.emit("context.briefing_denies_disk", level="warn", files=",".join(named[:6]))
-    return briefing + "\n\n" + prompts.fill(
-        prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
+    if named:
+        if rlog is not None:
+            rlog.emit("context.briefing_denies_disk", level="warn", files=",".join(named[:6]))
+        out = out + "\n\n" + prompts.fill(
+            prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
+    if ask is not None:
+        absent = _briefing_files_absent(briefing, files_list, task)
+        if absent:
+            chosen = _select_named(ask(prompts.render("briefing_claims_files", briefing=briefing,
+                                                      candidates="\n".join(absent))), absent)
+            if chosen:
+                if rlog is not None:
+                    rlog.emit("context.briefing_invents_files", level="warn",
+                              files=",".join(chosen[:6]))
+                out = out + "\n\n" + prompts.fill(
+                    prompts.load_map("briefing_checks")["files_missing"], files=", ".join(chosen))
+    return out
+
+
+# A file-shaped name in briefing prose: an optional path, a stem of 2+ chars, an extension that
+# starts with a letter. Not preceded by a word char, '/' or '.' (skips URL innards and attribute
+# tails), not followed by '(' (skips calls like requests.get(...)). Deliberately OVER-collects —
+# dotted module/field names like unittest.mock still match; the reasoner rejects those (see
+# _briefing_disk_truth). The 2-char stem floor cuts "e.g" style prose fragments.
+_FILE_SHAPED = re.compile(r"(?<![\w/.])([\w-]{2,}(?:/[\w.-]+)*\.[A-Za-z]\w{0,4})\b(?!\()")
+
+
+def _briefing_files_absent(briefing: str, files_list: str, task: str = "") -> list[str]:
+    """File-shaped names the briefing mentions that cria's OWN complete disk listing lacks — the
+    CANDIDATES for the invention arm, nothing more. A name the task itself uses is excluded (the
+    task's own words are the user's, e.g. a domain like api.handle.me), and matching against the
+    listing uses the same suffix rule as the denial arm."""
+    present = {m.lower() for m in re.findall(r"[\w./-]+\.\w{1,5}", files_list or "")}
+    task_l = (task or "").lower()
+    out: list[str] = []
+    for t in _FILE_SHAPED.findall(briefing or ""):
+        tl = t.lower()
+        if tl in task_l or tl in (o.lower() for o in out):
+            continue
+        if any(tl == q or q.endswith("/" + tl) or tl.endswith("/" + q) for q in present):
+            continue
+        out.append(t)
+    return out[:12]  # a composed judge prompt is bounded (#5 counter-nuance); 12 ≫ any real briefing
+
+
+def _select_named(answer: str, candidates: list[str]) -> list[str]:
+    """The judge's picks, restricted to whole-line exact candidate names — cria may SELECT from its
+    own list, never adopt a name the model wrote (rule 5b's SUBSTITUTE ban). Prose, NONE, or an
+    unreadable reply select nothing."""
+    by_lower = {c.lower(): c for c in candidates}
+    out: list[str] = []
+    for line in strip_think(answer or "").splitlines():
+        c = by_lower.get(line.strip().strip("`*-•\"' ").lower())
+        if c and c not in out:
+            out.append(c)
+    return out
 
 
 # The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
@@ -2523,6 +2585,7 @@ class Loop:
         ``_briefing_gate_ground_truth`` — the override that stops a rollup laundering an unverified
         "the tests pass" past cria's real last check state. Each had a piece the other needed. That is
         what having two of something costs, every time."""
+        task_pin = pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")
         out, sess.compact_state, applied = selfcompact.compact(
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
@@ -2546,12 +2609,19 @@ class Loop:
                                  selfcompact.compaction_request(mm), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
-                                 rlog) + _briefing_gate_ground_truth(sess),
+                                 rlog,
+                                 # The invention arm's one closed question (#8/#9): does the fresh
+                                 # briefing assert files exist that the complete listing lacks?
+                                 ask=lambda q: ask_closed(
+                                     self._ctx.compactor_chat or self._ctx.reasoner_chat,
+                                     self._ctx.compactor_role or self._ctx.reasoner_role,
+                                     q, rlog, phase="briefing-files"),
+                                 task=task_pin) + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
             # can't summarize the original requirements away.
-            pinned_task=(pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")),
+            pinned_task=task_pin,
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
             files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),

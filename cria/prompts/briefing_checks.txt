@@ -8,3 +8,8 @@ testless = ⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but
 # Same shape as `red`, for a briefing that says a file is missing which cria's own disk
 # listing shows exists. Additive: the briefing keeps its words, the disk gets the last one.
 files_exist = ⟦ctx:checks⟧ GROUND TRUTH — these files DO exist on disk right now: {{FILES}}. Trust this over any claim above that they are missing or were never written; read them before recreating anything.
+# The inverse of files_exist — the briefing asserts files were already created that cria's own
+# complete disk listing does not contain (the maple/nemotron rollup fabrication: "The real files
+# created so far are `script.py` and `tests.py`" over an empty workspace). Additive, like every
+# line in this file: the briefing keeps its words, the disk gets the last one.
+files_missing = ⟦ctx:checks⟧ GROUND TRUTH — these files do NOT exist on disk right now: {{FILES}}. The workspace listing is complete, so work described above as already done to them has not actually happened; creating them is still open work.
