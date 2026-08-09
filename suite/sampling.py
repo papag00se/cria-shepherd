@@ -71,17 +71,17 @@ MODEL_SAMPLING = {
     # DeepSeek-R1's card is explicit and unusually strict: temperature 0.5-0.7 (0.6 recommended),
     # top_p 0.95, and NO system prompt — everything in the user turn. 0.6 is the midpoint it names.
     # top_k is left off because the card does not publish one.
-    # `collapse_system_prompt` is deliberately OFF for the first run. The card says no system prompt,
-    # but the evidence is split: one of the model's own developers measured a system prompt at temp
-    # 0.7 as "close to the 'no system prompt'" result, and another user reports it fine — against one
-    # credible report of the model "second guessing itself in a loop". Turning it on here would
-    # confound the question this model is on the ladder to answer (does cria carry to a non-Qwen
-    # family?) with an untested prompt transformation. Flip it and re-run if the loop symptom shows.
-    "r1-llama": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
-        "classifier": {"temperature": 0.0},
-        "compactor":  {"temperature": 0.0},
+    # NVIDIA's card gives sampling PER REASONING MODE: reasoning ON -> temp 0.6 / top_p 0.95,
+    # reasoning OFF -> greedy. cria drives coder and reasoner with thinking on and the classifier
+    # and compactor with it off, so the card maps straight onto the four roles.
+    # `think_protocol` rides here too: the switch is a system-prompt SENTENCE on this model, and the
+    # convention is the MODEL's rather than the endpoint's — the same llama.cpp server on :18084
+    # serves parameter-toggled models the rest of the week. Listed in KNOBS so it is dropped on swap.
+    "nemotron-nano": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive"},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive"},
+        "classifier": {"temperature": 0.0, "think_protocol": "system_directive"},
+        "compactor":  {"temperature": 0.0, "think_protocol": "system_directive"},
     },
     # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
     # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
@@ -125,7 +125,8 @@ MODEL_SAMPLING = {
 # `collapse_system_prompt` is not sampling, but it is the same KIND of thing: a per-model, per-role
 # value cria.toml carries and run.py rewrites on every swap. Listed here so a stale one from the
 # previous model is dropped, exactly like a stale temperature.
-KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "collapse_system_prompt")
+KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
+         "collapse_system_prompt", "think_protocol")
 
 
 def render(model: str) -> dict:
@@ -163,7 +164,9 @@ def apply(model: str, toml_path: Path = CRIA_TOML) -> dict:
         # TOML booleans are lowercase; Python's repr of True is not valid TOML and cria's loader
         # would fail to parse the file it was handed.
         def _lit(v):
-            return "true" if v is True else "false" if v is False else v
+            if v is True or v is False:
+                return "true" if v else "false"
+            return f'"{v}"' if isinstance(v, str) else v
         added = [f"{k} = {_lit(v)}" for k, v in knobs.items()]
         # keep the header first, then the surviving keys, then this model's sampling
         text = text[:i] + "\n".join([kept[0]] + kept[1:] + added).rstrip() + "\n" + text[j:]

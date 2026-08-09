@@ -138,6 +138,37 @@ def _inject_nothink_directive(body: dict) -> None:
         body["messages"] = [{"role": "system", "content": directive}] + list(msgs)
 
 
+def _set_reasoning_directive(body: dict, want: str | None) -> None:
+    """Put this role's reasoning switch into the system message, for a backend whose switch IS text.
+
+    NVIDIA's Nemotron-Nano toggles on the literal system line `detailed thinking on` / `off` — no
+    parameter exists to set. cria's other two conventions are top-level body keys, so this is the
+    first one that has to touch the messages, and it lives here for the same reason the
+    chat_template OFF prefill does: this is where the messages are owned.
+
+    Prepended to the leading system message rather than replacing it — cria's system prompt is the
+    coder frame and every judge's instructions, and the switch is one line in front of it. A body
+    with no system message gets one. A no-op when the role expresses no preference, so the model's
+    own default stands. NOTE the interaction with `collapse_system_prompt`: folding runs AFTER this,
+    so the directive survives into the user turn; a model that needed BOTH would still be driven
+    correctly, though none does today."""
+    line = reasoning.system_directive(want)
+    if line is None:
+        return
+    msgs = body.get("messages")
+    if not isinstance(msgs, list):
+        return
+    if msgs and isinstance(msgs[0], dict) and msgs[0].get("role") == "system":
+        head = dict(msgs[0])
+        c = head.get("content")
+        if isinstance(c, str) and line in c.splitlines()[:1]:
+            return                                   # already set — do not stack it
+        head["content"] = f"{line}\n\n{c}" if isinstance(c, str) and c.strip() else line
+        body["messages"] = [head] + list(msgs[1:])
+    else:
+        body["messages"] = [{"role": "system", "content": line}] + list(msgs)
+
+
 def _collapse_system_into_user(body: dict) -> None:
     """Fold every leading system message into the front of the first user turn, in place.
 
@@ -238,6 +269,8 @@ class Role:
         at once — and an empty answer reads as "nothing to report", so the judgement disappears with
         no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
         the cap stands: capping the coder is what the operator knob is for."""
+        if self.think_protocol == "system_directive":
+            _set_reasoning_directive(body, self.reasoning)
         if self.collapse_system_prompt:
             _collapse_system_into_user(body)
         asked = body.get("max_tokens") if internal else None
@@ -617,7 +650,10 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
     return Role(
         name=name,
         backend=bname,
-        think_protocol=_think_protocol(backends[bname]),
+        # The convention is normally the BACKEND's, but `system_directive` is the MODEL's — the
+        # same llama.cpp endpoint serves models that use a parameter and one that uses a sentence.
+        # So a role may name it explicitly; everything else keeps deriving it from the backend.
+        think_protocol=str(spec.get("think_protocol") or _think_protocol(backends[bname])),
         reasoning=(str(reasoning_val).lower() if reasoning_val is not None else None),
         temperature=temperature,
         top_p=_num("top_p"),

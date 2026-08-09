@@ -36,7 +36,25 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
-| **r1-llama** (8B) | Q6_K | `temp 0.6, top_p 0.95` (no top_k) | DeepSeek-R1's own card (states 0.5–0.7; 0.6 is its midpoint) | DeepSeek-R1 reasoning distilled onto `meta-llama/Llama-3.1-8B`. Added 2026-08-08. **The first LLAMA-architecture model on the ladder** — every other entry is Qwen-, Gemma-, Nemotron- or ternary-derived, so this is the first read on whether cria's assists carry to another family. Chosen over Dolphin 3.0 (same base, same size, instruct-only) because a REASONING tune holds the thinking channel constant while changing the family; instruct-only would have confounded the two. R1 emits `<think>…</think>` as ordinary CONTENT, not a `reasoning_content` field — check how `--reasoning` parsing handles that on first launch. `unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:Q6_K`, 6.6 GB. **MUST run with `deepseek-r1-toolcall.jinja`** — the embedded template has NO tools branch and no `tool_calls` handling at all, and cria's coder path is ~100% tool calls. `collapse_system_prompt` is OFF for the first run on purpose (see that section) |
+| **nemotron-nano** (8B) | Q6_K | reasoning ON `temp 0.6, top_p 0.95`; OFF greedy — **the card gives them per mode**, and cria's coder+reasoner run ON while classifier+compactor run OFF, so it maps straight onto the four roles. Also `think_protocol = "system_directive"` | NVIDIA's own card | `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`, a derivative of meta-llama/Llama-3.1-8B-Instruct post-trained for reasoning **and tool calling** (SFT covers "Math, Code, Reasoning, and Tool Calling"; BFCL v2 Live 63.9% off / 63.6% on). **The first Llama-architecture model on the ladder** and the only 8B Llama derivative with both halves cria needs — see the two rejected below. Reasoning is a SYSTEM-PROMPT SENTENCE, not a parameter. Never set `collapse_system_prompt` here: folding the system prompt away deletes the switch |
+
+### Considered and REJECTED for the Llama-family slot (2026-08-08)
+
+cria's coder path is ~100% tool calls and its assists assume a thinking channel, so a Llama-family
+model needs BOTH. Two were tried before nemotron-nano and neither has both:
+
+- **Dolphin 3.0 (Llama-3.1-8B)** — trained for function calling (`hermes-function-calling-v1`) but
+  instruct-only, no thinking channel. Would have changed the family AND removed reasoning in one
+  step, confounding the question the slot exists to answer.
+- **DeepSeek-R1-Distill-Llama-8B** — reasoning, but tool use was never a training objective.
+  MEASURED on this box: **0/4, 30 calls, ZERO assistant turns ever entered the conversation.** It
+  emitted an invented `<tool name="web_fetch" call="begin">` in prose; llama.cpp parsed no tool
+  call, the harness recorded no action, and every turn restarted from the task. Pinning llama.cpp's
+  `llama-cpp-deepseek-r1.jinja` (the embedded template has NO tools branch at all) was necessary and
+  not sufficient — the template can express a call the model cannot produce. DeepSeek's own distill
+  discussion: tool use "is not one of the main goals for the model"; Fireworks lists R1 tool calling
+  as "Not supported"; R1-0528 added it, but its 8B distill is Qwen3-based and would have been our
+  fifth Qwen.
 
 ### Still in `models.toml`, NOT on the ladder
 
@@ -283,7 +301,7 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **gemma4-finetune** (retired) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4 NOT yet verified for the OFF recipe |
 | **qwen3.5** | ✅ | ✅ clean direct answer | Qwen3.5 base — **verified at load 2026-08-08**: `enable_thinking=false` → 0 chars of `reasoning_content`, `true` → 649, both answered correctly |
 | **maple-preview** | ✅ | ⚠ UNVERIFIED | embedded template, no `*-toggle.jinja` earned yet. ON is certain — 25/25 sampled coder replies carried `reasoning_content`. OFF has never been exercised |
-| **r1-llama** | ✅ always | ⚠ likely NOT toggleable | R1 distills are trained to think unconditionally and the card offers no off switch; expect `<think>` on every reply. It also emits the block as CONTENT rather than in `reasoning_content`, so cria's reasoning-off path and its think-fence display are both unexercised here — that is a reason to run it, not a defect. Reasoning is a training + template property, NOT an architecture one: this and Dolphin 3.0 share a base and differ entirely |
+| **nemotron-nano** | ✅ `detailed thinking on` | ✅ `detailed thinking off` | **cria's THIRD reasoning convention** — the switch is a sentence in the system prompt, not a body parameter. `reasoning.system_directive()` renders it; `config._set_reasoning_directive` prepends it to the leading system message (the mutation lives with the messages, same as the chat_template OFF prefill). Reasoning-unset leaves the model's own default alone |
 
 **Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF).
 Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet
@@ -346,7 +364,7 @@ and `/usr/lib/wsl/lib`.
 | qwopus | `-hf Jackrong/Qwopus3.5-9B-v3-GGUF:Q6_K` | `qwopus-toggle.jinja` |
 | qwythos | `-m …/Qwythos-9B-v2-Q6_K.gguf` | *(embedded)* |
 | qwen3.5 | `-m …/Qwen3.5-9B-Q6_K.gguf` | *(embedded)* |
-| r1-llama | `-m …/DeepSeek-R1-Distill-Llama-8B-Q6_K.gguf` | `deepseek-r1-toolcall.jinja` **(required — embedded has no tools branch)** |
+| nemotron-nano | `-m …/Llama-3.1-Nemotron-Nano-8B-v1-Q6_K.gguf` | *(embedded — has a real tools branch and system slot)* |
 | maple-preview | `-m …/maple/maple-tq2_0.gguf` **(stamsam fork binary + lib_dir)** | *(embedded)* |
 | nemotron-elastic | `-m …/Nemotron-Elastic-12B/…gguf` | *(embedded)* |
 | zaya1 | `-m …/ZAYA1-8B/ZAYA1-8B-Q6_K.gguf` **(zaya draft-PR binary + lib_dir)** | *(embedded)* |

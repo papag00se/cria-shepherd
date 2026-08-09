@@ -73,6 +73,8 @@ def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
     if style == "chat_template":
         body.setdefault("chat_template_kwargs", {})["enable_thinking"] = reasoning != "off"
         return
+    if style == "system_directive":
+        return      # a MESSAGE mutation, not a parameter — Role.apply owns it (see SYSTEM_DIRECTIVE)
     effort = _effort_for(reasoning)
     if effort is None:
         return
@@ -118,3 +120,24 @@ def apply_sampling(body: dict, params: dict, style: str) -> None:
         elif style == "openrouter":
             body["repetition_penalty"] = rp
         # "openai"/strict: dropped — no same-semantics knob (frequency_penalty is additive/different).
+
+
+# THE THIRD REASONING CONVENTION: the switch is a SENTENCE IN THE SYSTEM PROMPT, not a parameter.
+# NVIDIA's Llama-3.1-Nemotron-Nano toggles with the literal system message `detailed thinking on`
+# (or `off`). cria's portability layer knew two conventions — a `chat_template_kwargs` flag and an
+# effort field — and both are top-level body keys. This one is text, and it is the first model on
+# the ladder whose reasoning cannot be driven by any parameter at all.
+#
+# Kept HERE, next to its siblings, so the three conventions stay visible in one place even though
+# the mutation itself has to happen where the messages are owned (config.Role.apply, the same place
+# the chat_template OFF prefill lives).
+SYSTEM_DIRECTIVE_ON = "detailed thinking on"
+SYSTEM_DIRECTIVE_OFF = "detailed thinking off"
+
+
+def system_directive(reasoning: str | None) -> str | None:
+    """The system-prompt sentence that sets reasoning for a `system_directive` backend, or None when
+    the role expresses no preference (unset/"auto" — leave the model's own default alone)."""
+    if reasoning in (None, "auto"):
+        return None
+    return SYSTEM_DIRECTIVE_OFF if reasoning == "off" else SYSTEM_DIRECTIVE_ON

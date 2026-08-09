@@ -176,3 +176,85 @@ class TheSuiteWritesItPerModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheThirdReasoningConventionTests(unittest.TestCase):
+    """Some models toggle reasoning with a SENTENCE, not a parameter.
+
+    cria knew two conventions, both top-level body keys: `chat_template_kwargs.enable_thinking` and
+    an effort field. NVIDIA's Llama-3.1-Nemotron-Nano toggles on the literal system line
+    `detailed thinking on` / `off` — the first model on the ladder whose reasoning cannot be driven
+    by any parameter at all. The convention is the MODEL's, not the endpoint's: the same llama.cpp
+    server on :18084 serves parameter-toggled models the rest of the week, so the role names it.
+    """
+
+    def _apply(self, reasoning, msgs):
+        from cria.config import Role
+        body = {"messages": msgs}
+        Role(name="coder", backend="local", think_protocol="system_directive",
+             reasoning=reasoning).apply(body)
+        return body["messages"]
+
+    FRAME = [{"role": "system", "content": "CODER FRAME"}, {"role": "user", "content": "go"}]
+
+    def test_on_and_off_are_the_cards_exact_words(self):
+        from cria import reasoning
+        self.assertEqual(reasoning.system_directive("on"), "detailed thinking on")
+        self.assertEqual(reasoning.system_directive("off"), "detailed thinking off")
+
+    def test_it_prepends_and_keeps_the_frame(self):
+        out = self._apply("on", [dict(m) for m in self.FRAME])
+        self.assertEqual(out[0]["content"], "detailed thinking on\n\nCODER FRAME")
+
+    def test_unset_leaves_the_models_own_default_alone(self):
+        for r in (None, "auto"):
+            out = self._apply(r, [dict(m) for m in self.FRAME])
+            self.assertEqual(out[0]["content"], "CODER FRAME")
+
+    def test_a_body_with_no_system_message_gets_one(self):
+        out = self._apply("off", [{"role": "user", "content": "go"}])
+        self.assertEqual(out[0], {"role": "system", "content": "detailed thinking off"})
+
+    def test_it_does_not_stack_on_repeat(self):
+        out = self._apply("on", [{"role": "system", "content": "detailed thinking on\n\nFRAME"},
+                                 {"role": "user", "content": "g"}])
+        self.assertEqual(out[0]["content"].count("detailed thinking on"), 1)
+
+    def test_no_body_parameter_is_written_for_this_style(self):
+        """The switch is text; writing a parameter too would be a second, contradictory signal."""
+        from cria import reasoning
+        body = {}
+        reasoning.apply_reasoning(body, "on", "system_directive")
+        self.assertEqual(body, {})
+
+    def test_every_other_model_is_untouched(self):
+        from cria.config import Role
+        body = {"messages": [dict(m) for m in self.FRAME]}
+        Role(name="coder", backend="local", reasoning="on").apply(body)
+        self.assertEqual(body["messages"][0]["content"], "CODER FRAME")
+
+    def test_the_suite_writes_the_protocol_and_clears_it_on_swap(self):
+        import sys, pathlib, tempfile, tomllib, shutil
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "suite"))
+        import sampling
+        src = pathlib.Path.home() / ".cria" / "cria.toml"
+        if not src.exists():
+            self.skipTest("no cria.toml on this box")
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "cria.toml"
+        shutil.copy(src, tmp)
+        sampling.apply("nemotron-nano", tmp)
+        self.assertEqual(tomllib.load(open(tmp, "rb"))["roles"]["coder"]["think_protocol"],
+                         "system_directive")
+        sampling.apply("qwen35", tmp)                       # a model that does not use it
+        self.assertNotIn("think_protocol", tomllib.load(open(tmp, "rb"))["roles"]["coder"])
+
+    def test_folding_the_system_prompt_would_delete_the_switch(self):
+        """Why nemotron-nano must never set collapse_system_prompt. Pinned so the interaction is
+        recorded rather than rediscovered: the fold runs AFTER, so the directive survives into the
+        user turn — but on a model whose template reads the SYSTEM slot for it, that is a loss."""
+        from cria.config import Role
+        body = {"messages": [dict(m) for m in self.FRAME]}
+        Role(name="coder", backend="local", think_protocol="system_directive",
+             reasoning="on", collapse_system_prompt=True).apply(body)
+        self.assertEqual(body["messages"][0]["role"], "user")
+        self.assertIn("detailed thinking on", body["messages"][0]["content"])
