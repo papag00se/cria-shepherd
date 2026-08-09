@@ -36,12 +36,12 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
-| **nemotron-nano** (8B) | Q6_K | reasoning ON `temp 0.6, top_p 0.95`; OFF greedy — **the card gives them per mode**, and cria's coder+reasoner run ON while classifier+compactor run OFF, so it maps straight onto the four roles. Also `think_protocol = "system_directive"` and `merge_consecutive_turns = true` | NVIDIA's own card | `nvidia/Llama-3.1-Nemotron-Nano-8B-v1`, a derivative of meta-llama/Llama-3.1-8B-Instruct post-trained for reasoning **and tool calling** (SFT covers "Math, Code, Reasoning, and Tool Calling"; BFCL v2 Live 63.9% off / 63.6% on). **The first Llama-architecture model on the ladder** and the only 8B Llama derivative with both halves cria needs — see the two rejected below. Reasoning is a SYSTEM-PROMPT SENTENCE, not a parameter. Never set `collapse_system_prompt` here: folding the system prompt away deletes the switch. **BLOCKED — a KNOWN, UNFIXED llama.cpp bug (diagnosed 2026-08-09).** When the model answers without calling a tool it emits `<TOOLCALL>[]` — an EMPTY tool-call array — and the server 500s with `Unexpected empty grammar stack after accepting piece: >[] (71510)`. 56 crashes in one 8-minute run (1786243834), ~34 of 81 calls dead. TWO root causes combine: (a) the single token `>[]` both COMPLETES the auto-derived `<TOOLCALL>` trigger and carries text past it, and (b) llama.cpp's generated tool-call grammar has no production for an empty array, so `[]` is grammatically unrepresentable (`common/chat-peg-parser.cpp`, `standard_json_tools()`). MEASURED HERE, all reproduced deterministically on a fresh nemotron server: crashes 3/3 on "answer without a tool"; a llama.cpp built from a commit 1,275 newer (2026-07-28 vs our 2026-04-21) crashes IDENTICALLY, so upgrading the runtime does NOT help; dropping `--jinja` does not help; `detailed thinking off` does not help (4/12). Upstream: issue #14413 open since 2025-06-27, Nemotron instances #26737 (2026-08-07) and #26787 (2026-08-09) open, and fix PR #19503 was REJECTED by a maintainer as "too invasive" in favour of per-model trigger tuning — so no general fix is coming. llama.cpp has NO native `<TOOLCALL>`/`<AVAILABLE_TOOLS>` parser (a PR to add one, #15083, was closed unmerged) and NO flag to disable the lazy tool-call grammar. **The public does not run this model's tool calling on llama.cpp at all** — every official NVIDIA recipe is vLLM with an out-of-tree plugin (`--tool-parser-plugin … --tool-call-parser llama_nemotron_json`), which the 8B-v1 repo does not even ship (you borrow it from 4B-v1.1), and which breaks on vLLM version bumps. Do not re-run this model here without either a vLLM path or a chat-template override that moves the trigger off the `>[` token boundary |
 
-### Considered and REJECTED for the Llama-family slot (2026-08-08)
+### Considered and REJECTED for the Llama-family slot (2026-08-08, closed 2026-08-09)
 
 cria's coder path is ~100% tool calls and its assists assume a thinking channel, so a Llama-family
-model needs BOTH. Two were tried before nemotron-nano and neither has both:
+model needs BOTH. **The slot is now CLOSED — all three candidates failed, the third on grounds no
+model choice can fix.** Three were tried:
 
 - **Dolphin 3.0 (Llama-3.1-8B)** — trained for function calling (`hermes-function-calling-v1`) but
   instruct-only, no thinking channel. Would have changed the family AND removed reasoning in one
@@ -55,6 +55,21 @@ model needs BOTH. Two were tried before nemotron-nano and neither has both:
   discussion: tool use "is not one of the main goals for the model"; Fireworks lists R1 tool calling
   as "Not supported"; R1-0528 added it, but its 8B distill is Qwen3-based and would have been our
   fifth Qwen.
+- **NVIDIA Llama-3.1-Nemotron-Nano-8B-v1** — the only 8B Llama derivative with BOTH halves (post
+  trained for reasoning AND tool calling; BFCL v2 Live 63.9/63.6). cria's side worked: the
+  alternation merge, the `detailed thinking on` system directive and real `tool_calls` arrays all
+  reached the wire. **RETIRED 2026-08-09 anyway, because the RUNTIME cannot serve it.** When the
+  model answers without calling a tool it emits `<TOOLCALL>[]`, and llama.cpp 500s with
+  `Unexpected empty grammar stack after accepting piece: >[] (71510)` — 56 crashes in one 8-minute
+  run, ~34 of 81 calls dead. Two combining root causes: the single token `>[]` both completes the
+  auto-derived `<TOOLCALL>` trigger and carries text past it, and llama.cpp's generated tool-call
+  grammar has no production for an empty array. MEASURED: 3/3 reproduction on "answer without a
+  tool"; a build **1,275 commits newer crashes identically**; `--jinja` off does not help;
+  `detailed thinking off` does not help. Upstream #14413 open since 2025-06-27, fix PR #19503
+  rejected as "too invasive", no native `<TOOLCALL>` parser (PR #15083 closed unmerged), no flag to
+  disable the lazy tool-call grammar. The public runs this family's tool calling on **vLLM with an
+  NVIDIA out-of-tree plugin**, never on llama.cpp — and the 8B-v1 repo does not even ship that
+  plugin. Re-open only behind a vLLM backend or a merged llama.cpp fix.
 
 ### Still in `models.toml`, NOT on the ladder
 

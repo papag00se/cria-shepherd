@@ -77,19 +77,6 @@ MODEL_SAMPLING = {
     # `think_protocol` rides here too: the switch is a system-prompt SENTENCE on this model, and the
     # convention is the MODEL's rather than the endpoint's — the same llama.cpp server on :18084
     # serves parameter-toggled models the rest of the week. Listed in KNOBS so it is dropped on swap.
-    "nemotron-nano": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive",
-                       "merge_consecutive_turns": True},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "think_protocol": "system_directive",
-                       "merge_consecutive_turns": True},
-        "classifier": {"temperature": 0.0, "think_protocol": "system_directive",
-                       "merge_consecutive_turns": True},
-        "compactor":  {"temperature": 0.0, "think_protocol": "system_directive",
-                       "merge_consecutive_turns": True},
-    },
-    # Qwen3.5-9B BASE, the publisher's own thinking-mode values — the source the two inferences
-    # below were made FROM, so all three 9B rows share one sampling shape and a score difference is
-    # the weights.
     "qwen35": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},

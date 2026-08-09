@@ -40,10 +40,15 @@ def rows():
         # its retired planner-on lane and omitted gemma4 entirely. The grid is THE
         # operator view, so it now covers every ada-handles row; superseded/voided rows are
         # still excluded downstream by state().
-        # RETIRED models never render: fabliq/zaya1 (operator call 2026-08-04) and the gemma4
-        # finetune (operator call 2026-08-05, "replace the finetune in all places"). Their rows
-        # stay in results.jsonl as evidence; the grid is a living surface.
-        if r.get("task") == "ada-handles" and r.get("model") not in ("fabliq", "zaya1", "gemma4-finetune"):
+        # RETIRED models never render: fabliq/zaya1 (operator call 2026-08-04), the gemma4
+        # finetune (operator call 2026-08-05, "replace the finetune in all places"), and the two
+        # Llama-family candidates that were tried and rejected — r1-llama (no tool-call training:
+        # 0/4, 30 calls, ZERO assistant turns) and nemotron-nano (operator call 2026-08-09; its
+        # 0/4s measured a llama.cpp grammar crash that killed ~34 of 81 calls, not the model —
+        # see docs/model-settings.md "Considered and REJECTED"). Their rows stay in results.jsonl
+        # as evidence; the grid is a living surface.
+        if r.get("task") == "ada-handles" and r.get("model") not in (
+                "fabliq", "zaya1", "gemma4-finetune", "nemotron-nano", "r1-llama"):
             out.append(r)
     return out
 
@@ -70,7 +75,6 @@ MODEL_SPECS = {
     "gemma4-finetune":  ("gemma4-finetune", "12B q4km (retired finetune)"),
     "gemma4":           ("gemma4", "12B q4km"),
     "qwen35":           ("qwen3.5", "9B q6"),
-    "nemotron-nano":    ("nemotron-nano (llama)", "8B q6"),
     "qwythos":          ("qwythos", "9B q6"),
     "qwopus":           ("qwopus", "9B q6"),
     "ornith":           ("ornith", "9B q6"),

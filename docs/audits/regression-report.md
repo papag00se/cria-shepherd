@@ -28,8 +28,6 @@ gates = check runs it triggered.
 | 🟢 ternary-bonsai · 27B q2_0 | ³⁄₄ ⁴⁄₄ ⁴⁄₄ | 35.2 | 57 | 48 | 1 | 1 | 3 | 2 |
 | 🟡 mellum2 · 12B-A2.5B q4 | ²⁄₄ ⁴⁄₄ ⁴⁄₄ | 163.8 | 22 | 150 | 17 | 5 | 13 | 3 |
 | 🟠 maple (ternary) · 20B-A1B q2 | ¹⁄₄ ³⁄₄ ¹⁄₄ | 63.5 | 28 | 90 | 7 | 1 | 5 | 6 |
-| 🔴 nemotron-nano (llama) · 8B q6 | ⁰⁄₄ ⁰⁄₄ | 28.6 | 4 | 24 | 0 | 1 | 7 | 0 |
-| 🔴 r1-llama · ? | ⁰⁄₄ | 29.7 | 16 | 30 | 0 | 0 | 0 | 0 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
 
@@ -148,12 +146,9 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | mellum2 | counted | 4/4 | 11 | 102 | 56 | 168.2 | 6 | 5 | exited |
 | maple-preview | counted | 1/4 | 16 | 42 | 25 | 63.8 | 4 | 5 | milestone-miss-15min |
 | ternary-bonsai | counted | 4/4 | 49 | 38 | 19 | 25.4 | 0 | 3 | exited |
-| r1-llama | counted | 0/4 | 16 | 30 | 9 | 29.7 | 0 | 0 | milestone-miss-15min |
-| nemotron-nano | counted | 0/4 | 0 | 2 | 0 | 36.6 | 0 | 0 | crashed-early |
-| nemotron-nano | counted | 0/4 | 8 | 47 | 19 | 20.7 | 0 | 14 | exited |
 | gemma4 | counted | 4/4 | 8 | 50 | 23 | 59.5 | 3 | 4 | exited |
 
-counted runs: 100 · avg wall 22 min · avg coder calls 64 · full-pass rate 34/100
+counted runs: 97 · avg wall 23 min · avg coder calls 66 · full-pass rate 34/97
 
 ## Scoreboard (every run; counted rows bold)
 
