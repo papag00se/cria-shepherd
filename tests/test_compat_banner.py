@@ -246,5 +246,65 @@ class TruthfulnessRepairsTests(unittest.TestCase):
         self.assertIn("turn order", [l for _, l, _ in compat.probe(props(TOOLS_BRANCH, CAPS_GOOD))])
 
 
+
+class ATransientMissMustNotKillTheBannerTests(unittest.TestCase):
+    """`suite/run.py` starts the llama service and restarts cria immediately after, so the first
+    turns land while the model is still LOADING and both /props and /v1/models refuse the
+    connection. Caching that failure permanently — which the first cut did — killed the banner for
+    the whole run, silently. This file's own `_PROPS_RETRY_EVERY` comment already names the
+    scenario: "as ordinary as cria restarting while llama.cpp is still loading its model."
+    Observed live on the mellum2 swap."""
+
+    def _up(self, answers):
+        """An Upstream whose urlopen fails until `answers` says otherwise."""
+        from unittest import mock
+        from cria.upstream import Upstream
+        import io, urllib.error
+        up = Upstream("http://x")
+        state = {"i": 0}
+
+        def fake(req, timeout=None):
+            i = state["i"]; state["i"] += 1
+            if not answers[min(i, len(answers) - 1)]:
+                raise urllib.error.URLError("connection refused")
+            return io.BytesIO(b'{"chat_template":"tool_calls","chat_template_caps":{}}')
+        fake.__enter__ = None
+        return up, mock.patch("cria.upstream.urllib.request.urlopen",
+                              side_effect=lambda r, timeout=None: _CM(fake(r, timeout)))
+
+    def test_props_retries_after_a_refused_connection(self):
+        import types as _t
+        up, patcher = self._up([False, True])
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        with patcher:
+            self.assertIsNone(up.props(rlog))          # server still loading
+            self.assertIsNotNone(up.props(rlog))       # …and it comes back
+
+    def test_a_successful_props_is_never_re_probed(self):
+        import types as _t
+        up, patcher = self._up([True])
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        with patcher:
+            first = up.props(rlog)
+            self.assertIs(up.props(rlog), first)
+
+    def test_a_cloud_endpoint_is_still_never_probed(self):
+        import types as _t
+        from unittest import mock
+        from cria.upstream import Upstream
+        up = Upstream("http://x", api_key="sk-test")
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        side_effect=AssertionError("must not probe")):
+            self.assertIsNone(up.props(rlog))
+            self.assertIsNone(up.loaded_model(rlog))
+
+
+class _CM:
+    def __init__(self, f): self._f = f
+    def __enter__(self): return self._f
+    def __exit__(self, *a): return False
+
+
 if __name__ == "__main__":
     unittest.main()

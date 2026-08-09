@@ -75,6 +75,7 @@ class Upstream:
         self._window = context_window if context_window else _UNSET
         self._window_final = bool(context_window)  # a configured value is authoritative — no probe
         self._props_attempts = 0
+        self._models_attempts = 0
         if self._api_key and context_window is None:
             self._window = None       # cloud provider, no override → no floor
             self._window_final = True  # …and never probe /props on a cloud endpoint
@@ -97,8 +98,18 @@ class Upstream:
         answering) rather than a config label that may not match. None for a cloud endpoint (no
         single loaded model) or when /v1/models can't be read. A model swap needs a cria restart to
         refresh (the same workflow as the fleet swap)."""
-        if self._loaded_model is not _UNSET:
+        if self._api_key:
+            return None                  # cloud: no single loaded model, and never a probe. This
+            #                              guard is why the retry below cannot touch a cloud
+            #                              endpoint — __init__ seeds `None` there to mean "settled",
+            #                              which is a different None from "the probe missed".
+        if self._loaded_model is not _UNSET and self._loaded_model is not None:
             return self._loaded_model
+        if self._loaded_model is None:   # a previous attempt MISSED — retry on the same budget as
+            self._models_attempts += 1   # /props; a server still loading its model refuses both
+            if (self._models_attempts > _MAX_PROPS_ATTEMPTS
+                    and self._models_attempts % _PROPS_RETRY_EVERY):
+                return None
         self._loaded_model = None
         try:
             req = urllib.request.Request(self._base_url + "/v1/models", method="GET")
@@ -121,15 +132,25 @@ class Upstream:
         backed on it would silently vanish the day someone pinned a window — one mechanism quietly
         disabled by an unrelated setting. This asks for what it needs.
 
-        ONE attempt, no retry budget: the compat banner is decoration, and a decoration that costs a
-        probe per call on a sick endpoint is worse than no decoration (#3)."""
-        if self._props_seen or self._api_key:
+        A FAILED probe is retried, a successful one never is. The first cut cached the failure and
+        the banner died silently for the life of the process — the exact mistake `_resolve_window`
+        already documents ten lines above this file's `_PROPS_RETRY_EVERY`: "the trigger is as
+        ordinary as cria restarting while llama.cpp is still loading its model." That is not an edge
+        case here, it is the NORMAL case: `suite/run.py` starts the llama service and restarts cria
+        immediately after, so the first turns land while the model is still loading and /props
+        refuses the connection. Observed live on the mellum2 swap. Bounded by the same budget the
+        window uses, so a permanently dead endpoint costs a handful of probes, not one per call
+        (#3)."""
+        if self._props is not None or self._api_key:
             return self._props
-        self._props_seen = True          # attempted — never probe twice for the banner
+        self._props_attempts += 1
+        if self._props_attempts > _MAX_PROPS_ATTEMPTS and self._props_attempts % _PROPS_RETRY_EVERY:
+            return None
         try:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 self._props = json.loads(resp.read())
+            self._props_seen = True
         except (urllib.error.URLError, ValueError, OSError) as e:
             rlog.emit("compat.props", level="info", error=str(e))
         return self._props
