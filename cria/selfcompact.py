@@ -429,7 +429,13 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             state = CompactState(summary=combined, covered=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
-    anchors = [m for m in messages[head_end:covered] if _has_anchor(m)]   # kept verbatim, never elided
+    # Kept verbatim, never elided — but IDENTICAL copies collapse to the first. Each ⟦ctx:denied⟧
+    # reply to a repeated whole-spill read re-embeds the spec digest, and the digest contains the
+    # _SPEC_*_MARKERs, so every copy classified as an anchor: nemotron-nano 1786243834 carried the
+    # same 7,216-char denial SIX times in one 61K step frame (the prompt the coder answered with
+    # prose instead of a write). The anchor guarantee is ONE verbatim surviving copy; byte-identical
+    # repeats add zero information and drown the frame for a small model.
+    anchors = _dedup_identical([m for m in messages[head_end:covered] if _has_anchor(m)])
     band = messages[covered:tail_start]                                   # old-but-unfolded, verbatim
     # The pinned task leads the compacted view (right after cria's system prompt) so the north star is
     # the first thing the coder reads — never summarized, re-emitted fresh from the caller each turn.
@@ -450,6 +456,21 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     rollup = [_summary_msg(state.summary)] if state.summary.strip() else []
     out = messages[:head_end] + task + files + anchors + rollup + working
     return out, state, True
+
+
+def _dedup_identical(msgs: list[dict]) -> list[dict]:
+    """Byte-identical message contents collapse to the first occurrence — order and bytes of every
+    distinct message untouched. Exact match only: two renderings of the same fact are NOT the same
+    message, and deciding they mean the same thing would be a judgment this function must not make."""
+    seen: set[str] = set()
+    out = []
+    for m in msgs:
+        key = _text(m)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
+    return out
 
 
 def _is_files_msg(m: dict) -> bool:
