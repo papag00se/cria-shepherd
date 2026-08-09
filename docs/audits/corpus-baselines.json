@@ -1,0 +1,10 @@
+{
+ "generated": "2026-08-09",
+ "capture_dirs": 232,
+ "request_bodies": 31451,
+ "assistant_turns": 338070,
+ "assistant_turns_with_EMPTY_tool_calls_list": 0,
+ "tool_call_arguments_as_string": 336308,
+ "tool_call_arguments_as_dict": 0,
+ "distinct_wire_models": 19
+}
