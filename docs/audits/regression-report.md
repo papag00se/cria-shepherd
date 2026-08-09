@@ -22,11 +22,11 @@ gates = check runs it triggered.
 | 🟢 gemma4 · 12B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 57.7 | 5 | 35 | 2 | 0 | 3 | 1 |
 | 🟢 nemotron-elastic · 12B-A2B q4km | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 123.1 | 6 | 43 | 4 | 0 | 5 | 1 |
 | 🟢 ornith · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.3 | 17 | 124 | 5 | 4 | 9 | 6 |
-| 🟢 qwen3.5 · 9B q6 | ⁴⁄₄ ⁴⁄₄ | 77.8 | 20 | 99 | 8 | 1 | 8 | 4 |
+| 🟢 qwen3.5 · 9B q6 | ⁴⁄₄ ⁴⁄₄ ⁴⁄₄ | 79.3 | 30 | 150 | 12 | 4 | 10 | 4 |
 | 🟢 qwythos · 9B q6 | ⁴⁄₄ ³⁄₄ ⁴⁄₄ | 80.5 | 13 | 95 | 12 | 2 | 7 | 4 |
 | 🟢 qwopus · 9B q6 | ³⁄₄ ⁴⁄₄ ⁴⁄₄ | 81.4 | 23 | 114 | 9 | 4 | 11 | 5 |
 | 🟢 ternary-bonsai · 27B q2_0 | ³⁄₄ ⁴⁄₄ ⁴⁄₄ | 35.2 | 57 | 48 | 1 | 1 | 3 | 2 |
-| 🟡 mellum2 · 12B-A2.5B q4 | ²⁄₄ ⁴⁄₄ ⁴⁄₄ | 163.8 | 22 | 150 | 17 | 5 | 13 | 3 |
+| 🟡 mellum2 · 12B-A2.5B q4 | ⁴⁄₄ ⁴⁄₄ ¹⁄₄ | 159.2 | 30 | 223 | 32 | 6 | 19 | 6 |
 | 🟠 maple (ternary) · 20B-A1B q2 | ¹⁄₄ ³⁄₄ ¹⁄₄ | 63.5 | 28 | 90 | 7 | 1 | 5 | 6 |
 
 assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ context work
@@ -147,8 +147,10 @@ assists per run: 🧭 steers · 🔁 loops broken · 🧪 check runs · 🗜️ 
 | maple-preview | counted | 1/4 | 16 | 42 | 25 | 63.8 | 4 | 5 | milestone-miss-15min |
 | ternary-bonsai | counted | 4/4 | 49 | 38 | 19 | 25.4 | 0 | 3 | exited |
 | gemma4 | counted | 4/4 | 8 | 50 | 23 | 59.5 | 3 | 4 | exited |
+| qwen35 | counted | 4/4 | 50 | 253 | 143 | 82.3 | 19 | 14 | exited |
+| mellum2 | counted | 1/4 | 33 | 298 | 219 | 158.5 | 52 | 25 | milestone-miss-30min |
 
-counted runs: 97 · avg wall 23 min · avg coder calls 66 · full-pass rate 34/97
+counted runs: 99 · avg wall 23 min · avg coder calls 68 · full-pass rate 35/99
 
 ## Scoreboard (every run; counted rows bold)
 

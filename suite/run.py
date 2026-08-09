@@ -401,6 +401,28 @@ def main() -> None:
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "success", "score", "wall_seconds",
                        "calls", "avg_tok_s")}, indent=1))
+    _refresh_grid()
+
+
+def _refresh_grid() -> None:
+    """Rewrite the operator grid from results.jsonl, here, where the row was just appended.
+
+    The grid is THE operator view and the standing rule is to refresh it after every run — but it
+    was a step a human had to remember, so it drifted: gemma4's canary was recorded and then
+    qwen35's 4/4 and mellum2's 1/4 both landed unrecorded, leaving the board showing qwen with two
+    runs when it had three. A rule that depends on remembering is not a rule (#4 — fix it where it
+    belongs, not by trying harder).
+
+    Best-effort and non-fatal: the run's RESULT is already durably on disk one line above, and a
+    reporting step must never be able to fail a completed run."""
+    try:
+        sys.path.insert(0, str(SUITE))
+        import regression_stats
+        lines = [regression_stats.stat_line(r) for r in regression_stats.rows()]
+        regression_stats.write_report(lines, regression_stats.model_summary(lines))
+        print("[grid] refreshed docs/audits/regression-report.md")
+    except Exception as e:  # noqa: BLE001 — reporting must not fail the run
+        print(f"[grid] refresh skipped: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
