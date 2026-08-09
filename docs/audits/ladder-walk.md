@@ -13,6 +13,9 @@ For every wrong turn, four questions in order — only when all four fail is it 
 > 2. Did cria tell it to do something **impossible**?
 > 3. Did cria **withhold** something it already held?
 > 4. Did cria's **wording** cause it?
+>
+> …and for any YES: **which call authored it, and what did that call see?** (see the section
+> below — the answer is cria's prompt far more often than it is the model's judgement)
 
 ## What a WALK is
 
@@ -41,6 +44,71 @@ walked it.
 execute; that is how phase 1's Python cell was cleared wrongly the first time.
 
 ---
+
+## Ask what the REASONER saw — not just what cria said
+
+Nearly every "cria said something false" finding in this record is really three steps: **cria
+composed a prompt, a small model answered it badly, and cria delivered that answer in its own
+voice.** Stopping at "the steer was wrong" blames the answer and stops one step short of the thing
+cria owns. The prompt is cria's. The answer is a function of it.
+
+So for every bad injection a walk finds, the walk must go one step back and read the call that
+produced it: **what was that model shown, how big was it, what shapes did it demonstrate, and where
+in all of it was the actual question?**
+
+**Read BOTH halves: what it SAW and what it THOUGHT.** The verdict alone cannot tell you which of
+two unrelated bugs you have. *Never worked it out* is an evidence problem — the prompt did not
+contain, or buried, what the model needed. *Worked it out and then lost it* is an output problem —
+the answer channel, a length budget, or an imitated format destroyed a conclusion the model had
+already reached. They look identical from the answer and share no fix.
+
+`python3 suite/reasoner_audit.py <capture> --bad` does the mechanical part — per asked-model call it
+prints the composed prompt's size, the shapes it demonstrated, the tail where the ask sits, **what
+the model thought (`reasoning_content`, including an inline `<think>`), and what it finally
+answered** — flagging answers that imitate the prompt instead of answering it, thinking that
+concluded on a verdict the answer then dropped, and thinking that produced no answer at all.
+
+**The clearest example in that same run is not the forgery — it is call 0016.** The model thought:
+
+> "The README is missing. So the agent should write README.md. Then, once that's done, signal
+> ON_TRACK."
+
+Correct, and exactly the directive that was wanted. What it ANSWERED was
+`write_file({"path": "README.md", "content": …})` — the syntax the prompt had demonstrated ten
+times. cria shipped that blob to the coder as a steer. The reasoning was right and the output
+channel ate it; no amount of better evidence would have fixed that call.
+
+**The case that produced this rule.** mellum2 1786302864 injected a steer containing FABRICATED
+shell output — a `Chunk ID`, a wall time, an exit code and an invented `addr1q…` address — telling
+the coder its resolver worked when it had never once returned an address. As "the steer author
+lied" that is a model failure with nothing to fix. One step back:
+
+    0060-reasoner   system  2,769 chars — "you must never claim to have performed any action"
+                    prompt 80,503 chars — demonstrating tool-call syntax ×50 and tool OUTPUT
+                                          blocks ×24
+                    the ask: one sentence, at the very end
+
+The dominant demonstrated pattern is *tool call followed by its output*, fifty times over; the
+prohibition is one line 80KB earlier. The model emitted the most probable continuation of what it
+was shown.
+
+**And it is a dose-response, not an anecdote.** Over 717 reasoner calls in the captures:
+
+| tool-call/output shapes demonstrated in the prompt | calls | answered by imitating one |
+|---:|---:|---:|
+| 0–9 | 240 | **1%** |
+| 10–29 | 180 | **3%** |
+| 30–59 | 174 | **8%** |
+
+cria's own source already records this lesson for the compaction path — *"passed 89 STRUCTURED
+turns — 42 of them its own tool calls — a weak model continues the pattern and answers with a tool
+call, whatever the system prompt says"* (`cria/server.py`) — where the fix was to FLATTEN the
+history. The steer path already flattens it and still demonstrates the syntax, so flattening was
+necessary and not sufficient.
+
+**The question to add to the four.** After "did cria state something false?", ask: *if it did, which
+call authored it, and what did that call see?* A false fact cria emitted is a prompt-composition
+bug until proven otherwise.
 
 ## Ladder
 
