@@ -157,5 +157,50 @@ class TheIndicatorCarriesItTests(unittest.TestCase):
         self.assertFalse(IndicatorsConfig(connect=False).connect)
 
 
+class ItReachesTheDRIVEPathTests(unittest.TestCase):
+    """The bug this class exists for: the banner shipped wired ONLY into the Indicator that
+    `_route` builds — and when cria's loop engages (every suite run, every real coding turn)
+    `_produce_stream` returns before `_route` is ever reached. It was verified with a curl, which
+    takes the proxy path, so it looked correct and was invisible in production. Same
+    one-path-not-its-twin shape as four other faults fixed this week.
+
+    `_finalize` is this file's stated single completion-finalization chokepoint and the drive path
+    does go through it, so that is where the banner is emitted; the Indicator keeps the streaming
+    proxy covered, and one shared flag stops a double print."""
+
+    def test_finalize_emits_the_banner(self):
+        import inspect
+        from cria import server
+        src = inspect.getsource(server.CriaHandler._finalize) if hasattr(server, "CriaHandler") else ""
+        if not src:
+            handler = next(v for k, v in vars(server).items()
+                           if isinstance(v, type) and hasattr(v, "_finalize"))
+            src = inspect.getsource(handler._finalize)
+        self.assertIn("_connect_lines", src,
+                      "the drive path's chokepoint does not emit the connect banner")
+
+    def test_it_is_gated_on_visible_output(self):
+        """A header-only completion is stored and re-summarized by the harness as if it were the
+        model's answer — the lesson inject_buffered records in full."""
+        import inspect
+        from cria import server
+        handler = next(v for k, v in vars(server).items()
+                       if isinstance(v, type) and hasattr(v, "_finalize"))
+        src = inspect.getsource(handler._finalize)
+        i = src.index("_connect_lines")
+        self.assertIn("_has_visible_output", src[:i],
+                      "the banner must not turn an empty turn into a visible one")
+
+    def test_one_shot_flag_is_shared_by_both_paths(self):
+        import inspect
+        from cria import server
+        handler = next(v for k, v in vars(server).items()
+                       if isinstance(v, type) and hasattr(v, "_connect_lines"))
+        src = inspect.getsource(handler._connect_lines)
+        self.assertIn("_connect_done", src)
+        self.assertIn("self.server", src, "the flag must live on the SERVER, not the per-request handler")
+
+
+
 if __name__ == "__main__":
     unittest.main()

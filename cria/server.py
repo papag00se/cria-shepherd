@@ -632,6 +632,20 @@ class CriaHandler(BaseHTTPRequestHandler):
                       getattr(rlog, "gen_tokens", 0), getattr(rlog, "model_calls", 0),
                       getattr(rlog, "events", None))
         completion = self._decorate(completion)
+        # THE CONNECT BANNER, on the path that actually runs. `_route` builds an Indicator carrying
+        # it, and that covers the PROXY path — but when the loop engages (every suite run, every
+        # real coding turn) `_produce_stream` returns before `_route` is ever reached, so the
+        # banner was invisible exactly where it matters. `_finalize` is this file's stated "single
+        # completion-finalization chokepoint" and the drive path does go through it; the one-shot
+        # flag is shared, so whichever path fires first wins and neither double-prints.
+        #
+        # Gated on VISIBLE OUTPUT for the reason `inject_buffered` documents in full: a header-only
+        # completion is stored and re-summarized by the harness as if it were the model's answer
+        # (it once became an entire compaction summary). A banner must decorate a real turn or wait
+        # for one.
+        if ic.enabled and ic.connect and _has_visible_output(completion):
+            for line in reversed(self._connect_lines(self.server.upstream, self._connect_model(), rlog) or []):
+                _prepend_content_line(completion, f"{MARKER}{line}")
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
         if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
             # Reset ONLY once the tally has actually been REPORTED. The reset used to be
@@ -758,6 +772,16 @@ class CriaHandler(BaseHTTPRequestHandler):
             show_route=not classification.cached, route=ic.route, assists=ic.assists,
             connect=self._connect_lines(route.provider, shown, rlog) if ic.connect else None,
         )
+
+    def _connect_model(self) -> str:
+        """The name the connect banner shows on the drive path. The loaded model is the truth (#5b)
+        — `loaded_model` is already cached from /v1/models — and the configured coder backend name
+        is the fallback when the server did not answer."""
+        loaded = getattr(self.server.upstream, "_loaded_model", None)
+        if isinstance(loaded, str) and loaded:
+            return loaded
+        coder = self.server.cfg.routing.roles.get("coder")
+        return (coder.backend if coder else "") or "?"
 
     def _connect_lines(self, provider, shown: str, rlog) -> list[str] | None:
         """The once-per-PROCESS connect banner: what cria is fronting, and whether this model's

@@ -110,9 +110,13 @@ class FinalizeKeepsUnreportedCallsTests(unittest.TestCase):
         st.calls = stats_calls
         st.model_calls = 43
         st.observe(50.0, 100, 0)                      # t0 set; calls -> stats_calls+1
+        # `connect=False`: these tests isolate the TURN-STATS half of _finalize, and the connect
+        # banner is a different mechanism that also lives there. Off keeps this fake honest about
+        # what it is exercising rather than silently depending on the banner's own guards.
         fake = _t.SimpleNamespace(
             server=_t.SimpleNamespace(
-                cfg=_t.SimpleNamespace(indicators=_t.SimpleNamespace(enabled=True, stats=True)),
+                cfg=_t.SimpleNamespace(indicators=_t.SimpleNamespace(enabled=True, stats=True,
+                                                                     connect=False)),
                 stats_store=store),
             _decorate=lambda c: c)
         rlog = _t.SimpleNamespace(last_tok_per_s=None, gen_tokens=0, model_calls=0, events=None)
