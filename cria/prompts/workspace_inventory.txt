@@ -13,3 +13,9 @@ coder_header = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, n
 coder_note = Every file above is readable with read_file — do NOT reconstruct file content from memory or from the summary; the disk is the only current version.
 planner_header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth right now, before any work has started — newest first):
 planner_empty = WORKSPACE FILES in {{ROOT}}: none — the workspace is empty; nothing has been built yet.
+# The steer author's template heads its disk section "THE FILES IT HAS BEEN CHANGING" — and on
+# nemotron-nano 1786243834 the ONLY entry was cria's own spilled reference copy under
+# tmp/read-only/, so the one prompt that needed "the coder has produced nothing" read as file
+# activity instead (the unstick reasoner answered ON_TRACK over an untouched workspace, five
+# times). Spill entries are LABELLED, never removed: the completeness clause stays true.
+spill_note = — a reference copy the environment saved for re-reading, NOT something the coder wrote

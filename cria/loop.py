@@ -6060,7 +6060,11 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         # (`(no files touched yet)` while resolve_handle.py sat at 2,582 B, and the same prompt
         # spoke of "your current edits" fourteen lines below). The disk is the answer cria could
         # always have read — the same inventory the step critic is given.
-        disk = workspace_inventory(workspace_root)
+        # …and cria's OWN spill copies in it are labelled as such: the template heads this section
+        # "THE FILES IT HAS BEEN CHANGING", and on nemotron-nano 1786243834 the only entry was the
+        # spilled openapi reference — file activity where the coder had produced NOTHING, feeding
+        # five ON_TRACK verdicts over an untouched workspace (rule 5b, in cria's own prompt).
+        disk = _label_spill_entries(workspace_inventory(workspace_root))
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
@@ -7536,6 +7540,26 @@ def _named_gap(findings: str) -> str:
     actionable attached. Empty when cria holds nothing, which keeps silence the honest answer."""
     f = (findings or "").strip()
     return ("\n\nWhat cria's own checks currently report, unresolved:\n" + f) if f else ""
+
+
+def _label_spill_entries(disk: str) -> str:
+    """Inventory lines under cria's own spill dir get the ``spill_note`` label — the entry stays
+    (the completeness clause must hold), but it no longer reads as the coder's file activity. Only
+    the steer-author path uses this: its template says "THE FILES IT HAS BEEN CHANGING", and a
+    spill copy under that header is a false fact about who changed what. The critic's header
+    ("WORKSPACE FILES") makes no such claim, so its inventory is left alone."""
+    if not disk:
+        return disk
+    note = prompts.load_map("workspace_inventory").get("spill_note", "").strip()
+    prefix = webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/"
+    if not note:
+        return disk
+    out = []
+    for line in disk.splitlines():
+        if line.strip().split(" (")[0].startswith(prefix):
+            line = f"{line} {note}"
+        out.append(line)
+    return "\n".join(out)
 
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "", denied: tuple | list = ()) -> str:
