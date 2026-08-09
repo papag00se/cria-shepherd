@@ -12,17 +12,22 @@ from cria import loop, prompts
 
 
 class UnexecutedWriteTests(unittest.TestCase):
-    def test_the_two_measured_turns_are_recognised(self):
-        d = pathlib.Path.home()/".cria"/"calls"/"20260801T160104-019fbf8f-40be-7f53-a1c0-881700caf8e7"
-        if not d.is_dir():
-            self.skipTest("captures not present on this machine")
-        hits = 0
-        for r in sorted(d.glob("*-coder-*.response.json")):
-            try: msg = json.load(r.open())["choices"][0]["message"]
-            except Exception: continue
-            if msg.get("tool_calls"): continue
-            if loop.unexecuted_write(msg.get("content") or ""): hits += 1
-        self.assertGreaterEqual(hits, 2, "the two full-file paste turns must be caught")
+    def test_the_measured_turns_are_recognised(self):
+        """Real coder turns that pasted a file instead of writing it — VENDORED.
+
+        This used to scan a capture directory under ~/.cria/calls. The run-evidence cleanup on
+        2026-08-09 deleted it and the test began SKIPPING silently, which is worse than failing:
+        a measurement-backed assertion that quietly stops running is indistinguishable from one
+        that passes. The two turns below are the same shape, taken from captures that survived,
+        and they now live in the repo so no cleanup can disarm this again."""
+        here = pathlib.Path(__file__).parent / "fixtures"
+        turns = sorted(here.glob("unexecuted_write_*.json"))
+        self.assertGreaterEqual(len(turns), 2, "the vendored turns are missing")
+        for t in turns:
+            content = json.load(t.open())["content"]
+            with self.subTest(turn=t.name):
+                self.assertTrue(loop.unexecuted_write(content),
+                                f"{t.name} is a pasted file and must be caught")
 
     def test_a_pasted_file_is_caught(self):
         body = "Here is the script:\n\n```python\n" + "\n".join(
@@ -120,26 +125,29 @@ class NestedFenceTests(unittest.TestCase):
     def test_a_nested_fence_document_is_caught(self):
         self.assertTrue(loop.unexecuted_write(self.README))
 
-    def test_the_real_run_now_fires_on_the_pasted_readmes(self):
-        import glob
-        import json
-        d = ("/home/jesse/.cria/calls/"
-             "20260801T232511-019fc125-dd1a-7f41-bb0b-c1b6e07e74b9/")
-        files = sorted(glob.glob(d + "*coder-s*.response.json"))
-        if not files:
-            self.skipTest("captures not present on this machine")
-        fired = total = 0
-        for x in files:
-            m = json.load(open(x))["choices"][0]["message"]
-            if m.get("tool_calls"):
-                continue
-            c = (m.get("content") or "").strip()
-            if c.count("```") < 2:
-                continue
-            total += 1
-            fired += bool(loop.unexecuted_write(c))
-        self.assertGreaterEqual(fired, total - 1,
-                                "at most the one prose-complaint turn may be missed")
+    def test_it_discriminates_across_a_whole_real_run(self):
+        """Every fenced, tool-call-less coder turn of one real run — pastes AND diagnostics.
+
+        The predecessor scanned a capture directory and asserted a RATE ("at most one missed").
+        The 2026-08-09 cleanup deleted that directory and the test skipped silently. Rather than
+        re-point a rate assertion at different data — which would be tuning the expectation to fit
+        whatever survived — the turns are vendored with the verdict each one actually gets, so the
+        test now measures DISCRIMINATION: the file pastes must fire, and the diagnostic replies
+        that merely quote code must not. On this run that is a clean 4/5 split, which is a stronger
+        claim than the rate it replaces."""
+        here = pathlib.Path(__file__).parent / "fixtures" / "fenced_no_tool_turns.json"
+        turns = json.load(here.open())["turns"]
+        self.assertGreater(len(turns), 5, "the vendored run is missing")
+        pastes = [t for t in turns if t["is_paste"]]
+        prose = [t for t in turns if not t["is_paste"]]
+        self.assertTrue(pastes and prose, "a fixture with only one class proves nothing")
+        for t in pastes:
+            with self.subTest(paste=t["call"]):
+                self.assertTrue(loop.unexecuted_write(t["content"]))
+        for t in prose:
+            with self.subTest(diagnostic=t["call"]):
+                self.assertFalse(loop.unexecuted_write(t["content"]),
+                                 "a diagnostic that quotes code is not an unsaved file")
 
     def test_a_short_snippet_with_a_nested_fence_is_still_NOT_caught(self):
         self.assertFalse(loop.unexecuted_write("Try:\n\n```md\n## Hi\n\n```sh\nls\n```\n```\n"))

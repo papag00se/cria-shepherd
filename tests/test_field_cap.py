@@ -21,12 +21,16 @@ ledger-contradiction check must abstain on every capped endpoint.
 """
 import json
 import os
+import pathlib
 import unittest
 
 from cria import webfetch as wf
 
-SPEC = ("/home/jesse/.cria/suite/ada-handles_gemma4_codex_poff_1785390466"
-        "/workspace/tmp/read-only/api.handle.me_openapi.json")
+# VENDORED, not a capture path. This used to point into ~/.cria/suite, and the run-evidence
+# cleanup on 2026-08-09 deleted that directory — the tests then SKIPPED silently, which is a
+# worse outcome than failing. The spec is 96KB and is the real thing these assertions were
+# written against, so it lives in the repo now and cannot be swept away again.
+SPEC = str(pathlib.Path(__file__).parent / "fixtures" / "api.handle.me_openapi.json")
 
 
 class FieldCapTests(unittest.TestCase):

@@ -1,0 +1,2873 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Handles Public API",
+    "description": "ADA Handle Public API.\n\nRequests do not require authentication by default. If rate limiting is enabled, whitelisted clients may provide an `api-key` header to bypass the limiter.",
+    "termsOfService": "https://handle.me/#tou",
+    "contact": {
+      "email": "hello@koralabs.io"
+    },
+    "license": {
+      "name": "Mozilla Public License 2.0",
+      "url": "https://github.com/koralabs/handles-public-api/blob/main/LICENSE"
+    },
+    "version": "1.14.1"
+  },
+  "externalDocs": {
+    "description": "Swagger UI",
+    "url": "https://api.handle.me/swagger"
+  },
+  "servers": [
+    {
+      "url": "https://api.handle.me"
+    }
+  ],
+  "tags": [
+    {
+      "name": "handles",
+      "description": "Handle endpoints",
+      "externalDocs": {
+        "description": "Related Handle Docs",
+        "url": "https://api.handle.me/swagger"
+      }
+    },
+    {
+      "name": "holders",
+      "description": "Handle holder wallets, scripts, addresses, stats"
+    },
+    {
+      "name": "utils",
+      "description": "Handle utility endpoints"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "API index with content-negotiated discovery links",
+        "description": "Returns a pointer to the API's human and machine discovery surfaces. The response is selected via the `Accept` header:\n\n- Any `Accept` value containing `yaml` (e.g. `application/yaml`, `text/yaml`, `application/x-yaml`) → raw OpenAPI spec (this document).\n- `application/json` (or `*/*` / no `Accept` header) → OpenAPI spec parsed to JSON.\n- `text/plain` → plain-text list of absolute URLs to the Swagger UI, the OpenAPI spec, and the MCP endpoint.\n- `text/html` → HTML page with the same links.\n- Any other media type → `406 Not Acceptable`.\n",
+        "responses": {
+          "200": {
+            "description": "Discovery payload in the negotiated media type.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "No offered media type matches the request `Accept` header."
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Model Context Protocol endpoint",
+        "description": "Streamable HTTP MCP endpoint that accepts JSON-RPC 2.0 requests.\nSupports `initialize`, `ping`, `tools/list`, and `tools/call` methods.\nExposes read-only tools for handles, holders, and policies (including slot-based handle pagination).\nFor MCP `search_handles`, `page` and `slot_number` are mutually exclusive.\n",
+        "parameters": [
+          {
+            "name": "MCP-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "2025-11-25"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response body",
+            "headers": {
+              "MCP-Protocol-Version": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "MCP protocol revision used by this server response"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Notification accepted (no response body)"
+          },
+          "400": {
+            "description": "Unsupported protocol version header"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "MCP capability descriptor",
+        "description": "SSE transport is disabled, so the JSON-RPC POST is the only valid verb. GET still\nreturns `405` but with a discoverability descriptor so MCP clients probing GET\ncan self-bootstrap (protocol versions, server info, advertised tools, doc links)\nwithout out-of-band knowledge.\n",
+        "responses": {
+          "405": {
+            "description": "GET transport is not enabled; body advertises capability surface",
+            "headers": {
+              "Allow": {
+                "schema": {
+                  "type": "string",
+                  "example": "POST"
+                }
+              },
+              "MCP-Protocol-Version": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
+                    },
+                    "protocol": {
+                      "type": "string"
+                    },
+                    "transport": {
+                      "type": "string"
+                    },
+                    "latest_protocol_version": {
+                      "type": "string"
+                    },
+                    "supported_protocol_versions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "server_info": {
+                      "type": "object"
+                    },
+                    "tools": {
+                      "type": "array"
+                    },
+                    "links": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "OpenAPI spec (conventional alias)",
+        "description": "Conventional path for the OpenAPI spec; same payload as `GET /` with `Accept: application/json`.",
+        "responses": {
+          "200": {
+            "description": "OpenAPI spec as JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/swagger.json": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "OpenAPI spec (Swagger 2-style alias)",
+        "description": "Conventional path used by some toolchains; same payload as `/openapi.json`.",
+        "responses": {
+          "200": {
+            "description": "OpenAPI spec as JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/api-catalog": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "API catalog Linkset (RFC 9727)",
+        "responses": {
+          "200": {
+            "description": "Linkset describing service-doc and service-meta endpoints",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/security.txt": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "security.txt (RFC 9116)",
+        "responses": {
+          "200": {
+            "description": "Plain-text security contact / disclosure metadata",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/handles": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "summary": "Get all minted handles",
+        "description": "Get all minted handles. This endpoint will return a plain text list of all Handle names if the `Accepts` header is set to `text/plain`. If the `Accepts` header is set to `application/json` it will return a paginated list of JSON Handle objects instead.",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "A portion of the handle name to search for",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "characters",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Characters"
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Length of handles to return. This will also accept a range. For example `2-7` will get all Handles with a length >=2 and <=7",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "rarity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Rarity"
+            }
+          },
+          {
+            "name": "numeric_modifiers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/NumericModifiers"
+            }
+          },
+          {
+            "name": "og",
+            "in": "query",
+            "description": "Filter for OG Handles",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "personalized",
+            "in": "query",
+            "description": "Filter for Personalized Handles",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort results ascending or descending on Handle name",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "handle_type",
+            "in": "query",
+            "description": "Filter for specific Handle types",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "virtual_subhandle",
+                "nft_subhandle",
+                "handle"
+              ]
+            }
+          },
+          {
+            "name": "root_handle",
+            "in": "query",
+            "description": "Filter subhandles by their exact root handle name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "records_per_page",
+            "in": "query",
+            "description": "Number of Handles to return per page in paginated results. Maximum of 250 for `application/json` and 50000 for `text/plain`. Both `application/json` and `text/plain` support pagination. Defaults are 100 for `application/json` and 50000 for `text/plain`.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "The page number to return in paginated results. Either `page` or `slot_number` can be used in paginated results. Using the `page` parameter will order results by Handle name. This means pagination can potentially miss some Handles if Handles are added while paginating. As an alternative see `slot_number` below.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "slot_number",
+            "in": "query",
+            "description": "The slot number to start at when paginating results. Either `page` or `slot_number` can be used in paginated results. Using the `slot_number` parameter will order results by the slot number the Handles were created or updated in. Pagination can potentially return the same Handle more than once if Handles are added or updated during pagination. As an alternative, see `page` above.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "holder_address",
+            "in": "query",
+            "description": "The holder_address key of the wallet/script that the Handle is in. See the Holder endpoints for more information",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the search is in hex form",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful and up to date",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter"
+          }
+        }
+      }
+    },
+    "/handles/list": {
+      "post": {
+        "tags": [
+          "handles"
+        ],
+        "description": "POST an array to match or reverse-lookup minted Handles. \nThis may be combined with the all of the search and filtering\nparameters of the `/handles` endpoint \n(see [/handles](#/handles/get_handles) for more information), including paginated `text/plain` responses.\n",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/FilterType"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "An array of strings that can be any one type of FilterType.\n",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "examples": {
+                "handle": {
+                  "value": [
+                    "handle_1",
+                    "my_handle_2",
+                    "other_handle",
+                    "etc..."
+                  ]
+                },
+                "paymentkeyhash": {
+                  "value": [
+                    "120e95a22031d2cc21d6716788f709074fb89e9b8fbad6284eb8a074",
+                    "1771c13e355e10a4203d8948af58d16bce2b28d5f8a02835b0b21811",
+                    "b99182d0aba4003c6a80c98c58e24a91ca2ce50d04ea72361c9b9815",
+                    "etc..."
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful and up to date",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter"
+          }
+        }
+      }
+    },
+    "/handles/{handle}": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "description": "Returns a single Handle by name (or hex asset name when `hex=true`). Handle name format\nis enforced by the protocol, not by this API: any name that doesn't match the on-chain\nrules simply returns `404` with a docs link, matching how unminted names are returned.\n",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Handle"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Handle"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Handle not found (invalid shape, unminted, or protected). The `docs` field of the error body links to the relevant explanation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "451": {
+            "description": "Handle name matches a protected/legally restricted word.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/handles/{handle}/utxo": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/personalized": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Personalization"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Personalization"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/personalized/utxo": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/subhandle-settings": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubHandleSettings"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubHandleSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/subhandle-settings/utxo": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/subhandle_settings": {
+      "get": {
+        "deprecated": true,
+        "description": "Use `/handles/{handle}/subhandle-settings` instead.",
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubHandleSettings"
+                }
+              },
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubHandleSettings"
+                }
+              },
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle or subhandle settings not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/subhandle_settings/utxo": {
+      "get": {
+        "deprecated": true,
+        "description": "Use `/handles/{handle}/subhandle-settings/utxo` instead.",
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle or subhandle settings not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/subhandles": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter subhandles by type",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "virtual",
+                "nft"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/reference_token": {
+      "get": {
+        "deprecated": true,
+        "description": "Use `/handles/{handle}/personalized/utxo` instead.",
+        "tags": [
+          "handles"
+        ],
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UTxO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Handle format"
+          },
+          "404": {
+            "description": "Handle not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/datum": {
+      "get": {
+        "deprecated": true,
+        "tags": [
+          "handles"
+        ],
+        "description": "Get the datum in the same UTxO as the Handle, if present. This endpoint will return a plain text response of just the Cbor string if the `Accepts` header is `text/plain`. If the `Accepts` header is `application/json` the API will attempt to convert the Cbor to JSON, but may fail of the object isn't actually JSON.",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "default_key_type",
+            "in": "query",
+            "description": "Keys in CBOR maps default to 'utf8' encoding when converting to JSON. If the keys should default to 'hex' encoding, set this to 'hex'",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "numeric_keys",
+            "in": "query",
+            "description": "JavaScript doesn't support numeric object keys. CBOR does. If JSON keys can be converted to CBOR integers, then do so",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "description": "Cbor/hex encoded string of datum from the blockchain",
+                  "example": "a2446e616d654b436c65766572204769726c4469706673582e516d50636b3439384379355457594a53354e69667832523834466a596a4a4c693662386f484d4e6b666878705334"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "Attempt to convert the Cbor into a json object string",
+                  "example": "{ \"name\": \"Clever Girl\", \"ipfs\": \"QmPck498Cy5TWYJS5Nifx2R84FjYjJLi6b8oHMNkfhxpS4\" }"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "description": "Cbor/hex encoded string of datum from the blockchain",
+                  "example": "a2446e616d654b436c65766572204769726c4469706673582e516d50636b3439384379355457594a53354e69667832523834466a596a4a4c693662386f484d4e6b666878705334"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "Attempt to convert the Cbor into a json object string",
+                  "example": "{ \"name\": \"Clever Girl\", \"ipfs\": \"QmPck498Cy5TWYJS5Nifx2R84FjYjJLi6b8oHMNkfhxpS4\" }"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "If Cbor to JSON conversion fails or the Handle is an invalid format"
+          },
+          "404": {
+            "description": "Datum not found"
+          }
+        }
+      }
+    },
+    "/handles/{handle}/script": {
+      "get": {
+        "deprecated": true,
+        "tags": [
+          "handles"
+        ],
+        "description": "Get the reference script in the same UTxO as the Handle, if present.\nContent-negotiated: `Accept: text/plain` (or `application/cbor` / `application/cbor-hex`)\nreturns the raw CBOR-hex string; any other Accept (including `*/*` / no header)\nreturns the JSON `{cbor, type, hash}` representation.\n",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "description": "The Handle name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hex",
+            "in": "query",
+            "description": "Set to `true` if the `{handle}` is in hex form (full asset name hex, including asset label)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cbor": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "hash": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "description": "CBOR-hex string of the reference script",
+                  "example": "a2446e616d654b436c65766572204769726c4469706673582e516d50636b3439384379355457594a53354e69667832523834466a596a4a4c693662386f484d4e6b666878705334"
+                }
+              },
+              "application/cbor": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/cbor-hex": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Handle or script not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/root-handles": {
+      "get": {
+        "tags": [
+          "handles"
+        ],
+        "description": "Get all root handles (has at least one SubHandles minted). This may be combined with the all of the search and filtering parameters of the `/handles` endpoint (see [/handles](#/handles/get_handles) for more information).",
+        "parameters": [
+          {
+            "name": "minting_type",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/MintingType"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful and up to date",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "headers": {
+              "x-handles-search-total": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Number of total search results, regardless of pagination"
+              }
+            },
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "type": "string",
+                  "example": "handle123\nmy.handle\ni-always-hodl\n..."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Handle"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter"
+          }
+        }
+      }
+    },
+    "/holders": {
+      "get": {
+        "tags": [
+          "holders"
+        ],
+        "summary": "Lists the wallet/script/enterprise addresses that hold Handles.",
+        "description": "Lists the wallet/script/enterprise addresses that hold Handles.",
+        "parameters": [
+          {
+            "name": "records_per_page",
+            "in": "query",
+            "description": "Number of Holders to return per page in paginated results. Maximum of 250.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "The page number to return in paginated results.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort holders by `total_handles` count (`desc` by default, `asc` for smallest-first).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of Handle holders and some simple stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Holder"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Holder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter"
+          }
+        }
+      }
+    },
+    "/holders/{address}": {
+      "description": "Holder details",
+      "get": {
+        "tags": [
+          "holders"
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "description": "The stake/enterprise/script/other address of the Holder",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of Handle holders and some simple stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Holder"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Holder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Holder format"
+          },
+          "404": {
+            "description": "Holder not found"
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "description": "Handle Stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "List script metadata by network",
+        "description": "Returns one entry for every `<slug><ordinal>@handlecontract` subhandle that has inline script CBOR. There is no curated allow-list of contract families — whatever is on chain shows up here.\n\nResponse object keys are the script addresses derived from each validator hash. `refScriptAddress` is the on-chain address of the handle that holds the reference script UTxO. `type` is the family slug (the slug minus its trailing digits) — `pers1@handlecontract` has type `pers`, `persprx1@handlecontract` has type `persprx`.\n\nWithin each family the highest ordinal that has script CBOR is marked `latest: true`. Latest entries are emitted first so JSON-iteration order surfaces them up front.\n",
+        "parameters": [
+          {
+            "name": "latest",
+            "in": "query",
+            "description": "When `true`, only entries marked `latest` are returned (one per family that has a script). Combine with `type` to scope to specific families.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Optional `startsWith` filter on the slug part of the handle name (everything before `@handlecontract`).\n\n- `type=pers` returns every family whose slug begins with `pers` — `pers`, `persprx`, `perspz`, `perslfc`, `persdsg`, …\n- `type=persprx` returns only `persprx<n>` entries.\n\nThe match is case-insensitive and applied to the full slug including its ordinal, so any prefix that uniquely identifies a family also works.\n",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "pers"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Script metadata keyed by derived script address. Returns `{}` if no families match the filter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/deployment": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Deployment metadata",
+        "responses": {
+          "200": {
+            "description": "Deployment metadata from deployment_info.json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mint": {
+      "post": {
+        "tags": [
+          "handles"
+        ],
+        "summary": "Mint relay endpoint for subhandles",
+        "description": "Used by `api.handle.me` for subhandle mints.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "handle",
+                  "tx_hash",
+                  "handle_type",
+                  "auth_client",
+                  "access_token",
+                  "send_address"
+                ],
+                "properties": {
+                  "handle": {
+                    "type": "string"
+                  },
+                  "tx_hash": {
+                    "type": "string"
+                  },
+                  "handle_type": {
+                    "$ref": "#/components/schemas/HandleType"
+                  },
+                  "auth_client": {
+                    "type": "string"
+                  },
+                  "access_token": {
+                    "type": "string"
+                  },
+                  "send_address": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mint relay accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid mint request (for example `handle_type=handle`)"
+          }
+        }
+      }
+    },
+    "/swagger": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "description": "This swagger documentation"
+          }
+        }
+      }
+    },
+    "/swagger/swagger.yml": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw OpenAPI specification in YAML format",
+            "content": {
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mpt-root": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "MPT root hash verification",
+        "description": "Returns three Merkle Patricia Trie root hashes for the handle set:\n- `calculated_mpt_root_hash`: computed from the API's current handle index (plus ghost handles the on-chain validator cannot remove).\n- `datum_mpt_root_hash`: extracted from the API's cached `handle_root@handle_settings` datum (advances with the scanner as blocks are processed).\n- `chain_mpt_root_hash`: probed live from Koios (fallback Blockfrost) at provider chain tip.\n\n`verified` is `true` only when all three hashes are equal AND the provider's tip slot is at or ahead of our `current_slot` (otherwise the provider's view is older than ours and the comparison is not meaningful). A transient `verified: false` with `calculated === datum !== chain` simply reflects scanner lag behind the live chain tip — internal state is consistent, we just haven't applied the most recent blocks.\n",
+        "responses": {
+          "200": {
+            "description": "MPT root hash comparison",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "calculated_mpt_root_hash": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "MPT root hash computed from the API's current handle set (including ghost handles).",
+                      "example": "2411906497cba6d7713d99f101182bf48caf8730cea02ae887eeb15fdc2ce51b"
+                    },
+                    "datum_mpt_root_hash": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "MPT root hash decoded from the API's cached `handle_root@handle_settings` datum.",
+                      "example": "2411906497cba6d7713d99f101182bf48caf8730cea02ae887eeb15fdc2ce51b"
+                    },
+                    "chain_mpt_root_hash": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "MPT root hash probed live from Koios/Blockfrost at chain tip. Null when both providers fail or return an unusable response.",
+                      "example": "2411906497cba6d7713d99f101182bf48caf8730cea02ae887eeb15fdc2ce51b"
+                    },
+                    "verified": {
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "True only when all three hashes match AND `provider_tip_slot >= our_current_slot`. Null if any of the three hashes is unavailable."
+                    },
+                    "network": {
+                      "type": "string",
+                      "example": "mainnet"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Which provider produced `chain_mpt_root_hash`.",
+                      "enum": [
+                        "koios",
+                        "blockfrost"
+                      ]
+                    },
+                    "provider_tip_slot": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The absolute slot at which the provider reported `chain_mpt_root_hash`."
+                    },
+                    "our_current_slot": {
+                      "type": "integer",
+                      "description": "The absolute slot our scanner has processed up to."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Service health and scanner state",
+        "description": "Returns the scanner state and storage / Ogmios sync metrics. Always emits\n`Cache-Control: no-store` so caches/CDNs cannot serve stale state.\nStatus enum: `current` | `updating` | `ogmios_behind` | `storage_behind` | `waiting_on_cardano_node`.\n",
+        "responses": {
+          "200": {
+            "description": "Healthy and scanning is complete (`status: current`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Healthy but the scanner is still catching up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cardano node / Ogmios is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/policies": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Get active Handle policy settings",
+        "description": "Returns normalized JSON policy settings from the `handle_policies` datum.\nPolicy IDs are always emitted as hex strings without the `0x` prefix.\nEach policy maps to:\n- `first_minting_slot`: first slot where minting is active\n- `last_minting_slot`: optional last minting slot (`null` when open-ended)\n- `sunset_slot`: optional sunset/deprecation slot (`null` when unset)\n",
+        "responses": {
+          "200": {
+            "description": "Successful and up to date",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "first_minting_slot": {
+                        "type": "integer"
+                      },
+                      "last_minting_slot": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "sunset_slot": {
+                        "type": "integer",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a": {
+                    "first_minting_slot": 47931333,
+                    "last_minting_slot": null,
+                    "sunset_slot": null
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful, but scanning is still catching up to the tip of the blockchain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "first_minting_slot": {
+                        "type": "integer"
+                      },
+                      "last_minting_slot": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "sunset_slot": {
+                        "type": "integer",
+                        "nullable": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unable to decode policies datum"
+          },
+          "404": {
+            "description": "Policies datum not found"
+          }
+        }
+      }
+    },
+    "/datum": {
+      "post": {
+        "tags": [
+          "utils"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "The format of the datum being passed in",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DatumType"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "The format of the datum to encode/decode to",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DatumType"
+            }
+          },
+          {
+            "name": "default_key_type",
+            "in": "query",
+            "description": "Default key encoding when converting CBOR maps to JSON",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "utf8",
+                "hex"
+              ]
+            }
+          },
+          {
+            "name": "numeric_keys",
+            "in": "query",
+            "description": "JavaScript doesn't support numeric object keys. CBOR does. If JSON keys can be converted to CBOR integers, then do so",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "indefinite_arrays",
+            "in": "query",
+            "description": "Whether to use CBOR \"definite\" or \"indefinite\" arrays. Defaults to `true`\n<br />`true` will wrap arrays in the `9f[...]ff` CBOR Indefinite Major Type\n<br />`false` will preceed the array with the CBOR Major Type `8n[...]` (where `n` is the length of the array)\n",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "default_to_text",
+            "in": "query",
+            "description": "Whether strings should all be converted to CBOR byte strings or text strings. Defaults to `false` <br />`false` will preceed the bytes with the CBOR Major Type `4n[...]` (bytes) <br />`true` will preceed the bytes with the CBOR Major Type `6n[...]` (text)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "chunk_size",
+            "in": "query",
+            "description": "Strings or Buffers larger than `chunk_size` are broken into an array of strings or Buffers. Defaults to `64`. As an example, \"01234567890123456789\" with a `chunk _size` of 10 will convert to the CBOR equivalent of ['0123456789', '0123456789']",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The CBOR or JSON to encode/decode.\n<br />NOTE: To insert constructors where needed, wrap the object in the format:\n<br />\n```json\nconstructor_0: [ <your_arbitrary_json> ]\n```\nWhere `\"_0\"` is a number from 0-3\n",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "example": "{ \"name\": \"Clever Girl\", \"ipfs\": \"QmPck498Cy5TWYJS5Nifx2R84FjYjJLi6b8oHMNkfhxpS4\" }",
+                "description": "Use when passing in JSON"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string",
+                "example": "a2446e616d654b436c65766572204769726c4469706673582e516d50636b3439384379355457594a53354e69667832523834466a596a4a4c693662386f484d4e6b666878705334\n",
+                "description": "Use when passing in CBOR"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "datum was able to be encoded/decoded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "example": "{ \"name\": \"Clever Girl\", \"ipfs\": \"QmPck498Cy5TWYJS5Nifx2R84FjYjJLi6b8oHMNkfhxpS4\" }",
+                  "description": "Used when the `\"to:\"` parameter is JSON"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "a2446e616d654b436c65766572204769726c4469706673582e516d50636b3439384379355457594a53354e69667832523834466a596a4a4c693662386f484d4e6b666878705334\n",
+                  "description": "Used when the `\"to:\"` parameter is CBOR"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "datum cbor or json was in the wrong format"
+          },
+          "503": {
+            "description": "HTTP application failure"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Uniform error envelope returned by every 4xx/5xx response in this API.\nAgents should branch on `error` (machine-stable) rather than `message` (human prose).\n",
+        "required": [
+          "error",
+          "message",
+          "docs"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Machine-stable error code. Values include `handle_not_found`, `handle_datum_not_found`, `subhandle_settings_not_found`, `subhandle_settings_utxo_not_found`, `script_not_found`, `policies_not_found`, `policies_decode_failed`, `datum_decode_failed`, `datum_endpoint_disabled`, `cbor_required`, `records_per_page_too_large`, `route_not_found`, `method_not_allowed`, `not_acceptable`, `rate_limited`, `holder_not_found`, `handle_type_unsupported_for_mint`, `unavailable_for_legal_reasons`, `bad_request`, `not_found`, `internal_error`.",
+            "example": "handle_not_found"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable explanation. Subject to change; do not branch logic on this field.",
+            "example": "Handle not found"
+          },
+          "docs": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL pointing at the most-relevant docs for this error.",
+            "example": "https://api.handle.me/"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "stats"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "current",
+              "updating",
+              "ogmios_behind",
+              "storage_behind",
+              "waiting_on_cardano_node"
+            ]
+          },
+          "ogmios": {
+            "type": "object",
+            "nullable": true
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "percentage_complete": {
+                "type": "number"
+              },
+              "index_memory_size": {
+                "type": "number"
+              },
+              "slot_date": {
+                "type": "string"
+              },
+              "handle_count": {
+                "type": "integer"
+              },
+              "holder_count": {
+                "type": "integer"
+              },
+              "memory_size": {
+                "type": "number"
+              },
+              "current_slot": {
+                "type": "integer"
+              },
+              "last_slot": {
+                "type": "integer"
+              },
+              "current_block_hash": {
+                "type": "string"
+              },
+              "tip_block_hash": {
+                "type": "string"
+              },
+              "utxo_schema_version": {
+                "type": "integer"
+              },
+              "index_schema_version": {
+                "type": "integer"
+              },
+              "lock_lambdas": {
+                "nullable": true
+              },
+              "estimated_sync_time": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "AddressType": {
+        "type": "string",
+        "example": "wallet",
+        "description": "<br />If it is a Shelley address and a script, it will say `script`.\n<br />If it is Shelley, is not a script, and has a stake key, it will be `wallet`.\n<br />If it is Shelley, is not a script, and doesn't have a stake key, it will be `enterprise`.\n<br />If the address is not a Shelley address, it will be `other`.\n",
+        "enum": [
+          "wallet",
+          "script",
+          "enterprise",
+          "other"
+        ]
+      },
+      "Characters": {
+        "type": "string",
+        "example": "letters,numbers,special",
+        "description": "Included character types in the handles. Numbers includes negative and decimal numbers. Combining them does an 'AND' search. Ex - `letters,numbers` will find Handles that have both letters and numbers. <br />`letters` - All characters are letters <br />`numbers` - All characters are valid numeric characters (including decimals and negative) <br />`special` - All characters are dash, period, or underscore"
+      },
+      "DatumType": {
+        "type": "string",
+        "example": "plutus_data_cbor",
+        "description": "<br />json (cardano-cli can take this with --tx-out-datum-json-value)\n<br />tx_metadata_json (aka \"Detailed Schema\")\n<br />tx_metadata_cbor (the actual TxMetadata CBOR bytes)\n<br />plutus_data_json (aka \"Schema Json\" with Plutus constructors/fields)\n<br />plutus_data_cbor (the actual PlutusData CBOR bytes)\n",
+        "enum": [
+          "json",
+          "tx_metadata_json",
+          "tx_metadata_cbor",
+          "plutus_data_json",
+          "plutus_data_cbor"
+        ]
+      },
+      "DesignerSettings": {
+        "type": "object",
+        "properties": {
+          "creator_defaults_enabled": {
+            "type": "boolean",
+            "description": "True is the user elected to use the creator defaults from the chosen background"
+          },
+          "bg_border_color": {
+            "$ref": "#/components/schemas/HexString"
+          },
+          "pfp_border_color": {
+            "$ref": "#/components/schemas/HexString"
+          },
+          "font_shadow_color": {
+            "$ref": "#/components/schemas/HexString"
+          },
+          "font_shadow_size": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "example": [
+              12,
+              12,
+              10
+            ],
+            "description": "An array of three numbers representing vertical offset, horizontal offset, and blur radius"
+          },
+          "pfp_image": {
+            "type": "string",
+            "description": "IPFS hash of the selected profile pic",
+            "example": "ipfs://Q2de4Fg56tNHy82300000001"
+          },
+          "bg_image": {
+            "type": "string",
+            "description": "IPFS hash of the selected background",
+            "example": "ipfs://Q2de4Fg56tNHy82300000001"
+          },
+          "pfp_asset": {
+            "type": "string",
+            "description": "Hex string of policy id and asset name of the pfp_image on chain asset",
+            "example": "94da605878403d07c144fe96cd50fe20c16186dd8d171c78ed6a8768436c6179436861726c6f74746538353338"
+          },
+          "bg_asset": {
+            "type": "string",
+            "description": "Hex string of policy id and asset name of the bg_image on chain asset",
+            "example": "b8842fe3a0eae5011252c16566995d2c8f1bae85d380410cd21ea91f000de140556e646572776f726c645f48616e646c65735f6267"
+          },
+          "text_ribbon_colors": {
+            "type": "array",
+            "description": "The color used for the ribbon or the colors used for the gradient on the ribbon.",
+            "items": {
+              "$ref": "#/components/schemas/HexString"
+            },
+            "example": [
+              "0a1fd3ff",
+              "22d1af88",
+              "31bc2399"
+            ]
+          },
+          "qr_bg_color": {
+            "$ref": "#/components/schemas/HexString"
+          },
+          "qr_inner_eye": {
+            "type": "string",
+            "description": "Two values separated by a comma. The first is the inner eye style ('dot', 'square', 'rounded'). The second is the inner eye color as an hex RGBA value preceded by a hash symbol",
+            "example": "square,#FFFFFF"
+          },
+          "qr_outer_eye": {
+            "type": "string",
+            "description": "Two values separated by a comma. The first is the outer eye style ('dot', 'square', 'rounded'). The second is the outer eye color as an hex RGBA value preceded by a hash symbol",
+            "example": "square,#FFFFFF"
+          },
+          "qr_dot": {
+            "type": "string",
+            "description": "Two values separated by a comma. The first is the dots style ('dot', 'square', 'rounded'). The second is the dots color as an hex RGBA value preceded by a hash symbol",
+            "example": "square,#FFFFFF"
+          },
+          "qr_image": {
+            "type": "string",
+            "description": "Either the URL or the `data:image;base64` data in the center of the QR code",
+            "example": "ipfs://Q2de4Fg56tNHy82300000001"
+          },
+          "font_color": {
+            "type": "string",
+            "$ref": "#/components/schemas/HexString",
+            "description": "The color of the font in hex including alpha transparency",
+            "example": "0a1fd3ff"
+          },
+          "font": {
+            "type": "string",
+            "example": "ShortStackMod,https://claynation.nyc3.cdn.digitaloceanspaces.com/ada_handles/ShortStackNew.ttf"
+          },
+          "qr_link": {
+            "type": "string"
+          },
+          "socials": {
+            "type": "array",
+            "description": "The url and display text of the social entries selected from Personalization",
+            "items": {
+              "$ref": "#/components/schemas/SocialEntry"
+            }
+          },
+          "pfp_zoom": {
+            "type": "number",
+            "description": "The percentage that the PFP can be zoomed in as an integer greater than 100",
+            "example": 125
+          },
+          "pfp_offset": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "The [x,y] offset in pixels from the center of the PFP circle",
+            "example": [
+              -10,
+              25
+            ]
+          },
+          "text_ribbon_gradient": {
+            "type": "string",
+            "enum": [
+              "none",
+              "linear-XX",
+              "radial"
+            ],
+            "description": "The gradient of the ribbon colors. <br />`none` - no gradient <br />`linear-XX` - Linear gradient where `XX` is the degrees offset of the starting point - ex `linear-45` <br />`radial` - Radial gradient from the center of the ribbon",
+            "example": null
+          },
+          "socials_color": {
+            "type": "string",
+            "description": "",
+            "example": null
+          },
+          "circuit_color": {
+            "type": "string",
+            "description": "",
+            "example": null
+          }
+        }
+      },
+      "FilterType": {
+        "type": "string",
+        "example": "ultra_rare",
+        "description": "Filter Types:\n<br />`handle`, \n<br />`handlehex` (without CIP-67 label), \n<br />`assetname` (with CIP-67 label), \n<br />`holder` (bech32 stake address, bech32 script address, or bech32 \"enterprise\" address),\n<br />`bech32stake`, \n<br />`bech32address`,\n<br />`hexaddress`,\n<br />`paymentkeyhash`, or\n<br />`stakekeyhash`",
+        "enum": [
+          "handle",
+          "handlehex",
+          "assetname",
+          "holder",
+          "bech32stake",
+          "bech32address",
+          "hexaddress",
+          "paymentkeyhash",
+          "stakekeyhash"
+        ]
+      },
+      "Handle": {
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "hex": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "my.handle"
+          },
+          "handle_type": {
+            "type": "string",
+            "$ref": "#/components/schemas/HandleType",
+            "description": "Handle, NFT SubHandle, or Virtual SubHandle"
+          },
+          "virtual": {
+            "type": "object",
+            "description": "Additional information only available on Virtual SubHandles",
+            "properties": {
+              "expires_time": {
+                "type": "number",
+                "description": "The POSIX time the Virtual SubHandle expires"
+              },
+              "public_mint": {
+                "type": "boolean",
+                "description": "True if this Virtual SubHandle was publically minted"
+              }
+            }
+          },
+          "holder": {
+            "type": "string",
+            "description": "Current Holder of the Handle (see the Holder endpoints for more information)",
+            "example": "stake1uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          "holder_type": {
+            "$ref": "#/components/schemas/AddressType"
+          },
+          "image": {
+            "type": "string",
+            "description": "IPFS URL of the personalized handle image",
+            "example": "ipfs://hash_of_personalized_image"
+          },
+          "standard_image": {
+            "type": "string",
+            "description": "IPFS URL of the factory default handle image",
+            "example": "ipfs://hash_of_default_image"
+          },
+          "image_hash": {
+            "type": "string",
+            "description": "SHA256 Hash of the personalized handle image",
+            "example": "05dbb47e32ad6b89074c286a73543bdb957c01f7abf82b2f106584dc99432bb1"
+          },
+          "standard_image_hash": {
+            "type": "string",
+            "description": "SHA256 Hash of the default image data",
+            "example": "05dbb47e32ad6b89074c286a73543bdb957c01f7abf82b2f106584dc99432bb1"
+          },
+          "length": {
+            "type": "integer",
+            "example": 9,
+            "description": "Length of the root Handle"
+          },
+          "og": {
+            "type": "boolean",
+            "description": "OG status",
+            "example": 0
+          },
+          "og_number": {
+            "type": "integer",
+            "description": "Limited edition OG number. 0 means not an OG.",
+            "example": 0
+          },
+          "rarity": {
+            "$ref": "#/components/schemas/Rarity"
+          },
+          "characters": {
+            "$ref": "#/components/schemas/Characters"
+          },
+          "numeric_modifiers": {
+            "$ref": "#/components/schemas/NumericModifiers"
+          },
+          "sub_length": {
+            "type": "number",
+            "description": "Total length of the SubHandle, including `@` and root Handle"
+          },
+          "sub_rarity": {
+            "$ref": "#/components/schemas/Rarity"
+          },
+          "sub_characters": {
+            "$ref": "#/components/schemas/Characters"
+          },
+          "sub_numeric_modifiers": {
+            "$ref": "#/components/schemas/NumericModifiers"
+          },
+          "default_in_wallet": {
+            "type": "string",
+            "description": "The name of the default Handle in this wallet",
+            "example": "my_default_hndl"
+          },
+          "pfp_image": {
+            "type": "string",
+            "description": "IPFS hash of the selected profile pic",
+            "example": "ipfs://Q2de4Fg56tNHy82300000001"
+          },
+          "bg_image": {
+            "type": "string",
+            "description": "IPFS hash of the selected background",
+            "example": "ipfs://Q2de4Fg56tNHy82300000001"
+          },
+          "pfp_asset": {
+            "type": "string",
+            "description": "Hex string of policy id and asset name of the pfp_image on chain asset",
+            "example": "94da605878403d07c144fe96cd50fe20c16186dd8d171c78ed6a8768436c6179436861726c6f74746538353338"
+          },
+          "bg_asset": {
+            "type": "string",
+            "description": "Hex string of policy id and asset name of the bg_image on chain asset",
+            "example": "b8842fe3a0eae5011252c16566995d2c8f1bae85d380410cd21ea91f000de140556e646572776f726c645f48616e646c65735f6267"
+          },
+          "resolved_addresses": {
+            "type": "object",
+            "properties": {
+              "ada": {
+                "type": "string",
+                "example": "addr1e00000000000000000000000000000000000001"
+              },
+              "eth": {
+                "type": "string",
+                "example": "addr1e00000000000000000000000000000000000002"
+              },
+              "btc": {
+                "type": "string",
+                "example": "addr1e00000000000000000000000000000000000003"
+              }
+            }
+          },
+          "original_address": {
+            "type": "string",
+            "example": "addr1e00000000000000000000000000000000000001",
+            "description": "If enabled by the root Handle owner, this will show the address that the SubHandles was originally sent to on mint"
+          },
+          "version": {
+            "type": "string",
+            "description": "The version of the Handle",
+            "example": 1
+          },
+          "svg_version": {
+            "type": "string",
+            "description": "The version of the Handle image renderer that rendered the main nft image",
+            "example": 1
+          },
+          "utxo": {
+            "type": "string",
+            "description": "The transaction hash and index number (UTxO) that the Handle is in. In the format of `txhash#index`",
+            "example": "8f1d7ec063ce83d93d1bad658886e81568d19ca9bd8dd0e6e268d7be3e33c653#1"
+          },
+          "lovelace": {
+            "type": "integer",
+            "description": "The lovelace amount in the UTxO the Handle is in"
+          },
+          "has_datum": {
+            "type": "boolean",
+            "description": "`true` if the UTxO that the Handle is in also has a datum value"
+          },
+          "created_slot_number": {
+            "type": "integer",
+            "description": "The slot number this Handle was minted"
+          },
+          "updated_slot_number": {
+            "type": "integer",
+            "description": "The slot number this Handle was updated"
+          }
+        }
+      },
+      "HandleType": {
+        "type": "string",
+        "description": "Handle Types:\n<br />`Handle`\n<br />`NFT SubHandle` \n<br />`Virtual SubHandle`",
+        "enum": [
+          "handle",
+          "nft_subhandle",
+          "virtual_subhandle"
+        ]
+      },
+      "ScriptType": {
+        "type": "string",
+        "description": "Family slug emitted in `/scripts` response payloads. The slug is the part of the deployment-handle name (`<slug><ordinal>@handlecontract`) that comes before the trailing digits — `pers1@handlecontract` has slug `pers`, `persprx1@handlecontract` has slug `persprx`. Any slug that exists on chain can appear; there is no fixed enum.\n",
+        "example": "pers"
+      },
+      "HexString": {
+        "type": "string",
+        "example": "0x1a3dfb"
+      },
+      "Holder": {
+        "type": "object",
+        "properties": {
+          "total_handles": {
+            "type": "integer",
+            "example": 1421,
+            "description": "Total Handles this Holder holds"
+          },
+          "address": {
+            "type": "string",
+            "example": "stake1d4fg5dghrdxxxxxxxxxxxxxxxxxxx",
+            "description": "Stake Key, Enterprise Address, Script Address, or Other Address"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AddressType"
+          },
+          "known_owner_name": {
+            "type": "string",
+            "example": "jpg.store",
+            "description": "The name of the vendor/exchange if the address is from a known list of vendors/exchanges/projects."
+          },
+          "default_handle": {
+            "type": "string",
+            "example": "my_default_hndl",
+            "description": "The default Handle for this Holder"
+          },
+          "manually_set": {
+            "type": "boolean",
+            "description": "If `true` then the user set this as their default Handle manually. If `false`, then a simple algorithm attempted to pick the Holder's best Handle. The algorithm selects in this order - <br />OG Handles first <br />If no OG Handle then shortest Handle <br />If many have the same length, then the earliest minted slot number <br />If multiple minted at the same time, then ascending alpha order"
+          }
+        }
+      },
+      "MintingType": {
+        "type": "string",
+        "example": "nft",
+        "description": "Minting Types (leave blank for all):\n<br />`nft`, \n<br />`virtual`",
+        "enum": [
+          "nft",
+          "virtual"
+        ]
+      },
+      "NumericModifiers": {
+        "type": "string",
+        "description": "This property will have one of the following:\n  <br />No modifier (blank) is a positive whole number, or not a number\n  <br />`negative` - Negative whole number\n  <br />`decimal` - Positive decimal\n  <br />`negative,decimal` - Negative decimal\n  <br />Example:\n  <br />`1000` = no modifiers/blank\n  <br />`-100` = \"negative\"\n  <br />`10.0` = \"decimal\"\n  <br />`-1.0` = \"negative,decimal\"",
+        "example": "negative,decimal"
+      },
+      "Personalization": {
+        "type": "object",
+        "properties": {
+          "designer": {
+            "$ref": "#/components/schemas/DesignerSettings"
+          },
+          "portal": {
+            "$ref": "#/components/schemas/PortalSettings"
+          },
+          "socials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SocialEntry"
+            }
+          },
+          "trial": {
+            "type": "boolean",
+            "description": "True if the Handle is using an asset that is still in an \"trial\" status. This can be useful for DApps to display standard_image as opposed to image just in case the policy hasn't properly declared NSFW imagery"
+          },
+          "nsfw": {
+            "type": "boolean",
+            "description": "True if the Handle is using an asset that has a \"nsfw\" status. This can be useful for DApps to display standard_image as opposed to image to avoid NSFW imagery"
+          },
+          "validated_by": {
+            "type": "string",
+            "description": "The PubKeyHash of the signer of the personalization transaction that validated the personalization. Trusted vendors should be verifying ownership, authenticity, and Handle Standard compliance."
+          }
+        }
+      },
+      "Rarity": {
+        "type": "string",
+        "example": "ultra_rare",
+        "description": "Handle rarities:\n<br />`basic` - 8-15 characters\n<br />`common` - 4-7 characters\n<br />`rare` - 3 characters\n<br />`ultra_rare` - 2 characters\n<br />`legendary` - 1 character",
+        "enum": [
+          "basic",
+          "common",
+          "rare",
+          "ultra_rare",
+          "legendary"
+        ]
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "total_handles": {
+            "type": "integer",
+            "example": 195874,
+            "description": "Total of all Handles minted"
+          },
+          "total_holders": {
+            "type": "integer",
+            "example": 52167,
+            "description": "Total number of Handle Holders including wallets/scripts/enterprise/other addresses"
+          }
+        }
+      },
+      "PortalSettings": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string",
+            "example": "https://handle.me"
+          },
+          "custom_settings": {
+            "$ref": "#/components/schemas/HexString"
+          },
+          "default": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Script": {
+        "type": "object",
+        "description": "Handle-backed script metadata resolved from `@handlecontract` subhandles",
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "handleHex": {
+            "type": "string"
+          },
+          "refScriptUtxo": {
+            "type": "string"
+          },
+          "refScriptAddress": {
+            "type": "string"
+          },
+          "validatorHash": {
+            "type": "string"
+          },
+          "latest": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "$ref": "#/components/schemas/ScriptType"
+          },
+          "cbor": {
+            "type": "string"
+          }
+        }
+      },
+      "SocialEntry": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Valid URL. Supported schemas - `http://`, `https://`, `mailto:`, `tel:`, `ipfs://` Social websites with known host names will be authenticated to reduce fraud/phishing"
+          },
+          "display": {
+            "type": "string",
+            "description": "The display text to show either on the Handle if selected or on the Portal if selected."
+          }
+        }
+      },
+      "SubHandleSettings": {
+        "type": "object",
+        "properties": {
+          "nft": {
+            "type": "object"
+          },
+          "virtual": {
+            "type": "object"
+          },
+          "buy_down_paid": {
+            "type": "number"
+          },
+          "buy_down_price": {
+            "type": "number"
+          },
+          "buy_down_percent": {
+            "type": "number"
+          },
+          "agreed_terms": {
+            "type": "string"
+          },
+          "payment_address": {
+            "type": "string"
+          },
+          "migrate_sig_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UTxO": {
+        "type": "object",
+        "properties": {
+          "tx_id": {
+            "type": "string",
+            "description": "The current UTxO transaction ID"
+          },
+          "index": {
+            "type": "integer",
+            "description": "The current UTxO index"
+          },
+          "lovelace": {
+            "type": "integer",
+            "description": "The lovelace in the UTxO"
+          },
+          "datum": {
+            "type": "string",
+            "description": "The datum CBOR in the UTxO if there is any"
+          },
+          "address": {
+            "type": "string",
+            "description": "The address of the UTxO"
+          },
+          "script": {
+            "description": "If known, the script/contract details that the UTxO is locked to, if there is one",
+            "type": "object",
+            "$ref": "#/components/schemas/Script"
+          },
+          "reference_script": {
+            "type": "string",
+            "description": "The reference script (as CBOR) that is saved in this UTxO, if there is one"
+          }
+        }
+      }
+    },
+    "requestBodies": {
+      "Handle": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Handle"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "RateLimited": {
+        "description": "Too many requests. RFC 9239 `RateLimit-*` headers describe the limit and reset.",
+        "headers": {
+          "RateLimit-Limit": {
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "RateLimit-Remaining": {
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "RateLimit-Reset": {
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Malformed request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "HTTP method not supported on this path",
+        "headers": {
+          "Allow": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api-key": {
+        "type": "apiKey",
+        "description": "Optional header used to bypass rate limiting when enabled (see `RATE_LIMITER_ENABLED` and `WHITELISTED_API_KEYS`).",
+        "name": "api-key",
+        "in": "header"
+      }
+    }
+  }
+}
