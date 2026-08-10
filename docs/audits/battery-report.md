@@ -15,7 +15,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
 | 🟡 qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75.4 | 8 | 59 |
-| 🟠 ternary-bonsai | 80% | 0% | · | · | · | · | **40%** | 41.5 | 15 | 39 |
+| 🔴 ternary-bonsai | 80% | 0% | 25% | · | · | · | **36%** | 40.6 | 20 | 48 |
 
 ## Assisted — assists ON
 
@@ -35,6 +35,7 @@ judging. What each model does on its own.
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
+| orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
@@ -302,3 +303,31 @@ it wipes a test suite, skips a review, ships a test that will not compile, while
 right. qwen35's are capability: on Java it failed the messy feed, the race AND the review, and on
 Python it lost the route and the integration tests outright. gemma4 does the work and drops the
 paperwork; qwen35 does the paperwork and does not always finish the work.
+
+## ternary-bonsai broke the exact thing the task asked it to protect
+
+`orders-api-py` scored 25%, against 75% for the same model on the same task in the earlier
+campaign. Checked before recording it, because a 50-point swing on an unchanged task usually means
+an instrument. It does not here.
+
+Its `db.init()` reads:
+
+    conn.execute(SCHEMA.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"))
+
+It stripped the idempotency out of the schema. Against a database that already exists — which is
+precisely what the migration deliverable is about, and precisely what the verifier installs — the
+service raises `table orders already exists` and never starts.
+
+So the route it correctly wrote and the status column it correctly added are both unreachable, and
+three of the four checks fail on `service did not start`. The code is right and the program is
+dead: the same shape as the assisted run this task produced two campaigns ago, arrived at by the
+model on its own rather than by a steer.
+
+**Worth noting about the scoring shape, without changing it:** those three checks are not
+independent — one startup bug takes all of them. That is defensible (a service that cannot start
+delivers nothing) but it means a score is not a linear measure of work completed, and a 25% here
+represents more finished work than a 25% made of four separate failures.
+
+Also measured while checking: throughput was 38.7 tok/s against 45.6 for the earlier run on this
+task, and the GPU was at 100% and 80°C with the model server as the only process. Slower, but the
+score is explained by the bug, not the clock.
