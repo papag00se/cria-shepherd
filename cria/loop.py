@@ -788,7 +788,11 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # which model is loaded.
             if forced_rounds < (2 if answer_now_simple else 1) and (calls or massage.has_tool_call_leak(content)):
                 forced_rounds += 1
-                messages.append({"role": "assistant", "content": content or None,
+                # turn_text, not `content`: a thinking model that called a tool leaves `content`
+                # empty and its analysis in the reasoning channel, and writing that turn back as
+                # {"content": None} erases the judge's own work from its own transcript.
+                messages.append({"role": "assistant",
+                                 "content": massage.turn_text(msg) or None,
                                  **({"tool_calls": calls} if calls else {})})
                 if calls:   # a dangling tool_call needs its result turn or the next request is malformed
                     for tc in calls:
@@ -804,7 +808,10 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                 transcript.extend(messages[2:])
             return comp
         rounds += 1
-        messages.append({"role": "assistant", "content": msg.get("content") or None,
+        # Same reason as the write-back above: preserve what the judge produced this round, from
+        # whichever channel it produced it in, or the next round asks it to answer against a
+        # transcript where it appears to have been silent.
+        messages.append({"role": "assistant", "content": massage.turn_text(msg) or None,
                          "tool_calls": calls})
         for tc in calls:
             fn = tc.get("function") or {}

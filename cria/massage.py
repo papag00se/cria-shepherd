@@ -735,6 +735,35 @@ def content_text(content) -> str:
     return ""
 
 
+def turn_text(msg: dict) -> str:
+    """What the model actually PRODUCED this turn: ``content`` when it wrote there, else the
+    reasoning channel.
+
+    A pure reader, so a loop rebuilding its own transcript can use it without mutating a
+    completion — which is the difference between this and ``coerce_text_answer``. Same rule that
+    reader already applies to a final answer, and the mirror of ``loop._reasoning_of``'s content
+    fallback (principle 19: read a model's reasoning from either channel).
+
+    It exists because cria's judge loop was erasing its own analysis. ``_judge_completion`` rebuilds
+    the judge's conversation between inspection rounds, and both write-back sites took ``content``
+    alone. For a thinking model calling a tool — ``content`` empty, the analysis in
+    ``reasoning_content`` — the turn written back was ``{"content": None, "tool_calls": [...]}``, so
+    by the final tools-withdrawn round the judge faced a transcript in which it appeared to have
+    said nothing. Measured across one campaign arm: 140 of 329 judgment calls returned empty
+    content, 42%. On one run the steer author spent 28,777 characters reaching the correct root
+    cause and cria discarded it — found it, then lost it."""
+    if not isinstance(msg, dict):
+        return ""
+    text = content_text(msg.get("content")).strip()
+    if text:
+        return text
+    for key in ("reasoning_content", "reasoning"):
+        alt = msg.get(key)
+        if isinstance(alt, str) and alt.strip():
+            return alt.strip()
+    return ""
+
+
 def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
     """Promote a tool call the model emitted as TEXT (Hermes `<tool_call>…`, XML
     `<function=…>`) into a real tool_calls entry, and strip it from the content.
