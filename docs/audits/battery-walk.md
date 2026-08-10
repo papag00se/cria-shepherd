@@ -1,7 +1,7 @@
 
 ## orders-api-py_ternary-bonsai_codex_poff_1786367926
 
-**cria fault: yes** — three defects, one run. BASE 3/4 in 31 calls / 7.8 min → CRIA 2/4 in 113
+**cria fault: yes** — three defects, one run. **All three fixed 2026-08-10** (`d7e7cf3`, `78a0be4`, `e94a5f1`), each with a test that fails before and passes after; full suite 2,914. They live in the coaching path, so no baseline row is affected and none needed superseding. BASE 3/4 in 31 calls / 7.8 min → CRIA 2/4 in 113
 calls / 60.1 min. Walked call-by-call, 25 agents, every call read in order; 69 candidate incidents
 raised, 8 refuted on adversarial re-check.
 
