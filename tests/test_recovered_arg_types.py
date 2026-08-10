@@ -147,5 +147,55 @@ class BothRecoveryPathsUseItTests(unittest.TestCase):
         self.assertEqual(args["yield_time_ms"], "30000")
 
 
+
+class ParameterTagsBeatAnEmbeddedJsonLiteralTests(unittest.TestCase):
+    """A tool call whose PAYLOAD contains an object literal had its arguments replaced by that
+    literal, because the XML parser scanned for JSON before reading the `<parameter=…>` tags.
+
+    Measured on the battery's second baseline run (qwen35 / shipping-rates-py, 2026-08-10): the
+    model emitted a correct `edit_file` whose new_string was the fixed rates.py, containing
+    `{"domestic": 0.75, "eu": 1.50, …}`. The parser returned `{domestic, eu, international}` as the
+    call's arguments; `_menu_admits` rightly refused a call with no `path`; the fix was discarded;
+    the run scored 0/4 having touched nothing, and looked like a model that did no work.
+
+    Writing a dict literal is ordinary in every language this suite covers, so this is a routine
+    failure rather than an exotic one — and it is silent, because a refused call and an absent call
+    are indistinguishable from the score.
+    """
+
+    XML = ('<tool_call><function=edit_file>'
+           '<parameter=path>shipping/rates.py</parameter>'
+           '<parameter=old_string>PER_KILO = {"domestic": 0.75}</parameter>'
+           '<parameter=new_string>PER_KILO = {"domestic": 0.75, "express": 2.50}</parameter>'
+           '</function></tool_call>')
+
+    def test_the_parameter_tags_are_the_arguments(self):
+        spans = massage._reasoning_call_spans(self.XML)
+        self.assertEqual(len(spans), 1)
+        _s, _e, _d, parsed = spans[0]
+        name, args = parsed[0]
+        self.assertEqual(name, "edit_file")
+        self.assertEqual(sorted(args), ["new_string", "old_string", "path"])
+
+    def test_the_embedded_literal_does_not_become_the_arguments(self):
+        _s, _e, _d, parsed = massage._reasoning_call_spans(self.XML)[0]
+        self.assertNotIn("domestic", parsed[0][1])
+
+    def test_the_payload_survives_intact(self):
+        _s, _e, _d, parsed = massage._reasoning_call_spans(self.XML)[0]
+        self.assertIn('"express": 2.50', parsed[0][1]["new_string"])
+
+    def test_a_json_body_with_no_parameter_tags_still_parses(self):
+        """The fallback the old order existed for — a dialect that carries a JSON body instead."""
+        xml = '<tool_call><function=read_file>{"path": "a.py"}</function></tool_call>'
+        _s, _e, _d, parsed = massage._reasoning_call_spans(xml)[0]
+        self.assertEqual(parsed[0][1], {"path": "a.py"})
+
+    def test_the_leaked_content_path_agrees(self):
+        calls, _ = massage._extract_leaked(self.XML)
+        args = json.loads(calls[0]["function"]["arguments"])
+        self.assertEqual(sorted(args), ["new_string", "old_string", "path"])
+
+
 if __name__ == "__main__":
     unittest.main()

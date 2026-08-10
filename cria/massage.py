@@ -1032,9 +1032,7 @@ def _reasoning_call_spans(text: str) -> list:
             spans.append((m.start(), m.end(), "hermes-json", [(obj["name"], args)]))
     for m in _XML_FN.finditer(text):
         body = m.group(2)
-        args = extract_json_object(body)
-        if not isinstance(args, dict):
-            args = {k: v.strip() for k, v in _XML_PARAM.findall(body)}
+        args = _xml_args(body)
         # No `<parameter=…>` pair and no JSON body means the arguments never arrived — the nemotron
         # shape where a whole file was narrated as prose and then closed with tags that were never
         # opened. There is nothing to recover, and inventing the payload is the thing this function
@@ -1042,6 +1040,27 @@ def _reasoning_call_spans(text: str) -> list:
         if args:
             spans.append((m.start(), m.end(), "xml-function", [(m.group(1), args)]))
     return _outermost(sorted(spans, key=lambda s: (s[0], s[1])))
+
+
+def _xml_args(body: str) -> dict | None:
+    """Arguments for one `<function=NAME>…</function>` span.
+
+    `<parameter=…>` tags WIN over a JSON scan of the same text, and the order is the whole point.
+    Reading JSON first means any tool call whose payload happens to contain an object literal has
+    its arguments replaced by that literal. Measured on the battery's second baseline run
+    (qwen35 / shipping-rates-py, 2026-08-10): the model emitted a correct `edit_file` whose
+    new_string was the fixed `rates.py`, containing `{"domestic": 0.75, "eu": 1.50, …}` — and the
+    parser returned `{domestic, eu, international}` as the call's arguments. `_menu_admits` then
+    rightly refused a call with no `path`, the fix was discarded, and the run scored 0/4 having
+    touched nothing. Writing a dict literal is ordinary in every language this suite covers, so
+    the failure is routine rather than exotic.
+
+    JSON remains the fallback for the shape that has no parameter tags at all."""
+    params = _XML_PARAM.findall(body)
+    if params:
+        return {k: v.strip() for k, v in params}
+    obj = extract_json_object(body)
+    return obj if isinstance(obj, dict) else None
 
 
 def _outermost(spans: list) -> list:
@@ -1181,10 +1200,7 @@ def _extract_leaked(content: str, schemas: dict | None = None) -> tuple[list[dic
 
     for m in _XML_FN.finditer(content):
         name, body = m.group(1), m.group(2)
-        args = extract_json_object(body)
-        if args is None:
-            params = {k: v.strip() for k, v in _XML_PARAM.findall(body)}
-            args = params if params else {}
+        args = _xml_args(body) or {}
         resolved = _alias(name)
         calls.append(_toolcall(resolved, coerce_args(resolved, args, schemas or {})))
         cleaned = cleaned.replace(m.group(0), "")
