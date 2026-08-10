@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 gemma4 | 40% | · | 100% | · | 75% | 75% | **71%** | 59.6 | 7 | 22 |
+| 🟡 gemma4 | 40% | 40% | 100% | · | 75% | 75% | **64%** | 59.7 | 6 | 20 |
 
 ## Assisted — assists ON
 
@@ -26,6 +26,7 @@ judging. What each model does on its own.
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
+| cart-billing-go | go | gemma4 | BASE | 40% | 3 | 15 | 60.1 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
@@ -218,3 +219,24 @@ A hand-rolled EU list could have satisfied the library half of the check on the 
 test framework the task already uses. Requires are now resolved by top-level segment and against
 the workspace's own files. Re-proven: the honest solution still scores 100% and is credited with
 `countries`; gemma's run correctly shows none.
+
+## A third verifier fault, and the most instructive one
+
+`cart-billing-go`'s decimal-money ask never said whether the `Item` struct's field types could
+change. gemma4 changed `Price` from `float64` to `decimal.Decimal` — which for money is arguably
+the *more* correct design — and its own build and test suite were green. The verifier's probes
+construct `Item{... Price: 19.99 ...}` with float literals, so they stopped compiling, and two
+checks the model had not broken were scored MISS. Recorded 40%; the real defect was one deleted
+seeded test.
+
+The fix is not a cleverer probe. The task was AMBIGUOUS and the probe merely exposed it: a prompt
+that asks for decimal money without saying where the boundary sits has two correct answers and a
+verifier that only accepts one. The prompt now states it — the checkout service builds those values
+and cannot change this sprint, so convert inside the cart. That is a real constraint real systems
+have, and it makes the task harder to satisfy sloppily, not easier.
+
+**Three verifier faults in one day, all the same shape.** The seeded-test hash, the unsatisfiable
+regression-test pair, and now this. Every one punished a model for doing something defensible, and
+not one was visible from the score — each needed the workspace opened and read. The all-zero column
+`battery_status.py` catches by itself is the easy case. This class looks exactly like a model
+falling short, which is the reason it survives.
