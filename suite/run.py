@@ -73,7 +73,15 @@ def sh(*cmd, timeout=120):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def wait_health(url: str, tries=30, delay=10) -> bool:
+def wait_health(url: str, tries=90, delay=10) -> bool:
+    """Poll until the server answers. 15 minutes, not 5.
+
+    A healthy model answers on the first poll, so the ceiling costs nothing when it is not needed —
+    and when it IS needed the alternative is a false "never became healthy", which writes no result
+    row at all. A campaign driver then re-queues the same cell forever, because an absent row is
+    indistinguishable from a cell that has not been attempted. Observed 2026-08-10: ternary-bonsai
+    (6.7 GB, PrismML fork) exceeded 5 minutes from a cold page cache after a large file cleanup, and
+    the battery driver looped on it twice before anyone looked."""
     import urllib.request
     for _ in range(tries):
         try:
