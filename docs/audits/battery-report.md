@@ -13,8 +13,8 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟢 qwen35 | 80% | 100% | · | · | · | · | **90%** | 76.9 | 3 | 34 |
 | 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
+| 🟡 qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75.4 | 8 | 59 |
 
 ## Assisted — assists ON
 
@@ -31,9 +31,13 @@ judging. What each model does on its own.
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
+| orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
+| feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
+| handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
+| rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -267,3 +271,31 @@ The guard that already exists — `battery_status.py` halting on an all-zero col
 opposite failure, a task nobody can pass. This class produces a plausible near-miss, which is why
 it survives contact with a scoreboard. The only thing that has ever caught one is reading the
 workspace of a run that scored *almost* right.
+
+## Two models, near-identical totals, opposite strengths
+
+gemma4 78%, qwen35 74%. Four points apart, and the per-language breakdown shows they are not
+remotely the same model:
+
+| language | gemma4 | qwen35 | |
+|---|---:|---:|---|
+| ruby | 40% | **80%** | qwen twice as good |
+| go | 100% | 100% | tied |
+| python | **100%** | 50% | gemma twice as good |
+| java | **80%** | 40% | gemma twice as good |
+| node | 75% | 75% | tied |
+| rust | 75% | **100%** | qwen better |
+
+**A single-language battery would have reported "gemma is slightly ahead" and been useless.** On
+Python alone it would have said gemma by a mile; on Ruby alone, qwen by a mile. Both conclusions
+would have been drawn from one task and generalised to a model. That is precisely the overfit the
+language axis exists to prevent, and it showed up in the first two models.
+
+Cost differs as much as the profile: qwen35 spends **59 calls per task against gemma4's 20**, at
+75 tok/s against 59. Similar wall clock, three times the work to get there.
+
+Where each one falls down is also different in kind. gemma4's misses are finishing obligations —
+it wipes a test suite, skips a review, ships a test that will not compile, while the code itself is
+right. qwen35's are capability: on Java it failed the messy feed, the race AND the review, and on
+Python it lost the route and the integration tests outright. gemma4 does the work and drops the
+paperwork; qwen35 does the paperwork and does not always finish the work.
