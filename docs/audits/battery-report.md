@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟢 gemma4 | ³⁄₄ | ⁴⁄₄ | · | · | · | · | **7/8** | 61.3 | 1 | 11 |
+| 🟡 gemma4 | ³⁄₄ | ⁴⁄₄ | ⁴⁄₄ | ³⁄₄ | ³⁄₄ | ³⁄₄ | **20/24** | 60.2 | 5 | 16 |
 
 ## Assisted — assists ON
 
@@ -27,6 +27,10 @@ judging. What each model does on its own.
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 3/4 | 1 | 12 | 61.4 | exited |
 | cart-billing-go | go | gemma4 | BASE | 4/4 | 1 | 10 | 61.3 | exited |
+| orders-api-py | python | gemma4 | BASE | 4/4 | 21 | 32 | 57.3 | exited |
+| feed-pipeline-java | java | gemma4 | BASE | 3/4 | 2 | 10 | 60.4 | exited |
+| handles-cli-node | node | gemma4 | BASE | 3/4 | 2 | 21 | 60.5 | exited |
+| rust-toml-cli | rust | gemma4 | BASE | 3/4 | 2 | 8 | 60.4 | exited |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -130,3 +134,59 @@ gather step is short exactly one fact, and the judge names which one every time.
   by a model, and both errors ran the same direction: punishing the model for doing what the prompt
   asked. The all-zero column that `battery_status.py` catches automatically is the easy case; this
   class shows up as a plausible near-miss and needs the workspace opened.
+
+- **gemma4 · Java · 3/4 in 2.0 min / 10 calls — and it beat its own Python twin at the same work.**
+  The two tasks are the same three problems (slow O(n^2) scan, a real race with the workers
+  disabled, a feed full of malformed rows) plus a written review.
+
+  | | Python (2/4, 7.8 min, 20 calls) | Java (3/4, 2.0 min, 10 calls) |
+  |---|---|---|
+  | messy rows | ok | ok |
+  | faster | **69x but the totals changed** — fast because wrong | 47x with totals identical |
+  | race | ok (static check) | ok — **4 threads actually spawned**, measured |
+  | review | **never wrote one** | wrote 293 substantive words |
+
+  In Python it optimised by breaking correctness and skipped the review entirely. In Java it kept
+  the numbers right, genuinely parallelised, and wrote a review that names real risks — encoding
+  assumptions, `split(",")` failing on quoted fields, and static state making concurrent calls to
+  `summarize` unsafe. Its one miss is instruction-following, not capability: the prompt asks for
+  "the file and line for each thing you name" and it cited methods and fields instead.
+
+  The check was NOT loosened for it. Naming a method is arguably more durable than a line number,
+  but the prompt asked for a line and the Python sibling has carried the identical check since it
+  was written — softening it here would be fixing a task by making it easier to pass.
+
+  Worth stating plainly because it runs against the usual assumption: **this model is not
+  uniformly strongest in Python.** A battery that had stayed five-sixths Python could not have
+  produced that sentence.
+
+## gemma4 baseline across six languages — complete
+
+**20/24, unaided, in 32 minutes of wall clock across all six.** Two clean sweeps (Go, Python) and
+four 3/4s. Every miss was opened and read before it was recorded.
+
+| language | score | min | calls | what it missed |
+|---|---|---:|---:|---|
+| go | 4/4 | 1.5 | 10 | — |
+| python | 4/4 | 21.3 | 32 | — |
+| ruby | 3/4 | 1.2 | 12 | overwrote the seeded test file — 7 contract tests replaced with 3 of its own |
+| java | 3/4 | 2.0 | 10 | review cites methods and fields, never the file and line the prompt asks for |
+| node | 3/4 | 2.0 | 21 | never added the holder address and handle count the prompt asks for outright |
+| rust | 3/4 | 1.7 | 8 | its test file does not compile — E0599, and it never ran it |
+
+**Three of the four misses are the same failure, and it is not a coding failure.** Ruby destroyed
+an existing test suite, Rust shipped a test that never compiled, Java wrote a review that skipped
+the one formatting instruction it was given. The code was right in every one of those runs — the
+hidden contract passed in Ruby, the binary works in Rust, all three real defects were fixed in
+Java. What fails is finishing the instruction as written.
+
+**Python is not this model's best language.** On the identical data-pipeline task it scored 2/4 in
+Python and 3/4 in Java, and the Python run was the *worse* engineering: it optimised by breaking
+the totals and never wrote the review at all. Python was also its slowest run by a factor of ten
+(21.3 min against a 1.7-min median). One model is not a result, but a five-sixths-Python battery
+could not have raised the question.
+
+**Two of the six were scored wrong by a verifier before a human read them**, both punishing the
+model for doing what the prompt asked, and both found only by opening the workspace. The all-zero
+column the status tool catches by itself is the easy case; this class looks like a plausible near
+miss. Fixed at the source in `suite/tasks/_seedtests.py`, one owner for all three seeded languages.
