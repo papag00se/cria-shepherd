@@ -128,3 +128,65 @@ class TheCriticGetsTheReadingFactTests(unittest.TestCase):
         critic is told, in the same breath, that this list is background for a build step."""
         text = self._verify_prompt([("u", "/r", "f")])
         self.assertIn("does not make it done", text)
+
+
+class EvidenceDecidesWhenToLookTests(unittest.TestCase):
+    """A cadence was gating a FACT.
+
+    The trigger used to be `coder_turns % RESEARCH_CHECK_EVERY` alone, so a step whose reading
+    finished at turn 4 stayed pinned until turn 10. What the check waits for is deterministic and
+    free — `sources_read` is a pure function of the ledger and the message list — so the evidence
+    decides when to look and the clock only covers the case where no new evidence ever arrives.
+
+    Measured on ternary-bonsai's orders-api-py run: "read app.py and db.py" was satisfied at coder
+    call 4 and remained the LAST user turn for seven consecutive turns, telling a weak model to
+    restart at "read and plan" after every finished piece of work. Four byte-identical db.py writes
+    and two identical app.py writes followed, tripping cria's own repetition and flail detectors,
+    which fired six reasoner interventions. 3/4 unaided became 2/4 assisted.
+    """
+
+    def _loop(self):
+        lp = loop.Loop.__new__(loop.Loop)
+        lp._ctx = type("C", (), {"reasoner_chat": lambda *a, **k: None, "reasoner_role": None})()
+        return lp
+
+    def test_new_reading_off_cadence_is_judged_immediately(self):
+        lp, sess, rlog = self._loop(), _sess(4), _Rlog()      # turn 4, nowhere near the clock
+        with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
+             patch.object(research, "step_reading_verdict", return_value=research.DONE) as v:
+            lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v.call_count, 1,
+                         "the step's reading was done at turn 4 and nothing looked until turn 10")
+
+    def test_the_same_evidence_is_never_judged_twice(self):
+        """Bounded by the evidence itself — otherwise 'look every turn' is a reasoner call per turn."""
+        lp, sess, rlog = self._loop(), _sess(4), _Rlog()
+        with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
+             patch.object(research, "step_reading_verdict", return_value=research.NOT_DONE) as v:
+            for turn in range(5, 9):
+                sess.coder_turns = turn
+                lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v.call_count, 1, "unchanged evidence was re-judged")
+
+    def test_more_reading_arriving_later_is_judged_again(self):
+        lp, sess, rlog = self._loop(), _sess(4), _Rlog()
+        with patch.object(loop, "_extract_fetches", return_value=LEDGER), \
+             patch.object(research, "step_reading_verdict", return_value=research.NOT_DONE) as v:
+            lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+            sess.coder_turns = 5
+            grew = dict(LEDGER, **{"https://api.handle.me/holders": ("200", "/holders", "count(int)")})
+            with patch.object(loop, "_extract_fetches", return_value=grew):
+                lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v.call_count, 2, "a source that was not there before is new evidence")
+
+    def test_with_no_evidence_the_old_cadence_still_governs(self):
+        """Strictly additive (#2): this can only make the check fire MORE often than before."""
+        lp, sess, rlog = self._loop(), _sess(research.RESEARCH_CHECK_EVERY - 1), _Rlog()
+        with patch.object(research, "step_reading_verdict") as v:
+            lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertFalse(v.called)
+        sess.coder_turns = research.RESEARCH_CHECK_EVERY
+        with patch.object(loop, "_extract_fetches", return_value={}), \
+             patch.object(research, "step_reading_verdict", return_value=research.NOT_DONE) as v2:
+            lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
+        self.assertEqual(v2.call_count, 1, "the clock must still fire when nothing was ever read")

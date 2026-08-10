@@ -196,6 +196,10 @@ class GuardState:
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
+    # The set of sources the reading check last judged. It re-judges the moment new reading lands
+    # instead of waiting out a ten-turn clock, and never judges the same evidence twice — a cadence
+    # was gating a fact, and a step satisfied at turn 4 stayed pinned until turn 10.
+    research_evidence: tuple = ()
     step_checked_turn: int = -1     # the coder_turns tick the periodic STEP check last ran on
     drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
@@ -2830,15 +2834,39 @@ class Loop:
         # ONCE PER TICK. The driver recurses into the next item without advancing coder_turns, so a
         # modulo test alone re-fires for every remaining step inside one turn — that recursion is how
         # run 1785812224 walked six steps in under three minutes.
-        if sess.coder_turns <= 0 or sess.coder_turns % research.RESEARCH_CHECK_EVERY:
+        if sess.coder_turns <= 0:
             return None
         if sess.research_checked_turn == sess.coder_turns:
             return None
-        sess.research_checked_turn = sess.coder_turns
         item = sess.plan.current()
         if item is None or item.done:
             return None
         msgs = body.get("messages", [])
+        # A CADENCE WAS GATING A FACT. The trigger used to be `coder_turns % RESEARCH_CHECK_EVERY`
+        # alone, so a step whose reading finished at turn 4 stayed pinned until turn 10. What it is
+        # waiting for is deterministic and free — sources_read is a pure function of the ledger and
+        # the message list — so the EVIDENCE decides when to look, and the clock only covers the
+        # case where no new evidence ever arrives.
+        #
+        # Measured on ternary-bonsai's orders-api-py run: the step "read app.py and db.py" was
+        # satisfied at coder call 4 and stayed the LAST user turn for seven consecutive turns,
+        # telling a weak model to restart at "read and plan" after every finished piece of work.
+        # Four byte-identical db.py writes and two identical app.py writes followed; those tripped
+        # cria's own repetition and flail detectors, which fired six reasoner interventions, which
+        # produced the rabbit hole that cost the run. 3/4 unaided became 2/4 assisted.
+        #
+        # Strictly ADDITIVE (#2): this can only make the check fire MORE often than before, and the
+        # check only ever COMPLETES a step — it never fails one, never steers, never speaks to the
+        # coder. Bounded by the evidence itself: the same set of sources is never judged twice, so a
+        # step that reads nothing new costs nothing beyond the old cadence.
+        sources = research.sources_read(
+            _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {})), msgs)
+        fingerprint = tuple(sorted(s[0] for s in sources))
+        evidence_changed = fingerprint != sess.research_evidence
+        if not evidence_changed and sess.coder_turns % research.RESEARCH_CHECK_EVERY:
+            return None
+        sess.research_checked_turn = sess.coder_turns
+        sess.research_evidence = fingerprint
         # THE DURABLE LEDGER, not just this window. `_extract_fetches` reads raw web_fetch TOOL
         # RESULTS, and those are the first thing compaction drops — so from the first compaction on,
         # this check saw zero sources and short-circuited to NOT_DONE with no model call, forever.
@@ -2849,8 +2877,7 @@ class Loop:
         # consecutive turns. Every OTHER consumer of the ledger already merges sess.fetched_pages
         # (the steer author, the anchor composer, the judges); this one was the lone reader of the
         # window alone. The exit that justifies re-adding a research step at all was inert.
-        sources = research.sources_read(
-            _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {})), msgs)
+        # (`sources` is computed above, where the evidence also decides whether to look at all.)
         verdict = research.step_reading_verdict(
             lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                         sysp, usr, rlog, phase="research-check"),
