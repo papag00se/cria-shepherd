@@ -15,7 +15,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
 | 🟡 qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75.4 | 8 | 59 |
-| 🔴 ternary-bonsai | 80% | 0% | 25% | 0% | 50% | · | **30%** | 40.2 | 18 | 44 |
+| 🔴 ternary-bonsai | 80% | 0% | 25% | 0% | 50% | 0% | **26%** | 40.2 | 18 | 44 |
 
 ## Assisted — assists ON
 
@@ -44,6 +44,7 @@ judging. What each model does on its own.
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
+| rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -350,3 +351,30 @@ answer without the part that makes it work.
 The Java failure is the clearest, because it is exactly what extending that task was for: `deps` as
 a capability means declaring the dependency, not just naming it in an import. gemma4 declared
 commons-csv and scored 80% on the same task; qwen35 and ternary-bonsai both failed it.
+
+## The clearest result of the baseline arm: ternary-bonsai cannot satisfy a compiler
+
+Split its six scores by whether the language has a compiler standing between the model and a
+running program:
+
+| interpreted | | compiled | |
+|---|---:|---|---:|
+| ruby | 80% | go | **0%** |
+| node | 50% | java | **0%** |
+| python | 25% | rust | **0%** |
+
+**Three compiled languages, three zeros, three different compile errors** — a hallucinated stdlib
+API in Go, an undeclared dependency in Java, `E0277`/`E0432`/`E0599` in Rust. Its one interpreted
+failure is different in kind: the Python code ran fine, it just broke the schema guard at runtime.
+
+The task set is not the explanation. gemma4 scored 100/80/75 on those same three compiled tasks and
+qwen35 scored 100/40/100, so all three are demonstrably passable.
+
+**A Python-only battery would have recorded ternary-bonsai at 25% and called it a weak model.** The
+truth is far more actionable: it is competent in Ruby — 80%, the best Ruby score of any model so
+far — and produces plausible non-compiling code every time a compiler is involved. Those call for
+completely different responses, and only the language axis can tell them apart.
+
+It is also the assisted arm's most interesting subject. A compile error is *deterministic ground
+truth* — exactly the kind of signal cria's gate machinery is built to catch and feed back. If the
+assists are worth anything, this is where the delta should be largest.
