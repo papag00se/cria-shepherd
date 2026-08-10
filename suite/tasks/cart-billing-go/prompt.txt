@@ -5,3 +5,5 @@ Two other things while you're in there.
 Ops keep asking us to change discount codes and we currently need a deploy to do it. Load the codes from a discounts.json file next to the binary instead of hard-coding them, keeping the current three as the file's contents. If the file is missing, fall back to those same three rather than failing.
 
 And we can't see anything in production. Add logging so that every total we compute writes one line to stderr recording the subtotal, the discount code used (or none), and the final total. Support needs to be able to grep a customer's order out of the logs.
+
+One more thing from the accountant: she says we should not be doing money arithmetic in floating point at all, and that the next rounding bug is already waiting for us. Use whatever the Go ecosystem standardises on for decimal money rather than hand-rolling it.

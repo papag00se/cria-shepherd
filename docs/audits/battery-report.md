@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 gemma4 | 75% | 100% | 100% | 75% | 75% | 75% | **83%** | 60.2 | 5 | 16 |
+| 🟡 gemma4 | · | · | 100% | · | 75% | 75% | **83%** | 59.4 | 8 | 20 |
 
 ## Assisted — assists ON
 
@@ -25,10 +25,7 @@ judging. What each model does on its own.
 
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
-| shipping-rates-rb | ruby | gemma4 | BASE | 75% | 1 | 12 | 61.4 | exited |
-| cart-billing-go | go | gemma4 | BASE | 100% | 1 | 10 | 61.3 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
-| feed-pipeline-java | java | gemma4 | BASE | 75% | 2 | 10 | 60.4 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 

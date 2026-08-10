@@ -5,6 +5,6 @@ categories = [17, 10, 13, 20]   # data transform / optimise slow code / concurre
 deliverables = ["messy rows handled + skip counts", "substantially faster", "race fixed, workers on", "REVIEW.md"]
 
 [capabilities]
-coding    = ["executable", "concurrency", "docs"]
-reasoning = ["optimise", "data-shape", "review"]
-tools     = ["read", "edit", "write", "shell"]
+coding    = ["executable", "concurrency", "docs", "deps"]
+reasoning = ["optimise", "data-shape", "review", "research"]
+tools     = ["read", "edit", "write", "shell", "web"]

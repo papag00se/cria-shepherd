@@ -5,6 +5,6 @@ categories = [3, 1, 4, 19] # resolve failing tests / feature from spec / write m
 deliverables = ["threshold bug fixed", "express zone", "own tests for express", "README rate table"]
 
 [capabilities]
-coding    = ["executable", "tests", "docs"]
-reasoning = ["debug-failing", "spec-to-impl"]
-tools     = ["read", "edit", "write", "shell"]
+coding    = ["executable", "tests", "docs", "deps"]
+reasoning = ["debug-failing", "spec-to-impl", "research"]
+tools     = ["read", "edit", "write", "shell", "web"]

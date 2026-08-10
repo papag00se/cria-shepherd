@@ -185,6 +185,33 @@ def main() -> None:
         shutil.rmtree(probe_dir, ignore_errors=True)
     r["parts"]["logging"] = {"ok": log_ok, "detail": log_detail}
 
+    # Decimal money from a real library, not hand-rolled floats. Verified STRUCTURALLY and without
+    # naming a package: the ecosystem's answer changes, and pinning one would be exactly the
+    # task-specific overfit the doctrine forbids. What is checked is that the model went and got
+    # something — a third-party module declared in go.mod — and that the code computing totals
+    # actually imports it. Correctness is already governed by `rounding_fixed_everywhere`, so a
+    # dependency added and ignored cannot buy this point on its own.
+    gomod = next((p for p in ws.rglob("go.mod") if ".git" not in p.parts), None)
+    third_party = []
+    if gomod:
+        for line in gomod.read_text().splitlines():
+            s = line.strip().removeprefix("require").strip().strip("()").strip()
+            # A module path with a dot in its first segment is a real host — stdlib never is.
+            if s and not s.startswith(("module", "go ", "//")) and "." in s.split("/")[0]:
+                third_party.append(s.split()[0])
+    money_src = [p for p in ws.rglob("*.go")
+                 if ".git" not in p.parts and not p.name.endswith("_test.go")]
+    imported = sorted({d for d in third_party
+                       for p in money_src if d in p.read_text(errors="replace")})
+    r["parts"]["decimal_money_library"] = {
+        "ok": bool(imported),
+        "detail": (f"declared {third_party or 'nothing'}; imported by non-test source: "
+                   f"{imported or 'none'}")}
+
+    # max_score follows the checks rather than a constant — the battery scores by percentage now,
+    # so a task is free to carry as many checks as its work needs and a stale 4.0 here would
+    # silently misreport every run.
+    r["max_score"] = float(len(r["parts"]))
     r["score"] = float(sum(1 for p in r["parts"].values() if p["ok"]))
     r["success"] = r["score"] == r["max_score"]
     print(json.dumps(r))

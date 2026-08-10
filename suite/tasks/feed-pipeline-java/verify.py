@@ -81,26 +81,39 @@ def make_big_feed(path: Path):
                         random.randint(1, 40), round(random.uniform(1, 90), 2)])
 
 
-def build(root: Path, out: Path) -> tuple[bool, str]:
-    """Compile every .java under root into out. Returns (ok, detail)."""
-    sources = [str(p) for p in sorted(root.rglob("*.java"))
-               if ".git" not in p.parts and p.name != "Bench.java"]
-    if not sources:
-        return False, "no .java sources found"
-    out.mkdir(parents=True, exist_ok=True)
-    code, log = run(["javac", "-nowarn", "-d", str(out), *sources], root, timeout=240)
-    return code == 0, (log.strip()[-200:] if code else f"compiled {len(sources)} file(s)")
+def build(root: Path) -> tuple[str | None, str]:
+    """Build with Maven and return the FULL runtime classpath — the project's own classes plus
+    every resolved dependency.
+
+    Maven, not bare javac: the task now asks the model to pull in a CSV parser, and a build that
+    cannot resolve a dependency cannot verify one. `dependency:build-classpath` is how the jars get
+    onto the classpath the bench and the CLI probe run against; without it the model's own code
+    would compile and then fail at runtime with NoClassDefFoundError, which would read as a model
+    failure and is not one."""
+    if not (root / "pom.xml").exists():
+        return None, "no pom.xml"
+    code, log = run(["mvn", "-B", "-q", "compile"], root, timeout=420)
+    if code != 0:
+        return None, f"mvn compile failed: {log.strip()[-200:]}"
+    cp_file = root / "target" / "_verify_cp.txt"
+    code, log = run(["mvn", "-B", "-q", "dependency:build-classpath",
+                     f"-Dmdep.outputFile={cp_file}"], root, timeout=420)
+    deps = cp_file.read_text().strip() if cp_file.exists() else ""
+    classes = root / "target" / "classes"
+    if not classes.is_dir():
+        return None, "mvn compile produced no target/classes"
+    return (f"{classes}:{deps}" if deps else str(classes)), "built"
 
 
-def timed_run(root: Path, classes: Path, feed: Path):
-    """Compile the bench against `classes` and run it. Returns (parsed_json|None, output)."""
+def timed_run(root: Path, classpath: str, feed: Path):
+    """Compile the bench against `classpath` and run it. Returns (parsed_json|None, output)."""
     bench_dir = Path(tempfile.mkdtemp())
     (bench_dir / "Bench.java").write_text(BENCH)
-    code, log = run(["javac", "-nowarn", "-cp", str(classes), "-d", str(bench_dir),
+    code, log = run(["javac", "-nowarn", "-cp", classpath, "-d", str(bench_dir),
                      str(bench_dir / "Bench.java")], root, timeout=240)
     if code != 0:
         return None, f"bench did not compile against their code: {log.strip()[-200:]}"
-    code, out = run(["java", "-cp", f"{classes}:{bench_dir}", "Bench", str(feed)], root)
+    code, out = run(["java", "-cp", f"{classpath}:{bench_dir}", "Bench", str(feed)], root)
     m = re.search(r"VERIFY_JSON=(\{.*\})", out)
     return (json.loads(m.group(1)) if m else None), out
 
@@ -110,15 +123,15 @@ def main() -> None:
     r = {"task": "feed-pipeline-java", "score": 0.0, "max_score": 4.0, "success": False, "parts": {}}
     tmp = Path(tempfile.mkdtemp())
 
-    their_classes = tmp / "theirs"
-    built, build_detail = build(ws, their_classes)
+    their_cp, build_detail = build(ws)
+    built = their_cp is not None
 
     # --- 1: the messy feed
     messy = ws / "data" / "feed_messy.csv"
     if not messy.exists():
         messy = HERE / "seed" / "data" / "feed_messy.csv"
     if built:
-        code, out = run(["java", "-cp", str(their_classes), "pipeline.Importer", str(messy)], ws)
+        code, out = run(["java", "-cp", their_cp, "pipeline.Importer", str(messy)], ws)
         crashed = code != 0 or "Exception" in out
         reports_skips = bool(re.search(r"skip|ignored|rejected|malformed|invalid", out, re.I))
         counts_something = bool(re.search(r"\b[1-9]\d*\b", out))
@@ -132,10 +145,9 @@ def main() -> None:
     # --- 2: speed, against the seed's own implementation on the same big feed
     big = tmp / "big.csv"
     make_big_feed(big)
-    seed_classes = tmp / "seed"
-    seed_built, _ = build(HERE / "seed", seed_classes)
-    theirs, their_out = (timed_run(ws, their_classes, big) if built else (None, build_detail))
-    mine, _ = (timed_run(HERE / "seed", seed_classes, big) if seed_built else (None, ""))
+    seed_cp, _ = build(HERE / "seed")
+    theirs, their_out = (timed_run(ws, their_cp, big) if built else (None, build_detail))
+    mine, _ = (timed_run(HERE / "seed", seed_cp, big) if seed_cp else (None, ""))
     speed_ok, speed_detail = False, "importer did not complete on the large feed"
     if theirs and mine:
         # Correct FIRST: same row count and same money, to 2dp. Fast-because-wrong scores nothing.
@@ -161,7 +173,7 @@ def main() -> None:
         if not feed.exists():
             feed = HERE / "seed" / "data" / "feed.csv"
         for _ in range(STABILITY_RUNS):
-            got, _ = timed_run(ws, their_classes, feed)
+            got, _ = timed_run(ws, their_cp, feed)
             if not got:
                 stable = False
                 break
@@ -184,6 +196,36 @@ def main() -> None:
         "detail": (f"{len(rtext.split())} words, {len(located)} located finding(s)" if rv
                    else "no REVIEW.md")}
 
+    # --- 5: a real CSV parser, proven by BEHAVIOUR first.
+    #
+    # The messy feed carries `SKU-0007,"widget, blue",2,12.50` — a comma inside a quoted field.
+    # Splitting on commas shifts every later column on that row, so the quantity becomes ` blue"`
+    # and the row is dropped or mangled. A parser that understands quoting imports it at 25.00.
+    # That is the check that matters, and it is behavioural: no grep for a package name, which
+    # would be exactly the task-specific overfit the doctrine forbids.
+    #
+    # The declared-dependency half is secondary and exists because the prompt asks for a library
+    # rather than a hand-rolled parser. Behaviour alone cannot buy the point, and neither can a
+    # dependency added and ignored.
+    quoted_ok, csv_detail = False, "did not build"
+    if built:
+        code, out = run(["java", "-cp", their_cp, "pipeline.Importer", str(messy)], ws)
+        quoted_ok = bool(re.search(r"SKU-0007\D+25\.00", out))
+        csv_detail = ("quoted-comma row imported at 25.00" if quoted_ok
+                      else "quoted-comma row (SKU-0007) missing or mis-parsed")
+    pom = ws / "pom.xml"
+    declared = re.findall(r"<artifactId>\s*([\w.-]+)\s*</artifactId>",
+                          pom.read_text(errors="replace")) if pom.exists() else []
+    # The project's own artifactId and the build plugins are not dependencies it went and found.
+    declared = [d for d in declared
+                if d != "feed-importer" and not d.startswith("maven-")]
+    r["parts"]["csv_library"] = {
+        "ok": quoted_ok and bool(declared),
+        "detail": f"{csv_detail}; declared deps: {declared or 'none'}"}
+
+    # max_score follows the checks — the battery scores by percentage, so a task carries as many
+    # checks as its work needs and a constant here would silently misreport every run.
+    r["max_score"] = float(len(r["parts"]))
     r["score"] = float(sum(1 for p in r["parts"].values() if p["ok"]))
     r["success"] = r["score"] == r["max_score"]
     print(json.dumps(r))

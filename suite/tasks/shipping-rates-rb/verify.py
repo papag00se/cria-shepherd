@@ -152,6 +152,36 @@ def main() -> None:
         "ok": len(zones_named) == 4 and len(rates_named) >= 6,
         "detail": f"zones named {zones_named}, {len(rates_named)}/8 rate values present"}
 
+    # 5) country code -> zone, backed by a maintained source rather than a hand-typed EU list.
+    # The cases are chosen so a hand-rolled list fails: Croatia joined the EU in 2013 and is
+    # routinely missing from one; Switzerland and Norway are in Europe and NOT in the EU, which is
+    # the mistake the other direction. The library is checked structurally and WITHOUT naming a
+    # gem — pinning one would be the task-specific overfit the doctrine forbids — so what is
+    # verified is that some third-party gem is required by the source AND the tricky cases are
+    # right. A gem required and ignored cannot buy the point, because the answers still have to be.
+    probe = ('require "shipping/rates";'
+             'print [%w[GB DE HR CH US NO].map { |c| Shipping.zone_for(c) }.join(","),'
+             '       Shipping.shipping_cost("DE", 4.0, 50.00)].join("|")')
+    code, out = run(["ruby", "-Ilib", "-e", probe], ws)
+    last = out.strip().splitlines()[-1].strip() if out.strip() else ""
+    zones_ok = last.startswith("domestic,eu,eu,international,international,international")
+    by_code_ok = "|15.99" in last
+    stdlib = {"json", "set", "date", "time", "csv", "bigdecimal", "minitest", "rake",
+              "shipping/rates", "fileutils", "optparse", "logger", "yaml", "uri", "net/http"}
+    gems = set()
+    for p_ in ws.rglob("*.rb"):
+        if ".git" in p_.parts or "vendor" in p_.parts:
+            continue
+        for m in re.finditer(r'^\s*require\s+["\']([\w/-]+)["\']', p_.read_text(errors="replace"), re.M):
+            if m.group(1) not in stdlib and not m.group(1).startswith("."):
+                gems.add(m.group(1))
+    r["parts"]["country_zone_mapping"] = {
+        "ok": zones_ok and by_code_ok and bool(gems),
+        "detail": f"zones {last[:70] or out.strip()[-60:]}; third-party requires: {sorted(gems) or 'none'}"}
+
+    # max_score follows the checks — the battery scores by percentage, so a task carries as many
+    # checks as its work needs and a constant here would silently misreport every run.
+    r["max_score"] = float(len(r["parts"]))
     r["score"] = float(sum(1 for p in r["parts"].values() if p["ok"]))
     r["success"] = r["score"] == r["max_score"]
     print(json.dumps(r))

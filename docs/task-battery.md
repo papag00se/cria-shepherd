@@ -27,12 +27,25 @@ second rule is not decoration. A finding that only ever appears in Python cannot
 a Python-specific quirk in cria, and the project's whole claim is that it is harness- and
 language-agnostic.
 
+**Scores are percentages, not fractions.** A task carries as many checks as its work honestly
+needs; the constraint that remains is that every check WITHIN a task costs roughly the same effort.
+`suite/capabilities.py` and `suite/coverage.py` model what each task DEMANDS — wall clock does not:
+`orders-api-py` takes twenty minutes because it polls an HTTP service and `shipping-rates-rb` takes
+one because arithmetic is fast, and neither number says how much the model had to be good at.
+
+**Five of the six now reach the network**, and in every case because the work genuinely calls for
+it rather than to tick the box: the right fix for float money in Go is a decimal library, the right
+fix for `split(",")` in Java is a CSV parser, and the right source for EU membership in Ruby is a
+maintained gem rather than a list typed by hand (Croatia joined in 2013; Switzerland and Norway
+never did). The measurement now depends on the package registries being up — a real cost, recorded
+here rather than discovered later.
+
 | task | language | categories covered | status |
 |---|---|---|---|
-| `shipping-rates-rb` | Ruby | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs | built 2026-08-10; proven both ways, four cheats measured |
-| `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor without behaviour change | built; seed scores 0/4; **4/4 not yet proven** |
+| `shipping-rates-rb` | Ruby | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs · country→zone via a gem | built 2026-08-10; 5 checks; seed 0%, honest 100%, four cheats measured |
+| `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor · decimal money via a library | built; 5 checks; seed 0%, honest 100%, three cheats measured |
 | `orders-api-py` | Python | **8** new API endpoint · **9** database change · **5** integration tests · **11** security fix | built; scored 4/4 by gemma4 and qwen35, so proven satisfiable |
-| `feed-pipeline-java` | Java | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review | built 2026-08-10; proven both ways, three cheats measured |
+| `feed-pipeline-java` | Java | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review · real CSV parser | built 2026-08-10; Maven; 5 checks; seed 0%, honest 100%, three cheats measured |
 | `handles-cli-node` | JavaScript | **18** external service · **16** CLI tooling · **7** dependency migration · **15** containerise | built; seed scores 0/4; **4/4 not yet proven** |
 | `rust-toml-cli` | Rust | discover and use a third-party crate under compile-loop pressure | built; scored 4/4 by gemma4, so proven satisfiable |
 
