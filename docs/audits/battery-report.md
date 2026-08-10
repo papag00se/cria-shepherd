@@ -16,6 +16,7 @@ judging. What each model does on its own.
 | 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
 | 🟡 qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75.4 | 8 | 59 |
 | 🔴 ternary-bonsai | 80% | 0% | 25% | 0% | 50% | 0% | **26%** | 40.2 | 18 | 44 |
+| 🔴 nemotron-elastic | 60% | 0% | 25% | 0% | 0% | 0% | **15%** | 128.3 | 6 | 12 |
 
 ## Assisted — assists ON
 
@@ -30,21 +31,27 @@ judging. What each model does on its own.
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
+| shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
+| cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
+| orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
+| feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
+| handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
+| rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -378,3 +385,52 @@ completely different responses, and only the language axis can tell them apart.
 It is also the assisted arm's most interesting subject. A compile error is *deterministic ground
 truth* — exactly the kind of signal cria's gate machinery is built to catch and feed back. If the
 assists are worth anything, this is where the delta should be largest.
+
+# BASELINE ARM COMPLETE — 24 of 24, unaided average 48%
+
+| model | ruby | go | python | java | node | rust | overall | tok/s | min | calls |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 59 | 7 | 20 |
+| qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75 | 8 | 59 |
+| ternary-bonsai | 80% | 0% | 25% | 0% | 50% | 0% | **26%** | 40 | 18 | 44 |
+| nemotron-elastic | 60% | 0% | 25% | 0% | 0% | 0% | **15%** | 128 | 6 | 12 |
+| **per language** | **65%** | **50%** | **50%** | **30%** | **50%** | **44%** | **48%** | | | |
+
+## Four models, four distinct failure modes
+
+- **gemma4 — does the work, drops the paperwork.** Its code is right almost everywhere; it wipes a
+  seeded test suite, skips a review, ships a test that will not compile. Cheapest of the four at 20
+  calls per task.
+- **qwen35 — does the paperwork, does not always finish the work.** Lost the route and the
+  integration tests outright on Python; failed the messy feed, the race and the review on Java.
+  Spends 59 calls per task to get there, three times gemma4.
+- **ternary-bonsai — cannot satisfy a compiler.** 0% in all three compiled languages by three
+  different mechanisms, 80% in Ruby. Not a weak model; a model with one specific wall.
+- **nemotron-elastic — quits.** Two calls on node, two on rust, six on go. It reaches for tools
+  that were never offered, the turn ends empty, and nothing objects. Its 60% on Ruby says the
+  ceiling is not comprehension.
+
+## What the language axis bought
+
+Ruby is the EASIEST language here (65%) and Java the hardest (30%) — and neither fact is visible
+from any single task. Two models are separated by four points overall and agree on almost nothing
+underneath: qwen35 is twice gemma4 on Ruby, gemma4 is twice qwen35 on Python and Java.
+
+The old five-sixths-Python battery would have produced one number per model and three of the four
+diagnoses above would have been invisible. "gemma 78, qwen 74" is nearly useless; "gemma drops
+finishing work, qwen leaves work unfinished, ternary cannot compile, nemotron quits" is four
+different assists.
+
+## What the assisted arm is now testing
+
+Each failure mode has an obvious assist and they are not the same one:
+
+| model | what would help | does cria have it |
+|---|---|---|
+| gemma4 | notice a deliverable was implemented but not tested or documented | the completion gate, if it inspects |
+| qwen35 | notice a deliverable was never started | the completion gate |
+| ternary-bonsai | feed the compiler error back and make it act on it | the check gate — deterministic ground truth, its strongest signal |
+| nemotron-elastic | do not let an empty turn end the session | persistence, principle 14 |
+
+ternary-bonsai is the sharpest test. A compile error is exactly the ground truth cria's gates
+exist to catch, and 0% leaves nowhere to go but up.
