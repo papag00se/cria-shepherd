@@ -128,6 +128,34 @@ Plus a per-model roll-up of total delta across the six tasks. A negative Δ is t
 cell in the table: it is cria actively making a model worse, and it is what the walks exist to
 explain.
 
+## Persistence is one of the assists — read the delta accordingly
+
+"cria never ends a session by handing back to a human" (`docs/principles.md` #14) is implemented in
+the LOOP, and `drive = false` never builds the loop. So in the BASE arm nothing nudges a model that
+stops: Codex sees a text answer, ends its turn, and the process exits — possibly after two minutes.
+The suite's wall clock and milestone checks apply to both arms, but they only ever KILL a run;
+nothing keeps one alive.
+
+That is correct — persistence is one of the things being measured, not a thing to hold constant —
+but it means a raw Δ conflates two different claims:
+
+```
+BASE 1/4 in  2 min,   8 calls  →  CRIA 2/4 in 30 min, 150 calls    mostly persistence
+BASE 1/4 in 25 min, 120 calls  →  CRIA 4/4 in 20 min, 110 calls    genuinely better driving
+```
+
+Same +1, opposite conclusions. **Always read the delta next to the calls and minutes columns**, and
+say which kind it is in the closing summary. A cell where CRIA scored higher using 15× the calls is
+a weaker result than one where it scored higher using fewer, and the campaign is worth little if the
+write-up flattens them into one number.
+
+Two consequences worth naming in advance:
+- A BASE run terminating `exited` in under a minute is recorded `crashed-early` by the suite. In this
+  arm that is usually not a crash — it is the model stopping and nothing objecting. Check the calls
+  count before reading it as a failure.
+- If most BASE runs stop in minutes, the honest headline is "the assists are what keep a small model
+  working at all", which is a real finding and should be stated plainly rather than buried in a Δ.
+
 ## Rules that do not bend
 
 - The status tool decides what happens next. Never narration, never memory.
