@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 gemma4 | 40% | 40% | 100% | · | 75% | 75% | **64%** | 59.7 | 6 | 20 |
+| 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
 
 ## Assisted — assists ON
 
@@ -26,8 +26,9 @@ judging. What each model does on its own.
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
-| cart-billing-go | go | gemma4 | BASE | 40% | 3 | 15 | 60.1 | exited |
+| cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
+| feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 
@@ -240,3 +241,26 @@ regression-test pair, and now this. Every one punished a model for doing somethi
 not one was visible from the score — each needed the workspace opened and read. The all-zero column
 `battery_status.py` catches by itself is the easy case. This class looks exactly like a model
 falling short, which is the reason it survives.
+
+## Four instrument faults in one day, and what they have in common
+
+| # | task | what the verifier punished | recorded | true |
+|---|---|---|---|---|
+| 1 | shipping-rates-py | appending the tests the prompt asked for (file hash) | 3/4 | 4/4 |
+| 2 | cart-billing-go | adding the regression test to the file that has tests | 3/4 | 4/4 |
+| 3 | cart-billing-go | changing `Item.Price` to a decimal type — task never said | 40% | — |
+| 4 | cart-billing-go | adding a comment inside a seeded test | 80% | 100% |
+
+Not one was visible from the score. Every one needed the workspace opened and the diff read, and
+every one punished an answer a competent engineer would defend. Three of the four are in tasks
+written or extended today.
+
+The common shape: **the verifier encoded HOW the author solved it, not WHAT the prompt required.**
+A hash says "byte-identical to my seed" when the prompt said "add tests". A probe with float
+literals says "money is a float" when the prompt said "use decimal". A body comparison says "no
+comments" when nobody asked for that.
+
+The guard that already exists — `battery_status.py` halting on an all-zero column — catches the
+opposite failure, a task nobody can pass. This class produces a plausible near-miss, which is why
+it survives contact with a scoreboard. The only thing that has ever caught one is reading the
+workspace of a run that scored *almost* right.
