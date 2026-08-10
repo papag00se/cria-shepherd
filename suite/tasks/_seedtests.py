@@ -1,0 +1,109 @@
+"""Seeded-test integrity, per test function, for every language in the battery.
+
+THE ANTI-CHEAT. A task that ships a failing test and asks for it to be fixed has one obvious way to
+go green that is not a fix: delete the test, or weaken what it asserts. Every seeded suite must
+therefore survive the run intact.
+
+THE FAULT THIS MODULE EXISTS TO PREVENT. Expressing that as "the seed file must be byte-identical"
+breaks the task's own instructions. `shipping-rates-py` says *"Don't change what the tests assert"*
+and, two paragraphs later, *"Add it, with tests"*; `cart-billing-go` says *"add a test so it can't
+come back"*. The obvious place to add a test is the file that already has tests — so the honest
+solution and the cheat produce the same verdict, and the honest one is the more likely.
+
+Both were measured on real baseline runs, in two different languages, by two different models:
+
+  shipping-rates-py   gemma4 appended three correct express tests, deleted nothing, weakened
+                      nothing, left the suite green at 10 passed. Scored 3/4. True score 4/4.
+  cart-billing-go     gemma4 inserted exactly the regression test the prompt asked for, an 18-line
+                      pure insertion with all three seeded tests untouched. Scored 3/4. True 4/4.
+
+The rule that is actually wanted: **every seeded test still exists, and its body is unchanged.
+Additions are free.** A deleted test is missing; a weakened one has different source. Both are
+still caught, and a model that does what it was told is not punished for it.
+
+Blank lines and trailing whitespace are ignored, so a reformat is not read as a contract change.
+Anything that alters an assertion alters the text.
+"""
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+# Ruby: `def test_x` … `end` at the SAME indent — the shape minitest mandates.
+RUBY_DEF = re.compile(r"^([ \t]*)def\s+(test_\w+)", re.M)
+# Go: `func TestX(` … a closing brace in column 0, which gofmt guarantees for a top-level func.
+GO_FUNC = re.compile(r"^func\s+(Test\w+)\s*\(", re.M)
+
+
+def _norm(lines) -> str:
+    return "\n".join(l.rstrip() for l in lines if l.strip())
+
+
+def python_tests(src: str) -> dict[str, str]:
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return {}
+    out = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            out[node.name] = _norm((ast.get_source_segment(src, node) or "").splitlines())
+    return out
+
+
+def ruby_tests(src: str) -> dict[str, str]:
+    out, lines = {}, src.splitlines()
+    for m in RUBY_DEF.finditer(src):
+        indent, name = m.group(1), m.group(2)
+        start = src[: m.start()].count("\n")
+        body = [lines[start]]
+        for line in lines[start + 1:]:
+            body.append(line)
+            if line.rstrip() == f"{indent}end":
+                break
+        out[name] = _norm(body)
+    return out
+
+
+def go_tests(src: str) -> dict[str, str]:
+    out, lines = {}, src.splitlines()
+    for m in GO_FUNC.finditer(src):
+        start = src[: m.start()].count("\n")
+        body = [lines[start]]
+        for line in lines[start + 1:]:
+            body.append(line)
+            if line.rstrip() == "}":
+                break
+        out[m.group(1)] = _norm(body)
+    return out
+
+
+EXTRACT = {"python": (python_tests, "*.py"), "ruby": (ruby_tests, "*.rb"), "go": (go_tests, "*.go")}
+
+
+def unchanged(seed_dir: Path, ws: Path, lang: str, glob: str | None = None) -> tuple[bool, str]:
+    """Every seeded test still present in the workspace with its body intact. Additions are free.
+
+    `seed_dir` is where the task's own seeded test files live; the workspace is searched whole, so
+    moving a test to another file is not a failure — only losing or editing it is.
+    """
+    extract, pattern = EXTRACT[lang]
+    seeded: dict[str, tuple[str, str]] = {}
+    for f in sorted(seed_dir.rglob(glob or pattern)):
+        for name, body in extract(f.read_text(errors="replace")).items():
+            seeded[name] = (f.name, body)
+    if not seeded:
+        return True, "no seeded tests to protect"
+    live: dict[str, str] = {}
+    for p in ws.rglob(pattern):
+        if ".git" in p.parts or "vendor" in p.parts or "node_modules" in p.parts:
+            continue
+        live.update(extract(p.read_text(errors="replace")))
+    for name, (fname, body) in sorted(seeded.items()):
+        if name not in live:
+            return False, f"seeded test {name} from {fname} was deleted"
+        if live[name] != body:
+            return False, f"seeded test {name} was modified — the contract was changed, not the code"
+    added = len(live) - len(seeded)
+    return True, f"all {len(seeded)} seeded tests intact" + (f", {added} added" if added > 0 else "")

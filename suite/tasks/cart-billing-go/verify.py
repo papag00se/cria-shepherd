@@ -9,8 +9,8 @@ has to reproduce the reported cart.
 
 Four points:
 
-  1. the existing suite still passes, the seeded tests are byte-identical, AND the model added a
-     regression test of its own
+  1. the existing suite still passes, every seeded test survives with its body intact, AND the
+     model added a regression test of its own (additions are free — see _seedtests.py)
   2. the reported cart AND four hidden carts round correctly — special-casing the ticket's numbers
      scores nothing
   3. discount codes load from discounts.json, and a MISSING file still falls back rather than
@@ -19,13 +19,15 @@ Four points:
 
 `go test -count=1` throughout: Go replays a cached pass without executing anything.
 """
-import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _seedtests  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 TIMEOUT = 300
@@ -39,10 +41,6 @@ def run(cmd, cwd, timeout=TIMEOUT):
         return -1, "TIMEOUT"
     except Exception as e:  # noqa: BLE001
         return -2, f"VERIFIER-EXEC-ERROR: {e}"
-
-
-def _sha(p):
-    return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 # Runs two real carts and captures whatever the code logs. A discount cart and a bare one, so a
@@ -88,15 +86,26 @@ def main() -> None:
 
     code, out = run(["go", "test", "-count=1", "./..."], ws)
     suite_ok = code == 0 and not re.search(r"^(FAIL|---\s+FAIL)", out, re.M)
-    seed_test = HERE / "seed" / "cart_test.go"
-    live_test = next((p for p in ws.rglob("cart_test.go") if ".git" not in p.parts), None)
-    intact = live_test is not None and _sha(live_test) == _sha(seed_test)
-    own_test = any("_test.go" in p.name and _sha(p) != _sha(seed_test)
-                   for p in ws.rglob("*_test.go") if ".git" not in p.parts)
+
+    # Per-test-function integrity, NOT a file hash. The two checks below used to be unsatisfiable
+    # together for the obvious solution: `intact` demanded cart_test.go be byte-identical, while
+    # `own_test` demanded some *_test.go differ from the seed — so appending the regression test to
+    # the file that already has tests failed the first, and satisfying the first meant the new test
+    # had to live in a file the prompt never asked for. Measured: gemma4 inserted exactly the
+    # regression test the ticket describes, an 18-line pure insertion leaving all three seeded tests
+    # untouched, and scored 3/4 for it. True score 4/4. Shared with every other seeded task in the
+    # battery — see suite/tasks/_seedtests.py for the full account.
+    intact, intact_detail = _seedtests.unchanged(HERE / "seed", ws, "go")
+    seeded_names = set(_seedtests.go_tests((HERE / "seed" / "cart_test.go").read_text()))
+    live_names: set[str] = set()
+    for p in ws.rglob("*_test.go"):
+        if ".git" not in p.parts:
+            live_names |= set(_seedtests.go_tests(p.read_text(errors="replace")))
+    own_test = bool(live_names - seeded_names)
     r["parts"]["suite_green_plus_regression_test"] = {
         "ok": suite_ok and intact and own_test,
         "detail": (out.strip().splitlines()[-1] if out.strip() else "no output")
-                  + ("" if intact else "  [existing tests were MODIFIED]")
+                  + ("" if intact else f"  [{intact_detail}]")
                   + ("" if own_test else "  [no regression test of its own]")}
 
     # The reported cart, computed by the model's own code.

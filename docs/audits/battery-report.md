@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 gemma4 | ³⁄₄ | · | · | · | · | · | **3/4** | 61.4 | 1 | 12 |
+| 🟢 gemma4 | ³⁄₄ | ⁴⁄₄ | · | · | · | · | **7/8** | 61.3 | 1 | 11 |
 
 ## Assisted — assists ON
 
@@ -26,6 +26,7 @@ judging. What each model does on its own.
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 3/4 | 1 | 12 | 61.4 | exited |
+| cart-billing-go | go | gemma4 | BASE | 4/4 | 1 | 10 | 61.3 | exited |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -113,3 +114,19 @@ gather step is short exactly one fact, and the judge names which one every time.
   by appending. Same task, same model, different language, and the difference is destructive rather
   than cosmetic. Verified against the archived workspace before scoring it: the seeded tests are
   not renamed or moved, they are gone.
+
+- **gemma4 · Go · 4/4 (recorded 3/4, corrected).** `cart-billing-go`'s verifier had the same
+  too-strict fault as its Python sibling, and worse: `intact` demanded the seeded test file be
+  byte-identical while `own_test` demanded some test file DIFFER from the seed. Appending the
+  regression test to the file that already had tests failed the first; satisfying the first meant
+  putting the new test in a file the prompt never asked for. **The two were unsatisfiable
+  together** for the obvious solution. gemma4's answer was an 18-line pure insertion with all three
+  seeded tests untouched. Re-scored from the preserved workspace; the run itself is unchanged.
+- **Both faults are now one owner.** `suite/tasks/_seedtests.py` does per-test-function integrity
+  for Python, Ruby and Go — every seeded test must still exist with its body intact, additions are
+  free. Re-proven on Go against three cheats: deleting a seeded test, weakening an assertion, and
+  adding no regression test are each still caught and each named in the detail line.
+- **The pattern to watch.** Two of the first two language runs were scored wrong by a verifier, not
+  by a model, and both errors ran the same direction: punishing the model for doing what the prompt
+  asked. The all-zero column that `battery_status.py` catches automatically is the easy case; this
+  class shows up as a plausible near-miss and needs the workspace opened.
