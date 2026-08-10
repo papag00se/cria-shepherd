@@ -431,6 +431,16 @@ def _refresh_grid() -> None:
         print("[grid] refreshed docs/audits/regression-report.md")
     except Exception as e:  # noqa: BLE001 — reporting must not fail the run
         print(f"[grid] refresh skipped: {type(e).__name__}: {e}")
+    # The campaign's own table, on the same rule and for the same reason. Silent when no BATTERY
+    # rows exist, so an ordinary ladder run does not touch it.
+    try:
+        sys.path.insert(0, str(SUITE))
+        import battery_status
+        if rs := battery_status.rows():
+            battery_status.write_report(rs)
+            print("[battery] refreshed docs/audits/battery-report.md")
+    except Exception as e:  # noqa: BLE001
+        print(f"[battery] refresh skipped: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
