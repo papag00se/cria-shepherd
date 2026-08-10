@@ -121,3 +121,21 @@ assertion and a deleted test are each still caught, while the honest solution sc
 The general lesson for the remaining five: a verifier can be wrong by being too STRICT, not only too
 lax, and the tell is a plausible-looking near miss rather than an all-zero column. The status tool
 catches all-zero automatically; this class needs a human to read the diff.
+
+## Known latent ambiguity — cart-billing-go's decimal ask (recorded 2026-08-10, NOT changed)
+
+The prompt says "use whatever the Go ecosystem standardises on for decimal money rather than
+hand-rolling it", and `decimal_money_library` requires a THIRD-PARTY module in go.mod. A model could
+read stdlib `math/big` as the answer. `big.Float` is binary floating point rather than decimal and
+`big.Rat` is exact rational, so neither is really the decimal-money answer — but the reading is not
+absurd, and the check would fail a working `big.Rat` solution.
+
+**Deliberately left alone.** No run has lost a point to it: gemma4 and qwen35 both reached for a
+published package and both scored 100%. ternary-bonsai did reach for `math/big` and scored 0%, but
+because it hallucinated the API — `big.Float64`, `big.NewFloat64`, `SetFloat64` on `big.Int`, none
+of which exist — so nothing compiled and the ambiguity never bore on the score.
+
+The trigger to act is a model producing a WORKING stdlib solution and losing the point. Changing the
+prompt now would invalidate two 100% rows to fix something that has never happened, which is the
+same n=0 reasoning that keeps a detector out of cria. Recorded here so the next person to see a
+0% on this task checks this first.
