@@ -15,7 +15,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 40% | 100% | 100% | 80% | 75% | 75% | **78%** | 58.9 | 7 | 20 |
 | 🟡 qwen35 | 80% | 100% | 50% | 40% | 75% | 100% | **74%** | 75.4 | 8 | 59 |
-| 🔴 ternary-bonsai | 80% | 0% | 25% | · | · | · | **36%** | 40.6 | 20 | 48 |
+| 🔴 ternary-bonsai | 80% | 0% | 25% | 0% | 50% | · | **30%** | 40.2 | 18 | 44 |
 
 ## Assisted — assists ON
 
@@ -38,8 +38,10 @@ judging. What each model does on its own.
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
+| feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
+| handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 
@@ -331,3 +333,20 @@ represents more finished work than a 25% made of four separate failures.
 Also measured while checking: throughput was 38.7 tok/s against 45.6 for the earlier run on this
 task, and the GPU was at 100% and 80°C with the model server as the only process. Slower, but the
 score is explained by the bug, not the clock.
+
+## ternary-bonsai writes plausible code that cannot run — three languages, three mechanisms
+
+| language | what it produced | why nothing ran |
+|---|---|---|
+| go | `big.Float64`, `big.NewFloat64`, `SetFloat64` on `big.Int` | none of those exist — hallucinated a stdlib API |
+| python | `SCHEMA.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")` | broke idempotency; the service dies on any existing DB |
+| java | `import com.opencsv...` with an untouched `pom.xml` | imported a library it never declared |
+
+One signature, three mechanisms. The code reads correctly in every case and none of it executes.
+Nothing here is a missing capability in the ordinary sense — it knows `math/big` exists, it knows
+opencsv exists, it knows what a schema guard is for — and in each case it produced the shape of the
+answer without the part that makes it work.
+
+The Java failure is the clearest, because it is exactly what extending that task was for: `deps` as
+a capability means declaring the dependency, not just naming it in an import. gemma4 declared
+commons-csv and scored 80% on the same task; qwen35 and ternary-bonsai both failed it.
