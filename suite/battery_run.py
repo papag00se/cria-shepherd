@@ -19,7 +19,12 @@ from pathlib import Path
 
 SUITE = Path(__file__).resolve().parent
 TOML = Path("~/.cria/cria.toml").expanduser()
-NOTE_PREFIX = "BATTERY1"
+
+# ONE definition, imported — not restated. Copying it here meant bumping the campaign to BATTERY2
+# in the status tool left the runner still stamping BATTERY1, and the first finished run of the new
+# matrix was invisible to the scoreboard that is supposed to be the only source of truth.
+sys.path.insert(0, str(SUITE))
+from battery_status import NOTE_PREFIX  # noqa: E402
 
 
 def read_drive(text: str) -> str | None:
