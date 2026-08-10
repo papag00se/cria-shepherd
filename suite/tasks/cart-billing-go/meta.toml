@@ -3,3 +3,8 @@ language = "go"
 shape = "seeded-multi"       # a SYMPTOM (no failing test) + config + observability
 categories = [2, 12, 14, 6]  # bug from report / logging / config-env / refactor without behaviour change
 deliverables = ["rounding fixed + regression test", "discounts.json with fallback", "structured logging", "behaviour preserved"]
+
+[capabilities]
+coding    = ["executable", "tests", "docs", "config"]
+reasoning = ["debug-symptom", "spec-to-impl"]
+tools     = ["read", "edit", "write", "shell"]

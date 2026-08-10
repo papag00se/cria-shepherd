@@ -3,3 +3,8 @@ language = "python"
 shape = "seeded-multi"        # a running service, a live schema, and a real vulnerability
 categories = [8, 9, 5, 11]    # new API endpoint / database change / integration tests / security fix
 deliverables = ["GET /customers/<name>/orders", "status column + customer index, migrated", "HTTP-level tests", "SQL injection fixed"]
+
+[capabilities]
+coding    = ["executable", "api", "database", "tests"]
+reasoning = ["spec-to-impl", "security"]
+tools     = ["read", "edit", "write", "shell"]

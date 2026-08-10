@@ -97,10 +97,22 @@ def sha() -> str:
         return "?"
 
 
-def score_of(r: dict | None) -> str:
+def pct(r: dict | None) -> float | None:
+    """A task's result as a PERCENTAGE of its own checks.
+
+    Fractions forced every task to carry exactly four checks, which meant splitting work that was
+    really three deliverables or merging work that was really six. A percentage frees a task to
+    carry as many checks as its work honestly needs; the constraint that remains is the one that
+    was actually meant — every check WITHIN a task should cost roughly the same effort."""
     if not r:
-        return "  — "
-    return f"{int(r.get('score') or 0)}/{int(r.get('max_score') or 4)}"
+        return None
+    mx = float(r.get("max_score") or 0)
+    return 100.0 * float(r.get("score") or 0) / mx if mx else None
+
+
+def score_of(r: dict | None) -> str:
+    v = pct(r)
+    return "—" if v is None else f"{v:.0f}%"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -111,11 +123,13 @@ def _n(r: dict | None, key: str) -> str:
 
 
 NOTES_MARKER = "<!-- NOTES — hand-written, preserved across regeneration -->"
-GLYPH = {0: "⁰⁄₄", 1: "¹⁄₄", 2: "²⁄₄", 3: "³⁄₄", 4: "⁴⁄₄"}
 
 
-def _badge(avg: float) -> str:
-    return "🟢" if avg >= 3.5 else "🟡" if avg >= 2.5 else "🟠" if avg >= 1.5 else "🔴"
+def _badge(avg_pct: float) -> str:
+    """Banded on the percentage, so the bands mean the same thing whatever a task's
+    check count is."""
+    return ("🟢" if avg_pct >= 87.5 else "🟡" if avg_pct >= 62.5
+            else "🟠" if avg_pct >= 37.5 else "🔴")
 
 
 def language(task: str) -> str:
@@ -145,14 +159,19 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         have = [c for c in cells if c]
         if not have:
             continue
-        scores = [int(c.get("score") or 0) for c in have]
-        ranked.append((sum(scores) / len(scores), -sum(
-            float(c.get("wall_seconds") or 0) for c in have), m, cells, have, scores))
-    for avg, _t, m, cells, have, scores in sorted(ranked, key=lambda x: (-x[0], -x[1])):
-        got = " | ".join(GLYPH[int(c.get("score") or 0)] if c else "·" for c in cells)
+        # OVERALL is checks-passed over checks-attempted, not the mean of the percentages. A task
+        # carrying six checks should weigh more in the headline than one carrying three — that is
+        # the point of letting check counts differ.
+        passed = sum(float(c.get("score") or 0) for c in have)
+        total = sum(float(c.get("max_score") or 0) for c in have)
+        overall = 100.0 * passed / total if total else 0.0
+        ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
+                       m, cells, have))
+    for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
+        got = " | ".join(score_of(c) if c else "·" for c in cells)
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
-        out.append(f"| {_badge(avg)} {m} | {got} | **{sum(scores)}/{4 * len(have)}** | {rate} "
+        out.append(f"| {_badge(overall)} {m} | {got} | **{overall:.0f}%** | {rate} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     if len(out) == 2:
         out.append("| _no runs yet_ |" + " |" * (len(TASKS) + 3))
@@ -178,14 +197,15 @@ def report(rs: list[dict]) -> str:
     pairs = [(t, m, b, c) for t, m, b, c in pairs if b and c]
     if pairs:
         out += ["", "## What the assists were worth", "",
-                "Read Δ next to the calls and minutes columns — a +1 bought with 15× the calls is",
-                "not the same result as a +1 bought with fewer (`docs/battery-goal.md`).", "",
+                "Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain",
+                "bought with 15× the calls is not the same result as one bought with fewer",
+                "(`docs/battery-goal.md`).", "",
                 "| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |",
                 "|---|---|---|---|---|---|---|---|"]
         for t, m, b, c in pairs:
-            d = int(c.get("score") or 0) - int(b.get("score") or 0)
+            d = (pct(c) or 0) - (pct(b) or 0)
             out.append(f"| {t} | {language(t)} | {m} | {score_of(b).strip()} | "
-                       f"{score_of(c).strip()} | {f'**{d:+d}**' if d else '0'} | "
+                       f"{score_of(c).strip()} | {f'**{d:+.0f}**' if round(d) else '0'} | "
                        f"{_n(b,'calls')}→{_n(c,'calls')} | "
                        f"{_n(b,'wall_seconds')}→{_n(c,'wall_seconds')} |")
 
@@ -222,8 +242,8 @@ def main() -> int:
         return 0
     print(f"BATTERY CAMPAIGN — {len(MODELS)} models × {len(TASKS)} tasks × 2 arms "
           f"= {len(MODELS)*len(TASKS)*2} runs   (note prefix {NOTE_PREFIX})\n")
-    print(f"{'task':<20}{'model':<19}{'BASE':>6}{'CRIA':>7}{'Δ':>5}")
-    print("-" * 57)
+    print(f"{'task':<20}{'model':<19}{'BASE':>7}{'CRIA':>7}{'Δ':>6}")
+    print("-" * 59)
     todo: list[tuple[str, str, str]] = []
     filled = 0
     for task in TASKS:
@@ -231,9 +251,8 @@ def main() -> int:
             b, c = cell(rs, "BASE", model, task), cell(rs, "CRIA", model, task)
             delta = ""
             if b and c:
-                d = int(c.get("score") or 0) - int(b.get("score") or 0)
-                delta = f"{d:+d}"
-            print(f"{task:<20}{model:<19}{score_of(b):>6}{score_of(c):>7}{delta:>5}")
+                delta = f"{(pct(c) or 0) - (pct(b) or 0):+.0f}"
+            print(f"{task:<20}{model:<19}{score_of(b):>7}{score_of(c):>7}{delta:>6}")
             filled += bool(b) + bool(c)
             # ONE entry per cell-pair: the next thing to run for this pair. Counting cells off
             # `todo` would report an empty campaign as half finished (24 of 48), which is why the
@@ -260,7 +279,7 @@ def main() -> int:
     for task in TASKS:
         base = [cell(rs, "BASE", m, task) for m in MODELS]
         have = [b for b in base if b]
-        if len(have) >= 2 and all(int(b.get("score") or 0) == 0 for b in have):
+        if len(have) >= 2 and all((pct(b) or 0) == 0 for b in have):
             print(f"\nNEXT: VALIDATE {task}   "
                   f"({len(have)} baseline runs, every one 0/4 — prove the verifier is satisfiable)")
             print(f"      read suite/tasks/{task}/verify.py against suite/tasks/{task}/prompt.txt,")
@@ -272,8 +291,7 @@ def main() -> int:
     for task in TASKS:
         for model in MODELS:
             b, c = cell(rs, "BASE", model, task), cell(rs, "CRIA", model, task)
-            if b and c and int(c.get("score") or 0) < int(b.get("score") or 0) \
-                    and not walked(str(c.get("run_id"))):
+            if b and c and (pct(c) or 0) < (pct(b) or 0) and not walked(str(c.get("run_id"))):
                 print(f"\nNEXT: WALK {c.get('run_id')}   "
                       f"(CRIA {score_of(c)} lost to BASE {score_of(b)} — cria made it worse)")
                 print(f"      python3 suite/walk.py {str(c.get('capture_dir','')).split('/')[-1]} "

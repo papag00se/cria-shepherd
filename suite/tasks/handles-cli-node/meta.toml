@@ -3,3 +3,8 @@ language = "node"
 shape = "seeded-multi"         # a working script that must become a shippable tool
 categories = [18, 16, 7, 15]   # external service / CLI tooling / dependency migration / containerise
 deliverables = ["CLI with --json/--help/exit codes", "holder + total handles", "off `request` onto fetch", "tests incl. live", "Dockerfile"]
+
+[capabilities]
+coding    = ["executable", "tests", "deps", "packaging"]
+reasoning = ["comprehend-api"]
+tools     = ["read", "edit", "write", "shell", "web"]
