@@ -146,3 +146,44 @@ class TheSteerAuthorUsesBothTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
+    """A directive budgeted at ONE action pointed at the caller that failed, and nothing required it
+    to account for the other place the value was set.
+
+    Measured on ternary-bonsai's orders-api-py run, call 0087. The route worked. A steer changed
+    `db.get_customer_orders(m.group(1))` to `...(m.group(1), path=self.db_path)` and added
+    `db_path = None`. `db_path` is set only by `_run_server`, a helper in the model's OWN test file;
+    `serve()` — the real entry point, fifteen lines below and byte-identical to the seed — never
+    sets it. Every request became `sqlite3.connect(None)`. The code is present, correct, and
+    unreachable, and the verifier scored the deliverable MISS while the reasoner went on truthfully
+    reporting the route as done.
+
+    Staying inside the one-action budget is the point: one change to one mechanism is still one
+    action. What the rule adds is that the mechanism has to be followed to every place it is set.
+    """
+
+    TEXT = prompts.load("steer_diagnose")
+
+    def test_it_demands_every_place_the_value_is_set(self):
+        self.assertIn("EVERY place that value is set", self.TEXT)
+
+    def test_it_names_the_entry_point_as_well_as_the_failing_caller(self):
+        low = self.TEXT.lower()
+        self.assertIn("entry point", low)
+        self.assertIn("caller that failed", low)
+
+    def test_it_offers_locating_them_as_the_action_when_they_are_unknown(self):
+        """Otherwise the rule collides with the standing ban on guessing at unknown locations."""
+        self.assertIn("find every place it is set", self.TEXT)
+
+    def test_the_one_action_budget_survives(self):
+        self.assertIn("exactly ONE concrete next action", self.TEXT)
+
+    def test_it_still_forbids_writing_the_code(self):
+        self.assertIn("Never provide replacement code", self.TEXT)
+
+    def test_the_positive_veto_sentinel_is_untouched(self):
+        self.assertIn("ON_TRACK", self.TEXT)
+        self.assertNotIn("NOT_STUCK", self.TEXT)
