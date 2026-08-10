@@ -9,23 +9,39 @@ bought with fewer.
 
 | task | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|
-| shipping-rates-py | gemma4 | 4/4 | — |  | 15→— | 1→— |
-| shipping-rates-py | qwen35 | 1/4 | — |  | 13→— | 1→— |
-| shipping-rates-py | ternary-bonsai | 4/4 | — |  | 14→— | 1→— |
-| shipping-rates-py | nemotron-elastic | 0/4 | — |  | 11→— | 6→— |
-| orders-api-py | gemma4 | 4/4 | — |  | 46→— | 18→— |
-| orders-api-py | qwen35 | 1/4 | — |  | 163→— | 31→— |
-| orders-api-py | ternary-bonsai | 3/4 | — |  | 31→— | 8→— |
+| shipping-rates-py | gemma4 | 4/4 | 4/4 | 0 | 15→37 | 1→5 |
+| shipping-rates-py | qwen35 | 1/4 | 4/4 | **+3** | 13→47 | 1→6 |
+| shipping-rates-py | ternary-bonsai | 4/4 | 4/4 | 0 | 14→45 | 1→9 |
+| shipping-rates-py | nemotron-elastic | 0/4 | 4/4 | **+4** | 11→49 | 6→6 |
+| orders-api-py | gemma4 | 4/4 | 4/4 | 0 | 46→89 | 18→31 |
+| orders-api-py | qwen35 | 1/4 | 4/4 | **+3** | 163→256 | 31→38 |
+| orders-api-py | ternary-bonsai | 3/4 | 2/4 | **-1** | 31→113 | 8→60 |
 | orders-api-py | nemotron-elastic | 0/4 | — |  | 7→— | 0→— |
+| feed-pipeline-py | gemma4 | 2/4 | — |  | 20→— | 8→— |
+| feed-pipeline-py | qwen35 | 4/4 | — |  | 30→— | 3→— |
+| feed-pipeline-py | ternary-bonsai | 3/4 | — |  | 42→— | 15→— |
+| feed-pipeline-py | nemotron-elastic | 0/4 | — |  | 23→— | 12→— |
+| missing-tests-py | gemma4 | 4/4 | — |  | 7→— | 1→— |
+| missing-tests-py | qwen35 | 0/4 | — |  | 37→— | 4→— |
+| missing-tests-py | ternary-bonsai | 4/4 | — |  | 16→— | 4→— |
+| missing-tests-py | nemotron-elastic | 0/4 | — |  | 7→— | 1→— |
+| sqlite-inventory | gemma4 | 4/4 | — |  | 10→— | 1→— |
+| sqlite-inventory | qwen35 | 4/4 | — |  | 19→— | 3→— |
+| sqlite-inventory | ternary-bonsai | 4/4 | — |  | 9→— | 2→— |
+| sqlite-inventory | nemotron-elastic | 1/4 | — |  | 5→— | 1→— |
+| rust-toml-cli | gemma4 | 4/4 | — |  | 8→— | 1→— |
+| rust-toml-cli | qwen35 | 0/4 | — |  | 42→— | 16→— |
+| rust-toml-cli | ternary-bonsai | 0/4 | — |  | 33→— | 16→— |
+| rust-toml-cli | nemotron-elastic | 0/4 | — |  | 9→— | 1→— |
 
 ## Per-model total Δ across the six tasks
 
 | model | pairs complete | total Δ |
 |---|---|---|
-| gemma4 | 0/6 | — |
-| qwen35 | 0/6 | — |
-| ternary-bonsai | 0/6 | — |
-| nemotron-elastic | 0/6 | — |
+| gemma4 | 2/6 | +0 |
+| qwen35 | 2/6 | +6 |
+| ternary-bonsai | 2/6 | -1 |
+| nemotron-elastic | 1/6 | +4 |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -63,3 +79,44 @@ the instruments rather than the models, and all three had been silently scoring 
   are evidence about the model. Whether an off-menu name should come back as a tool error rather
   than an empty turn is a real question, but it is a CRIA-arm question and must not be touched
   mid-arm — one run per code state.
+
+## The baseline arm is complete — 24/24
+
+With the assists switched off, the four models scored 44/96. gemma4 22/24, ternary-bonsai 18/24,
+qwen35 10/24, nemotron-elastic 1/24. Two tasks nobody solved unaided are worth naming:
+`rust-toml-cli` (only gemma4) and `missing-tests-py` (qwen35 0/4).
+
+The seven assisted cells so far say the assists are worth the most exactly where the model is
+weakest: qwen35 +3 and +3, nemotron-elastic +4, gemma4 +0 and +0 — it was already at 4/4 and cria
+did not break it. One regression, below.
+
+## The lost-judgment defect — 42% of everything cria asks, campaign-wide
+
+`ternary-bonsai` on `orders-api-py` is the campaign's first negative delta: 3/4 unaided, 2/4
+assisted. It cost 113 calls and 60 minutes against the baseline's 31 calls and 7.8 minutes, and it
+gave back the route and the schema migration that the model had already got right on its own.
+
+Measured across every assisted run so far: **140 of 329 judgment calls returned empty content.**
+Not the coder — the judges. By phase: satisfaction 65, reasoner 42, satisfaction-confirm 26,
+critic 5, classifier 2. In the losing run alone the rate is 55%.
+
+The cause is not a broken model. On all 140, cria sent **zero tools**. 91 came back with
+`finish_reason: tool_calls` anyway, and the phantom calls are only ever two things:
+
+    read_file  83
+    list_dir   41
+
+The judge is never trying to ACT. It is only ever trying to LOOK. Asked "is the coder stuck?" or
+"is this task complete?", and given a transcript plus file METADATA — `db.py: 2,597 bytes, 74
+lines` — it correctly answers that it cannot tell without seeing the code, and reaches for the
+tool it knows. Its own reasoning says so plainly and repeatedly:
+
+> Let me check what's actually on disk now to see if the work is complete or not. I need to read
+> both files to understand where we are.
+
+cria reads `content`, finds it empty, and the conclusion dies in the output channel. The prompt
+tells the judge to answer "grounded ONLY in what you see above" — and the judge is telling us, 124
+times, that what it sees above is not enough.
+
+This is principle 8 unfinished: deterministic code gathers the facts, the reasoner judges. The
+gather step is short exactly one fact, and the judge names which one every time.
