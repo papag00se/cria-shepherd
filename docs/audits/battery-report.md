@@ -13,7 +13,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 gemma4 | · | · | 100% | · | 75% | 75% | **83%** | 59.4 | 8 | 20 |
+| 🟡 gemma4 | 40% | · | 100% | · | 75% | 75% | **71%** | 59.6 | 7 | 22 |
 
 ## Assisted — assists ON
 
@@ -25,6 +25,7 @@ judging. What each model does on its own.
 
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
+| shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
@@ -187,3 +188,33 @@ could not have raised the question.
 model for doing what the prompt asked, and both found only by opening the workspace. The all-zero
 column the status tool catches by itself is the easy case; this class looks like a plausible near
 miss. Fixed at the source in `suite/tasks/_seedtests.py`, one owner for all three seeded languages.
+
+## Adding a fifth deliverable made gemma4 worse at the other four
+
+`shipping-rates-rb` gained one ask — map country codes to zones using a maintained source. Same
+model, same other four deliverables, same code state otherwise:
+
+| check | 4-deliverable run | 5-deliverable run |
+|---|---|---|
+| seeded tests intact | MISS — overwrote the file | MISS — modified `test_eu_heavier_parcel` |
+| hidden contract | ok | ok |
+| express zone + own tests | **ok** | **MISS — priced right, wrote no tests for it** |
+| README rate table | ok | ok |
+| country→zone | — | MISS — `DE` returned international, and no gem |
+| | **75%** | **40%** |
+
+The express zone is the tell. In the four-ask run it implemented it AND tested it; with a fifth ask
+in the prompt it still priced it correctly and stopped writing the tests. Nothing about that
+deliverable changed. What changed is how much else was being asked for at the same time.
+
+That is worth more than the score: it says this model's failure under load is not "does the last
+thing badly", it is "quietly drops the finishing work on things it already did". Every one of the
+misses across all six languages has that shape — the code is right, the surrounding obligation
+(keep the tests, write the tests, cite the line, compile the test file) is what falls off.
+
+A verifier defect was found while reading this run and fixed: the third-party-gem check matched the
+full require string, so `minitest/autorun` — stdlib reached through a sub-path — counted as a gem.
+A hand-rolled EU list could have satisfied the library half of the check on the strength of the
+test framework the task already uses. Requires are now resolved by top-level segment and against
+the workspace's own files. Re-proven: the honest solution still scores 100% and is credited with
+`countries`; gemma's run correctly shows none.

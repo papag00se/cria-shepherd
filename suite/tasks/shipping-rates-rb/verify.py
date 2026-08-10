@@ -166,15 +166,25 @@ def main() -> None:
     last = out.strip().splitlines()[-1].strip() if out.strip() else ""
     zones_ok = last.startswith("domestic,eu,eu,international,international,international")
     by_code_ok = "|15.99" in last
-    stdlib = {"json", "set", "date", "time", "csv", "bigdecimal", "minitest", "rake",
-              "shipping/rates", "fileutils", "optparse", "logger", "yaml", "uri", "net/http"}
+    # A require is THIRD-PARTY only if its top-level segment is not stdlib AND it does not resolve
+    # to a file in this workspace. Matching the full string missed `minitest/autorun` — stdlib
+    # reached through a sub-path — which would have let a hand-rolled EU list satisfy the library
+    # half of this check on the strength of the test framework it was already using.
+    stdlib = {"json", "set", "date", "time", "csv", "bigdecimal", "minitest", "rake", "English",
+              "fileutils", "optparse", "logger", "yaml", "uri", "net", "digest", "securerandom",
+              "pp", "stringio", "tempfile", "benchmark", "ostruct", "forwardable", "singleton"}
+    own = {q.relative_to(d).with_suffix("").as_posix()
+           for d in (ws / "lib", ws / "test", ws) if d.is_dir()
+           for q in d.rglob("*.rb")}
     gems = set()
     for p_ in ws.rglob("*.rb"):
         if ".git" in p_.parts or "vendor" in p_.parts:
             continue
-        for m in re.finditer(r'^\s*require\s+["\']([\w/-]+)["\']', p_.read_text(errors="replace"), re.M):
-            if m.group(1) not in stdlib and not m.group(1).startswith("."):
-                gems.add(m.group(1))
+        for m in re.finditer(r'^\s*require\s+["\']([\w/.-]+)["\']', p_.read_text(errors="replace"), re.M):
+            name = m.group(1)
+            if name.startswith(".") or name in own or name.split("/")[0] in stdlib:
+                continue
+            gems.add(name)
     r["parts"]["country_zone_mapping"] = {
         "ok": zones_ok and by_code_ok and bool(gems),
         "detail": f"zones {last[:70] or out.strip()[-60:]}; third-party requires: {sorted(gems) or 'none'}"}
