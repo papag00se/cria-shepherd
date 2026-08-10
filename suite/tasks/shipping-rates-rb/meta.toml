@@ -1,0 +1,5 @@
+name = "shipping-rates-rb"
+language = "ruby"
+shape = "seeded-multi"     # starts from EXISTING code; debug + feature + tests + docs
+categories = [3, 1, 4, 19] # resolve failing tests / feature from spec / write missing tests / update docs
+deliverables = ["threshold bug fixed", "express zone", "own tests for express", "README rate table"]

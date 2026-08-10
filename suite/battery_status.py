@@ -26,13 +26,24 @@ from pathlib import Path
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 WALK = SUITE.parent / "docs" / "audits" / "battery-walk.md"
-NOTE_PREFIX = "BATTERY1"
+NOTE_PREFIX = "BATTERY2"
 
 MODELS = ("gemma4", "qwen35", "ternary-bonsai", "nemotron-elastic")
-# Deliberately NOT ada-handles (already mined) and not the seven handles-* ports (one problem in
-# seven languages — a portability question, not a variety one). See docs/task-battery.md.
-TASKS = ("shipping-rates-py", "orders-api-py", "feed-pipeline-py",
-         "missing-tests-py", "sqlite-inventory", "rust-toml-cli")
+# ONE KIND OF WORK PER LANGUAGE. BATTERY1 ran six tasks that were five-sixths Python, because the
+# selection dropped the Go and JavaScript members of the original five and substituted Python ones.
+# A result that only ever appears in Python cannot tell a cria defect from a Python defect.
+#
+#   shipping-rates-rb    ruby        fix failing tests · feature from spec · write tests · docs
+#   cart-billing-go      go          bug from a report · logging · config · refactor
+#   orders-api-py        python      API endpoint · schema change · integration tests · security
+#   feed-pipeline-java   java        data transform · optimise · concurrency · code review
+#   handles-cli-node     javascript  external service · CLI · dependency migration · containerise
+#   rust-toml-cli        rust        discover and use a third-party dependency
+#
+# BATTERY1's rows stay on disk under their own prefix — they are evidence, and this is a different
+# question. See docs/task-battery.md.
+TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
+         "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")          # order matters: the whole BASE arm first
 
 

@@ -20,30 +20,47 @@ place by exercising machinery no other task reaches.
 5. **No task is ever special-cased in cria.** Doctrine. The suite doubles as cria's regression
    harness, and a prompt cria recognises is worthless as one.
 
-## The 20 categories, and how they are covered
+## The matrix: one kind of work per language
 
-Five tasks, four categories each. The grouping follows how the work actually arrives — a billing
-ticket brings config and logging with it; a new endpoint brings a schema change and validation.
+Every task carries four deliverables of similar weight, and **no two tasks share a language**. That
+second rule is not decoration. A finding that only ever appears in Python cannot be told apart from
+a Python-specific quirk in cria, and the project's whole claim is that it is harness- and
+language-agnostic.
 
 | task | language | categories covered | status |
 |---|---|---|---|
-| `shipping-rates-py` | Python | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs | built, proven both ways; verifier corrected 2026-08-10 (see below) |
-| `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor without behaviour change | built, seed scores 0/4 |
-| `orders-api-py` | Python | **8** new API endpoint · **9** database change · **5** integration tests · **11** security fix | planned |
-| `feed-pipeline-py` | Python | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review | planned |
-| `handles-cli-node` | JavaScript | **18** external service · **16** CLI tooling · **7** dependency migration · **15** containerise | planned |
+| `shipping-rates-rb` | Ruby | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs | built 2026-08-10; proven both ways, four cheats measured |
+| `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor without behaviour change | built; seed scores 0/4; **4/4 not yet proven** |
+| `orders-api-py` | Python | **8** new API endpoint · **9** database change · **5** integration tests · **11** security fix | built; scored 4/4 by gemma4 and qwen35, so proven satisfiable |
+| `feed-pipeline-java` | Java | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review | built 2026-08-10; proven both ways, three cheats measured |
+| `handles-cli-node` | JavaScript | **18** external service · **16** CLI tooling · **7** dependency migration · **15** containerise | built; seed scores 0/4; **4/4 not yet proven** |
+| `rust-toml-cli` | Rust | discover and use a third-party crate under compile-loop pressure | built; scored 4/4 by gemma4, so proven satisfiable |
 
-Tooling for every one of these exists on the box: go, cargo, node, ruby+rspec, php+phpunit, mvn,
-docker, and Go's race detector.
+Toolchains for all six are on the box and need no network: ruby+minitest, go, python3, JDK 21,
+node 22, cargo with a warm crate cache.
 
-### Also in the suite (single-shape, kept for language coverage)
+### Why the earlier selection was wrong
+
+The first battery ran `shipping-rates-py`, `orders-api-py`, `feed-pipeline-py`, `missing-tests-py`,
+`sqlite-inventory` and `rust-toml-cli` — five Python tasks and one Rust. The original five-task
+design already had Go and JavaScript in it; the selection dropped both and replaced them with
+Python. The `handles-*` ports were excluded on the grounds that one problem in seven languages is a
+portability question rather than a variety one. That reasoning is right for measuring variety of
+WORK and exactly backwards for measuring variety of LANGUAGE, and the trade was never surfaced.
+
+Two tasks were ported rather than newly invented, so the work axis is unchanged and only the
+language moved: `shipping-rates-py` → `shipping-rates-rb`, `feed-pipeline-py` → `feed-pipeline-java`.
+The Python originals stay on disk. Retired from the matrix: `missing-tests-py` (its category 4 is
+covered by the Ruby task) and `sqlite-inventory` (Python, and overlapping `orders-api-py`).
+
+### Also in the suite, not in the matrix
 
 | task | language | shape |
 |---|---|---|
-| `ada-handles` | Python | API research + client + tests + live test + docs |
+| `ada-handles` | Python | API research + client + tests + live test + docs — already mined for findings |
 | `handles-{go,rust,node,ruby,php,java}` | six | the same problem, one language each — isolates the language variable |
-| `rust-toml-cli` | Rust | must discover and use a third-party crate |
-| `sqlite-inventory` | Python | schema design + SQL + CLI, fully offline |
+| `shipping-rates-py`, `feed-pipeline-py` | Python | the originals the Ruby and Java members were ported from |
+| `missing-tests-py`, `sqlite-inventory` | Python | retired from the matrix, kept as evidence |
 
 ## Cheat-resistance
 

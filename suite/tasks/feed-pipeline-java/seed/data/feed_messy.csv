@@ -1,0 +1,8 @@
+sku,description,quantity,unit_price
+SKU-0001,widget,5,10.00
+SKU-0002,gadget,,20.00
+SKU-0003,doohickey,3,$15.50
+SKU-0001,widget,5,10.00
+SKU-0004,thing,2,7.25
+SKU-0005,gizmo,not-a-number,3.00
+SKU-0006,,4,

@@ -1,0 +1,7 @@
+Three things on the shipping module, please.
+
+The test suite is failing — work out why and fix it. Don't change what the tests assert; they describe the behaviour our customers were promised.
+
+We're also launching an express service. It should cost 14.99 base plus 2.50 per kilo, and it follows the same free-shipping and oversize rules as the other zones. Add it, with tests.
+
+Finally the README has no rate table at all. Add one that lists every zone with its base rate and per-kilo cost, so support can answer pricing questions without reading the code.
