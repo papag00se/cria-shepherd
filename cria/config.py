@@ -363,6 +363,17 @@ class RoutingConfig:
     roles: Mapping[str, Role] = field(default_factory=dict)
     failover: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # task_type -> role chain
     engagement_bias: str = "task"
+    # BASELINE SWITCH. False = cria never drives: no planner, no steers, no gates, no critics, no
+    # completion judging. It stays a plain proxy and keeps only the PLUMBING a local model needs to
+    # be reachable at all — Responses↔chat translation, window fitting, tool-menu curation, per-model
+    # sampling and reasoning, template repair, and tool-call dialect recovery.
+    #
+    # This exists because "measure the model without cria" has no honest literal reading: Codex
+    # speaks the Responses API and llama.cpp does not, so unplugging cria does not produce a weaker
+    # setup, it produces one that cannot exchange a single message. Removing the plumbing measures
+    # the protocol gap; removing the ASSISTS measures what the assists are worth. This flag is the
+    # second experiment, and it is the control the suite's numbers should be read against.
+    engagement_drive: bool = True
     defaults_base_url: str = "http://127.0.0.1:18084"
 
 
@@ -610,6 +621,7 @@ def _routing(data: dict, defaults_base_url: str) -> RoutingConfig:
         roles=roles,
         failover=failover,
         engagement_bias=bias,
+        engagement_drive=bool(data.get("engagement", {}).get("drive", True)),
         defaults_base_url=defaults_base_url,
     )
 

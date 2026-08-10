@@ -406,7 +406,10 @@ class CriaServer(ThreadingHTTPServer):
         _warn_config(cfg, has_reasoner, has_coder, log)
         # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
         # Planner OFF → the loop drives the synthetic 1-item path (guards but no decomposition).
-        if has_coder and (has_reasoner or not cfg.planner.enabled):
+        # `[engagement] drive = false` → the loop is never built and cria is a plain proxy:
+        # plumbing only, zero assists. That is the BASELINE arm of the matrix (see
+        # RoutingConfig.engagement_drive for why 'no cria at all' is not a runnable control).
+        if cfg.routing.engagement_drive and has_coder and (has_reasoner or not cfg.planner.enabled):
             # The web-search key comes from the fixed BRAVE_SEARCH_API_KEY env var (never stored in
             # config); brave.api_key() reads it normalized (CRLF-safe) — the CRLF was the illegal-
             # header footgun, fixed once at the source (envfile) rather than stripped per-consumer.
