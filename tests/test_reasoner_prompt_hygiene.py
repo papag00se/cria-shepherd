@@ -172,11 +172,25 @@ class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
     def test_it_names_the_entry_point_as_well_as_the_failing_caller(self):
         low = self.TEXT.lower()
         self.assertIn("entry point", low)
-        self.assertIn("caller that failed", low)
+        self.assertIn("caller that happened to fail", low)
 
-    def test_it_offers_locating_them_as_the_action_when_they_are_unknown(self):
-        """Otherwise the rule collides with the standing ban on guessing at unknown locations."""
-        self.assertIn("find every place it is set", self.TEXT)
+    def test_it_does_NOT_add_a_second_go_and_look_escape(self):
+        """The first draft ended "...or command the coder to find every place it is set before
+        changing anything." That clause was the footgun, and it was removed before shipping.
+
+        This prompt was rewritten precisely because steers were DIAGNOSING instead of DIRECTING, and
+        "go find them all" is easier for a weak author to emit than naming a change — so the escape
+        would have become the answer. It was also redundant: the prompt already says "If a location
+        is unknown, command the coder to locate or inspect it instead of guessing", which covers the
+        unknown case without offering a way out of the imperative."""
+        self.assertNotIn("find every place it is set", self.TEXT)
+        self.assertIn("If a location is unknown", self.TEXT)
+
+    def test_the_rule_is_conditional_so_it_is_silent_on_the_97_percent(self):
+        """Measured over 505 authored steers in the captures, 18 are value-routing shaped — and
+        reading those 18, half are false positives of the matcher. The rule can only apply to a
+        couple of percent of directives, which is the whole of its blast radius."""
+        self.assertIn("If your action changes how a VALUE REACHES code", self.TEXT)
 
     def test_the_one_action_budget_survives(self):
         self.assertIn("exactly ONE concrete next action", self.TEXT)

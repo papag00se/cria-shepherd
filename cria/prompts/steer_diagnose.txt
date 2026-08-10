@@ -12,7 +12,7 @@ The directive must:
 - Check against the original TASK. If the coder is polishing unrequested work while a requested deliverable remains missing or broken, explicitly redirect it to that deliverable.
 - Give exactly ONE concrete next action that differs from the repeated failed behavior.
 - Command the coder to perform that action NOW with an available tool call.
-- If your action changes how a VALUE REACHES code—an attribute, a default, a global, an injected path, a config key—account for EVERY place that value is set: the caller that failed AND the program's own entry point. Name them all, or command the coder to find every place it is set before changing anything. Satisfying only the caller in front of you leaves the real path broken, and the check that prompted you cannot see it.
+- If your action changes how a VALUE REACHES code—an attribute, a default, a global, an injected path—it must hold for EVERY place that value is set, the program's real entry point included, not only the caller that happened to fail.
 - Prefer inspecting reality before another rewrite: read the actual file, run the exact failing check, inspect the real dependency/value, or compare a working access path with the failing one.
 - Describe required code changes in words only. Never provide replacement code, snippets, functions, or lines to paste. Quoting a real error or a line you actually read is not writing code—do it.
 
