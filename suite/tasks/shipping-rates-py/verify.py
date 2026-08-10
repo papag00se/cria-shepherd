@@ -19,7 +19,7 @@ Four points, and the cheats are all worthless:
 Hidden tests are copied in at scoring time and removed after, so nothing in the workspace hints at
 them during the run.
 """
-import hashlib
+import ast
 import json
 import re
 import shutil
@@ -43,8 +43,53 @@ def run(cmd, cwd, timeout=TIMEOUT):
         return -2, f"VERIFIER-EXEC-ERROR: {e}"
 
 
-def _sha(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+def _test_funcs(src: str) -> dict[str, str]:
+    """{name: normalized source} for each top-level test function. Blank lines and trailing
+    whitespace are ignored so a reformat is not read as a contract change; anything that alters an
+    assertion changes the text and is caught."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return {}
+    out = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            seg = ast.get_source_segment(src, node) or ""
+            out[node.name] = "\n".join(l.rstrip() for l in seg.splitlines() if l.strip())
+    return out
+
+
+def _seeded_tests_unchanged(ws: Path) -> tuple[bool, str]:
+    """Every seeded test still present, with its body byte-for-byte intact. ADDING tests is fine.
+
+    This used to demand the seed file be byte-identical, which failed the task's own instructions:
+    the prompt says "don't change what the tests ASSERT" and, two paragraphs later, "Add it, with
+    tests". A model that appends its express tests to the existing file — the obvious place — was
+    scored as having broken the contract. Measured on the first battery baseline run: gemma4
+    appended three correct express tests, deleted nothing, left the suite green at 10 passed, and
+    lost the point.
+
+    The anti-cheat this protects is unchanged and is the whole reason the check exists: a green
+    suite bought by deleting or weakening a failing assertion is not a pass. That is still caught —
+    a removed test is missing, and an edited one has different source."""
+    seed_funcs: dict[str, tuple[str, str]] = {}
+    for seed_file in sorted(SEED_TESTS.glob("*.py")):
+        for name, body in _test_funcs(seed_file.read_text(errors="replace")).items():
+            seed_funcs[name] = (seed_file.name, body)
+    if not seed_funcs:
+        return True, "no seeded tests to protect"
+    live_funcs: dict[str, str] = {}
+    for p in ws.rglob("test_*.py"):
+        if ".git" in p.parts:
+            continue
+        live_funcs.update(_test_funcs(p.read_text(errors="replace")))
+    for name, (fname, body) in sorted(seed_funcs.items()):
+        if name not in live_funcs:
+            return False, f"seeded test {name}() from {fname} was deleted"
+        if live_funcs[name] != body:
+            return False, f"seeded test {name}() was modified — the contract was changed, not the code"
+    added = len(live_funcs) - len(seed_funcs)
+    return True, f"all {len(seed_funcs)} seeded tests intact" + (f", {added} added" if added > 0 else "")
 
 
 def main() -> None:
@@ -61,15 +106,7 @@ def main() -> None:
     # ...and the seeded tests were not edited. ONE point with the suite result, deliberately:
     # a green suite bought by deleting the failing assertion is not a pass, so scoring them
     # separately would hand half a mark to the cheat the prompt explicitly forbids.
-    intact, detail = True, "tests byte-identical to the seed"
-    for seed_file in sorted(SEED_TESTS.glob("*.py")):
-        live = next((p for p in ws.rglob(seed_file.name) if ".git" not in p.parts), None)
-        if live is None:
-            intact, detail = False, f"{seed_file.name} was deleted"
-            break
-        if _sha(live) != _sha(seed_file):
-            intact, detail = False, f"{seed_file.name} was modified — the contract was changed, not the code"
-            break
+    intact, detail = _seeded_tests_unchanged(ws)
     r["parts"]["suite_green_tests_intact"] = {
         "ok": suite_ok and intact, "passed": n_pass,
         "detail": suite_detail + ("" if intact else f"  [{detail}]")}

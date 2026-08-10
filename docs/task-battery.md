@@ -27,7 +27,7 @@ ticket brings config and logging with it; a new endpoint brings a schema change 
 
 | task | language | categories covered | status |
 |---|---|---|---|
-| `shipping-rates-py` | Python | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs | built, proven both ways |
+| `shipping-rates-py` | Python | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs | built, proven both ways; verifier corrected 2026-08-10 (see below) |
 | `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor without behaviour change | built, seed scores 0/4 |
 | `orders-api-py` | Python | **8** new API endpoint · **9** database change · **5** integration tests · **11** security fix | planned |
 | `feed-pipeline-py` | Python | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review | planned |
@@ -73,3 +73,21 @@ A task shipping a `seed/` directory has it copied into the workspace and committ
 so `git status` is clean and the model's own diff stays legible to it. Hidden tests live in
 `hidden/` and are copied in only at scoring time — nothing in the workspace hints at them during
 the run.
+
+
+## Verifier corrections found by running the battery
+
+**`shipping-rates-py`, 2026-08-10 — `suite_green_tests_intact` punished the task's own instruction.**
+The check demanded the seeded test file be byte-identical to the seed. The prompt says *"Don't
+change what the tests assert"* and, two paragraphs later, *"Add it, with tests"* — and the obvious
+place to add tests is the file that already has them. The first baseline run caught it: gemma4
+appended three correct express tests, deleted nothing, weakened nothing, left the suite green at 10
+passed, and lost the point. Its true score was 4/4, recorded as 3/4.
+
+Byte-identity is now per-test-function integrity: every seeded test must still exist with its source
+unchanged, and additions are free. The anti-cheat is intact and was re-proven both ways — a weakened
+assertion and a deleted test are each still caught, while the honest solution scores 4/4.
+
+The general lesson for the remaining five: a verifier can be wrong by being too STRICT, not only too
+lax, and the tell is a plausible-looking near miss rather than an all-zero column. The status tool
+catches all-zero automatically; this class needs a human to read the diff.
