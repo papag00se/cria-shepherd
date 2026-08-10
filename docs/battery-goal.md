@@ -39,6 +39,40 @@ baseline is the thing we have never had, so it is worth having complete and on i
 any comparison exists to be tempted by. And a phase runs on ONE code state end to end — pair-by-pair
 invites a fix landing between the two halves of a pair, which voids it.
 
+## These tasks are largely unproven — that is part of the job
+
+`ada-handles` has been walked dozens of times. These six have barely run. `docs/task-battery.md`
+still lists `orders-api-py` and `feed-pipeline-py` as **planned** even though both have a verifier
+on disk, which tells you how much attention they have had.
+
+What is already established (checked 2026-08-10): every seeded task scores **0/4 on its untouched
+seed** — `shipping-rates-py`, `orders-api-py`, `feed-pipeline-py`, `missing-tests-py`. So no
+verifier is trivially passable and no task is already finished. `sqlite-inventory` and
+`rust-toml-cli` are greenfield and have no seed to score.
+
+What is NOT established, for five of the six: **that a correct solution can actually reach 4/4.**
+Only `shipping-rates-py` is proven in both directions. A verifier that cannot be satisfied produces
+a column of zeros that looks exactly like four models failing, and would quietly waste half the
+campaign.
+
+**So the baseline arm doubles as the shakedown, and a task is on trial until it is not.**
+
+- A task whose finished BASE cells are **all zero** is a suspect verifier, not a finding. The status
+  tool stops and says `NEXT: VALIDATE <task>` before any more runs.
+- To validate: read `verify.py` and the prompt together and ask whether the prompt actually asks for
+  what the verifier checks. Then satisfy it by hand in a scratch copy of the seed — the smallest
+  honest solution — and score it. If a correct solution cannot reach 4/4, the task is broken.
+- **Fixing a task is a first-class outcome of this campaign, not a detour.** Fix the verifier or the
+  prompt, note what was wrong in `docs/task-battery.md`, and update its status line there.
+- Any change to a task's `verify.py`, `prompt.txt` or seed **invalidates every row already scored on
+  it**. Mark them `{"superseded": "<what changed in the task and why>"}` and re-run them. A campaign
+  comparing runs across two different definitions of the same task measures nothing.
+- Never fix a task by making it easier to pass. The failure mode to avoid is a verifier tuned until
+  the models look good; the point is a verifier that is TRUE. If a task is genuinely too hard for
+  every model, that is a finding — record it and move on, do not soften it.
+- Never special-case cria for a task (`docs/principles.md`). If a task exposes a cria bug, that is
+  the campaign working.
+
 ## The one source of truth
 
 ```

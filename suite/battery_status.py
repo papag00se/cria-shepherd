@@ -127,6 +127,21 @@ def main() -> int:
         print("NEXT: WAIT — one run at a time, and do not edit cria/ or cria/prompts/ while it runs.")
         return 2
 
+    # A task whose finished BASE cells are ALL ZERO is a suspect verifier, not four failures. Five of
+    # the six tasks have never had a correct solution scored against them, so an unsatisfiable
+    # verifier is a live possibility and would waste the other half of the campaign. Stop and prove
+    # the task before spending more GPU on it.
+    for task in TASKS:
+        base = [cell(rs, "BASE", m, task) for m in MODELS]
+        have = [b for b in base if b]
+        if len(have) >= 2 and all(int(b.get("score") or 0) == 0 for b in have):
+            print(f"\nNEXT: VALIDATE {task}   "
+                  f"({len(have)} baseline runs, every one 0/4 — prove the verifier is satisfiable)")
+            print(f"      read suite/tasks/{task}/verify.py against suite/tasks/{task}/prompt.txt,")
+            print(f"      then solve it by hand in a copy of the seed and score that. See the")
+            print(f"      'largely unproven' section of docs/battery-goal.md.")
+            return 1
+
     # A CRIA run that LOST to its BASE twin is the campaign's whole point; walk it before running more.
     for task in TASKS:
         for model in MODELS:
