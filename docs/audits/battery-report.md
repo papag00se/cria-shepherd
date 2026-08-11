@@ -23,6 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 80% | 80% | 100% | 80% | 75% | 100% | **85%** | 59.3 | 15 | 53 |
+| 🟡 qwen35 | 80% | 80% | · | · | · | · | **80%** | 78.2 | 17 | 122 |
 
 ## What the assists were worth
 
@@ -33,7 +34,9 @@ bought with 15× the calls is not the same result as one bought with fewer
 | task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|---|
 | shipping-rates-rb | ruby | gemma4 | 40% | 80% | **+40** | 26→124 | 3→37 |
+| shipping-rates-rb | ruby | qwen35 | 80% | 80% | 0 | 32→159 | 3→24 |
 | cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→46 | 2→15 |
+| cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→85 | 3→11 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→53 | 21→14 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→39 | 14→18 |
 | handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→34 | 2→5 |
@@ -46,11 +49,13 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
 | shipping-rates-rb | ruby | gemma4 | CRIA | 80% | 37 | 124 | 57.0 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
+| shipping-rates-rb | ruby | qwen35 | CRIA | 80% | 24 | 159 | 78.3 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 80% | 15 | 46 | 60.7 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
+| cart-billing-go | go | qwen35 | CRIA | 80% | 11 | 85 | 78.1 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
@@ -482,3 +487,20 @@ worth it depends on what a run costs; what is NOT in doubt is that the gain land
 baseline said the weakness was.
 
 One run. The value of the prediction is that it was made BEFORE this ran, off a different arm.
+
+## The Go −20 reproduces across models, which settles what it is
+
+gemma4 and qwen35 both scored 100% on `cart-billing-go` unaided and both scored 80% assisted, and
+the diff is the same in each: `Subtotal()` returns `decimal.Decimal`, so the seeded test's float
+comparison was rewritten as `decimal.NewFromFloat(15.00)` / `got.Equal(want)` — the same asserted
+value, a different type.
+
+Two independent models converging on the same change to the same line is not a model behaviour and
+not a cria behaviour. It is what the task ASKS FOR: use decimal money, with a prompt that never
+says the seeded tests are fixed and a boundary constraint that covers `Item`'s fields but not the
+public return types. Both models did the reasonable thing and both lost the same 20 points for it.
+
+The fix is written up in `battery-walk.md` and deferred to campaign close, because it invalidates
+every Go row in both arms. Recorded here so the Δ column is not read as cria damage: **the Go
+column's −20s are an instrument artifact and should be struck from any conclusion about the
+assists.**
