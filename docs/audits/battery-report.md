@@ -23,7 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 80% | 80% | 100% | 80% | 75% | 100% | **85%** | 59.3 | 15 | 53 |
-| 🟡 qwen35 | 80% | 80% | 25% | · | · | · | **64%** | 78.0 | 24 | 130 |
+| 🟠 qwen35 | 80% | 80% | 25% | 0% | 50% | 100% | **56%** | 78.4 | 22 | 125 |
 
 ## What the assists were worth
 
@@ -40,8 +40,11 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→53 | 21→14 |
 | orders-api-py | python | qwen35 | 50% | 25% | **-25** | 76→146 | 20→37 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→39 | 14→18 |
+| feed-pipeline-java | java | qwen35 | 40% | 0% | **-40** | 69→106 | 6→16 |
 | handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→34 | 2→5 |
+| handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→182 | 12→34 |
 | rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→22 | 2→3 |
+| rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→74 | 6→10 |
 
 ## Every run
 
@@ -68,16 +71,19 @@ bought with 15× the calls is not the same result as one bought with fewer
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | gemma4 | CRIA | 80% | 18 | 39 | 56.6 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
+| feed-pipeline-java | java | qwen35 | CRIA | 0% | 16 | 106 | 78.3 | milestone-miss-15min |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | gemma4 | CRIA | 75% | 5 | 34 | 60.7 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
+| handles-cli-node | node | qwen35 | CRIA | 50% | 34 | 182 | 78.4 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | gemma4 | CRIA | 100% | 3 | 22 | 61.5 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
+| rust-toml-cli | rust | qwen35 | CRIA | 100% | 10 | 74 | 79.7 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
 
@@ -506,3 +512,49 @@ The fix is written up in `battery-walk.md` and deferred to campaign close, becau
 every Go row in both arms. Recorded here so the Δ column is not read as cria damage: **the Go
 column's −20s are an instrument artifact and should be struck from any conclusion about the
 assists.**
+
+# The assists help one model and hurt the other, and the split is not random
+
+Two arms complete:
+
+| model | BASE | CRIA | net | ruby | go | python | java | node | rust |
+|---|---:|---:|---:|---|---|---|---|---|---|
+| gemma4 | 78% | **85%** | **+7** | +40 | −20* | 0 | 0 | 0 | +25 |
+| qwen35 | 74% | **56%** | **−18** | 0 | −20* | −25 | −40 | −25 | 0 |
+
+\* the Go −20 is the instrument artifact, reproduced identically on both models; strike it from
+both rows. Corrected: gemma4 **+65 across two languages, four unchanged**; qwen35 **−90 across
+three, two unchanged, none positive**.
+
+**Not one positive delta for qwen35 in six languages.** That is not noise.
+
+## The hypothesis this suggests, and it follows from the baseline
+
+The baseline diagnosed the two models' failure modes as opposites:
+
+- **gemma4 stops too early.** Its code was right and its finishing obligations were dropped — a
+  wiped test suite, a skipped review, a test that never compiled. It averaged **20 calls per task**.
+- **qwen35 does not finish the work.** It left routes unwritten and tests unstarted, and it already
+  averaged **59 calls per task** unaided, three times gemma4.
+
+Persistence — cria refusing to let a session end — is the assist both arms share. For a model that
+quits with work undone, more turns are exactly the medicine, and gemma4's two big gains are both
+"it finally wrote the tests it had skipped". For a model already churning three times as hard,
+more turns are more rope. qwen35's assisted Java run ran 106 calls against its own 69 and ended
+**not compiling**, on a missing `AtomicInteger` import, in a file it had grown past 260 lines.
+
+**The provisional reading: the assists help a model that stops too early and hurt a model that
+already churns.** If that holds for ternary-bonsai and nemotron-elastic it is the most actionable
+thing this campaign will produce — persistence should be conditional on the model's own call
+profile, not applied uniformly.
+
+## What is and is not established
+
+| finding | status |
+|---|---|
+| gemma4 +65 where it was weak, unchanged where strong | measured, both arms |
+| qwen35 negative in every language that moved | measured, both arms |
+| Go −20 on both models is my task's ambiguity | diagnosed and reproduced |
+| qwen35 python −25 caused by contradictory cria steers | walked, cria fault confirmed |
+| qwen35 java −40, node −25 | **NOT yet walked** — the Java run ends non-compiling, cause unattributed |
+| the churn hypothesis above | **one comparison of two models** — ternary and nemotron will test it |
