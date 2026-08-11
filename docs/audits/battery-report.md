@@ -24,6 +24,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 80% | 80% | 100% | 80% | 75% | 100% | **85%** | 59.3 | 15 | 53 |
 | 🟠 qwen35 | 80% | 80% | 25% | 0% | 50% | 100% | **56%** | 78.4 | 22 | 125 |
+| 🟠 ternary-bonsai | 80% | 40% | 0% | 0% | 75% | 100% | **48%** | 41.2 | 29 | 72 |
 
 ## What the assists were worth
 
@@ -35,16 +36,22 @@ bought with 15× the calls is not the same result as one bought with fewer
 |---|---|---|---|---|---|---|---|
 | shipping-rates-rb | ruby | gemma4 | 40% | 80% | **+40** | 26→124 | 3→37 |
 | shipping-rates-rb | ruby | qwen35 | 80% | 80% | 0 | 32→159 | 3→24 |
+| shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→72 | 14→17 |
 | cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→46 | 2→15 |
 | cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→85 | 3→11 |
+| cart-billing-go | go | ternary-bonsai | 0% | 40% | **+40** | 21→96 | 16→46 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→53 | 21→14 |
 | orders-api-py | python | qwen35 | 50% | 25% | **-25** | 76→146 | 20→37 |
+| orders-api-py | python | ternary-bonsai | 25% | 0% | **-25** | 66→53 | 31→31 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→39 | 14→18 |
 | feed-pipeline-java | java | qwen35 | 40% | 0% | **-40** | 69→106 | 6→16 |
+| feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→59 | 16→16 |
 | handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→34 | 2→5 |
 | handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→182 | 12→34 |
+| handles-cli-node | node | ternary-bonsai | 50% | 75% | **+25** | 42→70 | 13→24 |
 | rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→22 | 2→3 |
 | rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→74 | 6→10 |
+| rust-toml-cli | rust | ternary-bonsai | 0% | 100% | **+100** | 41→81 | 16→43 |
 
 ## Every run
 
@@ -55,36 +62,42 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
 | shipping-rates-rb | ruby | qwen35 | CRIA | 80% | 24 | 159 | 78.3 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
+| shipping-rates-rb | ruby | ternary-bonsai | CRIA | 80% | 17 | 72 | 45.4 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 80% | 15 | 46 | 60.7 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | cart-billing-go | go | qwen35 | CRIA | 80% | 11 | 85 | 78.1 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
+| cart-billing-go | go | ternary-bonsai | CRIA | 40% | 46 | 96 | 42.0 | milestone-miss-45min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | gemma4 | CRIA | 100% | 14 | 53 | 59.1 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | orders-api-py | python | qwen35 | CRIA | 25% | 37 | 146 | 77.7 | milestone-miss-30min |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
+| orders-api-py | python | ternary-bonsai | CRIA | 0% | 31 | 53 | 42.8 | milestone-miss-30min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | gemma4 | CRIA | 80% | 18 | 39 | 56.6 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | feed-pipeline-java | java | qwen35 | CRIA | 0% | 16 | 106 | 78.3 | milestone-miss-15min |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
+| feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 59 | 43.8 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | gemma4 | CRIA | 75% | 5 | 34 | 60.7 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
 | handles-cli-node | node | qwen35 | CRIA | 50% | 34 | 182 | 78.4 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
+| handles-cli-node | node | ternary-bonsai | CRIA | 75% | 24 | 70 | 40.2 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | gemma4 | CRIA | 100% | 3 | 22 | 61.5 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 | rust-toml-cli | rust | qwen35 | CRIA | 100% | 10 | 74 | 79.7 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
+| rust-toml-cli | rust | ternary-bonsai | CRIA | 100% | 43 | 81 | 32.8 | exited |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
@@ -558,3 +571,45 @@ profile, not applied uniformly.
 | qwen35 python −25 caused by contradictory cria steers | walked, cria fault confirmed |
 | qwen35 java −40, node −25 | **NOT yet walked** — the Java run ends non-compiling, cause unattributed |
 | the churn hypothesis above | **one comparison of two models** — ternary and nemotron will test it |
+
+# ternary-bonsai: 26% → 48%, and the model that "cannot satisfy a compiler" now can
+
+| language | BASE | CRIA | Δ |
+|---|---:|---:|---|
+| rust | 0% | **100%** | **+100** |
+| go | 0% | 40% | **+40** |
+| node | 50% | 75% | **+25** |
+| ruby | 80% | 80% | 0 |
+| java | 0% | 0% | 0 |
+| python | 25% | 0% | **−25** |
+
+The Rust result was verified independently rather than taken from the score: the workspace builds
+clean, and a dotted key path invented after the fact returns the right value. It is real.
+
+**The baseline's sharpest finding was that this model produces plausible code that will not
+compile, in all three compiled languages, by three different mechanisms. The assists fixed exactly
+that** — +100 on Rust, +40 on Go. Java is the exception and stayed at 0%.
+
+## This forces a better hypothesis than "churn"
+
+After two models the reading was "assists help a model that stops too early and hurt one that
+already churns". ternary-bonsai does not fit: it averaged 44 calls per task unaided, between
+gemma4's 20 and qwen35's 59, and it gained +140 across three languages.
+
+What actually separates the three arms is **what kind of signal the failure produces**:
+
+| model | its failure | is there a deterministic signal cria can observe? | net |
+|---|---|---|---:|
+| ternary-bonsai | code does not compile | **yes — the compiler says so, exactly** | **+140** |
+| gemma4 | tests not written, review not written | **yes — the gate runs the suite and looks** | **+65** |
+| qwen35 | work never started; cria's own judgements wrong | **no — cria has to decide what is missing** | **−90** |
+
+The assists convert ground truth into progress, and they inject risk in proportion to how much cria
+must JUDGE rather than OBSERVE. A compile error needs no judgement — it is a fact, and feeding it
+back is worth a hundred points. "Which deliverable is missing and why" is a judgement, and on
+qwen35 cria got it wrong in exactly the way the walk recorded: two steers nine turns apart
+contradicting each other about one line, and the model believed the wrong one.
+
+That is a design statement, not a scoreboard: **the gates earn their keep, the judgements are where
+the losses live.** nemotron-elastic tests it last, and it is the strongest case for the observable
+side — it quits with an empty turn, which is as deterministic a signal as a compile error.
