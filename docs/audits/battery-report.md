@@ -25,6 +25,7 @@ judging. What each model does on its own.
 | 🟡 gemma4 | 80% | 80% | 100% | 80% | 75% | 100% | **85%** | 59.3 | 15 | 53 |
 | 🟠 qwen35 | 80% | 80% | 25% | 0% | 50% | 100% | **56%** | 78.4 | 22 | 125 |
 | 🟠 ternary-bonsai | 80% | 40% | 0% | 0% | 75% | 100% | **48%** | 41.2 | 29 | 72 |
+| 🔴 nemotron-elastic | 60% | 0% | 75% | 0% | 50% | 0% | **30%** | 137.8 | 28 | 96 |
 
 ## What the assists were worth
 
@@ -37,21 +38,27 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | gemma4 | 40% | 80% | **+40** | 26→124 | 3→37 |
 | shipping-rates-rb | ruby | qwen35 | 80% | 80% | 0 | 32→159 | 3→24 |
 | shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→72 | 14→17 |
+| shipping-rates-rb | ruby | nemotron-elastic | 60% | 60% | 0 | 41→188 | 11→61 |
 | cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→46 | 2→15 |
 | cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→85 | 3→11 |
 | cart-billing-go | go | ternary-bonsai | 0% | 40% | **+40** | 21→96 | 16→46 |
+| cart-billing-go | go | nemotron-elastic | 0% | 0% | 0 | 6→34 | 7→16 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→53 | 21→14 |
 | orders-api-py | python | qwen35 | 50% | 25% | **-25** | 76→146 | 20→37 |
 | orders-api-py | python | ternary-bonsai | 25% | 0% | **-25** | 66→53 | 31→31 |
+| orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→203 | 2→51 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→39 | 14→18 |
 | feed-pipeline-java | java | qwen35 | 40% | 0% | **-40** | 69→106 | 6→16 |
 | feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→59 | 16→16 |
+| feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→25 | 4→7 |
 | handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→34 | 2→5 |
 | handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→182 | 12→34 |
 | handles-cli-node | node | ternary-bonsai | 50% | 75% | **+25** | 42→70 | 13→24 |
+| handles-cli-node | node | nemotron-elastic | 0% | 50% | **+50** | 2→35 | 7→4 |
 | rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→22 | 2→3 |
 | rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→74 | 6→10 |
 | rust-toml-cli | rust | ternary-bonsai | 0% | 100% | **+100** | 41→81 | 16→43 |
+| rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→93 | 7→31 |
 
 ## Every run
 
@@ -64,6 +71,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | CRIA | 80% | 17 | 72 | 45.4 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
+| shipping-rates-rb | ruby | nemotron-elastic | CRIA | 60% | 61 | 188 | 133.7 | milestone-miss-60min |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 80% | 15 | 46 | 60.7 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
@@ -71,6 +79,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | cart-billing-go | go | ternary-bonsai | CRIA | 40% | 46 | 96 | 42.0 | milestone-miss-45min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
+| cart-billing-go | go | nemotron-elastic | CRIA | 0% | 16 | 34 | 141.0 | milestone-miss-15min |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | gemma4 | CRIA | 100% | 14 | 53 | 59.1 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
@@ -78,6 +87,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | orders-api-py | python | ternary-bonsai | CRIA | 0% | 31 | 53 | 42.8 | milestone-miss-30min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
+| orders-api-py | python | nemotron-elastic | CRIA | 75% | 51 | 203 | 133.8 | exited |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | gemma4 | CRIA | 80% | 18 | 39 | 56.6 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
@@ -85,6 +95,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
 | feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 59 | 43.8 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
+| feed-pipeline-java | java | nemotron-elastic | CRIA | 0% | 7 | 25 | 141.8 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | gemma4 | CRIA | 75% | 5 | 34 | 60.7 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
@@ -92,6 +103,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
 | handles-cli-node | node | ternary-bonsai | CRIA | 75% | 24 | 70 | 40.2 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
+| handles-cli-node | node | nemotron-elastic | CRIA | 50% | 4 | 35 | 140.8 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | gemma4 | CRIA | 100% | 3 | 22 | 61.5 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
@@ -99,6 +111,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
 | rust-toml-cli | rust | ternary-bonsai | CRIA | 100% | 43 | 81 | 32.8 | exited |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
+| rust-toml-cli | rust | nemotron-elastic | CRIA | 0% | 31 | 93 | 135.4 | milestone-miss-30min |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -613,3 +626,75 @@ contradicting each other about one line, and the model believed the wrong one.
 That is a design statement, not a scoreboard: **the gates earn their keep, the judgements are where
 the losses live.** nemotron-elastic tests it last, and it is the strongest case for the observable
 side — it quits with an empty turn, which is as deterministic a signal as a compile error.
+
+# CLOSING SUMMARY — 48 runs, 4 models, 6 languages, 2 arms
+
+| model | BASE | CRIA | raw Δ | corrected Δ* |
+|---|---:|---:|---:|---:|
+| gemma4 | 78% | 85% | +7 | **+11** |
+| qwen35 | 74% | 56% | −18 | **−15** |
+| ternary-bonsai | 26% | 48% | +22 | +22 |
+| nemotron-elastic | 15% | 30% | +15 | +15 |
+| **average** | **48%** | **55%** | **+7** | **+9** |
+
+\* correcting only the `cart-billing-go` −20, which is my own task defect and hit gemma4 and
+qwen35 identically. Nothing else is adjusted.
+
+**The average is the least useful number here.** +9 points hides +22, +15, +11 and −15.
+
+## What the assists are worth, and it depends on one thing
+
+| model | its failure mode | can cria OBSERVE that failure? | Δ |
+|---|---|---|---:|
+| ternary-bonsai | code does not compile | **yes — the compiler states it exactly** | +22 |
+| nemotron-elastic | quits after 2 calls | **yes — the turn ends with nothing** | +15 |
+| gemma4 | tests and docs not written | **yes — the gate runs the suite and looks** | +11 |
+| qwen35 | work not finished; cria must infer what is missing | **no — it is a judgement** | −15 |
+
+**The gates earn their keep. The judgements are where the losses live.** Every gain in this
+campaign came from cria feeding back a fact: a compiler error, an empty turn, a test that was never
+written. Every loss came from cria deciding something and being wrong.
+
+The three biggest single results say it plainly:
+
+- **ternary-bonsai, rust: 0% → 100%.** A model that could not produce compiling code in any
+  compiled language. Verified by hand: builds clean, answers a dotted key path invented after the
+  fact.
+- **nemotron-elastic, python 25% → 75% and node 0% → 50%.** It was quitting after 2 calls. Under
+  the assists, 203 and 35. Nothing about the model changed; it simply was not allowed to stop.
+- **qwen35, node 75% → 50%.** cria told it removing the `undici` dependency "isn't required by the
+  task", when the prompt says "drop the dependency entirely" in those words. The model was already
+  doing the right thing. The completion judge then ratified the mistake.
+
+## The three confirmed cria faults, all in the judgement half
+
+1. **Contradictory steers about one line** (qwen35 python, −25). Nine turns apart: "the schema
+   already defines `status`… remove the redundant column-addition", then "table orders has no column
+   named status — this is the root cause". The model believed the first.
+2. **A false fact about the task** (qwen35 node, −25). Above. Doctrine 5b, with the ground truth
+   sitting in cria's own prompt.
+3. **The entry point as collateral damage** (ternary-bonsai python, −25; and this morning's
+   ternary-bonsai walk, same task, different model). Twice in one campaign, the program's real entry
+   point stopped working while cria helped with tests. cria runs the repo's checks before closing a
+   session; it never runs the program.
+
+**Primary fix candidate: an entry-point smoke probe.** Start what the README says to start, and say
+so when it stops working. It is deterministic ground truth — the same category that bought +100 on
+Rust — and n=2 across two models and two mechanisms clears the prevalence bar.
+
+## What the instruments cost
+
+Six scoring faults were found and fixed during the campaign, five of them in tasks I wrote or
+extended the same day, **all punishing a model for doing something defensible**, and **not one
+visible from a score**. Each was caught only by opening the workspace of a run that scored *almost*
+right. The all-zero-column halt already in `battery_status.py` catches the opposite failure — a task
+nobody can pass — and is no help against this class.
+
+## Deferred, with reasons
+
+| item | why it waits |
+|---|---|
+| `cart-billing-go` boundary + "don't change the tests" | invalidates every Go row in both arms |
+| deliverables/checks pacing mismatch (60 min where 75 is right) | the BASE arm ran at the old wall; changing it mid-campaign breaks arm parity |
+| the stdlib-`math/big` ambiguity | no run has lost a point to it; the trigger is a WORKING stdlib solution that scores zero |
+| the entry-point probe | the campaign's own conclusion should be reviewed before code lands on it |

@@ -63,7 +63,9 @@ Fix: one pure reader (`massage.turn_text`) beside `content_text`/`coerce_text_an
 write-back sites so the judge's transcript preserves what it actually produced.
 
 
-## cart-billing-go_gemma4 CRIA 80% vs BASE 100% — cria fault: NO, task fault: YES
+## cart-billing-go_gemma4_codex_poff_1786408722
+
+**CRIA 80% vs BASE 100% — cria fault: NO, task fault: YES**
 
 The campaign's second negative delta, and it is not cria making a model worse. It is an
 underspecified task, and I wrote the ambiguity in twice.
@@ -103,7 +105,9 @@ cells a different task from their BASE twins. Recorded here so this −20 is not
 about cria, which it is not.
 
 
-## orders-api-py_qwen35 CRIA 25% vs BASE 50% — cria fault: YES
+## orders-api-py_qwen35_codex_poff_1786414444
+
+**CRIA 25% vs BASE 50% — cria fault: YES**
 
 The first assisted-arm regression with a real cria cause. The baseline had the status column; the
 assisted run does not, and cria told it to remove it.
@@ -140,3 +144,98 @@ turned into a second prompt rule off a single incident.
 
 Fix deferred: no cria change lands mid-arm. This is the first entry in the assisted arm's own
 fix list.
+
+
+## cart-billing-go_qwen35_codex_poff_1786413785
+
+**CRIA 80% vs BASE 100% — cria fault: NO, task fault: YES. Same defect as gemma4's Go pair.**
+
+Identical diff, independently produced: `Subtotal()` returns `decimal.Decimal`, so the seeded
+test's float comparison becomes `decimal.NewFromFloat(15.00)` / `got.Equal(want)` — same asserted
+value, different type — and the integrity check flags it.
+
+Two models converging on the same change to the same line is the task asking for it. The full
+diagnosis and the deferred fix are in the gemma4 entry above; nothing in this run adds to it, and
+the −20 is an instrument artifact in both rows.
+
+
+## orders-api-py_ternary-bonsai_codex_poff_1786424418
+
+**CRIA 0% vs BASE 25% — cria fault: PARTIAL, and it is the second sighting of one pattern.**
+
+Every check reads `service did not start`. The cause is one deletion: the assisted run's
+`orders/app.py` **has no `if __name__ == "__main__":` block**. Its BASE twin does. The file ends
+with a new `serve_once(port, path)` helper — "start the server and handle exactly one request",
+written to make `test_http.py` work — and the program's own entry point is gone. `python3 -m
+orders.app` now imports the module, defines two functions and exits 0.
+
+The parameterised query is present and correct in both runs. `sql_injection_fixed` did not regress
+because the SQL changed; it regressed because nothing answers.
+
+**cria did not order the deletion.** Its steers at 0027, 0046 and 0052 were all about
+`test_http.py` — the server thread, the readiness loop, a duplicated `db.init`. The model
+restructured `app.py` to serve those and took `__main__` with it.
+
+**But this is the second time in one campaign that the production entry point became collateral
+damage while cria helped with tests.** The first was this morning's walk on the same task: a steer
+routed the working route through `self.db_path`, set only by `_run_server` in the model's own test
+file, never by `serve()`. Different model, different mechanism, identical outcome — the code is
+right, the tests are the only thing that can reach it, and the deliverable scores zero.
+
+**The actionable gap is cria's, and it is on the observable side.** cria runs the repo's checks
+before letting a session end. It does not run the program. Whether the documented entry point still
+starts is deterministic ground truth — the same category as a compile error, which this campaign
+showed is worth +100 to a model that cannot compile. A smoke probe that starts the thing the README
+says to start, and says so when it stops working, would have caught both of these.
+
+n=2, two models, two mechanisms, one campaign. That clears the bar the value-is-set rule did not.
+Recorded as the campaign's primary fix candidate; not built here, because the closing summary is
+owed first and no cria change should land on the strength of an unreviewed conclusion.
+
+
+## feed-pipeline-java_qwen35_codex_poff_1786416866
+
+**CRIA 0% vs BASE 40% — cria fault: NO individually, YES in aggregate.**
+
+The assisted run does not compile, on one symbol: `AtomicInteger`. The file imports
+`java.util.concurrent.*`, which does not cover `java.util.concurrent.atomic`. A one-line fix, and
+the model never made it in 106 calls.
+
+No steer is wrong. Call 0105 says exactly the right thing — "Read the actual compilation errors
+from `target/compile.log` … before rewriting code again". cria diagnosed it correctly and pointed
+at it.
+
+What cria contributed is the rope. The BASE run compiled and scored 40% in 5.5 minutes on 69 calls.
+Under the assists the same model grew the file from 241 lines to 281, broke the build on a subtle
+package boundary, and was killed at the 15-minute milestone still broken. **Persistence gave a
+churning model more room to churn**, which is the effect this campaign's summary names.
+
+Contrast worth keeping: ternary-bonsai took the same class of signal — a compile error — from 0% to
+100% on Rust. The signal being available is not sufficient; the model still has to act on it.
+
+## handles-cli-node_qwen35_codex_poff_1786417858
+
+**CRIA 50% vs BASE 75% — cria fault: YES. A false fact about the task itself.**
+
+The lost check is `request_removed`, and it reproduces on the preserved workspace: the assisted
+solution does `require('undici')` and will not run without `node_modules`. Its BASE twin uses
+built-in fetch and runs clean.
+
+The prompt says: *"Move it to the built-in fetch that ships with modern Node, and **drop the
+dependency entirely**."*
+
+**Call 0155, cria's reasoner:**
+
+> The coder is now trying to remove the undici dependency from package.json, but **this isn't
+> required by the task** and may even be necessary for the tool to work
+
+It is required by the task, in those words. The model was already doing the right thing and cria
+talked it out of it. Doctrine 5b — cria stated a false fact about the world, and the ground truth
+was the task text sitting in its own prompt.
+
+Then the completion judge ratified it. **Call 0163:**
+
+> Move from deprecated `request` package to built-in fetch — ✓ (uses undici's fetch)
+
+`undici` is a third-party package; "built-in" is the entire point of the deliverable. Two separate
+cria judgements, the same wrong belief, and the second one closed the session on it.
