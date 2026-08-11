@@ -22,17 +22,30 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| _no runs yet_ | | | | | | | | | |
+| 🟡 gemma4 | 80% | 80% | · | · | · | · | **80%** | 58.9 | 26 | 85 |
+
+## What the assists were worth
+
+Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain
+bought with 15× the calls is not the same result as one bought with fewer
+(`docs/battery-goal.md`).
+
+| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
+|---|---|---|---|---|---|---|---|
+| shipping-rates-rb | ruby | gemma4 | 40% | 80% | **+40** | 26→124 | 3→37 |
+| cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→46 | 2→15 |
 
 ## Every run
 
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
+| shipping-rates-rb | ruby | gemma4 | CRIA | 80% | 37 | 124 | 57.0 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
+| cart-billing-go | go | gemma4 | CRIA | 80% | 15 | 46 | 60.7 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
@@ -434,3 +447,30 @@ Each failure mode has an obvious assist and they are not the same one:
 
 ternary-bonsai is the sharpest test. A compile error is exactly the ground truth cria's gates
 exist to catch, and 0% leaves nowhere to go but up.
+
+# The first pair, and the baseline's diagnosis holds
+
+**gemma4 · ruby · 40% → 80%, +40 points.** The two checks that flipped are precisely the two the
+baseline arm predicted:
+
+| check | BASE | CRIA | |
+|---|---|---|---|
+| seeded tests intact | MISS — modified `test_eu_heavier_parcel` | **ok** | finishing obligation |
+| express zone + own tests | MISS — priced right, wrote no tests | **ok** | finishing obligation |
+| hidden contract | ok | ok | |
+| README rate table | ok | ok | |
+| country→zone | MISS | MISS | capability, not finishing |
+
+gemma4's diagnosed failure mode was "does the work, drops the paperwork" — keeps the code right and
+sheds the surrounding obligation. Both flipped checks are exactly that, and the one that did NOT
+flip is exactly the other kind: it still returns `international` for `DE`, and it still hand-rolled
+the EU list the prompt told it not to hand-roll. The assists made it finish what it started; they
+did not make it follow an instruction it had ignored.
+
+**The price is the headline's other half.** 124 calls against 26, 37.5 minutes against 3.2 — five
+times the calls and twelve times the clock for +40 points. Per `docs/battery-goal.md` that is the
+weaker kind of gain, and it has to be said next to the number rather than under it. Whether it is
+worth it depends on what a run costs; what is NOT in doubt is that the gain landed where the
+baseline said the weakness was.
+
+One run. The value of the prediction is that it was made BEFORE this ran, off a different arm.
