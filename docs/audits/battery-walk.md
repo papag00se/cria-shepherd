@@ -61,3 +61,43 @@ proxy route. It is wired into none of the five judge paths.
 
 Fix: one pure reader (`massage.turn_text`) beside `content_text`/`coerce_text_answer`, used at both
 write-back sites so the judge's transcript preserves what it actually produced.
+
+
+## cart-billing-go_gemma4 CRIA 80% vs BASE 100% — cria fault: NO, task fault: YES
+
+The campaign's second negative delta, and it is not cria making a model worse. It is an
+underspecified task, and I wrote the ambiguity in twice.
+
+**What happened.** gemma4 changed `Subtotal()` to return `decimal.Decimal` — a reasonable
+consequence of "use whatever the ecosystem standardises on for decimal money". The seeded
+`TestSubtotal` compares against a float literal, so it stopped compiling. cria's steer author, at
+call 0022, told it:
+
+> The compilation error in `cart_test.go` occurs because `Subtotal()` now returns a
+> `decimal.Decimal`, but your test case is trying to compare it against a float literal. Update all
+> assertions in `cart_test.go`...
+
+It did, keeping the same asserted value (`decimal.NewFromFloat(15.00)` for `15.00`), and the
+seeded-test integrity check flagged it. −20 points.
+
+**Two faults, one mine and one arguable.**
+
+1. **The Go prompt never forbids changing the tests.** Its Ruby sibling says "Don't change what the
+   tests assert; they describe the behaviour our customers were promised." The Go prompt says no
+   such thing, and the verifier enforces it anyway. A model is being penalised for something it was
+   never told not to do — the fifth instrument fault of this exact class today.
+2. **My earlier fix half-closed the ambiguity.** After ternary-bonsai changed `Item.Price`, I added
+   "Keep the `Item` struct's field types as they are". That covered the struct and said nothing
+   about the return types of `Subtotal()` and `Total()`, so the same conflict reappeared one level
+   out. The boundary should have been the public API, not one struct.
+3. **cria chose to bend the test rather than the API.** Given a compile error caused by a changed
+   public signature, "update the callers" and "revert the signature" are both valid, and the steer
+   considered only the first. That is defensible on the information it had — nothing in the prompt
+   marks the seeded tests as sacred — but it is worth recording as a pattern: cria resolves an
+   API/consumer conflict by changing the consumer.
+
+**Action, deliberately deferred.** The prompt fix is to constrain the boundary to the public API and
+add the sibling's "don't change what the tests assert". That invalidates every Go row in BOTH arms,
+so it waits for the campaign to close rather than landing mid-arm and giving the remaining CRIA
+cells a different task from their BASE twins. Recorded here so this −20 is not read as evidence
+about cria, which it is not.
