@@ -139,3 +139,16 @@ The trigger to act is a model producing a WORKING stdlib solution and losing the
 prompt now would invalidate two 100% rows to fix something that has never happened, which is the
 same n=0 reasoning that keeps a detector out of cria. Recorded here so the next person to see a
 0% on this task checks this first.
+
+## Deferred: deliverables count vs checks count (recorded 2026-08-10, NOT changed mid-campaign)
+
+`suite/run.py` paces a run at `len(meta.deliverables) x --milestone-minutes`. The three tasks
+extended with a network deliverable now score FIVE checks while still declaring FOUR deliverables,
+so their wall is 60 minutes where it should be 75.
+
+**Deliberately left until the campaign closes.** The BASE arm ran all 24 cells at the 4-deliverable
+wall; changing it now would give the CRIA arm a longer clock than its own twins and void the only
+comparison the campaign exists to make. Arm parity beats pacing precision.
+
+Fix after the closing summary: add the fifth deliverable to each of the three `meta.toml` files, and
+re-run all six affected cells so both arms share the wall.
