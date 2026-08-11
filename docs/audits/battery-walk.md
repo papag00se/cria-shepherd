@@ -101,3 +101,42 @@ add the sibling's "don't change what the tests assert". That invalidates every G
 so it waits for the campaign to close rather than landing mid-arm and giving the remaining CRIA
 cells a different task from their BASE twins. Recorded here so this −20 is not read as evidence
 about cria, which it is not.
+
+
+## orders-api-py_qwen35 CRIA 25% vs BASE 50% — cria fault: YES
+
+The first assisted-arm regression with a real cria cause. The baseline had the status column; the
+assisted run does not, and cria told it to remove it.
+
+**Call 0042:**
+
+> The tests are failing because `db.py:62` has a migration that's trying to add a `status` column
+> to a table that already exists — but **the schema already defines `status` as a column. The
+> migration function itself is broken.** … Fix the migration logic so it checks for column
+> existence before adding, or **removes the redundant column-addition**.
+
+**Call 0051, nine turns later:**
+
+> The repo check shows `orders/db.py:62: sqlite3.OperationalError: **table orders has no column
+> named status**` — this is the root cause.
+
+One says the column exists and the addition is redundant. The other says the column does not exist.
+Both were delivered to the coder as fact, in cria's own voice, about the same line.
+
+**The false fact is 0042's, and the error is specific and generalisable.** `SCHEMA` defines `status`
+for tables created fresh; the migration adds it to tables that already exist. Both are required, and
+the second IS the deliverable — "orders should carry a status, and existing databases must be
+migrated". The steer author read one definition site, found `status` there, and concluded the other
+was redundant. It never distinguished the new-table path from the existing-table path, which is the
+only distinction that matters in a migration.
+
+The coder followed the directive, the column-addition went, and `schema_migrated` flipped from ok to
+MISS along with the route. 50% became 25%, at 146 calls against 76 and 37 minutes against 20.
+
+**Candidate rule, NOT built:** a directive must not call code redundant on the strength of one
+definition site when the failing path is a different one. That is adjacent to the value-is-set rule
+already added from the ternary walk, and it is n=1 again — recorded here, and deliberately not
+turned into a second prompt rule off a single incident.
+
+Fix deferred: no cria change lands mid-arm. This is the first entry in the assisted arm's own
+fix list.
