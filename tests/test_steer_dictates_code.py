@@ -98,15 +98,44 @@ class WiringTests(unittest.TestCase):
         src = inspect.getsource(loop.author_steer)
         self.assertEqual(src.count("ask=_steer_ask"), 2)   # tooled path and plain path
 
-    def test_a_DICTATES_steer_is_delivered_and_traced(self):
-        # OBSERVE-ONLY (operator ruling, 2026-08-04): the drop's harm evidence came from a BLIND
-        # author (since fixed); the 08-01 dense passes were carried by sighted dictation. The judge
-        # still runs and logs — the steer is DELIVERED, pending the cross-cohort re-measure.
+    def test_a_DICTATES_steer_is_still_delivered_not_dropped(self):
+        """The operator's 2026-08-04 ruling stands: the steer SHIPS. The drop's harm evidence came
+        from a BLIND author (since fixed) and the 08-01 dense passes were carried by sighted
+        dictation."""
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
                                            ask=lambda s, u: "DICTATES")
-        self.assertEqual(out, REAL_DICTATION)
+        self.assertTrue(out)                                   # delivered, never None
         self.assertIn("loop.steer_dictated_code", [k for k, _ in rlog.events])
+
+    def test_the_prose_survives_and_the_invented_call_does_not(self):
+        """The ruling's own reasoning, enforced. It turned on SIGHTED versus BLIND dictation, so the
+        question is not "does this contain code" but "did the author read it or invent it" — and
+        cria holds the evidence the author was shown.
+
+        REAL_DICTATION is the measured example: `pytest.register_pytest_mark("live")` is not a real
+        function, and it reached a coder because it sat inline in prose with no fence. The diagnosis
+        around it is correct and worth keeping."""
+        rlog = _Rlog()
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
+                                           ask=lambda s, u: "DICTATES")
+        self.assertIn("unknown mark named live", out)          # the diagnosis survives
+        self.assertNotIn("register_pytest_mark", out)          # the invention does not
+        self.assertIn("code removed", out)                     # and the removal is disclosed
+
+    def test_a_quote_of_something_cria_showed_the_author_survives(self):
+        """The case the ladder passes were built on: a steer quoting the coder's own failing line."""
+        rlog = _Rlog()
+        directive = 'Your assertion cart.go:22: if got != 48.58 { is the line that fails. Fix the total.'
+        out = loop._grounded_steer_or_none(directive, "cart.go:22: if got != 48.58 {", rlog,
+                                           ask=lambda s, u: "DICTATES")
+        self.assertEqual(out, directive)
+
+    def test_with_no_evidence_nothing_is_stripped(self):
+        """cria cannot call code invented when it has nothing to check against."""
+        rlog = _Rlog()
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "", rlog, ask=lambda s, u: "DICTATES")
+        self.assertEqual(out, REAL_DICTATION)
 
 
 if __name__ == "__main__":

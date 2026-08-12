@@ -6544,6 +6544,54 @@ _CODE_SHAPED = re.compile(
 
 _DICTATES = "DICTATES"
 
+# A line worth checking for provenance: a code line or a command line. Short fragments and ordinary
+# prose are left alone — the question is only ever about a line the coder could paste.
+_QUOTABLE_MIN = 12
+_INVENTED_MARK = ("[code removed — written by this supervisor, not read from your files or your "
+                  "checker output; make the change in your own code]")
+# The two shapes, checked differently: a line that IS code, and a call embedded in prose.
+_CODE_LINE = re.compile(
+    r"^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"
+    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )", re.M)
+_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\([^)\n]*\)")
+
+
+def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
+    """The directive with code the author did NOT read replaced by a marker.
+
+    Code survives when it appears in the evidence cria showed the author — the file text, the checker
+    output, the transcript it was given. That is the whole distinction the 2026-08-04 ruling rests
+    on: a steer quoting the coder's own failing line is grounded and carried the ladder passes; a
+    steer inventing a replacement is the author, and the author is the same weak model with no
+    compiler.
+
+    SPANS, not lines. An invented call usually sits inside a sentence that is otherwise a correct
+    diagnosis, and deleting the sentence throws away the half worth keeping — so a code-shaped LINE
+    is replaced whole, while an inline call embedded in prose loses only the call. Whitespace-
+    insensitive, because cria's own relay reflows the directive before the coder sees it.
+
+    Returns (directive, spans_stripped)."""
+    if not evidence:
+        return directive, 0                       # nothing to check against → change nothing
+    haystack = " ".join(evidence.split())
+    seen = lambda s: " ".join(s.split()) in haystack        # noqa: E731 — one predicate, used twice
+    stripped = 0
+    out = []
+    for line in directive.splitlines():
+        body = line.strip().strip("`")
+        if len(body) >= _QUOTABLE_MIN and _CODE_LINE.search(line) and not seen(body):
+            stripped += 1
+            out.append("    " + _INVENTED_MARK)
+            continue
+        def _sub(m):
+            nonlocal stripped
+            if seen(m.group(0)):
+                return m.group(0)
+            stripped += 1
+            return _INVENTED_MARK
+        out.append(_INLINE_CALL.sub(_sub, line))
+    return "\n".join(out), stripped
+
 
 def _dictates_code(directive: str, ask=None) -> bool:
     """True when the directive hands the coder CODE TO COPY rather than a description of the change.
@@ -6701,12 +6749,26 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
                   head=_clip(directive, 120))
         return None
     if _dictates_code(directive, ask):
-        # OBSERVE-ONLY (operator ruling, 2026-08-04). The drop's harm evidence was measured on a
-        # BLIND author (pre-ab51e59: empty truth slot 6/6 runs — broken invented code); the
-        # blindness was fixed the same day, and the 08-01 dense ladder passes were carried by ~15
-        # sighted dictated steers per run (gemma4 4/4). The operator trusts that record over the
-        # guard: DICTATES is logged for the cross-cohort re-measure, and the steer is DELIVERED.
-        rlog.emit("loop.steer_dictated_code", level="info", delivered=True, head=_clip(directive, 120))
+        # OBSERVE-ONLY on the DROP (operator ruling, 2026-08-04) — and the ruling's own reasoning is
+        # what this now enforces. The drop's harm evidence came from a BLIND author (empty truth
+        # slot, 6/6 runs of invented code); blindness was fixed the same day, and the 08-01 ladder
+        # passes were carried by ~15 SIGHTED dictated steers per run. The distinction the ruling
+        # turned on is therefore not "does it contain code" but "did the author READ this code or
+        # invent it" — and that is checkable, because cria holds the evidence the author was shown.
+        #
+        # The cross-cohort re-measure the ruling asked for is in: across the six-language battery,
+        # dictated implementations destroyed a working state 10 times. nemotron rust 0053 dictated a
+        # whole lib.rs whose body returns `current` from an Option fn and puts `return None` after
+        # `exit(1)`; 0038's judge "Proposed fix" re-injected a live E0593 and wrote Python
+        # triple-quoted strings into Rust. Neither line existed anywhere cria had read.
+        #
+        # So: quotes survive, inventions are stripped, and the prose ships either way. This is not
+        # the blunt drop the ruling rejected — a steer quoting the coder's own failing line is
+        # untouched, which is exactly the case the ladder passes were built on.
+        kept, stripped = _strip_invented_code(directive, evidence)
+        rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
+                  stripped=stripped, head=_clip(directive, 120))
+        directive = kept
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None
