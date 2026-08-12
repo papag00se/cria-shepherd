@@ -1,9 +1,15 @@
-We have a small script that resolves an Ada Handle against api.handle.me. I need it turned into something we can actually ship.
+We have a small script that resolves an Ada Handle against api.handle.me. I need it turned into a
+command-line tool we can ship.
 
-Make it a proper command-line tool: it should take the handle as an argument, support --json for machine-readable output and --help, and exit with a non-zero status when a handle cannot be resolved. It should also report the holder address and how many handles that holder owns, which it does not do today.
+It should take the handle as an argument, support a --json flag for machine-readable output and a
+--help flag, and exit with a non-zero status when a handle cannot be resolved. It must also print
+the holder's address and the number of handles that holder owns, which it does not do today.
 
-The script currently uses the deprecated `request` package. Move it to the built-in fetch that ships with modern Node, and drop the dependency entirely.
+The script currently uses the deprecated `request` package. Move it to the fetch function built into
+modern Node, and remove `request` from the project's dependencies entirely, so the tool runs with no
+node_modules directory present.
 
-Add tests, including one that really hits the API so we know the thing works end to end.
+Add tests. At least one of them must make a real request to the live API rather than a mock, so we
+know the tool works end to end.
 
 Finally, add a Dockerfile so ops can run it without installing Node.

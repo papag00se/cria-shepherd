@@ -1,11 +1,23 @@
 The nightly supplier feed importer has three problems and I'd like your help with all of them.
 
-First, it is far too slow. It takes minutes on a feed we receive every hour, and profiling says it is the code and not the disk. Make it substantially faster without changing what it produces.
+First, it is far too slow. It takes minutes on a feed we receive every hour, and profiling says it
+is the code and not the disk. Make it at least four times faster. The numbers it produces — the
+totals, the row counts, the per-SKU figures — must come out exactly the same as they do now.
 
-Second, there is a threading bug. When we turned on parallel workers the totals came out different every run, so someone disabled the parallelism instead of fixing it. Please fix it properly and turn the workers back on.
+Second, there is a threading bug. When we turned on parallel workers the totals came out different
+every run, so someone disabled the parallelism instead of fixing it. Fix the bug and turn the
+workers back on, so that running the same feed twice always gives the same answer.
 
-Third, the feed has started arriving with rows we didn't anticipate — blank quantities, prices with currency symbols, duplicate SKUs, rows missing columns entirely, and descriptions with commas inside quotes that our comma-splitting throws straight into the wrong column. Don't hand-roll a CSV parser for that last one; pull in whatever the Java ecosystem uses and let it do the parsing. Right now the importer either crashes or silently imports rubbish. Decide sensible handling, implement it, and make sure the summary it prints says how many rows were skipped and why.
+Third, the feed has started arriving with rows we didn't anticipate — blank quantities, prices with
+currency symbols, duplicate SKUs, rows missing columns entirely, and descriptions with commas inside
+quotes that our comma-splitting throws straight into the wrong column. Right now the importer either
+crashes or silently imports incorrect data. Decide how each kind of bad row should be handled,
+implement it, and make the summary it prints say how many rows were skipped and why. For the quoted
+commas: do not write your own CSV parser. Add an existing Java CSV library to the project's
+dependencies and let it do the parsing.
 
-Other tooling calls `Importer.summarize(path)` and reads `skus`, `rows` and `totals` off what it returns, so keep those working.
+Other tooling calls `Importer.summarize(path)` and reads `skus`, `rows` and `totals` off what it
+returns, so keep those working.
 
-When you're done, write REVIEW.md giving me your assessment of the code you worked on: what is still wrong or risky in there, with the file and line for each thing you name.
+When you're done, write REVIEW.md giving me your assessment of the code you worked on: what is still
+wrong or risky in there. For every problem you name, give the file name and the line number.

@@ -1,9 +1,20 @@
-A customer has reported a billing problem. They bought three items at 19.99 each with the SUMMER25 code and were charged 48.57, but they worked it out by hand as 48.58 and say we are undercharging by a cent on lots of orders. Our accountant confirms the totals are consistently a cent low. Please find the cause and fix it, and add a test so it can't come back.
+A customer has reported a billing problem. They bought three items at 19.99 each with the SUMMER25
+code and were charged 48.57, but they calculated 48.58 themselves and say we are undercharging by a
+cent on lots of orders. Our accountant confirms the totals are consistently a cent low. Please find
+the cause and fix it, and add a test so it can't come back.
 
-Two other things while you're in there.
+Three other changes to the same code.
 
-Ops keep asking us to change discount codes and we currently need a deploy to do it. Load the codes from a discounts.json file next to the binary instead of hard-coding them, keeping the current three as the file's contents. If the file is missing, fall back to those same three rather than failing.
+Ops keep asking us to change discount codes and we currently need a deploy to do it. Load the codes
+from a discounts.json file next to the binary instead of hard-coding them, keeping the current three
+as the file's contents. If the file is missing, use those same three rather than failing.
 
-And we can't see anything in production. Add logging so that every total we compute writes one line to stderr recording the subtotal, the discount code used (or none), and the final total. Support needs to be able to grep a customer's order out of the logs.
+We can't see anything in production. Add logging so that every total we compute writes one line to
+stderr recording the subtotal, the discount code used (or none), and the final total. Support needs
+to be able to find a customer's order in the logs with grep.
 
-One more thing from the accountant: she says we should not be doing money arithmetic in floating point at all, and that the next rounding bug is already waiting for us. Use whatever the Go ecosystem standardises on for decimal money rather than hand-rolling it. Keep the `Item` struct's field types as they are — the checkout service builds those values and we can't change it this sprint — so do the conversion inside the cart.
+The accountant also says we should not be doing money arithmetic in floating point at all, and that
+we will hit another rounding bug if we keep it. Do not write your own decimal type, and do not keep
+using float64: add a third-party Go module for decimal money — one that goes in go.mod — and do the
+arithmetic with it. Keep the `Item` struct's field types exactly as they are, because the checkout
+service builds those values and we can't change it this sprint, so convert inside the cart.

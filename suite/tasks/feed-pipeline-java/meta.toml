@@ -2,7 +2,13 @@ name = "feed-pipeline-java"
 language = "java"
 shape = "seeded-multi"          # slow, racy, and fed malformed data
 categories = [17, 10, 13, 20]   # data transform / optimise slow code / concurrency / code review
-deliverables = ["messy rows handled + skip counts", "substantially faster", "race fixed, workers on", "REVIEW.md"]
+deliverables = [
+  "messy rows handled + skip counts",
+  "four times faster, same numbers",
+  "race fixed, workers on",
+  "REVIEW.md with file and line",
+  "third-party CSV library",
+]
 
 [capabilities]
 coding    = ["executable", "concurrency", "docs", "deps"]

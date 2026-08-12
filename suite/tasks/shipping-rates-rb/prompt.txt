@@ -1,9 +1,18 @@
-A few things on the shipping module, please.
+Four changes to the shipping module, please.
 
-The test suite is failing — work out why and fix it. Don't change what the tests assert; they describe the behaviour our customers were promised.
+The test suite is failing — work out why and fix it. The tests that came with the repo describe
+behaviour our customers were promised, so do not change what they assert. Tests you write yourself
+are yours to change freely.
 
-We're also launching an express service. It should cost 14.99 base plus 2.50 per kilo, and it follows the same free-shipping and oversize rules as the other zones. Add it, with tests.
+We're also launching an express service. It should cost 14.99 base plus 2.50 per kilo, and it
+follows the same free-shipping and oversize rules as the other zones. Add it, and add tests for it.
 
-The README has no rate table at all. Add one that lists every zone with its base rate and per-kilo cost, so support can answer pricing questions without reading the code.
+The README has no rate table at all. Add one that lists every zone with its base rate and per-kilo
+cost, so support can answer pricing questions without reading the code.
 
-Finally, customers give us a two-letter country code, not a zone name. Add `Shipping.zone_for(code)` that returns the zone — we ship from the UK, so GB is domestic, EU member states are eu, and everywhere else is international — and let `shipping_cost` accept a country code as well as a zone. Please don't hand-roll the EU member list; it changes, and we'd rather lean on something maintained.
+Finally, customers give us a two-letter country code, not a zone name. Add `Shipping.zone_for(code)`
+that returns the zone — we ship from the UK, so GB is domestic, EU member states are eu, and
+everywhere else is international — and let `shipping_cost` accept a country code as well as a zone.
+Do not write the list of EU member countries into our code yourself: EU membership changes over
+time, and a list we maintain will go stale. Install a third-party Ruby gem that already knows which
+countries are in the EU, add it to the project's dependencies, and get the answer from it.
