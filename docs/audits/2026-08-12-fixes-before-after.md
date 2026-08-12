@@ -1,34 +1,15 @@
-# Every fix, before and after
+# Fixes coming out of the assisted-arm walk
 
-Two are landed. The rest are proposals from the line-by-line walk
-(`2026-08-12-assisted-arm-walk.md`). Every "before" is copied verbatim out of the captured runs —
-none of it is invented.
+Everything here was found by the line-by-line walk of the 24 assisted runs
+(`2026-08-12-assisted-arm-walk.md`). Nothing from an earlier batch is included — the gate `rm`
+fix that unblocked this arm is fix 39 in `battery-fix-progress.md` and does not belong here.
 
----
-
-## LANDED 1 — The gate killed itself with one word
-
-cria's checks clean up after themselves. The cleanup used `rm`. Codex's sandbox refuses any command
-containing `rm` — and refuses the **whole script**, not the line. So no check ran, in any language,
-for a whole 24-run arm, and nothing said so.
-
-**Before** — cria sends the harness:
-```sh
-printf '%s\n' "$__cria_new" | while IFS= read -r f; do [ -n "$f" ] && rm -rf -- "$f"; done
-```
-The harness replies: `rejected: rm -f style commands are not permitted`. Everything above it is
-thrown away too.
-
-**After** — the script only *lists* what to remove; cria deletes it itself:
-```sh
-echo ___CRIA_GATE_litter___
-printf '%s\n' "$__cria_new"
-```
-Plus: a refused script is now logged. Before, a refusal looked exactly like "no checks were set up."
+One is landed. The other nine are proposals. Every "before" is copied verbatim out of the captured
+runs — none of it is invented.
 
 ---
 
-## LANDED 2 — Every Java error thrown away because it was coloured
+## LANDED — Every Java error thrown away because it was coloured
 
 Maven prints in colour. Colour codes are control characters. cria counted them, decided the output
 was binary, and deleted it.
@@ -56,7 +37,7 @@ not the reason Java got worse.
 
 ---
 
-## PROPOSED 1 — The steer tells the model *how* to build it
+## 1 — The steer tells the model *how* to build it
 
 The biggest single cause of lost checks: **9**. cria's supervisor restates the job in its own words,
 and the model builds the restatement instead of the task.
@@ -80,7 +61,7 @@ create. The only words the model ever sees about *what to build* are the user's 
 
 ---
 
-## PROPOSED 2 — The steer says *why* it is broken, and is wrong
+## 2 — The steer says *why* it is broken, and is wrong
 
 24 times. In all 24, the model's own reading beat cria's guess.
 
@@ -95,7 +76,7 @@ state one.
 
 ---
 
-## PROPOSED 3 — The hand-off note guesses, and cria calls it your own finding
+## 3 — The hand-off note guesses, and cria calls it your own finding
 
 When the conversation gets long cria asks the same weak model to write a summary, and that summary
 must fill a "what's still broken" slot — with no files on screen. It guesses. cria then pins the
@@ -116,7 +97,7 @@ wants a current-state line it must read the files and run the checks at hand-off
 
 ---
 
-## PROPOSED 4 — Old check results replayed as current
+## 4 — Old check results replayed as current
 
 **Before**:
 > "**GROUND TRUTH FROM THE REPO'S CHECKS** — unchanged since you were last shown them — you have not
@@ -133,7 +114,7 @@ Or simply re-run them. cria should not assert a state it has not observed.
 
 ---
 
-## PROPOSED 5 — "Don't change the tests" aimed at the model's own tests
+## 5 — "Don't change the tests" aimed at the model's own tests
 
 **Before** — cria appends to every check result:
 > "If a test failed, fix what the test caught — changing the test so it stops asking is not a fix"
@@ -153,7 +134,7 @@ cria already knows which files existed at the start. This is a fact it has, not 
 
 ---
 
-## PROPOSED 6 — cria orders work that is already done
+## 6 — cria orders work that is already done
 
 22 times. cria's view of the session is built from the model's recent *thinking*, not from disk.
 
@@ -167,7 +148,7 @@ already there, or the named command already failed this session, drop the steer.
 
 ---
 
-## PROPOSED 7 — A successful write answered with nothing
+## 7 — A successful write answered with nothing
 
 **Before** — the model writes a file, and the whole reply is:
 ```
@@ -188,7 +169,7 @@ show it, or require the judge to read it from disk before it may claim anything 
 
 ---
 
-## PROPOSED 8 — Two small, certain ones
+## 8 and 9 — Two small, certain ones
 
 **The file list cria shows its "can I run this?" judge leaves out build files.**
 
