@@ -30,9 +30,27 @@ from cria import prompts, selfcompact
 PROMPT_DIR = pathlib.Path(prompts.__file__).parent
 
 
+def _consumed_by_load_map() -> set[str]:
+    """Prompt names read through `load_map`, which is the ONLY reader that strips `#` lines."""
+    src = "\n".join(p.read_text() for p in pathlib.Path("cria").rglob("*.py"))
+    return set(re.findall(r'load_map\(\s*["\']([\w-]+)["\']', src))
+
+
+MAPPED = _consumed_by_load_map()
+
+
 def _shipped(path: pathlib.Path) -> str:
-    """A prompt file's body as a model receives it — `#` lines are cria's notes and never ship."""
-    return "\n".join(l for l in path.read_text().splitlines() if not l.lstrip().startswith("#"))
+    """A prompt file's body AS THE MODEL RECEIVES IT.
+
+    `#` lines are stripped only for prompts read through `load_map`. `prompts.load` and `render`
+    return the file verbatim, so in those a `#` line is either a markdown heading the model is meant
+    to read (coder_system's "# Rules") or a rationale note that ships by accident. An earlier version
+    of this helper stripped `#` everywhere and would have passed a comment block naming the program
+    straight through to the model — which is exactly the leak these tests exist to catch."""
+    body = path.read_text()
+    if path.stem in MAPPED:
+        return "\n".join(l for l in body.splitlines() if not l.lstrip().startswith("#"))
+    return body
 
 
 class TheModelNeverSeesTheNameTests(unittest.TestCase):
@@ -51,6 +69,18 @@ class TheModelNeverSeesTheNameTests(unittest.TestCase):
         for name in ("confirm_auth_claim", "periodic_step_claim"):
             with self.subTest(prompt=name):
                 self.assertNotIn("cria", prompts.load(name).lower())
+
+    def test_a_rationale_comment_in_a_load_prompt_would_be_caught(self):
+        """The trap: `load`/`render` do not strip `#`, so a note left in one of those files is sent
+        to the model. Proven against a temporary file rather than by assertion."""
+        tmp = PROMPT_DIR / "_ruleseventeen_probe.txt"
+        tmp.write_text("# cria uses this to nudge the coder\nDo the thing.\n")
+        try:
+            self.assertNotIn(tmp.stem, MAPPED, "the probe must exercise the load/render path")
+            body = _shipped(tmp)
+            self.assertIn("cria", body.lower(), "the comment must survive — that is the hazard")
+        finally:
+            tmp.unlink()
 
     def test_the_marker_itself_is_untouched(self):
         """⟦ctx:…⟧ anchors are the parsing contract and must survive — the rule is about prose."""

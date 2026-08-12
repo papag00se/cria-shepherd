@@ -42,11 +42,38 @@ class VisibilityTests(unittest.TestCase):
 
 class RepeatPromptTests(unittest.TestCase):
     def test_it_repeats_the_checkers_own_words_verbatim(self):
-        from cria import prompts
-        out = prompts.render("steer_checks_repeat", findings=CHECKS)
+        from cria import loop, prompts
+        out = prompts.render("steer_checks_repeat", findings=CHECKS,
+                             since=loop._checks_ran_before([]))
         self.assertIn("test_resolve_handle.py:48", out)
         self.assertIn("test_resolve_handle.py:42", out)
-        self.assertIn("unchanged", out)
+
+    def test_it_claims_no_currency_it_cannot_verify(self):
+        """It used to open "unchanged since you were last shown them — you have not cleared them
+        yet". cria knows when the checks RAN and that nothing re-ran them; it does not know whether
+        the findings still hold, because the coder edits between gates. 25 wrong turns across the
+        six-language battery, every model (#5b)."""
+        from cria import loop, prompts
+        out = prompts.render("steer_checks_repeat", findings=CHECKS,
+                             since=loop._checks_ran_before([]))
+        self.assertNotIn("unchanged", out)
+        self.assertNotIn("you have not cleared them", out)
+        self.assertIn("nothing has run them again since", out)
+        self.assertIn("not as proof of the state right now", out)
+
+    def test_it_names_the_coders_own_edit_not_a_call_number(self):
+        from cria import loop, prompts
+        out = prompts.render("steer_checks_repeat", findings=CHECKS,
+                             since=loop._checks_ran_before(["lib/shipping/rates.rb"]))
+        self.assertIn("before your change to lib/shipping/rates.rb", out)
+        self.assertNotRegex(out, r"\b(?:call|turn)\s+\d+")
+
+    def test_no_placeholder_ever_reaches_the_model(self):
+        from cria import loop, prompts
+        for paths in ([], ["a.rb"], ["a.rb", "b.rb"]):
+            out = prompts.render("steer_checks_repeat", findings=CHECKS,
+                                 since=loop._checks_ran_before(paths))
+            self.assertNotIn("{{", out)
 
     def test_it_never_speaks_for_the_checker(self):
         # principle: cria may SELECT a checker's real lines, never SUBSTITUTE its own words.

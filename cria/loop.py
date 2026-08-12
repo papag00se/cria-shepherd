@@ -5400,6 +5400,60 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
     return ""
 
 
+def _checks_ran_before(paths: list[str]) -> str:
+    """The ``{{SINCE}}`` clause for ``steer_checks_repeat``: what the coder wrote since the checks ran.
+
+    THE SENTENCE THIS REPLACED. The block used to open "unchanged since you were last shown them —
+    you have not cleared them yet". cria cannot know that. It knows when the checks last RAN and that
+    nothing has run them since; whether the findings still hold is settled only by a re-run, and the
+    coder edits between gates. Stated as fact it outranks the model's own eyes, so the model doubts
+    reality rather than doubting cria — inventing stale bytecode, a Ruby cache, an unsaved file.
+    Measured on the six-language battery: 25 wrong turns, every model, five languages (#5b).
+
+    Anchored on the coder's OWN writes, which it can find in its context — never a call or turn
+    number, which is cria's private bookkeeping and resolves to nothing on the coder's side.
+
+    NOTE for whoever edits the prompt file: `prompts.load`/`render` do NOT strip `#` lines (only
+    `load_map` does), so a rationale comment placed in that file would be sent to the model verbatim.
+    That is why this explanation lives here. tests/test_the_model_sees_neither_the_name_nor_the_
+    numbering.py enforces it.
+
+    Empty when cria knows of no intervening write — then the sentence reads "They last ran, and
+    nothing has run them again since", which is still true and still claims no currency."""
+    labels = prompts.load_map("checks_ran_before")
+    if not paths:
+        return labels.get("none", "").strip()
+    key = "one" if len(paths) == 1 else "many"
+    return prompts.fill(labels[key], files=", ".join(paths)).rstrip("\n")
+
+
+def _writes_since_last_gate(messages: list[dict], cap: int = 3) -> list[str]:
+    """Files the coder wrote AFTER cria's checks last ran — newest first, bounded.
+
+    cria caches a check result and re-shows it. It cannot know the findings still hold: the coder
+    edits between gates, and only a re-run settles it. What cria DOES know is exactly this — when the
+    checks ran, and what has been written since. Saying that instead of "unchanged … you have not
+    cleared them yet" is the difference between a fact and an assertion cria has no basis for (#5b).
+
+    Same gate anchor as :func:`_checks_superseded_by_coder_run`, which handles the narrower case
+    where the coder's own run has already proven the findings gone."""
+    msgs = messages or []
+    last_gate = -1
+    for i, m in enumerate(msgs):
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, str) and probegate.SECTION_PREFIX in c:
+            last_gate = i
+    out: list[str] = []
+    for m in msgs[last_gate + 1:]:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            p = _write_path(tc.get("function") or {})
+            if p and p not in out:
+                out.append(p)
+    return list(reversed(out))[:cap]
+
+
 def _checks_already_visible(body: dict, checks: str) -> bool:
     """Is the check output the guard assumes the coder can see actually in this request?
 
@@ -6139,9 +6193,11 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         # and must never substitute its own words for them — so this repeats ground truth, and
         # authors nothing.
         if not _checks_already_visible(body, checks_now):
+            since = _writes_since_last_gate(body.get("messages", []))
             rlog.emit("loop.steer_checks_reattached", level="info", condition=condition,
-                      head=_clip(checks_now, 100))
-            return prompts.render("steer_checks_repeat", findings=checks_now)
+                      since=since, head=_clip(checks_now, 100))
+            return prompts.render("steer_checks_repeat", findings=checks_now,
+                                  since=_checks_ran_before(since))
         rlog.emit("loop.steer_same_checks", level="info", condition=condition,
                   head=_clip(checks_now, 100))
         return None

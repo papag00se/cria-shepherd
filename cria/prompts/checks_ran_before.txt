@@ -1,0 +1,6 @@
+# The clause naming WHEN the checks last ran, for steer_checks_repeat's {{SINCE}}. Anchored on the
+# coder's own writes, which it can find in its context — never a call or turn number, which is
+# cria's private numbering and resolves to nothing on the coder's side.
+none =
+one =  before your change to {{FILES}}
+many =  before your changes to {{FILES}}
