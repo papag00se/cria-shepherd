@@ -22,6 +22,6 @@ request_permissions = - request_permissions — ask the harness to allow a comma
 write_stdin = - write_stdin — send input to a shell session started by {{SHELL}} (e.g. answer an interactive prompt). Per the tool's own argument schema.
 web_search = - web_search — Args: {"query": "<what to look up>"}{{FETCH_HINT}}
 web_search_fetch_hint =  Open a result in full with web_fetch.
-web_fetch = - web_fetch — Args: {"url": "<url>"} — optional: "find" a section, "cursor" to page on, "raw" for the literal source. Sends a real browser User-Agent — a site this tool reads fine may still refuse a plain script (e.g. python-urllib's default UA); code you write must set its own headers.
+web_fetch = - web_fetch — Args: {"url": "<url>"} — optional: "find" a section, "cursor" to page on, "raw" for the literal source. Sends a real browser User-Agent — a site this tool reads fine may still refuse a plain script sending its HTTP library's default one; code you write must set its own headers.
 shell = - {{SHELL}} — LAST RESORT, for commands with no dedicated tool above (build, test, git, package installs, mkdir/rm). Per the tool's own argument schema. Do NOT use it to read, write, or list files when a focused tool exists.
 read_via_shell = - read a file with `{{SHELL}}` running `cat <path>` (there is no read_file tool this turn).

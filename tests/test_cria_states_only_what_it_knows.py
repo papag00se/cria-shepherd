@@ -93,3 +93,29 @@ class TheCapabilityRosterNamesNoLanguageTests(unittest.TestCase):
         r = self._roster()
         for u in ("grep", "cat", "sed", "ls", "find"):
             self.assertIn(u, r)
+
+
+class PromptExemplarsNameNoLanguageTests(unittest.TestCase):
+    """Three prompts whose EXAMPLES carried a language the task may not be in.
+
+    An exemplar is model-facing content. Where the surrounding sentence is general and the example
+    is Python, a weak model reads the example as the subject.
+    """
+
+    def test_the_directory_refusal_invents_no_filename(self):
+        t = prompts.load("write_isdir")
+        self.assertNotIn(".py", t)
+        self.assertIn("INCLUDING the filename", t)      # the instruction survives
+
+    def test_the_fetch_note_names_no_runtime(self):
+        t = prompts.load_map("cheatsheet")["web_fetch"]
+        self.assertNotIn("python-urllib", t)
+        self.assertIn("User-Agent", t)                   # the point survives
+
+    def test_the_compaction_rule_names_the_channel_not_one_fact_type(self):
+        """It said "do NOT restate the API's endpoints" and asserted those travel separately — on a
+        task with no external source, that forbade the briefing from carrying facts no other channel
+        held. The rule now names the LEDGER and is conditional on one existing."""
+        t = prompts.load("selfcompact_summary")
+        self.assertIn("durable ledger above already carries", t)
+        self.assertIn("Where no such ledger is present", t)
