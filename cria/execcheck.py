@@ -545,11 +545,22 @@ def runnable_listing(files: str) -> str:
     incorrect." … "I'll assume that the file is a Python script … That's a stretch." cria listed its
     own scratch output as the deliverable and then forbade the probe from saying otherwise.
 
-    An empty result is the honest answer and the prompt now allows it."""
+    An empty result is the honest answer and the prompt now allows it.
+
+    THE COMPLETENESS CLAIM DOES NOT SURVIVE THE FILTER. The listing's footer — "This list is
+    complete — a file not listed here does not exist in the workspace" — belongs to the code that
+    produced the unfiltered inventory, and it is TRUE there. Carrying it over a list this function
+    has just removed entries from makes cria assert the absence of files it deleted itself. Measured
+    on the six-language battery, rust: Cargo.toml, Cargo.lock, README.md and config.toml were all
+    stripped as data extensions, the footer rode along, and the model reasoned from "the list is
+    complete" to conclusions about a project whose manifest cria had hidden from it. A filtered list
+    may never say complete (#5b)."""
     out, kept_any = [], False
     for line in (files or "").splitlines():
         entry = _INVENTORY_ENTRY.match(line)
         if not entry:
+            if _COMPLETENESS_CLAIM and _COMPLETENESS_CLAIM in line:
+                continue              # the claim belongs to the unfiltered list, not to this one
             out.append(line)          # a header or footer — carried only if an entry survives
             continue
         path = entry.group(1)
@@ -564,3 +575,16 @@ def runnable_listing(files: str) -> str:
 # Header and footer lines ("WORKSPACE FILES in …", "This list is complete …") do not match, so they
 # are never mistaken for a program and never left behind alone.
 _INVENTORY_ENTRY = re.compile(r"^\s+(\S+)\s*\(\d[\d,]*\s*B\)\s*$")
+
+
+def _completeness_claim() -> str:
+    """The inventory footer's exact text, read from the one prompt that owns it so the two cannot
+    drift apart — a hardcoded copy here would go stale the first time the sentence is reworded."""
+    try:
+        from . import prompts
+        return (prompts.load_map("workspace_inventory") or {}).get("complete", "").strip()
+    except Exception:  # noqa: BLE001 — a missing prompt must not break the listing
+        return ""
+
+
+_COMPLETENESS_CLAIM = _completeness_claim()
