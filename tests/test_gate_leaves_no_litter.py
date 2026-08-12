@@ -7,8 +7,13 @@ the next run's schema assertions fail, and the coder was sent to debug cria's ow
 
 Principle 7 already says cria never pollutes the user's workspace; running the tests there was the
 one place it did. The cleanup is bounded and needs no per-language knowledge: record the untracked
-files before the probes, delete exactly the ones that appeared during them. Tracked files are never
+files before the probes, remove exactly the ones that appeared during them. Tracked files are never
 touched, pre-existing untracked files are never touched, and with no git the whole thing abstains.
+
+The REMOVAL is cria's, not the script's — the Codex sandbox rejects an exec containing `rm` and
+rejects the WHOLE script, so a cleanup written in shell silently killed every gate in every language
+(tests/test_gate_script_is_read_only.py). So these run the real round trip: compose the script, run
+it in a real `sh`, and hand the output to `interpret_gate`, which is where the sweep lives.
 """
 import pathlib
 import subprocess
@@ -29,12 +34,16 @@ def _repo():
 
 
 def _run(ws, writes=()):
-    """Run the real gate script, with a fake 'test' that creates `writes` partway through."""
-    script = probegate.plan_gate(ws).script
+    """The whole round trip: compose → a real shell runs it → cria interprets AND sweeps.
+
+    `writes` fakes a test that leaves artifacts behind, created partway through the script."""
+    plan = probegate.plan_gate(ws)
+    script = plan.script
     if writes:
         script = script.replace("__cria_post=$(git",
                                 "touch " + " ".join(writes) + "\n__cria_post=$(git", 1)
-    subprocess.run(["sh", "-c", script], capture_output=True, text=True, cwd=ws)
+    out = subprocess.run(["sh", "-c", script], capture_output=True, text=True, cwd=ws)
+    probegate.interpret_gate(plan, out.stdout)
     return sorted(p.name for p in pathlib.Path(ws).iterdir() if p.name != ".git")
 
 

@@ -30,6 +30,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 from dataclasses import dataclass, field
 
 from . import dedup, jsontext
@@ -46,6 +47,9 @@ from .proberun import ProbeReport
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
 SECTION_PREFIX = "___CRIA_GATE_"
 SECTION_SUFFIX = "___"
+# Section carrying the untracked paths the probes themselves created — cria's own litter, listed by the
+# harness's shell and removed by :func:`sweep_litter` on cria's side. A signal for cria, never the model.
+LITTER_SECTION = "litter"
 # Per-probe wall-clock bound. Was 45 s (codex-local's COMPLETION_PROBE_TIMEOUT), which is fine for a
 # syntax floor and far too short for what this gate actually selects: a full test suite, a cold
 # `cargo check`, a `tsc` build. That is not merely a slow gate — `completion_block_nudge` fails CLOSED
@@ -73,6 +77,8 @@ class GateOutcome:
     git_state: str = ""  # `git status --porcelain | sha1sum` — changed-files signal
     unran: list = field(default_factory=list)  # selected checks whose section never came back — a GAP,
     #                                            not a pass: without this, a truncated gate read clean
+    refused: str = ""  # the harness REFUSED to run the gate (sandbox policy) — its own words, for the log
+    swept: list = field(default_factory=list)  # untracked paths the probes created, removed by sweep_litter
 
 
 def _marker(section_id: str) -> str:
@@ -104,8 +110,15 @@ def plan_gate(workspace: str) -> GatePlan:
     #
     # Principle 7 already says cria never pollutes the user's workspace; running tests there is the
     # one place it did. The fix is bounded and needs no per-language knowledge: record the untracked
-    # files before the probes, and delete exactly the ones that appeared during them. Tracked files
+    # files before the probes, and remove exactly the ones that appeared during them. Tracked files
     # are never touched, and with no git the whole thing abstains rather than guessing.
+    #
+    # The REMOVAL happens on cria's side (:func:`sweep_litter`), not in this script. A `rm` here is
+    # not merely inelegant — the Codex sandbox HARD-REJECTS the whole exec ("rm -f style commands are
+    # not permitted"), so an `rm` in the cleanup killed EVERY gate in EVERY language, and the gate
+    # abstained silently because a rejected exec returns no probe sections. writeproxy.py:801 records
+    # the same sandbox rejection breaking every web_search. cria composes read-only shell; when
+    # something must be deleted, cria deletes it itself, under the dirguard's bounds.
     if workspace:
         parts.append("__cria_pre=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
     for i, c in enumerate(plan.candidates):
@@ -120,15 +133,15 @@ def plan_gate(workspace: str) -> GatePlan:
         parts.append(f"echo {_marker('offline')}")
         parts.append(offline)
     if workspace:
-        # Exactly what the probes created, removed. `comm -13` is the files present now that were not
-        # present before; anything git tracks never appears in this list at all.
+        # Exactly what the probes created, LISTED for cria to remove. The files present now that were
+        # not present before; anything git tracks never appears in this list at all.
+        parts.append(f"echo {_marker(LITTER_SECTION)}")
         parts.append("__cria_post=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
         # POSIX sh only — no process substitution. The harness's shell is not guaranteed to be bash,
         # and a bashism here would fail silently and leave the litter behind.
         parts.append('if [ -z "$__cria_pre" ]; then __cria_new=$__cria_post; '
                      'else __cria_new=$(printf \'%s\\n\' "$__cria_post" | grep -vxF "$__cria_pre"); fi')
-        parts.append('printf \'%s\\n\' "$__cria_new" | while IFS= read -r f; do '
-                     '[ -n "$f" ] && rm -rf -- "$f"; done')
+        parts.append('printf \'%s\\n\' "$__cria_new"')
     parts.append(f"echo {_marker('git')}")
     # Changed-files signal: one line summarizing the working tree (porcelain is stable);
     # hashing keeps it tiny and diffable across gate runs. Absent git → empty (no signal).
@@ -345,7 +358,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     timed_out_output: list[str] = []
     _sections = split_sections(raw)
     for sid, body in _sections.items():
-        if sid == "git":          # the changed-files hash is a signal for cria, noise for the model
+        if sid in ("git", LITTER_SECTION):  # cria's own bookkeeping — signal for cria, noise for the model
             continue
         # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
         # network taken away, so on a genuinely live suite it is SUPPOSED to fail — and this loop
@@ -750,13 +763,17 @@ _NO_SIGNAL_CHECK = "no usable result"   # the ⟦ctx:checks⟧ non-signal — no
 _GATE_MARKER_ECHO = re.compile(r"^\s*echo\s+.*" + re.escape(SECTION_PREFIX))
 _GATE_GIT_FP = re.compile(r"^\s*git status --porcelain.*sha1sum")
 _GATE_CD_GUARD = re.compile(r"^\s*cd\s+.*\|\|\s*exit\s+97\s*$")
+# The litter bookkeeping (pre/post untracked snapshot). Named for the three variables that appear
+# ONLY there — the probe wrapper uses __cria_out/_ec/_n, so a real probe line can never match.
+_GATE_LITTER = re.compile(r"__cria_(?:pre|post|new)\b")
 
 
 def _strip_gate_plumbing(cmd: str) -> str:
     """Drop cria's gate scaffolding from a composed gate command, keeping only the real probe commands
     (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains."""
     kept = [ln for ln in cmd.splitlines()
-            if not (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln) or _GATE_CD_GUARD.match(ln))]
+            if not (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
+                    or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln))]
     return "\n".join(ln for ln in kept if ln.strip()).strip()
 
 
@@ -866,16 +883,94 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
     return out
 
 
+# A harness that REFUSES to run the gate at all (sandbox policy, no shell, a rejected verb) returns no
+# section markers, which interpret_gate correctly reads as "nothing ran" — correct, and completely
+# silent. cria then loses its single largest assist on every turn with nothing in the log to say so.
+# These are the phrases a refusal carries; matching one turns the silence into one operator-facing warn.
+_REFUSAL_PHRASES = (
+    "not permitted",
+    "rejected:",
+    "is not allowed",
+    "permission denied",
+    "operation not permitted",
+    "sandbox",
+)
+
+
+def refusal_reason(result_text: str) -> str:
+    """The harness's own words for why it would not run the gate — '' if it doesn't look like a refusal.
+
+    Only consulted when NO section came back: a gate that ran and merely failed is not a refusal."""
+    text = (result_text or "").strip()
+    if not text:
+        return ""
+    low = text.lower()
+    if not any(p in low for p in _REFUSAL_PHRASES):
+        return ""
+    # The useful part is the harness's reason, not the multi-kilobyte echo of the script it refused.
+    for phrase in _REFUSAL_PHRASES:
+        i = low.find(phrase)
+        if i >= 0:
+            return " ".join(text[max(0, i - 80):i + 160].split())
+    return ""
+
+
+def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
+    """Remove the untracked files the gate's OWN probes created. Returns what was removed.
+
+    The list comes from the harness's shell (git's ``??`` set, before minus after); the removal happens
+    here so cria never composes a destructive command — the Codex sandbox rejects the whole exec when it
+    sees one, which silently killed every gate (see :func:`plan_gate`).
+
+    Bounded three ways, because this deletes files: git must call the path UNTRACKED (a tracked file can
+    never appear), the path must resolve INSIDE the workspace (no absolute paths, no ``..``, no following
+    a symlink out), and any failure is skipped rather than escalated. Nothing here guesses."""
+    body = (sections or {}).get(LITTER_SECTION)
+    root = getattr(plan, "workspace", "") or ""
+    if not body or not root:
+        return []
+    try:
+        base = os.path.realpath(root)
+    except OSError:
+        return []
+    removed: list[str] = []
+    for rel in (ln.strip() for ln in body.splitlines()):
+        if not rel or os.path.isabs(rel):
+            continue
+        target = os.path.join(base, rel)
+        # realpath on the PARENT: the leaf itself may be a symlink we must unlink rather than follow.
+        try:
+            parent = os.path.realpath(os.path.dirname(target))
+        except OSError:
+            continue
+        if parent != base and not parent.startswith(base + os.sep):
+            continue
+        try:
+            if os.path.islink(target) or os.path.isfile(target):
+                os.unlink(target)
+            elif os.path.isdir(target):
+                shutil.rmtree(target)
+            else:
+                continue
+        except OSError:
+            continue
+        removed.append(rel)
+    return removed
+
+
 def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
     sections = split_sections(result_text)
+    # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
+    # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.
+    swept = sweep_litter(plan, sections)
     # ran is TRUE only if an actual check section came back — NOT just the always-present git snapshot.
     # An empty / no-code repo yields zero candidates, so plan_gate composes a git-ONLY script; treating
     # that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
     # actually ran. No probe-* section → ran=False → silence, not a false pass.
     if not any(k.startswith("probe-") for k in sections):
-        return GateOutcome(ran=False)
-    out = GateOutcome(ran=True)
+        return GateOutcome(ran=False, refused=refusal_reason(result_text))
+    out = GateOutcome(ran=True, swept=swept)
 
     results = []
     for i, c in enumerate(plan.candidates):

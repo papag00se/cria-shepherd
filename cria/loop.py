@@ -2635,8 +2635,7 @@ class Loop:
         sess.probe_reissues = 0  # a result (or the capped fallback) resolves the streak
 
         # Interpret the gate output through the ported probe modules (floor + probes + git).
-        outcome = probegate.interpret_gate(sess.gate_plan, probe) if sess.gate_plan is not None \
-            else probegate.GateOutcome(ran=False)
+        outcome = read_gate(sess.gate_plan, probe, rlog)
         # Guard-probe result (repetition redirect / wheel-spin ground truth) — shared with the
         # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
         steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._probe_author)
@@ -5103,8 +5102,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     gs.periodic_probe = False
     gs.awaiting_probe = False
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
-        else probegate.GateOutcome(ran=False)
+    outcome = read_gate(gs.gate_plan, probe, rlog)
     # A periodic check-in speaks ONLY when there is a real PROBLEM to fix. On a CLEAN result it stays
     # SILENT — prodding a passing check-in with "the checks pass but that's not proof of correctness"
     # just makes the model distrust the pass and keep working (feeding the can't-stop spiral).
@@ -5255,8 +5253,7 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     'done'. Without the failed_unparsed_probes arm a failing test whose output didn't parse was accepted
     as a genuine 'done'."""
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
-        else probegate.GateOutcome(ran=False)
+    outcome = read_gate(gs.gate_plan, probe, rlog)
     if not outcome.ran:
         gs.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
@@ -5279,6 +5276,26 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
     track_gate_progress(gs, "")
     return None
+
+
+def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
+    """``interpret_gate`` for every caller, with the two things that must never be silent.
+
+    A harness can REFUSE the gate outright — Codex's sandbox rejects the exec if the script contains a
+    verb it dislikes, and a refused exec returns no section markers, which reads exactly like "no gate
+    was ever composed". cria then abstains from its largest assist on every single turn and logs
+    nothing. That happened for a whole 24-cell arm. The refusal now lands in the log with the harness's
+    own words. It stays out of the MODEL's view: it is cria's plumbing problem, not the coder's.
+
+    Also reports what the sweep took back, so litter removal is visible rather than assumed."""
+    if plan is None:
+        return probegate.GateOutcome(ran=False)
+    outcome = probegate.interpret_gate(plan, probe_text)
+    if outcome.refused:
+        rlog.emit("loop.gate_refused", level="warn", reason=outcome.refused)
+    if outcome.swept:
+        rlog.emit("loop.gate_swept", paths=len(outcome.swept), sample=outcome.swept[:5])
+    return outcome
 
 
 def gate_error_text(outcome) -> str:
@@ -7254,8 +7271,7 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     if not (gs.spin_probe or gs.redirect_probe):
         return None
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = probegate.interpret_gate(gs.gate_plan, probe) if gs.gate_plan is not None \
-        else probegate.GateOutcome(ran=False)
+    outcome = read_gate(gs.gate_plan, probe, rlog)
     if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
         gs.steer_source = "repetition guard"
