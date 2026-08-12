@@ -20,6 +20,15 @@ judging. What each model does on its own.
 
 ## Assisted — assists ON
 
+**Read the Δ with care from 2026-08-12 on.** The baseline rows were earned against the ORIGINAL task
+prompts (`p1`) on the original clocks. The assisted rows from here are `p2`: the six prompts were
+rewritten the same day (idiom and undefined words removed — no requirement changed, no threshold
+lowered, `2026-08-12-task-prompt-clarity.md`) and three tasks had their deliverable counts corrected,
+which moves their wall from 60 to 75 minutes and Node's from 75 to 60. Every row's note records its
+revision. A gain here is the assists AND the clearer wording together; the operator's call was that
+the baseline stands rather than being re-run.
+
+
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 100% | 80% | 100% | 40% | 50% | 100% | **78%** | 58.0 | 23 | 74 |

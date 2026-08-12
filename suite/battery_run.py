@@ -26,6 +26,13 @@ TOML = Path("~/.cria/cria.toml").expanduser()
 sys.path.insert(0, str(SUITE))
 from battery_status import NOTE_PREFIX  # noqa: E402
 
+# Which revision of the TASK PROMPTS a row was earned against. The six prompts were rewritten
+# on 2026-08-12 (idiom and undefined words removed; no requirement changed, no threshold
+# lowered) and three tasks had their deliverable counts corrected, which moves their wall
+# clock. A p1 row and a p2 row are not the same measurement, and the note is where that stays
+# visible instead of being folded silently into a delta.
+PROMPT_REV = "p2"
+
 
 def read_drive(text: str) -> str | None:
     m = re.search(r"(?m)^\s*drive\s*=\s*(true|false)", text)
@@ -79,7 +86,7 @@ def main() -> int:
             return 2
         return sh(sys.executable, str(SUITE / "run.py"), "--task", args.task, "--model", args.model,
                   "--planner", "off", "--milestone-minutes", str(args.milestone_minutes),
-                  "--note", f"{NOTE_PREFIX} {args.arm} {args.model} {sha}", timeout=7200)
+                  "--note", f"{NOTE_PREFIX} {args.arm} {args.model} {sha} {PROMPT_REV}", timeout=7200)
     finally:
         # Restore, always. An interrupted campaign must not leave the live config in the baseline
         # arm — every later run would silently measure a plain proxy and look like a collapse.
