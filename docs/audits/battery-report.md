@@ -22,7 +22,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟢 qwen35 | 100% | · | · | · | · | · | **100%** | 80.5 | 17 | 103 |
+| 🟡 qwen35 | 100% | 60% | · | · | · | · | **80%** | 80.2 | 36 | 189 |
 | 🟡 gemma4 | 20% | 60% | 100% | 60% | 75% | 100% | **67%** | 60.9 | 18 | 69 |
 
 ## What the assists were worth
@@ -36,6 +36,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | gemma4 | 40% | 20% | **-20** | 26→166 | 3→31 |
 | shipping-rates-rb | ruby | qwen35 | 80% | 100% | **+20** | 32→103 | 3→17 |
 | cart-billing-go | go | gemma4 | 100% | 60% | **-40** | 13→40 | 2→12 |
+| cart-billing-go | go | qwen35 | 100% | 60% | **-40** | 36→275 | 3→56 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→59 | 21→16 |
 | feed-pipeline-java | java | gemma4 | 80% | 60% | **-20** | 18→85 | 14→40 |
 | handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→29 | 2→4 |
@@ -54,6 +55,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 60% | 12 | 40 | 61.4 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
+| cart-billing-go | go | qwen35 | CRIA | 60% | 56 | 275 | 79.8 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |

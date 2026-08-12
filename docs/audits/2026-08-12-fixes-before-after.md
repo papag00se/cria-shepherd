@@ -420,3 +420,54 @@ and reads the rest whole, with a probe file proving the hazard is caught. `coder
 are markdown headings the model is meant to read and are unaffected.
 
 Suite: 3,049 → 3,117. cria restarted on `9dc4a6c`.
+
+
+---
+
+# Second batch — built 2026-08-12 afternoon
+
+Prompted by the operator's ChatGPT thread on what inherent knowledge a shepherd should carry. Its
+framing is cria's own — *deterministic knowledge that turns opaque artifacts into compact structured
+context* — so the work was to filter its 45 domains against what our runs actually show. Two of its
+claims were tested and one did not hold here: it proposes compressing lockfiles, and across 92
+captured runs the coder touched a lockfile **once**.
+
+| # | the source | outcome |
+|---|---|---|
+| 1 | `cart-billing-go` required the change its own verifier failed you for | `3329fb6` |
+| 2 | a missing dependency read as broken code | `adfe3b9` |
+| 3 | the install route named a tool this box does not have | `2a6534d` |
+| 4 | the gate composed probes for tools that are not installed | `7ef8b53` |
+| 5 | the steer author chose the implementation | `a1c5d41` |
+| 6 | the steer author asserted a cause it had not verified | `a1c5d41` |
+
+## The instrument fix is the biggest of them
+
+`cart-billing-go`'s seed is `Subtotal() float64` and its seeded test reads `got != 15.00`. The prompt
+says stop using float64 for money arithmetic. Under the natural reading that seeded line no longer
+compiles, so the model must edit it — and `suite_green_plus_regression_test` fails the run for
+editing a seeded test. **7 of 19 attempts lost that check to exactly this, three models, both arms.**
+
+Decimal inside with float64 at the boundary was always the intent: the HIDDEN test compares
+`c.Total()` against the literal `48.58`. But the hidden test is invisible during the run by design,
+so the model could not have known. Every Go number in the campaign was suspect until this was named.
+
+## Two more dropped on measurement
+
+That makes six today, which is the process working rather than failing.
+
+- **"cria orders work already done"** — filed with 22 occurrences. Against the real directives, 536
+  of them, exactly one says "create X" for a file already written, and reading it, that one is a
+  false positive about a missing database table.
+- **A general environment-facts block** — the 100 install-location mentions are 56 real commands and
+  48 of those are ruby `vendor/bundle`, already covered by the install-route fix and the dependency
+  note. What remained was cria proposing absent tools, which is a removal, not a block.
+
+## What the batch has in common
+
+Four of the six are cria stating or composing something it had not checked and could have: a route
+using a tool that is not installed, a probe for a program that is not there, a cause nobody verified,
+an implementation choice that was not cria's to make. The fifth is the same fault in a task file. The
+sixth adds a label the tools were already printing.
+
+None of them is new knowledge. All of them are cria asking a question it was already able to answer.
