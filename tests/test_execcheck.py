@@ -71,12 +71,39 @@ class CorroborationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("entry point", why)
 
-    def test_readme_silence_blocks_the_run(self):
+    def test_readme_silence_weakens_but_does_not_block(self):
+        """It used to VETO. The docstring said why: "The task asked for a README explaining how to
+        RUN it" — true of ada-handles and of nothing else. Measured on the six-language battery:
+        "the README documents no command that runs tests/handle-lookup.test.js" refused a run in a
+        workspace whose package.json declared the very script being run. A named deliverable of one
+        task must not become a precondition for believing a program ran (#13, safe direction)."""
         d = ws(**{"tool.py": PROGRAM})
         ok, why = execcheck.corroborate("python3 tool.py goose",
                                         execcheck.readme_commands(d), execcheck.entrypoints(d))
+        self.assertTrue(ok)
+        self.assertIn("no README or manifest documents", why)
+
+    def test_a_program_not_on_disk_is_still_refused(self):
+        """The disk check is the one that carries weight and it is unchanged."""
+        d = ws(**{"tool.py": PROGRAM})
+        ok, why = execcheck.corroborate("python3 ghost.py", [], execcheck.entrypoints(d))
         self.assertFalse(ok)
-        self.assertIn("README", why)
+        self.assertIn("not an entry point on disk", why)
+
+    def test_a_manifest_script_corroborates_without_any_readme(self):
+        d = ws(**{"tool.py": PROGRAM,
+                  "package.json": '{"scripts": {"start": "node lookup.js"}}'})
+        cmds = execcheck.manifest_commands(d)
+        self.assertIn("npm start", cmds)
+        self.assertIn("npm run start", cmds)
+
+    def test_manifest_commands_reads_each_ecosystem(self):
+        for name, body, want in (("Cargo.toml", "[package]\nname='x'\n", "cargo run"),
+                                 ("pom.xml", "<project/>", "mvn test"),
+                                 ("go.mod", "module x\n", "go test"),
+                                 ("Rakefile", "task :test\n", "rake test")):
+            with self.subTest(name=name):
+                self.assertIn(want, execcheck.manifest_commands(ws(**{name: body})))
 
     def test_a_claim_with_no_command_is_not_corroborated(self):
         ok, why = execcheck.corroborate("", ["python3 tool.py x"], ["tool.py"])

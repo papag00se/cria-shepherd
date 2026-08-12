@@ -154,9 +154,38 @@ def entrypoints(root: str) -> list[str]:
     return sorted(set(found))
 
 
+def manifest_commands(root: str) -> list[str]:
+    """Run commands the project DECLARES in its build manifest — a package.json script, a Rakefile
+    task, a Cargo/Maven target. The same class of artifact as a README command and available in
+    projects that were never asked for a README."""
+    out: list[str] = []
+    if not root or not os.path.isdir(root):
+        return out
+    pkg = os.path.join(root, "package.json")
+    if os.path.isfile(pkg):
+        try:
+            import json as _json
+            scripts = (_json.load(open(pkg, errors="replace")) or {}).get("scripts") or {}
+            out += [f"npm run {k}" for k in scripts]
+            for k in ("start", "test"):
+                if k in scripts:
+                    out.append(f"npm {k}")
+        except (OSError, ValueError):
+            pass
+    for name, cmds in (("Cargo.toml", ["cargo run", "cargo test"]),
+                       ("pom.xml", ["mvn test", "mvn compile"]),
+                       ("go.mod", ["go run", "go test"]),
+                       ("Rakefile", ["rake test"]), ("rakefile", ["rake test"]),
+                       ("Gemfile", ["bundle exec"]), ("build.gradle", ["gradle test"]),
+                       ("build.gradle.kts", ["gradle test"]), ("mix.exs", ["mix test"])):
+        if os.path.isfile(os.path.join(root, name)):
+            out += cmds
+    return out
+
+
 def readme_commands(root: str) -> list[str]:
-    """Run commands the README documents. The task asked for a README explaining how to RUN it, so a
-    command there is an artifact the model committed to — not a sentence in a chat turn."""
+    """Run commands the README documents. A command there is an artifact the model committed to —
+    not a sentence in a chat turn."""
     out: list[str] = []
     if not root or not os.path.isdir(root):
         return out
@@ -177,21 +206,86 @@ def readme_commands(root: str) -> list[str]:
     return out
 
 
+# Runners whose TARGET IS THE PROJECT, not a file named on the line. For these the program is the
+# runner plus its subcommand, and everything after is arguments — including any filename, which is
+# an INPUT and not the thing being executed.
+_PROJECT_RUNNERS = {
+    "cargo": ("run", "test", "check", "build"),
+    "go": ("run", "test", "build"),
+    "mvn": ("test", "compile", "verify", "package", "exec:java"),
+    "gradle": ("run", "test", "check", "build"),
+    "./gradlew": ("run", "test", "check", "build"),
+    "./mvnw": ("test", "compile", "verify", "package"),
+    "npm": ("start", "test", "run"),
+    "pnpm": ("start", "test", "run"),
+    "yarn": ("start", "test", "run"),
+    "bundle": ("exec",),
+    "rake": (),          # `rake test` — the task IS the target
+    "dotnet": ("run", "test", "build"),
+    "make": (),
+    "mix": ("test", "run"),
+}
+# Flags whose VALUE IS the program — `python3 -m orders.app`, `java -jar app.jar`.
+_FLAG_VALUE_IS_PROGRAM = {"-m", "--module", "-jar"}
+# Flags that swallow the next token as configuration, so that token is never the program.
+_FLAG_VALUE_SKIPPED = {"-cp", "-classpath", "--classpath", "-f", "--file", "-C", "--directory",
+                       "-p", "--project", "-D", "--define"}
+# Runners whose program is a bare NAME rather than a path — a JVM main class has no extension, so
+# the "contains a dot or a slash" test cannot see it.
+_BARE_TARGET_HEADS = {"java"}
+
+
 def program_token(command: str) -> str:
     """The FILE or target a command actually runs, so three sources can be compared without their
     arguments having to match — the arguments are exactly what differs between a README example and
-    a live invocation."""
+    a live invocation.
+
+    RESOLVED HEAD-FIRST, by the runner's own grammar. It used to scan forward for the first argument
+    containing a dot or a slash — the `python script.py arg` shape — which cannot tell an executable
+    from an input datum. Measured, by running it:
+
+        cargo run --quiet -- config.toml server.port  ->  'config.toml'
+        java -cp target/classes App in.csv            ->  'target/classes'
+        go run . goose                                ->  '.'
+
+    On the six-language battery that produced "the delivered program was not run, because
+    config.toml is not an entry point on disk" for a Rust CLI that ran correctly. A build tool's
+    target is the PROJECT; `--` ends the runner's own flags; `-cp` takes a value. None of that is
+    positional."""
     try:
         parts = shlex.split(command)
     except ValueError:
         parts = command.split()
-    for p in parts[1:] if parts else []:
+    if not parts:
+        return ""
+    head = os.path.basename(parts[0]) if "/" in parts[0] else parts[0]
+    subs = _PROJECT_RUNNERS.get(head, _PROJECT_RUNNERS.get(parts[0]))
+    if subs is not None:
+        sub = next((p for p in parts[1:] if not p.startswith("-")), "")
+        if not subs or sub in subs:
+            return " ".join([head, sub]).strip() if sub else head
+        return head
+    bare_ok = head in _BARE_TARGET_HEADS
+    skip_next = take_next = False
+    for p in parts[1:]:
+        if take_next:
+            return os.path.normpath(p) if "/" in p else p
+        if skip_next:
+            skip_next = False
+            continue
+        if p in _FLAG_VALUE_IS_PROGRAM:
+            take_next = True
+            continue
+        if p in _FLAG_VALUE_SKIPPED:
+            skip_next = True
+            continue
+        if p == "--":            # everything after belongs to the program, not the runner
+            continue
         if p.startswith("-"):
             continue
-        if "." in os.path.basename(p) or "/" in p:
+        if bare_ok or "." in os.path.basename(p) or "/" in p:
             return os.path.normpath(p)
-    # `cargo run`, `go run .`, `npm start` — the project itself is the target
-    return " ".join(parts[:2]) if len(parts) >= 2 else (parts[0] if parts else "")
+    return " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
 
 def corroborate(claim: str, readme: list[str], entries: list[str]) -> tuple[bool, str]:
@@ -201,15 +295,26 @@ def corroborate(claim: str, readme: list[str], entries: list[str]) -> tuple[bool
     tok = program_token(claim)
     if not tok:
         return False, "no program could be read out of the stated command"
-    in_readme = any(program_token(r) == tok for r in readme)
+    # DECLARED anywhere the project declares things, not the README alone. Requiring a README was
+    # this function assuming its origin task: its own docstring used to say "The task asked for a
+    # README explaining how to RUN it", which is true of ada-handles and of nothing else. Measured
+    # on the six-language battery: "the README documents no command that runs
+    # tests/handle-lookup.test.js" vetoed a run in a workspace whose package.json declared the very
+    # script being run. A named deliverable of one task must never become a precondition for
+    # believing a program ran.
+    declared = list(readme) + manifest_commands(os.path.dirname(entries[0]) if entries else "")
+    in_declared = any(program_token(r) == tok for r in declared)
     in_disk = any(os.path.normpath(e) == tok or os.path.basename(e) == os.path.basename(tok)
                   for e in entries)
     if not entries:
         return False, "no file in the workspace is an entry point by its language's convention"
-    if not in_readme:
-        return False, f"the README documents no command that runs {tok}"
     if not in_disk:
         return False, f"{tok} is not an entry point on disk"
+    if not in_declared:
+        # WEAKER, not a veto (#13, the safe direction): the program IS on disk and IS an entry point
+        # by its language's own convention. That the project never wrote the command down is a gap
+        # in documentation, not evidence the program did not run.
+        return True, f"{tok} runs, though no README or manifest documents the command"
     return True, ""
 
 
