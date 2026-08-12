@@ -95,6 +95,10 @@ _GLOBAL_INSTALL = re.compile(
 _LOCAL_INSTALL_SCOPE = re.compile(
     r"(?:^|[\s;&|(])\.{0,2}/?[\w.-]*(?:venv|env|virtualenv)[\w.-]*/bin/"   # ./.venv/bin/pip …
     r"|--target(?:=|\s)|--prefix(?:=|\s)|--root(?:=|\s)"
+    # The same idea in the other ecosystems: a destination inside the project. gem's --install-dir
+    # and bundler's --path are Ruby's form, composer's --working-dir is PHP's. Without these the
+    # guard refuses the very route its own remediation now recommends.
+    r"|--install-dir(?:=|\s)|--path(?:=|\s)|--working-dir(?:=|\s)"
     r"|(?:^|[\s;&|(])(?:source|\.)\s+\.{0,2}/?[\w.-]*(?:venv|env)[\w.-]*/bin/activate",
     re.IGNORECASE)
 
@@ -117,7 +121,53 @@ def install_refusal(command: str, level: str, workspace: str | None) -> str | No
     if _LOCAL_INSTALL_SCOPE.search(command):
         return None
     return prompts.fill(prompts.load("external_install_refusal"),
-                        root=f" ({workspace})" if workspace else "")
+                        root=f" ({workspace})" if workspace else "",
+                        local=_local_install_advice(command))
+
+
+# A guard that REFUSES in six ecosystems must REMEDIATE in six. The trigger above already matches
+# pip, npm/pnpm/yarn -g, gem, cargo, go, composer global and the system managers — and the whole
+# remedy was pip and a venv, so a refused `gem install countries` was answered with Python. Measured
+# on the six-language battery's ruby task: with no ruby-viable route offered, the coder hand-rolled
+# the data the gem would have provided.
+#
+# Per-manager rows are correct here; the defect was that the table existed only on the refusing
+# side. The kernel is "answer in the ecosystem you refused", and where no project-local form exists
+# (apt, brew — they install to the machine, full stop) the honest answer is to say only what is
+# forbidden and stop, rather than prescribe a route that does not exist.
+_INSTALL_REMEDY = (
+    (re.compile(r"(?:pip|pip3|python3?\s+-m\s+pip)\s+install", re.I),
+     "First check whether you need it at all: the package may already be importable, and "
+     "`pip install -e .` or `pip install .` installs YOUR OWN project, which your script and tests "
+     "do not need. If a third-party package really is missing, install it into the project: "
+     "`python3 -m venv .venv && ./.venv/bin/pip install <pkg>`, then run with `./.venv/bin/python`."),
+    (re.compile(r"(?:npm|pnpm|yarn)\s+(?:install|add|i)\b", re.I),
+     "Drop the global flag: `npm install <pkg>` installs into this project's own `node_modules`, "
+     "which is what your code will load."),
+    (re.compile(r"\bgem\s+install", re.I),
+     "Install it into the project instead: add the gem to a `Gemfile` and run "
+     "`bundle install --path vendor/bundle`, or `gem install --install-dir vendor/bundle <gem>`."),
+    (re.compile(r"\bcargo\s+install", re.I),
+     "A crate your code uses is a dependency, not a global binary: `cargo add <crate>` puts it in "
+     "`Cargo.toml` and cargo fetches it into this project."),
+    (re.compile(r"\bgo\s+install", re.I),
+     "A module your code imports is a dependency, not a global binary: `go get <module>` records it "
+     "in `go.mod` for this project."),
+    (re.compile(r"composer\s+global", re.I),
+     "Drop `global`: `composer require <pkg>` installs into this project's own `vendor/`."),
+)
+
+
+def _local_install_advice(command: str) -> str:
+    """The project-local route for the manager that was actually refused, or "" when there is none.
+
+    An empty string is a real answer: apt, dnf, brew and pacman install to the machine and have no
+    project-local form, so the refusal states what is forbidden and stops rather than inventing a
+    route (#3, #5b)."""
+    for pat, advice in _INSTALL_REMEDY:
+        if pat.search(command):
+            return " " + advice
+    return ""
 
 
 def _is_write_target(command: str, start: int) -> bool:
