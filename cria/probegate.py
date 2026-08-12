@@ -96,6 +96,18 @@ def plan_gate(workspace: str) -> GatePlan:
         plan.untested = probediscovery.undiscoverable_tests(workspace)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
+    # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
+    # test that writes — a database file, a fixture, an output artifact — leaves that behind for the
+    # next gate to trip over. cria then reports a failure it manufactured itself, under the strongest
+    # header it has. Measured on the six-language battery: a leftover orders.db from one gate run
+    # made the next run's schema assertions fail, and the coder was sent to debug cria's litter.
+    #
+    # Principle 7 already says cria never pollutes the user's workspace; running tests there is the
+    # one place it did. The fix is bounded and needs no per-language knowledge: record the untracked
+    # files before the probes, and delete exactly the ones that appeared during them. Tracked files
+    # are never touched, and with no git the whole thing abstains rather than guessing.
+    if workspace:
+        parts.append("__cria_pre=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
@@ -107,6 +119,16 @@ def plan_gate(workspace: str) -> GatePlan:
     if offline:
         parts.append(f"echo {_marker('offline')}")
         parts.append(offline)
+    if workspace:
+        # Exactly what the probes created, removed. `comm -13` is the files present now that were not
+        # present before; anything git tracks never appears in this list at all.
+        parts.append("__cria_post=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
+        # POSIX sh only — no process substitution. The harness's shell is not guaranteed to be bash,
+        # and a bashism here would fail silently and leave the litter behind.
+        parts.append('if [ -z "$__cria_pre" ]; then __cria_new=$__cria_post; '
+                     'else __cria_new=$(printf \'%s\\n\' "$__cria_post" | grep -vxF "$__cria_pre"); fi')
+        parts.append('printf \'%s\\n\' "$__cria_new" | while IFS= read -r f; do '
+                     '[ -n "$f" ] && rm -rf -- "$f"; done')
     parts.append(f"echo {_marker('git')}")
     # Changed-files signal: one line summarizing the working tree (porcelain is stable);
     # hashing keeps it tiny and diffable across gate runs. Absent git → empty (no signal).
