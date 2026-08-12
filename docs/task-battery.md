@@ -122,33 +122,192 @@ The general lesson for the remaining five: a verifier can be wrong by being too 
 lax, and the tell is a plausible-looking near miss rather than an all-zero column. The status tool
 catches all-zero automatically; this class needs a human to read the diff.
 
-## Known latent ambiguity — cart-billing-go's decimal ask (recorded 2026-08-10, NOT changed)
+## RESOLVED 2026-08-12 — cart-billing-go's decimal ambiguity
 
-The prompt says "use whatever the Go ecosystem standardises on for decimal money rather than
+The prompt said "use whatever the Go ecosystem standardises on for decimal money rather than
 hand-rolling it", and `decimal_money_library` requires a THIRD-PARTY module in go.mod. A model could
-read stdlib `math/big` as the answer. `big.Float` is binary floating point rather than decimal and
-`big.Rat` is exact rational, so neither is really the decimal-money answer — but the reading is not
-absurd, and the check would fail a working `big.Rat` solution.
+read stdlib `math/big` as the answer. That was recorded on 2026-08-10 and deliberately left alone at
+n=0 realised harm.
 
-**Deliberately left alone.** No run has lost a point to it: gemma4 and qwen35 both reached for a
-published package and both scored 100%. ternary-bonsai did reach for `math/big` and scored 0%, but
-because it hallucinated the API — `big.Float64`, `big.NewFloat64`, `SetFloat64` on `big.Int`, none
-of which exist — so nothing compiled and the ambiguity never bore on the score.
+Closed in the prompt-clarity pass, not because it finally bit, but because the whole prompt was
+being rewritten for a different reason and the sentence was one of the vaguest in the battery. It
+now says: *"Do not write your own decimal type, and do not keep using float64: add a third-party Go
+module for decimal money — one that goes in go.mod."* Same requirement, no second reading.
 
-The trigger to act is a model producing a WORKING stdlib solution and losing the point. Changing the
-prompt now would invalidate two 100% rows to fix something that has never happened, which is the
-same n=0 reasoning that keeps a detector out of cria. Recorded here so the next person to see a
-0% on this task checks this first.
+## RESOLVED 2026-08-12 — deliverables count vs checks count
 
-## Deferred: deliverables count vs checks count (recorded 2026-08-10, NOT changed mid-campaign)
+`suite/run.py` paces a run at `len(meta.deliverables) x --milestone-minutes`, and the counts had
+drifted from what each task scores. Three tasks scored five checks on a four-thing clock;
+handles-cli-node scored four on a five-thing clock.
 
-`suite/run.py` paces a run at `len(meta.deliverables) x --milestone-minutes`. The three tasks
-extended with a network deliverable now score FIVE checks while still declaring FOUR deliverables,
-so their wall is 60 minutes where it should be 75.
+Held open through the campaign for arm parity, then corrected once it closed. shipping-rates-rb,
+cart-billing-go and feed-pipeline-java now declare five and run to 75 minutes; handles-cli-node
+declares four and runs to 60. The milestone FLOOR is unaffected — it is one passing check per
+interval regardless of the count.
 
-**Deliberately left until the campaign closes.** The BASE arm ran all 24 cells at the 4-deliverable
-wall; changing it now would give the CRIA arm a longer clock than its own twins and void the only
-comparison the campaign exists to make. Arm parity beats pacing precision.
+## The prompts themselves
 
-Fix after the closing summary: add the fifth deliverable to each of the three `meta.toml` files, and
-re-run all six affected cells so both arms share the wall.
+The text below is generated from `suite/tasks/<task>/prompt.txt`, which is the source of truth.
+Revision **p2** (2026-08-12): idiom and undefined words removed, no requirement changed, no
+threshold lowered — `docs/audits/2026-08-12-task-prompt-clarity.md`. Rows in
+`suite/results/results.jsonl` carry `p1` or `p2` in their note.
+
+### shipping-rates-rb — Ruby
+
+5 deliverables, 5 scored checks, 75-minute wall.
+
+Checks: `suite_green_tests_intact`, `hidden_contract`, `express_zone`, `readme_rate_table`, `country_zone_mapping`
+
+```
+Four changes to the shipping module, please.
+
+The test suite is failing — work out why and fix it. The tests that came with the repo describe
+behaviour our customers were promised, so do not change what they assert. Tests you write yourself
+are yours to change freely.
+
+We're also launching an express service. It should cost 14.99 base plus 2.50 per kilo, and it
+follows the same free-shipping and oversize rules as the other zones. Add it, and add tests for it.
+
+The README has no rate table at all. Add one that lists every zone with its base rate and per-kilo
+cost, so support can answer pricing questions without reading the code.
+
+Finally, customers give us a two-letter country code, not a zone name. Add `Shipping.zone_for(code)`
+that returns the zone — we ship from the UK, so GB is domestic, EU member states are eu, and
+everywhere else is international — and let `shipping_cost` accept a country code as well as a zone.
+Do not write the list of EU member countries into our code yourself: EU membership changes over
+time, and a list we maintain will go stale. Install a third-party Ruby gem that already knows which
+countries are in the EU, add it to the project's dependencies, and get the answer from it.
+```
+
+### cart-billing-go — Go
+
+5 deliverables, 5 scored checks, 75-minute wall.
+
+Checks: `suite_green_plus_regression_test`, `rounding_fixed_everywhere`, `discounts_from_file`, `logging`, `decimal_money_library`
+
+```
+A customer has reported a billing problem. They bought three items at 19.99 each with the SUMMER25
+code and were charged 48.57, but they calculated 48.58 themselves and say we are undercharging by a
+cent on lots of orders. Our accountant confirms the totals are consistently a cent low. Please find
+the cause and fix it, and add a test so it can't come back.
+
+Three other changes to the same code.
+
+Ops keep asking us to change discount codes and we currently need a deploy to do it. Load the codes
+from a discounts.json file next to the binary instead of hard-coding them, keeping the current three
+as the file's contents. If the file is missing, use those same three rather than failing.
+
+We can't see anything in production. Add logging so that every total we compute writes one line to
+stderr recording the subtotal, the discount code used (or none), and the final total. Support needs
+to be able to find a customer's order in the logs with grep.
+
+The accountant also says we should not be doing money arithmetic in floating point at all, and that
+we will hit another rounding bug if we keep it. Do not write your own decimal type, and do not keep
+using float64: add a third-party Go module for decimal money — one that goes in go.mod — and do the
+arithmetic with it. Keep the `Item` struct's field types exactly as they are, because the checkout
+service builds those values and we can't change it this sprint, so convert inside the cart.
+```
+
+### orders-api-py — Python
+
+4 deliverables, 4 scored checks, 60-minute wall.
+
+Checks: `customer_orders_route`, `schema_migrated`, `integration_tests`, `sql_injection_fixed`
+
+```
+Four things on the orders service, please.
+
+Support needs to answer "what has this customer ordered?" without anyone running SQL themselves. Add
+a GET /customers/<name>/orders route that returns that customer's orders together with a total value
+for them.
+
+For that to be quick we need the database to change: orders should carry a status ('pending' by
+default) and the customer column needs an index. Existing databases have to keep working — people
+have live data, so an old orders.db must pick up the change rather than breaking or starting empty.
+
+We have no tests that go through HTTP at all, only tests that call the database directly. Add tests
+that start the server and make real requests against it, covering the new route and the existing
+ones.
+
+One more thing: a security review flagged that order lookups build SQL by string formatting, which
+means a crafted customer name can run SQL of its own. Fix this everywhere it appears, without
+changing what the lookups return for ordinary names.
+```
+
+### feed-pipeline-java — Java
+
+5 deliverables, 5 scored checks, 75-minute wall.
+
+Checks: `messy_feed_handled`, `substantially_faster`, `race_fixed_workers_on`, `review_written`, `csv_library`
+
+```
+The nightly supplier feed importer has three problems and I'd like your help with all of them.
+
+First, it is far too slow. It takes minutes on a feed we receive every hour, and profiling says it
+is the code and not the disk. Make it at least four times faster. The numbers it produces — the
+totals, the row counts, the per-SKU figures — must come out exactly the same as they do now.
+
+Second, there is a threading bug. When we turned on parallel workers the totals came out different
+every run, so someone disabled the parallelism instead of fixing it. Fix the bug and turn the
+workers back on, so that running the same feed twice always gives the same answer.
+
+Third, the feed has started arriving with rows we didn't anticipate — blank quantities, prices with
+currency symbols, duplicate SKUs, rows missing columns entirely, and descriptions with commas inside
+quotes that our comma-splitting throws straight into the wrong column. Right now the importer either
+crashes or silently imports incorrect data. Decide how each kind of bad row should be handled,
+implement it, and make the summary it prints say how many rows were skipped and why. For the quoted
+commas: do not write your own CSV parser. Add an existing Java CSV library to the project's
+dependencies and let it do the parsing.
+
+Other tooling calls `Importer.summarize(path)` and reads `skus`, `rows` and `totals` off what it
+returns, so keep those working.
+
+When you're done, write REVIEW.md giving me your assessment of the code you worked on: what is still
+wrong or risky in there. For every problem you name, give the file name and the line number.
+```
+
+### handles-cli-node — Node
+
+4 deliverables, 4 scored checks, 60-minute wall.
+
+Checks: `cli_behaviour`, `request_removed`, `tests_incl_live`, `dockerfile`
+
+```
+We have a small script that resolves an Ada Handle against api.handle.me. I need it turned into a
+command-line tool we can ship.
+
+It should take the handle as an argument, support a --json flag for machine-readable output and a
+--help flag, and exit with a non-zero status when a handle cannot be resolved. It must also print
+the holder's address and the number of handles that holder owns, which it does not do today.
+
+The script currently uses the deprecated `request` package. Move it to the fetch function built into
+modern Node, and remove `request` from the project's dependencies entirely, so the tool runs with no
+node_modules directory present.
+
+Add tests. At least one of them must make a real request to the live API rather than a mock, so we
+know the tool works end to end.
+
+Finally, add a Dockerfile so ops can run it without installing Node.
+```
+
+### rust-toml-cli — Rust
+
+4 deliverables, 4 scored checks, 60-minute wall.
+
+Checks: `builds`, `lookup`, `error_contract`, `tests_and_readme`
+
+```
+Create a Rust command-line tool in this directory using cargo.
+
+The tool reads a TOML file and prints the value found at a dotted key path, so
+`cargo run --quiet -- config.toml server.port` prints just the value (for example 8080). For TOML
+parsing, add a published crate from crates.io rather than writing a parser yourself.
+
+If the file does not exist, or the key path is not in it, print an error to stderr and exit with a
+nonzero status.
+
+Include unit tests for the key-path lookup logic, covering a nested table, an integer value, a
+string value, and a missing key.
+
+Add a README that explains how to build the tool, how to use it, and how to run its tests.
+```
