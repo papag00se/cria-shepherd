@@ -37,7 +37,8 @@ PROBE_PROMPT = (
     '  {"list_dir": "<relative path>"}    — list a directory\n'
     '  {"command": "<shell command>"}     — your FINAL answer: the one command the README '
     "documents (or the project layout implies) that runs the LIVE test against the real API. "
-    "Use python3, never bare python. If no live-test command exists, reply "
+    "Name the interpreter or runner exactly as this project invokes it. If no live-test command "
+    "exists, reply "
     '{"command": ""}.'
 )
 
@@ -70,16 +71,25 @@ def _provably_live(argv, ws):
     return False, "exit=0 but no markers and no network dependence proof"
 
 
+# The NAME is the signal; the extension picks the RUNNER. Collecting only *.py and *.sh made the
+# docstring's own claim false — it said these were "the two wrapper shapes any language's workspace
+# can carry", while `live_test.rb` and `live_test.js` were invisible and scored zero. One map, every
+# language the battery runs.
+_LIVE_RUNNERS = {".py": None, ".sh": ["bash"], ".rb": ["ruby"], ".js": ["node"], ".mjs": ["node"],
+                 ".php": ["php"], ".go": ["go", "run"], ".rs": ["cargo", "run", "--quiet", "--bin"]}
+
+
 def live_file_check(ws: Path):
-    """(ok, detail) from dedicated live-named files (*.py via python3, *.sh via bash), with the
-    handle-argument retry. (False, reason) when none exists or none proves live."""
-    files = sorted(p for ext in ("*.py", "*.sh") for p in ws.rglob(ext)
-                   if "live" in p.name.lower() and "__pycache__" not in p.parts)
+    """(ok, detail) from dedicated live-named files, run by whatever their extension implies, with
+    the handle-argument retry. (False, reason) when none exists or none proves live."""
+    files = sorted(p for ext in _LIVE_RUNNERS for p in ws.rglob(f"*{ext}")
+                   if "live" in p.name.lower() and "__pycache__" not in p.parts
+                   and "node_modules" not in p.parts and "target" not in p.parts)
     if not files:
         return False, "no live-test file found"
     detail = "no live-test file proved live"
     for lf in files:
-        runner = ["bash"] if lf.suffix == ".sh" else [sys.executable]
+        runner = _LIVE_RUNNERS.get(lf.suffix) or [sys.executable]
         for argv in (runner + [str(lf.relative_to(ws))],
                      runner + [str(lf.relative_to(ws)), "goose"]):
             ok, suffix = _provably_live(argv, ws)
@@ -193,6 +203,13 @@ _PLACEHOLDER_RE = re.compile(r"addr1e0{6,}|stake1[a-z]?x{4,}|stake1d4fg5dghr")
 _FETCH_HEADER_RE = re.compile(r"\AHTTP \d{3}|Content-Type:", re.M)
 
 
+_TEST_SUITE_RUN = re.compile(
+    r"(?:\./)?\b(?:pytest|unittest|rake\s+test|bundle\s+exec\s+(?:rspec|rake)|rspec|minitest"
+    r"|go\s+test|cargo\s+test|mvn\s+(?:test|verify)|gradlew?\s+test"
+    r"|npm\s+(?:test|run\s+test)|yarn\s+test|pnpm\s+test|node\s+--test|jest|vitest|mocha"
+    r"|phpunit|dotnet\s+test|mix\s+test)\b", re.I)
+
+
 def session_live_evidence(capture_dir, names=("goose", "papagoose")):
     """Operator ruling 2026-08-05: the live-test deliverable ALSO counts when the session holds
     evidence that the coder RAN a test of a live handle and got successful results — "the spirit
@@ -219,6 +236,10 @@ def session_live_evidence(capture_dir, names=("goose", "papagoose")):
     # stripping any `cd <dir> &&` prefix; grep/cat/curl/wget never appear on this list.
     runner_re = re.compile(
         r"^\s*(?:python3?(?:\s+-m)?|pytest|node|ruby|php|java|go\s+run|cargo\s+run|bash|sh|\./)")
+    # "is this the coder running its own test suite?" — the sibling allowlist one block up is already
+    # shape-generalised across seven runtimes, and this test was `"pytest" not in cmd`, which is one
+    # tool's name standing in for the question. A Go, Rust, Ruby, Java or Node suite run by the coder
+    # could never earn the operator's 2026-08-05 in-session credit.
     exec_names = {"exec_command", "shell", "bash", "run", "execute_command"}
     for f in sorted(d.glob("[0-9]*.json")):
         if f.name.endswith(".response.json"):
@@ -241,7 +262,7 @@ def session_live_evidence(capture_dir, names=("goose", "papagoose")):
             if not producer or producer[0] not in exec_names:
                 continue
             cmd = producer[1]
-            if not name_re.search(cmd) and "pytest" not in cmd:
+            if not name_re.search(cmd) and not _TEST_SUITE_RUN.search(cmd):
                 continue          # the run was not ON a task handle and was not the test suite
             shell_text = cmd.split('"cmd"')[-1].lstrip(':{ "[')
             shell_text = re.sub(r"^(?:cd\s+\S+\s*&&\s*)+", "", shell_text)
