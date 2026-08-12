@@ -1,13 +1,6 @@
-Create a Rust command-line tool in this directory using cargo.
+Create a Rust command-line tool in this directory with Cargo.
 
-The tool reads a TOML file and prints the value found at a dotted key path, so
-`cargo run --quiet -- config.toml server.port` prints just the value (for example 8080). For TOML
-parsing, add a published crate from crates.io rather than writing a parser yourself.
+Read a TOML file and print only the value at a dotted key path. 
+> Example: `cargo run --quiet -- config.toml server.port` prints `8080`. 
 
-If the file does not exist, or the key path is not in it, print an error to stderr and exit with a
-nonzero status.
-
-Include unit tests for the key-path lookup logic, covering a nested table, an integer value, a
-string value, and a missing key.
-
-Add a README that explains how to build the tool, how to use it, and how to run its tests.
+Use a published crates.io TOML parser; do not write your own parser. If the file is missing or the key path does not exist, print an error to `stderr` and exit non-zero. Add unit tests for nested key lookup covering an integer, a string, and a missing key. Add a README explaining how to build, use, and test the tool.

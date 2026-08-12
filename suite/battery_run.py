@@ -27,11 +27,12 @@ sys.path.insert(0, str(SUITE))
 from battery_status import NOTE_PREFIX  # noqa: E402
 
 # Which revision of the TASK PROMPTS a row was earned against. The six prompts were rewritten
-# on 2026-08-12 (idiom and undefined words removed; no requirement changed, no threshold
-# lowered) and three tasks had their deliverable counts corrected, which moves their wall
-# clock. A p1 row and a p2 row are not the same measurement, and the note is where that stays
-# visible instead of being folded silently into a delta.
-PROMPT_REV = "p2"
+# on 2026-08-12 twice: p2 removed idiom and undefined words, and p3 is the operator's own
+# rewrite into short numbered imperatives. Three tasks also had their deliverable counts
+# corrected, which moves their wall clock. Rows from different revisions are not the same
+# measurement, and the note is where that stays visible instead of being folded silently
+# into a delta. BUMP THIS whenever a task's wording changes materially.
+PROMPT_REV = "p3"
 
 
 def read_drive(text: str) -> str | None:

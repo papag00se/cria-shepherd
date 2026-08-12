@@ -1,17 +1,6 @@
-Four things on the orders service, please.
+Make these four changes to the orders service:
 
-Support needs to answer "what has this customer ordered?" without anyone running SQL themselves. Add
-a GET /customers/<name>/orders route that returns that customer's orders together with a total value
-for them.
-
-For that to be quick we need the database to change: orders should carry a status ('pending' by
-default) and the customer column needs an index. Existing databases have to keep working — people
-have live data, so an old orders.db must pick up the change rather than breaking or starting empty.
-
-We have no tests that go through HTTP at all, only tests that call the database directly. Add tests
-that start the server and make real requests against it, covering the new route and the existing
-ones.
-
-One more thing: a security review flagged that order lookups build SQL by string formatting, which
-means a crafted customer name can run SQL of its own. Fix this everywhere it appears, without
-changing what the lookups return for ordinary names.
+1. Add `GET /customers/<name>/orders`, returning that customer's orders and their total value.
+2. Add an order `status` field defaulting to `pending`, and add an index on the customer column. Existing `orders.db` files with live data must be migrated in place and continue working.
+3. Add HTTP integration tests that start the server and make real requests, covering the new route and all existing routes.
+4. Replace every order lookup that builds SQL using string formatting with parameterized queries, preventing SQL injection while preserving results for normal customer names.

@@ -1,20 +1,5 @@
-A customer has reported a billing problem. They bought three items at 19.99 each with the SUMMER25
-code and were charged 48.57, but they calculated 48.58 themselves and say we are undercharging by a
-cent on lots of orders. Our accountant confirms the totals are consistently a cent low. Please find
-the cause and fix it, and add a test so it can't come back.
+Fix the rounding bug causing totals to be one cent low. Example: three items at `19.99` with `SUMMER25` currently produce `48.57` instead of `48.58`. Add a regression test. 
 
-Three other changes to the same code.
+Then, move discount codes from hard-coded values to a `discounts.json` file next to the binary. Put the current three codes in that file. If the file is missing, fall back to those same three codes. Stop using `float64` for money arithmetic. Add a third-party Go decimal module to `go.mod` and use it for cart calculations. Do not create a custom decimal type. Keep the `Item` struct field types unchanged; convert values inside the cart.
 
-Ops keep asking us to change discount codes and we currently need a deploy to do it. Load the codes
-from a discounts.json file next to the binary instead of hard-coding them, keeping the current three
-as the file's contents. If the file is missing, use those same three rather than failing.
-
-We can't see anything in production. Add logging so that every total we compute writes one line to
-stderr recording the subtotal, the discount code used (or none), and the final total. Support needs
-to be able to find a customer's order in the logs with grep.
-
-The accountant also says we should not be doing money arithmetic in floating point at all, and that
-we will hit another rounding bug if we keep it. Do not write your own decimal type, and do not keep
-using float64: add a third-party Go module for decimal money — one that goes in go.mod — and do the
-arithmetic with it. Keep the `Item` struct's field types exactly as they are, because the checkout
-service builds those values and we can't change it this sprint, so convert inside the cart.
+Log every computed total to `stderr` on one line, including the subtotal, discount code or `none`, and final total, so orders can be found with `grep`.

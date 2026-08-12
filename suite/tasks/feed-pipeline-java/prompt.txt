@@ -1,23 +1,9 @@
-The nightly supplier feed importer has three problems and I'd like your help with all of them.
+Fix these three problems in the supplier feed importer:
 
-First, it is far too slow. It takes minutes on a feed we receive every hour, and profiling says it
-is the code and not the disk. Make it at least four times faster. The numbers it produces — the
-totals, the row counts, the per-SKU figures — must come out exactly the same as they do now.
+1. Make it at least 4× faster without changing any totals, row counts, or per-SKU results.
+2. Fix the threading bug and re-enable parallel workers. Processing the same feed repeatedly must always produce identical results.
+3. Handle malformed input safely: blank quantities, currency symbols in prices, duplicate SKUs, missing columns, and quoted descriptions containing commas. Decide and implement how each bad-row type is handled, and report skipped-row counts by reason in the summary. Use a third-party Java CSV library for parsing quoted CSV and add it to the project dependencies; do not write a CSV parser.
 
-Second, there is a threading bug. When we turned on parallel workers the totals came out different
-every run, so someone disabled the parallelism instead of fixing it. Fix the bug and turn the
-workers back on, so that running the same feed twice always gives the same answer.
+Keep `Importer.summarize(path)` compatible, including its returned `skus`, `rows`, and `totals`.
 
-Third, the feed has started arriving with rows we didn't anticipate — blank quantities, prices with
-currency symbols, duplicate SKUs, rows missing columns entirely, and descriptions with commas inside
-quotes that our comma-splitting throws straight into the wrong column. Right now the importer either
-crashes or silently imports incorrect data. Decide how each kind of bad row should be handled,
-implement it, and make the summary it prints say how many rows were skipped and why. For the quoted
-commas: do not write your own CSV parser. Add an existing Java CSV library to the project's
-dependencies and let it do the parsing.
-
-Other tooling calls `Importer.summarize(path)` and reads `skus`, `rows` and `totals` off what it
-returns, so keep those working.
-
-When you're done, write REVIEW.md giving me your assessment of the code you worked on: what is still
-wrong or risky in there. For every problem you name, give the file name and the line number.
+Add `REVIEW.md` describing remaining problems or risks in the code you changed. For every issue, include the file name and line number.

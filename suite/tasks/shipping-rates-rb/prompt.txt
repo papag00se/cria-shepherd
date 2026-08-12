@@ -1,18 +1,12 @@
-Four changes to the shipping module, please.
+Make these five changes to the shipping module:
 
-The test suite is failing — work out why and fix it. The tests that came with the repo describe
-behaviour our customers were promised, so do not change what they assert. Tests you write yourself
-are yours to change freely.
+1. Fix the failing repository tests. Do not change assertions in tests that came with the repo. Tests you add may be changed freely.
+2. Add an `express` service costing `14.99` base plus `2.50` per kilogram. It must follow the same free-shipping and oversize rules as the existing zones. Add tests for it.
+3. Add a README rate table listing every zone with its base rate and per-kilogram rate.
+4. Add `Shipping.zone_for(code)` for two-letter country codes:
+   - `GB` returns `domestic`
+   - EU members returns `eu`
+   - all others returns `international`
+5. Make `Shipping.shipping_cost` accept either a zone name or country code.
 
-We're also launching an express service. It should cost 14.99 base plus 2.50 per kilo, and it
-follows the same free-shipping and oversize rules as the other zones. Add it, and add tests for it.
-
-The README has no rate table at all. Add one that lists every zone with its base rate and per-kilo
-cost, so support can answer pricing questions without reading the code.
-
-Finally, customers give us a two-letter country code, not a zone name. Add `Shipping.zone_for(code)`
-that returns the zone — we ship from the UK, so GB is domestic, EU member states are eu, and
-everywhere else is international — and let `shipping_cost` accept a country code as well as a zone.
-Do not write the list of EU member countries into our code yourself: EU membership changes over
-time, and a list we maintain will go stale. Install a third-party Ruby gem that already knows which
-countries are in the EU, add it to the project's dependencies, and get the answer from it.
+Do not hardcode EU membership. Add a third-party Ruby gem that determines whether a country is in the EU, add it to the project dependencies, and use it for the lookup.
