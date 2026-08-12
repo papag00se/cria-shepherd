@@ -15,8 +15,8 @@ own language; that is a real difference, not an overfit.
 
 | # | fix | group | state |
 |---|---|---|---|
-| 1 | off-menu recovered call is eaten silently → emit the refusal | critical | todo |
-| 2 | an empty turn must never satisfy completion | critical | todo |
+| 1 | off-menu recovered call is eaten silently → emit the refusal | critical | **done** |
+| 2 | an empty turn must never satisfy completion | critical | **done** |
 | 3 | foreign project instructions relayed as repo doctrine | critical | todo |
 | 4 | no_tests_found states a repo fact from a cria miss | false-fact | todo |
 | 5 | gate "0 collected" borrows pytest vocabulary | false-fact | todo |

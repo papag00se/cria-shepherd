@@ -4308,7 +4308,14 @@ def reframe_preamble(m: dict) -> dict:
     patchwork of another voice (and parrots). Unwrap the real content: the project instructions
     and just the useful environment fields (cwd/shell/date), dropping the XML and the sandbox
     noise. Only touches a recognized preamble; an unrecognized message is returned untouched, and
-    the raw form is kept if nothing could be extracted (never lose the user's instructions)."""
+    the raw form is kept if nothing could be extracted.
+
+    The instructions half is PROVENANCE-GATED — see :func:`_workspace_instructions`. cria used to
+    re-present whatever the harness sent as "Project instructions (from the repo — follow these)",
+    which is a claim about where the text came from that cria had never checked, and on the
+    six-language battery it relayed another repo's development doctrine into a bare /tmp task. Only
+    instructions cria can find in an instruction file inside the workspace the preamble names are
+    relayed; everything else is dropped. The environment fields are unaffected."""
     if m.get("role") != "user" or not _is_env_context(m):
         return m
     new = _reframe_preamble_text(_msg_text_content(m))
@@ -4337,12 +4344,66 @@ def _tag_body(text: str, name: str) -> str | None:
 _ENV_FIELDS = (("cwd", "cwd"), ("shell", "shell"), ("current_date", "date"), ("timezone", "timezone"))
 
 
+# The files a harness reads project instructions out of. cria does not need to know which one THIS
+# harness used — only whether the text it was handed is present in one belonging to the workspace.
+_INSTRUCTION_FILES = ("AGENTS.md", "AGENT.md", "CLAUDE.md", "GEMINI.md", "CONVENTIONS.md",
+                      ".cursorrules", ".windsurfrules", ".github/copilot-instructions.md")
+
+
+def _squash(s: str) -> str:
+    return " ".join(s.split())
+
+
+def _workspace_instructions(cwd: str, relayed: str) -> str | None:
+    """The part of ``relayed`` that is genuinely THIS workspace's own instruction file, or None.
+
+    A harness concatenates every instruction file it can see — the operator's global one and the
+    repo's — and hands cria the blob. cria re-presents that blob as "Project instructions (from the
+    repo — follow these)", which is a claim about provenance cria never checked.
+
+    Measured on the six-language battery: that clause put THIS repo's development doctrine inside an
+    unrelated /tmp task workspace containing no such file — "Mitigations, fallbacks, and band-aids
+    are strictly prohibited. There is an upstream fix. Find it." nemotron-elastic cited it to justify
+    a destructive rewrite and talked itself past its own caution to do so ("the instruction says we
+    should not make unnecessary changes; but this is necessary"). A rule written for a long-lived
+    repo is the worst possible instruction for a weak model that has just formed a wrong theory.
+
+    So the provenance is CHECKED against the world rather than asserted (#5b): the workspace's own
+    file is read from disk and relayed only when the harness's blob actually contains it. Anything
+    else is another repo's authority and is dropped — silence over noise (#3), and the subtractive
+    direction (#1). The workspace is the ``cwd`` the preamble itself carries, so this needs no
+    plumbing and works for any harness that states one."""
+    if not cwd:
+        return None
+    try:
+        base = Path(cwd)
+        if not base.is_dir():
+            return None
+    except OSError:
+        return None
+    blob = _squash(relayed)
+    for name in _INSTRUCTION_FILES:
+        try:
+            f = base / name
+            if not f.is_file():
+                continue
+            own = f.read_text(errors="replace").strip()
+        except OSError:
+            continue
+        if own and _squash(own) in blob:
+            return own
+    return None
+
+
 def _reframe_preamble_text(text: str) -> str | None:
     instr = _tag_body(text, "INSTRUCTIONS") or _tag_body(text, "user_instructions")
     env = _tag_body(text, "environment_context")
+    cwd = _tag_body(env or "", "cwd") or ""
     parts: list[str] = []
     if instr and instr.strip():
-        parts.append(prompts.render("preamble_instructions", instructions=instr.replace("\r", "").strip()))
+        own = _workspace_instructions(cwd.strip(), instr)
+        if own:
+            parts.append(prompts.render("preamble_instructions", instructions=own.replace("\r", "").strip()))
     if env:
         fields = [(label, v.strip()) for tag, label in _ENV_FIELDS
                   if (v := _tag_body(env, tag)) and v.strip()]

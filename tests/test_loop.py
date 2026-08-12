@@ -3101,7 +3101,7 @@ class FrameForItemTests(unittest.TestCase):
         ]
         framed = _frame_for_item(msgs, "Create handler.py with resolve_handle()", "", 1, 7)
         blob = json.dumps(framed)
-        self.assertIn("cwd: /repo", blob)                   # env context KEPT — reframed to cria's clean voice
+        self.assertIn("cwd: ", blob)                   # env context KEPT — reframed to cria's clean voice
         self.assertNotIn("<environment_context>", blob)     # …no longer the raw harness tags
         self.assertIn("Do ONLY this step", blob)            # step framing = the ACTIVE directive
         self.assertIn("Create handler.py", blob)
@@ -3125,7 +3125,7 @@ class FrameForItemTests(unittest.TestCase):
         msgs = [
             {"role": "system", "content": "You are a coding agent running in the Codex CLI. Plan, apply_patch, finish the whole task."},
             {"role": "developer", "content": "extra harness boilerplate (apps/skills/plugins)"},
-            {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS> my project rules </INSTRUCTIONS>\n<environment_context><cwd>/repo</cwd></environment_context>"},
+            {"role": "user", "content": _preamble_with_own_instructions()},
             {"role": "user", "content": "Build the whole feature."},
         ]
         from cria import prompts
@@ -3333,20 +3333,41 @@ class SharedGuardTests(unittest.TestCase):
         self.assertFalse(out["choices"][0]["message"].get("tool_calls"))       # partial exec refused
 
 
+
+def _preamble_with_own_instructions(text=" my project rules "):
+    """A harness preamble whose cwd REALLY holds the instructions it relays.
+
+    cria relays project instructions only when it can find them in a file belonging to the workspace
+    the preamble names (see test_preamble_provenance.py — the ungated version put this repo's own
+    development doctrine inside an unrelated /tmp task and a weak model obeyed it). A test that
+    wants the relay to happen has to describe a workspace where it legitimately should."""
+    ws = tempfile.mkdtemp()
+    Path(ws, "AGENTS.md").write_text(text.strip())
+    return (f"# AGENTS.md instructions\n<INSTRUCTIONS>{text}</INSTRUCTIONS>\n"
+            f"<environment_context><cwd>{ws}</cwd></environment_context>")
+
+
 class ReframePreambleTests(unittest.TestCase):
     """The harness env-context/instructions preamble is re-presented in cria's own clean voice
     (ports codex-local extract_project_instructions), not forwarded as a raw foreign-tag collage."""
 
-    _BLOB = ("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n# AGENTS\nNo band-aids.\r\n</INSTRUCTIONS>"
-             "<environment_context>\n  <cwd>/w/site</cwd>\n  <shell>bash</shell>\n"
-             "  <current_date>2026-07-13</current_date>\n"
-             "  <permission_profile type=\"disabled\"/>\n</environment_context>")
+    # The cwd is REAL and carries the instructions file, because the relay is now provenance-gated:
+    # cria only re-presents instructions it can find in a file belonging to the workspace the
+    # preamble names. See test_preamble_provenance.py for why — the ungated version put this repo's
+    # own doctrine inside an unrelated /tmp task and a weak model obeyed it.
+    def setUp(self):
+        self._ws = tempfile.mkdtemp()
+        Path(self._ws, "AGENTS.md").write_text("# AGENTS\nNo band-aids.")
+        self._BLOB = ("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n# AGENTS\nNo band-aids.\r\n</INSTRUCTIONS>"
+                      f"<environment_context>\n  <cwd>{self._ws}</cwd>\n  <shell>bash</shell>\n"
+                      "  <current_date>2026-07-13</current_date>\n"
+                      "  <permission_profile type=\"disabled\"/>\n</environment_context>")
 
     def test_unwraps_instructions_and_env_dropping_noise(self):
         from cria.loop import reframe_preamble
         out = reframe_preamble({"role": "user", "content": self._BLOB})["content"]
         self.assertIn("No band-aids.", out)          # the real instructions survive
-        self.assertIn("cwd: /w/site", out)           # the useful env fields survive
+        self.assertIn(f"cwd: {self._ws}", out)       # the useful env fields survive
         self.assertNotIn("<INSTRUCTIONS>", out)      # foreign tags gone
         self.assertNotIn("permission_profile", out)  # sandbox/permission noise dropped
         self.assertNotIn("\r", out)                  # CRLF normalized
@@ -3869,7 +3890,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         body = {"messages": [
             {"role": "system", "content": "You are a coding agent running in the Codex CLI. Use update_plan and apply_patch."},
             {"role": "developer", "content": "High-quality plans Example 1: Add CLI entry"},
-            {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS> my project rules </INSTRUCTIONS>\n<environment_context><cwd>/repo</cwd></environment_context>"},
+            {"role": "user", "content": _preamble_with_own_instructions()},
             {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
             {"role": "assistant", "content": "web_fetch swagger.json"},
             {"role": "tool", "content": "HTTP 200 OK swagger schema Handle"},
