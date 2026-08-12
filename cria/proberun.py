@@ -223,7 +223,40 @@ def select_completion_probes(root: str) -> list[ProbeCandidate]:
                  if c.kind is probediscovery.ProbeKind.Test), None)
     if test is not None:
         _add(test)  # the test probe is never squeezed out by the cap
-    return selected
+    return [c for c in selected if program_is_installed(c)]
+
+
+def _head_program(command) -> str:
+    """The program a candidate would actually execute — the first token, ignoring env assignments."""
+    toks = list(command) if isinstance(command, (list, tuple)) else str(command or "").split()
+    for tok in toks:
+        tok = str(tok)
+        if "=" in tok and not tok.startswith(("-", "/", ".")) and tok.split("=", 1)[0].isidentifier():
+            continue        # FOO=bar prefix, not the program
+        return tok
+    return ""
+
+
+def program_is_installed(candidate) -> bool:
+    """False only when cria is SURE the candidate's program is absent from this machine.
+
+    cria composed `bundle exec rubocop` and `bundle exec rspec` for every ruby workspace on a box
+    with no bundler installed — two of five ruby probes that could never launch, every gate, burning
+    a slot and a timeout each. A launch failure already abstains rather than misreporting, so this
+    costs nothing in correctness; it costs the gate its budget and the operator a confusing
+    "could not run" on a check that was never available. cria knows the answer for free (#5b, #10).
+
+    UNSURE MEANS KEEP. A tool inside the project (`./gradlew`, `node_modules/.bin/jest`) is checked
+    as a file rather than on PATH, and anything this cannot resolve is kept — dropping a real probe
+    is far worse than running one that abstains, so the check only ever removes a certainty."""
+    import shutil
+    prog = _head_program(getattr(candidate, "command", candidate))
+    if not prog:
+        return True
+    if "/" in prog or prog.startswith("."):
+        base = os.path.join(getattr(candidate, "working_dir", "") or "", prog)
+        return os.access(base, os.X_OK) or os.access(prog, os.X_OK)
+    return shutil.which(prog) is not None
 
 
 # ---------------------------------------------------------------------------
