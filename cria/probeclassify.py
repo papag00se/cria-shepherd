@@ -776,6 +776,15 @@ def match_seed(base: str, argv: list[str]) -> ProbeDetection | None:
     elif base == "xcodebuild":
         if has("test"):  # ANY token == "test", not just sub
             seed = (ProbeKind.TEST, "xcodebuild", 82, 55)
+    elif base == "node":
+        # Node's OWN bundled test runner, invoked by FLAG rather than subcommand — the one shape the
+        # sub-seed table below cannot express. Omitting it meant `"test": "node --test tests/*.js"`
+        # in package.json classified UNKNOWN, and build_js drops a script it cannot classify, so a
+        # project that chose the most conservative runner available got no test probe at all.
+        # Measured on the six-language battery: node is one of the two languages where the gate
+        # never executed a single test.
+        if has("--test"):
+            seed = (ProbeKind.TEST, "node", 90, 85)
     elif base in _SUB_TEST_SEEDS:
         if sub == "test":
             seed = _SUB_TEST_SEEDS[base]

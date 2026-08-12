@@ -542,7 +542,19 @@ _TALLIES = (
     ("dotnet", re.compile(r"(?im)^.*?Failed:\s*(\d+),\s*Passed:\s*(\d+)"), _TALLY_FAILED_PASSED, True),
     # mocha · `11 passing` / `1 failing`, on separate lines
     ("mocha", re.compile(r"(?im)^\s*(\d+) passing\b"), None, False),
+    # minitest · `9 runs, 9 assertions, 0 failures, 0 errors, 0 skips`
+    ("minitest", re.compile(r"(?im)^\s*(\d+) runs?,\s*\d+ assertions?,\s*(\d+) failures?"),
+     _TALLY_TOTAL_FAILED, False),
+    # node --test (TAP) · `# pass 13` / `# fail 0`, on separate lines
+    ("node", re.compile(r"(?im)^\s*#\s*pass\s+(\d+)\b"), None, False),
 )
+
+# node's built-in runner prints TAP: the counts are on separate `# pass` / `# fail` lines, the same
+# split shape mocha has. Without a row here a green node suite was invisible to runner_tally, so
+# _offline_fact fell to its weaker sentence and cria could not say the tests had actually run —
+# measured on the six-language battery, where node is one of the two languages whose passing suites
+# cria could never count.
+_NODE_FAIL = re.compile(r"(?im)^\s*#\s*fail\s+(\d+)\b")
 
 # go test -v prints no summary count — the per-test lines ARE the tally.
 _GO_PASS = re.compile(r"(?m)^\s*--- PASS: ")
@@ -554,6 +566,11 @@ _GO_FAIL = re.compile(r"(?m)^\s*--- FAIL: ")
 # established. Same rule for every runner: a number cria cannot read as TESTS is not a tally.
 _MOCHA_FAILING = re.compile(r"(?im)^\s*(\d+) failing\b")
 _UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
+
+# For the rows whose reading is None: their pass count and their fail count are printed on separate
+# lines, so the row's own pattern reads the passes and this one reads the failures. Keyed by row
+# name so a second split-shape runner cannot silently borrow the first one's failure pattern.
+_SPLIT_FAIL_PATTERNS = {"mocha": _MOCHA_FAILING, "node": _NODE_FAIL}
 
 
 def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
@@ -589,9 +606,10 @@ def runner_tally(text: str) -> str:
         matches = pat.findall(body)
         if not matches:
             continue
-        if kind is None:                                    # mocha: two separate lines
+        if kind is None:            # a runner whose pass and fail counts are on SEPARATE lines
             passed = sum(int(x) for x in matches)
-            failed = sum(int(x) for x in _MOCHA_FAILING.findall(body))
+            companion = _SPLIT_FAIL_PATTERNS.get(_name)
+            failed = sum(int(x) for x in companion.findall(body)) if companion else 0
             return f"{failed}f/{passed}p"
         rows = [_tally_counts(kind, m if isinstance(m, tuple) else (m,)) for m in matches]
         rows = [r for r in rows if r is not None]
