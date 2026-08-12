@@ -1089,7 +1089,14 @@ TEST_CONVENTIONS: tuple = (
                    r"^\s*(?:RSpec\.describe\b|class\s+\w+\s*<\s*Minitest::Test\b|def\s+test_)",
                    (".rspec", "Rakefile", "rakefile", "Rakefile.rb"),
                    "named *_spec.rb (rspec), or test_*.rb / *_test.rb (minitest)",
-                   "rspec or minitest"),
+                   "rspec or minitest",
+                   # Ruby's zero-config floor, for the same reason Python has one: `rates.rb` plus
+                   # `test/test_rates.rb` is a complete, testable project with no Gemfile and no
+                   # Rakefile, and ranked ecosystem discovery sees nothing in it. minitest/autorun
+                   # runs everything required into the process, so requiring the test files IS the
+                   # run.
+                   ("ruby", "-Ilib", "-Itest", "-e",
+                    'Dir["test/**/test_*.rb"].each { |f| require File.expand_path(f) }')),
     TestConvention(("php",), ("*Test.php",), (), r"extends\s+TestCase\b",
                    ("phpunit.xml", "phpunit.xml.dist"),
                    "named *Test.php", "phpunit"),
@@ -1224,7 +1231,17 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
     language's test files but no manifest to trigger ecosystem discovery. Without it a bare "script +
     test file" project runs syntax + lint but NEVER its tests — a VACUOUS-GREEN gate that reports "no
     error-class problems" while the tests are broken, and a satisfaction judge that can complete on them.
-    See ``_TEST_FLOORS`` for why the table is (currently) Python-only and how other languages are covered."""
+    A language earns a floor when a bare "source file + test file" project is a real shape for it —
+    Python and Ruby need no manifest at all. Go, Rust, JS and the JVM cannot build without go.mod /
+    Cargo.toml / package.json / pom.xml, so their manifest always triggers ranked discovery, which
+    supplies the real test command.
+
+    THAT PREMISE IS LOAD-BEARING AND MUST BE RE-CHECKED WHEN THE LAYERS UNDER IT CHANGE. It held for
+    Go and Rust and did not hold for Ruby or Node, which are exactly the two languages the
+    six-language battery found running zero tests: Ruby had no ecosystem at all without a Gemfile,
+    and Node's package.json test script was discarded whenever the classifier did not recognise its
+    runner. Both are fixed where they broke — Rakefile detection and the `node --test` seed — and
+    Ruby has a floor here as well, because it is the other language that needs no manifest."""
     root = Path(root)
     out: list[ProbeCandidate] = []
     for conv in TEST_CONVENTIONS:

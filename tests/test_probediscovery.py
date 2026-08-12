@@ -298,12 +298,24 @@ class TestConventionTableTests(unittest.TestCase):
             Path(ws, "FooTest.java").write_text("class FooTest {\n  @Test\n  void a(){}\n}\n")
             self.assertEqual(undiscoverable_tests(ws), [])
 
-    def test_only_python_carries_a_zero_config_floor_runner(self):
-        # You cannot have a Go/Rust/JS project without go.mod/Cargo.toml/package.json, so those always
-        # trigger ranked ecosystem discovery, which adds their real test command. Python needs no
-        # manifest at all, and that is the hole the floor exists to close.
+    def test_a_floor_goes_to_every_language_that_needs_no_manifest(self):
+        # You cannot have a Go/Rust/JS/JVM project without go.mod/Cargo.toml/package.json/pom.xml, so
+        # those always trigger ranked ecosystem discovery, which adds their real test command. The
+        # languages that need NO manifest are the hole the floor exists to close — Python, and Ruby,
+        # where `rates.rb` plus `test/test_rates.rb` is a complete testable project. Ruby was missing
+        # for the whole of the six-language battery, and is one of the two languages the walkers
+        # found running zero tests.
         from cria.probediscovery import TEST_CONVENTIONS
-        self.assertEqual([c.runner for c in TEST_CONVENTIONS if c.floor], ["pytest"])
+        self.assertEqual(sorted(c.runner for c in TEST_CONVENTIONS if c.floor),
+                         ["pytest", "rspec or minitest"])
+
+    def test_the_manifest_languages_still_have_no_floor(self):
+        """Adding one is how the floor turns into a second, worse discovery path."""
+        from cria.probediscovery import TEST_CONVENTIONS
+        for conv in TEST_CONVENTIONS:
+            if conv.runner in ("go test", "cargo test", "mvn test", "jest/vitest", "phpunit"):
+                with self.subTest(runner=conv.runner):
+                    self.assertFalse(conv.floor)
 
     def test_matching_is_what_the_table_says(self):
         from cria.probediscovery import TEST_CONVENTIONS, _has_discoverable_test

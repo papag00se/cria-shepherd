@@ -92,3 +92,45 @@ class ARakefileIsAProjectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ABareRubyProjectStillRunsItsTestsTests(unittest.TestCase):
+    """The TEST FLOOR existed for exactly one language.
+
+    Its premise, stated in the code, is that every other language arrives with a manifest that
+    triggers ranked discovery. That holds for Go, Rust, JS and the JVM — they cannot build without
+    one. It did NOT hold for Ruby: `rates.rb` plus `test/test_rates.rb` is a complete, testable
+    project with no Gemfile and no Rakefile, and discovery saw nothing in it. Without a floor the
+    gate ran `ruby -c` and reported "no error-class problems" over tests it never executed —
+    the vacuous green the floor exists to prevent.
+    """
+
+    def _bare(self):
+        ws = Path(tempfile.mkdtemp())
+        (ws / "lib").mkdir()
+        (ws / "test").mkdir()
+        (ws / "lib" / "rates.rb").write_text("module Shipping\nend\n")
+        (ws / "test" / "test_rates.rb").write_text(
+            'require "minitest/autorun"\nclass TestRates < Minitest::Test\n'
+            "  def test_a\n    assert true\n  end\nend\n")
+        return ws
+
+    def test_a_manifestless_ruby_project_gets_a_test_probe(self):
+        cmds = [" ".join(c.command) for c in proberun.select_completion_probes(self._bare())]
+        self.assertTrue(any(c.startswith("ruby -Ilib -Itest -e") for c in cmds),
+                        "a testable project ran no tests and the gate would have read clean")
+
+    def test_the_floor_actually_runs_the_suite(self):
+        import subprocess
+        ws = self._bare()
+        probe = next(c for c in proberun.select_completion_probes(ws)
+                     if " ".join(c.command).startswith("ruby -Ilib"))
+        done = subprocess.run(probe.command, cwd=ws, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("1 runs", done.stdout)
+
+    def test_a_ruby_project_with_no_tests_gets_no_test_probe(self):
+        ws = Path(tempfile.mkdtemp())
+        (ws / "lib.rb").write_text("module X\nend\n")
+        cmds = [" ".join(c.command) for c in proberun.select_completion_probes(ws)]
+        self.assertFalse([c for c in cmds if c.startswith("ruby -Ilib")])
