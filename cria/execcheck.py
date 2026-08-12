@@ -35,7 +35,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
-from . import prompts
+from . import probediscovery, prompts
 
 # How long a delivered program gets to show it works. Long enough for a network round trip, short
 # enough that a server that never returns does not hold the gate open.
@@ -522,6 +522,20 @@ def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[st
         files=runnable_listing(files) or "(nothing in the workspace is a program)")
 
 
+# A BUILD MANIFEST IS NOT A DOCUMENT. The extension blocklist below strips `.xml`, `.toml`, `.json`
+# and `.mod` — which is every file that says WHICH build tool a project uses. The same prompt then
+# offers the judge `cargo run`, `go run .`, `mvn exec:java`, `npm start`, `rake` and asks it to pick
+# one, having removed the only evidence for the choice. Measured on the six-language battery: gemma4's
+# Java run showed the judge one line, `Importer.java`, and it answered "There is no pom.xml or
+# build.gradle listed in the provided file list? … if there's only a .java file and no build system
+# visible" — so no verification run happened at all. The docstring below records the same loss on
+# rust, where Cargo.toml and Cargo.lock were stripped.
+#
+# They are kept, in their own labelled section, so the judge can name the run target without ever
+# mistaking a manifest for the program (which is the case the blocklist exists for).
+# probediscovery.PRIMARY_MANIFESTS is the ONE owner of "this file makes a directory a project" —
+# reused here rather than copied, so a new ecosystem is added in one place.
+
 # cria's OWN scratch dir for spilled reference material (webfetch.SPILL_DIR). Listing it as the
 # coder's workspace told the probe that cria's 96 KB fetched spec was the deliverable.
 _SPILL_MARK = "tmp/read-only/"
@@ -564,6 +578,7 @@ def runnable_listing(files: str) -> str:
     complete" to conclusions about a project whose manifest cria had hidden from it. A filtered list
     may never say complete (#5b)."""
     out, kept_any = [], False
+    manifests: list[str] = []
     for line in (files or "").splitlines():
         entry = _INVENTORY_ENTRY.match(line)
         if not entry:
@@ -572,10 +587,18 @@ def runnable_listing(files: str) -> str:
             out.append(line)          # a header or footer — carried only if an entry survives
             continue
         path = entry.group(1)
-        if _SPILL_MARK in path or path.lower().endswith(_NOT_A_PROGRAM):
+        if _SPILL_MARK in path:
+            continue
+        if os.path.basename(path) in probediscovery.PRIMARY_MANIFESTS:
+            manifests.append(line)    # a build file: not a program, but it NAMES the run target
+            continue
+        if path.lower().endswith(_NOT_A_PROGRAM):
             continue
         out.append(line)
         kept_any = True
+    if kept_any and manifests:
+        out.append(prompts.load("exec_intent_build_files"))
+        out.extend(manifests)
     return "\n".join(out) if kept_any else ""
 
 
