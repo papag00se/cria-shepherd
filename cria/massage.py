@@ -1171,6 +1171,25 @@ def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dic
         if not all(_menu_admits(n, a, schemas) for n, a in parsed):
             _log(rlog, "massage.reasoning_call_off_menu", dialect=dialect,
                  calls=[n for n, _a in parsed])
+            # REFUSING TO FORWARD IS RIGHT; SAYING NOTHING IS NOT. The turn now leaves here exactly
+            # as it arrived — empty content, no tool_calls — and the model reads that as its action
+            # having produced no result. It repeats, or reasons on from memory, while downstream
+            # cria reads the same empty turn as the coder FINISHING and runs the gate and the
+            # satisfaction judge against a workspace where nothing happened.
+            #
+            # Measured across the six-language battery: nemotron-elastic's "quits after two calls"
+            # signature is this. Run 1786436075 call 0006 is the FIRST action of the run — a
+            # complete `str_replace_editor` view call in the reasoning channel — swallowed, and the
+            # completion machinery engaged at calls 7-12 after two list_dirs. Calls 0167, 0178 and
+            # 0180 are the same swallow again.
+            #
+            # cria owns the menu, so "that tool does not exist and here is what does" is a fact it
+            # can state (#5b, the honest direction). It cannot be said here — this function only
+            # reads the model's reply — so the fact rides out as a cria-internal hint and the loop
+            # says it, the `cria_output_reserve` pattern (#24: carry the intent, consume it where it
+            # belongs).
+            completion[LOST_CALL_KEY] = {"tried": sorted({n for n, _a in parsed}),
+                                         "menu": sorted(schemas)}
             continue
         msg["tool_calls"] = [_toolcall(n, a) for n, a in parsed]
         if choice.get("finish_reason") in (None, "stop"):
@@ -1857,6 +1876,9 @@ _USER_SIDE = ("user", "tool")
 # `merge_consecutive_turns` and consumed + stripped by `Upstream._prep`. Same contract as
 # `cria_output_reserve`: a hint cria carries on the body, never a wire field.
 MERGE_TURNS_KEY = "cria_merge_turns"
+# A turn whose only action named a tool that does not exist. cria-internal, consumed and stripped by
+# the loop, never on the wire. See the refusal site in recover_reasoning_tool_calls.
+LOST_CALL_KEY = "cria_lost_call"
 
 
 def merge_for_alternation(messages: list) -> list:

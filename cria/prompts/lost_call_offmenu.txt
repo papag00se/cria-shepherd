@@ -1,0 +1,1 @@
+Your last turn ended with a call to {{TRIED}}, which is not one of your tools, so nothing ran and no result came back. The tools you have this turn are: {{MENU}}. Do the same thing again with one of those.

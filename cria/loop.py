@@ -2397,6 +2397,26 @@ class Loop:
             return coder  # coder is acting → forward; the harness runs it, then loops back here
 
         # coder produced no tool call → it thinks the step is done.
+        # …unless cria ATE the call. massage recovers a tool call the model left in its reasoning
+        # channel, and refuses the span when a name is not on the menu — correctly, since a call to
+        # a tool that does not exist cannot be forwarded. What it used to do next was nothing: the
+        # turn went back empty, the model read its own action as having produced no result, and this
+        # branch read the same empty turn as a completion claim and spent a gate and a judge on a
+        # workspace where nothing had happened.
+        #
+        # A lost turn is not a finish. cria owns the menu, so naming the tool that does not exist —
+        # and the ones that do — is a fact it can state (#5b). Same shape as unexecuted_write below:
+        # refusing to draw a conclusion the evidence contradicts, not a new assist.
+        lost = coder.pop(massage.LOST_CALL_KEY, None)
+        if lost and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES:
+            sess.unexecuted_nudges += 1
+            rlog.emit("loop.lost_call_offmenu", step=idx, tried=lost.get("tried"),
+                      attempt=sess.unexecuted_nudges)
+            sess.nudge_reply = ""
+            return self._renudge(sess, key, body, denial.mark(prompts.render(
+                "lost_call_offmenu",
+                tried=", ".join(f"`{n}`" for n in lost.get("tried") or ["a tool"]),
+                menu=", ".join(lost.get("menu") or []) or "(none)")), rlog)
         # LEG 0 (ported from codex-local's completion gate): a "done" with ZERO tool calls this
         # step did nothing — nudge it to act before spending probe round-trips. (codex-local's
         # leg counts FILES MODIFIED in the active turn; cria's steps legitimately include
