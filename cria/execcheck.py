@@ -527,6 +527,13 @@ def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[st
 _SPILL_MARK = "tmp/read-only/"
 # Extensions that are DATA, never a program to run. Not exhaustive by design — the point is only to
 # stop the probe being handed a document and told it must name a file from the list.
+#
+# A BLOCKLIST OF DATA EXTENSIONS, with no counterpart for build OUTPUT. On rust every .d, .o, .rmeta,
+# .rlib and extensionless fingerprint under target/ survived while Cargo.toml and README.md were
+# deleted; on java the same for target/classes. The directory half of that is now fixed at the
+# source — the inventory this filters no longer contains generated directories at all
+# (groundtruth.BUILD_ARTIFACT_DIRS) — so this list is left doing the one job it is shaped for:
+# removing DOCUMENTS from a list the probe is told to pick a program from.
 _NOT_A_PROGRAM = (".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".md", ".txt", ".csv", ".lock",
                   ".log", ".xml", ".html", ".rst")
 

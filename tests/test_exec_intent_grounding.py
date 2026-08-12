@@ -22,7 +22,7 @@ class TheProbeIsGivenTheWorkspaceTests(unittest.TestCase):
 
     def test_the_prompt_forbids_naming_a_file_that_is_not_listed(self):
         _, user = execcheck.intent_prompt("t", files="  a.py (10 B)")
-        self.assertIn("never a file that is not on it", user)
+        self.assertIn("Never a file that is not on the list", user)
 
     def test_an_unreadable_workspace_says_so_rather_than_leaving_a_hole(self):
         _, user = execcheck.intent_prompt("t")
@@ -67,7 +67,7 @@ class CriasOwnSpillIsNotTheDeliverableTests(unittest.TestCase):
 
     def test_the_naming_rule_still_binds_when_there_are_programs(self):
         _, user = execcheck.intent_prompt("t", files="  resolve_handle.py (4389 B)")
-        self.assertIn("never a file that is not on it", user)
+        self.assertIn("Never a file that is not on the list", user)
 
 
 class AVerdictThatContradictsItselfIsNotAVerdictTests(unittest.TestCase):
@@ -101,3 +101,24 @@ class AVerdictThatContradictsItselfIsNotAVerdictTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ABuildToolsRunTargetIsAProgramTests(unittest.TestCase):
+    """The rule said the command "must name a file from the list". In cargo, maven, npm and rake
+    projects the thing that runs is a TARGET, not a path — and `_NOT_A_PROGRAM` had already deleted
+    Cargo.toml from the list before the prompt saw it, so the only legitimate answer was both absent
+    and forbidden. Measured on the six-language battery at rust 0016 and node 0026."""
+
+    def test_the_prompt_admits_a_runner_target(self):
+        _, user = execcheck.intent_prompt("t", files="  src/main.rs (900 B)")
+        self.assertIn("cargo run", user)
+        self.assertIn("run target", user)
+
+    def test_it_still_forbids_inventing_a_path(self):
+        _, user = execcheck.intent_prompt("t", files="  src/main.rs (900 B)")
+        self.assertIn("Never a file that is not on the list", user)
+
+    def test_it_still_forbids_running_a_data_file(self):
+        """The original defect: cria listed its own spilled openapi.json and the probe named it."""
+        _, user = execcheck.intent_prompt("t", files="  src/main.rs (900 B)")
+        self.assertIn("never a data file as though it were a program", user)
