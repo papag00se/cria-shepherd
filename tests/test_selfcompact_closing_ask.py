@@ -101,7 +101,17 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
                 self.assertNotIn("selfcompact.serialize(probegate.clean_gate_results(", src,
                                  "compose via selfcompact.compaction_request, not by hand")
         # the composer itself is the one legitimate site
-        self.assertIn("serialize(probegate.clean_gate_results(messages))",
+        self.assertIn("probegate.clean_gate_results(messages)",
+                      inspect.getsource(selfcompact.compaction_request))
+
+    def test_the_summarizer_input_stubs_superseded_write_bodies(self):
+        """compact() already stubs the transcript it EMITS; the summarizer's INPUT did not, so the
+        model writing the briefing read every old version of every file and put them in it — and the
+        briefing is prompt-leading content in the next turn. Measured on nemotron orders-api-py
+        0049, where the prompt opens with a full superseded orders/db.py body and the model then
+        described two different versions as "current"."""
+        from cria import selfcompact
+        self.assertIn("stub_old_write_args",
                       inspect.getsource(selfcompact.compaction_request))
 
     def test_the_plan_off_fold_goes_through_it(self):

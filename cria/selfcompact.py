@@ -234,7 +234,17 @@ def compaction_request(messages: list[dict]) -> str:
 
     Fixing the sibling by copying the two lines would have left a third place to forget. Both callers
     now compose the request here."""
-    return (serialize(probegate.clean_gate_results(messages))
+    # SUPERSEDED WRITE BODIES ARE STUBBED HERE TOO. `compact()` already does this to the transcript
+    # it EMITS (see the call beside the files list), but the summarizer's INPUT did not — so the
+    # model writing the briefing read every old version of every file and put them in it, and the
+    # briefing is prompt-LEADING content in the next turn. Measured on the six-language battery,
+    # nemotron orders-api-py 0049: the prompt opens with a compacted bullet carrying a full
+    # superseded orders/db.py body, and three sentences later the model describes two different
+    # versions of the file as "current".
+    #
+    # One rule, one owner: exactly one verbatim copy of a file region survives, and it is the
+    # newest. The bytes of the older ones are on disk, which is the only current version.
+    return (serialize(stub_old_write_args(probegate.clean_gate_results(messages)))
             + "\n\n" + prompts.load("compact_closing_ask"))
 
 
