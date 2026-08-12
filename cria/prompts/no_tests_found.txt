@@ -1,1 +1,1 @@
-No tests ran — the checks above cover syntax and lint only. {{FINDINGS}} If the task calls for tests, that is not done yet.
+The checks above cover syntax and lint only — no test command was composed, so nothing here says whether this project's tests pass. {{FINDINGS}}

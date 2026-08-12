@@ -574,7 +574,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             plan = probegate.plan_gate(ws)
             out = probegate.clean_gate_output(self.CLEAN, plan)
         self.assertIn("no error-class problems", out)      # the original fact is unchanged...
-        self.assertIn("No tests ran", out)            # ...and no longer half a sentence
+        self.assertIn("no test command was composed", out)            # ...and no longer half a sentence
         self.assertIn("test_*.py or *_test.py", out)       # the convention cria SEARCHED by
         self.assertNotIn("required", out)                  # cria cannot know whether this task wants tests
 
@@ -592,14 +592,14 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n#[cfg(test)]\nmod t {\n #[test]\n fn x(){}\n}\n",
                                   "Cargo.toml": "[package]\nname='x'\n"})
-            self.assertNotIn("No tests ran", probegate.clean_gate_output(self.CLEAN,
+            self.assertNotIn("no test command was composed", probegate.clean_gate_output(self.CLEAN,
                                                                              probegate.plan_gate(ws)))
 
     def test_a_decoration_language_with_no_tests_is_told_the_decoration(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertIn("No tests ran", out)
+        self.assertIn("no test command was composed", out)
         self.assertIn("#[test]", out)          # the DECORATION, not a filename
 
     def test_stranded_test_code_is_named_in_the_gate(self):
@@ -617,7 +617,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"main.go": "package main\n", "go.mod": "module x\ngo 1.21\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertIn("No tests ran", out)
+        self.assertIn("no test command was composed", out)
         self.assertIn("*_test.go", out)
 
     def test_a_venv_full_of_test_files_does_not_mask_a_testless_project(self):
@@ -627,7 +627,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"resolve.py": "x = 1\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_main.py": "def test_x(): pass\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_cfg.py": "def test_y(): pass\n"})
-            self.assertIn("No tests ran", probegate.clean_gate_output(self.CLEAN,
+            self.assertIn("no test command was composed", probegate.clean_gate_output(self.CLEAN,
                                                                           probegate.plan_gate(ws)))
 
     def test_findings_are_never_buried_under_the_note(self):
@@ -820,3 +820,24 @@ class GateRepeatCollapseIgnoresPerRunNoiseTests(unittest.TestCase):
         self.assertEqual(sum(probegate.CHECKS_REPEAT_NOTE[:40] in m["content"] for m in out), 0)
 
 
+
+
+class TheNoteStatesCriasCoverageNotAVerdictTests(unittest.TestCase):
+    """The clean-gate note used to end "If the task calls for tests, that is not done yet."
+
+    That is a verdict about the task, delivered in cria's own voice, from a discovery MISS. cria
+    cannot know whether a task wants tests, and on the six-language battery the same sentence was
+    emitted 49 times per run over a Ruby suite that was green — the miss was cria's convention table,
+    not the repo's tests. A discovery miss is a gap in cria's coverage and must be reported as one
+    (#5b, and #8: state the fact, let the judge rule)."""
+
+    def test_it_reports_criA_own_coverage(self):
+        from cria import prompts
+        note = prompts.render("no_tests_found", findings="")
+        self.assertIn("no test command was composed", note)
+
+    def test_it_does_not_rule_on_the_task(self):
+        from cria import prompts
+        note = prompts.load("no_tests_found").lower()
+        self.assertNotIn("not done yet", note)
+        self.assertNotIn("if the task", note)

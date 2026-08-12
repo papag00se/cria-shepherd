@@ -337,7 +337,12 @@ def detect_ecosystems(p: ProjectDir) -> list[Ecosystem]:
         v.append(Ecosystem.DotNet)
     if p.has("composer.json"):
         v.append(Ecosystem.Php)
-    if p.has("Gemfile"):
+    # A Rakefile is a Ruby project too. Gemfile-only detection meant a Rakefile-driven tree —
+    # minitest's standard layout, and the shape the battery's Ruby task ships — had NO ecosystem at
+    # all, so no lint and no test probe was ever attempted and the gate was `ruby -c` and nothing
+    # else. The module comment below records that Rakefile is "recorded as evidence but no builder
+    # consumes them"; that was true and it was a hole with consequences, not a design choice.
+    if p.has("Gemfile") or p.has("Rakefile") or p.has("rakefile"):
         v.append(Ecosystem.Ruby)
     if p.has("mix.exs"):
         v.append(Ecosystem.Elixir)
@@ -756,6 +761,13 @@ def build_php(p: ProjectDir, out: list[ProbeCandidate]) -> None:
                         ProbeCost.Moderate, "phpunit if installed (composer project)"))
 
 
+# A Rakefile's own test task. Read, not invented: FLAG-3 forbids inventing make/just/task probes and
+# is right to — but a target the project DECLARES is the project telling cria how it is tested, which
+# is the same class of fact as a package.json script. Gated on the declaration actually being there.
+_RAKE_TEST_TASK = re.compile(r"^\s*(?:Rake::TestTask\.new|task\s+:test\b|task\s+default:\s*:?test)",
+                             re.M)
+
+
 def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     # Unconditional once the ecosystem is detected — no Gemfile-content check.
     d = p.dir
@@ -763,6 +775,15 @@ def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
                     ProbeCost.Cheap, "rubocop if in Gemfile"))
     out.append(cand(ProbeKind.Test, ["bundle", "exec", "rspec"], d, 70, 88,
                     ProbeCost.Moderate, "rspec if in Gemfile"))
+    for name in ("Rakefile", "rakefile"):
+        try:
+            body = (Path(d) / name).read_text(errors="replace")
+        except OSError:
+            continue
+        if _RAKE_TEST_TASK.search(body):
+            out.append(cand(ProbeKind.Test, ["rake", "test"], d, 88, 90,
+                            ProbeCost.Moderate, f"test task declared in {name}"))
+        break
 
 
 def build_elixir(p: ProjectDir, out: list[ProbeCandidate]) -> None:
@@ -1003,8 +1024,18 @@ TEST_CONVENTIONS: tuple = (
                    ("jest.config.js", "jest.config.ts", "jest.config.mjs", "jest.config.cjs",
                     "vitest.config.js", "vitest.config.ts"),
                    "named *.test.js / *.spec.ts, or placed under __tests__/", "jest/vitest"),
-    TestConvention(("rb",), ("*_spec.rb",), (), r"^\s*RSpec\.describe\b", (".rspec",),
-                   "named *_spec.rb", "rspec"),
+    # BOTH of Ruby's mainstream conventions, in one row. rspec alone was a hole with a voice: on a
+    # Rakefile-driven minitest tree — the shape the battery's Ruby task ships — nothing matched, and
+    # cria told the coder "No rspec tests were found ... that is not done yet" 49 times in each of
+    # two models' runs while the coder's own suite was green at 24 runs / 0 failures. A convention
+    # table that knows one framework per language states a falsehood in every project using the
+    # other one. The Rakefile joins `configs` for the same reason `.rspec` is there: a declared test
+    # task IS the project re-pointing its own runner, and cria must then say nothing.
+    TestConvention(("rb",), ("*_spec.rb", "test_*.rb", "*_test.rb"), (),
+                   r"^\s*(?:RSpec\.describe\b|class\s+\w+\s*<\s*Minitest::Test\b|def\s+test_)",
+                   (".rspec", "Rakefile", "rakefile", "Rakefile.rb"),
+                   "named *_spec.rb (rspec), or test_*.rb / *_test.rb (minitest)",
+                   "rspec or minitest"),
     TestConvention(("php",), ("*Test.php",), (), r"extends\s+TestCase\b",
                    ("phpunit.xml", "phpunit.xml.dist"),
                    "named *Test.php", "phpunit"),
