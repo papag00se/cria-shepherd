@@ -1,6 +1,5 @@
 A drafted steer (below) tells the coder that an API needs authentication — a key, a token, or a
-login. The user's task never mentions authentication, so the claim needs a source. The facts cria
-gathered from the session's real network record follow the steer; trust them over anything the
+login. The user's task never mentions authentication, so the claim needs a source. The facts below come from the session's real network record; trust them over anything the
 steer asserts.
 
 THE DRAFTED STEER:

@@ -173,12 +173,15 @@ def serialize(messages: list[dict], defang: bool = False) -> str:
     (#15)."""
     if not defang:
         return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
-    out = []
-    for i, m in enumerate(messages, 1):
-        line = _defanged_line(m)
-        if line:
-            out.append(f"[{i:02d}] {line}")
-    return "\n".join(out)
+    # NO LINE NUMBERS. This transcript goes to the steer author, and whatever the author writes goes
+    # to the CODER — whose context has no such numbering, because it is cria's private rendering of
+    # the author's own view. Numbering the lines invited the author to cite them, and it did:
+    # measured on the six-language battery, 15 distinct coder-facing steers referred to "turn 46",
+    # "[65]", "turn [15]". One of them ordered "Restore test/test_rates.rb to its previous working
+    # state from turn [15]" — an instruction the coder cannot carry out, because turn 15 does not
+    # exist anywhere it can see. Every line below already names the file, the command and the error,
+    # which ARE things the coder can find, and the lines are in order. Nothing needed the index.
+    return "\n".join(line for m in messages if (line := _defanged_line(m)))
 
 
 # The harness's exec envelope, whose shape is the thing a model copies when it fakes a result.

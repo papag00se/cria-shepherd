@@ -412,7 +412,11 @@ class AStepCannotOutliveTheRunTests(unittest.TestCase):
     def test_the_claim_it_sends_is_honest_about_there_being_none(self):
         t = prompts.load("periodic_step_claim")
         self.assertIn("No completion claim", t)
-        self.assertIn("cadence", t)
+        # It must say WHY it is asking — a scheduled check, not a suspicion that the step is done.
+        # Asserted by meaning, not by one word: the wording changed when the prompt stopped naming
+        # cria to the model (rule 17), and the substance is what this test is for.
+        self.assertIn("routine check", t)
+        self.assertIn("open for many turns", t)
         self.assertNotIn("done", t.split(".")[0])        # it asserts nothing about the outcome
 
     def test_the_session_carries_its_own_once_per_tick_guard(self):
