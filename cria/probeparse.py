@@ -930,3 +930,71 @@ def run_candidate(runner: Runner, tokens: Sequence[str], cwd: str,
     if timed_out:
         result.summary = timeout_summary(timeout_s)
     return result
+
+
+# ---------------------------------------------------------------------------
+# "Your dependency is missing" is a different problem from "your code is wrong"
+# ---------------------------------------------------------------------------
+# A weak model cannot tell them apart from the raw output, and the cost of confusing them is not a
+# wasted call, it is the rest of the run. Measured on the six-language battery: 39 of 73
+# dependency-shaped checks failed, and 8 of those had the dependency DECLARED correctly and simply
+# not loadable. gemma4's ruby run installed two gems, `require` failed, three checks that had been
+# passing went red, and it spent the remaining twenty minutes fighting the package manager instead
+# of the task.
+#
+# Every ecosystem says this plainly in its own words, so this is CLASSIFICATION of the tool's own
+# error class (#12), not a guess about prose. Rows are only included where the message can mean
+# nothing else — an ambiguous one ("package X does not exist", which is equally a typo in the
+# project's own code) is left out rather than risk mislabelling a real bug (#3).
+_DEPENDENCY_MISSING = (
+    # ruby: cannot load such file -- countries (LoadError)
+    ("ruby", re.compile(r"cannot load such file -- (\S+)\s*\(LoadError\)")),
+    # python: ModuleNotFoundError: No module named 'requests'
+    ("python", re.compile(r"ModuleNotFoundError: No module named ['\"]([\w.]+)['\"]")),
+    # node: Error: Cannot find module 'commander'
+    ("node", re.compile(r"Cannot find module ['\"]([^'\"]+)['\"]")),
+    # rust: error[E0463]: can't find crate for `toml`
+    ("rust", re.compile(r"can't find crate for `([\w-]+)`")),
+    # go: no required module provides package example.com/x
+    ("go", re.compile(r"no required module provides package (\S+)")),
+    # maven: Could not resolve dependencies for project … commons-csv:jar:1.10.0
+    ("java", re.compile(r"Could not resolve dependencies[^\n]*?([\w.-]+:[\w.-]+:[\w.:-]+)")),
+)
+
+
+def dependency_missing(text: str) -> tuple[str, str] | None:
+    """``(ecosystem, name)`` when this output says a dependency could not be loaded — else None.
+
+    The name is whatever the TOOL named, verbatim. cria adds no interpretation here; a caller that
+    wants to know whether the name is the project's own file asks the filesystem
+    (:func:`names_a_workspace_file`), because that is a fact, not a judgment (#8)."""
+    for eco, pat in _DEPENDENCY_MISSING:
+        m = pat.search(text or "")
+        if m:
+            return eco, m.group(1)
+    return None
+
+
+# A dotted or slashed name's FIRST segment is the thing that has to resolve — `shipping.rates` is
+# the project's own `shipping/` package, `commons.csv` is not. Matching on the whole name would call
+# every submodule third-party.
+def names_a_workspace_file(name: str, workspace_root: str) -> bool:
+    """Does this import name correspond to something the workspace itself provides?
+
+    Deliberately generous about extension and layout: the question is only "is this the project's
+    own code", and a false YES is the safe direction — it means cria says nothing (#3) rather than
+    telling the coder its own module is a missing dependency."""
+    import os as _os
+    if not name or not workspace_root or not _os.path.isdir(workspace_root):
+        return False
+    head = re.split(r"[./\\:]", name.strip("'\"" ))[0]
+    if not head:
+        return False
+    for dirpath, dirnames, filenames in _os.walk(workspace_root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        if head in dirnames:
+            return True
+        for f in filenames:
+            if f == head or f.rsplit(".", 1)[0] == head:
+                return True
+    return False

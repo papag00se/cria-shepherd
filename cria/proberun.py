@@ -52,7 +52,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import probediscovery, prompts
+from . import probediscovery, probeparse, prompts
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -480,7 +480,41 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     body = block_findings(report)
     if body is None:
         return None
-    return BLOCK_NUDGE_PREAMBLE + body
+    return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report)
+
+
+def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
+    """One line naming a MISSING DEPENDENCY when a check's own output says that is what failed.
+
+    A weak model cannot tell "the library you declared is not loadable" from "your code is wrong",
+    and the cost of confusing them is the rest of the run rather than a wasted call. Measured on the
+    six-language battery: 8 checks failed with the dependency declared correctly and simply not
+    reachable, and gemma4's ruby run turned 3-of-5 passing into 1-of-5 doing it — two gems installed,
+    `require` failing, twenty minutes spent on the package manager.
+
+    Every ecosystem states this in its own words, so the classification reads the tool's error class
+    (#12) rather than guessing at prose, and only where the message can mean nothing else. The
+    checker's line is untouched and still shown above; this is one labelled sentence beside it, the
+    same shape as the disk-truth and gate-state lines already appended to the briefing — cria may
+    SELECT a checker's real lines and add its own fact beside them, never substitute.
+
+    Silent unless a probe actually failed that way, and silent when the name turns out to be the
+    project's own file (a false "your own module is a missing dependency" is the expensive direction,
+    so an unresolvable name is left alone)."""
+    # ProbeResult keeps no raw output — what survives is the summary and the parsed findings, which
+    # is where the tool's own error line ends up either way (summarize() falls back to the last
+    # error-ish line when nothing parsed, and a LoadError / "Cannot find module" is exactly that).
+    for res in (report.results if report is not None else []) or []:
+        text = "\n".join([getattr(res, "summary", "") or ""]
+                         + [f.message for f in (getattr(res, "findings", None) or [])])
+        hit = probeparse.dependency_missing(text)
+        if not hit:
+            continue
+        eco, name = hit
+        if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
+            return ""
+        return "\n" + prompts.fill(prompts.load_map("dependency_note")[eco], name=name)
+    return ""
 
 
 def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = None,

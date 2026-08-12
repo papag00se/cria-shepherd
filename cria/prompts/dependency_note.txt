@@ -1,0 +1,20 @@
+# One line beside a failing check whose own output says a DEPENDENCY could not be loaded, so the
+# coder fixes the dependency rather than the code. Keyed by ecosystem; {{NAME}} is whatever the tool
+# itself named. Parsed by prompts.load_map, so these comment lines never ship.
+#
+# Measured on the six-language battery: 8 checks failed with the dependency declared correctly and
+# simply not reachable. gemma4's ruby run turned 3-of-5 passing into 1-of-5 that way -- two gems
+# installed, `require` failing, and twenty minutes spent on the package manager instead of the task.
+# Each line says WHERE the ecosystem looks, because "install it" was never the missing step.
+
+ruby = Note: `{{NAME}}` is installed nowhere ruby is looking. A gem installed with --install-dir is not on the load path by default — set GEM_HOME to that directory when you run, or add its `lib` directory to $LOAD_PATH from your code. Fix the loading; the code that uses it is not what failed here.
+
+python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). Fix the import path; the code that uses it is not what failed here.
+
+node = Note: `{{NAME}}` cannot be resolved. Node loads from this project's own node_modules — being present in package.json is not the same as being installed. Fix the resolution; the code that uses it is not what failed here.
+
+rust = Note: the crate `{{NAME}}` is not available to this build. A crate has to be in Cargo.toml's [dependencies] before `use` can see it — `cargo add {{NAME}}` puts it there. Fix the dependency; the code that uses it is not what failed here.
+
+go = Note: no module in this project provides `{{NAME}}`. `go get {{NAME}}` records it in go.mod so the import resolves. Fix the dependency; the code that uses it is not what failed here.
+
+java = Note: the build could not resolve `{{NAME}}`. Check the groupId, artifactId and version in pom.xml against what the repository actually publishes — a version that does not exist fails exactly like this. Fix the dependency; the code that uses it is not what failed here.
