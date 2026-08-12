@@ -63,3 +63,33 @@ class ARunnerIsNotBlamedForCriasCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCapabilityRosterNamesNoLanguageTests(unittest.TestCase):
+    """The shell-tool clause carried a fixed exemplar list ending "python, pytest …", appended to
+    every reasoner, steer-author and satisfaction-judge prompt in every language.
+
+    All four walkers found it verbatim in the go, java, node, rust and ruby prompts. On ruby it was
+    not inert: the judge at call 0145 reached straight for it — "Use exec_command to run pytest or
+    rake test" — and spent an inspection round on a runner the project does not have. Naming a
+    language's tools where cria does not know the language is an invented fact in cria's own voice.
+    """
+
+    def _roster(self):
+        from cria import loop
+        return loop._coder_tools_summary([
+            {"function": {"name": "exec_command", "parameters": {"properties": {"cmd": {}}}}}])
+
+    def test_it_names_no_language_tooling(self):
+        r = self._roster().lower()
+        for tool in ("pytest", "python", "rspec", "cargo", "npm", "mvn"):
+            with self.subTest(tool=tool):
+                self.assertNotIn(tool, r)
+
+    def test_it_still_says_the_shell_runs_anything(self):
+        self.assertIn("runs ANY shell command", self._roster())
+
+    def test_the_neutral_examples_survive(self):
+        r = self._roster()
+        for u in ("grep", "cat", "sed", "ls", "find"):
+            self.assertIn(u, r)

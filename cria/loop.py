@@ -6043,7 +6043,16 @@ def _coder_tools_summary(tools) -> str:
     """One line per tool the CODER has (name + its params) — so a reasoner authoring a steer grounds any
     action it suggests in what the coder can ACTUALLY do. Observed: the coder wavered on whether it could
     grep, with exec_command right there; a reasoner that can't see the coder's tools can't say 'run
-    grep via exec_command'. The shell tool is flagged explicitly — it runs grep/cat/sed/python/pytest/…."""
+    grep via exec_command'. The shell tool is flagged explicitly.
+
+    THE EXEMPLARS ARE LANGUAGE-NEUTRAL, deliberately. The clause used to end "(grep, cat, sed, ls,
+    find, python, pytest …)" — a fixed string, appended to every reasoner, steer-author and
+    satisfaction-judge prompt in every language. All four walkers found it verbatim in the go, java,
+    node, rust and ruby prompts, and on ruby it was not inert: the judge at call 0145 reached
+    straight for it — "Use exec_command to run pytest or rake test" — and spent an inspection round
+    on a runner the project does not have. Naming a language's tools where cria does not know the
+    language is an invented fact in cria's own voice. grep/cat/sed/ls/find carry the same point
+    ("this runs shell commands") without asserting anything about the project."""
     lines = []
     for t in (tools or []):
         fn = t.get("function") or t
@@ -6053,7 +6062,7 @@ def _coder_tools_summary(tools) -> str:
         params = list(((fn.get("parameters") or {}).get("properties") or {}).keys())
         sig = f"{name}({', '.join(params)})"
         if name in _SHELL_TOOLNAMES:
-            sig += " — runs ANY shell command (grep, cat, sed, ls, find, python, pytest …)"
+            sig += " — runs ANY shell command (grep, cat, sed, ls, find …)"
         lines.append("  - " + sig)
     return "\n".join(lines) or "  (none advertised this turn)"
 
