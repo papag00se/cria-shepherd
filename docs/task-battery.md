@@ -145,14 +145,26 @@ cart-billing-go and feed-pipeline-java now declare five and run to 75 minutes; h
 declares four and runs to 60. The milestone FLOOR is unaffected — it is one passing check per
 interval regardless of the count.
 
-## The prompts themselves
+## The prompts themselves — where to edit them
 
-Not duplicated here. `docs/task-prompts.md` carries all six verbatim, with each task's deliverables,
-scored checks and wall clock, and it is GENERATED from the files the runner actually reads:
+Each task's prompt is one file, and it is the only copy:
 
-    python3 suite/prompt_digest.py --write
+    suite/tasks/shipping-rates-rb/prompt.txt      ruby
+    suite/tasks/cart-billing-go/prompt.txt        go
+    suite/tasks/orders-api-py/prompt.txt          python
+    suite/tasks/feed-pipeline-java/prompt.txt     java
+    suite/tasks/handles-cli-node/prompt.txt       node
+    suite/tasks/rust-toml-cli/prompt.txt          rust
 
-The source of truth is `suite/tasks/<task>/prompt.txt` — `suite/run.py:274` reads exactly that file.
-A pasted copy would be a second source of truth that drifts the moment a prompt is edited, which
-this project has paid for twice before. `tests/test_task_prompts_doc_is_generated.py` fails if the
-document and the files disagree.
+`suite/run.py` reads the file at the start of every run, so an edit takes effect on the next run
+with nothing to regenerate and nothing to rebuild. Nothing else in the repo holds prompt text — the
+only other place the wording appears is under `docs/audits/`, which is a record of what was sent on
+a given day and is not read by anything.
+
+Editing one changes what every later row measures. Rows carry `p1` or `p2` in their note so a row
+earned against older wording is never silently compared with a newer one; bump `PROMPT_REV` in
+`suite/battery_run.py` when the wording changes materially.
+
+A prompt and its verifier have to agree, and the deliverable count sets the clock
+(`15 minutes x len(meta.deliverables)`). `tests/test_task_meta_matches_its_verifier.py` fails when
+they drift — that drift is what put three tasks on the wrong wall clock.
