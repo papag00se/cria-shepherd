@@ -23,6 +23,9 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 gemma4 | 100% | 80% | 100% | 40% | 50% | 100% | **78%** | 58.0 | 23 | 74 |
+| 🟡 qwen35 | 60% | 80% | 75% | 0% | 75% | 100% | **63%** | 76.5 | 26 | 146 |
+| 🔴 ternary-bonsai | 60% | 20% | 0% | 0% | 75% | 0% | **26%** | 41.6 | 23 | 55 |
+| 🔴 nemotron-elastic | 0% | 20% | 75% | 0% | 0% | 0% | **15%** | 128.7 | 23 | 88 |
 
 ## What the assists were worth
 
@@ -33,11 +36,29 @@ bought with 15× the calls is not the same result as one bought with fewer
 | task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|---|
 | shipping-rates-rb | ruby | gemma4 | 40% | 100% | **+60** | 26→164 | 3→59 |
+| shipping-rates-rb | ruby | qwen35 | 80% | 60% | **-20** | 32→150 | 3→21 |
+| shipping-rates-rb | ruby | ternary-bonsai | 80% | 60% | **-20** | 57→62 | 14→18 |
+| shipping-rates-rb | ruby | nemotron-elastic | 60% | 0% | **-60** | 41→43 | 11→16 |
 | cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→28 | 2→8 |
+| cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→50 | 3→5 |
+| cart-billing-go | go | ternary-bonsai | 0% | 20% | **+20** | 21→78 | 16→31 |
+| cart-billing-go | go | nemotron-elastic | 0% | 20% | **+20** | 6→56 | 7→12 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→76 | 21→24 |
+| orders-api-py | python | qwen35 | 50% | 75% | **+25** | 76→224 | 20→61 |
+| orders-api-py | python | ternary-bonsai | 25% | 0% | **-25** | 66→46 | 31→31 |
+| orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→226 | 2→61 |
 | feed-pipeline-java | java | gemma4 | 80% | 40% | **-40** | 18→112 | 14→42 |
+| feed-pipeline-java | java | qwen35 | 40% | 0% | **-40** | 69→275 | 6→46 |
+| feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→36 | 16→16 |
+| feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→70 | 4→16 |
 | handles-cli-node | node | gemma4 | 75% | 50% | **-25** | 21→29 | 2→3 |
+| handles-cli-node | node | qwen35 | 75% | 75% | 0 | 81→77 | 12→12 |
+| handles-cli-node | node | ternary-bonsai | 50% | 75% | **+25** | 42→69 | 13→24 |
+| handles-cli-node | node | nemotron-elastic | 0% | 0% | 0 | 2→76 | 7→16 |
 | rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→32 | 2→5 |
+| rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→98 | 6→10 |
+| rust-toml-cli | rust | ternary-bonsai | 0% | 0% | 0 | 41→41 | 16→16 |
+| rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→60 | 7→16 |
 
 ## Every run
 
@@ -46,33 +67,51 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
 | shipping-rates-rb | ruby | gemma4 | CRIA | 100% | 59 | 164 | 56.5 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
+| shipping-rates-rb | ruby | qwen35 | CRIA | 60% | 21 | 150 | 76.1 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
+| shipping-rates-rb | ruby | ternary-bonsai | CRIA | 60% | 18 | 62 | 42.3 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
+| shipping-rates-rb | ruby | nemotron-elastic | CRIA | 0% | 16 | 43 | 128.8 | milestone-miss-15min |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 80% | 8 | 28 | 59.8 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
+| cart-billing-go | go | qwen35 | CRIA | 80% | 5 | 50 | 77.1 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
+| cart-billing-go | go | ternary-bonsai | CRIA | 20% | 31 | 78 | 41.8 | milestone-miss-30min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
+| cart-billing-go | go | nemotron-elastic | CRIA | 20% | 12 | 56 | 130.4 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | gemma4 | CRIA | 100% | 24 | 76 | 56.8 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
+| orders-api-py | python | qwen35 | CRIA | 75% | 61 | 224 | 75.0 | milestone-miss-60min |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
+| orders-api-py | python | ternary-bonsai | CRIA | 0% | 31 | 46 | 38.7 | milestone-miss-30min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
+| orders-api-py | python | nemotron-elastic | CRIA | 75% | 61 | 226 | 127.1 | milestone-miss-60min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | gemma4 | CRIA | 40% | 42 | 112 | 56.7 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
+| feed-pipeline-java | java | qwen35 | CRIA | 0% | 46 | 275 | 76.7 | milestone-miss-45min |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
+| feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 36 | 42.6 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
+| feed-pipeline-java | java | nemotron-elastic | CRIA | 0% | 16 | 70 | 131.2 | milestone-miss-15min |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
 | handles-cli-node | node | gemma4 | CRIA | 50% | 3 | 29 | 58.1 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
+| handles-cli-node | node | qwen35 | CRIA | 75% | 12 | 77 | 75.8 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
+| handles-cli-node | node | ternary-bonsai | CRIA | 75% | 24 | 69 | 40.6 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
+| handles-cli-node | node | nemotron-elastic | CRIA | 0% | 16 | 76 | 127.0 | milestone-miss-15min |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
 | rust-toml-cli | rust | gemma4 | CRIA | 100% | 5 | 32 | 60.3 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
+| rust-toml-cli | rust | qwen35 | CRIA | 100% | 10 | 98 | 78.5 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
+| rust-toml-cli | rust | ternary-bonsai | CRIA | 0% | 16 | 41 | 43.6 | milestone-miss-15min |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
+| rust-toml-cli | rust | nemotron-elastic | CRIA | 0% | 16 | 60 | 127.6 | milestone-miss-15min |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
@@ -111,7 +150,11 @@ the instruments rather than the models, and all three had been silently scoring 
   than an empty turn is a real question, but it is a CRIA-arm question and must not be touched
   mid-arm — one run per code state.
 
-## The baseline arm is complete — 24/24
+## [EARLIER FOUR-TASK BATTERY] The baseline arm is complete — 24/24
+
+> The next two sections are from the FIRST battery — four tasks, five-sixths Python, before the
+> six-language redesign. Their numbers do not belong to the tables above and must not be read
+> against them. Kept because both findings are about cria, not about that task set.
 
 With the assists switched off, the four models scored 44/96. gemma4 22/24, ternary-bonsai 18/24,
 qwen35 10/24, nemotron-elastic 1/24. Two tasks nobody solved unaided are worth naming:
@@ -121,7 +164,7 @@ The seven assisted cells so far say the assists are worth the most exactly where
 weakest: qwen35 +3 and +3, nemotron-elastic +4, gemma4 +0 and +0 — it was already at 4/4 and cria
 did not break it. One regression, below.
 
-## The lost-judgment defect — 42% of everything cria asks, campaign-wide
+## [EARLIER FOUR-TASK BATTERY] The lost-judgment defect — 42% of everything cria asks
 
 `ternary-bonsai` on `orders-api-py` is the campaign's first negative delta: 3/4 unaided, 2/4
 assisted. It cost 113 calls and 60 minutes against the baseline's 31 calls and 7.8 minutes, and it
@@ -659,3 +702,86 @@ nobody can pass — and is no help against this class.
 | deliverables/checks pacing mismatch (60 min where 75 is right) | the BASE arm ran at the old wall; changing it mid-campaign breaks arm parity |
 | the stdlib-`math/big` ambiguity | no run has lost a point to it; the trigger is a WORKING stdlib solution that scores zero |
 | the entry-point probe | the campaign's own conclusion should be reviewed before code lands on it |
+
+---
+
+# The campaign is complete — 48 cells, both arms
+
+**With the assists off, four models scored 48%. With them on, 45%.** The assists cost three points,
+2.7× the calls (34 → 91 per cell) and 2.4× the wall clock (10 → 24 minutes per cell).
+
+| | assists OFF | assists ON |
+|---|---:|---:|
+| checks passed | 52/108 (48%) | 49/108 (45%) |
+| calls per cell | 34 | 91 |
+| minutes per cell | 10 | 24 |
+| runs cut off by the clock | 4/24 | **11/24** |
+
+| model | off | on | Δ | calls | minutes |
+|---|---:|---:|---:|---|---|
+| gemma4 | 78% | 78% | 0 | 118 → 441 (3.7×) | 43 → 140 (3.2×) |
+| qwen35 | 74% | 63% | **−11** | 352 → 874 (2.5×) | 50 → 154 (3.1×) |
+| ternary-bonsai | 26% | 26% | 0 | 262 → 332 (1.3×) | 105 → 136 (1.3×) |
+| nemotron-elastic | 15% | 15% | 0 | 74 → 531 (7.2×) | 37 → 137 (3.7×) |
+
+## It is not "no effect" — it is a coin flip with large swings
+
+Seven cells gained, eight lost, nine unchanged. The moves are big in both directions:
+
+| gained | lost |
+|---|---|
+| gemma4 ruby **+60** | nemotron ruby **−60** |
+| nemotron python **+50** | gemma4 java **−40** |
+| qwen35 python, gemma4 rust, bonsai node **+25** | qwen35 java **−40** |
+| bonsai go, nemotron go **+20** | gemma4 node, bonsai python **−25** |
+| | qwen35 ruby, bonsai ruby, gemma4 go, qwen35 go **−20** |
+
+## Summed by language, one column is far worse than the rest
+
+| ruby | go | python | java | node | rust |
+|---:|---:|---:|---:|---:|---:|
+| −40 | 0 | **+50** | **−80** | 0 | +25 |
+
+**Java is −80, and it is the two capable models losing 40 points each.** Both of them turned a
+partly-working importer into one that does not compile. Java is also the slowest feedback loop in
+the battery — a full Maven compile per check — which is the obvious thing to test first.
+
+**Python is +50 and it is the two weakest models gaining.** nemotron went 25% → 75%, qwen 50% → 75%.
+
+## The mechanism the numbers point at: cria drives every model into the wall
+
+Every model converges on the same wall clock under the assists — 136 to 154 minutes for six tasks —
+regardless of how long it needed unaided. nemotron averaged 6 minutes a task on its own and 23 with
+the assists on. gemma4 averaged 7 and got 23.
+
+Nearly half of the assisted runs (11 of 24) end because the clock ran out, against 4 of 24 unaided.
+Eight of those eleven scored 20% or less, and the failure is repeatedly *the tree is mid-change when
+the clock stops*: nemotron's Ruby run had finished at 60% unaided and was cut off at 0% with four
+test errors on disk; bonsai's Rust and nemotron's Rust and Node all end not compiling.
+
+This is a hypothesis from aggregates, not a finding. Two readings fit the same numbers:
+
+1. **cria pushes past the coherent stopping point.** Unaided, a model stops when it believes it is
+   done, leaving a tree that at least builds. Assisted, it is nudged onward and the clock catches it
+   between edits.
+2. **cria's extra work is genuinely worse work.** The additional calls change correct code into
+   incorrect code, and the wall is incidental.
+
+They call for opposite fixes, so the next step is the pair walk over the eight losing cells —
+reading the calls, not inferring from totals.
+
+## What the fixes were worth
+
+The 38 fixes from the 24-pair walk plus fix 39 (the gate) show up exactly where they were aimed, and
+nowhere else:
+
+- **Ruby went from cria's worst language to gemma4's only perfect score** (40% → 100%). The Ruby
+  gate previously ran nothing at all and told the coder its green suite was missing.
+- **nemotron stopped quitting.** Its "two calls and done" signature is gone — 74 calls across six
+  tasks became 531. That was cria silently swallowing well-formed off-menu calls and reading the
+  empty turn as finished. It now works instead of quitting, and converts almost none of it to score:
+  four of its six tasks still end at 0%.
+- **The gate runs in every language now, with zero refusals.** The litter sweep takes back exactly
+  what the probes create, `orders.db` included.
+
+None of the 39 touched pacing, and pacing is what the campaign says is now costing the most.
