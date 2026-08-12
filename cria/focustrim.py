@@ -38,7 +38,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import dedup, jsontext
+from . import dedup, denial, jsontext
 from . import probegate, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -262,11 +262,38 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     if repeated is not None:
         label = next((_tried_label(tc) for m in messages if m.get("role") == "assistant"
                       for tc in (m.get("tool_calls") or []) if tc.get("id") == repeated[-1]), "")
+        # WHICH ADVICE DEPENDS ON WHETHER THE CALL WORKED. The note tells the model the call "has
+        # told you everything it can. Read what it already returned above" — true of a call that
+        # SUCCEEDED and is being repeated pointlessly, and false and harmful of one that failed:
+        # a failed call told it nothing, and there is no answer above to read. Measured on the
+        # six-language battery, where the guard sent a model to re-read an error as though it were
+        # the result it wanted. Same guard, two failure modes, two different true sentences.
         out.append({"role": "user",
-                    "content": prompts.render("trim_repeat_collapsed",
-                                              n=len(repeated), tried=label)})
+                    "content": prompts.render(
+                        "trim_repeat_collapsed_failed" if _repeat_failed(messages, repeated[-1])
+                        else "trim_repeat_collapsed", n=len(repeated), tried=label)})
         rep.squashed_runs += 1
     return out, rep
+
+
+def _repeat_failed(messages: list[dict], call_id: str) -> bool:
+    """Did the repeated call come back as a failure rather than an answer?
+
+    Conservative on purpose: a refusal cria itself authored, an empty body, or a nonzero exit
+    reported by the lowered command. Anything else is treated as a real result, so the guard's
+    original wording stands wherever it was already true."""
+    for m in messages:
+        if m.get("role") != "tool" or m.get("tool_call_id") != call_id:
+            continue
+        body = str(m.get("content") or "")
+        if not body.strip() or denial.is_denied(body):
+            return True
+        for line in body.splitlines():
+            s = line.strip()
+            if s.startswith("EXIT:") and s[5:].strip() not in ("0", ""):
+                return True
+        return False
+    return False
 
 
 def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:

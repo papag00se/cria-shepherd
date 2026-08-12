@@ -1,0 +1,1 @@
+[you have now made this exact call {{N}} times and it failed the same way every time — the earlier copies were folded away, so this is the only record of it. Tried: {{TRIED}}. Repeating it will fail the same way. It has not answered the question, so do not read its result as the answer: use a different tool, or fix what made it fail, before asking again.]
