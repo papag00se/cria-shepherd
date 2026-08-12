@@ -748,27 +748,31 @@ the battery — a full Maven compile per check — which is the obvious thing to
 
 **Python is +50 and it is the two weakest models gaining.** nemotron went 25% → 75%, qwen 50% → 75%.
 
-## The mechanism the numbers point at: cria drives every model into the wall
+## CORRECTED: the pacing reading was my instrument, not cria
 
-Every model converges on the same wall clock under the assists — 136 to 154 minutes for six tasks —
-regardless of how long it needed unaided. nemotron averaged 6 minutes a task on its own and 23 with
-the assists on. gemma4 averaged 7 and got 23.
+An earlier version of this section said every model converged on ~23 minutes per task regardless of
+what it needed unaided, and read that as cria setting the pace. That was wrong, and the line-by-line
+walk caught it (`2026-08-12-assisted-arm-walk.md`).
 
-Nearly half of the assisted runs (11 of 24) end because the clock ran out, against 4 of 24 unaided.
-Eight of those eleven scored 20% or less, and the failure is repeatedly *the tree is mid-change when
-the clock stops*: nemotron's Ruby run had finished at 60% unaided and was cut off at 0% with four
-test errors on disk; bonsai's Rust and nemotron's Rust and Node all end not compiling.
+`suite/run.py:326` sets `wall = milestone_minutes x deliverable_count`. Runs therefore die on a grid
+— 15.8, 16.2, 30.8, 46.2, 60.9 minutes — and the per-model means match because they share the grid,
+not because cria paces them. nemotron sat at 15.8-16.2 in five of six runs: that is failing the
+first floor test five times, not converging on a pace.
 
-This is a hypothesis from aggregates, not a finding. Two readings fit the same numbers:
+### What is true, measured from the captures
 
-1. **cria pushes past the coherent stopping point.** Unaided, a model stops when it believes it is
-   done, leaving a tree that at least builds. Assisted, it is nudged onward and the clock catches it
-   between edits.
-2. **cria's extra work is genuinely worse work.** The additional calls change correct code into
-   incorrect code, and the wall is incidental.
+**14 of 24 assisted runs had the coder declare the task complete; the baseline arm has zero
+declarations.** Seven of the fourteen were kept running, for 330 further calls.
 
-They call for opposite fixes, so the next step is the pair walk over the eight losing cells —
-reading the calls, not inferring from totals.
+**And that does not support making cria stop.** The two biggest wins in the campaign were earned
+after the declaration — gemma4's Ruby 40% -> 100% with 31 post-declaration calls, nemotron's Python
+25% -> 75% with 67. Four of the seven burned the calls for nothing and two lost ground. Refusing the
+declaration is right about as often as it is wrong, so the honest position is that cria cannot
+currently tell the two apart, not that it should stop.
+
+The per-15-minute score curves already in `results.jsonl` split three ways: plateaus, real late
+gains (gemma4/ruby was at 60% at minute 45 and 100% at 59), and one clean reached-then-lost —
+**qwen35/java hit 40% at 30 minutes, exactly its unassisted final, then 0% at 45.**
 
 ## What the fixes were worth
 
