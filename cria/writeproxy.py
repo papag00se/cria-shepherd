@@ -290,18 +290,48 @@ def _b64(s: str) -> str:
 # would break a file that currently PARSES; it NEVER blocks a model from editing an already-broken file
 # toward valid (broken→still-broken and broken→valid both write freely). Version-scoped to what the
 # workspace python's own compile() accepts, which is the interpreter that will run the code anyway.
-_VALIDATE_FN = r'''def _v(path, raw):
+# ONE ext -> validator table, and it runs INSIDE the lowered heredoc, so it may use Python's own
+# parsers in-process and must shell out for the rest.
+#
+# THE HOLE THIS CLOSES. It used to dispatch on .py/.pyi, .json and .toml and fall off the end for
+# everything else, returning None — "no opinion". Both callers read None as "nothing to refuse", so
+# for a .rb, .go, .java, .rs or .js file the validate-before-lower refusal branch was UNREACHABLE:
+# cria would happily replace a parsing Ruby file with one that does not parse, and the edit path's
+# would_break check was likewise always False. Measured across the six-language battery, where
+# cria's own write path corrupted a pom.xml with nothing detecting it.
+#
+# cria already owns a per-extension syntax-command table 600 lines away in probediscovery
+# (node --check, php -l, ruby -c). This is the same knowledge, needed in a place that cannot import
+# it. Per-language entries are correct here — every language gets its equivalent check; the defect
+# was the missing rows, not the table.
+#
+# UNKNOWN STAYS SAFE. A tool that is not installed, a timeout, or an extension with no parser all
+# return None, which means "cria cannot judge this" and never refuses. The guard stays
+# regression-only (#2): it may only refuse replacing a file that currently parses.
+_VALIDATE_FN = r'''import shutil as _sh, subprocess as _sp, tempfile as _tf, os as _os
+# NO literal braces anywhere in this source: it is prepended to the heredoc templates below, which
+# are .format()ed, and a dict literal's braces read as format placeholders.
+_EXT_CMD = dict([('.rb', ['ruby', '-c']), ('.js', ['node', '--check']),
+                 ('.mjs', ['node', '--check']), ('.cjs', ['node', '--check']),
+                 ('.php', ['php', '-l']), ('.go', ['gofmt', '-e'])])
+
+
+def _v(path, raw):
     try:
         text = raw.decode() if isinstance(raw, bytes) else raw
     except Exception:
         return None
     low = path.lower()
+    _dot = low.rfind('.')
+    ext = low[_dot:] if _dot >= 0 else ''
     try:
-        if low.endswith(('.py', '.pyi')):
+        if ext in ('.py', '.pyi'):
             compile(text, path, 'exec')
-        elif low.endswith('.json'):
+        elif ext == '.json':
             import json as _json; _json.loads(text)
-        elif low.endswith('.toml'):
+        elif ext == '.xml':
+            from xml.etree import ElementTree as _ET; _ET.fromstring(text)
+        elif ext == '.toml':
             try:
                 import tomllib as _t
             except ImportError:
@@ -310,6 +340,25 @@ _VALIDATE_FN = r'''def _v(path, raw):
                 except ImportError:
                     return None
             _t.loads(text)
+        elif ext in _EXT_CMD:
+            _argv = _EXT_CMD[ext]
+            if _sh.which(_argv[0]) is None:
+                return None
+            _fd, _tmp = _tf.mkstemp(suffix=ext)
+            try:
+                with _os.fdopen(_fd, 'w') as _fh:
+                    _fh.write(text)
+                _r = _sp.run(_argv + [_tmp], capture_output=True, text=True, timeout=20)
+                if _r.returncode != 0:
+                    _msg = ((_r.stderr or '') + (_r.stdout or '')).strip().replace(_tmp, path)
+                    return _msg.splitlines()[0][:200] if _msg else 'does not parse'
+            except Exception:
+                return None
+            finally:
+                try:
+                    _os.unlink(_tmp)
+                except OSError:
+                    pass
     except Exception as _e:
         return str(_e)
     return None
