@@ -300,13 +300,41 @@ That is A. Everything I filed as separate faults is B:
 - it names files, lines and symbols it never read (19 occurrences)
 - it restates the task in its own words and the coder builds the restatement (15 occurrences)
 
-**The A-fix: cria reads the files and puts their contents in the prompt.** It already lists their
-names, sizes and line counts — it just declines to open them, and asks a weak model to do it
-instead. Reading them costs cria nothing: no model call, no round trip. Principle 8 says
-deterministic code gathers the facts and the reasoner judges. Here cria gathers the *metadata* and
-delegates the *facts* to the one participant that mostly will not fetch them.
+**The A-fix I proposed here was wrong, and it was a revert.** cria used to carry file contents to
+this author. `loop.py:6155` records why it stopped:
 
-Fix 6 is not a separate fix. It dissolves into this one.
+> Without this the author's session carried every historical version whole — **49 copies of one
+> function at g2-0159** — and it asserted "current state" from the pile instead of reading.
+
+So the supply side has been tried in both directions. Contents in the prompt produced an author
+reasoning from a pile of stale copies. Metadata plus tools produces an author that mostly does not
+fetch. Neither is a fix waiting to be applied; both are measured failures.
+
+**And the 73% does not carry the weight I put on it.** Not looking at a file is not the same as
+being wrong. `steer_diagnose.txt` explicitly permits citing the transcript — *"Quoting a real error
+or a line you actually read is not writing code — do it"* — and most of these instructions do
+exactly that, correctly:
+
+> "The tests are currently passing (0 failures) according to your last run of
+> `ruby test/test_rates.rb`."
+
+A crude scan for instructions that assert what is *inside* an unopened file returns 60 of 356, and
+opening them shows most are false positives — they quote a command result, or they tell the coder to
+go and read. **There is no clean measurement of harm here, so there is no established root.**
+
+What is established is narrower and comes from the verified wrong turns, not from this ratio: 69
+traced to steer text, of which 15 cost a check or broke working code.
+
+**The supply side is closed.** That leaves two honest options, and both are what I was trying to
+avoid calling them:
+
+1. Check the directive against facts cria already holds — the file list, the check output, the disk —
+   and drop it when it contradicts them. This is a B-level guard and an ADD, so the bar is high, and
+   a wrong drop costs a steer that might have been the one that helped.
+2. Do not ask for the directive at all.
+
+Choosing between those needs the baseline control that does not exist yet. Fix 6 does **not**
+dissolve into anything; it stands on its own evidence (22 occurrences) and needs its own answer.
 
 ## Where else the lens moved the answer
 
