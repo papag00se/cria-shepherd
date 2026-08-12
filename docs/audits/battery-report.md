@@ -22,33 +22,54 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| _no runs yet_ | | | | | | | | | |
+| 🟡 gemma4 | 100% | 80% | 100% | 40% | 50% | 100% | **78%** | 58.0 | 23 | 74 |
+
+## What the assists were worth
+
+Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain
+bought with 15× the calls is not the same result as one bought with fewer
+(`docs/battery-goal.md`).
+
+| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
+|---|---|---|---|---|---|---|---|
+| shipping-rates-rb | ruby | gemma4 | 40% | 100% | **+60** | 26→164 | 3→59 |
+| cart-billing-go | go | gemma4 | 100% | 80% | **-20** | 13→28 | 2→8 |
+| orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→76 | 21→24 |
+| feed-pipeline-java | java | gemma4 | 80% | 40% | **-40** | 18→112 | 14→42 |
+| handles-cli-node | node | gemma4 | 75% | 50% | **-25** | 21→29 | 2→3 |
+| rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→32 | 2→5 |
 
 ## Every run
 
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
+| shipping-rates-rb | ruby | gemma4 | CRIA | 100% | 59 | 164 | 56.5 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
+| cart-billing-go | go | gemma4 | CRIA | 80% | 8 | 28 | 59.8 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
+| orders-api-py | python | gemma4 | CRIA | 100% | 24 | 76 | 56.8 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
+| feed-pipeline-java | java | gemma4 | CRIA | 40% | 42 | 112 | 56.7 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
+| handles-cli-node | node | gemma4 | CRIA | 50% | 3 | 29 | 58.1 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
+| rust-toml-cli | rust | gemma4 | CRIA | 100% | 5 | 32 | 60.3 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |

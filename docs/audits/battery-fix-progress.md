@@ -75,3 +75,39 @@ One bug of my own was caught by the suite mid-flight and is worth recording: the
 validator is prepended to the heredoc templates, which are `.format()`ed, so its dict literal's
 braces read as format placeholders and took down every lowered write with `KeyError: "'"`. Rebuilt
 brace-free, with a test that a real lowered write still builds.
+
+## Fix 39 — the gate cleanup killed the gate
+
+Landed after the fix batch, found by the assisted arm's first six cells.
+
+Fix 22's litter cleanup deleted the untracked files the probes created, using `rm -rf` inside the
+script cria hands the harness. **Codex's sandbox rejects any exec containing an `rm -f` style
+command, and rejects the whole script.** So no probe section ever came back; `interpret_gate` read
+that as "nothing ran" — which is correct and completely silent — and cria abstained from its largest
+assist on every turn of every task in every language. 12/12 gate invocations rejected across the six
+gemma4 cells before the arm was stopped.
+
+`writeproxy.py:801` already records this exact sandbox rejection breaking every `web_search`. Same
+lesson, second module, eight months apart.
+
+- **The script LISTS the litter; cria removes it.** New `___CRIA_GATE_litter___` section →
+  `probegate.sweep_litter`, bounded three ways because it deletes: git must call the path untracked,
+  it must resolve inside the workspace (no absolutes, no `..`, symlinks unlinked not followed), and
+  any failure is skipped. Verified live: it takes back `orders.db` — the artifact that motivated
+  fix 22 — plus `__pycache__`, `Cargo.lock`, `target/`.
+- **A refused gate is loud.** `probegate.refusal_reason` reads the harness's own words out of a
+  section-less result; `loop.read_gate` is now the single funnel for all four `interpret_gate` call
+  sites and logs `loop.gate_refused` at warn. Operator-facing only. This is the general fix: a
+  rejected verb in any future module surfaces instead of switching off a subsystem in the dark.
+- `tests/test_gate_script_is_read_only.py` — no composed gate, in any of the six battery languages,
+  may contain a destructive verb. Proven to fail (6 cases) with the `rm` put back.
+  `test_gate_leaves_no_litter.py` now drives the real round trip: compose → real `sh` → interpret.
+
+### Open, deliberately not acted on yet
+
+The sweep removes build caches too — `target/`, and `node_modules` would qualify if a probe ever
+created one. A cache is not litter: it changes how long the next check takes, never what it reports.
+`groundtruth.BUILD_ARTIFACT_DIRS` already owns that distinction and excluding it here is a two-line
+change. Not made mid-arm, and not on speculation: six sweeps so far, no cell harmed, and the final
+`verify.py` rebuilds from source in every language regardless. Revisit if a cell shows a gate
+timeout on a cold build.
