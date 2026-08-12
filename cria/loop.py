@@ -26,6 +26,7 @@ import difflib
 import hashlib
 import json
 import os
+import fnmatch
 import re
 import threading
 import time
@@ -5302,7 +5303,45 @@ def gate_error_text(outcome) -> str:
 
 # A cached finding that is a TEST failure — the only class a coder-run test suite can supersede. A
 # pyflakes or compileall finding is not cleared by pytest going green, so those are never dropped.
-_TEST_FINDING = re.compile(r"(?im)^[^\n]*\btest[\w.]*\.\w+:\d+:|\b\d+ failed\b|^FAILED\b")
+# A finding is ABOUT A TEST when its path is a test file in any language cria knows, or when the text
+# carries a runner's own failure tally. Both halves defer to owners that are already generalised:
+# probediscovery.TEST_CONVENTIONS knows every language's test-file convention, and
+# probegate.runner_tally reads twelve runners' summary lines.
+#
+# The regex this replaces was `\btest[\w.]*\.\w+:\d+:` — a filename whose basename STARTS with
+# "test". Checked against real findings: `tests/test_db.py:12:` matched, `test/test_rates.rb:41:`
+# matched, `tests/handle-lookup.test.js:8:` matched — and `cart_test.go:22:`, `OrderTest.java:31:`
+# and `tests/cli.rs:22:` did not. So the supersede below, which exists to stop cria restating
+# failures the coder has already cleared, was inert in Go, Java and Rust: exactly the languages
+# whose test files are named by suffix rather than prefix. Its own consumer
+# (probegate.runner_tally) was properly generalised; the trigger in front of it was not.
+_FAIL_WORDS = re.compile(r"(?im)\b\d+ failed\b|^FAILED\b|^\s*---\s*FAIL:|\bFAILURES?!")
+_PATH_LINE = re.compile(r"(?im)^[^\n]*?([\w./\\-]+\.\w+):\d+:")
+
+
+def _looks_like_a_test_path(path: str) -> bool:
+    """True when this path is a test file by any language's own convention."""
+    from . import probediscovery
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    parts = path.replace("\\", "/").split("/")
+    if any(seg in ("test", "tests", "spec", "specs", "__tests__") for seg in parts[:-1]):
+        return True
+    for conv in probediscovery.TEST_CONVENTIONS:
+        if any(fnmatch.fnmatch(name, g) for g in conv.globs):
+            return True
+        if any(d in parts for d in conv.dirs):
+            return True
+    return False
+
+
+def _is_test_finding(checks: str) -> bool:
+    if not checks:
+        return False
+    if _FAIL_WORDS.search(checks):
+        return True
+    if probegate.runner_tally(checks):
+        return True
+    return any(_looks_like_a_test_path(m) for m in _PATH_LINE.findall(checks))
 
 
 def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
@@ -5322,7 +5361,7 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
     SCOPED TO TEST FINDINGS. A green pytest says nothing about a pyflakes finding, so a cached
     non-test finding stands. And only results AFTER cria's last gate count — an older coder run is
     not newer information."""
-    if not checks or not _TEST_FINDING.search(checks):
+    if not checks or not _is_test_finding(checks):
         return ""
     msgs = messages or []
     last_gate = -1
