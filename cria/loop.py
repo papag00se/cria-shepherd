@@ -6772,6 +6772,13 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None
+    ghost = _symbol_not_in_the_file(directive, workspace_root)
+    if ghost:
+        # cria READ the file; the steer names something that is not in it. Refused, not reworded —
+        # the same rule as the phantom path above, one claim class over.
+        rlog.emit("loop.steer_phantom_symbol", level="warn", symbol=ghost,
+                  head=_clip(directive, 120))
+        return None
     cite = _false_line_citation(directive, evidence)
     if cite:
         # Same enforcement, next claim class: the author cited a LINE past the file's real length —
@@ -6837,6 +6844,47 @@ _CITE_WORDS = re.compile(r"\blines?\s+(\d{1,5})(?:\s*[-–—]\s*(\d{1,5}))?\s+(
 _CITE_BARE = re.compile(r"\blines?\s+(\d{1,5}(?:\s*[-–—]\s*\d{1,5})?(?:(?:\s*,\s*|\s+and\s+)"
                         r"\d{1,5}(?:\s*[-–—]\s*\d{1,5})?)*)", re.I)
 _DISK_LINE = re.compile(r"^FILE\s+(\S+)\s+—\s+[\d,]+\s+bytes,\s+([\d,]+)\s+lines?$", re.M)
+
+
+# The symbol must be MARKED AS CODE — backticked, or written as a call. "the change in app.py" is
+# ordinary prose and must never trip this, because the guard DROPS the steer: a false positive costs
+# a legitimate directive, which is the expensive direction.
+_SYMBOL_IN_FILE = re.compile(
+    r"(?:`([A-Za-z_]\w{2,})`|\b([A-Za-z_]\w{2,})\(\))"
+    r"\s+(?:in|from|of|inside)\s+`?([\w./-]+\.\w{1,5})`?")
+
+
+def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str | None:
+    """A steer binding an identifier to a named file where that identifier does not appear — or None.
+
+    Same enforcement class as the phantom path and the false line citation beside it: cria can settle
+    this against disk, so a steer that contradicts disk is refused rather than reworded. A weak model
+    believes cria's assertion over its own reading — told a function lives in a file where it does
+    not exist, it invents a plausible one and every later step builds on that.
+
+    Only files that EXIST inside the workspace are checkable; a name cria cannot resolve passes
+    silently (#3), and so does an unreadable file. The identifier must be a real word, not a bare
+    letter, or ordinary prose would trip it."""
+    if not workspace_root:
+        return None
+    try:
+        root = Path(workspace_root).resolve()
+    except (OSError, ValueError):
+        return None
+    for m in _SYMBOL_IN_FILE.finditer(directive):
+        symbol, rel = (m.group(1) or m.group(2)), m.group(3)
+        if not symbol:
+            continue
+        try:
+            p = (root / rel).resolve()
+            if not p.is_relative_to(root) or not p.is_file():
+                continue
+            body = p.read_text(errors="replace")
+        except (OSError, ValueError):
+            continue
+        if symbol not in body:
+            return f"{symbol} in {rel}"
+    return None
 
 
 def _false_line_citation(directive: str, evidence: str) -> str | None:
