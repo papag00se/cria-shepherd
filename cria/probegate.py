@@ -266,8 +266,28 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
         text = line.strip()
         if not text or text in f:      # nothing to quote, or the finding already shows it
             continue
+        if _EXCEPTION_FINDING.search(f):
+            # A RAISE SITE IS NOT A DEFECT SITE. This annotation is correct for a LINTER, where the
+            # flagged line IS the problem, and actively misleading for a runtime exception, where it
+            # is merely where the program stopped — the cause is upstream, in the value that reached
+            # it. Under a header ordering the coder to "resolve exactly what it names", quoting the
+            # raise site points at the one line that is usually fine. Measured on the six-language
+            # battery: the coder rewrote the assertion line repeatedly while the bad value came from
+            # a default argument three functions away. cria cannot justify the pointer, so it does
+            # not make it (#5b, and #3 — silence over noise).
+            continue
         out.append(f"  the flagged line on disk — line {line_no}: `{text[:200]}`")
     return out
+
+
+# A finding produced by a program CRASHING rather than by a checker inspecting code. Matched on the
+# shapes runtimes actually print — an exception class name, a traceback frame, an assertion report —
+# not on one language's phrasing.
+_EXCEPTION_FINDING = re.compile(
+    r"(?im)^\s*(?:Traceback|Exception in thread|goroutine \d+)|\bpanic:"
+    r"|\b[A-Z]\w*(?:Error|Exception)\b"
+    r"|\bassertion failed\b|\bAssertionError\b|\bpanicked at\b"
+    r"|\bat [\w.$]+\([\w.]+\.(?:java|kt|scala):\d+\)")
 
 
 def _line_on_disk(finding: str, workspace: str) -> "str | None":
