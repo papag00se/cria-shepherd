@@ -372,3 +372,51 @@ ledger, each doing the wrong thing at the only place it is done. **Fix 1** is la
 3. Fixes 8 and 9 — small, certain, remove nothing.
 4. Fix 4, then fix 7 with the supersede.
 5. Fix 5 last: it still narrows an assist, and there is still no baseline control.
+
+
+---
+
+# Built — 2026-08-12
+
+Applying the operator's A→B→C rule, and principle 15, dropped four of the nine before any code was
+written. Each was dropped on a measurement, not an opinion.
+
+| dropped | why |
+|---|---|
+| registry query for library availability | 4 hits in 239 instructions, and reading them, none is the failure described. The "no gems exist" case was **one occurrence**. |
+| write returns the new content | The coder **already keeps** its own written content — its `write_file` call carries it in every later prompt. A non-problem for the coder; for judges the absence is deliberate (the 49-copies incident, `loop.py:6155`). |
+| "instruction is already satisfied" drop | Rests on the empty-instruction figure, which did not survive measurement: 224 of 239 instructions name a path, a command, or a quoted error. |
+| cria puts file contents in the author's prompt | A revert of a measured decision. Retracted earlier in this document. |
+
+## The five that landed
+
+| # | the source | commit |
+|---|---|---|
+| 1 | `looks_binary` counted the terminal escape byte, so a coloured build log read as binary | `fdd14ea` |
+| 2 | `read_file` lowered to a bare `cat`, so bash's error came back as the file's contents | `f77f44f` |
+| 3 | the data-file filter stripped the manifests that name the run target | `1f7b10b` |
+| 4 | the re-shown check block asserted a currency cria had not observed | `188f702` |
+| 5 | the briefing's evidence rule guarded a false pass but not a false failure | `9dc4a6c` |
+
+Two of the five needed no downstream change at all, which is the test of whether a fix is at the
+source:
+
+- **The read ledger was never touched.** `research.files_read` already tested for the denied mark;
+  once cria's own lowered command carries that mark, the ledger is correct as a consequence. Its
+  docstring had the rule right all along — *"An attempted read is not a read"* — and its input was
+  lying to it.
+- **The briefing correctors were never touched.** `_briefing_disk_truth` and
+  `_briefing_gate_ground_truth` append cria's facts and never delete, because a matcher cannot tell
+  a claim about a file from a claim about something inside it. Neither could have caught an invented
+  failure; making the summariser's evidence rule symmetric stops it being written.
+
+## Found while building
+
+`prompts.load` and `render` do **not** strip `#` lines — only `load_map` does. A rationale comment
+placed in a `load`-style prompt file is sent to the model verbatim, and the one being written named
+the program. The rule-17 test had the same wrong assumption baked in: it stripped `#` everywhere, so
+it would have passed that leak straight through. It now strips comments only for `load_map` prompts
+and reads the rest whole, with a probe file proving the hazard is caught. `coder_system`'s `#` lines
+are markdown headings the model is meant to read and are unaffected.
+
+Suite: 3,049 → 3,117. cria restarted on `9dc4a6c`.
