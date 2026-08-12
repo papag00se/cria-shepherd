@@ -721,10 +721,28 @@ def build_jvm(p: ProjectDir, out: list[ProbeCandidate]) -> None:
         # RELEVANT_EXACT, so p.has("mvnw") is always False and this branch is
         # dead — `mvn` is always chosen. Kept verbatim, not fixed.
         m = "./mvnw" if p.has("mvnw") else "mvn"
+        # THE COMPILE SLOT. Every other build-system ecosystem fills it — gradle `check`, cargo
+        # `check`, go `build ./...`, dotnet `build` — and Maven had nothing below `mvn test`
+        # (Expensive, tier 4). Java has no interpreter parse flag, so the compiler IS its syntax
+        # floor; with no cheap compile probe, every Java run in the six-language battery reported
+        # "SYNTAX FLOOR: did not run" and a missing import surfaced only as a failed test phase.
+        out.append(cand(ProbeKind.BuildCheck, [m, "-q", "compile"], d, 88, 82,
+                        ProbeCost.Moderate, "maven compile (Java's cheapest parse check)"))
         out.append(cand(ProbeKind.Test, [m, "test"], d, 85, 88,
                         ProbeCost.Expensive, "maven test"))
-        out.append(cand(ProbeKind.StaticAnalysis, [m, "checkstyle:check"], d,
-                        60, 80, ProbeCost.Moderate, "checkstyle if configured"))
+        # DECLARED, not conjured. `checkstyle:check` on a pom that never mentions checkstyle makes
+        # Maven download the plugin and run its DEFAULT sun_checks ruleset — and cria then injected
+        # the result as "the repo's own checks report these error-class problems". Measured: 43
+        # style violations (80-column limits, missing `final`) presented to gemma4 as the project's
+        # own standard, which rewrote Importer.java four times to satisfy a rule the project does
+        # not have. A check the repo did not ask for is not one of the repo's checks (#5b).
+        try:
+            pom = (Path(d) / "pom.xml").read_text(errors="replace")
+        except OSError:
+            pom = ""
+        if "checkstyle" in pom:
+            out.append(cand(ProbeKind.StaticAnalysis, [m, "checkstyle:check"], d,
+                            60, 80, ProbeCost.Moderate, "checkstyle declared in pom.xml"))
 
 
 def build_dotnet(p: ProjectDir, out: list[ProbeCandidate]) -> None:
@@ -889,6 +907,38 @@ _JSON_CHECK = (
 )
 
 
+# The floor's contract is that every file the coder can break has SOME parser that reads it. It was
+# enumerated by LANGUAGES-with-a-parse-flag, which silently excludes every format whose parser is a
+# library: a build file. Measured on the six-language battery — cria's own write path corrupted a
+# pom.xml and nothing in the gate read XML, so the damage surfaced only as `mvn` failing much later,
+# with no finding naming the file.
+_XML_CHECK = (
+    "import sys\n"
+    "from xml.etree import ElementTree as ET\n"
+    "bad = 0\n"
+    "for f in sys.argv[1:]:\n"
+    "    try:\n"
+    "        ET.parse(f)\n"
+    "    except Exception as e:\n"
+    "        print('%s: %s' % (f, e))\n"
+    "        bad = 1\n"
+    "sys.exit(bad)\n"
+)
+
+# Build/config XML a coder edits. Not every .xml in a tree — a fixture or a data file is the
+# project's business — but the ones whose corruption stops the build.
+_STRICT_XML_NAMES = ("pom.xml", "build.xml", "ivy.xml", "web.xml", "phpunit.xml", "phpunit.xml.dist")
+
+
+def _strict_xml_files(root: Path) -> list[str]:
+    out: list[str] = []
+    for p in inventory(root):
+        for name in _STRICT_XML_NAMES:
+            if p.has(name):
+                out.append(str(Path(p.dir) / name))
+    return sorted(out)
+
+
 def _strict_json_files(root: Path) -> list[str]:
     """Paths of strict-JSON config files present (by name), skip-dirs pruned via inventory."""
     out: list[str] = []
@@ -928,6 +978,10 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     if jsons:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _JSON_CHECK, *jsons],
                         root, 95, 95, ProbeCost.Cheap, "strict-JSON config present: parse floor"))
+    xmls = _strict_xml_files(root)[:MAX_FLOOR_FILES_PER_LANG]
+    if xmls:
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _XML_CHECK, *xmls],
+                        root, 95, 95, ProbeCost.Cheap, "build XML present: parse floor"))
     return out
 
 
