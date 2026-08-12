@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 
 from . import prompts
 
@@ -131,42 +132,57 @@ def install_refusal(command: str, level: str, workspace: str | None) -> str | No
 # on the six-language battery's ruby task: with no ruby-viable route offered, the coder hand-rolled
 # the data the gem would have provided.
 #
-# Per-manager rows are correct here; the defect was that the table existed only on the refusing
-# side. The kernel is "answer in the ecosystem you refused", and where no project-local form exists
-# (apt, brew — they install to the machine, full stop) the honest answer is to say only what is
-# forbidden and stop, rather than prescribe a route that does not exist.
+# AND A ROUTE MUST BE ONE THIS MACHINE CAN ACTUALLY TAKE. The ruby row prescribed
+# `bundle install --path vendor/bundle`; `bundle` is not installed on the box the battery runs on.
+# Two runs followed it into `bundle: command not found` and spent the rest of the run on transport.
+# cria refused a real command and answered with an imaginary one — a false claim about the world,
+# one step removed (#5b), and exactly the knowledge cria can settle for free with `which`.
+#
+# So each ecosystem lists its routes in preference order, and each route names the tools it needs.
+# The first route whose tools are ALL present wins. Where none are available the honest answer is
+# the empty one — say what is forbidden and stop, which is already how apt, dnf, brew and pacman are
+# handled: they install to the machine and have no project-local form, so no route is invented (#3).
 _INSTALL_REMEDY = (
     (re.compile(r"(?:pip|pip3|python3?\s+-m\s+pip)\s+install", re.I),
-     "First check whether you need it at all: the package may already be importable, and "
-     "`pip install -e .` or `pip install .` installs YOUR OWN project, which your script and tests "
-     "do not need. If a third-party package really is missing, install it into the project: "
-     "`python3 -m venv .venv && ./.venv/bin/pip install <pkg>`, then run with `./.venv/bin/python`."),
+     (("pip_venv", ("python3",)),)),
     (re.compile(r"(?:npm|pnpm|yarn)\s+(?:install|add|i)\b", re.I),
-     "Drop the global flag: `npm install <pkg>` installs into this project's own `node_modules`, "
-     "which is what your code will load."),
+     (("npm_local", ("npm",)),)),
+    # Two ruby routes, bundler first because a Gemfile is the durable record. `gem_direct` is the
+    # fallback the box actually supports, and it says how to make the gem LOADABLE — installing to
+    # vendor/bundle without putting it on the load path is the failure that cost a 100% ruby run.
     (re.compile(r"\bgem\s+install", re.I),
-     "Install it into the project instead: add the gem to a `Gemfile` and run "
-     "`bundle install --path vendor/bundle`, or `gem install --install-dir vendor/bundle <gem>`."),
+     (("gem_bundler", ("bundle",)), ("gem_direct", ("gem",)))),
     (re.compile(r"\bcargo\s+install", re.I),
-     "A crate your code uses is a dependency, not a global binary: `cargo add <crate>` puts it in "
-     "`Cargo.toml` and cargo fetches it into this project."),
+     (("cargo_add", ("cargo",)),)),
     (re.compile(r"\bgo\s+install", re.I),
-     "A module your code imports is a dependency, not a global binary: `go get <module>` records it "
-     "in `go.mod` for this project."),
+     (("go_get", ("go",)),)),
     (re.compile(r"composer\s+global", re.I),
-     "Drop `global`: `composer require <pkg>` installs into this project's own `vendor/`."),
+     (("composer_local", ("composer",)),)),
+    (re.compile(r"\bmvn\s+install\b", re.I),
+     (("maven_dep", ("mvn",)),)),
 )
+
+
+def _tool_present(name: str) -> bool:
+    """Is this tool on PATH right now? The one question that separates a real route from a guess."""
+    return shutil.which(name) is not None
 
 
 def _local_install_advice(command: str) -> str:
     """The project-local route for the manager that was actually refused, or "" when there is none.
 
-    An empty string is a real answer: apt, dnf, brew and pacman install to the machine and have no
-    project-local form, so the refusal states what is forbidden and stops rather than inventing a
-    route (#3, #5b)."""
-    for pat, advice in _INSTALL_REMEDY:
-        if pat.search(command):
-            return " " + advice
+    An empty string is a real answer, and now for two reasons. apt, dnf, brew and pacman install to
+    the machine and have no project-local form. And an ecosystem whose tools are not installed has
+    no route cria can honestly offer either — better to state only what is forbidden than to send
+    the coder after a command that cannot run (#3, #5b)."""
+    routes = prompts.load_map("install_remedy")
+    for pat, options in _INSTALL_REMEDY:
+        if not pat.search(command):
+            continue
+        for key, needs in options:
+            if all(_tool_present(t) for t in needs) and routes.get(key):
+                return " " + routes[key]
+        return ""      # the ecosystem is refused, and nothing here can carry out the alternative
     return ""
 
 

@@ -1,0 +1,30 @@
+# The project-local route cria offers when it refuses a machine-wide install, one per ecosystem.
+# Model-facing (rule 22), keyed `<manager>_<route>`; dirguard._INSTALL_REMEDY picks the first route
+# whose tools are actually on PATH.
+#
+# A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA IS GUESSING. The ruby row prescribed
+# `bundle install --path vendor/bundle`, and `bundle` is not installed on the box the battery runs
+# on. Two runs followed the advice into `bundle: command not found` and spent the rest of the run on
+# transport rather than the task. cria refused a real command and answered with an imaginary one —
+# the same class as stating a false fact, one step removed (#5b).
+#
+# Every route below names the tools it needs, in code. When none of an ecosystem's routes are
+# available the honest answer is the empty one: say what is forbidden and stop. That is already how
+# apt, dnf, brew and pacman are handled — they install to the machine and have no project-local
+# form, so no route is invented for them (#3).
+
+pip_venv = First check whether you need it at all: the package may already be importable, and `pip install -e .` or `pip install .` installs YOUR OWN project, which your script and tests do not need. If a third-party package really is missing, install it into the project: `python3 -m venv .venv && ./.venv/bin/pip install <pkg>`, then run with `./.venv/bin/python`.
+
+npm_local = Drop the global flag: `npm install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
+
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `bundle install --path vendor/bundle`.
+
+gem_direct = Install it into the project instead: `gem install --install-dir vendor/bundle <gem>`, then make it loadable by putting that directory on the load path — `ruby -Ilib -e "..."` needs `GEM_HOME=vendor/bundle` set, or `$LOAD_PATH.unshift` the gem's `lib` directory from your code.
+
+cargo_add = A crate your code uses is a dependency, not a global binary: `cargo add <crate>` puts it in `Cargo.toml` and cargo fetches it into this project.
+
+go_get = A module your code imports is a dependency, not a global binary: `go get <module>` records it in `go.mod` for this project.
+
+composer_local = Drop `global`: `composer require <pkg>` installs into this project's own `vendor/`.
+
+maven_dep = A library your code imports is a dependency, not an install: add it to the `<dependencies>` block in `pom.xml` and let the build fetch it.

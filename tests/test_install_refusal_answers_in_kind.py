@@ -26,19 +26,27 @@ def remedy(cmd):
 
 
 class TheRemedyMatchesTheManagerTests(unittest.TestCase):
+    # Asserted on the ecosystem's OWN TOOL, not on one command line. The ruby entry used to require
+    # "bundle install --path", and `bundle` is not installed on the box the battery runs on — cria
+    # was prescribing a command that could not run, and two runs followed it into "command not
+    # found". A route is now chosen by what is actually on PATH, so the durable expectation is that
+    # ruby is answered with ruby's tool, whichever route that turns out to be.
+    # See tests/test_install_advice_names_a_tool_that_exists.py.
     CASES = {
-        "pip install requests": ".venv",
-        "gem install countries": "bundle install --path",
-        "cargo install ripgrep": "cargo add",
-        "go install example.com/x@v1": "go get",
-        "npm install -g eslint": "node_modules",
-        "composer global require x": "composer require",
+        "pip install requests": (".venv",),
+        "gem install countries": ("bundle install --path", "gem install --install-dir"),
+        "cargo install ripgrep": ("cargo add",),
+        "go install example.com/x@v1": ("go get",),
+        "npm install -g eslint": ("node_modules",),
+        "composer global require x": ("composer require",),
     }
 
     def test_each_ecosystem_is_answered_in_its_own_terms(self):
-        for cmd, want in self.CASES.items():
+        for cmd, wanted in self.CASES.items():
             with self.subTest(cmd=cmd):
-                self.assertIn(want, remedy(cmd))
+                got = remedy(cmd)
+                self.assertTrue(any(w in got for w in wanted),
+                                f"none of {wanted} in: {got[:160]}")
 
     def test_no_ecosystem_is_answered_in_pythons_terms_but_python(self):
         for cmd in self.CASES:
