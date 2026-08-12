@@ -1,5 +1,5 @@
 Fix the rounding bug causing totals to be one cent low. Example: three items at `19.99` with `SUMMER25` currently produce `48.57` instead of `48.58`. Add a regression test. 
 
-Then, move discount codes from hard-coded values to a `discounts.json` file next to the binary. Put the current three codes in that file. If the file is missing, fall back to those same three codes. Stop using `float64` for money arithmetic. Add a third-party Go decimal module to `go.mod` and use it for cart calculations. Do not create a custom decimal type. Keep the `Item` struct field types unchanged; convert values inside the cart.
+Then, move discount codes from hard-coded values to a `discounts.json` file next to the binary. Put the current three codes in that file. If the file is missing, fall back to those same three codes. Stop using `float64` for money arithmetic. Add a third-party Go decimal module to `go.mod` and use it for cart calculations. Do not create a custom decimal type. Keep the `Item` struct field types unchanged, and keep `Subtotal()` and `Total()` returning `float64` — other services call all three and we cannot change them this sprint. Convert to and from decimal inside the cart.
 
 Log every computed total to `stderr` on one line, including the subtotal, discount code or `none`, and final total, so orders can be found with `grep`.
