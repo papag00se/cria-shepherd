@@ -1162,6 +1162,49 @@ def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
     return out
 
 
+# A payload smaller than this is a targeted snippet — genuinely useful context for the model's next
+# attempt, and too short to be mistaken for the file. Above it, a rejected old_string reads as a
+# listing of the whole file.
+_REJECTED_PAYLOAD_CHARS = 400
+
+
+def _failed_edit_ids(messages: list[dict]) -> set[str]:
+    """tool_call_ids whose write/edit result came back as a failure — the payload never hit disk."""
+    ids: set[str] = set()
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        body = _debinarized(str(m.get("content") or ""))
+        if any(ln.strip() == _WROTE for ln in body.splitlines()):
+            continue                                   # a success — its content IS on disk
+        if editrecovery.is_edit_failure(body) if hasattr(editrecovery, "is_edit_failure") else (
+                "old_string" in body or "not an exact match" in body or denial.is_denied(body)):
+            if m.get("tool_call_id"):
+                ids.add(m["tool_call_id"])
+    return ids
+
+
+def _collapse_rejected_payload(tc: dict, path: str) -> dict:
+    """Replace a REJECTED edit's verbatim payload with a one-line statement of what was attempted.
+
+    Disclosure, not deletion (#5): the model still sees that it tried to edit this path and that the
+    attempt failed. What it no longer sees is its own invented file text rendered as though it were
+    the file. Only large payloads are collapsed — a short snippet is real context for the retry."""
+    fn = tc.get("function") or {}
+    args = _parse(fn.get("arguments"))
+    if not isinstance(args, dict):
+        return tc
+    changed = False
+    for key in ("old_string", "new_string", "content"):
+        val = args.get(key)
+        if isinstance(val, str) and len(val) > _REJECTED_PAYLOAD_CHARS:
+            args[key] = f"[{len(val)} characters — this edit was REJECTED, nothing was written to {path}]"
+            changed = True
+    if not changed:
+        return tc
+    return {**tc, "function": {**fn, "arguments": json.dumps(args)}}
+
+
 def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
@@ -1173,6 +1216,15 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
     exec_command calls keep their envelope — there the shell framing is the truth."""
     out: list[dict] = []
     swapped = 0
+    # WHICH CALLS FAILED, known before the assistant turn is emitted. A rejected edit_file keeps its
+    # arguments in the replayed history, and `old_string` is the model's own idea of the file —
+    # formatted exactly like a file listing, sitting closer to the generation point than the real
+    # content. Measured on the six-language battery: at nemotron cart-billing-go 0021 the coder read
+    # its own rejected old_string back as authority — "the earlier snippet we saw in the instruction
+    # shows the Item struct with ID, Name, PricePerUnit … Perhaps the original code is missing; we
+    # need to restore that structure" — and rebuilt a file that never existed. The asymmetry is the
+    # bug: fabrications persisted verbatim while verified content was dropped by compaction.
+    failed_ids = _failed_edit_ids(messages)
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
     own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
@@ -1193,6 +1245,8 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
                             write_paths[tc.get("id")] = _tool_path(p) or ""
+                            if tc.get("id") in failed_ids:
+                                tc = _collapse_rejected_payload(tc, _tool_path(p) or "")
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
                             strip_ids.add(tc.get("id"))
                 elif name == "local_web_search":  # always present the Brave tool as web_search
