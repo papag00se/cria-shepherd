@@ -379,11 +379,24 @@ class GuardsThatCouldOnlyFailOneWayTests(unittest.TestCase):
         self.assertIn("do NOT redo work", t)
 
     def test_the_checks_rule_allows_a_test_whose_premise_is_false(self):
+        """The exception is still here, and it is still needed: 888803's test asserted
+        `doesnotexist` is an unknown handle (it is registered, HTTP 200) and 360304's asserted a
+        field the API does not return. The coder reached "so the test is wrong" three times and
+        talked itself out of it because cria had forbidden the only correct repair.
+
+        What changed is its PRECONDITION. "something about the outside world that you have CHECKED"
+        is self-certified, and the six-language battery measured a weak model reading the failing
+        assertion dump itself as the check — the one sentence in the block that authorises weakening
+        a test, resting on a claim cria cannot verify. It is now scoped to an EXTERNAL system, the
+        evidence must be a command run this session with its output quoted, and the test's own
+        failure message is explicitly disqualified."""
         for key in ("block_nudge_preamble", "steer_checks_repeat"):
             t = prompts.load(key)
-            self.assertIn("not a fix", t)          # the prohibition stands
-            self.assertIn("PREMISE is factually wrong", t)
-            self.assertIn("CHECKED", t)            # and it must show its evidence
+            self.assertIn("not a fix", t)                       # the prohibition stands
+            self.assertIn("EXTERNAL system", t)                 # scoped to the case that motivated it
+            self.assertIn("Quote the command you ran", t)       # evidence, not self-certification
+            self.assertIn("own failure message is not that evidence", t)
+            self.assertIn("own behaviour never qualifies", t)   # the code-under-test case is out
 
 
 class AStepCannotOutliveTheRunTests(unittest.TestCase):
