@@ -128,7 +128,12 @@ def compose(fail: dict, prior: int) -> str:
                 else report("escalate_unread", prior=prior + 1, path=path))
     # Surgical (early failures): hand over the exact text to copy, or point at the current file.
     if anchor:
-        return report("anchor", anchor=anchor)
+        # THE LINE NUMBER, not just the window. A quoted snippet that appears twice in the file
+        # cannot tell the model WHICH copy it mistyped, and the six-language battery caught a coder
+        # resubmitting a byte-identical old_string three times against a hint that showed it text it
+        # believed it already had. The divergence index is computed where the mismatch is found; it
+        # only has to be carried out.
+        return report("anchor", anchor=anchor, line=fail.get("line") or "?")
     return report("no_anchor")
 
 

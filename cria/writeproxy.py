@@ -479,7 +479,7 @@ oldl=old.split(chr(10))
 o0=next((j for j,l in enumerate(oldl) if l.strip()),0)
 key=oldl[o0].strip() if oldl else ''
 new_first=next((l.strip() for l in new.split(chr(10)) if l.strip()),'')
-lines=s.split(chr(10)); ctx=''; close=''
+lines=s.split(chr(10)); ctx=''; close=''; dline=0
 if key:
     for i,l in enumerate(lines):
         if key[:40] in l:
@@ -493,13 +493,13 @@ if key:
                 fi=i+k-o0
                 if fi>=len(lines) or lines[fi]!=oldl[k]:
                     d=min(fi,len(lines)-1); break
-            ctx=chr(10).join(lines[max(0,d-2):d+4]); break
+            ctx=chr(10).join(lines[max(0,d-2):d+4]); dline=d+1; break
     if not ctx:  # no substring anchor — find the file line the old_string is CLOSEST to (a near-miss)
         cm=difflib.get_close_matches(key, [l.strip() for l in lines if l.strip()], n=1, cutoff=0.75)
         if cm:
             close=cm[0]
 if ctx:
-    _fail('anchor',anchor=ctx)
+    _fail('anchor',anchor=ctx,line=dline)
 elif close and new_first and new_first in close:
     _fail('phantom',anchor=close)   # already-correct line the model misremembers
 elif close:
