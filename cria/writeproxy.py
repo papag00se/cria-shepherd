@@ -548,9 +548,14 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         # with no lines in it. Walked on ada-handles_fabliq_codex_pon_1785721353 (calls 0093-0096,
         # 0085-0088, 0263, 0268): the coder guessed a path, cria answered "has 0 lines; line 1 is past
         # the end of the file", and its reasoning recorded the damage — "the file was empty or
-        # couldn't be found". The UNRANGED read of that same path says "No such file or directory",
-        # so cria held the true answer and served the false one. Ask the filesystem first.
-        f'if [ ! -e {q} ]; then printf "%s: No such file or directory\\n" {q}; exit 1; fi; '
+        # couldn't be found". The UNRANGED read of that same path says the file is not there, so cria
+        # held the true answer and served the false one. Ask the filesystem first.
+        #
+        # Through the SAME owner as the unranged read (_read_failure_branches), not a hand-rolled
+        # printf of bash's wording. Unmarked error text is indistinguishable from the file's contents
+        # to everything downstream: the read ledger counted exactly this shape as "261 chars read
+        # from disk" for a file nobody opened. One owner, one answer, whichever read was asked for.
+        f"{_read_failure_branches(q, path)}"
         f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
         f'if [ {start} -gt "$__n" ]; then '
         f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
@@ -606,9 +611,32 @@ def _spill_read_command(path: str) -> str:
                            format=(f" It is {fmt}." if fmt else ""),
                            outline=webfetch.outline_for_spill_path(path))
     # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.
-    return (f'if [ ! -e {q} ]; then printf "%s: No such file or directory\\n" {q}; exit 1; fi; '
+    # So does the not-there branch now: it used to printf bash's own phrasing, which exits non-zero
+    # but carries NO denied mark — so the ledger counted the error text as the file's contents. Same
+    # owner, same mark, one statement of what happened (see _read_failure_branches).
+    return (f"{_read_failure_branches(q, path)}"
             f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
             f'then {_refusal_command(steer)}; else cat {q}; fi')
+
+
+def _read_failure_branches(q: str, path: str) -> str:
+    """The guards that must run before any `cat`: a read that CANNOT return bytes says so in cria's
+    own voice, through the one refusal owner, so it carries the denied mark and a non-zero exit.
+
+    A bare `cat <missing>` hands the model bash's own error as the tool RESULT — text that is
+    non-empty and unmarked, so everything downstream reads it as content. `research.files_read`
+    accepts a read when the body is non-empty and not a denial, and its docstring already states the
+    intended rule: *an attempted read is not a read*. It was right; the input was lying to it. The
+    ledger recorded "Importer.java — 261 chars read from disk" for a 6,783-byte file at a path that
+    holds only directories, and a judge ruled the reading step DONE on a file nobody opened.
+
+    Fixed HERE, where cria composes the command, and not in the ledger: one statement of what
+    happened, in cria's own voice (#5b), and every reader downstream inherits it. The ledger needs
+    no change at all — the denied mark is already what it tests."""
+    msg = prompts.load_map("read_failed")
+    return (f'if [ -d {q} ]; then {_refusal_command(prompts.fill(msg["is_directory"], path=path))}; fi; '
+            f'if [ ! -e {q} ]; then {_refusal_command(prompts.fill(msg["missing"], path=path))}; fi; '
+            f'if [ ! -r {q} ]; then {_refusal_command(prompts.fill(msg["unreadable"], path=path))}; fi; ')
 
 
 def _read_command(args: dict) -> str | None:
@@ -634,7 +662,8 @@ def _read_command(args: dict) -> str | None:
     # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
     # report success.
     steer = _refusal_command(prompts.render("large_read_steer", path=str(path)))
-    return (f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
+    return (f"{_read_failure_branches(q, str(path))}"
+            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
             f"then {steer}; else cat {q}; fi")
 
 

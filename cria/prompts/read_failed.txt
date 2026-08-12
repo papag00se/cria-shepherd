@@ -1,0 +1,20 @@
+# Answers for a read cria lowered that CANNOT return the file's bytes. Both go through the one
+# refusal owner (_refusal_command), so they carry the denied mark and a non-zero exit: the call did
+# not run, and nothing downstream may count it as a read.
+#
+# WHY THIS EXISTS. `read_file` lowered to a bare `cat <path>`. On a missing path the harness handed
+# back bash's own two lines — "/bin/bash: line 2: x: No such file or directory / cat: x: No such
+# file or directory" — as the tool RESULT. That text is non-empty and carries no denied mark, so
+# research.files_read counted it: the ledger recorded "Importer.java — 261 chars read from disk"
+# for a 6,783-byte file at a path holding only directories, a judge read the ledger, and it ruled
+# the reading step DONE on a file nobody had opened. Measured across both battery arms: 4 distinct
+# failed reads recorded as successful ones.
+#
+# The fix is here rather than in the ledger. cria composes this command, so cria says what happened
+# (#5b), in its own voice, once — and every reader downstream inherits the truth for free.
+
+missing = {{PATH}} is not there — nothing was read. Check the path: it may be spelled differently, or it may sit under a subdirectory. Use list_dir on the directory you expect it in, then read the path exactly as it is listed.
+
+is_directory = {{PATH}} is a directory, not a file — nothing was read. Use list_dir on it to see what is inside, then read one of the files it lists.
+
+unreadable = {{PATH}} exists but could not be read — nothing was read. Check its permissions, or read a different path.

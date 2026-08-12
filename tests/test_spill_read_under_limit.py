@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import prompts, webfetch, writeproxy
+from cria import denial, prompts, webfetch, writeproxy
 
 _SHELL_TOOL = {"name": "shell", "parameters": {"properties": {"command": {"type": "string"}},
                                                "required": ["command"]}}
@@ -201,9 +201,14 @@ class MissingSpilledFileTests(_Workspace):
         return self.run_in_ws(writeproxy._spill_read_command(path))
 
     def test_the_coder_is_TOLD_the_file_is_not_there(self):
+        """Asserted by MEANING, not by bash's wording. The message used to be bash's own error, and
+        that was the second half of this bug: unmarked text reads as content, so the read ledger
+        counted the error as the file's bytes. cria now answers in its own voice, through the
+        refusal owner, so the same result also carries the denied mark."""
         r = self._run("./tmp/read-only/nope.txt")
-        self.assertIn("No such file or directory", r.stdout)
         self.assertIn("nope.txt", r.stdout)
+        self.assertIn("is not there", r.stdout)
+        self.assertTrue(denial.is_denied(r.stdout))
 
     def test_it_is_not_a_silent_empty(self):
         self.assertNotEqual(self._run("./tmp/read-only/nope.txt").stdout.strip(), "")
@@ -224,8 +229,9 @@ class MissingSpilledFileTests(_Workspace):
         ranged = self.run_in_ws(writeproxy._read_command({"path": missing, "start_line": 1,
                                                           "end_line": 5}))
         whole = self._run(missing)
-        self.assertIn("No such file or directory", ranged.stdout)
-        self.assertIn("No such file or directory", whole.stdout)
+        self.assertIn("is not there", ranged.stdout)
+        self.assertIn("is not there", whole.stdout)
+        self.assertEqual(ranged.stdout, whole.stdout, "the two paths must give the SAME answer")
         self.assertEqual(ranged.returncode, whole.returncode)
 
 
