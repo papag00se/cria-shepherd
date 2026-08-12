@@ -239,3 +239,35 @@ Then the completion judge ratified it. **Call 0163:**
 
 `undici` is a third-party package; "built-in" is the entire point of the deliverable. Two separate
 cria judgements, the same wrong belief, and the second one closed the session on it.
+
+
+## Method note — "model own fault" is the bucket to distrust (operator, 2026-08-11)
+
+The 24-pair walk classified incidents into kinds, and the largest single bucket after good-assist was
+`model-own-fault`: 130 of the first 620. The operator's correction: **that label is usually traceable to
+something in the context — ambiguous language, or anything that could sway a weak model the wrong way.**
+
+Measured against the walk's own text before any re-reading: **80 of those 130 mention cria machinery inside
+the incident description that filed them as the model's fault.** 88 sit in the assists-ON arm, where cria's
+context exists at all; the other 42 are in the control arm, where the only context is the task prompt and
+the harness — so a model-own-fault there is a TASK-DESIGN finding, not an absolution.
+
+The clearest single misfiling, and the reason this is a method problem rather than a bookkeeping one:
+
+> `[satisfaction-confirm 0034]` The confirm checker guessed a Maven-conventional package path that does not
+> exist in this project (`com/example/importer`) instead of the pipeline package the tree actually has …
+> **"no cria injection prompted the wrong guess."**
+
+The confirm checker IS cria. It hallucinated a Java layout convention rather than reading the directory, and
+because it emitted no *injection* the walker recorded it as the model's mistake. That is both a cria fault
+and a language-convention bias, filed under neither.
+
+**The rule this produces, for every walk from here:** a wrong turn is attributed to the model only after
+reading what the model was looking at when it turned. The categories to exhaust first are cria's own JUDGES
+(which act without injecting), cria's injections, cria's tool and denial surface, and the task prompt's own
+wording — a prompt that says "report the holder address" invites a weak model to invent a field literally
+named `holder_address`, and that is the prompt's doing, not the model's. `genuinely-model` is the verdict of
+last resort. It is real, and it must not be inflated away, but it is reached last.
+
+This is principle 16 (assume cria caused it until proven otherwise) applied to the CLASSIFICATION step
+rather than only to the investigation step — the place it was quietly being skipped.
