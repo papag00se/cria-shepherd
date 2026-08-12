@@ -15,6 +15,7 @@ does not own. cria bounds the output here; the harness re-issues the tool call t
 from __future__ import annotations
 
 import json
+import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
@@ -54,12 +55,29 @@ def binary_kind(head: bytes) -> str | None:
     return None
 
 
+# A terminal colour/cursor escape. Every build tool that detects a tty emits these, and several emit
+# them even when piped: maven, cargo, npm, gradle, pytest, go test. They are DECORATION — the text is
+# text — but the escape byte is 0x1b, a control character, so a naive count reads them as binary soup.
+# Measured on the six-language battery: `mvn compile -q` emits 713 bytes of compiler errors whose ONLY
+# control character is 0x1b, 22 of them at 3.1% density, clearing BOTH of looks_binary's thresholds.
+# Every Maven error in the campaign was replaced with "binary data cannot be read as text" — 212 of
+# qwen35's 275 prompts, 86 of gemma4's 112 — leaving the model to guess why its build failed, in the
+# one language family that cannot proceed without knowing.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+
+
+def strip_ansi(text: str) -> str:
+    """Terminal colour and cursor escapes removed. The ONE owner: a model reads text, and an escape
+    sequence carries nothing it can act on — only bytes that make the text look like a blob."""
+    return _ANSI.sub("", text or "")
+
+
 def looks_binary(text: str) -> bool:
     """True when decoded content is binary SOUP — replacement chars / raw control bytes — not text
     (operator ruling 07-30: blobs have no place in any model-facing prompt; a fact line replaces
-    them). Deliberately strict: CJK, base64, and a hexdump the model asked for are all TEXT (no
-    replacement or control chars) and never match."""
-    sample = text[:8192]
+    them). Deliberately strict: CJK, base64, a hexdump the model asked for, and a COLOURED BUILD LOG
+    are all TEXT and never match."""
+    sample = strip_ansi(text[:8192])
     bad = sum(1 for c in sample if c == "\ufffd" or (ord(c) < 32 and c not in "\t\n\r"))
     return bad >= 20 and bad / max(1, len(sample)) > 0.02
 

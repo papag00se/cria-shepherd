@@ -1,0 +1,8 @@
+[[1;31mERROR[m] COMPILATION ERROR : 
+[[1;31mERROR[m] /ws/src/main/java/pipeline/Importer.java:[88,31] method accumulate in class pipeline.Importer cannot be applied to given types;
+[[1;31mERROR[m]   required: java.lang.String,int
+[[1;31mERROR[m]   found:    java.lang.String
+[[1;31mERROR[m]   reason: actual and formal argument lists differ in length
+[[1;31mERROR[m] -> [1m[Help 1][m
+[[1;31mERROR[m] 
+[[1;31mERROR[m] Re-run Maven using the [1m-X[m switch to enable full debug logging.

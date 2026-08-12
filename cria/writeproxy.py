@@ -1077,10 +1077,17 @@ _EXIT_CODE = re.compile(r"Process exited with code (\d+)")
 
 
 def _debinarized(content: str) -> str:
-    """Binary SOUP in a tool result replaced by a fact line (operator ruling: blobs have no place in
-    any model-facing prompt). The harness exec envelope — the true record of the run — is preserved;
-    only the payload is stood in for. A hexdump/od/strings output the model asked for is TEXT and
-    passes untouched (the detector keys on replacement/control chars, which those never contain)."""
+    """Terminal colour stripped, then binary SOUP replaced by a fact line (operator ruling: blobs have
+    no place in any model-facing prompt). The harness exec envelope — the true record of the run — is
+    preserved; only the payload is stood in for. A hexdump/od/strings output the model asked for is
+    TEXT and passes untouched (the detector keys on replacement/control chars, which those never
+    contain).
+
+    The colour strip comes FIRST and is unconditional. Build tools colour their output, the escape
+    byte is a control character, and a coloured compiler log therefore read as binary and was thrown
+    away whole — every Maven error in the six-language battery. Stripping also spares the model bytes
+    it can do nothing with."""
+    content = content_reduce_mod.strip_ansi(content)
     if not content or not content_reduce_mod.looks_binary(content):
         return content
     m = _ENVELOPE_OUTPUT_LINE.search(content)
