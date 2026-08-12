@@ -262,3 +262,85 @@ asserting something it has not observed, which is doctrine 5b and needs no trade
 2 and 5 last. Both narrow an assist, and the walk read only assisted runs — there is no baseline
 control yet, so there is no evidence about what these assists also *earn*. gemma4's Ruby went
 40% → 100% under the same machinery.
+
+---
+
+# Tracing each fix back one more step
+
+Operator direction, 2026-08-12: *"A leads to B which causes C to break. You often like to fix B, but
+A led to B, so you should look at A to see if you can get B in a better state so C doesn't break."*
+
+Applied to all nine. It changed four of them, and collapsed two into one.
+
+## The root behind fixes 2 and 6, measured
+
+The stuck-supervisor writes the instructions that go to the coder. Two things I asserted about it
+while investigating were wrong, and both were corrected by opening the captures:
+
+- I said its prompt claims tools it does not have. **False.** `steer_diagnose.txt` says it has
+  `read_file` and `list_dir`, and the request really does offer both.
+- I said it is forced to produce an instruction. **False.** It may answer `ON_TRACK`.
+
+What is true is worse, and it is one number:
+
+| stuck-supervisor calls across the assisted arm | |
+|---|---:|
+| instructions sent to the coder | 356 |
+| **written without opening a single file** | **262 (73%)** |
+| answered `ON_TRACK` | 20 |
+| ...of which had opened a file | **0** |
+
+The tools are there. The prompt says *"Prefer inspecting reality before another rewrite: read the
+actual file"*. Three times out of four it does not look, and writes the order anyway.
+
+That is A. Everything I filed as separate faults is B:
+
+- it states an environment fact nothing verified — *"none exist in this environment"* (fix 2)
+- it orders work that is already done (fix 6, 22 occurrences)
+- it names files, lines and symbols it never read (19 occurrences)
+- it restates the task in its own words and the coder builds the restatement (15 occurrences)
+
+**The A-fix: cria reads the files and puts their contents in the prompt.** It already lists their
+names, sizes and line counts — it just declines to open them, and asks a weak model to do it
+instead. Reading them costs cria nothing: no model call, no round trip. Principle 8 says
+deterministic code gathers the facts and the reasoner judges. Here cria gathers the *metadata* and
+delegates the *facts* to the one participant that mostly will not fetch them.
+
+Fix 6 is not a separate fix. It dissolves into this one.
+
+## Where else the lens moved the answer
+
+**Fix 3 — the summary that reports stale problems.** Same shape as above: cria asks the model to
+write *"what still fails and why"* with no files and no check output in front of it. B was "make the
+rule against inventing a failure match the rule against inventing a pass." A is that cria is asking
+for something the writer cannot know. **cria should compose the current-state section itself** — from
+the disk and the last real check run, both of which it holds — and leave the model only the
+narrative of what it did.
+
+**Fix 5 — "don't weaken the tests" hitting the model's own test.** B was "reword the rule to name
+the repository's tests." A is that the rule is attached to *every* failing check without asking
+whether it applies. cria knows which test failed and whether that file existed at the start. **Do
+not attach the sentence when the failing test is one the model wrote this session.** Silence beats a
+reworded warning that still has to be interpreted.
+
+**Fix 7 — the write answered with only `Wrote <path>`.** B was "return the new content." A is *why*
+it is terse: context economy. Returning content on every write, with nothing else changed, grows the
+window. **The fix must supersede the previous copy in the same move** — cria already has the
+machinery for that (`dedup.elide_from_messages`). Return the new content *and* drop the stale one,
+or the fix trades a wrong-file bug for a context bug.
+
+## Where the lens changed nothing
+
+**Fix 4** (stale checks replayed) — the root already is "cria asserts a state it has not observed",
+and the fix is to re-run or to say when. **Fix 8** (build manifests stripped from the judge's list)
+and **fix 9** (a failed read recorded as a read) are both already at their root: one filter, one
+ledger, each doing the wrong thing at the only place it is done. **Fix 1** is landed.
+
+## Revised order
+
+1. **Give the supervisor the file contents** (was fixes 2 and 6, plus two mechanisms I had not
+   costed). One change, upstream of ~70 wrong turns.
+2. **cria composes the current-state section of the summary** (fix 3).
+3. Fixes 8 and 9 — small, certain, remove nothing.
+4. Fix 4, then fix 7 with the supersede.
+5. Fix 5 last: it still narrows an assist, and there is still no baseline control.
