@@ -190,9 +190,22 @@ def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[st
             out.append((rel, missing))
     return out
 
-_INVENTORY_EXCLUDE = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache",
-                                ".ruff_cache", "node_modules", "venv", ".venv", "site-packages",
-                                ".tox", ".eggs"})
+# ONE owner for "a directory the toolchain generated", shared by every walker that must not present
+# build output as the project's own files. Two sets used to disagree: this one and
+# execcheck._SKIP_DIRS, and the one WITHOUT the build outputs was the one feeding the listing stamped
+# "This list is complete". Measured on rust: ~450 lines of target/ artifacts — .d, .rmeta, .rlib,
+# extensionless fingerprints — presented to a judge as the workspace.
+#
+# The kernel is the same in every ecosystem: the toolchain wrote it, the coder did not. Deliberately
+# does NOT include `bin`, `obj` or `vendor`, which are real source directories in some projects and
+# whose cost of being wrong is hiding a deliverable.
+BUILD_ARTIFACT_DIRS = frozenset({
+    ".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "node_modules", "venv", ".venv", "site-packages", ".tox", ".eggs",
+    "target", "dist", "build", ".gradle", ".next", ".nuxt", ".svelte-kit", "coverage",
+})
+
+_INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 
 
 def workspace_inventory(root: str | None, flavor: str = "judge") -> str:

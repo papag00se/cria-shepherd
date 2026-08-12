@@ -76,8 +76,9 @@ ENTRY_CONVENTIONS: tuple[EntryConvention, ...] = (
     EntryConvention(("php",), r"^#!.*php", (), "a php shebang"),
 )
 
-_SKIP_DIRS = frozenset({".git", ".cria", "__pycache__", ".pytest_cache", "node_modules",
-                        "venv", ".venv", "site-packages", "target", "dist", "build", ".tox"})
+# Imported, not restated — see groundtruth.BUILD_ARTIFACT_DIRS for why two copies of this went out
+# of sync and what it cost.
+from .groundtruth import BUILD_ARTIFACT_DIRS as _SKIP_DIRS  # noqa: E402
 
 # A TEST file is not the program. Test files routinely carry their own runner block
 # (`if __name__ == "__main__": unittest.main()`), and counting it meant a workspace whose only
