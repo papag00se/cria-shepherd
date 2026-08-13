@@ -181,7 +181,13 @@ def serialize(messages: list[dict], defang: bool = False) -> str:
     # state from turn [15]" — an instruction the coder cannot carry out, because turn 15 does not
     # exist anywhere it can see. Every line below already names the file, the command and the error,
     # which ARE things the coder can find, and the lines are in order. Nothing needed the index.
-    return "\n".join(line for m in messages if (line := _defanged_line(m)))
+    #
+    # THE FIRST USER TURN IS THE TASK, and it alone is rendered whole — see _defanged_line. The
+    # harness frame is dropped upstream of here, so the first user-role message is the task/context
+    # every other line is judged against, and cria holds no second copy of it.
+    root = next((i for i, m in enumerate(messages) if m.get("role") == "user"), -1)
+    return "\n".join(line for i, m in enumerate(messages)
+                     if (line := _defanged_line(m, whole=(i == root))))
 
 
 # The harness's exec envelope, whose shape is the thing a model copies when it fakes a result.
@@ -193,8 +199,44 @@ _ENVELOPE = re.compile(r"(?im)^\s*(?:Chunk ID|Wall time|Original token count|Out
 _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 
 
-def _defanged_line(m: dict) -> str:
-    """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax."""
+# A BOUND MAY BE KEPT; A SILENT ONE MAY NOT. Bounding a prompt cria composes for its own judge or
+# steer author breaks no rule — over-applying never-truncate to composed prompts is itself a
+# documented footgun (#5's counter-nuance, the useless-prompting sweep). What broke was the two
+# things a bound must not do: take the WRONG END, and say nothing about it.
+#
+# Wrong end: a test runner prints its banner first and its verdict last, so the first 400 characters
+# of a run are seed and dots. One run rendered 140 of 140 pytest results to its judges as pure
+# banner. Another rendered three different commands — `… -q 2>&1`, `… > /tmp/importer_output.txt
+# 2>&1`, `… > data/output.txt 2>&1` — to one identical 164-character line, and the steer said "You've
+# run `time mvn exec:java` three times with identical behavior".
+#
+# Silent: with no marker the reader takes the fragment for the whole. A judge shown
+# "-> result: … Parallel workers are disabled - turning *" ordered the coder to change that line; the
+# real switch was a field called WORKERS_ENABLED and the verifier reported "0 thread(s)".
+#
+# Same budget, split head and tail, and say what was dropped — exactly the shape
+# proberun.compose_probe_command already uses on probe output, and for the same reason.
+_ELIDED_FMT = "...[{n} chars elided; head+tail kept — re-read the source for the middle]..."
+
+
+def _bounded(text: str, limit: int) -> str:
+    """``text`` within ``limit``, keeping BOTH ends and disclosing the cut."""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half] + _ELIDED_FMT.format(n=len(text) - 2 * half) + text[-half:]
+
+
+def _defanged_line(m: dict, whole: bool = False) -> str:
+    """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax.
+
+    ``whole`` keeps the text uncut. It is set for the ROOT TASK MESSAGE only, because that message is
+    the one thing every other line is judged against and cria holds no second copy of it. Clipped at
+    400 characters it cost two runs outright: ternary-bonsai/go read a task ending "Stop using
+    `float64` for mon" and ordered "Delete `go.mod`'s `require github.com/shopspring/decimal` line
+    and remove its import from cart.go NOW", when the task said to ADD a third-party decimal module
+    and not to write a custom type. The exemption is bounded in practice — the longest task prompt in
+    the battery is 1,061 characters — so it does not reopen the composed-prompt bound (#5)."""
     role = m.get("role")
     text = _text(m).strip()
     calls = m.get("tool_calls") or []
@@ -207,8 +249,8 @@ def _defanged_line(m: dict) -> str:
                 d = jsontext.loads(args) if isinstance(args, str) else (args or {})
             except (ValueError, TypeError, AttributeError):
                 d = {}
-            detail = "; ".join(f"{k}={str(v)[:160]}" for k, v in d.items()) if isinstance(d, dict) \
-                else str(args)[:160]
+            detail = "; ".join(f"{k}={_bounded(str(v), 160)}" for k, v in d.items()) \
+                if isinstance(d, dict) else _bounded(str(args), 160)
             bits.append(f"the coder called {fn.get('name', '?')} — {detail}" if detail
                         else f"the coder called {fn.get('name', '?')}")
         return " / ".join(bits)
@@ -216,12 +258,13 @@ def _defanged_line(m: dict) -> str:
         exit_m = _EXIT.search(text)
         body = _ENVELOPE.sub("", text).strip()
         head = f"→ exit {exit_m.group(1)}" if exit_m else "→ result"
-        return f"{head}: {' '.join(body.split())[:400]}" if body else head
+        return f"{head}: {_bounded(' '.join(body.split()), 400)}" if body else head
     if not text:
         return ""
     who = {"user": "the task/context said", "assistant": "the coder said",
            "system": "the frame said"}.get(role, f"{role} said")
-    return f"{who}: {' '.join(text.split())[:400]}"
+    flat = " ".join(text.split())
+    return f"{who}: {flat if whole else _bounded(flat, 400)}"
 
 
 def compaction_request(messages: list[dict]) -> str:
