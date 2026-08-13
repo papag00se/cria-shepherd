@@ -230,6 +230,36 @@ def _compaction_transcript(messages: list) -> str:
     return selfcompact.compaction_request(_drop_harness_frame(convo))
 
 
+def _compaction_body(pbody: dict) -> dict:
+    """The compaction request, re-asked in CRIA'S OWN WORDS.
+
+    THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
+    drops the harness system prompt, the compactor role's reasoning-off then injects
+    nothink_directive ("Do not think out loud... Respond directly") as the ONLY system line, and the
+    history below it is 100% tool-call turns (42-0 vs prose in g2). A summarize task whose entire
+    framing forbids narration, atop a context that has only ever spoken tool calls, yields a tool
+    call. The briefing framing must lead the FIRST pass — and it is the SAME battle-tested framing
+    the internal rolling compaction uses (selfcompact_summary), not a parallel variant (operator: one
+    compaction prompt).
+
+    …and the history is FLATTENED to a text transcript in ONE user message, exactly as cria's
+    internal rolling compaction does. THIS is why internal briefings succeed and harness ones failed:
+    passed 89 STRUCTURED turns — 42 of them its own tool calls — a weak model continues the pattern
+    and answers with a tool call, whatever the system prompt says (measured g6: correct framing led,
+    and both replies were still `call:write_file{...}`). With no tool-call turns in front of it,
+    there is no shape to mimic.
+
+    The harness's own compaction wording never reaches the model: `_compaction_transcript` drops the
+    marker turn, and this system line replaces the instruction. cria knows the turn is a compaction —
+    so cria, not the harness, gets to say what a good briefing is. ONE owner, so the streaming and
+    buffered transports cannot drift apart (they already did: streaming passed the harness's raw
+    prompt and the full structured history for months)."""
+    return {**pbody, "messages": [
+        {"role": "system", "content": prompts.load("selfcompact_summary")},
+        {"role": "user", "content": _compaction_transcript(pbody.get("messages", []))},
+    ]}
+
+
 def _text_of_msg(m: dict) -> str:
     c = m.get("content")
     if isinstance(c, list):
@@ -605,8 +635,22 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._respond_buffered(body, rlog)
 
     def _classify(self, body: dict, rlog):
+        """Classify the turn — unless cria ALREADY KNOWS what it is.
+
+        A compaction turn is self-identifying (the `<<<LOCAL_COMPACT>>>` handshake) and `_route`
+        dispatches it to the compactor without ever reading the verdict. Classifying it anyway spent
+        a whole model call to answer a question nobody asks, and the question is unanswerable: the
+        classifier must pick coding|reasoning|question for the text "Summarize the thread for
+        continuation", which is none of them. Measured over the 08-11..08-13 suite: 39 classifier
+        calls ran away to the 16,384-token ceiling and returned NOTHING — no content, no reasoning,
+        no tool call, `finish_reason: length` — for 131 minutes of wall clock, the single largest
+        block of dead time in the campaign. Deciding earlier is the fix; capping the runaway would
+        only have made the wasted call cheaper (A, not B)."""
         server: CriaServer = self.server
         if server.classifier is None:
+            return None
+        if _is_compaction_request(body.get("messages", [])):
+            rlog.emit("classify.skipped", why="compaction")
             return None
         return server.classifier.classify(body.get("messages", []), rlog)
 
@@ -902,8 +946,11 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
+            sbody = _proxy_body(body)
+            if _is_compaction_request(body.get("messages", [])):
+                sbody = _compaction_body(sbody)  # cria's own ask + a flat transcript, as buffered does
             stream = massage.massage_stream(
-                provider.stream_chat(self._apply_route_role(_proxy_body(body), indic), rlog),
+                provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
@@ -938,25 +985,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
         if _is_compaction_request(body.get("messages", [])):
-            # THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the
-            # proxy path drops the harness system prompt, the compactor role's reasoning-off then
-            # injects nothink_directive ("Do not think out loud... Respond directly") as the ONLY
-            # system line, and the history below it is 100% tool-call turns (42-0 vs prose in g2).
-            # A summarize task whose entire framing forbids narration, atop a context that has only
-            # ever spoken tool calls, yields a tool call. The briefing framing must lead the FIRST
-            # pass — and it is the SAME battle-tested framing the internal rolling compaction uses
-            # (selfcompact_summary), not a parallel variant (operator: one compaction prompt).
-            # …and the history is FLATTENED to a text transcript in ONE user message, exactly as
-            # cria's internal rolling compaction does. THIS is why internal briefings succeed and
-            # harness ones failed: passed 89 STRUCTURED turns — 42 of them its own tool calls — a
-            # weak model continues the pattern and answers with a tool call, whatever the system
-            # prompt says (measured g6: correct framing led, and both replies were still
-            # `call:write_file{...}`). With no tool-call turns in front of it, there is no shape to
-            # mimic. One mechanism, both paths.
-            pbody = {**pbody, "messages": [
-                {"role": "system", "content": prompts.load("selfcompact_summary")},
-                {"role": "user", "content": _compaction_transcript(pbody.get("messages", []))},
-            ]}
+            pbody = _compaction_body(pbody)
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:
