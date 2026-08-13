@@ -134,7 +134,8 @@ def main() -> None:
     code, out = run([sys.executable, "-c", probe], ws)
     priced = code == 0 and out.strip().splitlines()[-1].strip().startswith("14.99 24.99")
     own_tests = any("express" in p.read_text(errors="replace").lower()
-                    for p in ws.rglob("test_*.py") if ".git" not in p.parts)
+                    for p in list(ws.rglob("test_*.py")) + list(ws.rglob("*_test.py"))
+                    if ".git" not in p.parts)   # both pytest conventions, not just one
     r["parts"]["express_zone"] = {
         "ok": priced and own_tests,
         "detail": f"prices {out.strip()[-24:]} (want 14.99 24.99); model wrote its own tests: {own_tests}"}

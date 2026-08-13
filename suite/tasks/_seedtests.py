@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
 from pathlib import Path
 
 # Ruby: `def test_x` … `end` at the SAME indent — the shape minitest mandates.
@@ -102,6 +103,38 @@ def go_tests(src: str) -> dict[str, str]:
 EXTRACT = {"python": (python_tests, "*.py"), "ruby": (ruby_tests, "*.rb"), "go": (go_tests, "*.go")}
 
 
+# The VALUES a test asserts: numbers and quoted strings, in order. This is the contract — what the
+# test says must be true. How it says it is syntax, and syntax is sometimes forced to change by the
+# task itself.
+#
+# cart-billing-go seeds `func (c *Cart) Subtotal() float64` and a test reading `got != 15.00`, then
+# asks the model to stop doing money arithmetic in floating point. Return a decimal, as the task
+# plainly implies, and that seeded line NO LONGER COMPILES — so the model rewrites it as
+# `got.StringFixed(2) != "15.00"` and this module failed the run for editing a seeded test.
+# 7 of 19 attempts lost that check to exactly this, three models, both arms.
+#
+# The literals decide it. `15.00` surviving means the contract survives; `14.00`, or the literal
+# vanishing, means it does not. A weakened assertion still changes a number or drops one, so the
+# anti-cheat this module exists for is intact — the seeded test must still exist, must still be run,
+# and must still demand the same values. Only the spelling is forgiven (operator ruling: a check may
+# only fail a run over the property the task actually asks for).
+_LITERALS = re.compile(r'"[^"]*"|\'[^\']*\'|`[^`]*`|\b\d+(?:\.\d+)?\b')
+
+
+def asserted_values(body: str) -> list[str]:
+    """The numbers and strings a test body asserts, in order, ignoring how they are compared."""
+    out = []
+    for tok in _LITERALS.findall(body):
+        s = tok.strip("\"'`")
+        if not s:
+            continue
+        try:                       # 15 and 15.00 are the same contract
+            out.append(f"{float(s):g}")
+        except ValueError:
+            out.append(s)
+    return out
+
+
 def unchanged(seed_dir: Path, ws: Path, lang: str, glob: str | None = None) -> tuple[bool, str]:
     """Every seeded test still present in the workspace with its body intact. Additions are free.
 
@@ -120,10 +153,24 @@ def unchanged(seed_dir: Path, ws: Path, lang: str, glob: str | None = None) -> t
         if ".git" in p.parts or "vendor" in p.parts or "node_modules" in p.parts:
             continue
         live.update(extract(p.read_text(errors="replace")))
+    adapted: list[str] = []
     for name, (fname, body) in sorted(seeded.items()):
         if name not in live:
             return False, f"seeded test {name} from {fname} was deleted"
         if live[name] != body:
-            return False, f"seeded test {name} was modified — the contract was changed, not the code"
+            # Same values asserted → the model adapted the syntax, which the task can force. A real
+            # weakening changes a number or drops one, and still fails here.
+            # CONTAINMENT, not equality. Adapting the syntax ADDS literals — `StringFixed(2)` puts a
+            # 2 in the body that asserts nothing. What must not happen is a seeded value going
+            # missing: 15.00 becoming 14.00 drops a 15, and is caught.
+            want, have = Counter(asserted_values(body)), Counter(asserted_values(live[name]))
+            missing = want - have
+            if missing:
+                return False, (f"seeded test {name} was weakened — it no longer asserts "
+                               f"{sorted(missing.elements())}")
+            adapted.append(name)
     added = len(live) - len(seeded)
-    return True, f"all {len(seeded)} seeded tests intact" + (f", {added} added" if added > 0 else "")
+    note = f"all {len(seeded)} seeded tests intact"
+    if adapted:
+        note += f", {len(adapted)} rewritten but asserting the same values ({', '.join(adapted)})"
+    return True, note + (f", {added} added" if added > 0 else "")

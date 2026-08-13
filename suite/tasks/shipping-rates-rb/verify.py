@@ -40,6 +40,16 @@ RUN_SUITE = (
     'files.uniq.each { |f| require File.expand_path(f) }'
 )
 SUMMARY = re.compile(r"(\d+) runs?, \d+ assertions?, (\d+) failures?, (\d+) errors?")
+
+
+def _is_test_file(p) -> bool:
+    """Any ruby file this task's own suite runner would load — see RUN_SUITE. Name conventions only;
+    a file is a test file if minitest or rspec would pick it up, whichever layout the model chose."""
+    name, parts = p.name, p.parts
+    return (name.startswith("test_") or name.endswith("_test.rb")
+            or name.endswith("_spec.rb") or "spec" in parts or "test" in parts)
+
+
 # `def test_x` … `end` at the SAME indent. Ruby has no stdlib AST, and this is the shape minitest
 # mandates, so a regex anchored on indentation is exact for any conventionally formatted file.
 TEST_DEF = re.compile(r"^([ \t]*)def\s+(test_\w+)", re.M)
@@ -135,9 +145,15 @@ def main() -> None:
              '      Shipping.shipping_cost("express", 4.0, 10.0)')
     code, out = run(["ruby", "-Ilib", "-e", probe], ws)
     priced = code == 0 and out.strip().splitlines()[-1].strip().startswith("14.99 24.99")
+    # THE TASK ASKS FOR TESTS, NOT FOR A FILENAME. This looked only at files named `test_*`, while
+    # RUN_SUITE eight lines up loads `test/**/test_*.rb`, `spec/**/*_spec.rb` AND `test_*.rb` — so a
+    # model writing `spec/rates_spec.rb` had its tests RUN and got no credit for writing them.
+    # `rates_test.rb` is a common ruby convention too and was equally invisible. Any file this
+    # task's own runner would execute counts (operator ruling: a check may only fail a run over the
+    # property the task actually asks for).
     own_tests = any("express" in p.read_text(errors="replace").lower()
                     for p in ws.rglob("*.rb")
-                    if ".git" not in p.parts and p.name.startswith("test_"))
+                    if ".git" not in p.parts and _is_test_file(p))
     r["parts"]["express_zone"] = {
         "ok": priced and own_tests,
         "detail": f"prices {out.strip()[-24:]} (want 14.99 24.99); model wrote its own tests: {own_tests}"}
