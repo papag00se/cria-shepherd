@@ -5387,11 +5387,23 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
     coder's own pytest printed "1 failed, 4 passed" with the named test PASSED. Five independent
     walkers, both runs. Every one of them sent the coder back into a loop it had already left.
 
-    SCOPED TO TEST FINDINGS. A green pytest says nothing about a pyflakes finding, so a cached
-    non-test finding stands. And only results AFTER cria's last gate count — an older coder run is
-    not newer information."""
-    if not checks or not _is_test_finding(checks):
+    SCOPED BY WHAT THE GREEN RUN ACTUALLY PROVES. A green pytest says nothing about a pyflakes
+    finding — an unused import fails the linter and runs fine — so an interpreted runner only
+    settles a TEST finding. A runner that must BUILD before it can pass settles more than that:
+    `cargo test` cannot print "test result: ok" over an unresolved import, and `go test` cannot
+    print "ok <pkg>" over an undefined symbol, so a green tally from one of those is proof the
+    compile error is gone too (probegate.COMPILES_FIRST).
+
+    THAT DISTINCTION USED TO BE A PHRASE LIST over the finding's text, and it covered pytest and
+    minitest while missing every compiled language — go, java and rust, three of the six battery
+    families, and the ones where a stale error costs most. The question is not how the finding is
+    spelled, it is what the newer run establishes (#12: read the runner cria is holding, do not
+    match English in the prose cria rendered).
+
+    And only results AFTER cria's last gate count — an older coder run is not newer information."""
+    if not checks:
         return ""
+    compile_class = not _is_test_finding(checks)
     msgs = messages or []
     last_gate = -1
     for i, m in enumerate(msgs):
@@ -5406,9 +5418,12 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
         c = m.get("content") if m.get("content") is not None else m.get("output")
         if not isinstance(c, str) or probegate.SECTION_PREFIX in c:
             continue
-        tally = probegate.runner_tally(c)
-        if tally and (tally.startswith("0f/") or tally.endswith("/OK")):
-            return tally
+        runner, tally = probegate.runner_and_tally(c)
+        if not tally or not (tally.startswith("0f/") or tally.endswith("/OK")):
+            continue
+        if compile_class and runner not in probegate.COMPILES_FIRST:
+            continue          # a green interpreter proves nothing about a lint or compile finding
+        return tally
     return ""
 
 
@@ -6278,9 +6293,18 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                                            prompts.load("ledger_dedup_note"))
     reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
+    # THE AGE OF THE FINDINGS, in the author's own evidence block. cria already computes exactly
+    # this for the CODER-facing repeat prompt ("they last ran X, and <file> has been written since")
+    # and left the author reading the same cached block as the present tense under the word GROUND
+    # TRUTH. qwen35/go 0034: "The repo checks confirm: `sum.Add` is being called with 2 arguments
+    # but expects 1", while the file quoted in the same prompt reads sum.Add(price.Mul(quantity))
+    # and the coder's build one call later said "Build succeeded".
+    written = _writes_since_last_gate(body.get("messages", []))
     user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
+                          checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
+                                                   files=", ".join(written[:6])) if written else ""),
                           reasoning=(reasoning or "(not captured for this trigger)"))
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is

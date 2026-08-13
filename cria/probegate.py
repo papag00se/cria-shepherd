@@ -644,6 +644,39 @@ def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
     return None
 
 
+# Runners that CANNOT report a pass without building the project first. A green tally from one of
+# these is proof the code compiles, so it settles a compile-class finding as well as a test-class
+# one — `cargo test` never prints "test result: ok" over an unresolved import, and `go test` never
+# prints "ok <pkg>" over an undefined symbol.
+#
+# This is a property of the RUNNER, which cria reads off the output it is holding, not a property of
+# the finding's wording. The alternative was a phrase list over the finding text, which is how the
+# supersede came to cover pytest and minitest and miss every compiled language: three of the six
+# battery families, and exactly the ones where a stale error is most expensive.
+#
+# The interpreted runners are absent on purpose and the distinction is load-bearing: a green pytest
+# says nothing about a pyflakes finding, because an unused import fails the linter and runs fine.
+COMPILES_FIRST = frozenset({"cargo", "junit", "gradle", "dotnet", "go"})
+
+
+def runner_and_tally(text: str) -> tuple[str, str]:
+    """``(runner name, Nf/Np)`` — the runner whose summary line matched, and its tally.
+
+    :func:`runner_tally` is this without the name; both read the same rows, so a runner added to
+    ``_TALLIES`` is known to every caller at once."""
+    body = text or ""
+    for _name, pat, kind, summed in _TALLIES:
+        if not pat.findall(body):
+            continue
+        t = runner_tally(body)
+        return (_name, t) if t else ("", "")
+    if _GO_PASS.findall(body) or _GO_FAIL.findall(body):
+        return "go", runner_tally(body)
+    if _UNITTEST_TALLY.search(body):
+        return "unittest", runner_tally(body)
+    return "", ""
+
+
 def runner_tally(text: str) -> str:
     """A runner's own pass/fail line, normalized to `Nf/Np` — "" when it printed none.
 

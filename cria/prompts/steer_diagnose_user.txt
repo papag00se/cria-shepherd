@@ -3,7 +3,10 @@ WHAT TRIPPED THE DETECTOR:
 
 HOW TO WEIGH WHAT FOLLOWS — the sections below are NOT equally reliable, and mistaking one for
 another is the single most expensive error made in this seat. In order of authority:
-  1. GROUND TRUTH FROM THE REPO'S CHECKS and the fetch record — real output from real runs. Trust it.
+  1. GROUND TRUTH FROM THE REPO'S CHECKS and the fetch record — real output from real runs.
+     Trust the words; check the DATE. That section says when it last ran and what has been
+     written since. If the coder has edited a file the findings name, they describe the code
+     as it WAS, and the coder's own later run of the same check outranks them.
   2. THE FILES ON DISK — read them yourself before quoting them.
   3. THE CODING SESSION — what was actually done and what actually came back.
   4. THE CODER'S OWN WORDS AND THINKING — what it BELIEVES. Frequently wrong; that is usually why
@@ -17,7 +20,7 @@ THE CODING SESSION SO FAR (the task, and every tool call the coder made with its
 THE FILES IT HAS BEEN CHANGING (on disk right now — name, size, and line count only; use your read_file tool on any of them BEFORE citing or quoting their contents, and trust what you read over the transcript):
 {{DISK}}
 
-GROUND TRUTH FROM THE REPO'S CHECKS:
+GROUND TRUTH FROM THE REPO'S CHECKS{{CHECKS_AGE}}:
 {{TRUTH}}
 
 THE CODER'S RECENT PRIVATE THINKING — this is what the coder BELIEVES, not what is true. It is the
