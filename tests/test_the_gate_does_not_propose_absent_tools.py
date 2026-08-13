@@ -10,6 +10,12 @@ cost the gate its budget and the operator a confusing non-signal, and cria could
 UNSURE MEANS KEEP. A project-local tool (`./gradlew`, `node_modules/.bin/jest`) is checked as a file
 rather than on PATH, and anything unresolvable is kept: dropping a real probe is much worse than
 running one that abstains, so this only ever removes a certainty.
+
+THE ORACLE MOVED, THE RULE DID NOT. The certainty is now read off the CODER's path rather than
+cria's own service path (`cria.toolpath`) — cria could not see cargo, node or pytest and dropped
+every probe using them. These cases are unchanged in intent; they mock the new oracle because the
+old one answered for the wrong process. See
+tests/test_cria_asks_the_coders_path_not_its_own.py.
 """
 
 import os
@@ -18,7 +24,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from cria import proberun
+from cria import proberun, toolpath
 
 
 class C:
@@ -38,12 +44,12 @@ class OnlyACertainAbsenceIsDroppedTests(unittest.TestCase):
 
     def test_the_measured_case(self):
         """`bundle exec rubocop` on a box without bundler."""
-        with mock.patch("shutil.which", lambda p: None if p == "bundle" else "/usr/bin/" + p):
+        with mock.patch.object(toolpath, "which", lambda p: None if p == "bundle" else "/usr/bin/" + p):
             self.assertFalse(proberun.program_is_installed(C(["bundle", "exec", "rubocop"])))
             self.assertTrue(proberun.program_is_installed(C(["ruby", "-c", "x.rb"])))
 
     def test_an_env_prefix_is_not_mistaken_for_the_program(self):
-        with mock.patch("shutil.which", lambda p: "/usr/bin/ruby" if p == "ruby" else None):
+        with mock.patch.object(toolpath, "which", lambda p: "/usr/bin/ruby" if p == "ruby" else None):
             self.assertTrue(proberun.program_is_installed(C(["GEM_HOME=vendor", "ruby", "-c", "x"])))
 
     def test_an_empty_command_is_kept(self):

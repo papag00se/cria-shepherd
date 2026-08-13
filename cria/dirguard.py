@@ -22,7 +22,7 @@ import os
 import re
 import shutil
 
-from . import prompts
+from . import prompts, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -164,8 +164,13 @@ _INSTALL_REMEDY = (
 
 
 def _tool_present(name: str) -> bool:
-    """Is this tool on PATH right now? The one question that separates a real route from a guess."""
-    return shutil.which(name) is not None
+    """Is this tool on PATH right now? The one question that separates a real route from a guess.
+
+    On the CODER's path, not cria's: this advice is a sentence telling the coder which command to
+    run, so the only PATH that can make it true is the one the coder's commands use. cria's service
+    PATH has none of the user's toolchains, which turned every route through them into "no route"
+    (#5b — see :mod:`cria.toolpath`)."""
+    return toolpath.which(name) is not None
 
 
 def _local_install_advice(command: str) -> str:

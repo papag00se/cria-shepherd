@@ -35,7 +35,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
-from . import probediscovery, prompts
+from . import probediscovery, prompts, toolpath
 
 # How long a delivered program gets to show it works. Long enough for a network round trip, short
 # enough that a server that never returns does not hold the gate open.
@@ -361,11 +361,15 @@ def resolve_interpreter(argv: list[str]) -> list[str]:
     This is not guessing at the model's intent: `python foo.py` and `python3 foo.py` are the same
     instruction, and which one runs is a fact about the machine that cria can read. Every other
     failure direction is untouched — an unknown program is still a FileNotFoundError, and a command
-    cria cannot parse is still refused upstream in ``_runnable``."""
+    cria cannot parse is still refused upstream in ``_runnable``.
+
+    "A fact about the machine" means the machine the CODER builds on. `shutil.which` answered for
+    cria's own service process instead, whose systemd PATH holds none of the user's toolchains — see
+    :mod:`cria.toolpath`."""
     if not argv:
         return argv
     for name in _INTERPRETER_ALIASES.get(os.path.basename(argv[0]), ()):
-        if shutil.which(name):
+        if toolpath.which(name):
             return [name] + argv[1:]
     return argv
 
@@ -375,8 +379,14 @@ def run(root: str, command: str, timeout: int = RUN_TIMEOUT_S) -> tuple[int | No
     if not ok:
         return None, why
     try:
+        # …IN THE CODER'S ENVIRONMENT. This inherited cria's own, so the live-execution probe could
+        # not launch `node` at all: "the delivered program was not run, because FileNotFoundError:
+        # [Errno 2] No such file or directory: 'node'" — published by the ONE check built to catch a
+        # green gate over a broken program, on a Node cell that then scored 1/4. Only PATH is
+        # borrowed (toolpath.env), and the program still launches by argv with no shell, so nothing
+        # about quoting or injection changes.
         p = subprocess.run(resolve_interpreter(shlex.split(command)), cwd=root,
-                           capture_output=True, text=True,
+                           capture_output=True, text=True, env=toolpath.env(),
                            timeout=timeout)
         return p.returncode, ((p.stdout or "") + (p.stderr or ""))[:OUTPUT_CAP]
     except subprocess.TimeoutExpired:

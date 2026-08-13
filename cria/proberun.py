@@ -52,7 +52,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import probediscovery, probeparse, prompts
+from . import probediscovery, probeparse, prompts, toolpath
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -248,15 +248,22 @@ def program_is_installed(candidate) -> bool:
 
     UNSURE MEANS KEEP. A tool inside the project (`./gradlew`, `node_modules/.bin/jest`) is checked
     as a file rather than on PATH, and anything this cannot resolve is kept — dropping a real probe
-    is far worse than running one that abstains, so the check only ever removes a certainty."""
-    import shutil
+    is far worse than running one that abstains, so the check only ever removes a certainty.
+
+    AND THE CERTAINTY MUST BE ABOUT THE MACHINE, NOT ABOUT CRIA. This asked `shutil.which`, which
+    answers for cria's own process — a service with a bare systemd PATH. Every toolchain under the
+    user's home read as absent, so on this box cargo, rustc, node, npm, npx, pytest and pyflakes were
+    all "not installed" while the coder ran them freely. Two Rust cells ran no Rust tool at any gate
+    and the empty result was published as "no error-class problems" over a project that did not
+    compile. The question is what the coder's shell can launch, so ``toolpath`` is what gets asked
+    (#5b). The original bundler case still drops: `bundle` is absent from both paths."""
     prog = _head_program(getattr(candidate, "command", candidate))
     if not prog:
         return True
     if "/" in prog or prog.startswith("."):
         base = os.path.join(getattr(candidate, "working_dir", "") or "", prog)
         return os.access(base, os.X_OK) or os.access(prog, os.X_OK)
-    return shutil.which(prog) is not None
+    return toolpath.which(prog) is not None
 
 
 # ---------------------------------------------------------------------------
