@@ -688,8 +688,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         # edit_file/read_file calls; without this the model summarizes ~28 raw `python3 - <<HEREDOC`
         # blobs instead of its own tool calls, and that degraded summary becomes the next ⟦ctx:
         # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
-        body["messages"] = redact_secrets(represent_inbound(body.get("messages", []), rlog),
-                                           [self._brave_key])
+        body["messages"] = redact_secrets(
+            represent_inbound(body.get("messages", []), rlog,
+                              workspace_root=getattr(self, "_workspace_root", None)),
+            [self._brave_key])
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)

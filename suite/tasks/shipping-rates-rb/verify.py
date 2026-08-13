@@ -203,7 +203,12 @@ def main() -> None:
             gems.add(name)
     r["parts"]["country_zone_mapping"] = {
         "ok": zones_ok and by_code_ok and bool(gems),
-        "detail": f"zones {last[:70] or out.strip()[-60:]}; third-party requires: {sorted(gems) or 'none'}"}
+        "detail": (f"zones {last or out.strip()[-60:]}; "
+                   f"third-party requires: {sorted(gems) or 'none'}")}
+    # The detail is NOT clipped. It was cut at 70 characters, which lands mid-number on the
+    # cost that follows the zone list — "…|15.99" displayed as "…|15" and read as a wrong
+    # answer when the answer was right. A detail line exists to say why a check failed; a
+    # clipped one says something else.
 
     # max_score follows the checks — the battery scores by percentage, so a task carries as many
     # checks as its work needs and a constant here would silently misreport every run.

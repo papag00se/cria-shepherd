@@ -31,6 +31,7 @@ from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _q
 
 from . import brave, denial, editrecovery, prompts, webfetch
 from . import content_reduce as content_reduce_mod
+from . import probeparse
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
@@ -1291,7 +1292,7 @@ def _collapse_rejected_payload(tc: dict, path: str) -> dict:
     return {**tc, "function": {**fn, "arguments": json.dumps(args)}}
 
 
-def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
+def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1379,7 +1380,51 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
             out.append(m)
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
+    _note_missing_dependency(out, workspace_root, rlog)
     return out
+
+
+def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:
+    """Label the MOST RECENT command result whose own output says a dependency will not load.
+
+    The note existed already and fired only on cria's gate probes — so it never saw the model's own
+    `ruby -Ilib …`, which is where this actually happens. Measured on the p3 arm: nemotron-elastic's
+    ruby run carried `cannot load such file` 39 times and the note appeared zero times, and all five
+    of that cell's checks died on that one unloadable gem. Same mistake as the read guard: the door
+    cria watches was not the door the failure comes through.
+
+    ONLY THE LAST ONE. Annotating all 39 would put the same paragraph in the window 39 times, which
+    is noise on a signal the model has already seen (#3). The most recent occurrence is the turn it
+    can act on.
+
+    Silent when the name resolves to the project's own file — telling a coder its own module is a
+    missing dependency sends it after a package that should not exist (#8: ask the disk)."""
+    last = None
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        c = m.get("content")
+        if not isinstance(c, str) or probegate_marker_in(c):
+            continue          # a gate result already carries the note from proberun
+        if probeparse.dependency_missing(c):
+            last = m
+    if last is None:
+        return
+    eco, name = probeparse.dependency_missing(last["content"])
+    if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
+        return
+    note = prompts.fill(prompts.load_map("dependency_note")[eco], name=name)
+    if note in last["content"]:
+        return
+    last["content"] = last["content"] + "\n\n" + note
+    if rlog is not None:
+        rlog.emit("writeproxy.dependency_note", level="info", ecosystem=eco, name=name)
+
+
+def probegate_marker_in(text: str) -> bool:
+    """A gate result — proberun.dependency_note already speaks for those."""
+    from .probegate import SECTION_PREFIX
+    return SECTION_PREFIX in text
 
 
 # --------------------------------------------------------------------- content repair

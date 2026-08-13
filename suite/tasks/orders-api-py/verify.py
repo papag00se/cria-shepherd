@@ -188,6 +188,22 @@ def main() -> None:
     # --- 3: the model's tests must actually go through HTTP
     code, out = run([sys.executable, "-m", "pytest", "-q", "--tb=short"], ws)
     suite_green = code == 0 and bool(re.search(r"(\d+) passed", out))
+    # WHY it is not green, in the detail. "suite green: False" reads as "assertions failed", and for
+    # three of the four models in this arm that was wrong: their suites never TERMINATED. A test that
+    # starts a server and does not shut it down hangs pytest forever, which is a different defect
+    # from a failing assertion and needs a different fix. Saying which is the whole job of a detail
+    # line — see the same lesson in shipping-rates-rb, where a clipped detail made a correct answer
+    # look wrong.
+    if code == -1 or out.strip() == "TIMEOUT":
+        suite_why = "the suite never finished — a test is hanging (a server started and not shut down?)"
+    elif suite_green:
+        suite_why = "green"
+    else:
+        m_fail = re.search(r"(\d+) failed", out)
+        m_err = re.search(r"(\d+) error", out)
+        bits = [b for b in ((f"{m_fail.group(1)} failed" if m_fail else ""),
+                            (f"{m_err.group(1)} errors" if m_err else "")) if b]
+        suite_why = ", ".join(bits) or (out.strip().splitlines()[-1][:80] if out.strip() else "no output")
     test_text = " ".join(p.read_text(errors="replace")
                          for p in list(ws.rglob("test_*.py")) + list(ws.rglob("*_test.py"))
                          if ".git" not in p.parts)
@@ -195,7 +211,7 @@ def main() -> None:
                                              "urllib.request", "httpx"))
     r["parts"]["integration_tests"] = {
         "ok": suite_green and over_http,
-        "detail": f"suite green: {suite_green}; tests make real HTTP calls: {over_http}"}
+        "detail": f"suite: {suite_why}; tests make real HTTP calls: {over_http}"}
 
     # --- 4: the injection, probed through the running service
     inj_db = os.path.join(tmp, "inj.db")
