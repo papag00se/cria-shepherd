@@ -1128,6 +1128,43 @@ def _debinarized(content: str) -> str:
     return content_reduce_mod.binary_note(len(content.encode("utf-8", "replace")), None)
 
 
+# How much of an oversized command result survives at each end. Enough that an early failure line and
+# a final summary both live through the bound — the two places a real answer sits.
+EXEC_KEEP_LINES = 40
+
+
+def _bounded_exec_result(content: str, command: str = "") -> str:
+    """An oversized exec result → head, tail, and a statement of exactly what is missing.
+
+    cria refuses a `read_file` over READ_INLINE_MAX and tells the coder to grep instead. It let a
+    command printing 302,983 tokens through untouched, because the guard was built for cria's own
+    synthetic tools and the coder's shell was never on the same table. Measured across the battery:
+    71 of 538 command results exceed the limit cria enforces on a file read, and the harness had
+    ALREADY blind-clipped 10 of them before cria saw them. One 879-line result answering "does it
+    crash" pushed a session over the compaction trigger and destroyed the finished step's notes,
+    then the coder ran the identical command six calls later.
+
+    A BOUND WITH A ROUTE, not a clip. Principle 5 forbids the silent version — which is exactly what
+    the harness was doing — so this keeps both ends, states the loss in bytes and lines, and names
+    the next action. The harness's exec envelope (Chunk ID / exit code) is preserved: it is short,
+    it is the truth about the run, and the exit code is the most load-bearing line in the result."""
+    if not content or len(content) <= READ_INLINE_MAX:
+        return content
+    env, _, body = content.partition("Output:")
+    if not body:                       # no recognisable envelope — bound the whole thing
+        env, body = "", content
+    lines = body.splitlines()
+    if len(lines) <= EXEC_KEEP_LINES * 2:
+        return content                 # few, very long lines: cutting ends would cut mid-line
+    head, tail = lines[:EXEC_KEEP_LINES], lines[-EXEC_KEEP_LINES:]
+    kept = len("\n".join(head + tail))
+    note = prompts.fill(prompts.load_map("exec_output_bounded")["note"],
+                        elided=f"{max(0, len(body) - kept):,}", bytes=f"{len(body):,}",
+                        lines=f"{len(lines):,}", kept=str(EXEC_KEEP_LINES))
+    joined = ("\n".join(head) + "\n" + note + "\n" + "\n".join(tail))
+    return (env + "Output:\n" + joined) if env else joined
+
+
 def _blind_pipe_failure(command: str, content: str) -> bool:
     """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
     line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
@@ -1314,10 +1351,17 @@ def represent_inbound(messages: list[dict], rlog=None) -> list[dict]:
                 # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
                 # The note states only computable facts: nonzero exit, empty output, a filter present.
                 out.append({**m, "content": content + "\n\n" + prompts.load("filtered_failure_note")})
-            elif content != str(m.get("content") or ""):
-                out.append({**m, "content": content})   # the binary-soup cleanse changed it
             else:
-                out.append(m)
+                bounded = _bounded_exec_result(content, own_cmds.get(tid, ""))
+                if bounded != content:
+                    if rlog is not None:
+                        rlog.emit("writeproxy.exec_output_bounded", level="info",
+                                  chars=len(content), cmd=(own_cmds.get(tid, "") or "")[:80])
+                    out.append({**m, "content": bounded})
+                elif content != str(m.get("content") or ""):
+                    out.append({**m, "content": content})   # the binary-soup cleanse changed it
+                else:
+                    out.append(m)
         else:
             out.append(m)
     if swapped and rlog is not None:
