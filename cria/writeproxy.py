@@ -79,6 +79,23 @@ _LIST_NAMES = {"list_dir"}
 REFUSED_EXIT_CODE = 1
 
 
+def _oversize_command(text: str) -> str:
+    """A refusal for SIZE, which exits 0 — the target is fine, cria simply will not hand it over.
+
+    Operator ruling, 2026-08-12: *"You must still use an exit code of 0 or the weak model will
+    assume something like the file doesn't exist."* A non-zero exit on `ls` or `cat` means one thing
+    to a small model — the path is not there — and it then goes looking for a directory it is
+    standing in. That is a worse lie than the success-stamp the sibling owner exists to prevent,
+    because it is about the WORLD rather than about the call.
+
+    The distinction between the two owners is what was refused. :func:`_refusal_command` answers a
+    call that was BLOCKED or malformed — it did not run and must not report success. This one
+    answers a call that ran fine and produced more than fits: nothing failed, so nothing claims to
+    have. The denied mark is carried either way, so cria's own readers still know no content came
+    back."""
+    return f"printf %s {_qbash(denial.mark(text))}"
+
+
 def _refusal_command(text: str) -> str:
     """The one way cria lowers a refusal: MARK it as a call that did not run, print it, then exit
     non-zero. ONE owner — the five call sites each hand-rolled `printf %s …` and all five inherited
@@ -534,12 +551,13 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
       Too big → steer to a narrower range / grep instead of returning a doomed-to-be-truncated blob.
     * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
     An in-range, in-size read returns exactly its content."""
-    # Through the ONE refusal owner, not a hand-rolled printf. The size branch REPLACES the range
-    # the coder asked for — the `sed` never runs — and printf exits 0, so the harness stamped
-    # "Process exited with code 0" over text saying the read did not happen. That is the exact pair
-    # REFUSED_EXIT_CODE (see the module header) was introduced to kill, and these two size guards
-    # were missed because they live INSIDE a lowered command rather than at a call site.
-    steer = _refusal_command(prompts.render("large_range_steer", path=str(path)))
+    # Through an owner, not a hand-rolled printf — and specifically the SIZE owner, which exits 0.
+    # These two guards were once switched to REFUSED_EXIT_CODE alongside the blocked-call refusals,
+    # and that was wrong for them: a non-zero exit on a read means one thing to a small model, that
+    # the path is not there, and it goes hunting for a file it is holding. The call did not fail —
+    # cria declined to hand over the bytes — so nothing claims it failed. The denied mark still
+    # rides, so cria's own readers know no content came back (operator ruling, 2026-08-12).
+    steer = _oversize_command(prompts.render("large_range_steer", path=str(path)))
     return (
         # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
         # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
@@ -616,7 +634,7 @@ def _spill_read_command(path: str) -> str:
     # owner, same mark, one statement of what happened (see _read_failure_branches).
     return (f"{_read_failure_branches(q, path)}"
             f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f'then {_refusal_command(steer)}; else cat {q}; fi')
+            f'then {_oversize_command(steer)}; else cat {q}; fi')
 
 
 def _read_failure_branches(q: str, path: str) -> str:
@@ -661,7 +679,7 @@ def _read_command(args: dict) -> str | None:
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
     # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
     # report success.
-    steer = _refusal_command(prompts.render("large_read_steer", path=str(path)))
+    steer = _oversize_command(prompts.render("large_read_steer", path=str(path)))
     return (f"{_read_failure_branches(q, str(path))}"
             f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
             f"then {steer}; else cat {q}; fi")
@@ -673,11 +691,15 @@ def _list_command(args: dict) -> str:
     # Same principle as the read guard: a huge directory (node_modules, a data dir) would be SILENTLY
     # truncated by the harness's output cap. Cap the listing at READ_INLINE_MAX bytes and DISCLOSE the
     # total entry count so a cut isn't mistaken for the whole directory.
+    # NO CAP-AND-DISCLOSE. A clipped listing is still a partial view the model reasons over as if it
+    # were the directory (operator ruling: never elide, never truncate — refuse and make it narrow).
+    # The refusal is composed per call because it names the entry count, which only the shell knows.
+    refusal = denial.mark(
+        prompts.load_map("oversize_refusal")["list"].replace("{{PATH}}", str(path)))
+    head, _, tail = refusal.partition("{{ENTRIES}}")
     return (f'__o=$(ls -la {q} 2>&1); '
             f'if [ "$(printf %s "$__o" | wc -c)" -gt {READ_INLINE_MAX} ]; then '
-            f'printf %s "$__o" | head -c {READ_INLINE_MAX}; '
-            f'printf "\\n...[listing capped — %s entries in this directory; narrow to a subpath, or grep for a name]...\\n" '
-            f'"$(ls -1A {q} 2>/dev/null | wc -l | tr -cd 0-9)"; '
+            f'printf "%s%s%s\\n" {_qbash(head)} "$(ls -1A {q} 2>/dev/null | wc -l | tr -cd 0-9)" {_qbash(tail)}; '
             f"else printf '%s\\n' \"$__o\"; fi")
 
 
@@ -1128,41 +1150,32 @@ def _debinarized(content: str) -> str:
     return content_reduce_mod.binary_note(len(content.encode("utf-8", "replace")), None)
 
 
-# How much of an oversized command result survives at each end. Enough that an early failure line and
-# a final summary both live through the bound — the two places a real answer sits.
-EXEC_KEEP_LINES = 40
-
-
 def _bounded_exec_result(content: str, command: str = "") -> str:
-    """An oversized exec result → head, tail, and a statement of exactly what is missing.
+    """An oversized exec result → a REFUSAL naming its size and how to ask a smaller question.
 
-    cria refuses a `read_file` over READ_INLINE_MAX and tells the coder to grep instead. It let a
-    command printing 302,983 tokens through untouched, because the guard was built for cria's own
-    synthetic tools and the coder's shell was never on the same table. Measured across the battery:
-    71 of 538 command results exceed the limit cria enforces on a file read, and the harness had
-    ALREADY blind-clipped 10 of them before cria saw them. One 879-line result answering "does it
-    crash" pushed a session over the compaction trigger and destroyed the finished step's notes,
-    then the coder ran the identical command six calls later.
+    NO ELISION, NO TRUNCATION, ON ANY PATH (operator ruling, 2026-08-12). The first cut of this kept
+    a head and a tail and stated the loss; that is still a partial view the model reasons over as if
+    it held the relevant part, and disclosing the size does not make it actionable. read_file has
+    refused-and-redirected all along. This puts the coder's own shell on the same footing.
 
-    A BOUND WITH A ROUTE, not a clip. Principle 5 forbids the silent version — which is exactly what
-    the harness was doing — so this keeps both ends, states the loss in bytes and lines, and names
-    the next action. The harness's exec envelope (Chunk ID / exit code) is preserved: it is short,
-    it is the truth about the run, and the exit code is the most load-bearing line in the result."""
+    cria refuses a read_file over READ_INLINE_MAX and let a command printing 302,983 tokens through
+    untouched, because the guard was built for cria's synthetic tools and the harness's shell was
+    never on the same table. Measured across the battery: 71 of 538 command results exceed the limit
+    cria enforces on a file read, and the harness had ALREADY blind-clipped 10 of them. One 879-line
+    result answering "does it crash" pushed a session over the compaction trigger, destroyed the
+    finished step's notes, and was re-run identically six calls later.
+
+    THE EXIT STATUS SURVIVES. It is the harness's envelope, not a slice of the output — a distinct
+    fact about the run, and usually the actual answer to the question that produced the flood. What
+    is discarded is discarded whole, and the refusal says so: nothing was cut."""
     if not content or len(content) <= READ_INLINE_MAX:
         return content
-    env, _, body = content.partition("Output:")
-    if not body:                       # no recognisable envelope — bound the whole thing
+    env, sep, body = content.partition("Output:")
+    if not sep:                        # no recognisable envelope — the whole thing is output
         env, body = "", content
-    lines = body.splitlines()
-    if len(lines) <= EXEC_KEEP_LINES * 2:
-        return content                 # few, very long lines: cutting ends would cut mid-line
-    head, tail = lines[:EXEC_KEEP_LINES], lines[-EXEC_KEEP_LINES:]
-    kept = len("\n".join(head + tail))
-    note = prompts.fill(prompts.load_map("exec_output_bounded")["note"],
-                        elided=f"{max(0, len(body) - kept):,}", bytes=f"{len(body):,}",
-                        lines=f"{len(lines):,}", kept=str(EXEC_KEEP_LINES))
-    joined = ("\n".join(head) + "\n" + note + "\n" + "\n".join(tail))
-    return (env + "Output:\n" + joined) if env else joined
+    note = prompts.fill(prompts.load_map("oversize_refusal")["exec"],
+                        bytes=f"{len(body):,}", lines=f"{len(body.splitlines()):,}")
+    return (env + "Output:\n" + note) if sep else note
 
 
 def _blind_pipe_failure(command: str, content: str) -> bool:

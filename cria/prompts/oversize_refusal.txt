@@ -1,0 +1,14 @@
+# What cria answers when a READ would return more than it can hand over whole. Parsed by load_map.
+#
+# NO ELISION AND NO TRUNCATION, ON ANY PATH (operator ruling, 2026-08-12). A clip is a lie the model
+# cannot detect, and stating the size of the clip does not make it one it can act on -- it still
+# reasons over a partial view believing it has the relevant part. The only honest answer to "this is
+# too big" is to refuse and say how to ask a smaller question. read_file has worked this way all
+# along; the directory listing was capping with a note, and the coder's own command output was not
+# bounded at all.
+#
+# Every route named below is one the coder can run with the tools it already has.
+
+exec = [{{BYTES}} bytes over {{LINES}} lines — too much to return, so nothing is shown. Nothing was truncated: the command ran and its output was discarded, not cut. Ask it a smaller question and run it again: add a filter (`| grep <what you are looking for>`, `| head -50`, `| tail -50`), count instead of listing (`| wc -l`), or send it to a file (`> out.txt`) and grep that. Exit status is above and is accurate.]
+
+list = [{{ENTRIES}} entries — too many to list, so nothing is shown. Narrow it: list a subdirectory instead, or match what you are after (`ls {{PATH}} | grep <name>`), or count first (`ls -1A {{PATH}} | wc -l`).]

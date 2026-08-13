@@ -110,7 +110,8 @@ class ThroughTranslateOutboundTests(_Workspace):
         writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
-        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.returncode, 0)      # declined on size is not a failed call
+        self.assertTrue(denial.is_denied(r.stdout))
         self.assertIn("large reference document", r.stdout)
         self.assertNotIn("xxxx", r.stdout)          # and NOT the document
 
@@ -168,10 +169,13 @@ class SpillReadCommandTests(_Workspace):
         self.assertEqual(len(r.stdout), LARGEST_REFUSED)
 
     def test_an_OVERSIZED_spilled_file_is_still_refused(self):
+        """Still refused, and now with exit 0 — see ASizeRefusalReportsNoFailureTests for why a
+        non-zero exit on a read tells a small model the file is gone."""
         rel = self.spilled("spec.json", writeproxy.READ_INLINE_MAX + 1)
         r = self._run(rel)
-        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.returncode, 0)
         self.assertIn("large reference document", r.stdout)
+        self.assertTrue(denial.is_denied(r.stdout))
 
     def test_exactly_at_the_limit_is_read(self):
         rel = self.spilled("edge.txt", writeproxy.READ_INLINE_MAX)
@@ -235,31 +239,47 @@ class MissingSpilledFileTests(_Workspace):
         self.assertEqual(ranged.returncode, whole.returncode)
 
 
-class ARefusedReadDoesNotReportSuccessTests(_Workspace):
-    """The module header's own rule, applied to the two size guards that were exempt from it.
+class ASizeRefusalReportsNoFailureTests(_Workspace):
+    """REVERSED 2026-08-12 by operator ruling. These two guards used to exit non-zero.
 
-    ``cria/writeproxy.py`` line 52: "A REFUSED call did not run, so it must not report success."
-    :data:`writeproxy.REFUSED_EXIT_CODE` was introduced for the five hand-rolled ``printf %s …``
-    call sites, and both READ SIZE guards were missed — they live INSIDE a lowered command rather
-    than at a call site, so the harness stamped "Process exited with code 0" above text saying the
-    read did not happen. The spill read three lines away already had it right.
+    They were switched to :data:`writeproxy.REFUSED_EXIT_CODE` alongside the blocked-call refusals,
+    on the module header's rule that "a REFUSED call did not run, so it must not report success".
+    That rule is right for a call that was BLOCKED or malformed. It is wrong for a read declined on
+    SIZE, and the operator's reason is concrete: *"You must still use an exit code of 0 or the weak
+    model will assume something like the file doesn't exist."*
+
+    A non-zero exit on `cat` or `ls` means one thing to a small model — the path is not there — and
+    it goes hunting for a file it is holding. That is a lie about the WORLD; the success-stamp the
+    old rule guarded against is a lie about the CALL, and the smaller of the two. Nothing failed
+    here: cria declined to hand over the bytes, so nothing claims it failed.
+
+    The denied mark rides either way, which is how cria's own readers still know no content came
+    back — see :func:`writeproxy._oversize_command` against its sibling `_refusal_command`.
     """
 
-    def test_the_whole_read_size_guard_exits_non_zero(self):
+    def test_the_whole_read_size_guard_exits_zero(self):
         rel = self.spilled("big.json", writeproxy.READ_INLINE_MAX + 1)
         r = self.run_in_ws(writeproxy._read_command({"path": rel}))
-        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.returncode, 0)
         self.assertIn("would be truncated", r.stdout)      # the steer still reaches the model
+        self.assertTrue(denial.is_denied(r.stdout))        # and cria still knows nothing came back
 
-    def test_the_ranged_read_size_guard_exits_non_zero(self):
+    def test_the_ranged_read_size_guard_exits_zero(self):
         # 400 lines of 60 chars ≈ 24 KB — over the cap once the line numbers are added.
         p = os.path.join(self.spill, "wide.txt")
         with open(p, "w") as fh:
             fh.write("\n".join("z" * 60 for _ in range(400)))
         rel = f"{webfetch.SPILL_DIR}/wide.txt"
         r = self.run_in_ws(writeproxy._read_command({"path": rel, "start_line": 1, "end_line": 400}))
-        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.returncode, 0)
         self.assertIn("too large to return", r.stdout)
+        self.assertTrue(denial.is_denied(r.stdout))
+
+    def test_a_call_that_was_BLOCKED_still_exits_non_zero(self):
+        """The distinction the split preserves: a malformed or refused call really did not run."""
+        self.assertIn(f"exit {writeproxy.REFUSED_EXIT_CODE}",
+                      writeproxy._refusal_command("blocked"))
+        self.assertNotIn("exit ", writeproxy._oversize_command("too big"))
 
     def test_a_read_that_SUCCEEDS_still_exits_zero(self):
         """The direction of failure: only the refusing branch changed."""

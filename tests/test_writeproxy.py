@@ -400,13 +400,17 @@ class WebTests(unittest.TestCase):
             self.assertIn("ONE clean", _lowered_cmd(comp), shell_name)   # the malformed_call_refusal fired
 
     def test_list_dir_is_size_guarded(self):
-        # A huge directory (node_modules, a data dir) would be silently truncated by the harness output
-        # cap; cap + disclose the entry count instead (same principle as the read guard).
+        # A huge directory (node_modules, a data dir) would be silently truncated by the harness
+        # output cap. It used to be capped-and-disclosed; since the 2026-08-12 ruling it is REFUSED
+        # — a clipped listing is still a partial view the model reasons over as the directory, and
+        # naming the size of a clip does not make it actionable. No elision on any read path.
         from cria.writeproxy import _list_command, READ_INLINE_MAX
         cmd = _list_command({"path": "somedir"})
         self.assertIn("ls -la", cmd)
-        self.assertIn("listing capped", cmd)
+        self.assertIn("too many to list", cmd)
         self.assertIn(str(READ_INLINE_MAX), cmd)
+        self.assertNotIn("head -c", cmd)          # nothing is clipped
+        self.assertNotIn("exit 1", cmd)           # and nothing claims the directory is missing
 
     def test_lowered_commands_avoid_sandbox_rejected_primitives(self):
         # cria's OWN lowered commands must never use a destructive primitive a harness sandbox rejects

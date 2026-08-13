@@ -94,7 +94,16 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
         cmd = writeproxy._refusal_command("that path is outside the project directory")
         r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
         self.assertTrue(denial.is_denied(r.stdout))
-        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE,
+                         "a BLOCKED call did not run and must not report success")
+
+    def test_the_SIZE_owner_marks_its_refusal_but_reports_no_failure(self):
+        """The 2026-08-12 split. A read declined on size did not fail — and a non-zero exit on a
+        read tells a small model the path is not there, which is a lie about the world."""
+        cmd = writeproxy._oversize_command("that file is too large to return whole")
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertTrue(denial.is_denied(r.stdout))
+        self.assertEqual(r.returncode, 0)
 
     def test_the_WHOLE_READ_size_guard_refuses_and_says_so(self):
         # ADVERSARIAL PAIR, run for real: the same command must refuse a big file and READ a small
@@ -111,8 +120,10 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
             rs = subprocess.run(["bash", "-c", writeproxy._read_command({"path": small})],
                                 capture_output=True, text=True)
         self.assertTrue(denial.is_denied(rb.stdout))
-        self.assertEqual(rb.returncode, writeproxy.REFUSED_EXIT_CODE,
-                         "a refused read reported success — the contract this module's header states")
+        # Exit 0 since the 2026-08-12 ruling: a size refusal is not a failed call, and a non-zero
+        # exit on a read tells a small model the file is not there. The DENIED MARK above is what
+        # carries "no content came back" — that is the part this test exists for.
+        self.assertEqual(rb.returncode, 0)
         self.assertFalse(denial.is_denied(rs.stdout))
         self.assertEqual(rs.stdout, "print('hi')\n")
         self.assertEqual(rs.returncode, 0)
@@ -129,7 +140,7 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
                 ["bash", "-c", writeproxy._read_command({"path": p, "start_line": 1, "end_line": 2})],
                 capture_output=True, text=True)
         self.assertTrue(denial.is_denied(wide.stdout))
-        self.assertEqual(wide.returncode, writeproxy.REFUSED_EXIT_CODE)
+        self.assertEqual(wide.returncode, 0)   # size refusal: declined, not failed
         self.assertFalse(denial.is_denied(narrow.stdout))
         self.assertEqual(narrow.returncode, 0)
         self.assertIn("1: yyy", narrow.stdout)
