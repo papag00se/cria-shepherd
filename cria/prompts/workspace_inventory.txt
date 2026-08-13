@@ -19,3 +19,11 @@ planner_empty = WORKSPACE FILES in {{ROOT}}: none — the workspace is empty; no
 # activity instead (the unstick reasoner answered ON_TRACK over an untouched workspace, five
 # times). Spill entries are LABELLED, never removed: the completeness clause stays true.
 spill_note = — reference material saved into the read-only scratch directory for re-reading, not a deliverable
+# The BRIEFING writer's header. cria's rolling compaction and the harness's compaction handshake both
+# asked a model to describe the state of a workspace they had never been shown, and it filled the gap:
+# qwen35/rust 0032 briefed "**Test file created** — `tests/nested_key_lookup.rs` exists" and the very
+# next prompt's own ground-truth block listed six files, none of them tests/ — that path never existed
+# in the run. The existing repair (loop._briefing_disk_truth) answers the opposite direction, a
+# briefing that DENIES a file cria can see; nothing answered invention. So the writer is shown the
+# list, and the completeness clause below is what makes it decisive.
+briefing_header = FILES ON DISK RIGHT NOW (gathered from the filesystem just now, newest first). This is the only description of the workspace you have — the transcript's file mentions may be stale:

@@ -242,6 +242,13 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
         lines.append(labels["coder_note"])
         return "\n".join(lines)
+    if flavor == "briefing":
+        # The rolling/harness compaction writer. Same complete listing, wording that says why it is
+        # here: the transcript's file mentions may be stale, this is not. See the header's own note.
+        lines = [labels["briefing_header"]]
+        lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+        lines.append(labels["complete"])
+        return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
     lines.append(labels["complete"])

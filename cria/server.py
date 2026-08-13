@@ -21,7 +21,8 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import callcapture, compat, focustrim, massage, probegate, prompts, responses, rumination, selfcompact
+from . import (callcapture, compat, focustrim, groundtruth, massage, probegate, prompts,
+               responses, rumination, selfcompact)
 from .classify import Classifier
 from .content_reduce import est_tokens
 from .config import Config
@@ -199,7 +200,7 @@ def _last_checks_note(server, sess_key: str) -> str:
     return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
 
 
-def _compaction_transcript(messages: list) -> str:
+def _compaction_transcript(messages: list, files_list: str = "") -> str:
     """The conversation to be briefed, as flat text — the SAME preparation cria's internal
     compaction and steer author use: the harness's agent frame dropped (Codex ships ~7.8K tokens of
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
@@ -227,10 +228,10 @@ def _compaction_transcript(messages: list) -> str:
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.
-    return selfcompact.compaction_request(_drop_harness_frame(convo))
+    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list)
 
 
-def _compaction_body(pbody: dict) -> dict:
+def _compaction_body(pbody: dict, workspace_root: str | None = None) -> dict:
     """The compaction request, re-asked in CRIA'S OWN WORDS.
 
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
@@ -256,7 +257,11 @@ def _compaction_body(pbody: dict) -> dict:
     prompt and the full structured history for months)."""
     return {**pbody, "messages": [
         {"role": "system", "content": prompts.load("selfcompact_summary")},
-        {"role": "user", "content": _compaction_transcript(pbody.get("messages", []))},
+        {"role": "user", "content": _compaction_transcript(
+            pbody.get("messages", []),
+            # …AND THE DISK, for the same reason the self-compaction sibling now passes it: a writer
+            # shown no workspace invents one. ONE mechanism, both paths.
+            groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"))},
     ]}
 
 
@@ -948,7 +953,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
             if _is_compaction_request(body.get("messages", [])):
-                sbody = _compaction_body(sbody)  # cria's own ask + a flat transcript, as buffered does
+                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", [])))
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
                 body.get("model", ""),
@@ -985,7 +990,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
         if _is_compaction_request(body.get("messages", [])):
-            pbody = _compaction_body(pbody)
+            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", [])))
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:

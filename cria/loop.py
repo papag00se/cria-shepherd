@@ -2581,7 +2581,15 @@ class Loop:
                                  # that is where unittest entered a pytest run.
                                  # This is the SAME fix as da35f4e, which landed on the harness path
                                  # (server.py) and never reached its sibling here.
-                                 selfcompact.compaction_request(mm), rlog,
+                                 selfcompact.compaction_request(
+                                     mm,
+                                     # …AND THE DISK. This inventory was already gathered on
+                                     # the line below, but only to CORRECT the briefing after
+                                     # the fact (_briefing_disk_truth, denial direction only).
+                                     # The writer never saw it and invented files that never
+                                     # existed. Same fact, given before the question.
+                                     workspace_inventory(sess.workspace_root or "",
+                                                         flavor="briefing")), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
                                  rlog) + _briefing_gate_ground_truth(sess),

@@ -267,8 +267,21 @@ def _defanged_line(m: dict, whole: bool = False) -> str:
     return f"{who}: {flat if whole else _bounded(flat, 400)}"
 
 
-def compaction_request(messages: list[dict]) -> str:
-    """The compactor's user message: the cleaned transcript, then cria's ask LAST.
+def compaction_request(messages: list[dict], files_list: str = "") -> str:
+    """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
+
+    ``files_list`` is ``groundtruth.workspace_inventory`` — what is on disk RIGHT NOW. Without it
+    cria asked a model to describe a workspace it had never been shown, and it filled the gap:
+    qwen35/rust 0032 briefed "**Test file created** — `tests/nested_key_lookup.rs` exists", and the
+    next prompt's own ground-truth block listed six files, none of them tests/ — that path never
+    existed in the run. cria then shipped the invention as ⟦ctx:rollup⟧ and the coder planned against
+    it. The existing repair (``loop._briefing_disk_truth``) answers only the opposite direction, a
+    briefing that DENIES a file cria can see; it stays exactly as it is. This closes invention at the
+    source instead of adding a second corrector after the fact (#1: the bar to ADD is high, and the
+    cheapest fix here is giving the writer the fact it was missing).
+
+    Empty string when there is no workspace root — the section is dropped rather than rendered as an
+    empty or guessed listing (#5b).
 
     ONE owner, because having two was the bug. A model obeys the last instruction it reads, so a
     transcript whose final line is the coder's live step ("produce the corrected FULL file in a
@@ -290,8 +303,10 @@ def compaction_request(messages: list[dict]) -> str:
     #
     # One rule, one owner: exactly one verbatim copy of a file region survives, and it is the
     # newest. The bytes of the older ones are on disk, which is the only current version.
+    # Evidence, then disk, then the ask — the ask stays LAST for the reason above.
+    disk = f"\n\n{files_list.strip()}" if files_list.strip() else ""
     return (serialize(stub_old_write_args(probegate.clean_gate_results(messages)))
-            + "\n\n" + prompts.load("compact_closing_ask"))
+            + disk + "\n\n" + prompts.load("compact_closing_ask"))
 
 
 def _summary_msg(summary: str) -> dict:

@@ -58,8 +58,20 @@ class TheEvidenceRuleAppliesBothWaysTests(unittest.TestCase):
         self.assertLess(j - i, 200)
 
     def test_the_reason_given_is_the_summarisers_own_blindness(self):
-        """Not an appeal to a rule — a reason a weak model can apply to a case nobody wrote down."""
-        self.assertIn("You cannot see the files or run anything from here", self.body)
+        """Not an appeal to a rule — a reason a weak model can apply to a case nobody wrote down.
+
+        "see" became "read". The writer is now shown the on-disk FILE LIST (names and sizes), so
+        "you cannot see the files" had become a false statement in cria's own voice (#5b) — and a
+        false one in the direction that matters, since the whole point of the listing is that the
+        model should trust it. It still cannot READ them or run anything, which is the blindness the
+        rule actually rests on."""
+        self.assertIn("You cannot read the files or run anything from here", self.body)
+
+    def test_and_the_listing_does_not_soften_the_evidence_rule(self):
+        """A file list settles existence. It says nothing about whether a check ran, and the
+        briefing must not read it as licence to claim a pass."""
+        self.assertIn("settles whether a file exists and nothing else", self.body)
+        self.assertIn("Never state that a file was created unless it is on that list", self.body)
 
 
 class TheSurroundingContractIsUnchangedTests(unittest.TestCase):

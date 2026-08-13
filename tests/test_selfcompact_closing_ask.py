@@ -121,7 +121,10 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         # it, so "does the plan-off fold use the composer" is answered by there being only one fold.
         self.assertFalse(hasattr(loop.Loop, "_summarize_single"))
         self.assertIn("self._self_compact(", inspect.getsource(loop.Loop._self_compact_single))
-        self.assertIn("selfcompact.compaction_request(mm)",
+        # (The call is multi-line now — it also passes the on-disk file list — so match the
+        # composer, not the whole one-line spelling. The claim under test is unchanged: there is
+        # exactly one composer and this fold goes through it.)
+        self.assertIn("selfcompact.compaction_request(",
                       inspect.getsource(loop.Loop._self_compact))
 
     def test_the_one_fold_uses_the_compactor_ENDPOINT_not_just_its_role(self):
