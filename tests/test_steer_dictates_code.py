@@ -87,6 +87,18 @@ class OneQuestionTests(unittest.TestCase):
         self.assertTrue(loop._dictates_code(REAL_DICTATION, None))
 
 
+def tool_result(text):
+    return {"role": "tool", "tool_call_id": "c1", "content": text}
+
+
+def wrote(path, content):
+    import json as _json
+    return {"role": "assistant", "content": None,
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "write_file",
+                                         "arguments": _json.dumps({"path": path, "content": content})}}]}
+
+
 class WiringTests(unittest.TestCase):
     def test_the_gate_passes_its_reasoner_through(self):
         import inspect
@@ -111,27 +123,56 @@ class WiringTests(unittest.TestCase):
     def test_the_prose_survives_and_the_invented_call_does_not(self):
         """The ruling's own reasoning, enforced. It turned on SIGHTED versus BLIND dictation, so the
         question is not "does this contain code" but "did the author read it or invent it" — and
-        cria holds the evidence the author was shown.
+        cria holds what it OBSERVED (tool results + bytes the coder wrote; see loop._observed_code,
+        which is the haystack now — the composed prompt was carrying the coder's own prose).
 
         REAL_DICTATION is the measured example: `pytest.register_pytest_mark("live")` is not a real
         function, and it reached a coder because it sat inline in prose with no fence. The diagnosis
         around it is correct and worth keeping."""
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
-                                           ask=lambda s, u: "DICTATES")
+                                           ask=lambda s, u: "DICTATES",
+                                           messages=[tool_result("PytestUnknownMarkWarning: live")])
         self.assertIn("unknown mark named live", out)          # the diagnosis survives
         self.assertNotIn("register_pytest_mark", out)          # the invention does not
         self.assertIn("code removed", out)                     # and the removal is disclosed
 
     def test_a_quote_of_something_cria_showed_the_author_survives(self):
-        """The case the ladder passes were built on: a steer quoting the coder's own failing line."""
+        """The case the ladder passes were built on: a steer quoting the coder's own failing line.
+
+        It lives in a TOOL RESULT — a compiler or test error — which is exactly why narrowing the
+        haystack to what cria observed does not touch it."""
         rlog = _Rlog()
         directive = 'Your assertion cart.go:22: if got != 48.58 { is the line that fails. Fix the total.'
-        out = loop._grounded_steer_or_none(directive, "cart.go:22: if got != 48.58 {", rlog,
-                                           ask=lambda s, u: "DICTATES")
+        out = loop._grounded_steer_or_none(directive, "unused", rlog,
+                                           ask=lambda s, u: "DICTATES",
+                                           messages=[tool_result("cart.go:22: if got != 48.58 {")])
         self.assertEqual(out, directive)
 
-    def test_with_no_evidence_nothing_is_stripped(self):
+    def test_a_quote_of_what_the_coder_actually_WROTE_survives(self):
+        """The other half of observation: bytes the coder put on disk are real code, whatever the
+        coder believes about them. They live in the write_file arguments."""
+        rlog = _Rlog()
+        directive = 'You wrote self.assertEqual(total, 48.58) — change the expected value.'
+        out = loop._grounded_steer_or_none(
+            directive, "unused", rlog, ask=lambda s, u: "DICTATES",
+            messages=[wrote("t.py", "self.assertEqual(total, 48.58)")])
+        self.assertEqual(out, directive)
+
+    def test_a_line_the_coder_only_TALKED_about_does_not_ground_it(self):
+        """THE measured bug. nemotron-elastic/python 0197: the coder mused "return self._send(201,
+        {...})? ... That seems odd" and cria's steer ordered exactly that. Prose is not observation."""
+        rlog = _Rlog()
+        directive = 'Replace the handler line with return self._send(201, {"error": "internal"})'
+        out = loop._grounded_steer_or_none(
+            directive, "unused", rlog, ask=lambda s, u: "DICTATES",
+            messages=[tool_result("orders/app.py:54: 500 returned on exception"),
+                      {"role": "assistant",
+                       "content": 'return self._send(201, {"error": "internal"})? That seems odd.'}])
+        self.assertNotIn("_send(201", out)
+        self.assertIn("code removed", out)
+
+    def test_with_nothing_observed_nothing_is_stripped(self):
         """cria cannot call code invented when it has nothing to check against."""
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(REAL_DICTATION, "", rlog, ask=lambda s, u: "DICTATES")

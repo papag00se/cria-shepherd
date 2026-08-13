@@ -6637,14 +6637,52 @@ _CODE_LINE = re.compile(
 _INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\([^)\n]*\)")
 
 
+def _observed_code(messages: list[dict] | None) -> str:
+    """Everything cria has actually SEEN happen — what tools returned and what the coder WROTE.
+
+    THE HAYSTACK WAS THE BUG. This check asks "did the author read this line, or invent it?", and it
+    was asked against the whole composed prompt — which carries the defanged transcript, which
+    carries `the coder said: …`. So a line the coder merely BELIEVED counted as something cria had
+    seen, and the invention shipped with cria's authority behind it.
+
+    Measured, nemotron-elastic/python 0197. The coder's private thinking: "return self._send(201,
+    {"error": "internal server error"})? ... That seems odd." cria's steer: "replace the line that
+    returns 500 on exception with 201." The coder complied against its own judgement. That line is
+    still wrong on disk at orders/app.py:54.
+
+    PROVENANCE, NOT SYNTAX. cria trusts what was RETURNED and what was WRITTEN, never what was SAID:
+
+      * tool results — a compiler error, a test failure, a `read_file` body. This is where the
+        coder's own failing line lives, so the case the 2026-08-04 ruling protects (a steer quoting
+        the line that is actually failing) still passes.
+      * tool-call arguments — the bytes the coder actually put on disk with `write_file`/`edit_file`.
+        Code the coder really wrote is real code, whatever it believes about it.
+
+    Excluded is exactly one thing: assistant prose and reasoning. A belief is not an observation."""
+    out: list[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        if role in ("tool", "function_call_output") or m.get("type") == "function_call_output":
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if isinstance(c, str):
+                out.append(c)
+        for tc in m.get("tool_calls") or []:
+            args = (tc.get("function") or {}).get("arguments")
+            if isinstance(args, str):
+                out.append(args)
+    return "\n".join(out)
+
+
 def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
     """The directive with code the author did NOT read replaced by a marker.
 
-    Code survives when it appears in the evidence cria showed the author — the file text, the checker
-    output, the transcript it was given. That is the whole distinction the 2026-08-04 ruling rests
-    on: a steer quoting the coder's own failing line is grounded and carried the ladder passes; a
-    steer inventing a replacement is the author, and the author is the same weak model with no
-    compiler.
+    Code survives when it appears in what cria OBSERVED — see :func:`_observed_code` for why that is
+    tool results and written bytes, and never the coder's own prose. That is the whole distinction
+    the 2026-08-04 ruling rests on: a steer quoting the coder's own failing line is grounded and
+    carried the ladder passes; a steer inventing a replacement is the author, and the author is the
+    same weak model with no compiler.
 
     SPANS, not lines. An invented call usually sits inside a sentence that is otherwise a correct
     diagnosis, and deleting the sentence throws away the half worth keeping — so a code-shaped LINE
@@ -6846,7 +6884,9 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         # So: quotes survive, inventions are stripped, and the prose ships either way. This is not
         # the blunt drop the ruling rejected — a steer quoting the coder's own failing line is
         # untouched, which is exactly the case the ladder passes were built on.
-        kept, stripped = _strip_invented_code(directive, evidence)
+        # …AGAINST WHAT CRIA OBSERVED, not against the prompt. The prompt carries the coder's own
+        # prose, which made a line the coder only believed count as one cria had seen.
+        kept, stripped = _strip_invented_code(directive, _observed_code(messages))
         rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
                   stripped=stripped, head=_clip(directive, 120))
         directive = kept
