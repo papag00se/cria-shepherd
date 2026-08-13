@@ -2259,7 +2259,7 @@ class Loop:
         if satisfied:
             return None
         sess.completion_checks += 1
-        reason = reason or "a deliverable the task named is missing, stubbed, or does not actually work"
+        reason = reason or prompts.load("done_no_named_gap")
         # The STEP is the judge's proposed ACTION, not its verdict essay: the old framing+reason+fix
         # paragraph became a step verbatim and pinned a run for 118 calls (0729-mellum2) — carrying
         # literal {{…}} braces the coder shipped into a URL, and "or fallback on…" advice. The essay
@@ -3776,7 +3776,7 @@ class Loop:
             routes=known_routes(body.get("messages", []), sess),
             gate_findings=getattr(sess, "last_gate_flag", "") or "")
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
-        return "" if satisfied else (reason or "a deliverable the task named is missing, stubbed, or never verified")
+        return "" if satisfied else (reason or prompts.load("done_no_named_gap"))
 
     def _reasoned_reanchor(self, body: dict, rlog) -> str:
         """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the

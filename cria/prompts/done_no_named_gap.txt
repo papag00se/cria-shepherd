@@ -1,0 +1,1 @@
+the check did not name which deliverable is unfinished, so treat this as "not confirmed" rather than as a finding. Go through the task's deliverables one by one and verify each against the code and a check that actually runs.

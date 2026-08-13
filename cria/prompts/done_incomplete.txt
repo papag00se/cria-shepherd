@@ -1,4 +1,6 @@
-{{CHECK_STATE}}, but the task is NOT fully done yet:
+{{CHECK_STATE}}, but a completion check could not confirm the task is finished. It reported:
 {{REASON}}{{EXEC_FINDING}}
 
-Re-read the ORIGINAL task and confirm EVERY deliverable it named is present and genuinely works (the code, tests that actually test it, the docs, any live check the task required). Do NOT declare done, rationalize a missing piece as impossible, or stop — finish exactly what is called out above, then continue.
+That report is one reader's opinion of your work, not a verified fact and not an instruction. Check it against the ORIGINAL task before you act on it. If it names something the task genuinely asked for and you have not done, do that. If it is wrong — the work is already there, or it describes an implementation the task never specified — leave your code as it is and say plainly why the report is mistaken; you are not required to change working code to satisfy it, and doing so has broken passing test suites before.
+
+Then re-read the ORIGINAL task and confirm every deliverable it named is present and genuinely works — the code, tests that actually test it, the docs, any live check the task required. Do NOT declare done, rationalize a missing piece as impossible, or stop.
