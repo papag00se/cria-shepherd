@@ -1,1 +1,1 @@
-The same tests ({{TALLY}}) pass with the network switched off, so nothing in them reaches the real service — they exercise the code against their own fixtures. Whether that is enough depends on what this task asked for.
+The same tests ({{TALLY}}) pass with the network switched off — the outside network was removed and loopback left up, so nothing in them reaches a service on the internet. A service running on this machine is still reachable, so this does not show the tests are self-contained. Whether that is enough depends on what this task asked for.

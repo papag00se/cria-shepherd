@@ -1,0 +1,1 @@
+header = COMMANDS THIS PROJECT DECLARES FOR ITSELF (from its README and its build manifest — these are what the project says it is run and tested with):

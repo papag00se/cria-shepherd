@@ -289,8 +289,16 @@ def program_token(command: str) -> str:
     return " ".join(parts[:2]) if len(parts) >= 2 else parts[0]
 
 
-def corroborate(claim: str, readme: list[str], entries: list[str]) -> tuple[bool, str]:
-    """Do the model's command, the README and the files on disk name the same program?"""
+def corroborate(claim: str, readme: list[str], entries: list[str],
+                root: str = "") -> tuple[bool, str]:
+    """Do the model's command, the README and the files on disk name the same program?
+
+    ``root`` is the WORKSPACE, and it has to be passed in. This used to derive the manifest's
+    directory as ``os.path.dirname(entries[0])`` — but ``entries`` are paths RELATIVE to the
+    workspace, so a Rust project whose entry point is `src/main.rs` asked for a manifest in `src`,
+    found none, and concluded the project declares nothing. Every nested layout — Rust, Java, Go
+    with a cmd/ dir — silently lost its whole declared-command set, which is the half of this
+    function that was supposed to make the manifest usable in the first place."""
     if not claim.strip():
         return False, "the model named no run command"
     tok = program_token(claim)
@@ -303,12 +311,27 @@ def corroborate(claim: str, readme: list[str], entries: list[str]) -> tuple[bool
     # tests/handle-lookup.test.js" vetoed a run in a workspace whose package.json declared the very
     # script being run. A named deliverable of one task must never become a precondition for
     # believing a program ran.
-    declared = list(readme) + manifest_commands(os.path.dirname(entries[0]) if entries else "")
+    declared = list(readme) + manifest_commands(root)
     in_declared = any(program_token(r) == tok for r in declared)
     in_disk = any(os.path.normpath(e) == tok or os.path.basename(e) == os.path.basename(tok)
                   for e in entries)
     if not entries:
         return False, "no file in the workspace is an entry point by its language's convention"
+    # A PROJECT RUNNER HAS NO FILE TO BE. `program_token` resolves `cargo run` / `go test` /
+    # `mvn exec:java` to the runner plus its subcommand, because for those the target is the whole
+    # project and any filename on the line is an INPUT. Asking whether "cargo run" is a file on disk
+    # can only ever answer no — and the manifest read three lines above already answers the real
+    # question, since Cargo.toml is exactly what makes `cargo run` a thing this project can do.
+    # The head-first half of this landed without its caller (#24's corollary).
+    #
+    # What that cost, qwen35/rust 3/3 at 0139: cria published "Live execution inconclusive — the
+    # delivered program was not run, because cargo run is not an entry point on disk", and the coder
+    # answered "The context says tests are not running and cargo run is not an entry point. Let me
+    # check the actual state of the workspace" — after it had run both, successfully.
+    if _PROJECT_RUNNERS.get(tok.split()[0]) is not None:
+        if not in_declared:
+            return False, f"no manifest in this workspace declares {tok}"
+        return True, ""
     if not in_disk:
         return False, f"{tok} is not an entry point on disk"
     if not in_declared:
@@ -450,7 +473,7 @@ def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
 
     command = str(intent.get("command") or "").strip()
     expect = str(intent.get("success") or "").strip()
-    agreed, why = corroborate(command, readme, entries)
+    agreed, why = corroborate(command, readme, entries, root)
     if not agreed:
         return ExecResult(INCONCLUSIVE, command=command, expect=expect, entrypoints=entries,
                           readme_commands=readme, why=why)
@@ -514,7 +537,29 @@ def evaluate(root: str, intent: dict, ask=None) -> ExecResult:
                            else f"it exited {code}"))
 
 
-def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[str, str]:
+def declared_listing(root: str) -> str:
+    """The commands the PROJECT ITSELF declares — README lines and manifest targets — as a labelled
+    block, or "" when it declares none.
+
+    cria parses these already (``readme_commands``, ``manifest_commands``) and uses them one function
+    later to VETO the answer this prompt is about to produce. It did not show them to the model being
+    asked the question. So the probe author guessed, and cria then rejected the guess against the
+    facts it had withheld.
+
+    Measured, nemotron-elastic/node. The probe's own reasoning: "we need to guess. However the
+    instruction says \"Be concrete and short.\" So we can say something like \"handle: 0x123456\"."
+    It answered `node lookup.js --handle=somehandle --json`; the README on disk says
+    `node lookup.js goose`, which is the command the verifier runs. The live-run check never ran the
+    delivered program, and a green gate stood on the coder's own word."""
+    cmds = list(dict.fromkeys(readme_commands(root) + manifest_commands(root)))
+    if not cmds:
+        return ""
+    return (prompts.load_map("exec_intent_declared")["header"] + "\n"
+            + "\n".join(f"  {c}" for c in cmds))
+
+
+def intent_prompt(task: str, coder_tools: str = "", files: str = "",
+                  declared: str = "") -> tuple[str, str]:
     """(system, user) for the one question cria asks the model here.
 
     THE FILE LIST IS NOT OPTIONAL CONTEXT. Without it this judge is asked to name "the exact command"
@@ -529,7 +574,8 @@ def intent_prompt(task: str, coder_tools: str = "", files: str = "") -> tuple[st
     it was cria's own probe author guessing, because cria withheld the answer."""
     return prompts.load("exec_intent"), prompts.render(
         "exec_intent_user", task=task,
-        files=runnable_listing(files) or "(nothing in the workspace is a program)")
+        files=runnable_listing(files) or "(nothing in the workspace is a program)",
+        declared=declared)
 
 
 # A BUILD MANIFEST IS NOT A DOCUMENT. The extension blocklist below strips `.xml`, `.toml`, `.json`
