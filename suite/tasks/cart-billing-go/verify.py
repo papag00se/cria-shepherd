@@ -75,7 +75,10 @@ func main() {
 	}
 	// A MARKER, not the last line: the task asks for logging, so stderr now carries lines of its
 	// own and "the last line of the output" stopped being the answer the moment that landed.
-	fmt.Printf("VERIFY_TOTAL=%.2f\\n", t)
+	// %v, not %.2f: a decimal return — which the task asks for — makes %.2f emit "%!f(...)" and the
+	// marker never matches. %v renders float64 and any decimal type alike; the comparison below
+	// parses it and allows a cent, so the check tests the TOTAL, not the return type.
+	fmt.Printf("VERIFY_TOTAL=%v\\n", t)
 }
 '''
 
@@ -115,9 +118,12 @@ def main() -> None:
         probe_dir.mkdir(exist_ok=True)
         (probe_dir / "main.go").write_text(PROBE)
         code, out = run(["go", "run", "./_verify_probe"], ws)
-        m = re.search(r"VERIFY_TOTAL=([0-9.]+)", out)
+        m = re.search(r"VERIFY_TOTAL=(-?[0-9.]+)", out)
         val = m.group(1) if m else ""
-        reported_ok = code == 0 and val == "48.58"
+        try:
+            reported_ok = code == 0 and abs(float(val) - 48.58) < 0.005
+        except ValueError:
+            reported_ok = False
         reported_detail = f"reported cart totals {val or out.strip()[-60:]} (want 48.58)"
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
