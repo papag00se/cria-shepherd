@@ -22,8 +22,10 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 qwen35 | 100% | 60% | · | · | · | · | **80%** | 80.2 | 36 | 189 |
-| 🟡 gemma4 | 20% | 60% | 100% | 60% | 75% | 100% | **67%** | 60.9 | 18 | 69 |
+| 🟡 qwen35 | 60% | 80% | 75% | 100% | 50% | 100% | **78%** | 82.4 | 45 | 258 |
+| 🟡 gemma4 | 100% | 60% | 100% | 80% | 0% | 100% | **74%** | 61.9 | 21 | 57 |
+| 🔴 ternary-bonsai | 80% | 0% | 75% | 0% | 50% | 0% | **33%** | 45.6 | 31 | 66 |
+| 🔴 nemotron-elastic | 0% | 20% | 75% | 0% | 25% | 0% | **19%** | 137.0 | 29 | 108 |
 
 ## What the assists were worth
 
@@ -33,51 +35,83 @@ bought with 15× the calls is not the same result as one bought with fewer
 
 | task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|---|
-| shipping-rates-rb | ruby | gemma4 | 40% | 20% | **-20** | 26→166 | 3→31 |
-| shipping-rates-rb | ruby | qwen35 | 80% | 100% | **+20** | 32→103 | 3→17 |
-| cart-billing-go | go | gemma4 | 100% | 60% | **-40** | 13→40 | 2→12 |
-| cart-billing-go | go | qwen35 | 100% | 60% | **-40** | 36→275 | 3→56 |
-| orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→59 | 21→16 |
-| feed-pipeline-java | java | gemma4 | 80% | 60% | **-20** | 18→85 | 14→40 |
-| handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→29 | 2→4 |
-| rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→36 | 2→7 |
+| shipping-rates-rb | ruby | gemma4 | 40% | 100% | **+60** | 26→94 | 3→31 |
+| shipping-rates-rb | ruby | qwen35 | 80% | 60% | **-20** | 32→382 | 3→61 |
+| shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→97 | 14→49 |
+| shipping-rates-rb | ruby | nemotron-elastic | 60% | 0% | **-60** | 41→77 | 11→16 |
+| cart-billing-go | go | gemma4 | 100% | 60% | **-40** | 13→35 | 2→7 |
+| cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→57 | 3→7 |
+| cart-billing-go | go | ternary-bonsai | 0% | 0% | 0 | 21→47 | 16→16 |
+| cart-billing-go | go | nemotron-elastic | 0% | 20% | **+20** | 6→124 | 7→31 |
+| orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→106 | 21→52 |
+| orders-api-py | python | qwen35 | 50% | 75% | **+25** | 76→260 | 20→61 |
+| orders-api-py | python | ternary-bonsai | 25% | 75% | **+50** | 66→124 | 31→61 |
+| orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→200 | 2→61 |
+| feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→43 | 14→12 |
+| feed-pipeline-java | java | qwen35 | 40% | 100% | **+60** | 69→418 | 6→76 |
+| feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→43 | 16→16 |
+| feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→35 | 4→17 |
+| handles-cli-node | node | gemma4 | 75% | 0% | **-75** | 21→21 | 2→16 |
+| handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→241 | 12→38 |
+| handles-cli-node | node | ternary-bonsai | 50% | 50% | 0 | 42→36 | 13→10 |
+| handles-cli-node | node | nemotron-elastic | 0% | 25% | **+25** | 2→133 | 7→31 |
+| rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→41 | 2→7 |
+| rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→187 | 6→27 |
+| rust-toml-cli | rust | ternary-bonsai | 0% | 0% | 0 | 41→49 | 16→31 |
+| rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→76 | 7→16 |
 
 ## Every run
 
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
-| shipping-rates-rb | ruby | gemma4 | CRIA | 20% | 31 | 166 | 61.2 | milestone-miss-30min |
+| shipping-rates-rb | ruby | gemma4 | CRIA | 100% | 31 | 94 | 61.8 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
-| shipping-rates-rb | ruby | qwen35 | CRIA | 100% | 17 | 103 | 80.5 | exited |
+| shipping-rates-rb | ruby | qwen35 | CRIA | 60% | 61 | 382 | 80.7 | milestone-miss-60min |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
+| shipping-rates-rb | ruby | ternary-bonsai | CRIA | 80% | 49 | 97 | 43.5 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
+| shipping-rates-rb | ruby | nemotron-elastic | CRIA | 0% | 16 | 77 | 142.6 | milestone-miss-15min |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
-| cart-billing-go | go | gemma4 | CRIA | 60% | 12 | 40 | 61.4 | exited |
+| cart-billing-go | go | gemma4 | CRIA | 60% | 7 | 35 | 64.4 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
-| cart-billing-go | go | qwen35 | CRIA | 60% | 56 | 275 | 79.8 | exited |
+| cart-billing-go | go | qwen35 | CRIA | 80% | 7 | 57 | 83.3 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
+| cart-billing-go | go | ternary-bonsai | CRIA | 0% | 16 | 47 | 48.3 | milestone-miss-15min |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
+| cart-billing-go | go | nemotron-elastic | CRIA | 20% | 31 | 124 | 141.6 | milestone-miss-30min |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
-| orders-api-py | python | gemma4 | CRIA | 100% | 16 | 59 | 60.9 | exited |
+| orders-api-py | python | gemma4 | CRIA | 100% | 52 | 106 | 60.1 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
+| orders-api-py | python | qwen35 | CRIA | 75% | 61 | 260 | 81.6 | milestone-miss-60min |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
+| orders-api-py | python | ternary-bonsai | CRIA | 75% | 61 | 124 | 44.2 | milestone-miss-60min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
+| orders-api-py | python | nemotron-elastic | CRIA | 75% | 61 | 200 | 141.0 | milestone-miss-60min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
-| feed-pipeline-java | java | gemma4 | CRIA | 60% | 40 | 85 | 59.3 | exited |
+| feed-pipeline-java | java | gemma4 | CRIA | 80% | 12 | 43 | 62.8 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
+| feed-pipeline-java | java | qwen35 | CRIA | 100% | 76 | 418 | 82.4 | budget-killed |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
+| feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 43 | 46.6 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
+| feed-pipeline-java | java | nemotron-elastic | CRIA | 0% | 17 | 35 | 140.6 | milestone-miss-15min |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
-| handles-cli-node | node | gemma4 | CRIA | 75% | 4 | 29 | 60.0 | exited |
+| handles-cli-node | node | gemma4 | CRIA | 0% | 16 | 21 | 60.9 | milestone-miss-15min |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
+| handles-cli-node | node | qwen35 | CRIA | 50% | 38 | 241 | 82.7 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
+| handles-cli-node | node | ternary-bonsai | CRIA | 50% | 10 | 36 | 46.6 | exited |
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
+| handles-cli-node | node | nemotron-elastic | CRIA | 25% | 31 | 133 | 129.2 | milestone-miss-30min |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
-| rust-toml-cli | rust | gemma4 | CRIA | 100% | 7 | 36 | 62.6 | exited |
+| rust-toml-cli | rust | gemma4 | CRIA | 100% | 7 | 41 | 61.2 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
+| rust-toml-cli | rust | qwen35 | CRIA | 100% | 27 | 187 | 83.7 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
+| rust-toml-cli | rust | ternary-bonsai | CRIA | 0% | 31 | 49 | 44.1 | milestone-miss-30min |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
+| rust-toml-cli | rust | nemotron-elastic | CRIA | 0% | 16 | 76 | 127.3 | milestone-miss-15min |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
