@@ -65,9 +65,18 @@ class AnOversizedResultIsBoundedTests(unittest.TestCase):
     def test_it_names_the_next_action(self):
         """A refusal with no route is how the read guard would have failed too."""
         out = _bounded_exec_result(result(900))
-        for route in ("grep", "head -50", "> out.txt"):
+        for route in ("grep", "> out.txt"):
             with self.subTest(route=route):
                 self.assertIn(route, out)
+
+    def test_it_no_longer_offers_head(self):
+        """`| head -50` was on the list and is the one filter guaranteed to hide the answer: a
+        runner prints its verdict LAST. It also replaces the program's exit status with the
+        filter's, in the same sentence that says the exit status is accurate (5b)."""
+        self.assertNotIn("head -50", _bounded_exec_result(result(900)))
+
+    def test_it_warns_that_a_pipe_costs_the_exit_status(self):
+        self.assertIn("reports the LAST command's status", _bounded_exec_result(result(900)))
 
     def test_it_offers_counting_as_well_as_filtering(self):
         """Often the question was "how many", which needs no output at all."""

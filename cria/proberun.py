@@ -52,7 +52,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import probediscovery, probeparse, prompts, toolpath
+from . import content_reduce, probediscovery, probeparse, prompts, toolpath
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -112,7 +112,22 @@ DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 # (half the budget each, with a disclosed "middle N bytes elided" marker) so an early failure AND a
 # late one both survive. Only bites on genuinely huge output; the window-aware context floor is the one
 # place a real truncation may happen.
-PROBE_OUTPUT_CAP_BYTES = 16384
+#
+# DERIVED, NEVER PICKED. This was a standalone 16,384 while the bound that must ACCEPT the result is
+# content_reduce.INLINE_RESULT_MAX_BYTES = 9,000 — so cria composed probes whose output cria then
+# refused. The refusal is the model-facing one ("too much to return, so nothing is shown"), and
+# cria's own gate parser reads it, finds no findings, and records the check as never run. Measured
+# on ternary-bonsai/python 0034: a 10,104-byte test run was discarded whole, the gate reported
+# nothing, and the steer built on that silence told the coder "The output was truncated, but that's
+# the root cause" about a failure no one had seen. Seven wrong turns; twelve consecutive gates in
+# one cell produced nothing at all.
+#
+# The reserve covers the harness's own envelope, which is added AFTER this budget is applied and
+# counts against the same 9,000: `Chunk ID:`, `Wall time:`, `Original token count:`, `Process exited
+# with code N`, `Output:`, plus the EXIT: sentinel and the elision marker. 500 bytes is generous for
+# six short lines and keeps the arithmetic obvious.
+PROBE_ENVELOPE_RESERVE_BYTES = 500
+PROBE_OUTPUT_CAP_BYTES = content_reduce.INLINE_RESULT_MAX_BYTES - PROBE_ENVELOPE_RESERVE_BYTES
 # Trailing sentinel that smuggles the probe's exit code through a text-only
 # shell-tool result; scrape_exit() recovers it.
 PROBE_EXIT_SENTINEL = "EXIT:"
