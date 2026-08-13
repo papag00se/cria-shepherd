@@ -2,7 +2,7 @@ Fix these three problems in the supplier feed importer:
 
 1. Make it at least 4× faster without changing any totals, row counts, or per-SKU results.
 2. Fix the threading bug and re-enable parallel workers. Processing the same feed repeatedly must always produce identical results.
-3. Handle malformed input safely: blank quantities, currency symbols in prices, duplicate SKUs, missing columns, and quoted descriptions containing commas. Decide and implement how each bad-row type is handled, and report skipped-row counts by reason in the summary. Use a third-party Java CSV library for parsing quoted CSV and add it to the project dependencies; do not write a CSV parser.
+3. Handle malformed input safely: blank quantities, currency symbols in prices, missing columns, and quoted descriptions containing commas. A SKU appearing on several rows is normal — those rows all count. Decide and implement how each bad-row type is handled, and report skipped-row counts by reason in the summary. Use a third-party Java CSV library for parsing quoted CSV and add it to the project dependencies; do not write a CSV parser.
 
 Keep `Importer.summarize(path)` compatible, including its returned `skus`, `rows`, and `totals`.
 
