@@ -37,11 +37,13 @@ def prompt(task: str) -> str:
 
 
 class TheGoTaskNamesTheBoundaryItsVerifierEnforcesTests(unittest.TestCase):
-    def test_the_prompt_says_the_public_signatures_stay(self):
+    def test_the_prompt_does_NOT_pin_the_signatures(self):
+        """Reverted 2026-08-12 on operator instruction. The pin was added because the seeded test
+        does `got != 15.00` and will not compile against a decimal return, so 7 of 19 attempts lost
+        suite_green_plus_regression_test for editing a seeded test. The trap is still open; the
+        operator's call is that the prompt is not where it gets closed."""
         body = prompt("cart-billing-go")
-        self.assertIn("Subtotal()", body)
-        self.assertIn("Total()", body)
-        self.assertRegex(body, r"returning\s+`float64`")
+        self.assertNotRegex(body, r"`Subtotal\(\)`.{0,80}returning")
 
     def test_it_still_demands_decimal_arithmetic(self):
         """The constraint must not have swallowed the requirement."""
