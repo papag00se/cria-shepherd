@@ -2176,8 +2176,15 @@ class CoderToolsSummaryTests(unittest.TestCase):
         tools = [{"function": {"name": "read_file", "parameters": {"properties": {"path": {}, "start_line": {}}}}},
                  {"function": {"name": "exec_command", "parameters": {"properties": {"cmd": {}}}}}]
         out = _coder_tools_summary(tools)
-        self.assertIn("read_file(path, start_line)", out)
-        self.assertIn("exec_command(cmd)", out)
+        # NAMES AND PARAMETERS, NOT A CALLABLE SIGNATURE. `read_file(path, start_line)` is a complete
+        # template for opening a call, printed beside a transcript selfcompact defangs for exactly
+        # that reason — and judges answered on the tool channel (`<function=satisfied>`) where cria
+        # then discarded them. The grounding this block exists for is unchanged: the reasoner still
+        # sees which tools exist and what each one takes.
+        self.assertIn("read_file — takes path, start_line", out)
+        self.assertNotIn("read_file(", out)
+        self.assertIn("exec_command", out)
+        self.assertIn("takes cmd", out)
         self.assertIn("grep", out.lower())              # the shell tool is flagged as running grep/…
         self.assertIn("none advertised", _coder_tools_summary([]))
 

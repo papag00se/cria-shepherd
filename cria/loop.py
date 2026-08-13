@@ -451,6 +451,9 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             reasoner_chat, role, system, user, rlog,
             phase="satisfaction" + ("-noreason" if reasoning_off else ""),
             workspace_root="" if reasoning_off else workspace_root,
+            # The careful pass may answer through the verdict tool — same channel it inspects on.
+            # The toolless retry has no channel to answer on but text, and declares no key.
+            verdict_key="" if reasoning_off else "satisfied",
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
@@ -588,7 +591,16 @@ REPLAN_TRIGGER_STALLED = ("Progress has STALLED on the current step — the plan
 
 
 def _tool_names(coder_tools: str) -> list[str]:
-    """The bare tool names out of the coder-tools summary cria renders for a reasoner."""
+    """The bare tool names out of the coder-tools summary cria renders for a reasoner.
+
+    ANCHORED ON THE FORMAT, not on what follows the name. This used to key on a name followed by
+    `(`, `:`, a dash or end-of-line — which worked while the block rendered `write_file(path,
+    content)` and broke the moment that callable syntax was defanged to prose: `exec_command` was
+    lost entirely and `command` was harvested out of "runs ANY shell command". Every line
+    _coder_tools_summary writes is `  - <name>`, so that is what this reads."""
+    lines = re.findall(r"(?m)^\s*-\s*([a-z_][a-z0-9_]{2,})\b", coder_tools or "")
+    if lines:
+        return lines
     return re.findall(r"\b([a-z_][a-z0-9_]{2,})\b(?=\s*[(:\u2014-]|\s*$)", coder_tools or "", re.M) \
         or re.findall(r"\b([a-z_][a-z0-9_]{2,})\b", coder_tools or "")
 
@@ -730,7 +742,8 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
                       workspace_root: str = "", max_tokens: int = 8192,
                       force_think_off: bool = False, transcript: list | None = None,
-                      answer_now: str | None = None, answer_now_simple: str | None = None) -> dict:
+                      answer_now: str | None = None, answer_now_simple: str | None = None,
+                      verdict_key: str = "") -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -754,7 +767,12 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         sent_chars = sum(len(str(m.get("content") or "")) for m in messages)
         room_left = sent_chars < verifytools.VERIFY_MAX_CHARS
         if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and room_left and not forced_rounds:
-            body["tools"] = verifytools.VERIFY_TOOLS   # withdrawn on the forced-answer round
+            # …AND A WAY TO ANSWER IN THE SAME CHANNEL. Offered tools on one channel and made to
+            # answer on another, judges answered where they had been speaking: `<function=satisfied>`,
+            # `<function=exec_command>`. cria discarded those and "unverified — keep working" reached
+            # a finished workspace (qwen35/ruby 0138 and 9 more). Opt-in by key: the steer author
+            # shares this loop and answers in prose.
+            body["tools"] = verifytools.tools_for(verdict_key)   # withdrawn on the forced-answer round
         elif inspectable and not room_left and not forced_rounds:
             rlog.emit("loop.verify_inspect_capped", phase=phase, chars=sent_chars,
                       rounds=rounds, level="info")
@@ -812,6 +830,22 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
                 transcript.extend(messages[2:])
             return comp
+        # THE ANSWER ARRIVED AS A CALL. Read it off the structured tool_call (#12) and stop: this is
+        # the judge declaring its verdict, not asking to look at something. Any inspection call made
+        # in the same turn is ignored on purpose — the tool's own description forbids mixing them,
+        # and a judge that has decided has nothing left to look up.
+        said = next((tc for tc in calls
+                     if (tc.get("function") or {}).get("name") == "verdict"), None)
+        if verdict_key and said is not None:
+            try:
+                obj = json.loads((said.get("function") or {}).get("arguments") or "{}")
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict) and verdict_key in obj:
+                rlog.emit("loop.verdict_by_tool", phase=phase, round=rounds)
+                if transcript is not None:
+                    transcript.extend(messages[2:])
+                return _completion_of(comp, json.dumps(obj))
         rounds += 1
         # Same reason as the write-back above: preserve what the judge produced this round, from
         # whichever channel it produced it in, or the next round asks it to answer against a
@@ -6158,9 +6192,21 @@ def _coder_tools_summary(tools) -> str:
         if not name:
             continue
         params = list(((fn.get("parameters") or {}).get("properties") or {}).keys())
-        sig = f"{name}({', '.join(params)})"
+        # NAMES AND PROSE, NOT A SIGNATURE. This rendered `write_file(path, content)` — a complete
+        # template for opening a call — directly beside a transcript that selfcompact defangs for
+        # exactly that reason: measured over 717 reasoner calls, a prompt showing 30-59 tool-call
+        # shapes was answered by imitating one 8% of the time. The judge then answers on the tool
+        # channel (`<function=satisfied>`), cria discards the reply, and a finished workspace is told
+        # "unverified — keep working". The parameter NAMES stay, because grounding a suggested action
+        # in what the coder can actually do is why this block exists; the callable syntax goes.
+        # EVERY LINE USES THE SAME ` — ` SEPARATOR, because _tool_names reads the names back OUT of
+        # this block for the harness-leak check, and it keys on what follows the name.
+        notes = []
         if name in _SHELL_TOOLNAMES:
-            sig += " — runs ANY shell command (grep, cat, sed, ls, find …)"
+            notes.append("runs ANY shell command (grep, cat, sed, ls, find …)")
+        if params:
+            notes.append("takes " + ", ".join(params))
+        sig = f"{name} — {'; '.join(notes)}" if notes else name
         lines.append("  - " + sig)
     return "\n".join(lines) or "  (none advertised this turn)"
 
@@ -7657,6 +7703,22 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
         except OSError:
             lines.append(f"FILE {p} — does NOT exist on disk")
     return "\n".join(lines)
+
+
+def _completion_of(completion: dict, text: str) -> dict:
+    """``completion`` with its message content replaced by ``text`` and its tool_calls cleared.
+
+    How a verdict delivered as a TOOL CALL re-enters a caller that reads verdicts out of message
+    content. Every truncation, cleaning and parse step downstream stays exactly as it is; only the
+    channel the answer arrived on changes."""
+    out = dict(completion)
+    choices = []
+    for ch in completion.get("choices") or [{}]:
+        msg = {**((ch.get("message") or {})), "content": text}
+        msg.pop("tool_calls", None)
+        choices.append({**ch, "message": msg})
+    out["choices"] = choices or [{"message": {"role": "assistant", "content": text}}]
+    return out
 
 
 def _completion_text(completion: dict) -> str:

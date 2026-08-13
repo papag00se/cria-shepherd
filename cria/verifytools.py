@@ -138,3 +138,25 @@ def _read_file(args: dict, root: str) -> str:
         body = "\n".join(f"{i}: {lines[i - 1]}" for i in range(lo, hi + 1))
         return body or prompts.fill(_TD["missing"], path=f"{path} lines {start}..{end}")
     return text
+
+
+# The VERDICT tool — see the note in prompts/verify_tools.txt for what its absence cost.
+#
+# OPT-IN, by verdict key. Three judges share this inspection loop and answer under three different
+# keys (`done`, `satisfied`, `consistent`); the steer author shares it too and answers in PROSE. A
+# verdict tool offered to the author would be cria instructing the role collapse it already had to
+# guard against once (see ANSWER_NOW_STEER). Callers that want it name their key.
+def verdict_tool(key: str) -> dict:
+    """The one-call answer tool for a judge whose verdict field is ``key``."""
+    return {"type": "function", "function": {
+        "name": "verdict", "description": _TD["verdict"],
+        "parameters": {"type": "object", "properties": {
+            key: {"type": "boolean", "description": _TD["verdict_satisfied"]},
+            "reason": {"type": "string", "description": _TD["verdict_reason"]},
+            "proposed_fix": {"type": "string", "description": _TD["verdict_fix"]}},
+            "required": [key, "reason"]}}}
+
+
+def tools_for(verdict_key: str = "") -> list:
+    """The judge's menu: inspection, plus the verdict tool when the caller declares a key."""
+    return list(VERIFY_TOOLS) + ([verdict_tool(verdict_key)] if verdict_key else [])
