@@ -189,7 +189,16 @@ def main() -> None:
     # --- 4: the review
     rv = next((p for p in ws.rglob("REVIEW.md") if ".git" not in p.parts), None)
     rtext = rv.read_text(errors="replace") if rv else ""
-    located = re.findall(r"[\w/]+\.java[:\s]+\d+|line\s+\d+", rtext, re.I)
+    # A LOCATED FINDING IS A FILE AND A NUMBER NEAR EACH OTHER. The task asks for a review whose
+    # findings say WHERE; it never says how to write a location down. This matched
+    # `Importer.java:31` and the bare words "line 31", and missed "Lines 31-33 of Importer.java" —
+    # a correctly located finding scored as unlocated because of how the reviewer punctuated it.
+    # Same class as b623d90: assert the property the task names, nothing adjacent.
+    located = re.findall(
+        r"[\w/]+\.java\W{0,4}\d+"          # Importer.java:31 · `Importer.java` (31) · .java, 31
+        r"|[\w/]+\.java\W{0,12}?lines?\W{0,4}\d+"   # Importer.java, on line 31
+        r"|lines?\W{0,4}\d+(?:\s*[-–]\s*\d+)?",     # line 31 · Lines 31-33
+        rtext, re.I)
     substantial = len(rtext.split()) >= 60
     r["parts"]["review_written"] = {
         "ok": bool(rv) and substantial and len(located) >= 2,
