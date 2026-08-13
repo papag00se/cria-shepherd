@@ -69,13 +69,24 @@ def main() -> None:
             cli_detail = f"{' '.join(cmd)} goose: exit={code}"
             continue
         jcode, jout = run([*cmd, "goose", "--json"], ws)
+        # PARSE THE WHOLE OUTPUT FIRST. This only ever tried each LINE on its own, so a tool that
+        # pretty-printed its JSON across several lines scored zero — `{` is not valid JSON and
+        # neither is `"handle_name": "goose",`. Nothing in the task asks for one line, and
+        # `json.dumps(x, indent=2)` is the obvious way to write it. gemma4 emitted correct,
+        # indented JSON and lost the check for formatting it the normal way.
+        # The per-line pass is kept underneath for a tool that emits one object per line (JSONL),
+        # which is also a legitimate reading of "--json".
         parsed = False
-        for line in jout.splitlines():
-            try:
-                json.loads(line)
-                parsed = True
-            except ValueError:
-                continue
+        try:
+            json.loads(jout)
+            parsed = True
+        except ValueError:
+            for line in jout.splitlines():
+                try:
+                    json.loads(line)
+                    parsed = True
+                except ValueError:
+                    continue
         hcode, hout = run([*cmd, "--help"], ws)
         helped = hcode == 0 and len(hout.strip()) > 20
         bcode, _ = run([*cmd, "definitely-not-a-real-handle-zzz"], ws)
