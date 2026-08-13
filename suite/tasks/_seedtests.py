@@ -118,6 +118,7 @@ EXTRACT = {"python": (python_tests, "*.py"), "ruby": (ruby_tests, "*.rb"), "go":
 # anti-cheat this module exists for is intact — the seeded test must still exist, must still be run,
 # and must still demand the same values. Only the spelling is forgiven (operator ruling: a check may
 # only fail a run over the property the task actually asks for).
+_FORMAT_VERB = re.compile(r'%[-+ #0]*[\\d.*]*[vdsftqxXeEgGbcpTU%]')
 _LITERALS = re.compile(r'"[^"]*"|\'[^\']*\'|`[^`]*`|\b\d+(?:\.\d+)?\b')
 
 
@@ -127,6 +128,13 @@ def asserted_values(body: str) -> list[str]:
     for tok in _LITERALS.findall(body):
         s = tok.strip("\"'`")
         if not s:
+            continue
+        # A FORMAT STRING IS A MESSAGE, NOT AN ASSERTION. The seed's failure line reads
+        # `t.Errorf("Subtotal() = %v, want 15.00", got)`; adapt the comparison and the natural
+        # rewrite is `"Subtotal() = %v, want %v"`. Counting that as a lost value failed a faithful
+        # adaptation on its diagnostic text — gemma4 kept the same items, the same 15.00 and the
+        # same meaning, and lost the check for rewording the error it prints on failure.
+        if _FORMAT_VERB.search(s):
             continue
         try:                       # 15 and 15.00 are the same contract
             out.append(f"{float(s):g}")
