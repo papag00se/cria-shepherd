@@ -19,3 +19,9 @@ docs/audits/2026*
 # the next one — they are working notes, not the project's documentation. Kept on disk, out of
 # git (operator, 2026-08-13). The durable write-ups live in docs/ under stable names.
 docs/audits/202*.md
+
+# Per-run harness logs. One file per suite run, 335 of them at 151 MB and growing with every
+# arm. They are raw evidence for one run, kept on disk and archived under ~/.cria/suite —
+# not something anyone reads out of the repo (operator, 2026-08-13).
+# suite/results/results.jsonl IS tracked: it is the scoreboard, not a log.
+suite/results/*.log
