@@ -3336,3 +3336,632 @@ a web search because every other route was closed.
 That is the same 9,000-byte bound as the gate-refusal finding, reached from the other side. One number
 governs both what cria's own probe may return and what the coder may read of its own code, and 9,000
 bytes is roughly 300 lines of Java.
+
+---
+
+## handles-cli-node_nemotron-elastic_codex_poff_1786696250
+
+Commit 6655258 (p4). 41 calls, 490 s wall, terminal `exited` — the model stopped on its own and cria
+let it. Score 1/4. Phases: 21 coder, 7 exec-intent, 7 satisfaction, 2 satisfaction-confirm, 1
+classifier, 1 research-step, 1 research-check, 1 self-compact. Assists recorded: `context.self_compact`
+1, `loop.gate` 1. **Zero periodic gates.**
+
+The cleanest comparison in the cycle: `ternary-bonsai` scored 4/4 on this task in 32 calls / 510 s and
+`qwen35` scored 4/4 in 202 calls. The task is satisfiable, the verifier is fair, and the clock was not
+the problem.
+
+**The one-line shape.** cria's own process cannot see `node` on this box, so for 41 calls the only
+check that ever executed against a Node project was a Python JSON parse of `package.json`; the
+live-execution probe never ran the program once; and the completion gate — 16 of the run's 41 calls —
+ruled the task done over a workspace whose README-declared entry point crashes on line 4.
+
+**The clock, from the harness log:**
+
+| +time | what |
+|---:|---|
+| 0m12 | `self-compact` at call 0006 — 4 coder calls in |
+| 0m28 | call 0007 writes a briefing, no tool call; `⟦ctx:steer⟧ you used no tools` at 0008 |
+| 0m51 | writes `package.json` — `"type": "module"`, no `dependencies` |
+| 1m32 | writes `index.js` (a NEW entry point; `lookup.js` never opened) |
+| 1m55 | writes `test/test.js` |
+| 2m39 | completion check 1 → the "resolved address is the handle name" steer |
+| 3m13 | rewrites `index.js` — `Resolved address: ${holder}` becomes `Resolved address: ${handle}` |
+| 3m53 / 4m29 / 5m23 | completion checks 2–4 |
+| 5m37 | writes `Dockerfile` |
+| 6m18 / 7m09 | completion checks 5–6 |
+| 7m23 | writes `test/test.test.cjs`; runs it, passes |
+| 8m00 | completion check 7 → `satisfied: true`, `consistent: true`, run ends |
+
+**Why each check failed, verified by re-running the verifier's own commands on the archived
+workspace:**
+
+- `cli_behaviour` — `node index.js goose` exits **0** and prints
+  `Resolved address: goose / Holder address: stake1u85… / Number of handles owned by holder: 15`.
+  There is no `addr1…` in it, so `ADDR_RE` misses and the loop falls through to `node lookup.js goose`,
+  which exits 1. The tool prints the handle name where the resolved address goes.
+- `request_removed` — `required in source: True` is `lookup.js`, the seed file, never touched.
+- `tests_incl_live` — `node --test` fails **only** because the abandoned `test/test.js` is still there.
+  I deleted it and re-ran: `node --test` → exit 0 with the network, exit 1 under `unshare -rn`. That
+  check was one `rm` away from green.
+
+Findings ranked worst first.
+
+---
+
+### 1. cria's process cannot see `node`, so on a Node task it ran no Node check and never ran the program
+
+**what happened.** cria runs as a systemd service with a bare `PATH`. `node` lives under
+`~/.nvm/versions/node/v22.23.1/bin`. Every `node --check` probe cria composed was silently dropped
+before it could run, and the live-execution probe raised a Python `FileNotFoundError` that cria then
+published to the completion judge as its finding.
+
+**cria fault: yes**
+
+**evidence.** cria's syntax floor for this workspace composes four probes. Run under the service's own
+environment, three are discarded:
+
+```
+composed: 4
+kept after program_is_installed (bare systemd env):
+   ['python3', '-c']
+dropped: 3          # node --check index.js, node --check lookup.js, node --check test/test.test.cjs
+```
+
+And that is exactly what the wire shows. The `exec_command` cria injected at calls 0015, 0019, 0022,
+0027, 0032 and 0036 is byte-identical every time and contains **one** probe:
+
+```
+timeout -k 5 240 python3 -c 'import sys, json
+bad = 0
+for f in sys.argv[1:]:
+    try:
+        with open(f) as fh:
+            json.load(fh)
+    …' /tmp/suite-…/package.json
+```
+
+The result cria hands back, in its own voice, at every one of those turns:
+
+```
+⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.
+```
+
+At that moment `lookup.js` — the file the project's README declares as its run command — could not
+start. The same PATH blindness produced the live-execution marker at calls **0014** and **0031**:
+
+```
+⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because
+FileNotFoundError: [Errno 2] No such file or directory: 'node'.
+```
+
+**This is a recent fix that did not hold.** `cria/toolpath.py` (commit `3e2585e`, 2026-08-13) exists
+precisely to kill this, and `git merge-base --is-ancestor 3e2585e 6655258` says it was in this run.
+It is inert here because it needs `$SHELL` and systemd does not export one:
+
+```
+SHELL seen by cria: None
+coder_path(): /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
+which node: None
+which npm: None
+```
+
+`_login_shell_path()` returns `None`, `coder_path()` falls back to `os.environ.get("PATH")`, and the
+fix's whole premise — "ask a login shell" — never executes.
+
+**A → B → C.** A: `toolpath` learns the coder's PATH only from `$SHELL`, which is unset under systemd.
+B: `toolpath.which("node")` is `None`, so `proberun.program_is_installed` drops every Node probe as a
+certainty and `execcheck.run` cannot launch `node`. C: for 41 calls the gate's only evidence about a
+Node project was that its `package.json` parses as JSON, and it reported that as "no error-class
+problems".
+
+**fixable at A? Yes, and it is the whole finding.** `$SHELL` is not the only way to reach a login
+shell — `pwd.getpwuid(os.getuid()).pw_shell` is the user's real shell and is always available; that is
+the fact about the machine, where `$SHELL` is a fact about how cria's process happened to be started.
+Second, the current fallback is silently wrong in the dangerous direction: when cria cannot learn the
+coder's PATH it should treat *every* program as UNSURE-MEANS-KEEP (the contract `toolpath`'s own
+docstring claims) rather than fall through to `shutil.which` on cria's PATH, which manufactures a
+confident "absent". Third, `execcheck.run`'s `FileNotFoundError` must never reach a prompt: cria not
+being able to launch a program is a fact about cria, and it was published as a fact about the delivery.
+
+**principle.** #5b (a claim about cria's PATH stated as a fact about the world — the exact sin
+`toolpath`'s docstring names), #10 (verify by doing — nothing was done), #12, #16.
+
+---
+
+### 2. The completion gate ran sixteen times, never once ran the program, and passed it
+
+**what happened.** 16 of the run's 41 calls were completion machinery (7 exec-intent, 7 satisfaction,
+2 satisfaction-confirm). Not one of them executed the delivered CLI. The last pair ruled
+`satisfied: true` / `consistent: true` over a workspace where the declared entry point crashes.
+
+**cria fault: yes**
+
+**evidence.** Every satisfaction prompt in the run carried the same two lines, together:
+
+```
+[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran).
+If this task required tests, green does NOT verify them; judge accordingly.
+
+⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because
+lookup.js is not an entry point on disk. Everything else the checks cover passed. This says nothing
+about whether the program works, only that the run could not be established.
+```
+
+So the judge was told, correctly, that it had **no** execution evidence and **no** test evidence. Call
+0040's verdict:
+
+```json
+{"satisfied": true,
+ "reason": "All required deliverables are present and functional: the CLI accepts a handle argument,
+ supports `--json` and `--help`, exits with a non-zero code on unresolved handles, and outputs the
+ resolved address, holder address, and number of handles; … tests exist (including an end-to-end test
+ that makes a real request to `api.handle.me`) and pass; …", "proposed_fix": ""}
+```
+
+Call 0041, the confirm, with `list_dir` and `read_file` on its menu, called neither and answered
+`{"consistent": true, "why": ""}`. The run ended there.
+
+The word "functional" is doing all the work and nothing produced it. The judge's own charter, three
+lines above in the same prompt, forbids exactly this: *"Unexecuted code, tests, scripts, builds, or
+live checks do not prove behavior"* and *"Requested runtime behavior must be demonstrated by logged
+output showing the real successful result."* The judge had the coder's `node index.js --json
+test.handle` → exit 0 in its log and generalised from it to "all required deliverables are functional",
+including the Dockerfile it had no way to evaluate and the `--help` path nobody ran.
+
+**A → B → C.** A: cria could not run the program (finding 1) so the gate had no ground truth. B: the
+gate treated absent evidence as satisfiable evidence — the two "you have no evidence" banners are
+advisory prose in a prompt, not a bound on the verdict. C: a run with three failing checks ended
+`exited`, clean, at eight minutes, with 22 minutes of wall clock unspent.
+
+**fixable at A? Partly — fix 1 gives the gate real evidence. But B needs its own fix and it is the
+deeper one.** When `execcheck` returns `INCONCLUSIVE` *and* the task's request was `runs: true` (the
+exec-intent judge said so seven times), a `satisfied: true` has no legs to stand on and must be
+refused deterministically, not argued out of the model. Principle 13 says an undecidable judge means
+NOT done; here cria decided the judge was decidable because the judge said so. The same holds for the
+zero-tests banner on a task whose prompt contains the word "tests".
+
+**principle.** #13 (fail closed on completion — this failed OPEN, on missing ground truth, which the
+early-exit audit named as the cross-cutting root), #10, #14 (the run ended red with the wall unspent).
+
+---
+
+### 3. cria told the judge five times that a file on disk is not on disk — and it was the file the verifier runs
+
+**what happened.** `lookup.js` is 611 bytes in the workspace root, is the command the README declares,
+and is what `verify.py` executes. cria refused to run it and reported the refusal as a fact about the
+filesystem.
+
+**cria fault: yes**
+
+**evidence.** At call 0017 cria's exec-intent judge picked, correctly and verbatim from the README:
+
+```json
+{"runs": true, "command": "node lookup.js goose", "success": "…"}
+```
+
+The marker cria attached at calls 0018, 0021, 0026, 0034 and 0040:
+
+```
+⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because
+lookup.js is not an entry point on disk.
+```
+
+Two cria voices contradict each other **inside the same gate**. The exec-intent prompt at 0017 lists,
+under a heading that could not be plainer:
+
+```
+PROGRAMS THAT ACTUALLY EXIST IN THE PROJECT DIRECTORY RIGHT NOW:
+  index.js (1911 B)
+  test/test.js (697 B)
+  lookup.js (611 B)
+```
+
+The cause is in `execcheck.entrypoints()`. The JS convention is
+`r"^#!.*node|require\.main\s*===\s*module"`. `lookup.js` opens
+`// Looks up an Ada Handle and prints its Cardano address.` — no shebang, no `require.main` — so it is
+not in `entries`, and `corroborate()` reports `f"{tok} is not an entry point on disk"`. The message
+says *disk*. The check is cria's opinion of what counts as a program.
+
+**What it cost.** `node lookup.js goose` is a two-second command whose output is:
+
+```
+ReferenceError: require is not defined in ES module scope, you can use import instead
+This file is being treated as an ES module because it has a '.js' file extension and
+'…/package.json' contains "type": "module".
+```
+
+That single line names the run's whole failure: the model's own `"type": "module"` had converted the
+seed's CommonJS entry point into a file that cannot start. cria declined to run it five times.
+
+**A → B → C.** A: `entrypoints()` mistakes "carries a `#!` line" for "is a program", so a plain
+CommonJS script written by the seed is invisible to it. B: `corroborate()` turns that gap into a
+sentence about the filesystem and vetoes the run. C: the one command that would have exposed the fatal
+regression was refused at every gate, and the judge was told there was nothing to see.
+
+**fixable at A? Yes, two ways, both cheap.** (a) The refusal reason must be true: cria can `os.path.
+exists` the token before saying anything about disk, and when the file *is* there the honest sentence
+is "`lookup.js` is on disk but carries no entry-point marker" — which is a claim cria can support. (b)
+Better: a `.js` file that the **README declares as a run command** is an entry point by the strongest
+evidence available, stronger than a shebang. `corroborate()` already computes `in_declared`; today
+`in_disk` vetoes and `in_declared` only softens. For a source file named by the project's own
+documented command, declared-ness should be sufficient — the existing code already reasons this way for
+project runners (`cargo run`) and for the `in_disk and not in_declared` case.
+
+**principle.** #5b (the textbook shape: an assertion in the indicative with a cria-internal bound
+behind it, contradicted by the filesystem and by cria's own file list two prompts earlier), #10, #24's
+corollary (the same "not an entry point on disk" string was fixed once for `cargo run`; the source-file
+path it also breaks was not).
+
+---
+
+### 4. cria's judge invented a specification requirement, and the model followed it away from the address the task asks for
+
+**what happened.** The satisfaction judge at call 0014 asserted that the spec demands the *handle name*
+where the resolved address goes. cria relayed that verbatim, and at 0015 the model changed a line that
+printed a real Cardano address into one that prints the string `goose`. That is the byte that fails
+`cli_behaviour`.
+
+**cria fault: yes**
+
+**evidence.** Call 0014, the judge's verdict, delivered to the coder at 0015 inside `⟦ctx:steer⟧`:
+
+```
+… additionally the JSON output prints `resolved_address: holder` rather than the handle name,
+which the specification demands.
+Proposed fix: … output `resolved_handle: handle` alongside `holder_address` and `number_of_handles`.
+```
+
+"which the specification demands" is false. The specification was in cria's own fetch ledger, in the
+same prompt, and had been since call 0007:
+
+```ts
+GET /handles/{handle} … returns:
+  resolved_addresses?: {
+    ada?: string;
+    …
+```
+
+and the seed file the model never opened ends on exactly that field:
+
+```js
+console.log('address: ' + body.resolved_addresses.ada);
+```
+
+The coder's reasoning at 0015 adopts the claim without checking it — *"In our current output we printed
+'resolved_address: holder' which is wrong; we need 'resolved_handle: handle' (the input handle)"* — and
+the write at 0015/0016 turns
+
+```js
+console.log(`Resolved address: ${holder}`);   →   console.log(`Resolved address: ${handle}`);
+```
+
+The final workspace prints `Resolved address: goose`. `ADDR_RE = addr1[0-9a-z]{20,}` never matches, and
+`cli_behaviour` and `request_removed`'s `ran_clean` both die on it.
+
+**Honesty about the counterfactual:** the pre-steer version printed the *holder* (`stake1…`), which is
+also not an `addr1…`, so the steer did not by itself lose the point. What it did was move the field one
+step further from the answer and, worse, **certify the wrong answer as what the spec requires** —
+closing the one question the model still had open. Its reasoning at 0009 had been genuinely uncertain
+(*"Resolved address maybe the holder's address? … the resolved address is the address of the handle?"*)
+and it had `resolved_addresses.ada` in front of it. cria resolved that uncertainty in the wrong
+direction and stamped it with the word "specification".
+
+**A → B → C.** A: the satisfaction judge is asked for a verdict and a `proposed_fix`, with no fence
+against asserting what a spec says; nothing checks its claim against the fetch ledger sitting in its own
+prompt. B: cria relays the claim to the coder as a report. C: the coder, which had the right field
+available and was unsure, takes cria's certainty over its own doubt and prints the handle name.
+
+**fixable at A? Yes.** The `proposed_fix` field is where a judge stops judging and starts designing —
+the same failure mode principle 8 documents for the draft-time plan check. Two bounds, both already
+precedented in this codebase: (i) fence the judge out of prescribing implementation the way
+`satisfaction.txt` fences it out of coding — a verdict may name a deliverable that is *missing*, never
+what a field should be *called* or *contain*; (ii) never let cria's own voice say "the specification
+demands X" when cria is holding the parsed specification and can check — the ledger is right there and
+`resolved_addresses.ada` is in it.
+
+**principle.** #5b (a false fact about the spec, asserted with the spec in the same prompt), #1 (an
+assist that misled), #2 (an intervention that made a working line worse), #8 (the judge left its seat).
+
+---
+
+### 5. No test probe was ever composed, on a Node project with tests, and one `rm` was the difference
+
+**what happened.** cria never ran the project's tests. It told the judge so, seven times, accurately.
+The reason is that `node --test` is deliberately excluded as a Node test floor and this `package.json`
+has no `scripts` block — so a Node project with two test files got zero test commands.
+
+**cria fault: yes**
+
+**evidence.** Every satisfaction prompt:
+
+```
+[GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran).
+```
+
+and up to call 0037:
+
+```
+No jest/vitest tests were found — to be run they must be named *.test.js / *.spec.ts, or placed
+under __tests__/.
+```
+
+`probediscovery.test_floor_candidates()` on the final workspace returns `[]`. The reason is written
+into the module:
+
+```python
+# (`node --test` is deliberately NOT an entry: it cannot run jest/vitest/mocha suites — different
+# globals — so it would falsely fail them.)
+```
+
+The workspace has no jest, no vitest, no mocha, and `TEST_CONVENTIONS` already records a `configs`
+tuple naming exactly the files whose presence would make that objection true — `jest.config.*`,
+`vitest.config.*`. Neither exists here.
+
+**What it cost, measured.** I copied the archived workspace, deleted the one abandoned file, and ran
+the verifier's own test commands:
+
+```
+=== delete stale test/test.js, rerun node --test ===
+with-network exit=0
+no-network  exit=1
+```
+
+`tests_incl_live` passes. The whole check hinged on `test/test.js`, which the model superseded at 0036
+with `test/test.test.cjs` and never removed — and whose failure (`require is not defined in ES module
+scope`) the model had already seen with its own eyes at call 0024. Nothing in cria ever ran the suite
+as a suite, so nobody ever saw that the old file was still in it. (Note the same PATH blindness from
+finding 1 would have dropped an `npm test` probe too, had one been composed.)
+
+**A → B → C.** A: Node has no zero-config test floor in cria, on the stated grounds that `node --test`
+would false-fail a jest suite. B: a `package.json` with no `scripts` therefore yields no test command at
+all, and the gate publishes "0 collected" as its permanent state. C: a stale broken test file sat in the
+tree for the last 17 calls, invisible, and took the `tests_incl_live` point with it.
+
+**fixable at A? Yes.** The objection to `node --test` is conditional and cria already computes the
+condition. Give JS a `floor` of `("node", "--test")` gated on the absence of `configs` and of any
+jest/vitest/mocha dependency in `package.json` — the same shape as the Python and Ruby floors, which
+exist for exactly this case ("a complete, testable project ranked discovery sees nothing in"). This is
+the fifth language-shaped hole of this kind in the ledger; the Ruby one has its own paragraph in
+`TEST_CONVENTIONS` and reads identically.
+
+**principle.** #10 (verify by doing), #19/#20 (a rule written for one ecosystem's default runner leaves
+another with nothing), #12.
+
+---
+
+### 6. The compaction briefing's last line told the coder to write a briefing, and it did
+
+**what happened.** cria self-compacted at call 0006 — four coder calls into the session — and the
+briefing it produced ended by describing the briefing itself as the next action. Injected as
+`⟦ctx:rollup⟧`, that line consumed the next coder turn entirely.
+
+**cria fault: yes**
+
+**evidence.** Call 0006's output, last line:
+
+```
+Last step: I will now write the briefing that describes the current state, what works, what still
+needs to be done, and the next concrete step.
+```
+
+That text was injected verbatim at call 0007 as the session rollup. The coder's reasoning at 0007
+opens:
+
+```
+We need to produce a briefing summarizing current state, what works, what still needs to be done,
+and next concrete step. The user wants us to output that.
+```
+
+and its entire output is a 700-word markdown document with **no tool call**, on a turn whose
+instruction was the full task. cria caught it — the recovery at 0008 is one of the run's better
+moments:
+
+```
+⟦ctx:steer⟧ you used no tools and changed nothing this step — do the step's work with tool calls
+first, then report
+```
+
+and the coder went straight to work. Cost: one call and ~23 s.
+
+**Two things are wrong.** First, the compaction prompt asks *"what you were doing last"*, and a
+compactor whose only action was writing the briefing answers with the briefing — a self-reference the
+prompt invites. Second, the compaction fired at call 0006 with a four-turn transcript, one of which was
+a 232-byte HTML page; the window pressure was the repeated 3,000-token `⟦ctx:facts⟧` ledger, which is
+re-composed every turn and which compaction cannot reduce.
+
+**fixable at A? Yes, cheaply.** The briefing template already forbids "no plan for what to do next";
+extend it to forbid narrating the briefing act itself, and strip a trailing sentence whose subject is
+the briefing before injecting. Separately, worth measuring why self-compact triggered on a four-turn
+history — compacting a transcript to relieve pressure that comes from a per-turn re-composed ledger
+cannot help.
+
+**principle.** #1 (an injected string the weak model followed), #5 (compaction is the one place cria
+may lose information and it must not add any).
+
+---
+
+### 7. The confirm judge said the Dockerfile was missing while it was on disk, and never looked
+
+**what happened.** At call 0035 `satisfaction-confirm` — whose entire purpose is to check a claim
+against the filesystem, with `list_dir` and `read_file` on its menu — declared the Dockerfile absent
+without calling either tool. cria relayed the false fact to the coder.
+
+**cria fault: yes**
+
+**evidence.** The Dockerfile was written at call 0027 (`-> Wrote Dockerfile`) and appears in cria's own
+exec-intent inventory at call 0030:
+
+```
+Dockerfile (344 B)
+  index.js (1911 B)
+  test/test.js (697 B)
+  lookup.js (611 B)
+```
+
+Call 0035's complete output — note the empty think block, meaning no inspection at all:
+
+```
+<think></think>
+{"consistent": false,
+ "why": "The step requires a Dockerfile, but no such file is present in the workspace."}
+```
+
+Delivered to the coder at 0036 as:
+
+```
+⟦ctx:steer⟧ … It reported:
+The step requires a Dockerfile, but no such file is present in the workspace.
+```
+
+**Why it did not cost a point.** The "report, not an order" framing worked here: the coder checked,
+did not rewrite the Dockerfile, and moved on to the test file. But cria published a statement its own
+filesystem contradicts, and the confirm judge's contract — *"when the step's completion implies a file
+or artifact should exist, list_dir the workspace … before you answer"* — was simply not enforced.
+
+**fixable at A? Yes.** This one does not need the model at all. A confirm verdict of `consistent:
+false` whose `why` names a file is a claim cria can check for free before relaying: if the named path
+exists, the verdict is unsupported and must be dropped (safe null, #4), not forwarded. `verify_tools.
+txt`'s own header records the identical incident — *"not exist, and built a wrong stale-cache theory on
+that false fact (rule 5b)"* — so the pattern is known; what is missing is the deterministic guard
+between the judge's mouth and the coder's ear.
+
+**principle.** #5b, #13 (an inspection judge that does not inspect is undecidable, and undecidable must
+not become an assertion), #8.
+
+---
+
+### 8. The model built a parallel entry point and orphaned the seed; nothing in cria noticed, and that is the whole gap to the two 100% runs
+
+**what happened.** The model never opened `lookup.js`. It wrote a new `index.js`, pointed a new
+`package.json` at it, and added `"type": "module"` — which broke the seed file it had abandoned. Both
+100% runs edited `lookup.js` in place.
+
+**cria fault: none** (the choice was the model's) — **but every signal that would have exposed it was
+one cria check away, and none of them ran.**
+
+**evidence.** Across all 41 calls there is no `read_file` on `lookup.js`. At call 0008 the model wrote,
+as its very first action, a `package.json` that never mentions it:
+
+```json
+{"name": "ada-handle-resolver", …, "bin": {"ada-handle-resolver": "index.js"}, "type": "module"}
+```
+
+The winner's tree is the same task solved the other way — `ternary-bonsai`:
+
+```
+Dockerfile  README.md  lookup.js (2767 B)  package.json  test/run.js
+```
+
+no `index.js` at all, `"main": "lookup.js"`, `"scripts": {"test": "node test/run.js"}`, and the three
+lines that pass the check:
+
+```js
+console.log('address: ' + (result.address || 'N/A'));      // resolved_addresses.ada
+console.log('holder: ' + (result.holder || 'N/A'));
+console.log('total_handles: ' + (result.total_handles ?? 'N/A'));
+```
+
+`qwen35` did the same — 3,914 bytes of `lookup.js`, no second entry point. **Three sentences of
+comparison:** both winners kept the seed as the program and edited it, so the verifier's README-derived
+command and their deliverable were the same file; both printed `resolved_addresses.ada`; both declared
+a `test` script, which is what gives cria a test probe to run. This run produced a second, better
+program beside a first, broken one, and every check cria owns was pointed at neither.
+
+**A → B → C.** A: `lookup.js` is stale from the first coder call and no cria mechanism ever reads,
+runs, or lints it (findings 1, 3 and 5 are the three separate reasons). B: adding `"type": "module"`
+converts it from stale to crashing, and nothing reports the regression. C: two checks key on that file
+(`request_removed`'s `src_uses`, and every entry-point loop in `cli_behaviour`), and both fail.
+
+**fixable at A? Yes — this is the cheapest single guard in the walk.** cria already knows the project's
+declared run command (`readme_commands` + `manifest_commands`; the exec-intent prompt prints it as
+"COMMANDS THIS PROJECT DECLARES FOR ITSELF"). A deterministic, regression-only check — *the command
+this project declares for itself ran at session start and does not run now* — needs no reasoner, cannot
+fire on a first attempt, and would have surfaced `ReferenceError: require is not defined in ES module
+scope` the moment `"type": "module"` landed at call 0008, six calls before the first gate.
+
+**principle.** #2 (a regression-only guard is the safe class), #10, #11 (a real deterministic anomaly,
+not "files exist").
+
+---
+
+### 9. Smaller things, in one place
+
+- **The exec-intent judge invents inputs.** At 0013 it answered `"command": "node index.js --handle abc
+  --json"` — a flag the tool does not accept and a handle that does not exist — after ~2,000 words of
+  visible agonising over the README's `node lookup.js goose`. At 0030 it produced `--handle 0xabc123`,
+  and its `success` fields across the run are `"Resolved address: 0xabc123, Holder address: 0xdef456,
+  Number of handles: 3"` and `"0x123abc 0xdef456 1"` — Ethereum-shaped addresses for a Cardano API
+  whose real values were in the same prompt. Its prompt says *"If the request names an example input,
+  put that exact value in the command"*; the README names `goose` and the judge reached it only 4 times
+  in 7. Since these `success` strings are what `execcheck` would compare a real run against, the probe
+  was mis-aimed even in the turns where the command was right.
+- **The assists ledger under-reports what fired.** The row records two assists. The wire carries one
+  no-op steer (0008), six completion-critic steers (0015, 0019, 0022, 0027, 0032, 0036), seven
+  exec-intent probes, seven satisfaction judges and two confirms. Anything reading `assists` to compare
+  cells will conclude cria barely touched this run; cria in fact spent 39% of its calls on it (#12 —
+  surface the metric from the authoritative event).
+- **Zero periodic gates in 41 calls.** `ternary-bonsai` got 1 and `qwen35` got 9 on the same task. Worth
+  checking whether the completion gate resets the periodic counter: this run ended a coder turn seven
+  times, so it may never have accumulated an uninterrupted stretch long enough to trigger one.
+- **The spill still lands in the workspace.** `tmp/read-only/api.handle.me_openapi.json` (96 KB) is in
+  the archived tree and appears in every `⟦ctx:files⟧` listing cria sends. Already on the backlog and
+  recorded in the gemma4 section of this document; confirmed again here.
+- **Call 0012 lost a Dockerfile inside its own reasoning.** The model composed the file in `<think>`,
+  emitted `</parameter></function></tool_call>` and stopped with no tool call. Not cria's doing, but it
+  is what triggered the first completion gate, ten calls before a Dockerfile actually existed.
+
+---
+
+### 10. Recent fixes — did they behave?
+
+| fix | fired? | verdict |
+|:--|:--|:--|
+| `toolpath` — cria asks the coder's PATH (`3e2585e`) | **no**, though present in this commit | **Inert on this box.** `$SHELL` is unset under systemd, so `_login_shell_path()` returns `None` and the fallback restores the exact bug the fix names in its own docstring. Reproduced: `which node: None`. Root of findings 1, 3 and 5. |
+| derived probe output cap (`{{BYTES}} bytes over {{LINES}} lines`) | **no** | Nothing in this run came near the bound — the largest probe output was a 226-token Node stack trace. Correctly silent. |
+| reasoning logged on unfinished streams | **yes** | **Helped, for the walk if not the run.** Call 0012 finished `stop` with no tool call and its full `<think>` is in the capture — which is the only reason the vanished Dockerfile is explicable. Keep. |
+| completion-judge "report, not an order" framing | **yes, 6×** | **Mixed, and it hurt once.** It worked at 0036 (the coder did not rewrite an existing Dockerfile on a false report) and at 0019/0022 (it acted on a true one). It failed at 0015, where the report was false *and* authoritative-sounding — "which the specification demands" — and the coder followed it into printing the handle name. The framing tells the coder a report is an opinion; it does not stop cria putting the word "specification" in the opinion. See finding 4. |
+| `verdict` tool on the judge's menu | **never called** | All 7 satisfaction verdicts and both confirms came back as plain-text JSON in the `SAY` channel, and all 9 parsed cleanly. Costs a few hundred tokens of schema per call and bought nothing here; it also did not hurt. Worth base-rating across the cycle before keeping. |
+| cached-check age note (newest-gate-only annotation) | **no** | No gate in this run produced a failing finding, so there was never a stale one to stamp. The related de-dup, `CHECKS_REPEAT_NOTE` ("same result as a later check below — omitted here…"), fired repeatedly and behaved: it collapsed six identical clean-check results without hiding a distinct one. |
+
+**The one that matters:** in a run that ended early with a program that cannot start, the completion
+judge was not silent — it spoke seven times and said yes. The failure was not a missing judge. It was
+a judge asked to rule with no execution evidence, told twice per prompt that it had none, and allowed
+to say "functional" anyway.
+
+
+### Verified cold — the PATH oracle is half-built, and it is my own fix
+
+The walk above blamed a missing `$SHELL` under systemd. That part is wrong: cria's running process
+has `SHELL=/bin/bash`, and `_login_shell_path()` works — it returns a full login PATH. But the
+symptom it reported is real, and the true cause is one flag.
+
+```
+env -i HOME=/home/jesse SHELL=/bin/bash PATH=/usr/bin:/bin bash -lc  'command -v node'  → NOT FOUND
+env -i HOME=/home/jesse SHELL=/bin/bash PATH=/usr/bin:/bin bash -lic 'command -v node'  → /home/jesse/.nvm/versions/node/v22.23.1/bin/node
+```
+
+`cria/toolpath.py::_login_shell_path` runs `bash -lc`. **nvm initialises in `.bashrc`, and a
+non-interactive shell never sources it** — `-l` makes the shell a login shell, not an interactive
+one. So the oracle finds everything installed by a system package or exported from `.profile` and
+misses everything a version manager installs:
+
+```
+cargo   → /home/jesse/.cargo/bin/cargo      ✓
+pytest  → /home/jesse/.local/bin/pytest     ✓
+mvn     → /usr/bin/mvn                      ✓
+ruby    → /usr/bin/ruby                     ✓
+node    → None                              ✗
+npm     → None                              ✗
+```
+
+The consequence on the Node column: `node --check` — the Tier-0 syntax floor for JavaScript — could
+never run, so cria had no syntax floor and no execution on that entire task. The only check it could
+compose was a Python JSON parse of `package.json`.
+
+This is the Tier 1 PATH-oracle fix from earlier this cycle, and it is half-built. The same hole will
+hit rbenv, pyenv, nodenv, sdkman and asdf — every version manager puts its shim in `.bashrc`.
+
+**Fix at A, for the fix phase:** probe with an interactive login shell, keep the timeout, and drop
+whatever the rc files print on stderr. Then re-check the whole table, because `which()` answering
+`None` is what makes cria silently skip a probe rather than fail loudly — and a probe that never
+runs looks exactly like a probe that passed.
