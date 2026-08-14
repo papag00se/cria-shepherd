@@ -264,7 +264,18 @@ def _spill_name(url: str) -> str:
     p = urllib.parse.urlparse(url)
     stem = (p.netloc + p.path).strip("/") or "page"
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "page"
-    if "." not in stem.rsplit("_", 1)[-1]:
+    # ALWAYS `.txt`, never the URL's own extension. This used to append `.txt` only when the last
+    # segment had no dot, so a fetch of `…/decimal.go` was written into the workspace as a `.go`
+    # file — and `go build ./...` compiled cria's own 90 KB copy of somebody else's library.
+    # Proven by ablation on the archived run: with `tmp/` present the verifier says
+    # `FAIL [build failed]`; after `rm -rf tmp` it says `ok`. Every check in that cell, gone.
+    #
+    # The kernel is not Go's: a spill is a TEXT TRANSCRIPT of a fetch, not a source file, and any
+    # toolchain that globs by extension — go, cargo, javac, tsc, a pytest collector — will pick up
+    # whatever cria leaves lying in the tree. So the name states what the file is. The original
+    # extension survives inside the name (`…_decimal.go.txt`), which keeps the stable-name property
+    # this function exists for.
+    if not stem.endswith(".txt"):
         stem += ".txt"
     return f"{SPILL_DIR}/{stem}"
 

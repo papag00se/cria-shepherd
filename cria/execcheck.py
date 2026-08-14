@@ -332,8 +332,26 @@ def corroborate(claim: str, readme: list[str], entries: list[str],
         if not in_declared:
             return False, f"no manifest in this workspace declares {tok}"
         return True, ""
+    # THE PROJECT'S OWN ANSWER OUTRANKS A FILE TEST. `in_declared` is read three lines above and was
+    # then never consulted before this veto, so a command the project itself documents was refused
+    # for not looking like a path. Measured across cycle 1 of the 100% campaign — six of twenty-four
+    # cells, four languages:
+    #
+    #   pytest              a program, not a file        (3 cells; the command came from the README)
+    #   pipeline.Importer   a class path, not a file     (java)
+    #   config.toml         an input, not the program    (rust)
+    #   lookup.js           611 bytes, present on disk   (node; the disk scan simply missed it)
+    #
+    # `exec-intent` asks the project how it runs itself and prefers what it finds verbatim. Getting
+    # a true answer and discarding it for failing a file-existence test is cria contradicting its own
+    # question, and the refusal reaches the CODER — which is when it costs a run (in the two cells
+    # that still scored 100% it reached a judge already holding a passing test run, and was ignored).
+    if not in_disk and not in_declared:
+        return False, f"{tok} is not an entry point on disk, and no README or manifest declares it"
     if not in_disk:
-        return False, f"{tok} is not an entry point on disk"
+        # Declared but not a file: the project says this is how it runs, and that is the better
+        # evidence. Weaker than a disk hit, never a veto (#13, the safe direction).
+        return True, f"{tok} runs as the project's own declared command, though it is not a file on disk"
     if not in_declared:
         # WEAKER, not a veto (#13, the safe direction): the program IS on disk and IS an entry point
         # by its language's own convention. That the project never wrote the command down is a gap

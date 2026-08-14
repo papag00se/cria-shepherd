@@ -135,8 +135,28 @@ def split_loc(s: str) -> Optional[tuple[str, Optional[int], Optional[int]]]:
     return None
 
 
+# `file:[line,col] message` (javac via Maven) and `file(line,col): message` (MSVC, and some .NET
+# analysers) rewritten to the `file:line:col: message` shape the rest of this function reads.
+_MAVEN_LOC = re.compile(r"^(\S+?):\[(\d+),(\d+)\]\s+")
+_MSVC_LOC = re.compile(r"^(\S+?)\((\d+),(\d+)\):\s+")
+
+
 def split_diag(s: str) -> Optional[tuple[str, Optional[int], Optional[int], str]]:
     """``file:line[:col]: message`` -> (file, line, col, message). Used by parse_generic."""
+    # MAVEN PUTS THE LINE AND COLUMN IN BRACKETS. javac-via-Maven prints
+    # `/…/Importer.java:[3,30] cannot find symbol` — no colon-space after the location, so every
+    # Maven diagnostic fell through to `return None` and cria then told the steer author "a specific
+    # line could not be parsed from the output" while the located errors sat in the same turn. The
+    # author ranks that block as authority tier 1 and builds on it. Seen in every Java cell of
+    # cycle 1; that column scored 0 / 40 / 0 / 0.
+    #
+    # Normalised here rather than matched downstream, because this is a LOCATION FORMAT and there
+    # are only a handful in use — gcc/clang/rustc `file:line:col:`, MSVC `file(line,col):`, Maven
+    # `file:[line,col]`. Reading a compiler's file/line/column is something this function already
+    # claims to do; a rule keyed to the word "Maven" would be the per-language matcher this project
+    # keeps getting burned by.
+    s = _MAVEN_LOC.sub(r"\1:\2:\3: ", s, count=1)
+    s = _MSVC_LOC.sub(r"\1:\2:\3: ", s, count=1)
     if ": " not in s:
         return None
     loc, msg = s.split(": ", 1)  # FIRST colon+space splits location from message

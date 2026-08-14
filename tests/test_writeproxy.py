@@ -1007,7 +1007,10 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
         """cria EMITS the spill as a `cp` command; the HARNESS runs it. Existence is only a fact once
         it has — which is why the check is worth making: a sandbox-rejected cp now re-spills instead
         of pointing the model at a file that was never written."""
-        target = pathlib.Path(ws) / "tmp" / "read-only" / "api.example.com_openapi.json"
+        # Derived, not spelled out: the spill NAME is webfetch's to choose (it gained a mandatory
+        # `.txt` when a fetched `…decimal.go` got compiled by `go build ./...`), and a hard-coded
+        # copy of it here silently stops writing the file the guard looks for.
+        target = pathlib.Path(ws) / webfetch._spill_name("https://api.example.com/openapi.json").lstrip("./")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("the spilled document")
 

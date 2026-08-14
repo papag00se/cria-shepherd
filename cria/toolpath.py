@@ -46,17 +46,44 @@ _probed = False
 
 
 def _login_shell_path() -> str | None:
-    """The `PATH` a login shell exports, or None when cria cannot ask one."""
+    """The `PATH` the coder's own shell exports, or None when cria cannot ask one.
+
+    LOGIN **AND** INTERACTIVE. `-l` alone was not enough and the miss was total on one ecosystem.
+    Version managers — nvm, rbenv, pyenv, nodenv, sdkman, asdf — install their shim into `.bashrc`,
+    and `.bashrc` opens with a guard that returns immediately for a non-interactive shell. A login
+    shell is not an interactive one, so `bash -lc` sources `.profile` and skips every one of them.
+
+    Measured on this box, from a clean environment:
+
+        bash -lc  'command -v node'  ->  (nothing)
+        bash -lic 'command -v node'  ->  /home/jesse/.nvm/versions/node/v22.23.1/bin/node
+
+    Everything installed by a system package or exported from `.profile` resolved fine (cargo,
+    pytest, mvn, ruby); everything behind a version manager was invisible (node, npm). The cost in
+    cycle 1 of the 100% campaign was the whole JavaScript column: `node --check` is the tier-0 syntax
+    floor for JS and it could not run once, so cria had no syntax floor and no execution on that
+    task, and `which()` answering None makes cria SKIP a probe — which reads exactly like a probe
+    that passed.
+
+    `stderr` is dropped rather than merged: an interactive rc prints prompts, banners and job-control
+    chatter, and none of it is the answer. The `printf` is the only thing on stdout.
+    """
     shell = os.environ.get("SHELL")
     if not shell or not os.access(shell, os.X_OK):
         return None
-    try:
-        p = subprocess.run([shell, "-lc", "printf %s \"$PATH\""],
-                           capture_output=True, text=True, timeout=_PATH_PROBE_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    out = (p.stdout or "").strip()
-    return out or None
+    for flags in ("-lic", "-lc"):        # interactive first; the plain login shell is the fallback
+        try:
+            p = subprocess.run([shell, flags, "printf %s \"$PATH\""],
+                               capture_output=True, text=True, timeout=_PATH_PROBE_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        # An interactive rc can emit anything on stdout before the printf; the PATH is the LAST line
+        # and it is the one containing separators. Take the longest colon-joined line, which is the
+        # printf's own output in every real case and cannot be a banner.
+        lines = [ln.strip() for ln in (p.stdout or "").splitlines() if ":" in ln and "/" in ln]
+        if lines:
+            return max(lines, key=len)
+    return None
 
 
 def coder_path() -> str:

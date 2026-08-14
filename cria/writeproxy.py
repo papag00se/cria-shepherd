@@ -847,7 +847,11 @@ def _search_command(args: dict, brave_key: str) -> str:
     # Composed before the parse below, which needs both: the spill path to write, and the pointer to
     # print when the brief listing does not fit inline.
     target, msg = webfetch.search_spill(query)
-    inline_note = prompts.load("search_inline_note")
+    # NAME THE FILE. The note used to end "in the file named above" on the INLINE path, where
+    # nothing above names a file — the filename only appears in the spill branch, which is the
+    # branch not taken. A pointer to a file cria never named is a false fact in cria's own voice
+    # (#5b); seen in three cells of cycle 1. The target is known here, so it goes in the sentence.
+    inline_note = prompts.fill(prompts.load("search_inline_note"), target=target)
     url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load

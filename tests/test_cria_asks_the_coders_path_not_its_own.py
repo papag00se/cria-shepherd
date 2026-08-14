@@ -36,8 +36,14 @@ SERVICE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin"
 
 
 def login_shell_path() -> str:
-    return subprocess.run([os.environ.get("SHELL", "/bin/bash"), "-lc", 'printf %s "$PATH"'],
-                          capture_output=True, text=True).stdout.strip()
+    """What the CODER's shell exports. `-lic`, not `-lc`: version managers (nvm, rbenv, pyenv,
+    sdkman, asdf) install their shim into `.bashrc`, which a NON-interactive shell never sources —
+    so `bash -lc` finds cargo and ruby and misses node entirely. Measured on this box: `-lc` cannot
+    see node, `-lic` finds it at once, and the miss cost cria its whole JavaScript syntax floor."""
+    out = subprocess.run([os.environ.get("SHELL", "/bin/bash"), "-lic", 'printf %s "$PATH"'],
+                         capture_output=True, text=True).stdout
+    lines = [ln.strip() for ln in out.splitlines() if ":" in ln and "/" in ln]
+    return max(lines, key=len) if lines else ""
 
 
 class TheTwoPathsReallyDifferTests(unittest.TestCase):
