@@ -77,6 +77,7 @@ def files_read(messages: list) -> list[tuple[str, int]]:
     the shapes that made a coder believe it had seen a file it had not."""
     calls: dict[str, str] = {}
     got: dict[str, int] = {}
+    written = _paths_written(messages or [])
     for m in messages or []:
         for tc in (m.get("tool_calls") or []):
             fn = tc.get("function") or {}
@@ -97,8 +98,45 @@ def files_read(messages: list) -> list[tuple[str, int]]:
             body = body if isinstance(body, str) else ""
             if body.strip() and not denial.is_denied(body):
                 path = calls[m["tool_call_id"]]
-                got[path] = max(got.get(path, 0), len(body))
+                # READING BACK YOUR OWN WRITING IS NOT RESEARCH. A file the coder created earlier in
+                # this same session teaches it nothing it did not already know, and counting it let
+                # the research step close on the coder's own output.
+                #
+                # Measured, nemotron-elastic/rust 0033: the block headed "WHAT HAS REALLY BEEN READ
+                # THIS SESSION" listed `tests/test_nested_lookup.rs`, written by the coder four calls
+                # earlier, and the judge closed the documentation step with "So we have DONE." No
+                # page defining the toml crate API was read at any point in the run.
+                #
+                # A file that existed BEFORE the session — a seed, a schema, a data set — is
+                # untouched: that is real reading, and the whole reason this ledger covers files at
+                # all rather than fetches alone.
+                if path not in written:
+                    got[path] = max(got.get(path, 0), len(body))
     return sorted(got.items())
+
+
+def _paths_written(messages: list) -> set:
+    """Every path this session WROTE, so a read of one can be told from a read of the world."""
+    out = set()
+    for m in messages or []:
+        for tc in (m.get("tool_calls") or []):
+            fn = tc.get("function") or {}
+            if str(fn.get("name", "")) not in _WRITE_TOOLS:
+                continue
+            try:
+                d = jsontext.loads(fn.get("arguments")) if isinstance(fn.get("arguments"), str) \
+                    else (fn.get("arguments") or {})
+            except (ValueError, TypeError, AttributeError):
+                d = {}
+            path = (d or {}).get("path") or (d or {}).get("file") or (d or {}).get("filename")
+            if isinstance(path, str) and path.strip():
+                out.add(path.strip())
+    return out
+
+
+# The write-shaped tools, by the same rule as _READ_TOOLS below: named tools only, never a shell
+# command line, because a wrong attribution here would silently delete a real read from the ledger.
+_WRITE_TOOLS = ("write_file", "edit_file", "create_file", "apply_patch")
 
 
 # The read-shaped tools by name. Shell reads (`cat`, `grep`) are deliberately NOT here: cria lowers
