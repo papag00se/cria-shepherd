@@ -3968,6 +3968,25 @@ runs looks exactly like a probe that passed.
 
 ## orders-api-py_qwen35_codex_poff_1786680733
 
+### The bound produces two OPPOSITE falsehoods, depending on what survives
+
+The Rust walk found the other half of the same bug, and it is the worse half.
+
+| run | what survived the discard | what cria then said |
+|---|---|---|
+| `orders-api-py × nemotron` | a fragment (`0f/2p`) | 19× "no error-class problems", 8× "the repo's automated checks pass" — while pytest was red |
+| `rust-toml-cli × ternary` | nothing | `PROBES: none ran — the gate command produced no output`, told to its own judge 5.24 seconds and 10,104 bytes after one ran |
+
+In the Rust case cria **read its own refusal as the probe result**: the interpreter sees no parseable
+findings, sets `outcome.ran = False`, and takes the "couldn't run → stay silent" branch. So there is
+no replaced checks block, there is no block at all — `grep -l "ctx:checks"` over all 43 prompts
+returns zero, and `loop.periodic_gate_result` fired twice with `spoke=False`. Three gates,
+30,310 bytes of compiler output, not one word to the coder.
+
+One bound, two failure modes, both false: a green report over red output, and a "nothing ran" over
+output that ran. Whichever way it falls, the coder is told something the world contradicts (#5b) and
+cria has failed open on missing ground truth (#13).
+
 ### The bound does not just lose the checks — cria then reports them GREEN
 
 This is the finding that upgrades everything else, and it is verified cold in
@@ -3996,6 +4015,29 @@ That is a **fail-open on missing ground truth** — the cross-cutting root of ev
 project has ever traced (#13, `docs/audits/2026-07-20-early-exit-anomaly-audit.md`) — and a false
 fact stated in cria's own voice (#5b). It is the same bound as the read refusals and the Go spill
 chain; those cost calls, this one costs the truth.
+
+### The live-execution probe refuses to run the thing — measured across the cycle
+
+cria has a live-execution probe. It fires, and then declines, with `X is not an entry point on disk`.
+Measured over all 24 captures:
+
+| cell | score | what it refused to run |
+|---|---:|---|
+| `orders-api-py × gemma4` | 100% | `pytest` |
+| `orders-api-py × qwen35` | 50% | `pytest` |
+| `orders-api-py × nemotron-elastic` | 50% | `pytest` |
+| `feed-pipeline-java × nemotron-elastic` | 0% | `pipeline.Importer` |
+| `handles-cli-node × nemotron-elastic` | 25% | `lookup.js` |
+| `rust-toml-cli × gemma4` | 100% | `config.toml` |
+
+**Six of 24 cells.** `pytest` is refused because it is a program, not a file; `pipeline.Importer` is
+refused because it is a class path, not a file; `lookup.js` was refused about a 611-byte file that
+was on disk. The nominated command comes from `exec-intent`, which reads the project's README and
+prefers what it finds there verbatim — so the probe asks the project how to run itself, gets a true
+answer, and then refuses it for not looking like a path.
+
+This is the deterministic mechanism behind "no probe ever starts the thing and asks it something".
+The capability exists; a file-existence test on the wrong token is what stops it.
 
 ### The 9,000-byte bound is upstream of the Go zero too
 
@@ -5304,3 +5346,1091 @@ reporting that a named file is not on disk, which is the plainest kind of ground
 
 **principle.** #13 (fail closed on completion — a `task_complete` whose named artifacts do not exist is
 the definition of an undecidable "done"), #5b, #12.
+
+---
+
+## rust-toml-cli_ternary-bonsai_codex_poff_1786698772
+
+Commit 7bc6056 (p4). 42 calls, 948.3 s wall, terminal `milestone-miss-15min`, score 0/4 (flat, and a
+confirmed recheck). Phases: 35 coder, 2 research-step, 2 critic, 1 classifier, 1 confirm-applies,
+1 self-compact. Assists that fired: `loop.probe` ×1, `loop.periodic_gate` ×2,
+`loop.periodic_gate_result` ×2, `context.self_compact` ×1. No steer, no wheel-spin, no rumination
+abort, no completion judge. 32.3 tok/s — the same cell ran at 43.6 and 44.1 tok/s in p2 and p3.
+
+**The claim under test is CONFIRMED, and the mechanism is worse than "the result was replaced".** Three
+composed gate scripts ran, all three produced the compiler's exact errors, all three were refused whole
+by cria's own byte bound, and cria's own gate reader then classified "could not run" — which is the one
+branch that is *designed* to say nothing. `grep -c "ctx:checks"` over all 43 captured prompts in
+`/home/jesse/.cria/calls/20260814T021313-019fff8c-0066-76f0-a8c1-369b0040a86a` returns **0**. The
+markers that are present: `⟦ctx:denied⟧` ×93, `⟦ctx:facts⟧` ×35, `⟦ctx:files⟧` ×1, `⟦ctx:rollup⟧` ×1,
+`⟦ctx:task⟧` ×1.
+
+### 1. Three gates ran, 30,310 bytes of compiler output were discarded, and cria's "couldn't run" branch turned that into silence — no `⟦ctx:checks⟧` block exists in this run
+
+**What happened.** `probegate` composed one shell script holding six probes (a Python TOML syntax
+floor, `cargo clippy -q --no-deps`, `cargo check`, `cargo clippy --all-targets --all-features`,
+`cargo test --no-fail-fast`, and a network-off re-run). Each probe is capped at
+`proberun.PROBE_OUTPUT_CAP_BYTES` = 8,500. The harness returned the JOINED result, which
+`writeproxy._bounded_exec_result` measured against `READ_INLINE_MAX` = 9,000 and refused. cria then
+read its OWN refusal string as the probe result: `read_gate` found no `EXIT:` sentinels, set
+`outcome.ran = False`, `gate_error_text` returned empty, and `guard_periodic_result` took the branch
+whose comment reads *"a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence
+either way"* and returned `None`. Nothing was injected. The four cargo runs inside those bytes named
+every error the run then died of.
+
+**cria fault: yes.**
+
+**Evidence.** The composed command, identical at all three gates (CALL 0014's turn, CALL 0023's turn,
+CALL 0038's turn) — third leg quoted:
+
+> `cd /tmp/suite-rust-toml-cli_ternary-bonsai_codex_poff_1786698772-bmanhot6 && __cria_out=$(timeout -k 5 240 cargo check </dev/null 2>&1); __cria_ec=$?; __cria_n=$(printf '%s' "$__cria_out" | wc -c | tr -cd '0-9'); if [ "$__cria_n" -le 8500 ]; then printf '%s\n' "$__cria_out"; else printf '%s' "$__cria_out" | head -c 4250; …`
+
+What came back, gate 1 (chunk `064952`, in CALL 0018's transcript and CALL 0020's history):
+
+> `Wall time: 5.2424 seconds` · `Process exited with code 0` · `Original token count: 5495` · Output:
+> `[10,104 bytes over 238 lines — too much to return, so nothing is shown. Nothing was truncated: the
+> command ran and its output was discarded, not cut. Ask it a smaller question and run it again…]`
+
+Gate 2 (chunk `670952`, CALL 0024): `Original token count: 5427` · `[10,104 bytes over 239 lines — too
+much to return, so nothing is shown…]`. Gate 3 (chunk `caf190`, CALL 0039): `Original token count:
+2577` · `[10,102 bytes over 223 lines — too much to return, so nothing is shown…]`.
+
+What reached the model afterwards, in all three cases: **nothing**. No checks block, no finding, no
+note. Verified twice — by reading every prompt delta in chunks 01–08 end to end, and by
+`grep -l "ctx:checks"` over the 43 prompt files, which matches none.
+
+What the discarded bytes contained is not in doubt: the coder's own `cargo check 2>&1 | head -50` at
+CALL 0025, run against the same tree seconds after gate 2, returned
+
+> `error[E0308]: mismatched types` `--> src/main.rs:56:36` … `expected \`&Map<String, Value>\`, found \`&Value\``
+
+— three located E0308s in 501 tokens. The gate had four such runs and cria threw away all four, three
+times.
+
+**A → B → C.** **A** — two bounds derived independently: a cap applied PER PROBE (8,500) and a bound
+applied PER RESULT (9,000), over a script that joins six probes. **B** — an ordinary Rust gate run of
+10,104 bytes is refused whole, and cria's own reader, handed the refusal, records "no check ran."
+**C** — the run's entire problem was a compile error, and the mechanism built to name compile errors
+produced silence three times across 42 calls.
+
+**fixable at A? Yes, and the cross-run entry's fix is not sufficient on its own.** Deriving the
+per-probe cap from the per-result bound (commit `c2bd194`, live in this run) does not help when N
+probes each stay under the cap and their SUM does not. Two things fix it properly: (1) size the
+per-probe budget against the joined result across the probes actually in the plan — one owner
+computing both; and (2) more important, **cria's own gate must never read its ground truth through the
+model-facing byte bound at all**. `read_gate` should parse the raw probe output and emit
+`⟦ctx:checks⟧` from the parsed findings; whether the raw bytes are also shown to the coder is a
+separate question with a separate bound. Today one discard destroys both.
+
+**principle.** #10 (cria's own probe is the ground truth, and it was destroyed), #13 inverted (a
+couldn't-run gate fails silent, which here means fail-open toward "nothing is wrong"), #12, #2.
+
+### 2. The compaction briefing certified a build that had ten errors and unit tests that were never written — and that is why the README lies and `cargo test` fails
+
+**What happened.** The self-compact at CALL 0018 had exactly one piece of evidence about the build:
+gate 1's refusal, whose harness envelope says `Process exited with code 0` — the *shell script's*
+status, not cargo's. It read that as a passing build and a passing test run, and invented a test
+module that has never existed in `src/main.rs`. The briefing was delivered to the coder at CALL 0019
+as `⟦ctx:rollup⟧`.
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0018, `--- SAY (full) ---`:
+
+> **Current state of code and tests:**
+> - The build ran (`cargo check` succeeded).
+> - Tests ran (`cargo test --no-fail-fast` exited 0), so all unit tests pass.
+
+and, one bullet up:
+
+> - `src/main.rs` exists (2883 B) — contains the CLI implementation using `toml::Table`, argument
+>   parsing, file I/O, dotted-key traversal, error handling to stderr with non-zero exit codes, **and
+>   unit tests for integer, string, and missing-key lookups.**
+
+The file it is describing is quoted verbatim three times in the same prompt and contains no
+`#[cfg(test)]`, no `#[test]`, and no `mod tests`. Five calls later `cargo build --release` returned
+`error: could not compile \`toml-key-lookup\` … due to 10 previous errors`.
+
+The briefing prompt forbids both sentences explicitly — *"Only state that tests PASS or the build
+WORKS if the transcript shows the check ACTUALLY RAN and passed (a real command with passing
+output)"* — and the compactor obeyed it against the only signal it was given, which was cria's own
+false envelope.
+
+Next reasoning, CALL 0019: *"The task is essentially complete except for the README.md file."* The
+model then wrote `README.md` (CALL 0022) ending with *"The tests cover nested key lookup for integers,
+strings, and missing keys."* — a sentence that was true of the briefing and of nothing on disk. It
+never wrote a test for the rest of the run. The verifier's fourth check reports
+`cargo test ok=False, README ok=True`.
+
+**A → B → C.** **A** — the refusal keeps the harness's `Process exited with code 0` beside discarded
+output. **B** — the compactor, told to trust real command output, reads the one exit code in front of
+it as the build's. **C** — the model is told its build passes and its tests pass, writes a README
+asserting tests it does not have, and never revisits the test requirement.
+
+**fixable at A? Yes.** The refusal already knows the output was discarded; it must also say that the
+exit status shown belongs to the wrapper, not to the probes — or, better, the compactor should never
+be handed a probe result cria itself could not parse (finding 1's fix removes this input entirely).
+
+**principle.** #5b (cria's own voice asserting a passing build and tests that do not exist), #13,
+#12.
+
+### 3. cria told its own judge, in its own voice, that no probe ran — 5.24 seconds after one ran
+
+**What happened.** The critic prompt at CALL 0015 carries cria's ground-truth digest. The digest
+reported the gate as never having run.
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0015, verbatim:
+
+> `GROUND-TRUTH CHECKS (lint · type-check · tests · git): SYNTAX FLOOR: did not run`
+> `PROBES: none ran — the gate command produced no output.`
+
+Three lines above it in the same prompt sits the gate's own result, `Wall time: 5.2424 seconds`,
+`Original token count: 5495`, `10,104 bytes over 238 lines`. The string is
+`cria/prompts/probe_digest_none.txt`. Both halves of the sentence are false: the gate command ran, and
+it produced 10,104 bytes.
+
+The judge (CALL 0016) ruled `{"done": true, …}` on the research step. Harmless here only because the
+step it was judging was a read, not a build.
+
+**A → B → C.** **A** — the digest is written off `outcome.ran`, which is false whenever the result was
+refused. **B** — "none ran" is stated as a fact about the world. **C** — every downstream reader (the
+critic, and by the same route the compactor) is told cria has no evidence, when cria had it and threw
+it away.
+
+**fixable at A? Yes.** Distinguish "no probe was composed" from "a probe ran and cria could not read
+its result" — they are different facts and only the first is what this sentence says. The second
+should name itself.
+
+**principle.** #5b, #12 (surface the metric from the authoritative event — the probe's own wall time
+and byte count were right there).
+
+### 4. cria's refusal told the coder to grep, cria's dirguard blocked the file route, and the coder's error view lost file:line for the last eighteen calls
+
+**What happened.** The refusal at CALL 0024 offers three recovery routes. The coder tried the best one
+(tee to a file, then grep it) and cria's workspace guard refused it. It fell back to a pipe-grep whose
+pattern keeps `error[…]`, `note:` and `help:` and drops every `-->` line — so from CALL 0029 onward the
+coder could see that an E0308 existed and never see where.
+
+**cria fault: yes** (the refusal authored the advice; the guard closed the good half of it).
+
+**Evidence.** CALL 0024 refusal text: *"Ask it a smaller question and run it again: send it to a file
+and search that (`> out.txt 2>&1` then `grep -n <what you are looking for> out.txt`), match it directly
+(`| grep <what you are looking for>`)…"*
+
+CALL 0027 → CALL 0028: `cargo check 2>&1 | tee /tmp/build_errors.txt; echo "EXIT:$?"` →
+
+> `⟦ctx:denied⟧ Writing/reading outside the working directory is not permitted here … The path
+> '/tmp/build_errors.txt' is outside it; use a path within the project instead.`
+
+CALL 0029 onward, five times: `cargo check 2>&1 | grep -E 'error\[|help:|note:' | head -40`. What that
+returns at CALL 0033, and again unchanged at CALL 0040:
+
+> `error[E0308]: mismatched types`
+> `   = note: expected struct \`toml::map::Map<_, _>\``
+> `note: tuple variant defined here`
+> `help: consider using clone here`
+> `error[E0599]: no method named \`as_datetime\` found for reference \`&toml::value::Datetime\``
+> `error[E0308]: \`match\` arms have incompatible types`
+
+No file, no line, no "found" type. The coder's reasoning at CALL 0040 shows the cost: *"I need to fix
+three issues: 1. The `flatten()` issue - I'm trying to use `.flatten()` on an Option, but it's not
+available."* — `flatten()` had already been removed two writes earlier. It was reasoning from a
+remembered error list because the current one told it nothing locatable. It fixed only the third
+(`_ => "..."` → `_ => "...".to_string()`) and left the other two, which are the two the verifier died
+on.
+
+**A → B → C.** **A** — cria refuses its own gate output and prints recovery advice. **B** — the coder
+takes the advice, the file route is denied, the lossy route survives. **C** — eighteen calls of blind
+edits against an error list with no locations.
+
+**fixable at A? Yes.** With finding 1 fixed the refusal never happens on a gate result, and the coder
+is handed the located findings instead of advice on how to go looking for them. Independently: the
+dirguard refusal already names the fix ("use a path within the project instead") and could name a
+concrete in-project path rather than a policy.
+
+**principle.** #10, #2 (a guard that blocks the first attempt at a recovery route can trap the loop),
+#5b (advice addressed to the author of a command the coder did not write).
+
+### 5. The authored research step, and "do ONLY step 1 of 2", cost fourteen of forty-two calls before anything was compiled
+
+**What happened.** cria drafted a research step for a task whose external dependency is one
+well-known crate, then held the coder to it for eleven calls while the coder had already written all
+the code inside step 1. Two other models scored 100% on this exact task.
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0002/0003 authored: *"Read crates.io to identify the task-specific crate name,
+dependency structures, and API requirements needed for implementing the Rust command-line tool's TOML
+parsing and key lookup functionality before coding."* Delivered at every turn from CALL 0004 to CALL
+0014 as *"Do ONLY this step (1 of 2), then stop."*
+
+The oscillation is visible in the coder's own words. CALL 0006 think: *"I've already fetched the
+relevant information… Now let me create the Cargo project and implement everything."* CALL 0008 think,
+two calls later: *"The user is asking me to read crates.io to identify… Let me research this on
+crates.io first."* Between those it wrote `Cargo.toml`, ran `cargo init` twice (second: `error: cargo
+init cannot be run on existing Cargo packages`), wrote the whole of `src/main.rs`, and issued three
+re-fetches that were all denied. Calls 0015–0018 (critic, critic, confirm-applies, self-compact) went
+to closing a step that produced nothing on disk.
+
+First build attempt: CALL 0023, at 02:21 — six minutes into a fifteen-minute floor.
+
+**A → B → C.** **A** — cria authors a plan step. **B** — the step contradicts what the coder can see it
+has already done, and the "do ONLY this step" framing makes finishing it a goal in itself. **C** — a
+third of the call budget spent before the first compile, on a task where compiling early was the whole
+game.
+
+**fixable at A? Yes.** The corollary to #2 says it plainly: cria does not AUTHOR work. A research step
+for "use a published crates.io TOML parser" adds a step and no information.
+
+**principle.** #2 corollary (ADDITIVE is necessary, not sufficient — cria writes no plan step of its
+own), #1.
+
+### 6. The fetch ledger told the model, thirty-five times, that a complete crate doc page "DEFINES" nothing
+
+**What happened.** `⟦ctx:facts⟧` annotates every successful fetch with an API-routes clause. There are
+no routes in this task. The page it disparages is the one that answered the question.
+
+**cria fault: yes.**
+
+**Evidence.** Present in 35 of 43 prompts, first at CALL 0005:
+
+> `- https://docs.rs/toml/latest/toml/ → HTTP 200 (this page answered, but no endpoint definitions were
+> found in it — that status is a fact about the REQUEST, not about what the API returns; whatever the
+> page returned is in the transcript, but nothing read so far DEFINES the API's routes)`
+
+That fetch returned the `Value` enum in full, the `Table` type, and the `FromStr` parse idiom — every
+fact the task needed. The model re-fetched the same two URLs three times immediately after
+(CALLS 0008, 0009, 0010), each denied.
+
+**cria fault: none** for the denials themselves — the repetition note at CALL 0011 (*"you have now made
+this exact call 2 times and it failed the same way every time"*) is the one injection in this run that
+plainly helped: the model stopped fetching and started writing.
+
+**A → B → C.** **A** — an assist written for the ada-handles API-spec task ships on every fetch.
+**B** — a Rust crate doc read is reported as having defined nothing. **C** — three wasted fetches and
+three denials.
+
+**fixable at A? Yes.** The clause is only true of a document the task expects to define endpoints.
+Either key it on the task actually naming an API, or drop the second half and keep the status.
+
+**principle.** #20 (de-overfit off "browse an API spec"), #5b (the page did define what was asked of
+it), #1.
+
+### 7. A `find=` that matched nothing returned 14,021 characters of link list and called itself "a large match" — on the last call of the run
+
+**What happened.** The coder asked the Datetime doc for method signatures. cria answered "no match"
+and then printed every link on the page, then warned that the match was too large.
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0042:
+
+> `find "pub fn|pub fn year|…|as_datetime": no match for any of: pub fn, pub fn year, … (each was
+> searched separately).`
+> `find "pub fn": no match. Links on this page:` — followed by 128 URLs —
+> `⚠ This find="pub fn|…|as_datetime" match is large (14,021 chars) and is only part of the document —
+> narrow it (a more specific keyword)…`
+
+There was no match to be large. The next reasoning: *"The search didn't find `year`, `month` etc. as
+methods on Datetime. Let me check what methods are available by looking at the source code of the
+crate directly"* — and it picked
+`https://docs.rs/toml_datetime/…/src/toml_datetime/datetime.rs.html#77` out of that link dump. CALL
+0043 fetched it, cria spilled it (53,608 chars) and returned a path, and the run was killed there.
+The link list authored the last action of the run.
+
+**A → B → C.** **A** — the no-match path falls through to a link dump and reuses the large-match
+warning. **B** — the model reads "large match, narrow it" as evidence something was found. **C** — one
+call spent on the dump, one on the URL it suggested, clock out.
+
+**fixable at A? Yes.** A no-match answer is a no-match answer (#3: state the fact or be silent). If a
+link list is useful it needs its own label and its own size note, and it must not borrow the
+"match is large" sentence.
+
+**principle.** #5b, #3, #5's counter-nuance.
+
+### 8. The self-compact was used for exactly one call, then the full uncompacted history came back and grew to 94 KB
+
+**What happened.** cria compacted at CALL 0018, served the briefing at CALL 0019, and from CALL 0020
+onward served the original transcript from the first turn — including both full docs.rs dumps and every
+superseded `main.rs` write.
+
+**cria fault: yes.**
+
+**Evidence.** Captured prompt sizes: `0014` 34,892 B → `0018` (compact input) 24,712 B → `0019`
+(compacted, carries `⟦ctx:rollup⟧`) 19,240 B → `0020` **38,977 B** → `0025` 52,656 → `0030` 63,120 →
+`0035` 70,431 → `0040` 79,317 → `0043` 93,716. `⟦ctx:rollup⟧` and `⟦ctx:files⟧` each appear in exactly
+one prompt out of 43.
+
+By CALL 0043 the model was re-reading the identical 8,459-character docs.rs page twice, the identical
+`cargo init` failure three times, and four superseded versions of `main.rs` — none of which it may act
+on — inside 94 KB, at 32.3 tok/s.
+
+**A → B → C.** **A** — the compaction is applied on one turn's body rather than held as the session's
+new baseline. **B** — the next turn rebuilds from the full history. **C** — the compaction's only
+lasting effect on the run was the false "tests pass" claim it injected (finding 2); its intended
+benefit lasted one call.
+
+**fixable at A? Yes** — though this needs its own read of the plan-off driver before proposing the
+change; the observation here is the byte curve, not the fix.
+
+**principle.** #5 (the context floor is the one place window-fitting belongs, and it must persist),
+#12.
+
+### 9. The spill note pointed at a rendered-text file and told the model to grep it for Rust signatures
+
+**What happened.** cria saved the Datetime doc as extracted text, then told the coder to grep it for
+what it needed. What it needed was `pub fn year` — a signature that exists in the page's rendered
+markup and not in the text extraction.
+
+**cria fault: partial.**
+
+**Evidence.** CALL 0034: *"This document is too large for the context (36,788 chars) — it was saved IN
+FULL to ./tmp/read-only/docs.rs_toml_latest_toml_value_struct.Datetime.html, a path relative to the
+project directory you are working in. … Grep the file for what you need (grep -n on …)"*
+
+CALL 0039: `grep -n 'fn year\|fn month\|fn day\|fn hour\|fn minute\|fn second\|as_datetime'
+./tmp/read-only/…` → `Original token count: 0` · Output: (empty). Exit 0 — the file was there and had
+nothing.
+
+**Refuting one thing I expected to find here:** the path in the note is correct. The coder's own read
+at CALL 0035 used `/tmp/suite-…/.tmp/read-only/…` — it turned `./tmp` into `.tmp` itself — and cria's
+refusal (*"is not there — nothing was read. Check the path… Use list_dir on the directory you expect
+it in"*) is true and actionable. Three calls (0035–0037) lost to the model's own typo, not to a false
+cria fact.
+
+**A → B → C.** **A** — the spill saves extracted text and the note promises the document "IN FULL".
+**B** — a grep for source signatures finds nothing and returns clean. **C** — the coder concludes the
+methods do not exist, goes looking for the crate source instead, and the clock ends there.
+
+**fixable at A? Partly.** "Saved IN FULL" is a claim about the fetch, not about the bytes on disk;
+saying "saved as extracted text" costs nothing and is true. `raw=true` already exists for the markup.
+
+**principle.** #5b, #5's counter-nuance (a selection is fine when it is DISCLOSED).
+
+### 10. cria's spill files are inside the graded workspace
+
+**What happened.** `workspace/tmp/read-only/` holds two cria-written HTML dumps in the archived
+workspace.
+
+**cria fault: yes** — already logged from the Ruby column (that section's finding 7); recorded here as
+a second confirmation, in a second language, in a second cycle-1 cell.
+
+**Evidence.**
+`/home/jesse/.cria/suite/rust-toml-cli_ternary-bonsai_codex_poff_1786698772/workspace/tmp/read-only/docs.rs_toml_latest_toml_value_struct.Datetime.html`
+and `…_toml_datetime_datetime.rs.html`. `.gitignore` in the workspace is 8 bytes (`/target`), so both
+are visible to any `ls`, and to the verifier.
+
+**fixable at A? Yes** — the spill belongs in cria's own directory with a read-through, per #7.
+
+**principle.** #7.
+
+### 11. What the model actually knew about its own build, in full
+
+Every build/test/check command the coder itself issued, and what came back:
+
+| call | command | result |
+|---|---|---|
+| 0023 | `cargo build --release 2>&1 \| tail -5` | `Process exited with code 0` (the pipeline's), body: `Some errors have detailed explanations: E0308, E0599.` … `due to 10 previous errors` |
+| 0025 | `cargo check 2>&1 \| head -50` | three located `E0308`s with `--> src/main.rs:39:32`, `:56:36`, `:66:5` — **the only located view it ever got** |
+| 0027 | `cargo check 2>&1 \| tail -5` | `due to 9 previous errors` |
+| 0028 | `cargo check 2>&1 \| tee /tmp/build_errors.txt` | `⟦ctx:denied⟧` outside the working directory |
+| 0029 | `cargo check … \| grep -E 'error\[\|help:\|note:' \| head -40` | 9 unlocated lines |
+| 0031 | same | 3 unlocated lines |
+| 0033 | same | 3 unlocated lines |
+| 0040 | same, no `head` | 3 unlocated lines |
+
+**Was any of it refused?** None of the coder's own commands was refused for size — every one was
+already narrowed by a pipe. The only outputs refused in this run are cria's own three gate results.
+The coder's one attempt at the lossless route (0028) was refused on path, not size.
+
+**The two type errors.** Introduced at CALL 0011 (the first `main.rs` write) and never both cleared:
+
+1. `E0308` in `lookup_key`'s tail. Born as `current = Some(v)` / `current` (returning
+   `Option<&Map<String, Value>>` from a fn declared `-> Option<toml::Value>`), rewritten at 0025 to
+   `current_table.flatten()` (→ `E0599`), at 0029 to `current_table.flatten().ok()` (still `E0599`),
+   and at 0031 to `current_table.as_ref().map(|t| toml::Value::Table(t.clone()))`, which is what the
+   verifier compiled: `t` is `&&Map`, so `t.clone()` is `&Map` and the variant wants `Map`. The
+   compiler said so — `= note: expected struct \`toml::map::Map<_, _>\`` / `help: consider using clone
+   here` — with no location, five times.
+2. `E0599 as_datetime`. Introduced at CALL 0029 as a *fix* for the six `no method named \`year\``
+   errors, on the model's guess that a wrapper existed. Never cleared.
+
+**Did it ever see them stated plainly?** Once, at CALL 0025, for the first-generation errors — and
+that view is the only one that produced a real repair (`print_value(&v)`). After 0028 it never saw a
+line number again. Its own summary of its state, CALL 0040: *"I see three issues: (1) `flatten()` not
+available on Option, (2) `as_datetime()` doesn't exist, (3) match arm type mismatch"* — one of those
+three had not existed for two writes.
+
+### 12. Every cria injection in this run, and what the model did next
+
+| # | call | injection | model's next reasoning | verdict |
+|---|---|---|---|---|
+| 1 | 0002/0003 | authored research step; `Do ONLY this step (1 of 2)` | oscillates research↔build for 11 calls | **hurt** |
+| 2 | 0005+ (×35) | `⟦ctx:facts⟧` "nothing read so far DEFINES the API's routes" | re-fetches the same two URLs 3× | **hurt** |
+| 3 | 0009/0010 | `⟦ctx:denied⟧` already-fetched | fetches the *other* URL, also denied | nothing |
+| 4 | 0011 | repetition note, "you have now made this exact call 2 times" | *"The system is telling me I can't re-fetch them. Let me use what I already know"* → writes `main.rs` | **helped** |
+| 5 | 0014's turn | gate 1 → 10,104 B refused, nothing spoken | — | **hurt** |
+| 6 | 0015–0017 | critic + confirm-applies on a read-only step | 3 calls, `done: true` | nothing |
+| 7 | 0018→0019 | `⟦ctx:rollup⟧` "cargo check succeeded… all unit tests pass" | *"The task is essentially complete except for the README.md"* | **hurt (worst)** |
+| 8 | 0019 | `⟦ctx:files⟧` accurate 4-file listing | reads Cargo.toml | nothing |
+| 9 | 0023's turn | gate 2 → 10,104 B refused | *"The output was too large. Let me check what errors we're getting"* → 0025's located view | helped by accident |
+| 10 | 0028 | dirguard denies `/tmp/build_errors.txt` | adopts the lossy pipe-grep | **hurt** |
+| 11 | 0034 | spill note, "saved IN FULL … grep the file" | greps for `fn year`, gets nothing | **hurt** |
+| 12 | 0038's turn | gate 3 → 10,102 B refused | re-runs the same grep | **hurt** |
+| 13 | 0042 | `find=` no-match + 128 links + "match is large" | picks a source URL out of the link dump | **hurt** |
+
+One helped. Two did nothing. Nine hurt.
+
+### 13. Everything cria stated in its own voice that the world contradicts (#5b)
+
+1. *"The build ran (`cargo check` succeeded)."* — it had ten errors. CALL 0018.
+2. *"Tests ran (`cargo test --no-fail-fast` exited 0), so all unit tests pass."* — no test exists in
+   the tree. CALL 0018.
+3. *"`src/main.rs` … and unit tests for integer, string, and missing-key lookups."* — CALL 0018.
+4. *"PROBES: none ran — the gate command produced no output."* — 10,104 bytes, 5.24 s. CALL 0015.
+5. *"Ask it a smaller question and run it again"* — addressed to a coder that did not write the
+   command. CALLS 0024, 0039 (and 0018's transcript).
+6. *"nothing read so far DEFINES the API's routes"* — about a crate doc with no routes, ×35.
+7. *"This find=… match is large (14,021 chars)"* — after "no match for any of". CALL 0042.
+8. *"it was saved IN FULL"* — extracted text, not the document. CALLS 0034, 0043.
+
+### 14. Recent-fix scorecard
+
+- **Derived probe output cap** (`c2bd194`, live — `PROBE_OUTPUT_CAP_BYTES = 9000 − 500 = 8500`):
+  **fired and did not help.** The cap is applied per probe and the bound is applied to six joined
+  probes; three gate results still landed at 10,104 / 10,104 / 10,102 bytes and were still refused
+  whole. The commit's own comment predicts this run almost exactly ("a 10,104-byte test run was
+  discarded whole, the gate reported nothing") and the arithmetic it fixed was not the arithmetic that
+  bites. The head+tail elision inside the script never fired at all — no single probe came near 8,500.
+- **Reasoning logged on unfinished streams** (`3bc4471`, live): **did not fire on the path that
+  mattered.** CALL 0043 shows `--- THINK (full) ---` followed by `[no response captured]`, and the
+  capture directory holds `0043-coder-s1.prompt.txt` and `0043-coder-s1.json` but no
+  `.reasoning.txt` and no `.response.json` — the other 42 calls all have one. The fix covers stream
+  errors and exceptions; a terminal kill of the run still leaves the last call's thinking unrecorded,
+  and that is the call whose thinking is worth most.
+- **Completion-judge report framing** (`62c9707`, live): **never fired** — no completion judge ran in
+  this session. The model never claimed done.
+- **The verdict tool** (`cc16b89`, live): **never fired** — same reason. The per-step critic at
+  0015/0016 answered in plain JSON content and parsed cleanly, so the channel problem did not arise.
+- **Cached-check age note** (`7d24edc`, live): **never fired** — no steer was authored in this run
+  (`assists` contains no `loop.*_steer`, no `wheel_spinning`, no `flail_steer`). There was no cached
+  check to age, because no check ever produced a finding.
+
+Four of five never fired. The one that fired is the one this run was chosen to test, and it fired
+against the wrong bound.
+
+### 15. What this run needed
+
+**One change:** parse the gate's raw output for findings BEFORE the model-facing byte bound sees it, so
+the `E0599 as_datetime` and the `Value::Table(t.clone())` mismatch reach the coder as a
+`⟦ctx:checks⟧` block with their file and line — instead of being refused three times and reported to
+cria's own judge and compactor as "none ran".
+
+---
+
+## shipping-rates-rb_nemotron-elastic_codex_poff_1786672024
+
+Commit d9060df p4. 57 calls, 949.9 s wall, terminal `milestone-miss-15min` (floor 1 scored 0.0,
+`confirmed: true`). Score **0/5** — every check red. Assists fired: `rumination.abort` ×4,
+`loop.periodic_gate` ×2, `loop.gate` ×1, `context.self_compact` ×1, `loop.repetition` ×1,
+`steer-code` ×1. Four ⟦ctx:steer⟧ injections reached the model.
+
+Read every call 0001–0057 end to end. This section does not re-argue the [Ruby column](#cross-run--the-ruby-column-all-four-models)
+finding above — the gem/verifier trilemma is the standing `A` for the whole column. What this run
+adds is that **the trilemma never bound here**: `countries (8.1.0)` was already on the box and
+`require "countries"` worked from call 0031 onward. Nothing about this cell's 0% is explained by the
+install problem. It is explained by the coder never writing a line of Ruby.
+
+**The single most important fact about this run.** `diff -r seed/ workspace/` returns three entries:
+`.git`, `tmp/`, and `Gemfile`. In 57 calls the model created **one file** — a 56-byte Gemfile —
+and made **zero** edits to `lib/`, `test/` or `README.md`. `lib/shipping/rates.rb` is byte-identical
+to the seed, `>` and all.
+
+For the run history of this cell — 3/5 (BASE, 41 calls), 3/5 (CRIA e59209c, 188 calls), then 0/5,
+0/5, 0/5 on 74d34dd, 3f51b85 and d9060df — see the cross-run note at the end.
+
+### It reasoned out the whole correct answer twice and spent both turns re-running the test instead — because cria told it to
+
+**what happened.** At call **0037** the coder produced 16,397 reasoning tokens containing the
+complete, correct deliverable: the full new `lib/shipping/rates.rb` (`"express" => 14.99` /
+`"express" => 2.50` in both hashes, `order_total >= FREE_SHIPPING_THRESHOLD`, a `zone_for` built on
+`require 'countries'`, and `shipping_cost` accepting either a zone or a code), the two added test
+methods, and the README rate table with all four zones and eight rate values. It then emitted one
+tool call: `rake test`. At call **0052** it did the same thing again — a second full draft of
+`rates.rb`, `test/express_service_test.rb`, `test/zone_for_test.rb` and the README table — and again
+its one action was `rake test`. Neither turn contained a `write_file`.
+
+The tail of 0037 says why, in its own words:
+
+```
+Now we need to run the tests to see if they pass.
+Let's run `rake test` again.
+But we need to ensure that the changes are applied.
+```
+
+It believed the drafting *was* the applying. What put that belief there is cria's own steer, standing
+in the context since call 0024 and re-delivered in the steer author's evidence bundle at 0044 and
+0054:
+
+```
+⟦ctx:steer⟧ I am giving you the CURRENT state of the repo (syntax & tests). …
+the repo's own checks FAILED, but a specific line could not be parsed from the output:
+$ ruby -Ilib -Itest -e 'Dir["test/**/test_*.rb"]…' — exited 1: 7 runs, 7 assertions, 1 failures, 0 errors, 0 skips
+$ rake test — exited 1: Command failed with status (1)
+Run that exact check yourself and read the actual error, then fix the real cause — do not rewrite the
+whole file, and do not treat this as done.
+```
+
+Two things are wrong with it. First, **the line WAS parsed** — the ⟦ctx:checks⟧ block delivered in
+the same turn, three lines above, quotes it exactly:
+
+```
+TestRates#test_free_shipping_at_the_threshold [/tmp/…/test/test_rates.rb:15]:
+Expected: 0.0
+  Actual: 7.24
+```
+
+Second, the remedy cria prescribes for its own parse failure is *run the check again*. The coder
+obeyed: `rake test` at 0014, 0034, 0037, 0052, plus the composed gate probe at 0024, 0034, 0046,
+0055, 0056 — nine executions of a check whose one-line answer never changed across the whole run.
+
+The cause is in `cria/probeparse.py:456`:
+
+```python
+_RUNNER_LOCATIONS = (
+    re.compile(r"panicked at ([^\s:][^:]*):(\d+):(\d+)"),          # cargo test / any Rust panic
+    re.compile(r"^\s*#\s+(\.?[^\s:]+):(\d+)(?::in\b|\s*$)", re.M),  # rspec backtrace line
+    re.compile(r"^\s*(/[^\s:]+\.php):(\d+)\s*$", re.M),            # phpunit failure location
+)
+```
+
+Rust, **rspec**, phpunit. Minitest is absent — and minitest is what this task ships, what
+`verify.py::RUN_SUITE` loads, and what every `shipping-rates-rb` run produces. Its location line is
+`TestRates#name [path:15]:` — bracketed, with the colon after the bracket — so it matches neither
+`parse_generic`'s `file:line: message` shape nor the rspec `#`-prefixed shape. The parser is one
+alternative short of the file the whole Ruby column is graded on.
+
+**cria fault: yes.**
+
+**evidence.** Call 0024 (steer text, quoted above, delivered with the parsed failure directly above
+it); calls 0034/0044/0054 (same string re-delivered, and carried into the steer author's "GROUND
+TRUTH FROM THE REPO'S CHECKS" slot verbatim); call 0037 (16,397 reasoning tokens → `rake test`);
+call 0052 (same); `cria/probeparse.py:456-460`; `cria/prompts/ground_truth_failed.txt`.
+
+**A → B → C.** A: `_RUNNER_LOCATIONS` has no minitest shape, so `probeparse` returns no `Finding` for
+a minitest failure. B: cria states in its own voice that "a specific line could not be parsed" — a
+claim its own adjacent ⟦ctx:checks⟧ block refutes — and issues the imperative *Run that exact check
+yourself*. C: the coder spends its actions running the check; the two turns that held a complete,
+correct implementation ended in `rake test` and the draft was discarded with the turn.
+
+**fixable at A? Yes, twice over.** (1) Add the minitest location shape to `_RUNNER_LOCATIONS` —
+`^\S+#\S+ \[([^\]\s:]+):(\d+)\]:` — alongside the rspec one; it is a per-runner shape, not a
+per-language rule, so it fits the existing table exactly. (2) Independently: `ground_truth_failed`
+must not fire at all when the ⟦ctx:checks⟧ block being delivered in the same turn already carries the
+checker's message. cria cannot truthfully say "could not be parsed" in the same breath as printing
+the parse.
+
+**principle.** #5b (a claim about cria's parser stated as a fact about the world), #12 (surface the
+signal from the authoritative event — the checker's own text was right there), #3 (silence over noise
+— with the checks block present there was nothing to add), [`feedback_matchers_by_shape`] (flagged
+2× on 08-06: a rule keyed to one runner's phrasing is inert on the next).
+
+### cria fetched two gem pages that do not exist, in place of the coder's own searches, and its ledger carried both 404s for the rest of the run
+
+**what happened.** The coder issued `web_search`. cria's research supervisor judged the query
+**on-target** and, alongside that, invented a gem name; cria then replaced the coder's `web_search`
+tool call with a `web_fetch` of the invented page. Twice.
+
+Call **0017** (reasoner, on the coder's `web_search{"query":"ruby gem eu membership detection"}`):
+
+```
+{ "on_target": true,
+  "recommendation": "https://rubygems.org/gems/eu-membership-detector" }
+```
+
+Its own reasoning admits the invention: *"we need to be grounded: the gem could be
+'eu-membership-detector' or 'country_eu'. Let's propose a concrete URL."*
+
+Call **0020** (reasoner, on `web_search{"query":"europe gem ruby"}`):
+
+```
+{ "on_target": true,
+  "recommendation": "https://rubygems.org/gems/geo_validator" }
+```
+
+Reasoning: *"maybe suggest using 'ruby-geo' gem or 'country_code' gem? … Let's choose
+'https://rubygems.org/gems/geo_validator'."*
+
+Call **0040** produced a third, `gem 'country_code'`, which the search-repeat gate happened to block
+first. Both URLs that were acted on came back 404:
+
+```
+HTTP 404 Not Found · https://rubygems.org/gems/geo_validator
+Page not found. It will be mine. Oh yes. It will be mine.
+```
+
+The coder never typed either name. At call 0023 its own reasoning ends *"Search for gem 'europe' on
+RubyGems. — TOOL CALL web_search {"query":"europe gem ruby"}"*, and the assistant turn that appears
+in its transcript at call 0024 is `web_fetch(https://rubygems.org/gems/geo_validator)`. The
+`eu-membership-detector` fetch fired from the **cached** verdict (`sess.query_verdicts[query]`) when
+the coder re-issued the first query.
+
+From call 0025 to the end, every coder prompt carried:
+
+```
+⟦ctx:facts⟧ THESE FETCHES FAILED. …
+- https://rubygems.org/gems/geo_validator → HTTP 404
+- https://rubygems.org/gems/eu-membership-detector → HTTP 404
+```
+
+Presented as "your real fetch record for this session". The coder read it as its own history and
+kept reasoning from it — call 0029: *"There's a gem called `geo_validator` but it's not on
+rubygems… maybe the correct gem name is `geo_validator`?"*; call 0047, having been shown two
+plausible-looking fake gem names by cria, invented a third of its own and fetched
+`https://rubygems.org/gems/rubyswitch` → 404.
+
+The gate that should have stopped this is host-only:
+
+```python
+def host_is_grounded(url: str, evidence: str) -> bool:
+    """Is this url's HOST one the session actually named or touched? Path not considered."""
+```
+
+`rubygems.org` is all over the evidence, so any invented `/gems/<anything>` passes. `loop.py`'s own
+comment beside the call says *"What it must not do is send the coder to a site it invented"* — it
+sent the coder to a **page** it invented, which is the same failure one level down the URL.
+
+**cria fault: yes.**
+
+**evidence.** Calls 0017, 0020, 0040 (reasoner recommendations, quoted); 0021/0025 (the two 404s);
+0024 (`web_search` emitted, `web_fetch geo_validator` recorded); 0025–0057 (the ledger);
+`cria/loop.py::guard_search_query` (the `_looks_like_url` → `_substitute_fetch` branch, which runs
+*even when `on_target` is true*); `cria/urlgrounding.py::host_is_grounded`.
+
+**A → B → C.** A: the judge prompt asks a weak reasoner for "a concrete URL to fetch … grounded in
+the task, never invented" — a synthesis request with an anti-invention instruction attached, which is
+the shape #8's fence exists to prevent. B: it synthesises a plausible rubygems path; the only guard
+checks the host, so it passes; cria substitutes its own tool call for the coder's. C: two 404s enter
+the durable fetch ledger as the coder's own history, and the coder spends ~10 calls
+(0021, 0024, 0025, 0035, 0038–0042, 0047, 0048) on gem-name archaeology it never started.
+
+**fixable at A? Yes.** Two independent cuts, either sufficient: (1) never substitute — surface the
+recommendation and let the coder act (#2's corollary, which `guard_search_query`'s *other* branch
+already obeys, in a comment quoting this exact rule); (2) if substitution stays, the URL must be
+`ungrounded_urls`-clean (path included), not merely host-grounded — an invented path is precisely
+what a search recommendation must not be allowed to become a fetch of.
+
+**principle.** #2 corollary (cria never SUBSTITUTES its own action for the coder's), #5b (a 404 for a
+URL cria invented, filed in the coder's voice as "your real fetch record"), #8 (a prompt that asks
+the model to produce a URL is asking it to do the work; the fence is missing), #1.
+
+### The steer named a test that passes and told the coder to make it return 0.0 — and the invented-code stripper is gated behind a verdict that said "DESCRIBES"
+
+**what happened.** Call **0044** (steer author) produced, and call **0046** delivered:
+
+```
+⟦ctx:steer⟧ Read lib/shipping/rates.rb with read_file to view the current cost calculation, then
+modify it so Shipping.shipping_cost('domestic', 2.0, 30.00) returns 0.0 (Expected: 0.0).
+```
+
+`Shipping.shipping_cost("domestic", 2.0, 30.00)` is `test_domestic_light_parcel`. It asserts
+**6.49** and it **passes**. The failing call is `("domestic", 3.0, 75.00)`. cria's steer instructs the
+coder to break a green test.
+
+The author fabricated the arguments because its evidence bundle had them elided. Its transcript slot
+at 0044 reads:
+
+```
+→ exit 1: Run options: --seed 18442 # Running: F...... … 1) Failure:
+TestRates#test_free_shipping_at_the_threshold [/tmp/suite-shipping-rates-rb_nemo…[56 chars elided;
+head+tail kept — re-read the source for the middle]…tes.rb:15]: Expected: 0.0 Actual: 7.24
+```
+
+The 56 elided characters are the path. The arguments were never in the bundle at all, and the author
+says so mid-reasoning: *"Let's look at test file… Likely expects cost 0.0 when order_total >
+FREE_SHIPPING_THRESHOLD? Actually free shipping threshold maybe weight > something."* Then it wrote
+numbers anyway — the only `shipping_cost(...)` call it had ever seen, from `test_domestic_light_parcel`.
+
+Two guards touched this and neither could catch it:
+
+* `_dictates_code` fired (call **0045**, phase `steer-code`) and answered **DESCRIBES** — correctly,
+  on the question it was asked. Its prompt asks only *"does this directive hand the coder code to
+  copy?"*. It has no notion of whether the quoted call is real.
+* `_strip_invented_code`, the guard whose entire purpose is *"did the author READ this line, or invent
+  it?"*, **never ran** — in `_grounded_steer_or_none` it sits **inside** `if _dictates_code(directive, ask):`.
+  A DESCRIBES verdict skips provenance-checking altogether. Had it run, the check would have caught
+  it: `_INLINE_CALL` matches `Shipping.shipping_cost('domestic', 2.0, 30.00)`, and `_observed_code`
+  holds only the double-quoted `("domestic", 2.0, 30.00)` from `read_file`, so `seen()` is False.
+
+**Did it hurt?** Partly. At 0046 the coder resisted — *"So for domestic, weight 3.0, order_total
+75.0… change condition to >="* — but the wrong numbers surfaced in its own reasoning seven calls
+later, at **0053**:
+
+```
+In test they pass weight=2.0, order_total=30.00? Wait test expects 0.0 at threshold? Actually test
+calls Shipping.shipping_cost("domestic", 2.0, 30.00). That's weight 2.0, order_total 30.00, which is
+below threshold, so should compute cost = base + weight_cost + surcharge. … but they expect 0.0?
+Something off.
+```
+
+It spent that call re-deriving out of cria's error and finished it with an `exec_command` probe, not
+an edit.
+
+**cria fault: yes.**
+
+**evidence.** Calls 0044 (author reasoning + SAY), 0045 (steer-code → `DESCRIBES`), 0046 (delivered
+steer + coder's resistance), 0053 (the contamination surfacing); `cria/loop.py:6924-6945`
+(`if _dictates_code(...): … kept, stripped = _strip_invented_code(...)`); `suite/tasks/shipping-rates-rb/seed/test/test_rates.rb`.
+
+**A → B → C.** A: the steer author's evidence bundle elides the checker's own failure text — 56
+characters, on a 200-character line, inside a prompt cria composed. B: the author has the test name
+and the expected value but not the call, so it supplies a call from memory: the wrong one. C: the
+provenance stripper is gated behind DICTATES, DICTATES answered DESCRIBES, and a fabricated call
+shipped in cria's voice against a passing test.
+
+**fixable at A? Yes.** (1) Do not elide the checker's failure block in the steer author's evidence —
+rule 5's counter-nuance permits bounding a composed prompt, but the *one* fact this author exists to
+reason about is the failure, and 56 characters is not the budget. (2) Run `_strip_invented_code`
+whenever `_CODE_SHAPED` matches, independent of the DICTATES verdict — its question ("read or
+invented?") is orthogonal to the DICTATES question ("code or prose?"), and today a DESCRIBES answer
+silently waives it.
+
+**principle.** #5b (an assertion about a source cria has read that the source contradicts), #5
+counter-nuance (elision is allowed, but not of the load-bearing fact), #8, #16.
+
+### The second steer dictated a shell command — one cria itself refuses, for a gem already installed — and the DICTATES guard never fired
+
+**what happened.** Call **0054** authored, and call **0055** delivered:
+
+```
+⟦ctx:steer⟧ [REDIRECT]
+Stop the repeated cd /tmp/suite-… && ruby -e 'require 'countries'; puts Countries.available?' loop.
+Instead, run gem install countries in this directory to install the gem, then re‑run the tests.
+```
+
+Three faults in one sentence:
+
+1. **The gem is installed.** Call 0031: `gem list countries` → `countries (8.1.0)`. The errors the
+   author was reading were `uninitialized constant Countries::EU (NameError)` and
+   `undefined method 'available?' for Countries:Module (NoMethodError)` — both of which prove
+   `require 'countries'` **succeeded**. cria read a successful require as a missing gem.
+2. **cria refuses that exact command.** `gem install countries` with no `--install-dir` is what
+   `dirguard.install_refusal` blocks; the coder had already been refused twice for the same shape at
+   0028 and 0029. cria's steer orders the coder into cria's own wall.
+3. **No `steer-code` call exists for it.** The run's phase census shows `steer-code: 1`, and it was
+   spent on the previous steer. `_dictates_code` short-circuits on `if not _CODE_SHAPED.search(directive): return False`,
+   and none of `_CODE_SHAPED`'s alternatives match a backticked command sitting mid-sentence: the
+   flag-shaped arm is anchored `^[ \t]*` at line start, and this line starts `Stop the repeated …`.
+   The one steer in this run that genuinely dictates a command is the one the dictation guard never saw.
+
+**cria fault: yes.**
+
+**evidence.** Call 0031 (`countries (8.1.0)`); calls 0043/0050 (`NameError` on `Countries::EU`),
+0053/0055/0057 (`NoMethodError` on `available?`); call 0054 (author reasoning: *"They need to add it
+to Gemfile and run bundle install … they can install into vendor/bundle"* — reasoning from the
+install thread, not from the NameError); call 0055 (delivered steer); `phases: {"steer-code": 1}`;
+`cria/loop.py::_CODE_SHAPED` and `_dictates_code`.
+
+**A → B → C.** A: `_CODE_SHAPED`'s command arm is line-anchored, so an inline backticked command is
+invisible to it. B: the DICTATES guard never runs on the steer that dictates. C: cria, in its own
+voice, orders a refused command for a dependency that is already loadable — and the coder's next
+three calls (0055, 0056, 0057) are all the same `ruby -e "… Countries.available?"` probe, the last
+one being where the 15-minute floor caught it.
+
+**fixable at A? Yes.** Add an unanchored backticked-span arm to `_CODE_SHAPED` (a directive that says
+"run \`X\`" is dictating X wherever the backticks sit), and — separately — a steer that prescribes an
+install must be checked against `dirguard`'s own refusal predicate before delivery: cria must never
+instruct what cria will refuse.
+
+**principle.** #5b ("install the gem" about a gem that is installed), #4 (the guard's regex is being
+tuned per-shape instead of asking), #1, #16.
+
+### The install refusal answered a missing *binary* with a project-local *library* route, and the very next call ruminated to death
+
+**what happened.** Calls 0027–0029, in full:
+
+```
+0027  exec_command  cd … && bundle install
+      → Process exited with code 127 · /bin/bash: line 1: bundle: command not found
+0028  exec_command  cd … && gem install bundle
+      → ⟦ctx:denied⟧ Installing into the shared system or user environment is not permitted here — an
+        install must land inside the project directory (…), and this one would not. Install it into
+        the project instead: `gem install --install-dir vendor/bundle <gem>`, then make it loadable by
+        putting that directory on the load path — `ruby -Ilib -e "..."` needs `GEM_HOME=vendor/bundle`
+        set, or `$LOAD_PATH.unshift` the gem's `lib` directory from your code.
+0029  exec_command  mkdir -p vendor/bundle && cd vendor/bundle && gem install bundle -v 2.2.39
+      → ⟦ctx:denied⟧ (the identical text again)
+```
+
+`gem install bundle` is a request for an **executable on PATH**, not a library to `require`. The
+`gem_direct` remedy in `cria/prompts/install_remedy.txt` answers it with a load-path lecture —
+`GEM_HOME`, `$LOAD_PATH.unshift` — none of which can put a `bundle` binstub anywhere the shell will
+find it. The refusal is correct; the remedy is a non-sequitur for this request. That file's own
+header already records the last time this went wrong (*"A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA
+IS GUESSING… cria refused a real command and answered with an imaginary one"*) — the bundler route
+was replaced, and the replacement is unusable for the same class of request.
+
+Call **0029**'s entire reasoning is the model trying to obey it, and it degenerates:
+
+```
+Let's try to run `gem install --local . countries`. This will download the gem and place it in
+vendor/bundle/gems/countries-.../. But we need to have the gem source. The gem is on rubygems.org,
+so we can install it. Let's try to run that. But we need to check if the gem is installed.
+```
+
+— that block repeated **nine times** verbatim before the guard cut it. Rumination abort #1, and its
+subject is cria's prescription.
+
+**cria fault: yes** (for the remedy; the refusal itself is correct and out of scope here — see the
+Ruby-column `A` above).
+
+**evidence.** Calls 0027, 0028, 0029 (quoted); `cria/prompts/install_remedy.txt` (`gem_direct`);
+30 subsequent prompt renderings carry the refusal text.
+
+**A → B → C.** A: the remedy is keyed on the ecosystem (`gem_*`), not on what is being installed. B: a
+request for a missing *binary* is answered with instructions for making a *library* loadable. C: the
+coder spends its next call trying to satisfy an impossible instruction and ruminates until aborted.
+
+**fixable at A? Yes.** The remedy table already knows how to say nothing — its header states the rule:
+*"When none of an ecosystem's routes are available the honest answer is the empty one: say what is
+forbidden and stop."* A refused install whose target is a *tool the shell needs on PATH* has no
+project-local form, exactly like apt/brew, and should take the empty route.
+
+**principle.** #3, #5b (one step removed, in the file's own words), #4.
+
+### Four rumination aborts, read one at a time — the guard was right every time, and once it discarded the answer
+
+**what happened.** All four aborts are real degeneration. The guard is not misfiring on this model.
+The interesting part is *what* it was thinking, and what the abort note did next.
+
+**#1 — call 0029, `[OUTPUT LOOP]`.** Subject: how to satisfy cria's `--install-dir vendor/bundle`
+prescription. Tail: `"Let's try to run `gem install --local . countries`. This will download the gem
+and place it in vendor/bundle/gems/countries-.../."` ×9. **Guard right.** The note said *"Take the
+simplest concrete next step you already know, and take it NOW as a single tool call."* Next action,
+call 0030: `gem list countries` → `countries (8.1.0)`. **This is the single best assist in the run** —
+the abort note broke a loop and the recovery move found the fact that made the whole install thread
+unnecessary. **HELPED.**
+
+**#2 — call 0032, `[OUTPUT LOOP]`.** Subject: writing a hardcoded EU list, which the prompt forbids.
+It degenerated inside the list itself:
+
+```
+when 'DE', 'FR', 'IT', 'ES', 'NL', 'SE', 'DK', 'FI', 'NO', 'PL', 'PT', 'IE', 'LU', 'LU', 'BE', 'CH',
+'AT', 'LU', 'LU', 'LU', 'LU', 'LU', … (≈250 more 'LU')
+```
+
+**Guard right, and doubly so** — the abort killed a turn that was about to write the one thing the
+task explicitly bans ("Do not hardcode EU membership"). Next action, call 0033→0034: re-read
+`test_rates.rb` and `README.md`. **HELPED.**
+
+**#3 — call 0036, `[RUMINATION GUARD]`, 16,397 reasoning tokens, "34 second-guessing phrases".**
+This is the expensive one. The reasoning **opens with the correct fix** —
+
+```
+The condition is `order_total > FREE_SHIPPING_THRESHOLD`… The test expects it to be free. … So the
+fix is to change the condition from `>` to `>=`.
+```
+
+— and then talks itself out of it against `test_oversize_surcharge_still_applies_to_free_shipping`,
+mis-quoting the test file to itself (it invents a version where the comment *"An order EXACTLY at the
+threshold ships free"* sits on all three tests), and loops the resulting four-paragraph contradiction
+**≈15 times**. Classic *found it then lost it* ([`feedback_read_the_reasoning`]).
+
+**Guard right on the verdict, wrong on the diagnosis it handed back.** The tail was not
+second-guessing; it was verbatim block repetition. The density counter reached 34 only *because* the
+block containing "actually"/"but"/"however" was repeated — so the phrase count is a re-count of one
+passage, and the message cria composed from it says *"Your last reasoning pass hit 34 second-guessing
+phrases … Stop re-examining"* rather than *"the same words kept coming out"*. The other guard's
+message (`rumination_guard_degenerate`) is the accurate one for this tail and did not fire. The
+advice ("pick one and proceed") happened to be right anyway. Next action, call 0037: the 16k-token
+turn that drafted everything and ran `rake test`. **NOTHING** (the abort did not cause 0037's failure
+— see the first finding — but it also did not recover the answer that was inside the discarded turn).
+
+**#4 — call 0049, `[OUTPUT LOOP]`.** Subject: oscillating between the `europe` gem and the `countries`
+gem. Repeated block: *"But the `europe` gem may not be necessary; we can use the `countries` gem's EU
+detection. Let's check if the `countries` gem has EU detection. … But the current error is that
+`Countries::EU` is uninitialized."* ×5. **Guard right.** Next action, call 0050: re-ran
+`ruby -e "require 'countries'; puts Countries::EU"` — the same command it had already run at 0043 and
+been repetition-noted for. **NOTHING.**
+
+**Reading, not a count.** Two of four aborts are downstream of a cria injection — abort #1's subject is
+the install remedy, and abort #3's is the `>` vs `>=` question the unparsed minitest failure kept alive.
+The density rule is not over-firing on this model — every one of the four turns was genuinely
+non-terminating. The one thing worth changing is #3's *message*: when the tail is a verbatim repeated
+block, say so, because "stop second-guessing" tells the model the wrong thing about its own failure.
+
+**cria fault: none for the aborts** (all four correct); **yes, minor, for #3's message selection**.
+
+**evidence.** Calls 0029, 0032, 0036, 0049 (aborted `--- THINK (full) ---` bodies, all four visible
+only because reasoning is now logged on unfinished streams); the two guard texts in
+`cria/prompts/rumination_guard.txt` and `rumination_guard_degenerate.txt`; `assists: {"rumination.abort": 4}`.
+
+**A → B → C.** A: the density rule counts phrases over the whole pass. B: a repeated block multiplies
+the count, so density wins the race against the degeneracy detector on a tail that is pure repetition.
+C: the model is told it was second-guessing when it was looping, and the note's "do not revisit the
+decision" reads as advice about deliberation rather than about output.
+
+**fixable at A? Yes, cheap.** Check the degeneracy shape *first* and let it claim the tail when the
+tail is a repeat; fall through to the density message only when it is not. Both detectors already
+exist; only their order matters.
+
+**principle.** #12 (surface the signal from what actually happened, not a proxy count), #6 (the
+runaway backstop is right — this is only about what it says), #19.
+
+### Every other injection, and whether it moved anything
+
+**⟦ctx:checks⟧ — the gate result. Fired 9×. NOTHING, then HURT by accretion.** Every delivery
+carried the same two-seed minitest run and the same `Expected: 0.0 / Actual: 7.24`. Correct,
+truthful, and after the second delivery it was pure context weight. The composed probe command
+itself — a 2,746-character `__cria_out=$(timeout -k 5 240 …)` shell block — appears in the coder's own
+transcript as an assistant turn it did not author, five times.
+
+**⟦ctx:steer⟧ #4 — the completion gate, call 0056. HELPED.** Call 0055 ended with a malformed reply
+and no valid tool call (its `<think>` block ran straight into a stray `</parameter></function></tool_call>`),
+which reads as "done" to the harness. cria's gate caught it:
+
+```
+⟦ctx:steer⟧ not done yet — the repo's own checks are failing:
+$ ruby -Ilib -Itest -e '…' — exited 1: 7 runs, 7 assertions, 1 failures, 0 errors, 0 skips
+$ rake test — exited 1: Command failed with status (1)
+```
+
+Fail-closed on a false completion (#13), no human surfacing (#14), and the coder kept working. This
+is the mechanism doing exactly its job.
+
+**Repetition notes — 5 deliveries. HELPED weakly, then NOTHING.** `write_file(Gemfile)` ×2 (call
+0032), `read_file(rates.rb)` ×3 then ×4 (calls 0043, 0052), `ruby -e "… Countries::EU"` ×2 (0051),
+`ruby -e "… Countries.available?"` ×2 (0057). Each note is true and well-shaped ("Repeating it again
+will return that same result… take a DIFFERENT action"). The model complied on the file reads and
+ignored it on the ruby probes — 0057, the last call of the run, is that exact probe for the third
+time.
+
+**Search-repeat refusals — 3 deliveries. HELPED.** Call 0041: *"You already ran web_search 'ruby gem
+eu membership detection', which is near-identical to 'eu gem ruby'. Its results were saved to
+./tmp/read-only/search-ruby_gem_eu_membership_detection.txt"*. The pointer is real —
+`tmp/read-only/search-ruby_gem_eu_membership_detection.txt` is on disk in the final workspace. The
+coder never opened it, but the refusal cost nothing and prevented a duplicate search. The
+`judge_rehunt` call at 0039 correctly answered `{"new_direction": false}`.
+
+**Dedup refusals on `web_fetch` — 3 deliveries. HELPED.** Truthful, and each one carried the earlier
+status forward rather than just saying "no".
+
+**⟦ctx:rollup⟧ — the compaction briefing, call 0012→0013. NOTHING.** It fired at call 12 of 57, at the
+plan's step boundary, on a workspace of four files totalling 2.6 KB after six tool calls. The briefing
+it produced —
+
+```
+The current workspace contains the shipping module implementation in `lib/shipping/rates.rb`, its
+test suite in `test/test_rates.rb`, and supporting files `README.md` and `Rakefile`. … The next step
+is to address the failing tests by ensuring the current implementation meets the existing
+expectations, then proceed to implement the new features as outlined.
+```
+
+— restates the ⟦ctx:files⟧ list delivered in the same turn and adds nothing. It obeyed its evidence
+rule (it does not claim any test passed), so it is not a footgun; it is a call spent on a session that
+had nothing to compact.
+
+**Oversize refusal — never fired.** No read or write in this run was large enough.
+
+**cria fault: none** for this group, except the accretion noted under ⟦ctx:checks⟧.
+
+**principle.** #3 (the checks block after the second identical delivery is noise on an unchanged
+signal), #13/#14 (the gate), #2 (all of these are additive/recovery-class and none deleted anything).
+
+### #5b sweep — everything cria stated in its own voice that the world contradicts
+
+Four, all quoted above, listed here as one ledger:
+
+1. **"a specific line could not be parsed from the output"** (call 0024, and every re-delivery) — the
+   line was parsed and printed three lines above it. *World says: `test_rates.rb:15`.*
+2. **`Shipping.shipping_cost('domestic', 2.0, 30.00)` … `(Expected: 0.0)`** (call 0046) — that call
+   asserts 6.49 and passes. *World says: `assert_equal 6.49`.*
+3. **"run gem install countries in this directory to install the gem"** (call 0055) — the gem is
+   installed and loadable, and cria refuses that command. *World says: `countries (8.1.0)`.*
+4. **"- https://rubygems.org/gems/geo_validator → HTTP 404 … This is your real fetch record for this
+   session"** (calls 0025–0057) — cria fetched it, not the coder; the gem name is cria's invention.
+   *World says: the coder asked for a `web_search`.*
+
+A fifth is borderline and worth naming because it is a **LANG/task overfit**, not a falsehood: the
+success side of the fetch ledger says
+
+```
+- https://rubygems.org/gems/countries → HTTP 200 (this page answered, but no endpoint definitions
+  were found in it … nothing read so far DEFINES the API's routes)
+```
+
+about a **gem index page** on a task with no API in it. The sentence is technically true and
+completely irrelevant; it is `docs/principles.md` #20's "browse an API spec" heritage leaking into a
+Ruby packaging task. It reached the model 12 times.
+
+**fixable at A? Yes** for all four: (1) don't emit the parse-failed remedy when the checks block
+carries the message; (2) run the provenance stripper unconditionally; (3) check a prescribed install
+against `dirguard` before delivering it; (4) don't substitute, or ground the path.
+
+### Recent fixes — did they fire, and did they help
+
+| fix | fired? | verdict |
+|---|---|---|
+| reasoning logged on unfinished streams | **yes, 4×** | **HELPED (the walk, decisively).** Calls 0029/0032/0036/0049 all carry full `--- THINK (full) ---` bodies ending `[finish: rumination]`. Without it, abort #3's "it had the `>=` fix and lost it" is invisible, and abort #2's near-miss on the forbidden hardcoded EU list is invisible. Neutral to the run itself. |
+| the derived probe output cap | **fired 9×, never cut** | **NOTHING.** The `if [ "$__cria_n" -le 8500 ]` branch took the short path every time — the largest probe output was ~700 bytes. It did, however, put 2,746 characters of shell into the coder's transcript on each of its 5 visible turns. |
+| the completion-judge report framing | **yes, 1×** (call 0056) | **HELPED.** Caught a malformed no-tool-call turn as a false "done", reported the checks in the checker's words, and the session continued. No false green. |
+| the verdict tool (`task_complete`) | **never called** | **NEVER FIRED.** The model ended turns by stopping, once malformed (0055). Nothing to evaluate. |
+| the cached-check age note (`steer_checks_repeat` / `checks_ran_before`) | **never fired** | **NEVER FIRED.** No `They last ran…` clause appears in any of the 57 prompts. Every checks block in this run came from a fresh probe, so the staleness path was never taken. |
+
+Also never fired: the oversize-read refusal, `_strip_invented_code` (gated out — see finding 3), and
+`_dictates_code` on the one steer that dictated (see finding 4).
+
+### What this model actually spends its calls on
+
+**Not on writing code.** The breakdown of all 57, read call by call:
+
+| what the call did | calls |
+|---|---:|
+| **Choosing / hunting / probing a gem** (searches, gem-page fetches, `ruby -e "require 'countries'; puts …"`, invented-gem 404s) | **26** |
+| **Re-running or reading the same check** (`rake test`, the composed gate probe, re-reading `rates.rb`/`test_rates.rb`/`README.md` after already having them) | **13** |
+| **cria's own reasoner/judge/steer/compact calls** | 12 |
+| **Install transport** (`bundle install`, `gem install bundle` ×2, `gem list`) | 4 |
+| **Ruminating to an abort with no tool call at all** | 4 (0029, 0032, 0036, 0049) |
+| **Writing a file** | **2** — both `write_file(Gemfile)`, the second identical to the first |
+
+Three concrete patterns, each quotable:
+
+1. **It re-reads what it already has.** `read_file(lib/shipping/rates.rb)` was repetition-noted at
+   "**3 times**" (0043) and again at "**4 times**" (0052). The file is 985 bytes and never changed.
+2. **It designs in the reasoning channel and then acts on something else.** Calls 0037 and 0052 are
+   the extreme case — ~16,000 and ~9,000 reasoning tokens producing complete file bodies, followed by
+   `rake test`. Across the run it wrote the corrected `rates.rb` **in reasoning** at least six times
+   (0025, 0032, 0037, 0046, 0052, 0056) and to disk zero times.
+3. **A wrong hypothesis survives being disproved.** `Countries::EU` failed at 0043 and it re-ran the
+   identical command at 0050. `Countries.available?` failed at 0053 and it re-ran it at 0055 and
+   again at **0057, the last call of the run**, after two repetition notes. In its 0057 reasoning it
+   restates the error wrongly — *"That gave `undefined constant Countries` earlier"* — when the shell
+   had twice printed `undefined method 'available?' for Countries:Module`, i.e. proof that
+   `Countries` **is** defined.
+
+The 15-minute floor did not cut this run short of a result. At 15 minutes the workspace held one
+Gemfile, and at 16 minutes it still did.
+
+### Cross-run — this cell was 3/5 twice before it was 0/5 three times
+
+Not derivable from this run alone, and it bounds how much of the above is model behaviour:
+
+| run | note | score | calls | terminal |
+|---|---|---:|---:|---|
+| 1786404005 | BATTERY2 **BASE** | **3/5** | 41 | exited |
+| 1786431282 | BATTERY2 CRIA e59209c | **3/5** | 188 | milestone-miss-60min |
+| 1786538736 | BATTERY2 CRIA 74d34dd | 0/5 | 43 | milestone-miss-15min |
+| 1786626329 | BATTERY2 CRIA 3f51b85 p3 | 0/5 | 77 | milestone-miss-15min |
+| 1786672024 | BATTERY2 CRIA d9060df p4 | **0/5** | 57 | milestone-miss-15min |
+
+The BASE run — same model, same task, no cria assists, **41 calls in 636 seconds** — shipped the
+express zone (`prices 14.99 24.99 … model wrote its own tests: True`), the full README rate table
+(`8/8 rate values present`) and a green hidden-contract check. It failed only the two checks the
+gem/verifier trilemma makes unwinnable. This model can write this code. In the walked run it wrote
+none of it.
+
+That is not a finding about the trilemma, and it is not a finding about the 15-minute floor. It is
+the strongest single argument for the first finding in this section: the difference between 3/5 and
+0/5 on this cell is not what the model can do, it is how many of its turns get spent obeying cria.
