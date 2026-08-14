@@ -3968,6 +3968,35 @@ runs looks exactly like a probe that passed.
 
 ## orders-api-py_qwen35_codex_poff_1786680733
 
+### The bound does not just lose the checks — cria then reports them GREEN
+
+This is the finding that upgrades everything else, and it is verified cold in
+`orders-api-py_nemotron-elastic_1786685383`. cria discarded its own gate output eight times for
+being over the bound (9,347 / 9,232 / 8,935 bytes). It then said, in its own voice, in the prompts
+that followed:
+
+```
+19×   ⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.
+       The same tests (0f/2p) pass with the network switched off…
+ 8×   The repo's automated checks pass, but a completion check could not confirm the task
+       is finished.
+```
+
+pytest was red. The route was returning status 0. `0f/2p` is what survived after the real result was
+thrown away — two tests, reported as the whole story.
+
+So the chain is not "cria loses a check". It is:
+
+- **A** — the gate's per-section budget (8,500 bytes) is set independently of the inbound presenter's
+  discard threshold (~8,900), and a gate joins several sections into one result.
+- **B** — the joined result is discarded whole.
+- **C** — cria reports the remnant as a clean bill of health, to the coder and to both judges.
+
+That is a **fail-open on missing ground truth** — the cross-cutting root of every early exit this
+project has ever traced (#13, `docs/audits/2026-07-20-early-exit-anomaly-audit.md`) — and a false
+fact stated in cria's own voice (#5b). It is the same bound as the read refusals and the Go spill
+chain; those cost calls, this one costs the truth.
+
 ### The 9,000-byte bound is upstream of the Go zero too
 
 Recorded here because it belongs with the cross-run finding rather than in one cell's section. The
