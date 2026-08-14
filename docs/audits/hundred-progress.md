@@ -4,13 +4,13 @@
 is `docs/goals/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which
 rewrites itself after every cell.
 
-**Target: 24 of 24 cells at 100%.** Currently 11.
+**Target: 24 of 24 cells at 100%.** Currently 12.
 
 ---
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 22 of 24 in flight. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 23 of 24 in flight. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -40,7 +40,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 19 | handles-cli-node | ternary-bonsai | **100%** | +50 | 9 | 32 | all four green in 32 calls, live test included. One rumination abort, one gate, nothing else needed |
 | 20 | handles-cli-node | nemotron-elastic | 25% | 0 | 8 | 41 | half a migration: it took `request` out of `package.json` and left the `require` in the source, so the program cannot start — `node lookup.js goose` exits 1. It then **stopped on its own** at 41 calls with three checks failing, which is the part that is cria's. Walk running |
 | 21 | rust-toml-cli | gemma4 | **100%** | 0 | 14 | 73 | all four green — clean build, 3/3 lookups, the error contract, tests and README. Held its perfect score from last cycle |
-| 22 | rust-toml-cli | qwen35 | | | | | |
+| 22 | rust-toml-cli | qwen35 | **100%** | 0 | 19 | 153 | all four green, held from last cycle. Heavily assisted — 5 periodic gates, 4 wheel-spin steers, 3 litter sweeps, one dictated steer dropped — and still landed |
 | 23 | rust-toml-cli | ternary-bonsai | | | | | |
 | 24 | rust-toml-cli | nemotron-elastic | | | | | |
 
