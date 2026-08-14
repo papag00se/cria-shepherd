@@ -185,14 +185,23 @@ def collect_assists(t0: float, t1: float) -> dict:
                             kinds["context.floor_over_budget"] = kinds.get("context.floor_over_budget", 0) + 1
         except OSError:
             continue
-    interesting = ("steer", "loop.replan", "plan.noise", "plan.missing", "searchloop",
-                   "loop.truncated", "gate", "repetition", "wheel", "flail", "tunnel",
-                   "editrecovery", "rumination", "loop.probe", "compact", "floor_over_budget")
+    # A DENYLIST, NOT AN ALLOWLIST. This was a list of substrings a kind had to MATCH to be counted,
+    # so every intervention nobody thought to name was dropped in silence — and the dropped ones were
+    # the interesting ones. Measured on rust-toml-cli x nemotron-elastic: `writeproxy.exec_output_bounded`
+    # fired 80 times, the single most important number in that run, and the row recorded none of it;
+    # six distinct steer texts and thirty gate-carrying prompts came out as 0 steers and 2 gates. Every
+    # "cria intervened N times" this campaign has quoted from this field was a floor, not a count (#12).
+    #
+    # Inverted so it fails the safe way: a NEW intervention kind is counted by default, and only
+    # transport and bookkeeping are named. Adding an assist can no longer make it invisible.
+    plumbing = ("upstream.", "http.", "request.", "response.", "ctx.estimate", "usage.",
+                "toolmenu.", "indicators.", "coder.reasoning", "route.classify",
+                "writeproxy.advertised", "writeproxy.represented", "capture.", "log.")
     # loop.compaction_reframed fires on every REQUEST that re-reads a compacted history (stateless
     # re-processing, by design) — counting it as an assist inflated one run by 85. Occurrences of
     # compaction itself are context.self_compact / route.compaction.
     kinds.pop("loop.compaction_reframed", None)
-    return {k: v for k, v in kinds.items() if any(k.startswith(p) or p in k for p in interesting)}
+    return {k: v for k, v in kinds.items() if not any(k.startswith(p) for p in plumbing)}
 
 
 def deliverable_count(task_dir: Path) -> int:

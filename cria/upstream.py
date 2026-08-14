@@ -13,6 +13,7 @@ to forward Server-Sent Events as they arrive.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +40,14 @@ _RENDER_TIMEOUT_S = 8
 # Re-run the reasoning watcher (rumination check) only after this many new chars of reasoning, so
 # the regex isn't recompiled-scanned on every tiny SSE delta. codex-local checks ~every 500 bytes.
 _WATCH_STRIDE = 400
+
+
+# A kill can lose at most this much reasoning. Small enough that the tail of a thought survives,
+# large enough that streaming does not become one write syscall per token.
+_REASONING_FLUSH_BYTES = 2048
+# Open partial-reasoning handles, keyed by capture path, so the save at the end of the stream can
+# close the one this call opened without threading the handle through four call sites.
+_REASONING_SINKS: dict = {}
 
 
 class UpstreamError(Exception):
@@ -347,6 +356,7 @@ class Upstream:
         # one had a reasoning file to read. The accumulation is a list append per delta; the write
         # happens once, in the finally, so it survives a client disconnect mid-generator too.
         reasoning: list[str] = []
+        _rsink: dict = {}
         try:
             for raw in resp:
                 if raw.startswith(b"data:"):
@@ -367,6 +377,7 @@ class Upstream:
                                 rc = d.get("reasoning_content") or d.get("reasoning")
                                 if rc:
                                     reasoning.append(rc)
+                                    self._stream_reasoning_to_disk(_rsink, capture_path, rc)
                                     if t_first is None:
                                         # A reasoning delta IS a first token. Counting only CONTENT
                                         # meant a turn that thought for four minutes and then errored
@@ -466,6 +477,7 @@ class Upstream:
 
         content: list[str] = []
         reasoning: list[str] = []
+        _rsink: dict = {}
         tool_acc: dict[int, dict] = {}
         finish: str | None = None
         usage: dict | None = None
@@ -513,6 +525,7 @@ class Upstream:
                             t_first = time.monotonic()
                             rlog.emit("upstream.first_token", ttft_ms=round((t_first - t0) * 1000, 1))
                         reasoning.append(rc)
+                        self._stream_reasoning_to_disk(_rsink, capture_path, rc)
                     tcs = delta.get("tool_calls")
                     _accumulate_tool_deltas(tool_acc, tcs)
                     # Feed the degenerate-run backstop from EVERY generated stream — content,
@@ -596,6 +609,59 @@ class Upstream:
         return json.dumps(completion).encode("utf-8")
 
 
+    @staticmethod
+    def _partial_path(capture_path: str | None) -> str:
+        return f"{capture_path}.reasoning.partial.txt" if capture_path else ""
+
+    @staticmethod
+    def _stream_reasoning_to_disk(state: dict, capture_path: str | None, chunk: str) -> None:
+        """Append a reasoning delta to a partial file AS IT ARRIVES, so a killed process still leaves
+        the thinking behind.
+
+        `_save_reasoning` writes at the END of the stream, which covers a clean finish, a stream error
+        and an exception — but not the process being terminated. The suite kills a run at its
+        milestone floor, and `rust-toml-cli x ternary-bonsai` call 0043 has a prompt and a request
+        body and no reasoning file at all: the model's last thoughts before the kill, which are the
+        ones that say what it was about to do, gone. The operator's instruction was "all streamed
+        reasoning logged, whether it finishes or not", and a SIGKILL cannot run a `finally`.
+
+        Flushed every few kilobytes rather than every token: a delta is a handful of bytes and an
+        fsync per token would put the disk in the streaming path. The bound on what a kill can lose
+        is one flush window, not the whole turn."""
+        if not capture_path:
+            return
+        try:
+            fh = state.get("fh")
+            if fh is None:
+                fh = state["fh"] = open(Upstream._partial_path(capture_path), "w",
+                                        encoding="utf-8", errors="replace")
+                _REASONING_SINKS[capture_path] = state
+            fh.write(chunk)
+            state["pending"] = state.get("pending", 0) + len(chunk)
+            if state["pending"] >= _REASONING_FLUSH_BYTES:
+                fh.flush()
+                state["pending"] = 0
+        except OSError:
+            state["fh"] = None            # disk trouble is never worth breaking the stream over
+
+    @staticmethod
+    def _close_partial(_unused, capture_path: str | None) -> None:
+        """Drop the partial once the real file is written — it exists only to survive a kill."""
+        state = _REASONING_SINKS.pop(capture_path, {}) or {}
+        fh = state.get("fh")
+        if fh is not None:
+            try:
+                fh.close()
+            except OSError:
+                pass
+            state["fh"] = None
+        try:
+            p = Upstream._partial_path(capture_path)
+            if p and os.path.exists(p):
+                os.unlink(p)
+        except OSError:
+            pass
+
     def _save_reasoning(self, capture_path: str | None, text: str, aborted, rlog,
                         ending: str = "") -> None:
         """Persist the coder's FULL reasoning block — UNTRUNCATED — to a sibling of the call capture
@@ -616,7 +682,10 @@ class Upstream:
         Those are exactly the turns whose thinking is worth most, because the answer is gone. The
         save now happens on every exit, and ``ending`` names which one so a partial file is never
         mistaken for a complete one."""
-        if not text or not capture_path:
+        if not capture_path:
+            return
+        if not text:
+            self._close_partial(getattr(self, "_rsink_last", {}), capture_path)
             return
         # When the rumination detector aborted this turn, bracket the reasoning with a loud marker so
         # a fired guard is obvious IN the file (not just cross-referenced from the log). Non-fired
@@ -636,6 +705,7 @@ class Upstream:
                     f"{text}\n\n⟦— stream ENDED HERE: {ending} —⟧\n")
         else:
             body = text  # the WHOLE block — deliberately not clipped
+        self._close_partial(getattr(self, "_rsink_last", {}), capture_path)
         try:
             p = Path(capture_path)
             rpath = p.parent / (p.stem + ".reasoning.txt")
