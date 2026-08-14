@@ -205,14 +205,13 @@ def _read_file(args: dict, cwd: str) -> ToolResult:
     return ToolResult(body, bool(body.strip()))
 
 
-# A conservative ALLOW-LIST for the planner's read-only shell (reject anything else).
-_READ_ONLY = {
-    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "find", "fd", "tree",
-    "file", "stat", "du", "pwd", "echo", "printf", "which", "type", "env", "date", "whoami",
-    "uname", "basename", "dirname", "realpath", "readlink", "cut", "sort", "uniq", "tr", "nl",
-    "tac", "rev", "column", "diff", "cmp", "comm", "od", "xxd", "strings", "jq", "yq", "cd",
-    "true", "test", "[",
-}
+# THIS SHELL IS DENY-LISTED, NOT ALLOW-LISTED. An allow-list of ~40 read-only commands used to sit
+# here under the words "reject anything else", orphaned by 882bc2c and referenced by nothing since.
+# What actually runs is everything below: _CATASTROPHIC, the scratchpad write roots, _MUTATORS,
+# _NET_OUT_FLAGS and _ENV_MANAGERS. Two contradictory descriptions of the same guard, eight lines
+# apart, with the false one on top — and this is the shell CRIA ITSELF runs, so a maintainer who
+# believed the comment would think an unlisted command could not get through. The comment was the
+# risk, not the set.
 _GIT_READ = {"status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "cat-file",
              "blame", "describe", "remote", "config", "grep"}
 

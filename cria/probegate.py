@@ -344,10 +344,24 @@ def _is_hard_failure(plan, sid: str) -> bool:
     """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
     looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
     Unknown plan or unparseable id → False (keep the advisory-clean lint behaviour)."""
+    # `kind` is a FIELD, not a method. Calling it raised TypeError on every probe, and TypeError was
+    # in this function's own `except`, so it swallowed its own defect and returned False forever —
+    # proved by executing it: a Test candidate, whose kind IS in _HARD_FAILURE_KINDS, answered False.
+    #
+    # What that turned off: the branch that reports a non-zero exit as a real failure REGARDLESS of
+    # how its output looks. With it dead, a build that fails only on warnings-shaped output — a
+    # `-Werror` compile, `#![deny(warnings)]`, `noUnusedLocals` — was summarised to the model as
+    # clean, which is the fail-open on missing ground truth (#13) this file exists to prevent.
+    #
+    # It hid because a DIFFERENT function of the same name in focustrim.py is tested and correct, so
+    # the name looked covered.
+    #
+    # TypeError is deliberately no longer caught: nothing here legitimately raises it, and catching it
+    # is what let the bug live.
     try:
         idx = int(sid.split("-", 1)[1])
-        kind = plan.candidates[idx].kind()
-    except (AttributeError, IndexError, ValueError, TypeError):
+        kind = plan.candidates[idx].kind
+    except (AttributeError, IndexError, ValueError):
         return False
     return kind in proberun._HARD_FAILURE_KINDS
 
