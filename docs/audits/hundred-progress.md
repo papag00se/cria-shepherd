@@ -4,13 +4,23 @@
 is `docs/goals/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which
 rewrites itself after every cell.
 
-**Target: 24 of 24 cells at 100%.** Currently 12.
+**Target: 24 of 24 cells at 100%.** Currently 9 — mean 53.8%.
 
 ---
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 24 of 24 in flight — the last. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
+**Phase: WALK** — the run phase finished 2026-08-14 02:45, all 24 cells scored.
+
+**Cycle 1 result: mean 53.8%, up from 51.2%. Nine cells at 100%, up from five.**
+
+Read that as it is. Four cells gained a lot (+100, +75, +50, +50), four lost a lot (−80, −80, −60,
+−25×3), and eleven did not move at all. The gains came from two task-prompt corrections and the
+losses from cria; the eleven flat cells include five that never compiled and were never going to on
+this code state.
+
+*(An earlier running count in this file said twelve at 100%. It was a hand-incremented number and it
+was wrong; nine is what the results file says.)* Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -42,7 +52,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 21 | rust-toml-cli | gemma4 | **100%** | 0 | 14 | 73 | all four green — clean build, 3/3 lookups, the error contract, tests and README. Held its perfect score from last cycle |
 | 22 | rust-toml-cli | qwen35 | **100%** | 0 | 19 | 153 | all four green, held from last cycle. Heavily assisted — 5 periodic gates, 4 wheel-spin steers, 3 litter sweeps, one dictated steer dropped — and still landed |
 | 23 | rust-toml-cli | ternary-bonsai | 0% | 0 | 16 | 42 | never built — `E0308`, two type errors, killed at the 15-minute floor. **Two gates ran and not one `⟦ctx:checks⟧` block reached the model**, on a run whose whole problem was a compile error. Three oversize refusals at 10,102–10,104 bytes sit where those results should be. Sixth cell showing that bug |
-| 24 | rust-toml-cli | nemotron-elastic | | | | | |
+| 24 | rust-toml-cli | nemotron-elastic | 0% | 0 | 16 | 57 | never built either — four errors, `E0277`/`E0599`. Five rumination aborts. Flat |
 
 Δ is percentage points against the previous run of the same cell, whatever prompt revision it was
 earned against. Run ids are on the rows in `suite/results/results.jsonl`.

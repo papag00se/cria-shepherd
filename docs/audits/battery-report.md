@@ -25,7 +25,7 @@ judging. What each model does on its own.
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 40% (-60) | 100% (+50) | 100% (0) | **81%** | 76.5 | 23 | 172 |
 | 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 75% (+75) | 100% (0) | **63%** | 57.9 | 13 | 55 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% (0) | 100% (+50) | 0% (0) | **56%** | 38.9 | 20 | 53 |
-| 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% (0) | 25% (0) | 0% | **11%** | 128.7 | 20 | 78 |
+| 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% (0) | 25% (0) | 0% (0) | **11%** | 128.5 | 20 | 74 |
 
 ## What the assists were worth
 
@@ -58,7 +58,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→73 | 2→14 |
 | rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→153 | 6→19 |
 | rust-toml-cli | rust | ternary-bonsai | 0% | 0% | 0 | 41→42 | 16→16 |
-| rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→76 | 7→16 |
+| rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→57 | 7→16 |
 
 ## Every run
 
@@ -111,7 +111,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
 | rust-toml-cli | rust | ternary-bonsai | CRIA | 0% | 16 | 42 | 32.3 | milestone-miss-15min |
 | rust-toml-cli | rust | nemotron-elastic | BASE | 0% | 7 | 2 | 122.9 | exited |
-| rust-toml-cli | rust | nemotron-elastic | CRIA | 0% | 16 | 76 | 127.3 | milestone-miss-15min |
+| rust-toml-cli | rust | nemotron-elastic | CRIA | 0% | 16 | 57 | 125.9 | milestone-miss-15min |
 
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
