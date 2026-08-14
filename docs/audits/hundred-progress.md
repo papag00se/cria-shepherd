@@ -10,7 +10,7 @@ rewrites itself after every cell.
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 20 of 24 in flight. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 21 of 24 in flight. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -38,7 +38,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 17 | handles-cli-node | gemma4 | 75% | **+75** | 4 | 26 | biggest gain of the cycle, and the fastest cell yet — 26 calls, three and a half minutes. The p4 prompt fix landed: the CLI now prints address, holder and count, which is exactly what the checker asked for and the old wording did not. Only `tests_incl_live` failed — its tests pass with the network blocked, so they are mocked, not live |
 | 18 | handles-cli-node | qwen35 | **100%** | +50 | 24 | 202 | all four green, including the live test — `npm test` passes with the network and fails without it, which is exactly the property the check is asking for |
 | 19 | handles-cli-node | ternary-bonsai | **100%** | +50 | 9 | 32 | all four green in 32 calls, live test included. One rumination abort, one gate, nothing else needed |
-| 20 | handles-cli-node | nemotron-elastic | | | | | |
+| 20 | handles-cli-node | nemotron-elastic | 25% | 0 | 8 | 41 | half a migration: it took `request` out of `package.json` and left the `require` in the source, so the program cannot start — `node lookup.js goose` exits 1. It then **stopped on its own** at 41 calls with three checks failing, which is the part that is cria's. Walk running |
 | 21 | rust-toml-cli | gemma4 | | | | | |
 | 22 | rust-toml-cli | qwen35 | | | | | |
 | 23 | rust-toml-cli | ternary-bonsai | | | | | |
@@ -85,9 +85,10 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
   That is roughly what it was built to do. The four `feed-pipeline-java` cells are the real test and
   they have not run yet this cycle; the 11-aborts-in-35-calls figure on that task predates the change
   and says nothing about it.
-- **Aborts cluster on one model.** 24 of the 26 in the cycle so far are nemotron-elastic, which also
-  scores 0% in three of its four finished cells. Whether the guard is catching a model that genuinely
-  spirals or helping to sink it needs a read, not a count (#23b). Queued for the walk phase.
+- **Aborts cluster on one model, but they are not what sinks it.** nemotron-elastic this cycle:
+  0% / 0% / 50% / 0% / 25%, with aborts of 4 / 2 / 7 / 1 / 0. Its best cell had seven aborts and its
+  25% cell had none, so the guard is not the driver. What the five have in common is that four were
+  killed at a milestone floor. That is the question worth reading, and it is now being read.
 
 ### Environment notes — established, deliberately NOT changed mid-cycle
 
