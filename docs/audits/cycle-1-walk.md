@@ -1192,3 +1192,695 @@ Distinct refusals across the 24 cycle-1 cells: 21, in 7 runs — `shipping-rates
 `rust-toml-cli × nemotron-elastic` (2). Not every run that hits it loses — two cells with refusals
 still scored 100% — so the refusal is a tax, not a guaranteed kill. It is above the prevalence bar
 either way, and the fix costs nothing anyone is relying on.
+
+---
+
+## feed-pipeline-java_gemma4_codex_poff_1786688189
+
+Commit 2bbf2c5. 54 calls, 966 s wall, terminal `milestone-miss-15min` (score 0 against a floor of 1,
+confirmed by a recheck). Score 0/5, down from 80% last cycle — tied for the worst regression in the
+cycle. Phases: 48 coder, 2 reasoner, 1 classifier, 1 research-step, 1 self-compact, 1 proxy.
+Assists that fired: 3 periodic gates, 2 `loop.wheel_spinning`, 1 `rumination.abort`, 1
+`context.self_compact`, 1 `route.compaction`, 1 `loop.gate_swept`.
+
+All five checks died on one missing line. The model's rewritten
+`src/main/java/pipeline/Importer.java` begins `import org.apache.commons.csv.*;`, not
+`package pipeline;`, so the class compiled into the DEFAULT package —
+`target/classes/Importer.class`, not `target/classes/pipeline/Importer.class`. The verifier's bench
+does `import pipeline.Importer;` and gets `error: package pipeline does not exist`. The file is
+valid Java, `mvn compile` is happy, and every cria check went green over it. What was lost is the
+file's **identity**, not its validity.
+
+Shape of the run in one line: at fourteen minutes the model made a one-line surgical edit that
+turned the build GREEN, cria's stuck-detector fired anyway on a five-writes-ago counter, the
+reasoner — holding a clean check in its own prompt and believing the build was still broken — told
+it to go re-inspect the worker implementation, the coder answered with a whole-file rewrite that
+silently dropped the package line, cria's gate then compiled that file, **deleted the class file
+that proved the regression**, and reported no problems; the model spent the last seven minutes
+chasing a classpath ghost and worked out the real cause in its final reasoning, one call before the
+clock killed it.
+
+**The clock, from the event log** (run start 23:17:00):
+
+| +time | call | what |
+|---:|---:|---|
+| 2m41 | 0018 | periodic gate 1 — `ran: true, spoke: true` (compile RED, `MapRecord`) |
+| 4m31 | 0021 | `loop.wheel_spinning` #1 (`writes: 5`) → steer at 0022 |
+| 9m17 | 0028 | `rumination.abort` (`degenerate: true`, 159 s, no tool call) |
+| 9m54 | 0029 | `coder-s1-focus1` — the `[OUTPUT LOOP]` reframe |
+| 10m12 | 0030 | `context.self_compact` (59 turns → 15) |
+| 10m17 | 0032 | `route.compaction` |
+| 11m31 | 0037 | `loop.wheel_spinning` #2 (`writes: 5`) → steer delivered at 0038 |
+| 14m26 | 0038 | **the packageless rewrite**; periodic gate 2 GREEN, `loop.gate_swept` deletes the class |
+| 14m44 | 0042 | `ClassNotFoundException: pipeline.Importer` — the seven-minute chase begins |
+| 15m44 | 0054 | model finds the cause in its own reasoning; killed |
+
+Findings ranked worst first.
+
+---
+
+### 1. The unstick steer fired on a GREEN build, and the rewrite it invited dropped `package pipeline;`
+
+**what happened.** At call 0036 the coder made a targeted one-line edit that fixed the last compile
+error; the gate that ran immediately after reported no problems and told the coder in cria's own
+voice *"do not rewrite the whole file again."* `loop.wheel_spinning` then fired on a write counter
+from before that fix, and the reasoner — with the clean check in its prompt — authored a directive
+saying the coder had not fixed anything and should go re-inspect the worker. The coder answered with
+a whole-file `write_file`, and the new content's first line is an `import`.
+
+**cria fault: yes**
+
+**evidence.** Call 0036, the surgical edit that worked:
+
+```
+edit_file  path=src/main/java/pipeline/Importer.java
+  old_string: "for (String name : record.headers()) {"
+  new_string: "for (String name : csvParser.getHeaderNames()) {"
+→ Wrote src/main/java/pipeline/Importer.java
+```
+
+The gate result in the very next tool response:
+
+```
+⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems. The checks above
+cover syntax and lint only — no test command was composed, so nothing here says whether this
+project's tests pass. No mvn test tests were found …
+```
+
+`loop.wheel_spinning {"step": 1, "path": "src/main/java/pipeline/Importer.java", "writes": 5}` fires
+at t+731 s. The reasoner prompt at call 0037 carries the trigger line and the check result side by
+side:
+
+```
+WHAT TRIPPED THE DETECTOR:
+It has rewritten the file `src/main/java/pipeline/Importer.java` at least 5 times with varying
+content and it still is not converging.
+…
+GROUND TRUTH FROM THE REPO'S CHECKS:
+the repo's own checks that ran (lint / type-check / syntax) found no error-class problems in your
+current edits. If you still need to change this file, make a small TARGETED edit at the specific
+line — do not rewrite the whole file again.
+```
+
+The reasoner read past both. Its private reasoning at call 0037:
+
+> "`mvn clean compile` failed previously (not shown in the snippet but implied by the "STUCK" flag
+> and history). Actually, the transcript shows an error during `mvn clean compile`, but it's
+> truncated."
+> …
+> "The repo check says 'no error-class problems', but that's just syntax."
+
+and the directive it produced, delivered verbatim to the coder at call 0038:
+
+```
+⟦ctx:steer⟧ Stop repeatedly rewriting src/main/java/pipeline/Importer.java with minor adjustments
+that do not progress toward the primary requirements. You have yet to demonstrate a 4x speed
+improvement or confirm that the threading bug is fixed and parallel workers are functional.
+Identify the specific source of the threading bug and verify it is resolved before making further
+changes to the record processing logic. Read src/main/java/pipeline/Importer.java to inspect the
+current worker implementation and identify where concurrency is being blocked.
+```
+
+Two of those sentences are false of the world at that moment: the file had just converged (the
+compiler said so in the same prompt), and concurrency was not "being blocked" —
+`WORKERS_ENABLED = true` had been on disk since call 0014.
+
+The coder's reasoning at 0038 opens by adopting it — *"The user wants me to stop making minor
+adjustments that don't progress toward the requirements"* — spends 440 lines re-reading the file it
+already had, and then issues **not** a targeted edit but a full `write_file`. The first bytes of the
+`content` argument:
+
+```json
+{"content":"import org.apache.commons.csv.*;\nimport java.io.IOException;\nimport java.io.Reader;\n…","path":"src/main/java/pipeline/Importer.java"}
+```
+
+`package pipeline;` is gone. Every previous write in the run — calls 0013, 0015, 0017, 0019, 0023,
+0025, 0026, 0029 — began `package pipeline;`. This is the only one that does not, and its content is
+byte-identical to the final workspace file.
+
+**Was it an edit-recovery escalation? No.** cria's edit-recovery never fired on this file. The one
+`⟦ctx:edit⟧` refusal in the run was on `pom.xml` at call 0010, and it worked (read, retry, wrote).
+The whole-file rewrite at 0038 was the coder's own choice, made against *two* cria strings telling it
+not to (the gate's "do not rewrite the whole file again" and the coder system prompt's "Do NOT
+rewrite a whole file to make a one-line change") and *one* cria string telling it to go re-inspect
+and change the worker. The steer is the newest message in the window and it won.
+
+**The only functional difference** between the green file at 0036 and the fatal file at 0038 is that
+one `catch (Exception e)` became three catches. The package line was collateral on a rewrite that
+was carrying a five-line change.
+
+**A → B → C.** A: the wheel-spin trigger counts writes over a window that spans a compaction and does
+not reset when a check goes green, so it fires on a converged file. B: the reasoner, told the coder
+is "not converging", discounts the clean check as "just syntax" and orders a re-inspection of a bug
+that is already fixed. C: the coder rewrites the whole file to obey, drops the declaration that makes
+the class addressable, and every check dies on `package pipeline does not exist`.
+
+**fixable at A? Yes, two places, both cheap.**
+(a) *The trigger.* `loop.wheel_spinning` is a deterministic trigger and it is allowed to be noisy —
+but it must not assert. Its text says "**it still is not converging**", which is a claim about the
+world, and cria's own check in the same prompt contradicts it. Make the trigger report the count and
+stop, and gate it on the check *not* being green: a file that just went from red to green on a
+one-line edit is the definition of converging, and cria knows that deterministically.
+(b) *The steer author.* The prompt already ranks the checks as authority #1 and the reasoner
+explicitly downgraded them in writing. The seat needs one hard fence in the same shape as the
+"do not state a CAUSE you have not verified" rule: **if the current checks are clean, you may not
+tell the coder that the thing the checks cover is broken.** Everything the directive asserted
+(build broken, concurrency blocked) is inside what the checks had just answered.
+
+**principle.** #5b (cria states a false fact — "still is not converging", "where concurrency is being
+blocked"), #3 (silence over noise — the signal was clean and cria spoke anyway), #8 (the reasoner
+must be grounded on the evidence it was given, not on the trigger's framing), #2 (an intervention
+must not make something already working worse — this one did, exactly).
+
+---
+
+### 2. cria compiled the packageless file, produced the artifact that proved it, deleted that artifact, and said nothing
+
+**what happened.** The gate that ran right after the fatal rewrite compiled the code. That compile
+created `target/classes/Importer.class` — the class in the wrong place, which is the whole failure in
+one filename. cria's litter sweep classified it as probe litter and deleted it, leaving behind an
+empty `target/classes/pipeline/` directory. Eighteen seconds later the model went looking, saw the
+empty `pipeline/` directory, and concluded its class was exactly where it expected.
+
+**cria fault: yes**
+
+**evidence.** The event, at t+906.3 s (23:31:26):
+
+```
+{"kind": "loop.gate_swept", "paths": 2,
+ "sample": ["target/classes/Importer$Summary.class", "target/classes/Importer.class"]}
+{"kind": "loop.periodic_gate_result", "ran": true, "spoke": false}
+```
+
+`probegate.sweep_litter` (cria/probegate.py:956) removes "the untracked files the gate's OWN probes
+created", computed as git's `??` set before minus after. In this repo the seed **tracks its build
+output** — `git ls-files` in the archived workspace lists
+`target/classes/pipeline/Importer$Summary.class` and `target/classes/pipeline/Importer.class`, and
+there is no `.gitignore`. So the old, correct class file is tracked and invisible to the sweep, and
+the new, wrong-package class file is untracked and gets deleted. The sweep is behaving exactly as
+written and it is deleting the coder's build.
+
+What the model saw eighteen seconds later, call 0044:
+
+```
+--- list_dir target/classes ---
+total 12
+drwxr-xr-x 3 jesse jesse 4096 Aug 13 23:31 .
+drwxr-xr-x 5 jesse jesse 4096 Aug 13 23:27 ..
+drwxr-xr-x 2 jesse jesse 4096 Aug 13 23:31 pipeline
+```
+
+and what it concluded, in cria's own transcript:
+
+> "The class `pipeline.Importer` is in `target/classes/pipeline`. The maven exec plugin should be
+> able to find it if I specify the classpath or if it's configured correctly."
+
+That directory was empty. `ls -R target/classes` at call 0053 proves it:
+
+```
+target/classes:
+Importer$Summary.class
+Importer.class
+pipeline
+
+target/classes/pipeline:
+```
+
+Between those two listings the model burned calls 0042–0053 — `mvn exec:java`, reading `pom.xml`,
+`mvn compile`, `java -cp target/classes`, `mkdir -p src/test/java/pipeline && mvn test`,
+`mvn dependency:copy-dependencies`, `java -cp "target/classes:target/dependency/*"`,
+`mvn exec:java -Dexec.classpath=…`, two `list_dir target/classes` — every one of them returning
+`Could not find or load main class pipeline.Importer` or `ClassNotFoundException: pipeline.Importer`,
+and the model theorising about missing dependencies and shell glob expansion:
+
+> "Okay, `java -cp target/classes` didn't work because it doesn't include the dependencies (like
+> commons-csv)."  (call 0046)
+> "This might be because I'm running it from a different directory or there's something wrong with
+> how the classpath is being expanded in the shell."  (call 0050)
+
+Seven minutes. The run had seven minutes left.
+
+**A → B → C.** A: the sweep's definition of "litter" is "untracked and created by my probe", and in a
+project that commits `target/` the coder's *new* build output is untracked while the *old* one is
+tracked. B: cria deletes the newest build artifact immediately after every gate, leaving a stale
+empty package directory as the only thing on disk. C: the model reads the leftover directory as
+evidence its class is correctly placed and spends the rest of the budget on the classpath instead of
+the package line.
+
+**fixable at A? Yes, and the fix is a strict improvement over deleting.** The sweep already computes
+the exact comparison that names this bug: the set of build outputs before the probe versus after. It
+currently uses that set only as a delete list. Two changes, in order of value:
+
+1. **Never sweep a path under a directory the build system owns** (`target/`, `build/`, `dist/`,
+   `bin/`, `obj/`, `__pycache__`). cria's probe did not "litter" there — it built there, which is what
+   the build directory is for, and the coder needs the result. Litter-sweeping is for scratch files
+   cria's probes leave in the source tree.
+2. **Surface the set, do not just delete it.** When a build probe produces an output at a path where
+   a *tracked* output of the same basename already exists elsewhere in the tree —
+   `target/classes/Importer.class` appearing while `target/classes/pipeline/Importer.class` is tracked
+   — that is a deterministic anomaly, computed from git and the filesystem with no language knowledge
+   at all, and it is the general form of finding 8's guard. See finding 9.
+
+**principle.** #10 (verify by doing — cria's probe produced the ground truth and cria destroyed it),
+#5b (the world cria left behind — an empty `pipeline/` directory — told the model something false, and
+cria made it that way), #2 (the sweep deleted correct content; ADDITIVE/RECOVERY is the safe class).
+
+---
+
+### 3. The gate said the error line "could not be parsed" while quoting the least useful line of an output that contained it
+
+**what happened.** The first periodic gate got a perfectly ordinary javac error with file, line and
+column. cria's summary said no specific line could be parsed and quoted the Maven help URL instead.
+The reasoner then built an entire directive on the premise that the error messages were truncated —
+and sent the coder to re-run a command whose full output it already had on screen.
+
+**cria fault: yes**
+
+**evidence.** The tool result at call 0018 (`⟦ctx:checks⟧`, cria's own words, first four lines):
+
+```
+[ERROR] COMPILATION ERROR :
+[ERROR] …/src/main/java/pipeline/Importer.java:[103,18] cannot find symbol
+  symbol:   class MapRecord
+  location: class pipeline.Importer
+```
+
+The `⟦ctx:steer⟧` cria composed from that same output, in the same turn:
+
+```
+⟦ctx:steer⟧ I am giving you the CURRENT state of the repo (syntax & tests). If anything below is
+broken, fix syntax errors FIRST before continuing and then tests; if it's all clean, carry on.
+the repo's own checks FAILED, but a specific line could not be parsed from the output:
+$ mvn -q compile — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+$ mvn test — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+Run that exact check yourself and read the actual error…
+```
+
+`Importer.java:[103,18] cannot find symbol` is a file, a line and a column. The Java finding matcher
+does not recognise Maven's `path:[line,col]` bracket form (it matches `path:line:col`), so
+`completion_block_nudge` found nothing and cria fell through to `failed_unparsed_probes`, which
+prints the LAST `[ERROR]` line — which for Maven is always the help URL.
+
+The same false claim was then handed to the reasoner as authority-tier-1 ground truth (call 0021):
+
+```
+GROUND TRUTH FROM THE REPO'S CHECKS:
+the repo's own checks FAILED, but a specific line could not be parsed from the output:
+$ mvn -q compile — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/…/MojoFailureException
+```
+
+and the reasoner built its whole directive on it — reasoning:
+
+> "The current check output only shows `[ERROR] [Help 1] …MojoFailureException`. It doesn't show the
+> actual Java compiler error (e.g., "cannot find symbol")."
+
+directive at call 0022:
+
+```
+⟦ctx:steer⟧ Stop rewriting src/main/java/pipeline/Importer.java in its entirety. You are stuck in a
+loop of "rewritten the file... at least 5 times" while receiving truncated error messages that do
+not reveal the underlying compilation failure. Execute a command to run mvn compile without the -q
+(quiet) flag or use javac directly on the source files to capture and resolve the specific compiler
+errors causing the MojoFailureException.
+```
+
+Nothing was truncated. The coder obeyed (`mvn clean compile`, call 0022) and got back the identical
+text it had already been shown, twice. Cost: ~2 calls and one more full-file rewrite at 0023.
+
+**A → B → C.** A: the finding matcher does not know Maven's `[line,col]` bracket form, so a parseable
+error is reported as unparseable. B: cria states "a specific line could not be parsed" — a claim about
+cria's matcher, presented as a claim about the output. C: the reasoner diagnoses "truncated error
+messages", orders a command that changes nothing, and two calls are spent re-reading a message that
+was never hidden.
+
+**fixable at A? Yes.** Two independent fixes, and both should land:
+(a) Add Maven's `path:[line,col]` form to the Java finding matcher — it is a spelling of the same
+kernel the matcher already handles, not a new rule. But keyed to javac's punctuation it is exactly the
+by-shape smell the operator has flagged twice, so:
+(b) When no line parses, **quote the checker's own first ERROR-class line rather than its last one.**
+Maven, gradle, cargo and go all put the diagnosis first and the boilerplate last; picking the tail is
+what turned a real error into a help URL. And drop the phrase "a specific line could not be parsed
+from the output" — say what cria actually knows: *"the check failed; cria could not locate a
+file:line in the output, so here is what it printed."* The current sentence tells the model the output
+lacks something the output has.
+
+**principle.** #5b (the tell, exactly: an assertion the world contradicts, built on a partial matcher),
+#12 (surface the metric from the authoritative event — the exit code was right, the located finding
+was invented from the wrong line), #23b at the code level.
+
+---
+
+### 4. Three gates, three chances, and what each one could have known
+
+The question this walk was sent with. All three gates ran the same composed script; none of them
+lied, and none of them said the one thing that mattered.
+
+**The command, identical every time** (call 0018 shown, workspace path shortened):
+
+```
+cd <ws> && __cria_out=$(timeout -k 5 240 python3 -c '…ElementTree parse…' <ws>/pom.xml …); printf 'EXIT:%d\n' …
+cd <ws> && __cria_out=$(timeout -k 5 240 mvn -q compile …); printf 'EXIT:%d\n' …
+cd <ws> && __cria_out=$(timeout -k 5 240 mvn test …); printf 'EXIT:%d\n' …
+__cria_test_ec=$__cria_ec
+cd <ws> && if [ "${__cria_test_ec:-1}" -eq 0 ] && unshare -rn -- true …; then … exec mvn test …; fi
+```
+
+| gate | +time | result | what it said | what it could have known |
+|---|---:|---|---|---|
+| 1 | 2m41 | `ran: true, spoke: true` | the compile errors (finding 3 mangled the summary) | correct and useful; the package was still intact |
+| 2 | 14m26 | `ran: true, spoke: false` | "no error-class problems … No mvn test tests were found" | **it had just compiled the packageless file and created `target/classes/Importer.class`, then deleted it** (finding 2) |
+| 3 | 15m44 | `ran: true, spoke: false` | same | same |
+
+**cria fault: none for what they said; yes for what they threw away** (that half is finding 2).
+
+Gate 2 and 3 are the crux and they are honest: `mvn -q compile` exited 0, so "no error-class
+problems" is true. The gate's disclosure is also exactly right — it volunteers *"The checks above
+cover syntax and lint only — no test command was composed, so nothing here says whether this
+project's tests pass. No mvn test tests were found — to be run they must be annotated @Test, in a
+file named *Test.java or *Tests.java (surefire default)."* That is #3 and #5b both behaving: it states
+the limit of its own claim instead of hedging or overclaiming.
+
+What no gate did is **run the thing the project says it is**. `README.md`, which cria read into the
+transcript at call 0041, gives the entry point in two lines:
+
+```
+mvn -q exec:java -Dexec.mainClass=pipeline.Importer -Dexec.args=data/feed.csv
+java -cp target/classes pipeline.Importer data/feed.csv
+```
+
+Either one, run by the gate at 14m26, prints `ClassNotFoundException: pipeline.Importer` and the run
+is saved. The gate compiles and it tests; it never *runs*. Same gap as the `orders-api-py` walk's
+finding 6 (a gate that never called the route), in Java dress: **"the project declares an entry point;
+start it and ask it for something"** is as general as "run the tests", and this is the second cell in
+one cycle where it is the missing probe. Worth base-rating before building (#15) — but two independent
+cells now.
+
+**principle.** none violated. #10 by omission.
+
+---
+
+### 5. Did the model ever compile or test against the package path? Yes — and it went green, which is the trap
+
+**what happened.** After the fatal rewrite the model ran `mvn compile` three times and `mvn test`
+once. All four succeeded. The package was wrong the whole time.
+
+**cria fault: none**
+
+**evidence.** Every build the model ran after call 0038:
+
+| call | command | result |
+|---:|---|---|
+| 0038 | (gate) `mvn -q compile` + `mvn test` | `⟦ctx:checks⟧ … reported no error-class problems` |
+| 0045 | `mvn compile` | `BUILD SUCCESS`, exit 0 |
+| 0046 | `mvn compile && java -cp target/classes pipeline.Importer data/feed.csv` | compile SUCCESS; **`Error: Could not find or load main class pipeline.Importer`** |
+| 0047 | `mkdir -p src/test/java/pipeline && mvn test` | `BUILD SUCCESS`, exit 0 (zero tests) |
+| 0054 | (gate) same script | `… reported no error-class problems` |
+
+Call 0047 is the purest form of it: the model created an empty test directory and Maven returned
+`BUILD SUCCESS` — `maven-surefire-plugin … [INFO] BUILD SUCCESS` over zero tests. cria's gate had
+already disclosed that condition in words (finding 4), so cria did not sell it as proof, but the raw
+`mvn test` exit 0 in the model's own hand did.
+
+Call 0046 is the moment the world told the truth: the README's own command, verbatim, failing. The
+model had `Could not find or load main class pipeline.Importer` on screen four separate times
+(0042, 0046, 0049, 0050) before it read it correctly. Nothing cria said pointed at it, and nothing
+cria said pointed away from it either — this one is the model's.
+
+**principle.** none.
+
+---
+
+### 6. The two wheel-spins and the rumination abort — helped, nothing, or worse
+
+**`loop.wheel_spinning` #1 — call 0021, delivered 0022. Verdict: WORSE (mildly).**
+Trigger: `{"step": 1, "path": "src/main/java/pipeline/Importer.java", "writes": 5}` — deterministic and
+true; the coder had genuinely rewritten the file five times. What the reasoner authored is quoted in
+finding 3: a directive premised on truncated errors that weren't. What reached the model reached it
+intact. What the model did next: `mvn clean compile` (call 0022), got the same bytes, then rewrote the
+whole file again (call 0023). Net: two wasted calls, one more full rewrite, and the "the errors are
+truncated" frame stayed in the window.
+
+**`rumination.abort` — call 0028. Verdict: HELPED, and the reframe after it helped more.**
+`{"degenerate": true, "chars": 2048}` after 159 s of generation with no tool call. The reasoning it cut
+off is the clearest thing in the run: the same four sentences about `CSVRecord.Field`, verbatim, six
+times —
+
+> "I'll try this: I'll just use a `while` loop with an iterator and see what happens. If it fails,
+> I'll just use `record.get(name)`. But how do I know the names?
+> Actually, I have an idea! I'll just use the fact that `CSVRecord` has a method to get all fields as
+> a map! Wait, does it? Let me check… No, but maybe I can build it."
+
+The detector fired correctly and the `coder-s1-focus1` reframe that followed is a model of the shape:
+
+```
+[OUTPUT LOOP] Your last turn stopped generating new text — the tail of it was one short passage
+repeating over and over — and it was aborted before it produced a tool call.
+This is not about thinking too hard; it is that the same words kept coming out. Do not re-examine
+and do not restart from scratch. Take the simplest concrete next step you already know, and take it
+NOW as a single tool call.
+```
+
+It states a fact about the stream, gives no diagnosis, and asks for one action. The model's next turn
+was 20 lines of reasoning and exactly one `write_file`. That is what the other two steers should look
+like.
+
+**`loop.wheel_spinning` #2 — call 0037, delivered 0038. Verdict: WORSE, and it is finding 1.**
+This is the one that cost the run.
+
+**A note on the trigger itself.** Both wheel-spins carry `"writes": 5`, and the second fired 420 s
+after the first with a `context.self_compact` and a `route.compaction` in between. The counter is not
+reset by a compaction and not reset by a green check, so the second firing is substantially the same
+five writes being counted again — the coder had made *one* write and *one* surgical edit since the
+reframe. A detector that can fire twice on the same evidence is a detector that will fire on a
+converged file, which is what happened.
+
+**principle.** #1 (every assist can become a footgun — two of the three fired on real triggers and
+produced worse-than-nothing directives), #3, #21/#8.
+
+---
+
+### 7. The repetition note called three different writes "this exact call"
+
+**what happened.** cria told the model it had made the same call three times with the same result. The
+three calls wrote three genuinely different files.
+
+**cria fault: yes** (small, but it is the same disease as findings 1 and 3)
+
+**evidence.** Call 0027:
+
+```
+[you have now made this exact call 3 times and it returned the exact same result every time — the
+earlier copies were folded away, so this is the only record of it. Tried:
+write_file(src/main/java/pipeline/Importer.java). Repeating it again will return that same result:
+it has told you everything it can. Read what it already returned above, or take a DIFFERENT action.]
+```
+
+The three writes it folded were: call 0024 (`record.forEach(field -> map.put(field.name(), …))`),
+call 0026 first write (a 20-line stub whose `load` body is two comments and returns an empty list),
+and call 0026 second write (`for (CSVRecord.Field field : record)`, the full 158-line file). Three
+different files. What was identical is the *return value* — `Wrote src/main/java/pipeline/Importer.java`
+— because that is what a write always returns.
+
+The note fires again, correctly, at call 0052 on two identical `list_dir(target/classes)` calls. The
+difference is the tool: a read repeated is a no-op, a write repeated is not. Fingerprinting a
+**write** on `(tool, path)` and then asserting "it returned the exact same result every time … it has
+told you everything it can" is a category error — the point of a write is its effect on disk, and the
+note's advice ("Read what it already returned above") is meaningless for one.
+
+The `orders-api-py × ternary-bonsai` walk recorded the model misreading this same note as "the tool is
+caching my previous response". Two cells, two misreadings, same sentence.
+
+**fixable at A? Yes.** Fingerprint a mutating call on `(tool, path, content-hash)`, not `(tool, path)`
+— cria has the content in the args (#12: key on the authoritative event, which for a write includes
+what was written). A genuine byte-identical rewrite is still worth flagging and would still fire.
+
+**principle.** #5b, #12.
+
+---
+
+### 8. The model found the root cause in its last reasoning and the clock took it
+
+**what happened.** At call 0053 the model finally ran `ls -R target/classes`, saw the class files at
+the root, and worked out the whole thing. It was killed on the next call.
+
+**cria fault: none** (suite timing)
+
+**evidence.** Call 0054, its final reasoning and its final words:
+
+> "I see what happened. `Importer.class` and `Importer$Summary.class` are at the root of
+> `target/classes`. This means my source code was NOT under package `pipeline`.
+>
+> Wait, let me check the file again.
+> ```java
+> package pipeline;
+> ```
+> If it's in the `pipeline` package, then after compilation, it should be in
+> `target/classes/pipeline/Importer.class`.
+> …
+> Why are they at the root of `target/classes`? This usually happens if the source directory is
+> configured incorrectly or if the file was moved.
+> Let me check the structure again."
+
+→ `exec_command {"cmd": "ls -R src/main/java"}` → killed.
+
+It had the diagnosis in words ("my source code was NOT under package `pipeline`") and was one
+`read_file` from the fix — a single `edit_file` prepending one line. Note the tell in the middle: it
+quotes `package pipeline;` from memory as if it were still in the file. It never re-read the file it
+rewrote at 0038; nothing in the run ever showed it the first line of its own output.
+
+**Was it about to recover, or lost?** About to recover — but it had been lost for seven minutes
+before that, and the seven minutes were finding 2's. It is worth being precise about the ceiling: even
+with the package restored at 15 minutes, `review_written` fails (`no REVIEW.md` — never written) and
+`substantially_faster` fails (never benchmarked, and `load` still builds a `HashMap` per row).
+Restoring the line buys `messy_feed_handled`, `csv_library` and probably `race_fixed_workers_on` —
+3/5, not 5/5. The package line is worth 60 points, not 100.
+
+**principle.** none. #14 is not implicated — cria never handed back; the suite's milestone floor ended
+it.
+
+---
+
+### 9. The general shape, and what a guard should actually be
+
+The kernel, stated without Java in it: **a whole-file rewrite silently dropped the declaration that
+makes the file addressable from outside itself.** The file still parses, still compiles, still passes
+every syntax and lint check — and nothing outside it can name it any more. Go loses `package x`, PHP
+and C# lose `namespace x`, Java and Kotlin lose `package x;`, Rust loses the `pub` or the `mod` line in
+its parent, Python loses nothing (its module path is its file path, which is why this class of bug is
+invisible to a Python-shaped intuition and why the battery only found it in the Java column).
+
+**Is "this file declared X before and does not now" the right shape? No — not as a refusal, and not
+keyed on a declaration.** Three reasons, in order:
+
+1. **It is not general, it only sounds general.** "The declaration that makes a file addressable" is a
+   real kernel, but the set of languages where it is a *line in the file* is small, and the check
+   degenerates into a per-language table of first-line forms. That table is precisely the shape this
+   project has been burned by (`feedback_matchers_by_shape`, flagged twice on 08-06): a rule keyed to
+   the word "package" is inert in Rust and Python and meaningless in a `.json`.
+2. **As a refusal it violates #2.** Moving a class to a different package, splitting a file, renaming a
+   module, deleting a stub — all of them legitimately remove the old declaration, and all of them are
+   the *first* attempt at something. cria cannot tell an intentional move from an accidental drop from
+   the bytes of the write, because the information is not in the bytes. A guard that blocks the first
+   attempt traps the loop.
+3. **The false-positive rate is not the problem; the tuning is.** The moment you start weighing "does
+   `package` in a `.md` count", "what about a moved file", "what about a new file", you are doing the
+   judgment at authoring time on imagined cases (#8, the tell). That is a sign the rule wants to be a
+   question — but here it does not even need to be a question, because cria can **ask the world**.
+
+**The shape that is actually general, and cria already computes it.** Do not compare the source text;
+compare **what the build produced**. cria runs a build probe on every gate and already diffs the
+filesystem before and after it (that diff is `sweep_litter`'s input). The anomaly is:
+
+> a build output appeared at a path that did not have one, while a build output that the repo TRACKS,
+> with the same basename, is now absent.
+
+`target/classes/Importer.class` appeared; `target/classes/pipeline/Importer.class` is tracked and gone.
+No language knowledge, no keyword, no first-line parsing — git and the filesystem answer it, and it is
+identically true for Go (`bin/foo` moved), Rust (`target/debug/foo`), .NET (`bin/Debug/**/Foo.dll`) and
+Java. It costs one set comparison on data cria has already gathered, and it fires only when a build
+that used to place an artifact somewhere now places it somewhere else — which is a regression by
+construction (#2 satisfied).
+
+**And then say it, do not act on it.** The output is one disclosed fact in cria's own voice, with the
+two paths in it:
+
+> `⟦ctx:checks⟧ the build now produces target/classes/Importer.class; it previously produced
+> target/classes/pipeline/Importer.class, which is no longer built.`
+
+No refusal, no diagnosis, no imperative — the coder decides whether that was intentional. Compare what
+actually reached the model at that moment: nothing at all, twice, while cria deleted the file that
+would have said it.
+
+This is the same fix as finding 2 approached from the other side, and it is the highest-value item on
+this walk: **the sweep already has the evidence; it is being used only to delete.**
+
+**principle.** #2 (regression-only, and additive rather than blocking), #5b (say a true thing cria can
+support), #8 (deterministic code gathers the fact; nobody needs to judge it), #20/`feedback_matchers_by_shape`
+(the reason not to write the Java-keyed version).
+
+---
+
+### 10. Recent fixes — did they behave?
+
+**Java's cheap compile probe (`mvn -q compile` as the syntax floor) — FIRED, HELPED EARLY, AND WAS THE
+LAST WORD AT THE WORST MOMENT.** `probediscovery.build_jvm` adds it with the comment *"Java has no
+interpreter parse flag, so the compiler IS its syntax floor; with no cheap compile probe, every Java run
+in the six-language battery reported 'SYNTAX FLOOR: did not run'."* It worked: gate 1 surfaced
+`cannot find symbol MapRecord` at 2m41 instead of at the end. It is also, unavoidably, the mechanism
+that certified the packageless file — `javac` has no complaint about a class in the default package.
+Not a defect in the fix; the honest reading is that **"it compiles" is a weaker claim than the gate's
+green implies, and the gate has no probe that closes the gap** (finding 4). Keep the probe. The gap is
+the entry-point run.
+
+**The Java syntax floor in `validate-before-lower` — DID NOT FIRE, because Java is not in the table.**
+`writeproxy._VALIDATE_FN`'s `_EXT_CMD` is `{.rb, .js, .mjs, .cjs, .php, .go}` plus in-process
+`.py/.json/.xml/.toml`. The comment 20 lines above it names the hole it closed —
+*"for a .rb, .go, .java, .rs or .js file the validate-before-lower refusal branch was UNREACHABLE"* —
+and `.java` and `.rs` are still not in the table it closed the hole with. Note carefully: **this would
+not have caught this bug** (the packageless file is valid Java) and adding `javac` to that table is
+expensive and probably wrong. Recording it only because the code claims a coverage it does not have,
+and the next reader will believe the comment.
+
+**Derived probe output cap (`bytes over … lines`) — DID NOT FIRE.** Zero refusals in 54 calls; the
+largest gate result was ~5.7 KB and the largest coder result 916 tokens. The composed script carried
+the per-command arithmetic (`-le 8500`, `head -c 4250`) and never reached it. Clean run for that
+mechanism — and worth noting against the cross-run prevalence table, which credits this cell with 2
+refusals from the *previous* cycle's run (`…_1786596642`), not this one.
+
+**Reasoning logged on unfinished streams — HELPED, and finding 6 is only provable because of it.**
+Call 0028 ends `[finish: rumination]` with all 800 lines of the degenerate loop captured. Without it
+the abort would be an unexplained 159-second gap; with it, the trigger is verifiable as correct. Same
+for call 0037's reasoner, where the sentence that convicts the steer — *"the transcript shows an error
+during `mvn clean compile`, but it's truncated"* — is reasoning-only and appears in no verdict.
+
+**Completion-judge report framing / the verdict tool — DID NOT FIRE.** Zero `loop.task_complete`, zero
+`loop.done_critic`, zero completion probes. The model never claimed to be finished — it was still
+mid-diagnosis when the milestone killed it. No evidence either way from this cell.
+
+**Cached-check age note — FIRED IN FORM, DATED NOTHING, TWICE.** Both reasoner prompts (calls 0021 and
+0037) carry the instruction:
+
+```
+  1. GROUND TRUTH FROM THE REPO'S CHECKS and the fetch record — real output from real runs.
+     Trust the words; check the DATE. That section says when it last ran and what has been
+     written since.
+```
+
+and in both, the `GROUND TRUTH FROM THE REPO'S CHECKS:` section that follows carries **no date and no
+age**. Third cell in this cycle with the same observation (see the `shipping-rates-rb` and
+`orders-api-py` sections). Here it is not harmless: at call 0037 the checks were seconds old and
+*that was the load-bearing fact* — the reasoner decided they were stale history ("failed previously
+… implied by the STUCK flag and history") and it had nothing in the prompt to contradict it. An
+unconditional `— ran 3 s ago, nothing written since` on that section is one line and would have put
+the fact where the instruction says to look.
+
+**Litter sweep (`sweep_litter` / `loop.gate_swept`) — FIRED, AND IT IS THE SECOND-WORST THING IN THIS
+RUN.** Finding 2. Its own docstring is careful about the three bounds that make deletion safe
+(untracked, inside the workspace, failures skipped) and every one of them held. The bound it does not
+have is the one that mattered: it does not ask whether the path it is deleting is *the build's output*
+rather than *its own scratch*.
+
+### Verified against the tree, after the walk
+
+Two of the findings above were re-checked directly rather than taken on the walk's word.
+
+**The seed ships compiled classes, and they sit on the path the checker imports from.**
+`suite/tasks/feed-pipeline-java/seed/target/classes/pipeline/Importer.class` and
+`Importer$Summary.class` are in the repo, and the seed has no `.gitignore`. So every run of this task
+starts with a pre-built `pipeline.Importer` already at the exact location `verify.py` does
+`import pipeline.Importer` against. A workspace can therefore LOOK correct while the model's own
+source is not, and the final workspace here shows the end state of that confusion: an empty
+`target/classes/pipeline/` directory beside two default-package classes at `target/classes/`.
+Task fault, not cria's. A Java seed should ship source and a `pom.xml`, not build output.
+
+**`sweep_litter` does delete untracked build output — by design.** `probegate.py:956` removes every
+path in git's untracked set that appeared across the probe window, bounded to untracked and
+in-workspace. A gate that runs `mvn compile` therefore creates class files and then deletes them.
+That is correct as "clean up after my own probe" and wrong as "leave the workspace as I found it",
+because the artifact it removes is sometimes the only evidence of where the build actually put
+things. The call-level cost in this run is recorded above with its call numbers; the mechanism is
+confirmed here from the source.
+
+**Not re-verified, carried as a candidate:** the claim that `.java` is missing from
+`validate-before-lower`'s extension table while a comment says the hole was closed. Left for the
+fix phase to confirm before anything is changed on the strength of it.
