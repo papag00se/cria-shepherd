@@ -52,6 +52,10 @@ Seeded from work already done; the walk phase appends to it.
 
 | rank | tier | finding | state | closed by |
 |---:|---|---|---|---|
+| 1 | 1 | the Ruby task cannot be passed honestly: the prompt demands a third-party gem, the verifier only sees ruby's default load path, and cria correctly refuses any install that reaches it. The passes came from a gem left on the box on 2026-08-08 (`docs/audits/cycle-1-walk.md`, cross-run section) | open | |
+| 2 | 1 | cria's install refusal prescribes the command to run, and on this box that command is the losing one — off the load path, and 900 files into the workspace | open | |
+| 3 | 1 | the briefing prompt shipped at 167 KB against a 48 K window and the server refused it 12 times; 46% of it was the gem tree cria told the coder to create. `vendor` is deliberately excluded from the build-artifact skip set — **a documented earlier decision, do not revert without surfacing** | open | |
+| 4 | 2 | the search note ends "in the file named above" and, on the inline path, nothing above names a file. Self-inflicted by the search-inlining change (#5b) | open | |
 | — | 1 | spilled fetch keeps the URL's extension inside the workspace (`cria/webfetch.py:267`) | open — first in the fix phase | |
 | — | 1 | steer author's free-prose contract (`_steer_or_none`) | open — deferred at 0.1% prevalence, needs its own pass | |
 | — | 3 | cria's story of what happened ≠ cria's own record (5 sites) | open | |
