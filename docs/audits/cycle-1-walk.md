@@ -7189,3 +7189,35 @@ before any probe ran, and 6 duplicate research-checks — none of which moved th
 **principle.** #16 (assume cria caused it until proven otherwise — here the hallucination is genuinely
 the model's, and the *budget* is genuinely cria's), the operator's rule that the only target is 100%:
 the reachable next check is `review_written`, and what blocks it is a plan step cria authored.
+
+### Verified cold — why Maven diagnostics come back "could not be parsed"
+
+Two Java walks independently reported cria telling the steer author *"a specific line could not be
+parsed from the output"* while the located compile errors sat in the same turn. The mechanism is in
+`cria/probeparse.py:138`:
+
+```python
+def split_diag(s):
+    """``file:line[:col]: message`` -> (file, line, col, message)."""
+    if ": " not in s:
+        return None
+```
+
+It requires a colon-space after the location. Maven prints:
+
+```
+[ERROR] /…/Importer.java:[3,30] cannot find symbol
+```
+
+The line and column are in brackets and there is no `": "` after them, so the parser returns `None`
+for every javac-via-Maven diagnostic. cria then reports, truthfully about itself and falsely about
+the world, that the line could not be parsed — and the steer author, which ranks that block as
+authority tier 1, builds on it.
+
+**Fixable at A?** Yes, in one place. This is a diagnostic-location format, and there are only a
+handful in use: gcc/clang/rustc `file:line:col:`, MSVC `file(line,col):`, Maven `file:[line,col]`.
+Teaching the location parser the bracket form is not a per-language matcher of the kind this project
+keeps getting burned by — the kernel is "read a compiler's file/line/column", and cria already claims
+to do it. Seen in both Java cells; the Java column scored 0/40/0/0.
+
+Principles: #5b (a claim about cria stated as a claim about the output), #12, #19.
