@@ -1611,3 +1611,72 @@ the wall clock, not the model, is what ended it.
 it" needs a different reading from "never found it" (#8's lesson, feedback_read_the_reasoning). It
 changes how a run is scored and how a model's ceiling is judged, not what gets added to cria.
 
+
+---
+
+# Cycle 1 of the 100% campaign (2026-08-14) — new entries and re-ranks
+
+Twenty-four cells run, nineteen walked end to end, ~13 agent-walks. Ranked by *cells cost × how
+cheap the real fix is*. `(c1)` marks a finding first seen in this cycle. Evidence for every one is in
+[`cycle-1-walk.md`](cycle-1-walk.md) with call numbers and quoted bytes.
+
+**The single highest-value fact in the cycle:** measured against the plain-proxy control arm, cria is
+better in 7 cells, worse in 3, level in 14 — **net +145 points**, with three own-goals of −80, −60
+and −20. And of every injection in the two cells that scored 100%, only the **gate** demonstrably
+changed the outcome. Between a third and a half of a *winning* run is cria's own machinery.
+
+## Tier 1 (c1) — broke working code or killed runs
+
+| # | finding | cells | state |
+|---|---|---:|---|
+| c1-1 | **the gate's own output is discarded, and cria then reports it.** Per-probe cap 8,500 against a per-result bound of 9,000, several probes joined into one result. Two opposite falsehoods: a fragment survives → "the repo's automated checks pass" (19×) while pytest is red; nothing survives → cria reads its own refusal, sets `ran=False`, tells its judge "PROBES: none ran" | 7 | **FIXED** `probe_output_budget` |
+| c1-2 | **cria cannot see `node`.** `bash -lc` skips `.bashrc`, where every version manager lives | all JS | **FIXED** `-lic` |
+| c1-3 | **a spilled fetch keeps the URL's extension inside the workspace.** `…decimal.go` was compiled by `go build ./...`; ablation-proven | 1 | **FIXED** always `.txt` |
+| c1-4 | **the live-execution probe refuses the project's own declared command** for not being a file — `pytest`, `pipeline.Importer`, `config.toml`, `lookup.js` | 6 | **FIXED** declared outranks disk |
+| c1-5 | **Maven diagnostics never parse**, so cria says "a specific line could not be parsed" while the located errors sit in the same turn | all Java | **FIXED** location-format normalise |
+| c1-6 | **an ordinary `mvn -q compile` is 9,390 bytes against a 9,000 bound** — every Maven run in one session discarded; the model saw its 18 errors once, by accident, via bare `javac`. The fix (reduce, don't discard) collides with the 2026-08-12 refuse-whole ruling | 1+ | **OPERATOR** |
+| c1-7 | **cria's plan step is a bare filename**, so judges can only ask "does the file exist"; 21 of 46 calls went to them and step 2 — the rest of the task — was never reached | 2 | open |
+| c1-8 | **the compaction briefing certifies broken code as working** and carries a fixed problem forward ~50 calls after the fix | 4 | open |
+| c1-9 | **`task_complete` is folded into the previous write's content**, so `validate-before-lower` refused a `pom.xml` 12 times for malformed XML at the line where cria's junk starts | 1 | open |
+| c1-10 | **the briefing prompt shipped at 167 KB against a 48 K window**, 400'd twelve times, run dead. 46% of it was the gem tree cria told the coder to create. `vendor` is excluded from the skip set **by a documented earlier decision** | 1 | open — **surface before touching** |
+| c1-11 | **cria's gate is not read-only.** Its only route to ground truth is the project's own runner; these tests POST, and the workspace database ended with 53 orders. The failing count the model chased climbed 3 → 22 | 1+ | open |
+| c1-12 | **a steer named the wrong deliverable file** — "create `data/review.md`" when the check wants `REVIEW.md` | 1 | open |
+| c1-13 | **four completion verdicts said "Create REVIEW.md" and not one was injected** | 1 | open |
+| c1-14 | **the install refusal prescribes the losing command** (`--install-dir vendor/bundle`, off the load path) and authors an implementation | 3 | open |
+| c1-15 | **the Ruby task cannot be passed honestly** — prompt demands a gem, verifier sees only the default load path, dirguard correctly refuses installs that reach it. Its passes came from a gem left on the box on 2026-08-08 | 4 | open — task fault |
+| c1-16 | **the Java seed ships tracked `.class` files** at exactly the path the checker imports from | 4 | open — task fault |
+| 30 | **a fixed port on a shared box** — RE-OPENED at 2 occurrences; a foreign `uvicorn` owns 8081 and answered the task's requests | 2 | open — operator's box |
+
+## Tier 2 (c1) — lost checks
+
+| # | finding | cells | state |
+|---|---|---:|---|
+| c1-17 | the search note said "the file named above" with no file named above | 3 | **FIXED** names the target |
+| c1-18 | **the gate reports green when the test count FALLS.** 23 runs → 20 runs on the identical script, reported as "no error-class problems"; two repo tests had been deleted in a rewrite | 1 | open |
+| c1-19 | **a killed run loses its last reasoning.** The operator asked for all streamed reasoning kept whether it finishes or not; the fix covered stream errors, not process death | 1+ | open |
+| c1-20 | **the litter sweep deletes fresh build output** — right as "clean up my own probe", wrong as "leave the workspace as I found it" | 2 | open |
+| c1-21 | **`research-check` cannot close on a task with no API to read**, so every call stayed "step 1 of 2" | 2 | open |
+| c1-22 | **`_strip_invented_code` missed invalid Go** in a steer the DICTATES judge had already flagged; `_CODE_SHAPED` is line-anchored | 2 | open |
+| c1-23 | **the assists ledger undercounts** — 6 steers and 30 gate-carrying prompts recorded as 0 and 2 | all | open |
+
+## Tier 3 (c1) — wasted time
+
+| # | finding | state |
+|---|---|---|
+| c1-24 | **the cached-check age note has zero positive results** — never fired ×5, fired-and-did-nothing ×5, across every section that mentions it | open — **REMOVE** |
+| c1-25 | a purposeful reasoner call with no output path: the search supervisor's `on_target:false` goes to a display channel stripped before the model | open |
+| c1-26 | the repetition note fingerprints on tool+path and ignores content, so three different writes are "this exact call"; it also fires on cria's own gate script and tells the coder it made that call | open |
+| c1-27 | the fetch ledger's "nothing read so far DEFINES the API's routes" fired 41× on a task with no API | open |
+| c1-28 | the satisfaction judge loops with no repetition guard — four byte-identical `list_dir(".")` calls | open |
+| c1-29 | the gate result ships twice per turn: the full block plus a steer preamble restating it | open |
+
+## What this cycle proved about the standing assists
+
+Recorded here because it should govern the next fix phase, not just this one.
+
+- Only the **gate** earned its place in the two winning runs. Everything else confirmed what the model
+  was already doing, cost calls, or both.
+- The three worst defects (c1-1, the read refusal, c1-4) range from a tax to a total loss depending
+  on **routing and position** — whether a second copy of the fact exists elsewhere in the context —
+  not on severity. That argues for fixing them at source, never for adding a compensating assist.
+- The safe direction is REMOVE (#1). c1-24 is the first candidate and there will be others.
