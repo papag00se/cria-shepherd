@@ -23,7 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟢 qwen35 | 100% (+40) | 100% (+20) | 75% | 100% | 50% | 100% | **89%** | 81.1 | 37 | 213 |
-| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% | 80% | 0% | 100% | **67%** | 60.8 | 18 | 52 |
+| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (=) | 80% | 0% | 100% | **67%** | 60.5 | 13 | 47 |
 | 🟠 ternary-bonsai | 80% (=) | 100% (+100) | 75% | 0% | 50% | 0% | **52%** | 43.4 | 25 | 60 |
 | 🔴 nemotron-elastic | 0% (=) | 0% (-20) | 75% | 0% | 25% | 0% | **15%** | 132.6 | 26 | 92 |
 
@@ -43,7 +43,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | qwen35 | 100% | 100% | 0 | 36→80 | 3→10 |
 | cart-billing-go | go | ternary-bonsai | 0% | 100% | **+100** | 21→54 | 16→16 |
 | cart-billing-go | go | nemotron-elastic | 0% | 0% | 0 | 6→51 | 7→16 |
-| orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→106 | 21→52 |
+| orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→71 | 21→21 |
 | orders-api-py | python | qwen35 | 50% | 75% | **+25** | 76→260 | 20→61 |
 | orders-api-py | python | ternary-bonsai | 25% | 75% | **+50** | 66→124 | 31→61 |
 | orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→200 | 2→61 |
@@ -81,7 +81,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
 | cart-billing-go | go | nemotron-elastic | CRIA | 0% | 16 | 51 | 124.8 | milestone-miss-15min |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
-| orders-api-py | python | gemma4 | CRIA | 100% | 52 | 106 | 60.1 | exited |
+| orders-api-py | python | gemma4 | CRIA | 100% | 21 | 71 | 58.7 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | orders-api-py | python | qwen35 | CRIA | 75% | 61 | 260 | 81.6 | milestone-miss-60min |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
