@@ -127,6 +127,12 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
 
 ### Log
 
+- **2026-08-14 02:45 → 07:33** — nothing. The run phase closed and the walk phase did not start.
+  The per-cell watcher had been the heartbeat all night; when the last cell landed it fired for the
+  last time, and the turn that closed the run phase ended on "continuing now" without launching
+  anything. Five hours idle, found only because the operator asked. Rule added to the goal doc:
+  never end a turn on an intention — have work in flight or say there is none.
+
 - **2026-08-13** — cycle 1 run phase resumed at cell 9 after a driver-imposed `timeout 3000` killed
   `orders-api-py × gemma4` at 52 minutes of its own 60-minute wall. The cap is gone; the suite owns
   the only wall clock. The rerun finished in 21 minutes at 100%.

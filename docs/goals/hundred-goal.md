@@ -167,6 +167,12 @@ cycle. Do not carry a silent backlog: anything deliberately deferred says so, wi
 - **Never delete run evidence.** Annotate rows; keep the captures.
 - **Never end a session to a human** (#14). No off-ramps, no "should I continue", no ceiling.
 - **Plain language in chat.** The verdict and the cause. Detail goes in the docs.
+- **Never end a turn on an intention.** Through the run phase a per-cell watcher supplies the
+  heartbeat: a cell lands, it wakes you, you report and re-arm. When the last cell lands that
+  heartbeat stops, and a turn that ends with "continuing now" and nothing actually launched simply
+  ends. It cost five idle hours between the run phase closing at 02:45 and the first walk of the
+  walk phase. So: before finishing any turn, have real work in flight — a watcher, an agent, a
+  command — and if there is genuinely none, say so rather than describing what you are about to do.
 
 ## Carried in — the fix phase of cycle 1 starts here
 
