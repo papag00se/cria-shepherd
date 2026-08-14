@@ -1071,6 +1071,68 @@ def _reasoning_call_spans(text: str) -> list:
     return _outermost(sorted(spans, key=lambda s: (s[0], s[1])))
 
 
+# A parameter value ends at the `</parameter>` that BALANCES its opener — matched like brackets,
+# because the two shapes that break a naive rule are byte-identical at the start:
+#
+#   unclosed   <parameter=content><project>…</project></function></tool_call><tool_call>
+#              <function=task_complete><parameter=summary>done</parameter>
+#   nested     <parameter=content>Call it like this: <parameter=url>http://x</parameter></parameter>
+#
+# Earliest-closer swallows the next CALL in the first. Own-closer-wins cuts the DOCUMENTATION in the
+# second. Only depth tells them apart: the nested one balances, the unclosed one never does. When the
+# openers outnumber the closers the value stops at the next structural boundary instead — the sibling
+# opener, or the end of the call.
+_PARAM_OPEN = re.compile(r"<parameter=([A-Za-z0-9_.-]+)\s*>")
+_PARAM_CLOSE = "</parameter>"
+# Past these a value cannot possibly extend: they end the call or the turn.
+_PARAM_HARD_BOUNDARIES = ("</function>", "</tool_call>")
+
+
+def _bounded_xml_params(body: str) -> list:
+    """`[(name, value)]` for every `<parameter=NAME>` in ``body``, each value ending at the closing
+    tag that balances it, or — when it has none — at the next opener or call boundary.
+
+    Replaces a bare non-greedy `findall`, which sounds safe and is not: with no closing tag of its
+    own a match runs on to the NEXT one, in another parameter or another CALL. Measured on
+    `feed-pipeline-java x nemotron-elastic`: a `write_file` whose `content` swallowed the whole
+    `task_complete` that followed it, so `validate-before-lower` refused the `pom.xml` twelve times
+    as malformed XML at the line where cria's own junk began. The file's gate-3 note has described
+    this shape since it was written and called it pre-existing; it was a defect.
+
+    Returns the shape `_XML_PARAM.findall` did, so the caller is unchanged and both dialect channels
+    keep one definition of the syntax."""
+    out = []
+    for m in _PARAM_OPEN.finditer(body):
+        name, start = m.group(1), m.end()
+        depth, i, end = 1, start, None
+        while i < len(body):
+            nxt_open = _PARAM_OPEN.search(body, i)
+            nxt_close = body.find(_PARAM_CLOSE, i)
+            if nxt_close == -1:
+                break                                  # never closed at all
+            if nxt_open and nxt_open.start() < nxt_close:
+                depth += 1
+                i = nxt_open.end()
+                continue
+            depth -= 1
+            if depth == 0:
+                end = nxt_close
+                break
+            i = nxt_close + len(_PARAM_CLOSE)
+        if end is None:
+            # Unbalanced: stop at the earliest thing that cannot be part of this value.
+            end = len(body)
+            sib = _PARAM_OPEN.search(body, start)
+            if sib:
+                end = min(end, sib.start())
+            for tag in _PARAM_HARD_BOUNDARIES:
+                j = body.find(tag, start)
+                if j != -1:
+                    end = min(end, j)
+        out.append((name, body[start:end]))
+    return out
+
+
 def _xml_args(body: str) -> dict | None:
     """Arguments for one `<function=NAME>…</function>` span.
 
@@ -1084,8 +1146,29 @@ def _xml_args(body: str) -> dict | None:
     touched nothing. Writing a dict literal is ordinary in every language this suite covers, so
     the failure is routine rather than exotic.
 
+    A PARAMETER STOPS AT THE NEXT STRUCTURAL BOUNDARY when its own closing tag is missing.
+    `_XML_PARAM` is non-greedy, which sounds safe and is not: with no `</parameter>` of its own, the
+    match runs on to the NEXT one — which belongs to a different parameter, or a different CALL.
+    The note on gate 3 above has described this since it was written ("nine `<parameter=steps>`
+    openers closed by ONE `</parameter>` collapse into a single string carrying the other eight tags
+    verbatim") and called it a pre-existing property; it is a defect and this is where it lived.
+
+    Measured, `feed-pipeline-java x nemotron-elastic`, cycle 1: the model emitted a `write_file` and
+    a `task_complete` in one turn. The write's `content` had no closing tag, so it swallowed the rest
+    of its own call AND the whole next one — the recorded value ends
+    `…</project></function></tool_call><tool_call><function=task_complete>`. `validate-before-lower`
+    then refused the `pom.xml` twelve times as malformed XML, at "line 34, column 1", which is
+    exactly where cria's junk began. Fourteen calls lost; the model escaped only by switching tools.
+    The trailing call is always `task_complete`, so a feature added to make completion cleaner was
+    corrupting the write in front of it.
+
+    THE REAL CLOSING TAG STILL WINS when it exists, which is what keeps a legitimately nested payload
+    intact — a `write_file` whose content is a document ABOUT tool calls really does contain
+    `<parameter=` and `</function>` text, and :func:`_outermost` exists because that happens. The
+    boundary only applies when there is no `</parameter>` to find before it.
+
     JSON remains the fallback for the shape that has no parameter tags at all."""
-    params = _XML_PARAM.findall(body)
+    params = _bounded_xml_params(body)
     if params:
         return {k: v.strip() for k, v in params}
     obj = extract_json_object(body)

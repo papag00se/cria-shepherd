@@ -325,9 +325,8 @@ finding one that happens to work.
 (MODEL lens — `_reasoning_of` content fallback; dialect-marker drift); `cria/reasoning.py`,
 `cria/massage.py`.
 
-### 20. De-overfit assists from the single dev task (the LANG / MODEL / HARNESS audit)
-**Rule.** cria was tuned for weeks against one prompt and one model; prompts and detectors
-must be generalized off "browse an API spec" and off one model's token dialect. Run the
+### 20. Be task and language agnostic
+**Rule.** cria is meant to support many of the top languages Run the
 three-lens agnostic audit as a repeatable practice.
 **Why.** Overfit prompts and detectors silently fail the moment the task, model, or harness
 changes — the failure mode agnosticism exists to prevent.
