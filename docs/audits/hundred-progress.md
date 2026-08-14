@@ -98,6 +98,32 @@ two winning runs, only the **gate** demonstrably changed the outcome, and only w
 only copy of the finding. The rest confirmed or cost calls. That is an argument for **pruning**, which
 principle 1 already says is the safe direction — not for reverting this cycle's work.
 
+### SURFACED — c1-13 is a deliberate decision, not a bug
+
+The walk found four completion verdicts that each named the missing deliverable ("Create REVIEW.md")
+and said none reached the coder. Verified: zero coder prompts in that run carried a completion nudge,
+no "Proposed fix" line, no mention of REVIEW.md in any steer.
+
+The cause is one line, and it is on purpose — `loop.py::_periodic_satisfaction`:
+
+```python
+if not satisfied:
+    return None   # do NOT steer — the reason is judgment, not ground truth. Log only.
+```
+
+The periodic satisfaction check may only END a session, never steer it. The asymmetry with the
+done-claim path (which DOES steer with the critic's reason) is the point: a done-claim is an anomaly
+the coder created, a timer is not, and steering off a timer is noise on a clock — #3 and #11.
+
+**Not changed.** Reversing it would be exactly the class of revert the operator has asked me to
+surface instead of doing. What it costs is on the record now: a judge computed the exact unmet
+deliverable four times in one run and the coder never heard any of it, on a task where that
+deliverable was the cheapest point on the board — sixty words and two line numbers, no build needed.
+
+The question for the operator is whether a NOT-satisfied verdict that names a **specific missing
+deliverable** is still "judgment" in the sense that rule meant, or whether that is ground truth of a
+kind the timer objection does not cover.
+
 ### Findings ledger — cycle 1
 
 Seeded from work already done; the walk phase appends to it.
