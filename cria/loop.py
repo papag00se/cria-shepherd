@@ -1926,6 +1926,11 @@ class LoopContext:
     trigger_compaction: int = 16384
     # Is the planner stage ON? False = plan-off: the loop synthesizes a degenerate 1-item plan
     # (PlanSession.synthetic) and drives it through _drive_single_item — the relocated plan-off path.
+    # `synthetic` means DEGENERATE, not "the planner is off": it is set from len(plan.items) == 1
+    # (see _drive), so a plan-off session whose model drafts TWO steps runs the ordinary multi-item
+    # driver and the coder sees "Do ONLY this step (1 of 2)". That is the NORMAL path — 37 of 50
+    # cycle-1 captures took it. Read as "planner off means one item", it manufactures a bug report:
+    # it did, on 2026-08-14.
     # The planner object above is then dormant (plan_for is never called on the synthetic path).
     planner_enabled: bool = True
     # Periodic SATISFACTION check cadence for the single-item path — start at drive `start`, then every

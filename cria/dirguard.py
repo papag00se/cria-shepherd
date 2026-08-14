@@ -170,7 +170,35 @@ def _tool_present(name: str) -> bool:
     run, so the only PATH that can make it true is the one the coder's commands use. cria's service
     PATH has none of the user's toolchains, which turned every route through them into "no route"
     (#5b — see :mod:`cria.toolpath`)."""
-    return toolpath.which(name) is not None
+    if toolpath.which(name) is not None:
+        return True
+    # A DISTRO MAY SHIP IT UNDER A VERSIONED NAME. Debian installs bundler as `bundle3.2`; there is no
+    # plain `bundle` on this box. Asked name-exactly, cria concluded "ruby has no project-local route"
+    # and fell through to the weaker advice — while the tool it wanted was on PATH the whole time,
+    # and `bundle3.2 install --path vendor/bundle` scores 5/5 on the task that advice is for.
+    #
+    # This is not guessing a name: the directory is READ and a real file is found, or the answer stays
+    # False (#5b). The same shape as the two commits that already fixed this function twice — a
+    # sentence asserting something about this machine that cria never asked the machine.
+    return _versioned_variant(name) is not None
+
+
+def _versioned_variant(name: str) -> str | None:
+    """The `<name><version>` executable actually present on the coder's PATH, or None.
+
+    Distros version the binary rather than the package: `bundle3.2`, `python3.12`, `pip3`, `gem3.2`.
+    Every directory on the path is listed and matched against `name` plus digits and dots — nothing
+    is constructed and probed, so a name that does not exist cannot be reported as present."""
+    import re as _re
+    pat = _re.compile(rf"^{_re.escape(name)}[0-9][0-9.]*$")
+    for d in (toolpath.coder_path() or "").split(os.pathsep):
+        try:
+            for entry in os.listdir(d):
+                if pat.match(entry) and os.access(os.path.join(d, entry), os.X_OK):
+                    return entry
+        except OSError:
+            continue
+    return None
 
 
 def _local_install_advice(command: str) -> str:

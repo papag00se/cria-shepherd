@@ -685,7 +685,13 @@ def _parse_step_numbers(ans: str, n_steps: int) -> set:
     return {int(x) - 1 for x in re.findall(r"\d+", ans) if 0 <= int(x) - 1 < n_steps}
 
 
-# NB: cria does NOT author plan steps. A "research-first" enforcement used to prepend its own step
+# NB (scope, because this note has been misread): what follows is about the PLANNER's own retired,
+# cria-TEMPLATED, PINNED research step. A research step the MODEL drafts is ordinary and still
+# happens — cria only refuses a draft that names a build verb (research.step_defect) and takes the
+# model's corrected sentence verbatim. Seeing "Read crates.io to identify the crate…" in a live run
+# is the model planning, not this mechanism returning.
+#
+# cria does NOT author plan steps. A "research-first" enforcement used to prepend its own step
 # ("web_fetch <the named domain>'s real source") whenever the task named an API host and the planner had
 # drafted no research step, and PIN it so the living re-derivation couldn't touch it. Both halves were
 # overreach: authoring a step is planning cria has no business doing (the injected step still had to guess

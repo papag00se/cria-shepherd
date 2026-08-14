@@ -124,16 +124,64 @@ def configure_cria(model: str, planner_enabled: bool) -> dict:
     return spec
 
 
-def user_site_listing() -> set:
-    """Top-level names in the user's site-packages — the leak tripwire. Runs under --yolo can
-    pip-install into the REAL user site (measured: an editable install of a suite /tmp workspace via
-    a .pth, a broken resolver.py shadowing `import resolver` for every later run AND the verifier —
-    two weeks of cross-run poisoning found only by a capture walk). The delta is recorded per row so
-    contamination is evidence, never a silent confound; nothing is prevented or cleaned here."""
+# WHERE EVERY ECOSYSTEM INSTALLS WHEN NOBODY SAYS WHERE. A run under --yolo can install into the
+# operator's real environment, and the resulting artefact outlives the run: the NEXT run finds a
+# dependency it never installed and scores points for work it did not do.
+#
+# This watched Python only, and the cost is measured. `shipping-rates-rb` requires a third-party gem;
+# `countries-8.1.0` has been in the user gem dir since 2026-08-10 12:37 (installed thirteen minutes
+# before e19911b, whose subject is gem detection — the task author validating the reference solution
+# and leaving it behind). Every ruby row since has reported `site_packages_leak: []` while four of
+# them were scored against a gem no model installed: re-scored with the dir hidden, 5/5 → 1/5,
+# 5/5 → 1/5, 4/5 → 1/5.
+#
+# So the tripwire is per-ECOSYSTEM, because the failure is. A rule keyed to one language's spelling
+# is inert on the other five — the same shape the operator has flagged repeatedly.
+def _user_install_roots() -> dict:
+    """`{label: directory}` for each ecosystem's default user-level install location. Asked of the
+    tool where the tool can answer, so a version bump or a custom GEM_HOME does not silently blind
+    the tripwire; a fixed path only where there is no command to ask."""
+    home = os.path.expanduser("~")
+    roots = {}
     try:
-        return set(os.listdir(site.getusersitepackages()))
-    except OSError:
-        return set()
+        roots["py"] = site.getusersitepackages()
+    except Exception:  # noqa: BLE001
+        pass
+    probes = {
+        "gem": ("ruby", "-e", "print Gem.user_dir + '/gems'"),
+        "npm": ("npm", "root", "-g"),
+    }
+    for label, argv in probes.items():
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=20).stdout.strip()
+            if out:
+                roots[label] = out
+        except (OSError, subprocess.SubprocessError):
+            pass
+    for label, path in (("cargo", f"{home}/.cargo/registry/cache"),
+                        ("go", f"{home}/go/pkg/mod/cache/download"),
+                        ("maven", f"{home}/.m2/repository")):
+        if os.path.isdir(path):
+            roots[label] = path
+    return roots
+
+
+def user_install_listing() -> set:
+    """`{"<ecosystem>:<name>"}` for everything currently installed at user level, across ecosystems.
+
+    The delta between two calls is recorded per row so contamination is EVIDENCE, never a silent
+    confound. Nothing is prevented or cleaned here — a leak that is visible can be reasoned about;
+    the two weeks of cross-run poisoning this was built after were invisible.
+
+    (Measured first on Python: an editable install of a suite /tmp workspace via a .pth left a broken
+    resolver.py shadowing `import resolver` for every later run AND the verifier.)"""
+    out = set()
+    for label, root in _user_install_roots().items():
+        try:
+            out.update(f"{label}:{n}" for n in os.listdir(root))
+        except OSError:
+            continue
+    return out
 
 
 def codex_pids():
@@ -303,7 +351,7 @@ def main() -> None:
         sh("git", "-C", str(ws), "-c", "user.email=suite@local", "-c", "user.name=suite",
            "commit", "-qm", "seed", timeout=120)
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
-    site_before = user_site_listing()
+    installs_before = user_install_listing()
 
     env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}")
     t0 = time.time()
@@ -404,7 +452,7 @@ def main() -> None:
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
         "archive": str(archive),
-        "site_packages_leak": sorted(user_site_listing() - site_before),
+        "user_install_leak": sorted(user_install_listing() - installs_before),
         "capture_dir": str(session_dir) if session_dir else None,
         "harness_log": str(log_path),
     }
