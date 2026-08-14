@@ -124,6 +124,11 @@ def plan_gate(workspace: str) -> GatePlan:
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
+        if c.kind is probediscovery.ProbeKind.Test:
+            # Remember THIS probe's exit code for the offline leg below. compose_probe_command
+            # leaves it in __cria_ec, which the next probe overwrites, so it is captured here under
+            # a name of its own.
+            parts.append("__cria_test_ec=$__cria_ec")
     # The OFFLINE re-run of the test probe — see proberun.offline_probe_command.
     # Emitted last among the probes so a failure here can never mask a real check result.
     test_c = next((c for c in plan.candidates

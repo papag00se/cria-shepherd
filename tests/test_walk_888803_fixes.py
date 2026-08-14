@@ -823,7 +823,11 @@ class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
     def test_a_box_without_namespaces_prints_nothing_at_all(self):
         cmd = self.proberun.offline_probe_command(
             self._test_cand(["python3", "-m", "pytest", "-q"]), 60)
-        self.assertIn("if unshare -rn -- true", cmd)   # guarded, never assumed
+        self.assertIn("unshare -rn -- true >/dev/null", cmd)   # guarded, never assumed
+        # …and gated on the ONLINE run having passed: after a red run the comparison this
+        # leg exists to make cannot be written, and a second execution in the live
+        # workspace is pure side effect. See offline_probe_command.
+        self.assertIn('[ "${__cria_test_ec:-1}" -eq 0 ]', cmd)
         self.assertTrue(cmd.rstrip().endswith("fi"))   # nothing printed outside the guard
 
     def test_the_block_really_stops_a_non_python_process(self):
@@ -834,7 +838,8 @@ class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
             self.skipTest("this kernel does not grant unprivileged network namespaces")
         cmd = self.proberun.offline_probe_command(
             self._test_cand(["curl", "-s", "-m", "5", "-o", "/dev/null", "https://1.1.1.1"]), 30)
-        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=120).stdout
+        out = subprocess.run(["bash", "-c", "__cria_test_ec=0; " + cmd],
+                             capture_output=True, text=True, timeout=120).stdout
         self.assertIn("EXIT:", out)
         self.assertNotIn("EXIT:0", out)   # curl could not reach the outside world
 
@@ -847,7 +852,8 @@ class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
                   "socket.create_connection(s.getsockname(),timeout=4).close()")
         cmd = self.proberun.offline_probe_command(
             self._test_cand(["python3", "-c", script]), 30)
-        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=120).stdout
+        out = subprocess.run(["bash", "-c", "__cria_test_ec=0; " + cmd],
+                             capture_output=True, text=True, timeout=120).stdout
         self.assertIn("EXIT:0", out)
 
 
@@ -892,3 +898,49 @@ class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
         self.assertIn("no error-class problems", out)
         self.assertNotIn("could not", out.lower())
         self.assertNotIn("network switched off", out)
+
+
+class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
+    """The leg's single product is the COMPARISON — "these same tests also pass with the network
+    gone". After a red online run there is nothing to compare: both runs fail, the sentence cannot
+    be written, and all that remains is a second execution of the suite in the live workspace.
+
+    Measured, gemma4/python 0061-0077. The coder's own run: "8 passed in 2.08s", exit 0. The next
+    gate reported a HIGHER row count, because the suite had run twice against the same database. The
+    coder's theory: "The test `test_get_customer_orders` might be running multiple times in a loop
+    within pytest (e.g., `pytest -n auto` for parallel execution)." It spent ~25 calls chasing a
+    duplication cria had created.
+    """
+
+    import types as _types
+
+    def _cand(self):
+        from cria import probediscovery
+        return self._types.SimpleNamespace(
+            kind=probediscovery.ProbeKind.Test, command=["echo", "OFFLINE_RAN"], working_dir="/tmp")
+
+    def _run(self, prelude):
+        import subprocess
+        from cria import proberun
+        cmd = proberun.offline_probe_command(self._cand(), 30)
+        return subprocess.run(["bash", "-c", prelude + cmd],
+                              capture_output=True, text=True, timeout=60).stdout
+
+    def test_a_green_online_run_lets_it_through(self):
+        import subprocess
+        if subprocess.run(["unshare", "-rn", "--", "true"], capture_output=True).returncode != 0:
+            self.skipTest("this kernel does not grant unprivileged network namespaces")
+        self.assertIn("OFFLINE_RAN", self._run("__cria_test_ec=0; "))
+
+    def test_a_red_online_run_does_not(self):
+        self.assertEqual(self._run("__cria_test_ec=1; ").strip(), "")
+
+    def test_a_test_probe_that_never_ran_does_not(self):
+        """Unset means no test probe ran at all — also a reason not to run one twice."""
+        self.assertEqual(self._run("unset __cria_test_ec; ").strip(), "")
+
+    def test_the_gate_script_saves_the_exit_code_for_it(self):
+        import inspect
+
+        from cria import probegate
+        self.assertIn("__cria_test_ec=$__cria_ec", inspect.getsource(probegate.plan_gate))

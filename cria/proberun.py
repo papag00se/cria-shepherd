@@ -722,7 +722,21 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
     inner = _NETNS_LOOPBACK_UP + argv
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
-        f"if {_NETNS_CAPABLE} >/dev/null 2>&1; then "
+        # ONLY WHEN THE ONLINE RUN PASSED. The leg's single product is the COMPARISON — "these same
+        # tests also pass with the network gone". After a red online run there is nothing to compare:
+        # both runs fail, the sentence cannot be written, and all that is left is a second execution
+        # of the suite in the live workspace with its side effects.
+        #
+        # Measured, gemma4/python 0061-0077. The coder's own run: "8 passed in 2.08s", exit 0. The
+        # next gate reported a higher row count, because the tests had been run twice against the
+        # same database. The coder's theory: "The test `test_get_customer_orders` might be running
+        # multiple times in a loop within pytest (e.g., `pytest -n auto` for parallel execution)."
+        # It spent the rest of the run chasing a duplication cria had created. ~25 coder calls.
+        #
+        # A removal, and it uses a fact the script already holds (probegate saves the test probe's
+        # exit code into __cria_test_ec). Unset means the test probe never ran, which is also a
+        # reason not to run it twice.
+        f'if [ "${{__cria_test_ec:-1}}" -eq 0 ] && {_NETNS_CAPABLE} >/dev/null 2>&1; then '
         f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
         f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __cria_ec=$?; "
         f"printf '%s' \"$__cria_out\" | tail -c 600; "
