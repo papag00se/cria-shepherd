@@ -10,7 +10,7 @@ rewrites itself after every cell.
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 23 of 24 in flight. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 24 of 24 in flight — the last. Node column complete: 75 / 100 / 100 / 25. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -41,7 +41,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 20 | handles-cli-node | nemotron-elastic | 25% | 0 | 8 | 41 | half a migration: it took `request` out of `package.json` and left the `require` in the source, so the program cannot start — `node lookup.js goose` exits 1. It then **stopped on its own** at 41 calls with three checks failing, which is the part that is cria's. Walk running |
 | 21 | rust-toml-cli | gemma4 | **100%** | 0 | 14 | 73 | all four green — clean build, 3/3 lookups, the error contract, tests and README. Held its perfect score from last cycle |
 | 22 | rust-toml-cli | qwen35 | **100%** | 0 | 19 | 153 | all four green, held from last cycle. Heavily assisted — 5 periodic gates, 4 wheel-spin steers, 3 litter sweeps, one dictated steer dropped — and still landed |
-| 23 | rust-toml-cli | ternary-bonsai | | | | | |
+| 23 | rust-toml-cli | ternary-bonsai | 0% | 0 | 16 | 42 | never built — `E0308`, two type errors, killed at the 15-minute floor. **Two gates ran and not one `⟦ctx:checks⟧` block reached the model**, on a run whose whole problem was a compile error. Three oversize refusals at 10,102–10,104 bytes sit where those results should be. Sixth cell showing that bug |
 | 24 | rust-toml-cli | nemotron-elastic | | | | | |
 
 Δ is percentage points against the previous run of the same cell, whatever prompt revision it was
