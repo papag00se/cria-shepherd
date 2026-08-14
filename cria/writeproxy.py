@@ -1338,6 +1338,43 @@ def _collapse_rejected_payload(tc: dict, path: str) -> dict:
     return {**tc, "function": {**fn, "arguments": json.dumps(args)}}
 
 
+# THE HARNESS'S OWN TRUNCATION MARKER, in either unit. Codex writes `…N chars truncated…` /
+# `…N tokens truncated…` into a tool result it decided was too big to keep whole. Other harnesses
+# will spell it differently; this matches the shape, and anything it misses stays silent (#3).
+_HARNESS_CUT = re.compile(r"…\s*([\d,]+)\s+(chars|tokens)\s+truncated\s*…")
+
+
+def note_harness_cuts(messages: list, rlog=None) -> int:
+    """Count tool results the HARNESS truncated before cria ever saw them, and say so in the log.
+
+    OBSERVE, NEVER ACT. Nothing is altered and nothing reaches the model: this is cria learning a
+    fact about the harness it is fronting, on the only channel where that fact is visible.
+
+    Why it exists. `content_reduce.INLINE_RESULT_MAX_BYTES = 9000` is a hardcoded copy of a constant
+    from ONE harness's source — Codex's `TruncationPolicyConfig::bytes(10_000)` — in a project whose
+    rule 18 says cria never depends on one harness's config and the retired fork is "a read-only
+    spec, never a fix target". The number was measured once, in August, against 166 observed cuts.
+    Asked for a current example, there was none: zero markers across all 50 captured sessions, and
+    the largest result cria had actually sent upstream was 160,447 bytes, intact.
+
+    So the belief outlived its evidence, grew a second life on the inbound path, and cost 24% of
+    every command result in a 24-cell campaign before anyone re-checked it. A remembered number is a
+    claim about cria; the marker on the wire is a claim about the world (#5b). This asks the world.
+
+    It is harness-AGNOSTIC by construction: Claude Code, Aider and whatever connects next get counted
+    the same way, with no survey of anyone's source and nothing to go stale."""
+    n = 0
+    for m in messages or []:
+        if (m or {}).get("role") != "tool":
+            continue
+        for hit in _HARNESS_CUT.finditer(str(m.get("content") or "")):
+            n += 1
+            if rlog is not None:
+                rlog.emit("harness.truncated_a_result", level="warn",
+                          amount=hit.group(1), unit=hit.group(2))
+    return n
+
+
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
@@ -1347,6 +1384,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     disk-caching shell command. A write/edit SUCCESS is reframed as a clean confirmation (never over a
     real error). A harness ``local_web_search`` is re-presented as ``web_search``. The model's OWN
     exec_command calls keep their envelope — there the shell framing is the truth."""
+    note_harness_cuts(messages, rlog)   # observe only: did the harness cut anything before cria saw it?
     out: list[dict] = []
     swapped = 0
     # WHICH CALLS FAILED, known before the assistant turn is emitted. A rejected edit_file keeps its
