@@ -151,6 +151,39 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
   25% cell had none, so the guard is not the driver. What the five have in common is that four were
   killed at a milestone floor. That is the question worth reading, and it is now being read.
 
+### The 9,000-byte bound: its justification does not reproduce
+
+Asked for an example of something cria returned that the harness cut. **I could not produce one, and
+I looked properly.**
+
+What the bound claims (`content_reduce.INLINE_RESULT_MAX_BYTES`): Codex truncates every tool result
+in its history at 10,000 bytes, so anything cria hands back above that is silently middle-cut in
+every later prompt.
+
+What is verifiable today:
+
+| claim | check | result |
+|---|---|---|
+| the harness really has that policy | read the Rust | **TRUE** — `TruncationPolicyConfig::bytes(10_000)`, `models-manager/src/model_info.rs:83`, the production fallback profile for local models |
+| the marker appears in cria's prompts | grep 50 sessions, both forms (`…N chars truncated…`, `…N tokens truncated…`) | **zero** |
+| large results get cut on cria's path | find the largest tool result cria actually sent upstream | **160,447 bytes, uncut** — sixteen times the supposed limit |
+| the cited evidence run | look for `1785893473` | **gone** — deleted in the housekeeping of 2026-08-13 |
+
+So the policy exists in the harness's source and is **not observably operating on the path cria
+uses**. A 160 KB tool result reached the model through cria intact.
+
+Against that, the bound's measured cost this cycle: 24% of all command results discarded (1,179
+sampled, p75 = 8,424), the gate blinded in 7 of 24 cells, a model unable to read its own 389-line
+source file by any route, and the chain that cost `cart-billing-go × nemotron-elastic` every check.
+
+**What would change this conclusion:** if the harness applies the policy only when rendering its own
+history to its own model — a path cria never sees, because cria captures what cria sends. That is
+plausible and it is exactly what needs testing before the number moves. Until then the bound is
+guarding a mechanism nobody can currently demonstrate, at a cost everybody can.
+
+**Operator's call.** Discovering the limit from the harness rather than hardcoding it is the only
+version that satisfies principle 18 either way.
+
 ### Environment notes — established, deliberately NOT changed mid-cycle
 
 - **A foreign server owns port 8081 on this box, and it answered the Python task's requests.**
