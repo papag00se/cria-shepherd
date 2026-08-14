@@ -22,10 +22,10 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 qwen35 | 100% (+40) | 80% | 75% | 100% | 50% | 100% | **85%** | 81.9 | 36 | 209 |
+| 🟢 qwen35 | 100% (+40) | 100% (+20) | 75% | 100% | 50% | 100% | **89%** | 81.1 | 37 | 213 |
 | 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% | 80% | 0% | 100% | **67%** | 60.8 | 18 | 52 |
-| 🔴 ternary-bonsai | 80% (=) | 0% | 75% | 0% | 50% | 0% | **33%** | 44.5 | 25 | 58 |
-| 🔴 nemotron-elastic | 0% (=) | 20% | 75% | 0% | 25% | 0% | **19%** | 135.4 | 29 | 104 |
+| 🟠 ternary-bonsai | 80% (=) | 100% (+100) | 75% | 0% | 50% | 0% | **52%** | 43.4 | 25 | 60 |
+| 🔴 nemotron-elastic | 0% (=) | 0% (-20) | 75% | 0% | 25% | 0% | **15%** | 132.6 | 26 | 92 |
 
 ## What the assists were worth
 
@@ -40,9 +40,9 @@ bought with 15× the calls is not the same result as one bought with fewer
 | shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→52 | 14→16 |
 | shipping-rates-rb | ruby | nemotron-elastic | 60% | 0% | **-60** | 41→57 | 11→16 |
 | cart-billing-go | go | gemma4 | 100% | 100% | 0 | 13→36 | 2→7 |
-| cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→57 | 3→7 |
-| cart-billing-go | go | ternary-bonsai | 0% | 0% | 0 | 21→47 | 16→16 |
-| cart-billing-go | go | nemotron-elastic | 0% | 20% | **+20** | 6→124 | 7→31 |
+| cart-billing-go | go | qwen35 | 100% | 100% | 0 | 36→80 | 3→10 |
+| cart-billing-go | go | ternary-bonsai | 0% | 100% | **+100** | 21→54 | 16→16 |
+| cart-billing-go | go | nemotron-elastic | 0% | 0% | 0 | 6→51 | 7→16 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→106 | 21→52 |
 | orders-api-py | python | qwen35 | 50% | 75% | **+25** | 76→260 | 20→61 |
 | orders-api-py | python | ternary-bonsai | 25% | 75% | **+50** | 66→124 | 31→61 |
@@ -75,11 +75,11 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
 | cart-billing-go | go | gemma4 | CRIA | 100% | 7 | 36 | 62.3 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
-| cart-billing-go | go | qwen35 | CRIA | 80% | 7 | 57 | 83.3 | exited |
+| cart-billing-go | go | qwen35 | CRIA | 100% | 10 | 80 | 78.6 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
-| cart-billing-go | go | ternary-bonsai | CRIA | 0% | 16 | 47 | 48.3 | milestone-miss-15min |
+| cart-billing-go | go | ternary-bonsai | CRIA | 100% | 16 | 54 | 41.5 | exited |
 | cart-billing-go | go | nemotron-elastic | BASE | 0% | 7 | 6 | 123.9 | exited |
-| cart-billing-go | go | nemotron-elastic | CRIA | 20% | 31 | 124 | 141.6 | milestone-miss-30min |
+| cart-billing-go | go | nemotron-elastic | CRIA | 0% | 16 | 51 | 124.8 | milestone-miss-15min |
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | gemma4 | CRIA | 100% | 52 | 106 | 60.1 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
