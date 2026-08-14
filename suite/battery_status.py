@@ -97,7 +97,7 @@ def prior_cell(rs: list[dict], arm: str, model: str, task: str, current: dict | 
 
 
 def delta_of(now: dict | None, before: dict | None) -> str:
-    """`(+20)` / `(-40)` / `(=)` in PERCENTAGE POINTS, or "" with nothing to compare against.
+    """`(+20)` / `(-40)` / `(0)` in PERCENTAGE POINTS, or "" with nothing to compare against.
 
     Points, not checks: the cell already reads as a percentage, and the two units side by side
     ("80% (+1)") invite the reader to do arithmetic that does not work — tasks carry different check
@@ -108,7 +108,7 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     if a is None or b is None:
         return ""
     d = a - b
-    return " (=)" if abs(d) < 0.5 else f" ({d:+.0f})"
+    return " (0)" if abs(d) < 0.5 else f" ({d:+.0f})"
 
 
 def in_flight() -> str | None:
