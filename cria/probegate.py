@@ -68,6 +68,9 @@ class GatePlan:
     # Test-naming conventions cria searched by and found nothing for (probediscovery.undiscoverable_tests).
     # Computed with the selection, so the clean-gate render reads a fact instead of re-walking the tree.
     untested: list = field(default_factory=list)
+    # cria-facing observations about the PLAN itself (not about the repo) — currently only the
+    # shared-budget floor. Never shown to the model; it is a note for the log and the operator.
+    notes: list = field(default_factory=list)
 
 
 @dataclass
@@ -121,9 +124,21 @@ def plan_gate(workspace: str) -> GatePlan:
     # something must be deleted, cria deletes it itself, under the dirguard's bounds.
     if workspace:
         parts.append("__cria_pre=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
+    # ONE RESULT, SHARED BUDGET. Every probe below writes into the same shell result, and the bound
+    # that decides whether the model ever sees it is applied to that whole result — so the per-probe
+    # cap has to be this plan's share of it, not a constant. When each probe carried the full
+    # whole-result budget the gate reliably overran and was discarded, and cria then read its own
+    # refusal as the probe output. See proberun.probe_output_budget.
+    section_cap, fits = proberun.probe_output_budget(len(plan.candidates))
+    if not fits:
+        # Say it rather than starve the sections silently (#5b): the plan is asking one result to
+        # carry more than it can, and a reader of the log should see that, not a mysteriously
+        # clipped check.
+        plan.notes.append(f"gate plan has {len(plan.candidates)} probes sharing one result; "
+                          f"each section floored at {section_cap} bytes")
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
-        parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
+        parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S, cap=section_cap))
         if c.kind is probediscovery.ProbeKind.Test:
             # Remember THIS probe's exit code for the offline leg below. compose_probe_command
             # leaves it in __cria_ec, which the next probe overwrites, so it is captured here under

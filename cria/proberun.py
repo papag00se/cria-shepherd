@@ -128,6 +128,42 @@ DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 # six short lines and keeps the arithmetic obvious.
 PROBE_ENVELOPE_RESERVE_BYTES = 500
 PROBE_OUTPUT_CAP_BYTES = content_reduce.INLINE_RESULT_MAX_BYTES - PROBE_ENVELOPE_RESERVE_BYTES
+
+# ...AND DERIVED PER *RESULT*, NOT PER COMMAND. Deriving the number above from the bound fixed the
+# constant and left the arithmetic wrong, because a gate joins EVERY probe into ONE shell result and
+# the bound is applied to that one result. Six probes at 8,500 each cannot fit in 9,000, so the gate
+# went straight back to being discarded whole — and this time cria read its own refusal as the probe
+# output, recorded `ran = False`, and told its judge "PROBES: none ran" 5.24 seconds and 10,104 bytes
+# after one had. Measured over cycle 1 of the 100% campaign: refusals in 7 of 24 cells, every one in
+# a narrow band just over the bound (8,912–10,107 bytes); in `rust-toml-cli × ternary-bonsai` three
+# gates ran and not one `⟦ctx:checks⟧` block reached the model; in `orders-api-py × nemotron-elastic`
+# a fragment survived and cria reported "the repo's automated checks pass" 8 times while pytest was
+# red. One bound, two opposite falsehoods (docs/audits/cycle-1-walk.md).
+#
+# So the budget is SHARED and must be divided by however many probes are actually in the plan. Each
+# section still head+tails with its own disclosed marker, so nothing vanishes silently; what changes
+# is that the sum now fits by construction instead of by luck.
+#
+# MARKER_OVERHEAD_BYTES covers everything else riding in the same result and belonging to no probe's
+# budget: the per-section `___cria_probe-N___` echo lines, the litter listing, the git digest, and
+# the offline re-run leg, which is separately fixed at its own `tail -c 600`.
+MARKER_OVERHEAD_BYTES = 1100
+# A section smaller than this cannot carry a compiler diagnostic or a test tally, which is the whole
+# point of running the probe. Hitting the floor means the plan is asking one shell result to carry
+# more than it can — the honest response is a smaller plan, not a starved section, and
+# :func:`probe_output_budget` says so via `fits`.
+MIN_PROBE_SECTION_BYTES = 700
+
+
+def probe_output_budget(n_sections: int) -> tuple[int, bool]:
+    """Per-section byte budget when ``n_sections`` probes share ONE shell result, and whether the
+    plan fits. Returns ``(cap, fits)``; ``fits`` is False when the division fell to the floor, which
+    means the joined result may still exceed the bound and the caller should shrink the plan."""
+    if n_sections <= 0:
+        return PROBE_OUTPUT_CAP_BYTES, True
+    usable = content_reduce.INLINE_RESULT_MAX_BYTES - PROBE_ENVELOPE_RESERVE_BYTES - MARKER_OVERHEAD_BYTES
+    cap = usable // n_sections
+    return (max(cap, MIN_PROBE_SECTION_BYTES), cap >= MIN_PROBE_SECTION_BYTES)
 # Trailing sentinel that smuggles the probe's exit code through a text-only
 # shell-tool result; scrape_exit() recovers it.
 PROBE_EXIT_SENTINEL = "EXIT:"
@@ -643,7 +679,7 @@ def display_command(command) -> str:
     return shlex.join(command)
 
 
-def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
+def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None = None) -> str:
     """One shell line the harness executes in place of upstream's spawn.
 
     Every upstream host mechanic has a shell equivalent: current_dir -> ``cd
@@ -662,7 +698,10 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     if not c.command:
         raise ValueError(EMPTY_COMMAND_SUMMARY)
     argv = " ".join(shlex.quote(t) for t in c.command)
-    half = PROBE_OUTPUT_CAP_BYTES // 2
+    # `cap` is this SECTION's share of the one result every probe in the plan writes into; the
+    # default is the whole-result budget, for a caller composing a single probe on its own.
+    budget = PROBE_OUTPUT_CAP_BYTES if cap is None else max(int(cap), 1)
+    half = budget // 2
     # One physical shell line (no literal newlines — ``\\n`` are printf escapes): capture, then if the
     # byte size is within budget print it whole, else print the first half + an elided-count marker +
     # the last half, so BOTH an early and a late failure land in the parseable capture.
@@ -671,11 +710,11 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
         f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} "
         f"</dev/null 2>&1); __cria_ec=$?; "
         f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c | tr -cd '0-9'); "
-        f"if [ \"$__cria_n\" -le {PROBE_OUTPUT_CAP_BYTES} ]; then "
+        f"if [ \"$__cria_n\" -le {budget} ]; then "
         f"printf '%s\\n' \"$__cria_out\"; "
         f"else printf '%s' \"$__cria_out\" | head -c {half}; "
         f"printf '\\n...[middle %d bytes elided; head+tail kept so an early failure survives]...\\n' "
-        f"\"$((__cria_n - {PROBE_OUTPUT_CAP_BYTES}))\"; "
+        f"\"$((__cria_n - {budget}))\"; "
         f"printf '%s' \"$__cria_out\" | tail -c {half}; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
