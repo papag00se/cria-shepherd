@@ -25,7 +25,7 @@ judging. What each model does on its own.
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 100% | 50% | 100% | **85%** | 80.5 | 31 | 192 |
 | 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 80% | 0% | 100% | **67%** | 60.5 | 13 | 47 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% | 50% | 0% | **48%** | 42.2 | 23 | 54 |
-| 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 75% | 0% | 25% | 0% | **15%** | 132.6 | 26 | 92 |
+| 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% | 25% | 0% | **11%** | 130.1 | 24 | 88 |
 
 ## What the assists were worth
 
@@ -46,7 +46,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→71 | 21→21 |
 | orders-api-py | python | qwen35 | 50% | 50% | 0 | 76→131 | 20→29 |
 | orders-api-py | python | ternary-bonsai | 25% | 50% | **+25** | 66→92 | 31→47 |
-| orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→200 | 2→61 |
+| orders-api-py | python | nemotron-elastic | 25% | 50% | **+25** | 14→175 | 2→46 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→43 | 14→12 |
 | feed-pipeline-java | java | qwen35 | 40% | 100% | **+60** | 69→418 | 6→76 |
 | feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→43 | 16→16 |
@@ -87,7 +87,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | orders-api-py | python | ternary-bonsai | CRIA | 50% | 47 | 92 | 37.2 | milestone-miss-45min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
-| orders-api-py | python | nemotron-elastic | CRIA | 75% | 61 | 200 | 141.0 | milestone-miss-60min |
+| orders-api-py | python | nemotron-elastic | CRIA | 50% | 46 | 175 | 125.9 | milestone-miss-45min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
 | feed-pipeline-java | java | gemma4 | CRIA | 80% | 12 | 43 | 62.8 | exited |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |

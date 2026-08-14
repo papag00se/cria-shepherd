@@ -10,7 +10,7 @@ rewrites itself after every cell.
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 12 of 24 in flight. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 13 of 24 in flight. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -30,7 +30,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 9 | orders-api-py | gemma4 | **100%** | 0 | 21 | 71 | |
 | 10 | orders-api-py | qwen35 | 50% | −25 | 29 | 131 | model defect, reproduced: its `init()` runs `CREATE TABLE IF NOT EXISTS` (a no-op on the pre-migration database the checker supplies) then `UPDATE orders SET status=…` on a column that was never added — service exits 1, two checks die with it |
 | 11 | orders-api-py | ternary-bonsai | 50% | −25 | 47 | 92 | killed at 45 min for sitting below the floor. Scored 2 at the 15-, 30- and 45-minute marks and never moved. The route answers 200 but the body carries neither the items nor the total, and eleven of its own tests fail. The stuck detector fired three times and changed nothing — walk running |
-| 12 | orders-api-py | nemotron-elastic | | | | | |
+| 12 | orders-api-py | nemotron-elastic | 50% | −25 | 46 | 175 | same signature as cell 11: score frozen at 2 across all three milestones, killed at the 45-minute floor. `GET /customers/alice/orders` did not answer at all (status 0) and three of its own tests fail. Five oversize refusals in the same 8,935–10,103 byte band |
 | 13 | feed-pipeline-java | gemma4 | | | | | |
 | 14 | feed-pipeline-java | qwen35 | | | | | |
 | 15 | feed-pipeline-java | ternary-bonsai | | | | | |
@@ -66,6 +66,18 @@ Seeded from work already done; the walk phase appends to it.
 | — | 3 | calls the model made that never happened | open | |
 
 Ranks are assigned in the rank phase, once the walk has said how many cells each one cost.
+
+### Watching, not yet concluded
+
+- **The rumination rate change.** Aborts on the cells that have run under it are mostly down —
+  `orders-api-py × nemotron` 15/200 → 7/175, `cart-billing-go × nemotron` 6/124 → 2/51,
+  `orders-api-py × qwen35` 4/260 → 1/131 — and up on one, `shipping-rates-rb × nemotron` 3/77 → 4/57.
+  That is roughly what it was built to do. The four `feed-pipeline-java` cells are the real test and
+  they have not run yet this cycle; the 11-aborts-in-35-calls figure on that task predates the change
+  and says nothing about it.
+- **Aborts cluster on one model.** 24 of the 26 in the cycle so far are nemotron-elastic, which also
+  scores 0% in three of its four finished cells. Whether the guard is catching a model that genuinely
+  spirals or helping to sink it needs a read, not a count (#23b). Queued for the walk phase.
 
 ### Environment notes — established, deliberately NOT changed mid-cycle
 
