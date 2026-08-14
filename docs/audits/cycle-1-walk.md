@@ -588,3 +588,607 @@ and all of them are downstream of cria having no workspace-local route that the 
   and that command is the losing one on this box.
 - **Not a fix.** Installing the `bundle` binstub. The verifier never calls bundler, so it changes
   nothing about what the checks can see, and it changes the environment mid-campaign.
+
+---
+
+## orders-api-py_ternary-bonsai_codex_poff_1786682533
+
+Commit 0240a94. 93 calls, 45 min wall (killed at the milestone floor), 1,601,115 tokens, terminal
+`milestone-miss-45min`. Score 2/4 — `schema_migrated` and `sql_injection_fixed` passed;
+`customer_orders_route` failed (`-> 200, alice's items: False, total present: False`) and
+`integration_tests` failed (`suite: 11 failed; tests make real HTTP calls: True`). The same cell
+scored 3/4 last cycle.
+
+Shape of the run in one line: the model wrote all four changes correctly in the first six minutes
+except for one arithmetic slip in the new route, then spent thirty-eight minutes unable to see its
+own test failures because cria discarded the output of `pytest` — the coder's runs and cria's own
+gate script alike — and cria's compaction certified the broken route as working, so nobody looked
+at it again.
+
+**The clock, from the event log** (run start 04:42:13):
+
+| +time | call | what |
+|---:|---:|---|
+| 1m22 | 0009 | `context.self_compact` (13 turns → 4, step boundary) |
+| 5m07 | 0021 | periodic gate 1 — `ran: false, spoke: false` (its output was discarded) |
+| 6m56 | 0025 | `loop.wheel_spinning` #1 → steer at 0027 |
+| 19m39 | 0038 | periodic gate 2 — `ran: true, spoke: true` |
+| 22m52 | 0039 | `loop.wheel_spinning` #2, then `route.compaction` 3 s later |
+| 25m22 | 0047 | `loop.steer_roleplay_dropped`, canned fallback steer at 0048 |
+| 26m23 | 0059 | `loop.repetition` → steer at 0064 |
+| 28m58 | 0067 | periodic gate 3 — `ran: true, spoke: true` |
+| 33m40 | 0077 | `loop.wheel_spinning` #3 → steer at 0081 |
+| 38m34 | 0086 | periodic gate 4 — `ran: false, spoke: false` |
+| 45m00 | 0093 | killed mid-`write_file`; `[no response captured]` |
+
+Findings ranked worst first.
+
+---
+
+### 1. cria threw away every full test run in the session — the coder's and its own gate's — and the run never recovered
+
+**what happened.** `pytest` on the eleven failing integration tests prints ~10 KB. cria's oversize
+guard discards a result over 9,000 bytes whole and replaces it with a lecture. It fired 102 times in
+this run: 72 on cria's own composed gate script and 30 on the coder's own commands. Two of the four
+periodic gates therefore recorded the checks as **never having run**, and after call 0036 (six
+minutes in) the model never saw a full test result again.
+
+**cria fault: yes**
+
+**evidence.** The refusal, identical every time (call 0021, the first periodic gate):
+
+```
+Chunk ID: dd3e4e
+Wall time: 0.1823 seconds
+Process exited with code 0
+Original token count: 2389
+Output:
+[9,552 bytes over 231 lines — too much to return, so nothing is shown. Nothing was truncated: the
+command ran and its output was discarded, not cut. Ask it a smaller question and run it again…]
+```
+
+Every occurrence, by size and chunk id: `dd3e4e` 9,552 B (call 0021 gate), `7fbfc7` 9,325 B (gate
+before the compaction), `6e7569` **10,101 B** (call 0058 — the coder's own
+`python3 -m pytest tests/test_integration.py -v`, exit 1), `a5fa1f` 9,325 B (call 0064 gate),
+`acb807` 9,057 B (call 0081 gate), `633451` 8,912 B (call 0086 gate).
+
+The event log is unambiguous about the cost to cria's own instrument:
+
+```
+{"kind": "loop.periodic_gate_result", "ran": false, "spoke": false}   04:47:20  (+5m07)
+{"kind": "loop.periodic_gate_result", "ran": false, "spoke": false}   05:20:47  (+38m34)
+{"kind": "writeproxy.exec_output_bounded", "chars": 9656,
+ "cmd": "cd /tmp/suite-orders-api-py_ternary-bonsai_codex_poff_1786682533-ykre2pv6 || exi"}   ×72
+```
+
+**The arithmetic.** `proberun.PROBE_OUTPUT_CAP_BYTES = content_reduce.INLINE_RESULT_MAX_BYTES - 500`
+= 8,500, and `writeproxy._bounded_exec_result` refuses a result over `READ_INLINE_MAX` = 9,000. That
+derivation is exactly right **for one command**. But `probegate.py:154` does
+`plan.script = "\n".join(parts)` — this run's script carried **four** commands (compileall, pyflakes,
+pytest, the netns pytest re-run), each separately capped at 8,500:
+
+```
+… if [ "$__cria_n" -le 8500 ]; then printf '%s\n' "$__cria_out"; else … head -c 4250 … tail -c 4250 …
+```
+
+Four × 8,500 = 34,000 against a 9,000 bound. The derived cap is per-command; the refusal is
+per-result. `tests/test_cria_never_composes_a_probe_it_will_refuse.py` asserts
+`PROBE_OUTPUT_CAP_BYTES + PROBE_ENVELOPE_RESERVE_BYTES <= INLINE_RESULT_MAX_BYTES` — true, and still
+insufficient, because nothing bounds the join.
+
+**A → B → C.** A: the gate composes N probes into one shell result but budgets each one against the
+whole-result bound. B: the combined result trips the refusal, so cria's own gate reads its own
+refusal, finds no findings, and logs `ran: false`. C: the model, told three times to "fix what the
+checks report", is shown nothing; it re-runs the same command; the wheel-spin detector then fires on
+the repetition cria caused.
+
+**fixable at A? Yes, and precisely.** Budget the **script**, not the command: divide
+`PROBE_OUTPUT_CAP_BYTES` by the number of parts at composition time in
+`probegate.py`/`proberun.compose_probe_command`, or run one probe per tool call. The existing test
+should assert the property on the composed script with N parts, not on the constant.
+
+There is a second, separate half. The coder's own `pytest -v` at call 0058 asked for
+`max_output_tokens: 5000` and produced 3,117 tokens — inside its own request — and cria discarded it
+anyway, on a byte rule the model cannot see or plan around. The 2026-08-12 operator ruling (no
+elision on any path) makes this deliberate, and the exit status did survive. Recording it as the
+consequence, not as a violation: the one command in the run that would have told the model what was
+wrong is the command the guard ate, and it ate it four separate times.
+
+**principle.** #12 (surface the metric from the authoritative event — the gate surfaced *its own
+refusal*), #10 (verify by doing — the probe ran and cria could not read it), #16.
+
+---
+
+### 2. The compaction briefing certified the broken route as working, and nobody opened it again
+
+**what happened.** At call 0039 the compactor wrote that the new route "returns a JSON object with
+an `orders` array and a `total_value` field". No check had ever called that route. It returns
+`{"orders": [], "total_value": 0}` for every customer, because of a slice written at call 0016. That
+sentence then rode in `⟦ctx:continuation⟧` on every remaining turn, and `orders/app.py` was never
+edited again in the following 76 calls.
+
+**cria fault: yes**
+
+**evidence.** The briefing (call 0039, `[proxy]`):
+
+```
+1. **New route `GET /customers/<name>/orders`** — added in `orders/app.py`. It returns a JSON object
+   with an `orders` array and a `total_value` field (sum of quantity × unit_price for that customer).
+…
+4. **Parameterized queries** — every order lookup in `orders/db.py` now uses `?` placeholders …
+**Current state:**
+- `tests/test_db.py::test_create_and_get` — PASSED
+- All 11 tests in `tests/test_integration.py` … have not yet been run successfully
+```
+
+The compactor's own instruction, in the same prompt:
+
+```
+- Only state that tests PASS or the build WORKS if the transcript shows the check ACTUALLY RAN and
+  passed (a real command with passing output). If the coder merely ASSERTED success without a
+  passing run in the transcript, record it as an unverified claim … A confident claim is not a
+  passing test.
+```
+
+The transcript it was given contains exactly two runs of anything touching the route
+(`d363cd`, `e3c65d`), and both are eleven FAILED lines. The briefing carried the *test* failures
+forward honestly and turned the three *deliverables* into settled fact.
+
+What the sentence describes, on disk (`orders/app.py:26`):
+
+```python
+name = self.path[len("/customers/"):len("/customers/orders")-len("/orders")]
+```
+
+`len("/customers/")` is 11; `len("/customers/orders") - len("/orders")` is 17 − 7 = 10. The slice is
+`self.path[11:10]` — the empty string, for every request. `db.get_customer_orders("")` returns
+`{"orders": [], "total_value": 0}`, which is the verifier's
+`alice's items: False, total present: False`.
+
+The briefing's effect is visible in every later reader. Coder at call 0051, with the line on screen:
+*"The app.py already has the new route."* Reasoner at call 0062, with the line on screen:
+*"The code looks correct and complete — all four task requirements appear already implemented."*
+Reasoner at call 0079, with the line on screen: it goes straight to the conftest. Four readings of
+that line by three different seats, and none of them evaluated it.
+
+**A → B → C.** A: the compactor states a behavior no run has exercised. B: the claim is re-injected
+as the agent's own prior work on every turn (`⟦ctx:continuation⟧`, quoted verbatim at calls 0048 and
+0093), so items 1, 2 and 4 are closed and only the test wiring is open. C: 38 minutes of work on
+`conftest.py`, and the one deliverable that was actually broken is never touched.
+
+**fixable at A? Yes.** The evidence rule is written for *tests pass* and *the build works*; the
+compactor obeyed it for those two and then asserted a *route's response shape*, which is the same
+class of claim. Two changes: (a) extend the rule from "tests pass / build works" to any statement of
+what the code DOES — "describe by the file it lives in and the source you read it from, never by
+what it returns unless a run showed you"; (b) the briefing already says what remains — a deliverable
+whose only evidence is "I wrote it" belongs in the same "unverified claim" bucket the prompt already
+has words for.
+
+**principle.** #5b (cria states a fact about the world with nothing behind it), #13 (fail closed —
+an unverified deliverable is not done).
+
+---
+
+### 3. Wheel-spin steer #1 named the symbol, not the fault, and cost thirteen minutes
+
+**what happened.** The first unstick directive told the coder to change a function signature. The
+real fault was three lines away in `conftest.py`, in a file the reasoner never opened. The coder
+complied halfway, reintroduced the same undefined name, and the identical error came back for
+another thirteen minutes.
+
+**cria fault: yes**
+
+**evidence.** Trigger at call 0025 (`loop.wheel_spinning`, `writes: 5`, path
+`tests/test_integration.py`). The reasoner read lines 1–20 of that file and nothing else. Its
+directive, delivered at call 0027:
+
+```
+⟦ctx:steer⟧ Read tests/test_integration.py at lines 1–20. Line 10 has
+def _req(path, method="GET", body=None, port=http_port): but http_port is never defined as a Python
+variable — it's only a pytest fixture name in conftest.py . Fix the _req function by removing
+port=http_port from its signature so callers pass the port explicitly.
+```
+
+The coder's next act (call 0027 reasoning): *"The issue is that `http_port` is a pytest fixture, not
+a module-level constant. I need to fix the `_req` function to accept `port` as a required parameter
+and have tests pass it in via the fixture."* It removed the default, went back to bare `PORT` —
+undefined again — and added `http_port` to every test signature without passing it to `_req`. The
+next gate reports the same class of error, now on `PORT` instead of `http_port` (call 0067):
+
+```
+tests/test_integration.py:10:46: undefined name 'PORT'
+  the flagged line on disk — line 10: `def _req(path, method="GET", body=None, port=PORT):`
+```
+
+What the directive could have said is in the file the reasoner did not read. `conftest.py` at that
+moment:
+
+```python
+    port = 0
+    def wrapper():
+        _serve(port=port, path=test_db_path)
+    …
+    return port, event          # returns 0, never the port the OS actually bound
+```
+
+The steer prompt forbids exactly the move that was made:
+
+```
+- Do not choose the IMPLEMENTATION. Which library to use, which data structure, which flag, which
+  output format, which file to create — those belong to the TASK or to the coder, never to you. Say
+  what must become true and stop.
+```
+
+"Remove `port=http_port` from its signature" is a signature edit — the implementation. "The test
+client must be given the port the server actually bound to" is what must become true, and it points
+at the fixture.
+
+**A → B → C.** A: the reasoner diagnoses from the flagged line alone, because the trigger handed it
+one path and the lint finding names one line. B: it authors an edit to that line. C: the coder makes
+that edit, the symbol changes, the error does not, and the loop restarts.
+
+**fixable at A? Yes.** The trigger already knows the coder rewrote *one* file five times; the
+evidence bundle should include the file that file DEPENDS on when the failing name is defined there
+— the pyflakes finding says "undefined name 'http_port'" and `conftest.py` is the only file in the
+workspace that defines it. That is a deterministic join, not a judgment. Feed it, and the reasoner
+reads the fixture.
+
+**principle.** #2 corollary (cria does not author the work), #8 (the reasoner must be fenced to
+judging, and given the evidence to judge on).
+
+---
+
+### 4. Wheel-spin steer #2: eight reasoner calls, two and a half minutes, one canned sentence
+
+**what happened.** The second wheel-spin fired at 22m52. The reasoner spent calls 0040–0047 listing
+three directories and reading four files — including `app.py` with the broken slice — and never
+produced a directive. Twice it emitted a `<tool_call>` block as prose after being told to answer.
+cria dropped the second one and fell back to a generic message.
+
+**cria fault: yes**
+
+**evidence.** Call 0046, after `You have inspected enough. Answer NOW with the short unstick
+directive spoken to the coder ("You ..."), or EXACTLY the one word ON_TRACK`, the reasoner's whole
+answer is:
+
+```
+The tester has rewritten test_integration.py at least 5 times without convergence. Let me inspect
+the actual files on disk to understand the real state before directing next steps.
+
+<tool_call>
+<function=list_dir>
+<parameter=path>/tmp/suite-orders-api-py_ternary-bonsai_codex_poff_1786682533-ykre2pv6</parameter>
+</function>
+</tool_call>
+```
+
+cria answers `[not executed — no further inspection rounds]` and asks again. Call 0047 answers with
+another bare `<tool_call>`, and cria drops it:
+
+```
+{"level": "warn", "kind": "loop.steer_roleplay_dropped", "head": "<tool_call> </tool_call>"}
+{"kind": "loop.spin_probe_result", "spoke": true}        — same millisecond
+```
+
+What reached the model at call 0048 instead:
+
+```
+⟦ctx:steer⟧ you have rewritten `…/tests/test_integration.py` repeatedly — rewriting it again will
+not change the outcome. Stop and take a DIFFERENT next action: read the file as it is on disk right
+now, run the specific thing that's failing and read the actual error, or inspect the code you
+depend on. Then make one targeted change based on what you find.
+```
+
+That is the deterministic wheel-spin default, not the reasoner's judgment. The coder obeyed it
+literally and spent calls 0049–0057 re-reading `__init__.py`, `app.py`, `db.py`, `conftest.py`,
+`test_integration.py`, `test_db.py` and `README.md` — every one of which it had already read this
+session — then ran the tests and got the discard message (finding 1).
+
+**Was the drop right? Yes.** `<tool_call> </tool_call>` reaching the coder as a steer would be
+cria emitting the harness's own tool syntax into the model's context. The guard did its job.
+
+**The problem is what happened after the drop.** Principle #4's safe null is *inject nothing*; what
+fired is a canned imperative that reads exactly like a reasoned directive and carries no new
+information. Its three suggestions are the three things the coder had just done. The one thing this
+seat could have contributed — it had `app.py` open at call 0046 — it did not notice.
+
+**A → B → C.** A: the reasoner is bounded to N inspection rounds and, when it hits the bound
+mid-inspection, is asked for a verdict it has not formed. B: it answers with another tool call; cria
+drops it and speaks a canned line. C: 9 calls and ~4 minutes spent re-reading files, at 22–26 minutes
+into a 45-minute budget.
+
+**fixable at A? Yes, two ways, both cheap.** (a) When the inspection bound is reached, the "answer
+NOW" turn should be a *fresh* prompt with no tool schema attached — a reasoner that cannot see tools
+cannot call them (the classifier and steer-code roles already run this way, and neither ever emits a
+tool call). (b) When the authored directive is dropped, take the safe null: the deterministic
+detector fired on a real fact, but the sentence cria substitutes is not that fact — it is advice, and
+the model had already taken all of it.
+
+**principle.** #4 (a deterministic fallback behind a reasoner call), #21/#8 (the seat must be able to
+answer the question it is asked), #9 (a purposeful call is cheap — eight calls that author nothing
+are not).
+
+---
+
+### 5. The one steer that worked was the one that named cria's own defect
+
+**what happened.** The `loop.repetition` trigger produced the only directive in the run that moved
+the score-relevant work, and what it diagnosed was cria's output discard.
+
+**cria fault: none** (recorded because it is the counter-example that dates the others)
+
+**evidence.** Reasoner at call 0063, reasoning:
+
+> "The issue is that the integration tests are producing too much output and getting truncated, so
+> the coder can't see if they're passing or failing. They need to run a specific test with minimal
+> output to see what's happening."
+
+Delivered at call 0064:
+
+```
+⟦ctx:steer⟧ [REDIRECT]
+The coder is looping — re-running python3 -m pytest tests/test_integration.py -v 2>&1 repeatedly,
+getting truncated output each time with no visible results. They can't see whether any test passes
+or fails. **Run a single isolated test with minimal output to see the actual error:**
+cd … && python -m pytest tests/test_integration.py::test_post_order_creates_and_returns_id -v
+--tb=short 2>&1 | head -50 …
+```
+
+The coder ran it and, at call 0066, saw a real traceback for the first time since call 0036. From
+there it made genuine progress: `NameError: name 'PORT'` → `http_port = 0` → "The server fixture
+doesn't correctly capture the actual bound port" (call 0071) → a fixed port → `ss -tlnp` proving
+18080 was listening (call 0092).
+
+Two things to record about it. First, this directive **hands the coder a command to paste**, which
+its own prompt forbids and which the `steer-code` check exists to catch — and it is the directive
+that helped. Second, it is delivered in the third person about the coder, to the coder, tagged
+`[REDIRECT]`; the model read it as *"The user is pointing out that I'm looping"*. It worked, but that
+is the shape the roleplay guard drops elsewhere, and it passed through here.
+
+**fixable at A?** Nothing to fix in the steer. The finding is finding 1: the best thing the steer
+machinery did all run was route around cria's own guard.
+
+**principle.** none violated.
+
+---
+
+### 6. The model's own bug — the empty customer name — was seen by four readers and evaluated by none
+
+**what happened.** The route's path-slicing arithmetic is wrong in the very first write of
+`app.py` (call 0016) and is byte-identical in the final workspace. It is the whole of the
+`customer_orders_route` failure.
+
+**cria fault: none**
+
+**evidence.** Written at call 0016 and never changed:
+
+```python
+if self.path.startswith("/customers/") and self.path.endswith("/orders"):
+    name = self.path[len("/customers/"):len("/customers/orders")-len("/orders")]
+```
+
+Verifier detail: `GET /customers/alice/orders -> 200, alice's items: False, total present: False` —
+a 200 with an empty body is exactly what `name == ""` produces.
+
+The model's own test would have caught it
+(`test_get_customer_orders_returns_orders_and_total` asserts two orders and 22.50) — but that test
+never reached its assertions, because the server never started (finding 7). And the same call that
+wrote the slice also wrote `except (KeyError, TypeError, ValueErr)`, caught it one call later, and
+fixed it; the slice produced no error to catch.
+
+**The context that would have let it catch itself.** Nothing cria said, and one thing cria could
+have: the periodic gate runs `pytest` and nothing else. A gate that had ever *called the route* — a
+single `curl`-equivalent against the running service, the way `verify.py` does — would have printed
+`{"orders": [], "total_value": 0}` for `alice` and the model would have had a fact to work from
+instead of a fixture to fight. That is not a task-specific probe: "the project declares an entry
+point; start it and ask it for something" is as general as "run the tests". It is worth measuring
+before building (#15).
+
+**principle.** none violated by cria; #10 by omission — the gate verifies by running the tests, and
+the tests were the thing that could not run.
+
+---
+
+### 7. The fixture that starts the server is never requested by a single test
+
+**what happened.** After call 0083 the conftest is clean and correct in isolation: `stop_server`
+starts the app and waits for the port. No test asks for `stop_server`. Every test takes only
+`http_port`, which is a bare `return TEST_PORT`. So pytest never instantiates the fixture that
+starts anything, and all eleven tests die on connection refused.
+
+**cria fault: none**
+
+**evidence.** Final `tests/conftest.py`:
+
+```python
+@pytest.fixture(scope="session")
+def http_port():
+    return TEST_PORT              # 18080 — no server involved
+
+@pytest.fixture(scope="session")
+def stop_server(http_port, test_db_path):
+    …thread.start()…              # the only thing that starts the server
+```
+
+Final `tests/test_integration.py` — all eleven signatures are `def test_…(http_port):`.
+`.pytest_cache/v/cache/lastfailed` holds exactly those eleven names.
+
+The model proved the server works at call 0092 (`Port is LISTENING`, `ss` shows
+`127.0.0.1:18080 … python3`) and concluded *"The issue is timing — the test connects before the
+server thread finishes starting"*, then added a ten-attempt retry loop. Under pytest there was no
+server at all to be early for. It ran out of clock two calls later.
+
+**A → B → C.** A: the fixture that has the side effect is named for the teardown handle, not the
+setup. B: the tests request the port, which looks like the thing they need. C: the server is never
+started, and the model reads the resulting connection refusal as a race.
+
+**fixable at A?** Not at cria. The nearest general assist is finding 6's: a gate that exercises the
+service would have separated "the app doesn't work" from "your test harness doesn't start it".
+
+**principle.** none.
+
+---
+
+### 8. Twice the model found the real cause in its own words and lost it
+
+**cria fault: none** — recorded because it is the tell that separates "never found it" from
+"found it and dropped it" (#8, the method note).
+
+Call 0053, having just read the conftest:
+
+> "The conftest has a bug — it passes `port=port` (which is 0) but never actually sets PORT before
+> calling `_serve`. The server won't bind properly."
+
+It then read two more files and ran the tests instead of fixing it. Call 0036 had already shown it
+`http_port = 0` in the pytest failure header and it wrote a rewrite that changed neither.
+
+Call 0071 finds it again and this time acts:
+
+> "The problem: in `conftest.py`, `_serve(port=port, path=path)` — but `port` is 0 (the default).
+> The server binds to port 0 which means 'pick a random available port', but we never capture what
+> that port actually is."
+
+The fix it then wrote bound a second `HTTPServer` on the same port and left it running; it caught
+that itself at call 0075 (*"I'm starting two servers on the same port"*) and retreated to a fixed
+port. Real convergence, at 30 minutes, with 15 left.
+
+---
+
+### 9. Smaller things, in one place
+
+- **Two writes byte-identical to what was already on disk** (call 0030, call 0031) after the model
+  said "let me fix this properly". `loop.repetition` caught the second one. cria fault: none; the
+  note fired correctly.
+- **The repetition note was misread.** Call 0084 reasoning: *"I see the issue - I keep getting the
+  same output because the tool is caching my previous response."* The note says the call "returned
+  the exact same result every time"; the model concluded the tool caches. It did take a different
+  action, so no harm — but "it has told you everything it can" is being read as a statement about
+  the tool rather than about the repetition.
+- **The dirguard refusal fired twice on a mistyped workspace path** (`…ternary-bonsai_poff…`,
+  calls 0029 and 0081-era) and named both the real project directory and the bad path. The model
+  self-corrected each time. Working as intended; ~2 calls.
+- **The periodic gate says the same thing twice in one turn.** At calls 0038 and 0067 the tool
+  result carries `⟦ctx:checks⟧ …` and the very next user message is `⟦ctx:steer⟧ I am giving you the
+  CURRENT state of the repo …` containing the identical findings block. Two copies of the same four
+  lines. Noise, not a lie — but it doubles the most-repeated text in the window.
+- **Throughput collapsed with depth**: `⟦cria⟧ coder · ternary_bonsai_27b_q2_0 · 50 tok/s` at the
+  start, `· 3 tok/s` near the end. The last ten minutes of the run are eight calls. Any fix that
+  saves calls early is worth several late ones.
+
+---
+
+### 10. Recent fixes — did they behave?
+
+**Derived probe cap (`PROBE_OUTPUT_CAP_BYTES` from `INLINE_RESULT_MAX_BYTES`) — HALF-FIRED, and the
+half that missed cost the run.** The constant is in place and the composed script carries the right
+per-command arithmetic (`-le 8500`, `head -c 4250`). It still refused five gate results and logged
+`ran: false` twice, because `probegate.py:154` joins four commands into one result and only the
+result is bounded. This is finding 1 and it is the single highest-value fix on this walk.
+
+**Reasoning logged even on unfinished streams — HELPED.** 83 `coder.reasoning` events over 92
+completions, and the reasoning is present on turns that ended in prose as well as tool calls.
+Findings 2, 3, 6 and 8 are only provable from it — "the app.py already has the new route" (call
+0051) and "the conftest has a bug … port is 0" (call 0053) are both reasoning-only. Nothing was
+captured for the final call 0093, and that is because the process was killed mid-stream, not a
+capture failure.
+
+**Completion-judge "report, not an order" framing, and the verdict tool on the judge's menu — DID
+NOT FIRE.** Zero `loop.task_complete`, zero `loop.done_critic`, zero `loop.completion_probe` in the
+run window. The model never claimed to be finished, so the completion path was never exercised. No
+evidence either way from this cell.
+
+**Search results inlined rather than spilled — DID NOT FIRE.** No `web_search` or `web_fetch` in the
+run; the task needs no external source.
+
+**Cached-check age note — FIRED, on an empty section, twice.** Call 0077's reasoner prompt:
+
+```
+GROUND TRUTH FROM THE REPO'S CHECKS— these ran BEFORE the coder wrote …/tests/conftest.py,
+…/tests/test_integration.py, so they describe the code as it was, not as it is now:
+(no check results for this steer)
+```
+
+The age sentence is correct in form and is dating nothing — there are no results under it. Calls
+0040 and 0059 carry the same section with the same `(no check results for this steer)` and no age
+line at all. Two shapes for one empty section; the honest one is to say the section is empty and stop.
+Small, but it is the same family as finding 2 — a sentence emitted in cria's own voice with no
+referent.
+
+**`loop.steer_roleplay_dropped` — FIRED CORRECTLY, and what followed it did not.** See finding 4:
+dropping `<tool_call> </tool_call>` was right; substituting a canned directive for the dropped one
+was the miss.
+
+
+---
+
+## Cross-run — cria refuses its own gate's output
+
+Verified directly in the captures, not inferred. This is the top cria fault of cycle 1 and it is
+self-inflicted by the cycle's own probe-cap change.
+
+### What happens
+
+`probegate` composes ONE shell script holding several probes and caps each probe's output at
+`proberun.PROBE_OUTPUT_CAP_BYTES` = 8,500 (`INLINE_RESULT_MAX_BYTES` 9,000 minus a 500-byte
+envelope reserve). The harness runs the script and returns the JOINED result. That joined result is
+then measured by `writeproxy._bounded_exec_result` against `READ_INLINE_MAX` — the same 9,000.
+
+Two probes of 5 KB each clear the per-probe cap and blow the per-result bound, so cria discards its
+own gate output whole and hands the coder this instead:
+
+> `[9,552 bytes over 231 lines — too much to return, so nothing is shown. Nothing was truncated:
+> the command ran and its output was discarded, not cut. Ask it a smaller question and run it
+> again: send it to a file and search that …]`
+
+The coder did not write that command. cria wrote it. It cannot "ask it a smaller question", and the
+sentence is addressed to an author who is not there. The harness's own envelope on that same call
+reads `Original token count: 2389` — cria refused two and a half thousand tokens.
+
+### It is not catching floods
+
+Every refusal in the two runs where it fired sits within 12% of the bound:
+
+| run | refused results |
+|---|---|
+| `orders-api-py_ternary-bonsai_1786682533` | 9,552 · 9,325 · 10,101 · 9,057 · 8,912 bytes (194–248 lines) |
+| `orders-api-py_gemma4_1786679396` | 4 results, same band |
+
+231 lines of pytest output is an ordinary test run, not the 302,983-token flood the bound was
+written for. `10,101` was the coder's own `pytest`, discarded at the moment it most needed reading —
+eleven of its tests were failing.
+
+### And the two policies inside it contradict each other
+
+The gate script carries its own elision: `head -c 4250 … middle %d bytes elided … tail -c 4250`.
+That is truncation of model-read content, which the operator's 2026-08-12 ruling removed everywhere
+else — and the outer bound then refuses the elided result anyway. One composed result, truncated by
+one owner and refused by another.
+
+### A → B → C
+
+- **A** — two bounds derived independently: a cap applied PER PROBE, a bound applied PER RESULT, and
+  a gate that joins N probes into one result. Nothing reconciles them.
+- **B** — an ordinary gate run exceeds the bound and is discarded whole.
+- **C** — the coder never sees its failing tests, and cria never sees its own ground truth: two of
+  four periodic gates in that run recorded `ran: false, spoke: false`. The run spun 45 minutes on
+  a defect its own test output names.
+
+### Fixable at A? Yes.
+
+The per-probe cap must be derived from the bound the JOINED result will be measured against, across
+the probes actually in the plan — one owner computing both, not two constants that happen to share a
+parent. The gate's internal head+tail elision goes with it: cria bounding its own composed probe is
+allowed (#5's counter-nuance), but not in a way that leaves the outer owner refusing the result
+anyway.
+
+Principles: #10 (cria's own probe is the ground truth, and it was destroyed), #5b (a refusal
+instructing the coder to re-run a command it did not author), #12, #2.
+
+### Prevalence
+
+Distinct refusals across the 24 cycle-1 cells: 21, in 7 runs — `shipping-rates-rb × gemma4` (1),
+`orders-api-py × gemma4` (4), `orders-api-py × ternary-bonsai` (5), `feed-pipeline-java × gemma4`
+(2), `feed-pipeline-java × qwen35` (6), `rust-toml-cli × ternary-bonsai` (1),
+`rust-toml-cli × nemotron-elastic` (2). Not every run that hits it loses — two cells with refusals
+still scored 100% — so the refusal is a tax, not a guaranteed kill. It is above the prevalence bar
+either way, and the fix costs nothing anyone is relying on.
