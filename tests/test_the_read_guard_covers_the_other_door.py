@@ -25,6 +25,10 @@ distinct fact about the run, and usually the real answer to the question that pr
 """
 
 import unittest
+from unittest import mock
+import tempfile
+import re
+import os
 
 from cria import prompts, writeproxy
 from cria.writeproxy import READ_INLINE_MAX, _bounded_exec_result
@@ -53,21 +57,55 @@ class AnOversizedResultIsBoundedTests(unittest.TestCase):
         self.assertNotIn("SKU-00899", out)
 
     def test_it_says_nothing_was_cut(self):
-        """The distinction that makes it honest: discarded whole, not clipped."""
+        """The distinction that makes it honest: nothing dropped, and now nothing lost either."""
         out = _bounded_exec_result(result(900))
         self.assertIn("Nothing was truncated", out)
-        self.assertIn("discarded, not cut", out)
 
     def test_the_size_is_stated(self):
         out = _bounded_exec_result(result(900))
         self.assertRegex(out, r"[\d,]+ bytes over [\d,]+ lines")
 
-    def test_it_names_the_next_action(self):
-        """A refusal with no route is how the read guard would have failed too."""
-        out = _bounded_exec_result(result(900))
-        for route in ("grep", "> out.txt"):
-            with self.subTest(route=route):
-                self.assertIn(route, out)
+    def test_the_whole_output_is_saved_and_the_file_is_named(self):
+        """THE CHANGE. The refusal used to discard 24% of every command result in the corpus and
+        hand back only routes; `mvn -q compile` is 9,390 bytes against a 9,000 bound, so every Maven
+        run in one session was thrown away. The bound cannot move — it is derived from the harness's
+        own 10,000-byte per-output budget — so the output is spilled and the refusal names the file."""
+        with tempfile.TemporaryDirectory() as ws:
+            cwd = os.getcwd()
+            try:
+                os.chdir(ws)
+                out = _bounded_exec_result(result(900), "mvn -q compile")
+                m = re.search(r"(\./tmp/read-only/exec-[\w.-]+\.txt)", out)
+                self.assertIsNotNone(m, out)
+                self.assertTrue(os.path.exists(m.group(1)))
+                self.assertEqual(len(open(m.group(1)).read()), 900 * 22)
+            finally:
+                os.chdir(cwd)
+
+    def test_the_same_command_reuses_its_own_file(self):
+        """Stable naming, so a re-run overwrites instead of littering one file per attempt."""
+        with tempfile.TemporaryDirectory() as ws:
+            cwd = os.getcwd()
+            try:
+                os.chdir(ws)
+                _bounded_exec_result(result(900), "mvn -q compile")
+                _bounded_exec_result(result(900), "mvn -q compile")
+                self.assertEqual(len(os.listdir("./tmp/read-only")), 1)
+            finally:
+                os.chdir(cwd)
+
+    def test_it_names_grep_on_the_file_it_just_wrote(self):
+        """A refusal with no route is how the read guard would have failed too — but the route is
+        now the file that already exists, not a re-run the coder has to pay for."""
+        with tempfile.TemporaryDirectory() as ws:
+            cwd = os.getcwd()
+            try:
+                os.chdir(ws)
+                out = _bounded_exec_result(result(900), "mvn -q compile")
+                self.assertIn("grep", out)
+                self.assertIn("exec-mvn", out)
+            finally:
+                os.chdir(cwd)
 
     def test_it_no_longer_offers_head(self):
         """`| head -50` was on the list and is the one filter guaranteed to hide the answer: a
@@ -75,12 +113,30 @@ class AnOversizedResultIsBoundedTests(unittest.TestCase):
         filter's, in the same sentence that says the exit status is accurate (5b)."""
         self.assertNotIn("head -50", _bounded_exec_result(result(900)))
 
-    def test_it_warns_that_a_pipe_costs_the_exit_status(self):
-        self.assertIn("reports the LAST command's status", _bounded_exec_result(result(900)))
+    def test_the_exit_status_survives_either_way(self):
+        self.assertIn("Exit status is above and is accurate", _bounded_exec_result(result(900)))
 
-    def test_it_offers_counting_as_well_as_filtering(self):
-        """Often the question was "how many", which needs no output at all."""
-        self.assertIn("wc -l", _bounded_exec_result(result(900)))
+
+class WhenTheSpillCannotBeWrittenTests(unittest.TestCase):
+    """cria must never name a file it did not write (#5b). If the spill fails the refusal falls back
+    to the route-naming form, which is true with or without a file."""
+
+    def test_the_old_refusal_still_names_the_routes(self):
+        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
+            out = _bounded_exec_result(result(900), "mvn -q compile")
+        for route in ("grep", "> out.txt", "wc -l"):
+            with self.subTest(route=route):
+                self.assertIn(route, out)
+
+    def test_it_warns_that_a_pipe_costs_the_exit_status(self):
+        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
+            out = _bounded_exec_result(result(900), "mvn -q compile")
+        self.assertIn("reports the LAST command's status", out)
+
+    def test_it_names_no_file(self):
+        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
+            out = _bounded_exec_result(result(900), "mvn -q compile")
+        self.assertNotIn("read-only", out)
 
 
 class WhatMustPassThroughUntouchedTests(unittest.TestCase):

@@ -17,4 +17,6 @@
 
 exec = [{{BYTES}} bytes over {{LINES}} lines — too much to return, so nothing is shown. Nothing was truncated: the command ran and its output was discarded, not cut. Ask it a smaller question and run it again: send it to a file and search that (`> out.txt 2>&1` then `grep -n <what you are looking for> out.txt`), match it directly (`| grep <what you are looking for>`), or count instead of listing (`| wc -l`). Exit status is above and is accurate — but note that a `|` pipeline reports the LAST command's status, not your program's, so the file route is the one that keeps it.]
 
+exec_spilled = [{{BYTES}} bytes over {{LINES}} lines — too much to return whole, so the complete output was saved to {{TARGET}}, a path relative to the project directory you are working in. Nothing was truncated and nothing was dropped: every byte the command printed is in that file. Search it for what you need (`grep -n <what you are looking for> {{TARGET}}`), or read a line range from it. Exit status is above and is accurate.]
+
 list = [{{ENTRIES}} entries — too many to list, so nothing is shown. Narrow it: list a subdirectory instead, or match what you are after (`ls {{PATH}} | grep <name>`), or count first (`ls -1A {{PATH}} | wc -l`).]

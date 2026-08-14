@@ -37,6 +37,7 @@ silently.
 import unittest
 
 import tempfile
+from unittest import mock
 
 from cria import content_reduce, probegate, proberun, writeproxy
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
@@ -138,11 +139,22 @@ class TheRefusalPolicyIsUntouchedTests(unittest.TestCase):
     never elided. This change makes cria stop composing output it will refuse; it does not soften
     what happens when something else overruns."""
 
-    def test_an_oversized_result_is_still_refused_not_clipped(self):
+    def test_an_oversized_result_is_still_never_clipped_inline(self):
+        """The ruling is about ELISION, and elision is still absent: the inline answer carries no
+        slice of the output at all. What changed is that the whole of it is now saved and named
+        instead of discarded — paging and spill files, which is what the policy always said."""
         body = "Output:" + ("x" * (content_reduce.INLINE_RESULT_MAX_BYTES + 1000))
-        out = writeproxy._bounded_exec_result(body, "some command")
+        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
+            out = writeproxy._bounded_exec_result(body, "some command")
         self.assertIn("nothing is shown", out)
         self.assertNotIn("x" * 500, out)
+
+    def test_and_the_spilled_form_carries_no_slice_either(self):
+        body = "Output:" + ("x" * (content_reduce.INLINE_RESULT_MAX_BYTES + 1000))
+        with mock.patch("cria.writeproxy._spill_exec_output", return_value="./tmp/read-only/x.txt"):
+            out = writeproxy._bounded_exec_result(body, "some command")
+        self.assertNotIn("x" * 500, out)
+        self.assertIn("./tmp/read-only/x.txt", out)
 
     def test_a_result_within_the_bound_is_untouched(self):
         body = "Output:\nall good\n"

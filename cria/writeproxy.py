@@ -1212,9 +1212,48 @@ def _bounded_exec_result(content: str, command: str = "") -> str:
     env, sep, body = content.partition("Output:")
     if not sep:                        # no recognisable envelope — the whole thing is output
         env, body = "", content
-    note = prompts.fill(prompts.load_map("oversize_refusal")["exec"],
-                        bytes=f"{len(body):,}", lines=f"{len(body.splitlines()):,}")
+    # SPILL IT, THEN POINT AT IT. The refusal alone was measured discarding 24% of every command
+    # result in the cycle-1 corpus (1,179 results; p75 = 8,424 bytes, so the bound sits almost
+    # exactly at the third quartile of what real tools print). `mvn -q compile` is 9,390 bytes, so
+    # EVERY Maven run in one session was thrown away and the model saw its 18 compile errors once,
+    # by accident, when it happened to use bare javac.
+    #
+    # The bound itself is not the thing to move: it is derived from the harness's own 10,000-byte
+    # per-tool-output history budget, and anything above that is silently middle-cut in every later
+    # prompt — 166 measured cuts — which no context floor on cria's side can see or repair. Raising
+    # it trades a refusal cria controls for a truncation cria cannot.
+    #
+    # So this does what content_reduce's own docstring already says the policy is: "bounding is done
+    # by PAGING and spill files, never by dropping content". The full output goes to a file, the
+    # refusal NAMES that file, and the model greps it — the same route the refusal was already
+    # telling it to take, minus the re-run it used to cost. Nothing is elided inline, so the
+    # 2026-08-12 ruling is untouched.
+    target = _spill_exec_output(body, command)
+    key = "exec_spilled" if target else "exec"
+    note = prompts.fill(prompts.load_map("oversize_refusal")[key],
+                        bytes=f"{len(body):,}", lines=f"{len(body.splitlines()):,}",
+                        target=target or "")
     return (env + "Output:\n" + note) if sep else note
+
+
+def _spill_exec_output(body: str, command: str) -> str:
+    """Write an oversized command result to the read-only spill dir; return its path, or "" if it
+    could not be written.
+
+    Named from the COMMAND, so re-running the same thing overwrites its own file instead of littering
+    a new one per attempt — the same stable-name property the fetch spill has. Failure is silent and
+    returns "": the caller then emits the plain refusal, which is true either way. cria must never
+    name a file it did not write (#5b), so the path is returned only after the write succeeds."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", (command or "cmd").strip())[:48].strip("-") or "cmd"
+    digest = hashlib.sha1((command or "").encode()).hexdigest()[:8]
+    target = f"{webfetch.SPILL_DIR}/exec-{stem}-{digest}.txt"
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8", errors="replace") as fh:
+            fh.write(body)
+    except OSError:
+        return ""
+    return target
 
 
 def _blind_pipe_failure(command: str, content: str) -> bool:
