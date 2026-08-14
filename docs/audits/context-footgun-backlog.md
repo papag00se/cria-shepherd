@@ -1260,7 +1260,22 @@ stand as a note.
 - **Occurrences:** 2 · **Languages:** 1 (python) · **Models:** 2 (gemma4, nemotron-elastic)
 - **Fix belongs at:** the environment — RE-OPENED 2026-08-14, the `nothing-to-fix` call was wrong
 
-*Re-opened.* It happened again in cycle 1, `orders-api-py × nemotron-elastic`. Confirmed live while
+*CORRECTION 2026-08-14, and the re-open is withdrawn.* Measured rather than argued: the same
+workspace scored 2.0/4.0 on the host AND in an empty network namespace where 8081 was provably free —
+part for part identical. The collision cost the scoreboard nothing. The model's own tests fail with
+`Errno 98` regardless, because it starts three daemon-thread servers and never shuts them down. This
+entry's original `nothing-to-fix` was right.
+
+Also wrong in the text below: it credits cria's reasoner with naming the cause and unsticking the
+run. In the nemotron occurrence cria did the opposite — `0102-reasoner` told the coder to run
+`uvicorn orders.app:app --port 8081`, naming the occupied port and an ASGI command the stdlib seed
+cannot serve. That narrative belongs to the earlier gemma4 occurrence only.
+
+What the run DID cost, and nobody filed: it stopped the operator's systemd services six times
+(`pkill -f uvicorn`, `kill $(lsof -t -i :8081)`) and an unrelated service on port 9091 three more.
+Fixed — `dirguard.kill_refusal`.
+
+*Originally re-opened on the belief it happened again in cycle 1, `orders-api-py × nemotron-elastic`.* Confirmed live while
 writing this: `uvicorn` pid 479454 serving `app.compaction_main:app` on `127.0.0.1:8081` out of
 `/home/jesse/src/coding-agent-router`, started 23:21 on 2026-08-13 — during the campaign. The model
 tried four times to start its own service and never bound; every 404 it chased came from that

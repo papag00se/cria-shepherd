@@ -104,6 +104,40 @@ _LOCAL_INSTALL_SCOPE = re.compile(
     re.IGNORECASE)
 
 
+# A KILL THAT SELECTS BY PATTERN, NAME OR PORT reaches every matching process on the machine, not
+# just the ones this run started. Same hole `install_refusal` was written for and says so in its own
+# docstring: "the destination is decided by the environment, so there is no token to find". A path
+# scan sees nothing in `pkill -f uvicorn`, and there is nothing for it to see.
+#
+# MEASURED, orders-api-py x nemotron-elastic, cycle 1: the coder ran `pkill -f uvicorn` and
+# `kill $(lsof -t -i :8081)` and took down the OPERATOR'S systemd services six times, plus an
+# unrelated service on port 9091 three more. It was trying to free a port for its own server, which
+# is legitimate work — the selector was not.
+#
+# `kill <pid>` is untouched. A literal pid is a process the coder has identified, which is the whole
+# difference between stopping your own server and clearing the machine.
+_PATTERN_KILL = re.compile(
+    r"(?:^|[\s;&|(])(?:"
+    r"pkill\b|killall\b|fuser\b[^;&|]*\s-k\b|skill\b"
+    r"|kill\b[^;&|]*\$\("                       # kill $(lsof …) / kill $(pgrep …)
+    r"|kill\b[^;&|]*`"                            # backtick form
+    r")", re.IGNORECASE)
+
+
+def kill_refusal(command: str, level: str) -> str | None:
+    """The refusal for a kill whose SELECTOR is unbounded, or None. Allowed at ``write``, the level
+    that means the operator accepted an unrestricted process.
+
+    Deliberately NOT a security control — the same best-effort posture as the rest of raw-shell
+    handling, and the same reason: a weak model reaching past the workspace usually does it by
+    accident, and the cheapest fix is to say so at the moment it happens."""
+    if level == "write" or not command:
+        return None
+    if not _PATTERN_KILL.search(command):
+        return None
+    return prompts.load("pattern_kill_refusal")
+
+
 def install_refusal(command: str, level: str, workspace: str | None) -> str | None:
     """The refusal for an install whose destination is SHARED, or None when allowed.
 
@@ -378,6 +412,11 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     installing = install_refusal(command, level, workspace)
     if installing:
         return installing
+    # Same class, judged in the same place: a selector that reaches outside the workspace without
+    # naming a path, so the scan below can never see it.
+    killing = kill_refusal(command, level)
+    if killing:
+        return killing
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)
