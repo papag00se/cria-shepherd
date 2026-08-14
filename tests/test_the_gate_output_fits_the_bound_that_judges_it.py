@@ -134,31 +134,21 @@ class TheWholeGateFitsTests(unittest.TestCase):
         self.assertEqual(planned(2).notes, [])
 
 
-class TheRefusalPolicyIsUntouchedTests(unittest.TestCase):
-    """The operator's 2026-08-12 ruling stands: output that genuinely does not fit is REFUSED whole,
-    never elided. This change makes cria stop composing output it will refuse; it does not soften
-    what happens when something else overruns."""
+class TheInboundRefusalIsGoneAndTheOutboundCapRemainsTests(unittest.TestCase):
+    """The operator's 2026-08-12 ruling was about ELISION — never hand back a clipped view. It is
+    intact: cria still elides nothing on the way in. What went is the inbound REFUSAL, which was a
+    different thing wearing the same number, on a result the harness had already delivered whole.
 
-    def test_an_oversized_result_is_still_never_clipped_inline(self):
-        """The ruling is about ELISION, and elision is still absent: the inline answer carries no
-        slice of the output at all. What changed is that the whole of it is now saved and named
-        instead of discarded — paging and spill files, which is what the policy always said."""
+    The outbound cap this file exists for is untouched: cria still decides how much its OWN composed
+    probes print, which is the half of the number that was ever coherent."""
+
+    def test_the_coders_result_now_reaches_the_model_whole(self):
         body = "Output:" + ("x" * (content_reduce.INLINE_RESULT_MAX_BYTES + 1000))
-        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
-            out = writeproxy._bounded_exec_result(body, "some command")
-        self.assertIn("nothing is shown", out)
-        self.assertNotIn("x" * 500, out)
+        self.assertEqual(writeproxy._bounded_exec_result(body, "some command"), body)
 
-    def test_and_the_spilled_form_carries_no_slice_either(self):
-        body = "Output:" + ("x" * (content_reduce.INLINE_RESULT_MAX_BYTES + 1000))
-        with mock.patch("cria.writeproxy._spill_exec_output", return_value="./tmp/read-only/x.txt"):
-            out = writeproxy._bounded_exec_result(body, "some command")
-        self.assertNotIn("x" * 500, out)
-        self.assertIn("./tmp/read-only/x.txt", out)
-
-    def test_a_result_within_the_bound_is_untouched(self):
-        body = "Output:\nall good\n"
-        self.assertEqual(writeproxy._bounded_exec_result(body, "cmd"), body)
+    def test_the_gate_still_sizes_its_own_probes(self):
+        cap, _ = proberun.probe_output_budget(6)
+        self.assertIn(f"-le {cap}", planned(6).script)
 
 
 if __name__ == "__main__":

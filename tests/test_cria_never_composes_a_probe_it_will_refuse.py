@@ -55,10 +55,13 @@ class AMaximalProbeResultSurvivesTests(unittest.TestCase):
         out = writeproxy._bounded_exec_result(self.envelope("x" * proberun.PROBE_OUTPUT_CAP_BYTES))
         self.assertNotIn("too much to return", out)
 
-    def test_and_a_genuinely_oversized_one_still_is(self):
-        """The guard is not disabled — a coder command that floods is still refused."""
-        out = writeproxy._bounded_exec_result(self.envelope("x" * 40000))
-        self.assertIn("too much to return", out)
+    def test_and_a_genuine_flood_reaches_the_model_too_now(self):
+        """The inbound refusal is GONE — it ran on the wrong side of the wire, on a result the
+        harness had already captured and delivered, and it could not prevent the harness cut it was
+        named for. A flood is the context floor's problem, which is the one place window-fitting may
+        lose anything (#5), and `content_reduce` is the lossless-first owner above it."""
+        big = self.envelope("x" * 40000)
+        self.assertEqual(writeproxy._bounded_exec_result(big), big)
 
 
 class TheComposedProbeStillDisclosesItsOwnElisionTests(unittest.TestCase):

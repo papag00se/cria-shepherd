@@ -1190,70 +1190,39 @@ def _debinarized(content: str) -> str:
 
 
 def _bounded_exec_result(content: str, command: str = "") -> str:
-    """An oversized exec result → a REFUSAL naming its size and how to ask a smaller question.
+    """Returns ``content`` unchanged. THE INBOUND BOUND IS GONE — it was on the wrong side of the wire.
 
-    NO ELISION, NO TRUNCATION, ON ANY PATH (operator ruling, 2026-08-12). The first cut of this kept
-    a head and a tail and stated the loss; that is still a partial view the model reasons over as if
-    it held the relevant part, and disclosing the size does not make it actionable. read_file has
-    refused-and-redirected all along. This puts the coder's own shell on the same footing.
+    The story was: the harness truncates every tool result in its history at 10,000 bytes, so cria
+    must stay under it. The 10,000 is real (`TruncationPolicyConfig::bytes(10_000)`,
+    models-manager/src/model_info.rs:83 — the production profile for local models, not a test
+    fixture). Nothing after that held.
 
-    cria refuses a read_file over READ_INLINE_MAX and let a command printing 302,983 tokens through
-    untouched, because the guard was built for cria's synthetic tools and the harness's shell was
-    never on the same table. Measured across the battery: 71 of 538 command results exceed the limit
-    cria enforces on a file read, and the harness had ALREADY blind-clipped 10 of them. One 879-line
-    result answering "does it crash" pushed a session over the compaction trigger, destroyed the
-    finished step's notes, and was re-run identically six calls later.
+    THE DIRECTION IS WRONG. This ran inside :func:`represent_inbound`, on a result the HARNESS had
+    already run, already captured and already applied its own policy to. cria never writes the
+    harness's history, so refusing here cannot prevent a harness cut — it can only withhold from the
+    model what the harness successfully delivered. The number is coherent OUTBOUND, where cria
+    composes the command and decides how much it prints (`proberun.compose_probe_command`, the search
+    inline cap); those keep it.
 
-    THE EXIT STATUS SURVIVES. It is the harness's envelope, not a slice of the output — a distinct
-    fact about the run, and usually the actual answer to the question that produced the flood. What
-    is discarded is discarded whole, and the refusal says so: nothing was cut."""
-    if not content or len(content) <= READ_INLINE_MAX:
-        return content
-    env, sep, body = content.partition("Output:")
-    if not sep:                        # no recognisable envelope — the whole thing is output
-        env, body = "", content
-    # SPILL IT, THEN POINT AT IT. The refusal alone was measured discarding 24% of every command
-    # result in the cycle-1 corpus (1,179 results; p75 = 8,424 bytes, so the bound sits almost
-    # exactly at the third quartile of what real tools print). `mvn -q compile` is 9,390 bytes, so
-    # EVERY Maven run in one session was thrown away and the model saw its 18 compile errors once,
-    # by accident, when it happened to use bare javac.
-    #
-    # The bound itself is not the thing to move: it is derived from the harness's own 10,000-byte
-    # per-tool-output history budget, and anything above that is silently middle-cut in every later
-    # prompt — 166 measured cuts — which no context floor on cria's side can see or repair. Raising
-    # it trades a refusal cria controls for a truncation cria cannot.
-    #
-    # So this does what content_reduce's own docstring already says the policy is: "bounding is done
-    # by PAGING and spill files, never by dropping content". The full output goes to a file, the
-    # refusal NAMES that file, and the model greps it — the same route the refusal was already
-    # telling it to take, minus the re-run it used to cost. Nothing is elided inline, so the
-    # 2026-08-12 ruling is untouched.
-    target = _spill_exec_output(body, command)
-    key = "exec_spilled" if target else "exec"
-    note = prompts.fill(prompts.load_map("oversize_refusal")[key],
-                        bytes=f"{len(body):,}", lines=f"{len(body.splitlines()):,}",
-                        target=target or "")
-    return (env + "Output:\n" + note) if sep else note
+    AND IT WAS NOT HAPPENING. Zero harness cut markers across all 50 captured sessions, both marker
+    forms. The largest tool result cria has actually sent upstream is 160,447 bytes, intact — sixteen
+    times the limit it supposedly could not exceed.
 
+    THE JOB WAS ALREADY OWNED, TWICE. `content_reduce` is "MIME-aware, lossless-first reduction of a
+    single oversized tool output" — its own first line — and the context floor is the one place
+    window-fitting may lose anything (#5). A second, cruder owner answering by DISCARD is the
+    duplicate. A spill helper added here earlier the same day was a third naming-and-writing path
+    beside `_spill_name` and `search_spill_name`, and it wrote into the workspace from cria's own
+    process, which the other two deliberately avoid (#7). Both are gone.
 
-def _spill_exec_output(body: str, command: str) -> str:
-    """Write an oversized command result to the read-only spill dir; return its path, or "" if it
-    could not be written.
-
-    Named from the COMMAND, so re-running the same thing overwrites its own file instead of littering
-    a new one per attempt — the same stable-name property the fetch spill has. Failure is silent and
-    returns "": the caller then emits the plain refusal, which is true either way. cria must never
-    name a file it did not write (#5b), so the path is returned only after the write succeeds."""
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", (command or "cmd").strip())[:48].strip("-") or "cmd"
-    digest = hashlib.sha1((command or "").encode()).hexdigest()[:8]
-    target = f"{webfetch.SPILL_DIR}/exec-{stem}-{digest}.txt"
-    try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8", errors="replace") as fh:
-            fh.write(body)
-    except OSError:
-        return ""
-    return target
+    WHAT IT COST while it stood, from cycle 1 of the 100% campaign: 24% of all 1,179 command results
+    discarded — p75 of real output is 8,424 bytes, so the bound sat at the third quartile of normal.
+    The gate was blinded in 7 of 24 cells: twice reporting "the repo's automated checks pass" over a
+    red pytest, once telling its own judge "PROBES: none ran" 5.24 seconds after one had. A model
+    could not read its own 389-line source file by any route and went web-searching a `file://` URL.
+    And it is the first link in the chain that cost `cart-billing-go × nemotron-elastic` every check.
+    """
+    return content
 
 
 def _blind_pipe_failure(command: str, content: str) -> bool:

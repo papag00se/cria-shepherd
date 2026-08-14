@@ -1,197 +1,88 @@
-"""cria refuses a 9,001-byte file read and let a command print 302,983 tokens.
+"""The exec half of the read guard is GONE. The read half stays, and here is the line between them.
 
-`read_file` over `READ_INLINE_MAX` (9,000 bytes) is refused, with the coder told to grep or read a
-line range instead. The coder's own `exec_command` had no bound at all — the guard was built for
-cria's synthetic tools and the harness's shell was never on the same table.
+`read_file` and `list_dir` are commands **cria composes**: cria decides what they print, so a size
+guard in them keeps cria from ever asking the shell for more than it can hand over. That is outbound
+and it is coherent. Those tests are at the bottom of this file, unchanged, including the operator's
+2026-08-12 ruling that a size refusal must still exit 0 or a weak model reads it as "no such file".
 
-Measured across the battery: **71 of 538 command results (13%) are larger than the limit cria
-enforces on a file read**, and the harness had ALREADY blind-clipped 10 of them, stamping
-"Warning: truncated output" — the silent truncation principle 5 exists to prevent, arriving through
-a door cria was not watching.
+The other door was the coder's OWN command output, and cria bounded that too, at the same number.
+It should not have.
 
-The measured harm, gemma4's Java run: the coder wanted to know whether its importer crashed, ran it
-over the 120,000-row feed with per-item printing, and got 879 lines back. That pushed the session
-over the compaction trigger, which destroyed the notes of the step it had just finished. It then ran
-the identical command six calls later.
+  * WRONG SIDE OF THE WIRE. It ran in `represent_inbound`, on a result the harness had already run,
+    already captured and already applied its own truncation policy to. cria does not write the
+    harness's history, so refusing there cannot prevent a harness cut — only withhold from the model
+    what the harness successfully delivered.
+  * THE CUT WAS NOT HAPPENING. Zero harness truncation markers across all 50 captured sessions. The
+    largest tool result cria has actually sent upstream is 160,447 bytes, intact — sixteen times the
+    10,000-byte limit it supposedly could not exceed. The policy is real in the harness source; it is
+    not observably operating on this path.
+  * THE JOB WAS ALREADY OWNED. `content_reduce` opens "MIME-aware, lossless-first reduction of a
+    single oversized tool output", and the context floor is the one place window-fitting may lose
+    anything (#5). A second owner answering by DISCARD was the duplicate.
 
-NO ELISION AND NO TRUNCATION, ON ANY PATH (operator ruling). The first cut of this kept a head and
-a tail and stated the loss. That is still a partial view the model reasons over as if it held the
-relevant part, and stating the size of a clip does not make it actionable. read_file has
-refused-and-redirected all along; this puts the coder's own shell, and the directory listing, on the
-same footing.
-
-The exit status survives because it is the harness's envelope, not a slice of the output — a
-distinct fact about the run, and usually the real answer to the question that produced the flood.
+Cost while it stood, cycle 1 of the 100% campaign: 24% of 1,179 command results discarded (p75 of
+real output is 8,424 bytes — the bound sat at the third quartile of NORMAL); the gate blinded in 7 of
+24 cells, twice reporting "the repo's automated checks pass" over a red pytest; a model unable to
+read its own 389-line file by any route; and the first link in the chain that cost
+`cart-billing-go x nemotron-elastic` every check.
 """
 
-import unittest
-from unittest import mock
+import pathlib
 import tempfile
-import re
-import os
+import unittest
 
-from cria import prompts, writeproxy
+from cria import content_reduce, writeproxy
 from cria.writeproxy import READ_INLINE_MAX, _bounded_exec_result
 
 
 def result(n_lines: int, prefix: str = "SKU", exit_code: int = 0) -> str:
-    body = "\n".join(f"{prefix}-{i:05d} imported ok" for i in range(n_lines))
+    body = "\n".join(f"{prefix}-{i:05d}: 4326.28 processed ok" for i in range(n_lines))
     return f"Chunk ID: be2fc9\nWall time: 0.9s\nProcess exited with code {exit_code}\nOutput:\n{body}"
 
 
-class AnOversizedResultIsBoundedTests(unittest.TestCase):
-    def test_the_measured_case_shrinks(self):
-        out = _bounded_exec_result(result(879))
-        self.assertLess(len(out), READ_INLINE_MAX)
+class TheCodersOwnOutputIsNoLongerBoundedTests(unittest.TestCase):
+    def test_a_huge_result_passes_through_untouched(self):
+        """THE REMOVAL. 900 lines is ~19,800 bytes and used to come back as a refusal."""
+        big = result(900)
+        self.assertEqual(_bounded_exec_result(big, "mvn -q compile"), big)
 
-    def test_the_exit_code_survives(self):
-        """The most load-bearing line in any command result."""
-        out = _bounded_exec_result(result(900, exit_code=1))
-        self.assertIn("Process exited with code 1", out)
+    def test_the_measured_case_passes_through(self):
+        """`mvn -q compile` is 9,390 bytes on the java task — every Maven run in one session was
+        discarded, and the model saw its 18 compile errors once, by accident, via bare javac."""
+        body = "x" * 9390
+        r = f"Process exited with code 1\nOutput:\n{body}"
+        self.assertEqual(_bounded_exec_result(r, "mvn -q compile"), r)
 
-    def test_NO_output_survives_not_even_the_ends(self):
-        """The ruling: refuse, do not elide. A head and tail is still a partial view."""
-        out = _bounded_exec_result(result(900))
-        self.assertNotIn("SKU-00000", out)
-        self.assertNotIn("SKU-00450", out)
-        self.assertNotIn("SKU-00899", out)
-
-    def test_it_says_nothing_was_cut(self):
-        """The distinction that makes it honest: nothing dropped, and now nothing lost either."""
-        out = _bounded_exec_result(result(900))
-        self.assertIn("Nothing was truncated", out)
-
-    def test_the_size_is_stated(self):
-        out = _bounded_exec_result(result(900))
-        self.assertRegex(out, r"[\d,]+ bytes over [\d,]+ lines")
-
-    def test_the_whole_output_is_saved_and_the_file_is_named(self):
-        """THE CHANGE. The refusal used to discard 24% of every command result in the corpus and
-        hand back only routes; `mvn -q compile` is 9,390 bytes against a 9,000 bound, so every Maven
-        run in one session was thrown away. The bound cannot move — it is derived from the harness's
-        own 10,000-byte per-output budget — so the output is spilled and the refusal names the file."""
+    def test_nothing_is_written_to_the_workspace(self):
+        """A spill helper added here and removed the same day wrote into the workspace from cria's
+        own process — a third naming path beside `_spill_name` and `search_spill_name`, and the one
+        thing the other two deliberately avoid (#7)."""
+        self.assertFalse(hasattr(writeproxy, "_spill_exec_output"))
         with tempfile.TemporaryDirectory() as ws:
-            cwd = os.getcwd()
-            try:
-                os.chdir(ws)
-                out = _bounded_exec_result(result(900), "mvn -q compile")
-                m = re.search(r"(\./tmp/read-only/exec-[\w.-]+\.txt)", out)
-                self.assertIsNotNone(m, out)
-                self.assertTrue(os.path.exists(m.group(1)))
-                self.assertEqual(len(open(m.group(1)).read()), 900 * 22)
-            finally:
-                os.chdir(cwd)
-
-    def test_the_same_command_reuses_its_own_file(self):
-        """Stable naming, so a re-run overwrites instead of littering one file per attempt."""
-        with tempfile.TemporaryDirectory() as ws:
+            import os
             cwd = os.getcwd()
             try:
                 os.chdir(ws)
                 _bounded_exec_result(result(900), "mvn -q compile")
-                _bounded_exec_result(result(900), "mvn -q compile")
-                self.assertEqual(len(os.listdir("./tmp/read-only")), 1)
+                self.assertEqual(os.listdir("."), [])
             finally:
                 os.chdir(cwd)
 
-    def test_it_names_grep_on_the_file_it_just_wrote(self):
-        """A refusal with no route is how the read guard would have failed too — but the route is
-        now the file that already exists, not a re-run the coder has to pay for."""
-        with tempfile.TemporaryDirectory() as ws:
-            cwd = os.getcwd()
-            try:
-                os.chdir(ws)
-                out = _bounded_exec_result(result(900), "mvn -q compile")
-                self.assertIn("grep", out)
-                self.assertIn("exec-mvn", out)
-            finally:
-                os.chdir(cwd)
-
-    def test_it_no_longer_offers_head(self):
-        """`| head -50` was on the list and is the one filter guaranteed to hide the answer: a
-        runner prints its verdict LAST. It also replaces the program's exit status with the
-        filter's, in the same sentence that says the exit status is accurate (5b)."""
-        self.assertNotIn("head -50", _bounded_exec_result(result(900)))
-
-    def test_the_exit_status_survives_either_way(self):
-        self.assertIn("Exit status is above and is accurate", _bounded_exec_result(result(900)))
-
-
-class WhenTheSpillCannotBeWrittenTests(unittest.TestCase):
-    """cria must never name a file it did not write (#5b). If the spill fails the refusal falls back
-    to the route-naming form, which is true with or without a file."""
-
-    def test_the_old_refusal_still_names_the_routes(self):
-        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
-            out = _bounded_exec_result(result(900), "mvn -q compile")
-        for route in ("grep", "> out.txt", "wc -l"):
-            with self.subTest(route=route):
-                self.assertIn(route, out)
-
-    def test_it_warns_that_a_pipe_costs_the_exit_status(self):
-        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
-            out = _bounded_exec_result(result(900), "mvn -q compile")
-        self.assertIn("reports the LAST command's status", out)
-
-    def test_it_names_no_file(self):
-        with mock.patch("cria.writeproxy._spill_exec_output", return_value=""):
-            out = _bounded_exec_result(result(900), "mvn -q compile")
-        self.assertNotIn("read-only", out)
-
-
-class WhatMustPassThroughUntouchedTests(unittest.TestCase):
-    def test_a_small_result_is_identical(self):
+    def test_a_small_result_is_still_identical(self):
         small = result(5)
         self.assertEqual(_bounded_exec_result(small), small)
 
-    def test_a_result_at_the_limit_is_identical(self):
-        """Same constant as the read guard — one owner for 'too big to hand over'."""
-        body = "x" * (READ_INLINE_MAX - 100)
-        r = f"Process exited with code 0\nOutput:\n{body}"
-        self.assertEqual(_bounded_exec_result(r), r)
 
-    def test_a_few_very_long_lines_are_refused_too(self):
-        """Shape does not matter once it is over the limit — there is no clip to get wrong."""
-        r = "Process exited with code 0\nOutput:\n" + "\n".join(["y" * 5000] * 4)
-        out = _bounded_exec_result(r)
-        self.assertNotIn("yyyy", out)
-        self.assertIn("too much to return", out)
+class TheOutboundUseOfTheNumberSurvivesTests(unittest.TestCase):
+    """cria still caps what its OWN composed commands print. That is the coherent half."""
 
-    def test_an_empty_result_is_untouched(self):
-        self.assertEqual(_bounded_exec_result(""), "")
-
-    def test_output_with_no_envelope_is_still_refused(self):
-        out = _bounded_exec_result("\n".join(f"line {i}" for i in range(2000)))
-        self.assertLess(len(out), READ_INLINE_MAX)
-        self.assertIn("too much to return", out)
-        self.assertNotIn("line 1000", out)
-
-
-class ItUsesTheSameLimitAsTheReadGuardTests(unittest.TestCase):
-    def test_one_owner_for_the_size(self):
-        from cria import content_reduce
+    def test_the_read_guard_still_shares_the_constant(self):
         self.assertEqual(READ_INLINE_MAX, content_reduce.INLINE_RESULT_MAX_BYTES)
 
-    def test_the_refusals_live_in_a_prompt_file(self):
-        m = prompts.load_map("oversize_refusal")
-        for key in ("exec", "list"):
-            with self.subTest(route=key):
-                self.assertTrue(m.get(key, "").strip())
-
-    def test_neither_refusal_names_the_program(self):
-        for key, text in prompts.load_map("oversize_refusal").items():
-            with self.subTest(route=key):
-                self.assertNotIn("cria", text.lower())
-
-    def test_no_read_path_elides_any_more(self):
-        """The ruling applies to every path, so no composed read command may clip."""
-        import inspect
-        from cria import writeproxy as w
-        for fn in (w._list_command, w._read_command, w._ranged_read):
-            with self.subTest(fn=fn.__name__):
-                src = inspect.getsource(fn)
-                self.assertNotIn("head -c", src)
-                self.assertNotIn("tail -c", src)
+    def test_the_probe_composer_still_bounds_what_it_asks_for(self):
+        from cria import proberun
+        self.assertGreater(proberun.PROBE_OUTPUT_CAP_BYTES, 0)
+        self.assertLess(proberun.PROBE_OUTPUT_CAP_BYTES, content_reduce.INLINE_RESULT_MAX_BYTES)
 
 
 class ASizeRefusalExitsZeroTests(unittest.TestCase):
