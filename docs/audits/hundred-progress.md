@@ -10,7 +10,7 @@ rewrites itself after every cell.
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 13 of 24 in flight. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 14 of 24 in flight. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -31,7 +31,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 10 | orders-api-py | qwen35 | 50% | −25 | 29 | 131 | model defect, reproduced: its `init()` runs `CREATE TABLE IF NOT EXISTS` (a no-op on the pre-migration database the checker supplies) then `UPDATE orders SET status=…` on a column that was never added — service exits 1, two checks die with it |
 | 11 | orders-api-py | ternary-bonsai | 50% | −25 | 47 | 92 | killed at 45 min for sitting below the floor. Scored 2 at the 15-, 30- and 45-minute marks and never moved. The route answers 200 but the body carries neither the items nor the total, and eleven of its own tests fail. The stuck detector fired three times and changed nothing — walk running |
 | 12 | orders-api-py | nemotron-elastic | 50% | −25 | 46 | 175 | same signature as cell 11: score frozen at 2 across all three milestones, killed at the 45-minute floor. `GET /customers/alice/orders` did not answer at all (status 0) and three of its own tests fail. Five oversize refusals in the same 8,935–10,103 byte band |
-| 13 | feed-pipeline-java | gemma4 | | | | | |
+| 13 | feed-pipeline-java | gemma4 | 0% | −80 | 16 | 54 | its rewrite of `Importer.java` dropped the seed's first line, `package pipeline;`. The file still compiles — javac puts it in the default package — so nothing complained, and the checker's `import pipeline.Importer` then found nothing. All five checks died on one missing line; killed at the 15-minute floor. Walk running |
 | 14 | feed-pipeline-java | qwen35 | | | | | |
 | 15 | feed-pipeline-java | ternary-bonsai | | | | | |
 | 16 | feed-pipeline-java | nemotron-elastic | | | | | |
@@ -68,6 +68,12 @@ Seeded from work already done; the walk phase appends to it.
 Ranks are assigned in the rank phase, once the walk has said how many cells each one cost.
 
 ### Watching, not yet concluded
+
+- **A dropped declaration is silent in some languages and impossible in others.** Cell 13 lost
+  `package pipeline;` in a rewrite and scored 0%. Measured across every Java and Go workspace on
+  disk: 1 of 17 files, one run. Go never loses it because Go refuses to compile a file without one;
+  Java accepts the default package without a murmur. So the exposure is real but narrow, the cost
+  when it lands is the whole cell, and the bar to ADD a guard is high (#1). The rank phase decides.
 
 - **The rumination rate change.** Aborts on the cells that have run under it are mostly down —
   `orders-api-py × nemotron` 15/200 → 7/175, `cart-billing-go × nemotron` 6/124 → 2/51,

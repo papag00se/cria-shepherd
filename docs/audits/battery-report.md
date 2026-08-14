@@ -23,7 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 100% | 50% | 100% | **85%** | 80.5 | 31 | 192 |
-| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 80% | 0% | 100% | **67%** | 60.5 | 13 | 47 |
+| 🟠 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 0% | 100% | **52%** | 59.4 | 14 | 48 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% | 50% | 0% | **48%** | 42.2 | 23 | 54 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% | 25% | 0% | **11%** | 130.1 | 24 | 88 |
 
@@ -47,7 +47,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | qwen35 | 50% | 50% | 0 | 76→131 | 20→29 |
 | orders-api-py | python | ternary-bonsai | 25% | 50% | **+25** | 66→92 | 31→47 |
 | orders-api-py | python | nemotron-elastic | 25% | 50% | **+25** | 14→175 | 2→46 |
-| feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→43 | 14→12 |
+| feed-pipeline-java | java | gemma4 | 80% | 0% | **-80** | 18→54 | 14→16 |
 | feed-pipeline-java | java | qwen35 | 40% | 100% | **+60** | 69→418 | 6→76 |
 | feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→43 | 16→16 |
 | feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→35 | 4→17 |
@@ -89,7 +89,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
 | orders-api-py | python | nemotron-elastic | CRIA | 50% | 46 | 175 | 125.9 | milestone-miss-45min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |
-| feed-pipeline-java | java | gemma4 | CRIA | 80% | 12 | 43 | 62.8 | exited |
+| feed-pipeline-java | java | gemma4 | CRIA | 0% | 16 | 54 | 56.0 | milestone-miss-15min |
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | feed-pipeline-java | java | qwen35 | CRIA | 100% | 76 | 418 | 82.4 | budget-killed |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
