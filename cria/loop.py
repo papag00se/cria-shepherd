@@ -6623,6 +6623,19 @@ def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
     and negation handling is not duplicated here."""
     if ask is None or massage.is_truncated(comp):
         return None      # a cut reply is not a directive, and a cut trace is not a conclusion
+    # …AND A STREAM CRIA ITSELF KILLED IS NOT AN ANSWER. When a guard aborts a reply mid-stream there
+    # is no verdict to have been contradicted: cria stopped the model before it could give one. This
+    # ran anyway, and then cria narrated the corpse as a decision.
+    #
+    # Measured, nemotron-elastic/ruby 0048. cria's prompt to the recovery reasoner: "You were just
+    # asked whether a small coding model was stuck, and you answered with the single word ON_TRACK."
+    # The reply it refers to ended "reasoning stream ABORTED HERE by the rumination guard", with no
+    # content at all. The model never said ON_TRACK; cria did, on its behalf, and then built a steer
+    # on the answer it invented (#12 — every sentence cria says about an action comes from the event
+    # that produced it, and the abort IS the event here).
+    if comp.get("cria_rumination") or (comp.get("choices") or [{}])[0].get("finish_reason") == "rumination":
+        rlog.emit("loop.steer_rescue_skipped", level="info", why="stream aborted by a guard")
+        return None
     reasoning = _reasoning_of(comp)
     # `_reasoning_of` falls back to `content` for a model with no separate channel (principle 19). If
     # that IS the answer we already read, there is no second signal here and nothing to recover.
@@ -7495,9 +7508,23 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
                                  (f"fetching {url} — the source this task names, read it directly"
                                   if on_target else
                                   f"'{query}' looked off-target for this task — fetching {url} instead"))
-    search_tc["function"] = {**(search_tc.get("function") or {}), "arguments": json.dumps({"query": rec})}
-    _add_note(coder, f"'{query}' looked off-target for this task — searching '{rec}' instead")
-    rlog.emit("loop.search_query_judged", action="requery", query=query, rec=rec)
+    # SURFACE, DO NOT SUBSTITUTE. This rewrote the coder's own search arguments in place, so the
+    # question the coder actually asked was never asked at all — and cria's replacement became the
+    # record held against it. Doctrine #2's corollary states the rule outright: "cria never
+    # SUBSTITUTES its own action for the coder's: surface the fact, steer, and let the coder act."
+    #
+    # Measured, nemotron-elastic/rust 0006. The plan step in flight was "Read the crates.io TOML
+    # crate documentation"; the judge reasoned "That seems off-target: they need to write a tool, not
+    # search docs", and cria searched "rust toml dotted key path command line tool" instead. The
+    # documentation the step asked for was never fetched, and the saved results held 20 finished
+    # tools rather than the API the coder needed.
+    #
+    # The coder's search runs. cria says what it thinks and lets the coder decide — which is also the
+    # only version that survives the judge being wrong, and here the judge was wrong because it was
+    # never told what step was in flight.
+    _add_note(coder, f"'{query}' may be off-target for this task — '{rec}' would search for what the "
+                     f"task actually needs. Your search runs either way; re-run it with that if you agree.")
+    rlog.emit("loop.search_query_judged", action="noted", query=query, rec=rec)
     return coder
 
 

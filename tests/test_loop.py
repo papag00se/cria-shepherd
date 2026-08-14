@@ -4107,13 +4107,21 @@ class SearchJudgeTests(unittest.TestCase):
         self.assertEqual(self._fn(out)["name"], "web_search")          # the coder's own search runs
         self.assertNotIn("totally-invented", self._fn(out)["arguments"])
 
-    def test_off_target_query_with_terms_rec_is_requeried(self):
+    def test_off_target_query_is_NOTED_not_rewritten(self):
+        """SURFACE, DO NOT SUBSTITUTE (#2's corollary). This used to replace the coder's search
+        arguments, so the question the coder asked was never asked and cria's replacement became the
+        record held against it. nemotron-elastic/rust 0006: the step in flight was "Read the
+        crates.io TOML crate documentation", the judge called that off-target, and cria searched
+        "rust toml dotted key path command line tool" instead — the documentation was never read.
+
+        The coder's search runs; the better query is offered as a note it can act on."""
         from cria.loop import guard_search_query, GuardState
         out = guard_search_query(GuardState(), self._search("random cardano stuff"), self._body(),
                                  self._reasoner({"on_target": False, "recommendation": "api.handle.me handles endpoint"}),
                                  self._role(), _Rlog())
         self.assertEqual(self._fn(out)["name"], "web_search")
-        self.assertEqual(json.loads(self._fn(out)["arguments"])["query"], "api.handle.me handles endpoint")
+        self.assertEqual(json.loads(self._fn(out)["arguments"])["query"], "random cardano stuff")
+        self.assertIn("api.handle.me handles endpoint", json.dumps(out))
 
     def test_on_target_query_untouched_and_verdict_cached(self):
         from cria.loop import guard_search_query, GuardState
@@ -6415,3 +6423,62 @@ class TheStruggleFilterDoesNotCountTheTaskTests(unittest.TestCase):
     def test_a_short_window_still_never_fires(self):
         from cria.loop import _flail_candidate
         self.assertFalse(_flail_candidate(["stuck, failed, error"], self.TASK))
+
+
+class CriaDoesNotNarrateItsOwnAbortAsAnAnswerTests(unittest.TestCase):
+    """The ON_TRACK rescue ran on replies cria had killed mid-stream.
+
+    When a guard aborts a reply there is no verdict to have been contradicted — cria stopped the
+    model before it could give one. The rescue ran anyway, and cria then told its recovery reasoner
+    what the model had "answered".
+
+    nemotron-elastic/ruby 0048. cria's prompt: "You were just asked whether a small coding model was
+    stuck, and you answered with the single word ON_TRACK." The reply it refers to ended "reasoning
+    stream ABORTED HERE by the rumination guard", with no content at all. cria supplied the ON_TRACK
+    itself and then built a steer on it (#12: the sentence must come from the event, and the abort
+    IS the event).
+    """
+
+    class _R:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, k, **kw):
+            self.events.append((k, kw))
+
+    def aborted(self):
+        return {"choices": [{"message": {"content": "",
+                                         "reasoning_content": "I am stuck and cannot proceed"},
+                             "finish_reason": "rumination"}],
+                "cria_rumination": {"hits": 9}}
+
+    def live(self):
+        return {"choices": [{"message": {
+            "content": "ON_TRACK",
+            "reasoning_content": "the coder is stuck and needs help; I should say so"},
+            "finish_reason": "stop"}]}
+
+    def test_an_aborted_stream_recovers_nothing(self):
+        from cria.loop import _steer_from_reasoning
+        self.assertIsNone(_steer_from_reasoning(self.aborted(), "ON_TRACK",
+                                                lambda s: "do X now", self._R()))
+
+    def test_and_says_why_it_declined(self):
+        from cria.loop import _steer_from_reasoning
+        rlog = self._R()
+        _steer_from_reasoning(self.aborted(), "ON_TRACK", lambda s: "do X now", rlog)
+        self.assertIn("loop.steer_rescue_skipped", [k for k, _ in rlog.events])
+
+    def test_a_real_contradiction_is_still_rescued(self):
+        """The mechanism this guard protects: a model whose thinking says stuck and whose answer
+        says ON_TRACK. Ten of those in one run."""
+        from cria.loop import _steer_from_reasoning
+        out = _steer_from_reasoning(self.live(), "ON_TRACK",
+                                    lambda s: "read cart.go and fix line 12 now", self._R())
+        self.assertIn("cart.go", out)
+
+    def test_a_finish_reason_of_rumination_alone_is_enough(self):
+        from cria.loop import _steer_from_reasoning
+        comp = self.aborted()
+        comp.pop("cria_rumination")
+        self.assertIsNone(_steer_from_reasoning(comp, "ON_TRACK", lambda s: "do X", self._R()))
