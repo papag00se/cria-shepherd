@@ -72,6 +72,32 @@ Caveat stated rather than buried: the BASE rows were earned earlier on an older 
 is two code states, not a controlled A/B. A −60 and a −80 are not noise, and every cause here is
 read from the captures rather than inferred from the delta.
 
+### Verdict on the fixes landed BEFORE this cycle
+
+Two different questions get confused here, so both are answered separately.
+
+**Question 1 — were the fixes we landed worth it?** Three clear keepers, three that need correcting,
+three that should be examined for removal. Nothing to revert.
+
+| fix | verdict | what the walks saw |
+|---|---|---|
+| reasoning logged on unfinished streams | **KEEP — the best fix of the batch** | named helping or decisive in most walks; several findings were only diagnosable because of it. One gap: a killed run still loses its last reasoning |
+| rumination rate change | **KEEP** | guard right 5/5 in the Rust cell, 4/4 in Ruby; aborts down on every cell that ran under it |
+| the p4 task-prompt corrections | **KEEP** | +75, +50, +50 — the three biggest gains in the cycle |
+| derived probe output cap | **CORRECT IT** | this is rank 1. The intent was right and the arithmetic was wrong: 8,500 per command against a 9,000 bound applied to all the commands at once |
+| search inlining | **CORRECT IT** | titles inline was right; the note still ends "the file named above" with no file named above — third cell |
+| PATH oracle | **CORRECT IT** | right idea, `bash -lc` should be `-lic`; misses every version manager |
+| cheap `mvn compile` probe | **CORRECT IT** | helped early in one cell, reported green over a no-op in two others |
+| cached-check age note | **EXAMINE FOR REMOVAL** | "fired in form, dated nothing" — five cells running, never once acted on by a steer author |
+| verdict tool | **EXAMINE** | fired in a minority of chances; once ended a run cleanly, once malformed its own arguments |
+| completion-judge report framing | **EXAMINE** | mostly nothing; stopped the model damaging working code once, hurt once |
+
+**Question 2 — are the standing assists worth having?** That is what the control walk asked, and it is
+about the machinery that predates this cycle, not the fixes above. Its answer: of every injection in
+two winning runs, only the **gate** demonstrably changed the outcome, and only when its report was the
+only copy of the finding. The rest confirmed or cost calls. That is an argument for **pruning**, which
+principle 1 already says is the safe direction — not for reverting this cycle's work.
+
 ### Findings ledger — cycle 1
 
 Seeded from work already done; the walk phase appends to it.
