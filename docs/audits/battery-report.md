@@ -22,7 +22,7 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟢 qwen35 | 100% (+40) | 100% (+20) | 75% | 100% | 50% | 100% | **89%** | 81.1 | 37 | 213 |
+| 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 100% | 50% | 100% | **85%** | 80.5 | 31 | 192 |
 | 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 80% | 0% | 100% | **67%** | 60.5 | 13 | 47 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 75% | 0% | 50% | 0% | **52%** | 43.4 | 25 | 60 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 75% | 0% | 25% | 0% | **15%** | 132.6 | 26 | 92 |
@@ -31,7 +31,7 @@ judging. What each model does on its own.
 
 Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain
 bought with 15× the calls is not the same result as one bought with fewer
-(`docs/battery-goal.md`).
+(`docs/goals/battery-goal.md`).
 
 | task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|---|
@@ -44,7 +44,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | ternary-bonsai | 0% | 100% | **+100** | 21→54 | 16→16 |
 | cart-billing-go | go | nemotron-elastic | 0% | 0% | 0 | 6→51 | 7→16 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→71 | 21→21 |
-| orders-api-py | python | qwen35 | 50% | 75% | **+25** | 76→260 | 20→61 |
+| orders-api-py | python | qwen35 | 50% | 50% | 0 | 76→131 | 20→29 |
 | orders-api-py | python | ternary-bonsai | 25% | 75% | **+50** | 66→124 | 31→61 |
 | orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→200 | 2→61 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→43 | 14→12 |
@@ -83,7 +83,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | gemma4 | BASE | 100% | 21 | 32 | 57.3 | exited |
 | orders-api-py | python | gemma4 | CRIA | 100% | 21 | 71 | 58.7 | exited |
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
-| orders-api-py | python | qwen35 | CRIA | 75% | 61 | 260 | 81.6 | milestone-miss-60min |
+| orders-api-py | python | qwen35 | CRIA | 50% | 29 | 131 | 77.9 | exited |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
 | orders-api-py | python | ternary-bonsai | CRIA | 75% | 61 | 124 | 44.2 | milestone-miss-60min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
@@ -116,7 +116,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 <!-- NOTES — hand-written, preserved across regeneration -->
 ## Instrument fixes made during the baseline arm
 
-The baseline arm doubles as the shakedown (`docs/battery-goal.md`). Three faults surfaced, all in
+The baseline arm doubles as the shakedown (`docs/goals/battery-goal.md`). Three faults surfaced, all in
 the instruments rather than the models, and all three had been silently scoring runs wrong.
 
 - **`shipping-rates-py` verify.py demanded byte-identical seed tests** while its own prompt says
@@ -138,7 +138,7 @@ the instruments rather than the models, and all three had been silently scoring 
   the assists can avoid making it worse, not whether they help.
 - **qwen35 emits its XML dialect in roughly 70% of calls** — 115 of 163 on `orders-api-py` were
   recovered from the reasoning channel, none rejected. Dialect recovery is load-bearing for this
-  model in BOTH arms, which is why `docs/battery-goal.md` keeps it in the baseline.
+  model in BOTH arms, which is why `docs/goals/battery-goal.md` keeps it in the baseline.
 - **qwen35's 1/4s are genuine.** On `orders-api-py` it worked the full 31 minutes, edited `app.py`
   and `db.py` and wrote `tests/test_http.py`, and landed only the SQL-injection fix. Real work,
   wrong results — not a lost-call artifact.
@@ -519,7 +519,7 @@ the EU list the prompt told it not to hand-roll. The assists made it finish what
 did not make it follow an instruction it had ignored.
 
 **The price is the headline's other half.** 124 calls against 26, 37.5 minutes against 3.2 — five
-times the calls and twelve times the clock for +40 points. Per `docs/battery-goal.md` that is the
+times the calls and twelve times the clock for +40 points. Per `docs/goals/battery-goal.md` that is the
 weaker kind of gain, and it has to be said next to the number rather than under it. Whether it is
 worth it depends on what a run costs; what is NOT in doubt is that the gain landed where the
 baseline said the weakness was.

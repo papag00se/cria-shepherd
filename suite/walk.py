@@ -4,7 +4,7 @@
 Why this exists: a walk done through an ad-hoc digest script silently cut reasoning at a few
 hundred characters and tool arguments shorter still, and two real defects (a file the run DID
 create, and the harness's "unsupported call" replies) were invisible in the cut. The walk doctrine
-(docs/regression-goal.md) says "read EVERY call in order — no grep, no sampling"; this tool is the
+(docs/goals/regression-goal.md) says "read EVERY call in order — no grep, no sampling"; this tool is the
 one permitted way to materialize a capture for that reading, and it NEVER truncates content.
 
 For each call NNNN-<phase> in the capture directory it prints:

@@ -152,7 +152,7 @@ The deterministic "request always fits the window" guarantee is **built and live
 Confirm each from logs before acting; assume nothing.
 
 ## Deliverable — the Report (update continuously)
-Maintain `docs/compaction-live-report.md`. Per model: whether the context floor held (no overflow)
+Maintain `docs/goals/compaction-live-report.md`. Per model: whether the context floor held (no overflow)
 across the run, the sessions run, every issue (with log evidence), its root cause, the fix applied
 (file + change), and recommended fixes for anything unresolved. Also capture how each model did on
 the actual Ada Handle task — did it produce working code/tests/README, or where did it break.

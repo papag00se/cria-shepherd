@@ -77,6 +77,6 @@ question about a prompt or a setting costs minutes instead of a run.
 | `ask_shape.py` | does a wording change hold across the whole fleet? (swaps models via systemd) |
 
 Score with cria's real parser, never a lookalike, and never act on n<12 — both mistakes produced
-false findings. See `docs/matrix-goal.md` for the full method and what is already settled.
+false findings. See `docs/goals/matrix-goal.md` for the full method and what is already settled.
 
 **Evidence preservation (operator directive 2026-07-29):** every run archives its workspace to `~/.cria/suite/<run_id>/`; the row records `archive`, `capture_dir` (the per-call evidence), and `harness_log`. Nothing there is cleaned until reviewed — the logs are the raw material for the next round of cria improvements.

@@ -4,8 +4,8 @@ The single source of truth for work that is **undecided or unbuilt right now**. 
 decisions land and items ship. Grew out of the 2026-07-18 routes/naming/reasoning discussion.
 
 **Where the rest is tracked (so nothing feels lost):**
-- [docs/work-plan.md](work-plan.md) — the `/goal` wave (Epics A/B/C). **COMPLETE.**
-- [docs/port-fidelity-audit.md](port-fidelity-audit.md) — older port gaps (the former `DEFERRALS.md`
+- [docs/goals/work-plan.md](goals/work-plan.md) — the `/goal` wave (Epics A/B/C). **COMPLETE.**
+- [docs/audits/port-fidelity-audit.md](audits/port-fidelity-audit.md) — older port gaps (the former `DEFERRALS.md`
   was merged in here, commit `5be0f9f`).
 - This file — the live themes below.
 
@@ -50,7 +50,7 @@ invariants held: (1) the off-ramps (stall-terminate / satisfaction / done-critic
 (3) synthetic session persists on stable `sid:` keys, **ephemeral** on unstable `task:` keys.
 The shell-tool decline is gated to planner-ON (else the synthetic path would lose its guards).
 
-- [x] Design pass → `docs/route-unify-plan.md`.
+- [x] Design pass → `docs/goals/route-unify-plan.md`.
 - [x] Phase 1 synthetic framing; Phase 2 relocate into `Loop`; Phase 3 creation + persistence;
       Phase 4 flip dispatch + delete plan-off path; Phase 5 remove dead `GuardStore`.
 - [x] 944 tests; **live smoke**: a coding turn drove `loop.start synthetic=true steps=1`, ZERO

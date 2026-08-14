@@ -3,7 +3,7 @@
 
 Reads `suite/results/results.jsonl` and nothing else. Not a conversation, not a memory, not a
 report someone typed. Whatever it prints under `NEXT:` is the next action; when a chat message and
-this tool disagree, this tool is right. `docs/battery-goal.md` is the campaign it drives.
+this tool disagree, this tool is right. `docs/goals/battery-goal.md` is the campaign it drives.
 
 THE QUESTION: for four models across six tasks, what does the same model score with cria DRIVING
 versus with cria only PLUMBING? Nothing in this project has ever measured what the assists are
@@ -244,7 +244,7 @@ def report(rs: list[dict]) -> str:
         out += ["", "## What the assists were worth", "",
                 "Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain",
                 "bought with 15× the calls is not the same result as one bought with fewer",
-                "(`docs/battery-goal.md`).", "",
+                "(`docs/goals/battery-goal.md`).", "",
                 "| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |",
                 "|---|---|---|---|---|---|---|---|"]
         for t, m, b, c in pairs:
@@ -329,7 +329,7 @@ def main() -> int:
                   f"({len(have)} baseline runs, every one 0/4 — prove the verifier is satisfiable)")
             print(f"      read suite/tasks/{task}/verify.py against suite/tasks/{task}/prompt.txt,")
             print(f"      then solve it by hand in a copy of the seed and score that. See the")
-            print(f"      'largely unproven' section of docs/battery-goal.md.")
+            print(f"      'largely unproven' section of docs/goals/battery-goal.md.")
             return 1
 
     # A CRIA run that LOST to its BASE twin is the campaign's whole point; walk it before running more.
@@ -346,7 +346,7 @@ def main() -> int:
                 return 1
 
     if not todo:
-        print("\nNEXT: NOTHING — campaign complete. Write the closing summary per docs/battery-goal.md.")
+        print("\nNEXT: NOTHING — campaign complete. Write the closing summary per docs/goals/battery-goal.md.")
         return 0
 
     # BASE arm first, entirely. `todo` is built task-major, so sort by arm to enforce the phase.

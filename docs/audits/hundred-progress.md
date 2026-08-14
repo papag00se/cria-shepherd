@@ -1,7 +1,7 @@
 # 100% campaign — live progress
 
 **This file is the status.** Not a chat message, not a memory, not an intention. The goal it serves
-is `docs/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which
+is `docs/goals/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which
 rewrites itself after every cell.
 
 **Target: 24 of 24 cells at 100%.** Currently 8.
@@ -68,3 +68,8 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
   the only wall clock. The rerun finished in 21 minutes at 100%.
 - **2026-08-13** — the campaign driver moved out of a session scratchpad into `suite/cycle_run.py`
   so a lost terminal cannot lose the loop.
+- **2026-08-13** — the goal docs moved to `docs/goals/` and the port-fidelity audit to
+  `docs/audits/`; every reference in `docs/` and `suite/` was repointed. Three comments under
+  `cria/` still name the old path (`cria/loop.py:1757`, `cria/loop.py:3952`,
+  `cria/probediscovery.py:854`). They are inert text and they wait for the fix phase — one code
+  state per cycle applies to a comment as much as to a line that runs.
