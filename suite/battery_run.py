@@ -32,7 +32,15 @@ from battery_status import NOTE_PREFIX  # noqa: E402
 # corrected, which moves their wall clock. Rows from different revisions are not the same
 # measurement, and the note is where that stays visible instead of being folded silently
 # into a delta. BUMP THIS whenever a task's wording changes materially.
-PROMPT_REV = "p3"
+#
+# p4 (2026-08-13): two prompts named a fact their own verifier already scored.
+#   * handles-cli-node now asks for the RESOLVED address as well as the holder's. api.handle.me
+#     returns two different addresses and the checker required both; the prompt named one, so a tool
+#     that printed the holder address and the count — exactly what was asked — lost two checks.
+#   * feed-pipeline-java no longer lists duplicate SKUs as bad data. Its speed check compares row
+#     counts against the seed on a feed of 120,000 rows over 25,000 SKUs, so a model that skipped
+#     repeats as instructed could never match and lost the point however fast and correct it was.
+PROMPT_REV = "p4"
 
 
 def read_drive(text: str) -> str | None:
