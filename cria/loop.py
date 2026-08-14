@@ -6870,54 +6870,6 @@ def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
     return ""
 
 
-# A path the directive tells the coder to CREATE, and a path the TASK itself named. Both are plain
-# file references; the discrepancy between them is what `_task_named_it_differently` reads.
-_DIRECTIVE_CREATE = re.compile(
-    r"\b(?:create|write|add|generate|produce)\s+(?:a\s+|an\s+|the\s+|new\s+)*"
-    r"[`'\"]?([\w./-]*\.[A-Za-z0-9]{1,8})[`'\"]?", re.IGNORECASE)
-_ANY_FILE_REF = re.compile(r"[`'\"]?([\w./-]*\.[A-Za-z0-9]{1,8})[`'\"]?")
-
-
-def _task_named_it_differently(directive: str, messages: list | None) -> str:
-    """`"<what the steer said> vs <what the task said>"` when the directive tells the coder to create a
-    file the TASK already named at a different path or case — else "".
-
-    Same enforcement class as the phantom path and the false line citation beside it: cria holds both
-    strings, so this is exact rather than judged, and a steer that contradicts the task is refused
-    rather than reworded.
-
-    The steer author's prompt ALREADY forbids this — "which file to create … belong to the TASK or to
-    the coder, never to you" — and a prompt is a request. Measured, `feed-pipeline-java x qwen35`,
-    call 0109: the authored steer ended "After that, create data/review.md". The task asks for
-    `REVIEW.md` and `verify.py:190` looks for it with `rglob("REVIEW.md")`, case-sensitive, so
-    `data/review.md` matches nothing. One check lost to a filename, from an author that is not
-    allowed to pick filenames at all.
-
-    Only a basename the task ITSELF wrote is checkable — cria is comparing two strings it was given,
-    never guessing what the deliverable should be called. A file the task never mentions passes
-    silently (#3): the coder may legitimately create scratch files of its own."""
-    if not directive or not messages:
-        return ""
-    task = ""
-    for m in messages:
-        if (m or {}).get("role") == "user":
-            task = str(m.get("content") or "")
-            break
-    if not task:
-        return ""
-    named = {}
-    for m in _ANY_FILE_REF.finditer(task):
-        ref = m.group(1)
-        if "." in ref:
-            named.setdefault(os.path.basename(ref).lower(), ref)
-    for m in _DIRECTIVE_CREATE.finditer(directive):
-        ref = m.group(1)
-        want = named.get(os.path.basename(ref).lower())
-        if want and want != ref:
-            return f"{ref} vs {want}"
-    return ""
-
-
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
                             sess=None, messages: list | None = None,
                             workspace_root: str | None = None) -> str | None:
@@ -6956,13 +6908,6 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     phantom = _phantom_system_path(directive, workspace_root)
     if phantom:
         rlog.emit("loop.steer_phantom_path", level="warn", path=phantom, head=_clip(directive, 120))
-        return None
-    renamed = _task_named_it_differently(directive, messages)
-    if renamed:
-        # The author picked a filename for a deliverable the TASK had already named, which its own
-        # prompt forbids. Refused like every sibling in this family — cria holds both strings.
-        rlog.emit("loop.steer_renamed_deliverable", level="warn", paths=renamed,
-                  head=_clip(directive, 120))
         return None
     # A FALSE FACT ABOUT A SOURCE CRIA HAS READ. Same enforcement class as the phantom path and the
     # false line citation above: cria stated the shape, so the check is exact, and a steer that

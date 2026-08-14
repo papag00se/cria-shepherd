@@ -98,6 +98,28 @@ two winning runs, only the **gate** demonstrably changed the outcome, and only w
 only copy of the finding. The rest confirmed or cost calls. That is an argument for **pruning**, which
 principle 1 already says is the safe direction — not for reverting this cycle's work.
 
+### REVERTED — the `data/review.md` guard fixed nothing
+
+Built and removed the same day. The walk ranked it "the likely root of `review_written` failing" and
+I took that at face value without checking the consequence.
+
+Checked afterwards, in the archived workspace and every prompt of the run:
+
+- no `REVIEW.md`
+- no `data/review.md`
+- **zero write calls with "review" in the path, across all 371 calls**
+
+The coder never wrote a review file anywhere, so the path cria named made no difference to the
+score. A guard against a rename that never happened.
+
+**The real reason that check failed:** in 371 calls and 46 minutes the coder never spent one call on
+a deliverable worth 20 points that needed sixty words and no build. cria noticed four times and said
+nothing (below), and the one time it did mention the file it was inside a steer about threading.
+
+Same mistake as the 9,000-byte story: repeating a walk's attribution without testing whether the
+thing it blamed actually caused the outcome. The walks find real bytes; their causal claims are
+candidates.
+
 ### SURFACED — c1-13 is a deliberate decision, not a bug
 
 The walk found four completion verdicts that each named the missing deliverable ("Create REVIEW.md")
