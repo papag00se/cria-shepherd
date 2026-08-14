@@ -103,14 +103,18 @@ def prior_cell(rs: list[dict], arm: str, model: str, task: str, current: dict | 
 
 
 def delta_of(now: dict | None, before: dict | None) -> str:
-    """`(+1)` / `(-2)` / `(=)` in CHECKS, or "" when there is nothing to compare against."""
+    """`(+20)` / `(-40)` / `(=)` in PERCENTAGE POINTS, or "" with nothing to compare against.
+
+    Points, not checks: the cell already reads as a percentage, and the two units side by side
+    ("80% (+1)") invite the reader to do arithmetic that does not work — tasks carry different check
+    counts, so one check is 20 points on a five-check task and 25 on a four-check one."""
     if not now or not before:
         return ""
-    a, b = now.get("score"), before.get("score")
+    a, b = pct(now), pct(before)
     if a is None or b is None:
         return ""
-    d = float(a) - float(b)
-    return " (=)" if abs(d) < 0.001 else f" ({d:+.0f})"
+    d = a - b
+    return " (=)" if abs(d) < 0.5 else f" ({d:+.0f})"
 
 
 def in_flight() -> str | None:
@@ -209,10 +213,9 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
                        m, cells, have))
     for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
-        # …WITH THE MOVEMENT SINCE THE PREVIOUS PROMPT REVISION. The percentage alone cannot say
-        # whether a run got better; the operator asked for the swing per cell, in CHECKS, because a
-        # check is the unit the tasks are actually scored in. A `*` marks a cell whose task wording
-        # changed between the two revisions — there the swing is not a like-for-like comparison.
+        # …WITH THE MOVEMENT SINCE THE PREVIOUS PROMPT REVISION, in percentage points, matching the
+        # unit the cell is already written in. A `*` marks a cell whose task wording changed between
+        # the two revisions — there the swing is not a like-for-like comparison.
         def _with_delta(c, tk):
             if not c:
                 return "·"
