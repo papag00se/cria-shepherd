@@ -423,6 +423,12 @@ def write_landed(result_text: str) -> bool:
     return _WROTE_HEAD in result_text or (bool(head) and t.startswith(head))
 
 
+def _is_write_call(tc: dict) -> bool:
+    """Is this tool call a WRITE? The same `_WRITE_TOOL_NAMES` set the stubber keys on, so "which
+    turn is the live working set" and "which arguments get stubbed" can never answer differently."""
+    return ((tc or {}).get("function") or {}).get("name") in _WRITE_TOOL_NAMES
+
+
 def _stub_write_args(m: dict, landed=None) -> dict:
     """A COPY of message ``m`` with big write-tool argument bodies replaced by an elision stub.
 
@@ -485,9 +491,23 @@ def stub_old_write_args(msgs: list[dict]) -> list[dict]:
     turn gets its big argument bodies replaced by an elision stub — the on-disk reference for a
     write that landed, the refused form for one that did not; the LAST tool-call turn keeps its
     full arguments (the live working set). Copies — never mutates the caller's messages."""
-    last_tc = max((i for i, m in enumerate(msgs) if m.get("tool_calls")), default=None)
+    # THE LAST *WRITE*, NOT THE LAST TOOL CALL. "Keep the live working set" means keep the newest
+    # thing the coder WROTE; the old rule kept whatever turn happened to be last, and cria's own gate
+    # probe is a tool call. When a gate ran last — which is often, it fires on a timer — every write
+    # in the span was stubbed and the briefer saw no source at all.
+    #
+    # Measured, orders-api-py x ternary-bonsai: the route's 2,579 characters were replaced by cria's
+    # own `[elided … this exact content is on disk]`, and the briefing then reconstructed the route's
+    # behaviour from the task text and the test file's assertions — asserting it returned an `orders`
+    # array and a `total_value`, when it returned neither. That sentence rode 37 later prompts.
+    # Across cycle 1: 20 briefings assert behaviour of the coder's own work, 9 of them falsely.
+    #
+    # cria replacing source with cria's own claim, and a model then describing what the source must
+    # have done, is the shape of #5b at one remove.
     landed = _write_outcomes(msgs)
-    return [m if (i == last_tc or not m.get("tool_calls")) else _stub_write_args(m, landed)
+    last_write = max((i for i, m in enumerate(msgs)
+                      if any(_is_write_call(tc) for tc in (m.get("tool_calls") or []))), default=None)
+    return [m if (i == last_write or not m.get("tool_calls")) else _stub_write_args(m, landed)
             for i, m in enumerate(msgs)]
 
 
