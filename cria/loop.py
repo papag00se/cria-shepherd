@@ -1465,7 +1465,31 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None
     sentences = re.split(r"(?<=[.!?])\s+", text)
     key = " ".join(recovered.split()[:6]).lower()
     start = next((i for i, sn in enumerate(sentences) if key and key in " ".join(sn.split()).lower()),
-                 0)
+                 None)
+    if start is None and not key:
+        # A BARE `NOT_DONE` with no sentence after it. The reasoner ruled but quoted nothing, so
+        # there is no anchor to miss and the judge's own text from the top is the best available
+        # reason — the long-standing behaviour, deliberately kept.
+        start = 0
+    if start is None:
+        # THE ANCHOR MISSED, SO THE ANCHORED EXCERPT IS WORTHLESS. This defaulted to 0 and shipped
+        # the thinking FROM THE TOP — which is the model warming up, not its ruling. The one piece of
+        # text known to be about the ruling is the sentence the reasoner just handed back, and it was
+        # thrown away at exactly the moment the recovery had worked.
+        #
+        # Measured, ternary-bonsai/ruby 0085. Recovered: "the code was broken because it used the
+        # wrong API (`EuCountries.eu_members` instead of `ISO3166.EUCountry.codes.include?(code)`)".
+        # Delivered to the coder: "Let me check if there's a way to see what happened after my
+        # write_file call." — sentence zero.
+        #
+        # A fallback that fires precisely when the recovery succeeded is the band-aid (#4), so it is
+        # deleted rather than tuned.
+        reason = _cut_on_a_word(recovered, REASON_HARD_CEILING) if recovered else ""
+        if not reason:
+            return None                      # nothing about the ruling to carry — fail closed (#13)
+        rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase, anchor_missed=True,
+                  matched=_clip(recovered, 60), reason=_clip(reason, 120))
+        return {flag: False, "reason": reason, "proposed_fix": ""}
     # WHOLE SENTENCES up to the budget, never a hard character slice. `reason[:300]` cut a judge's
     # thinking mid-word and handed the fragment onward as the diagnosis the coder must act on — an
     # instruction that stops mid-sentence is one the coder completes by guessing. The budget bounds
@@ -6690,10 +6714,27 @@ def _dedupe_doubled(text: str) -> str:
 # (not a real function) sailed through, because that code was inline in prose with no fence and no
 # line-leading keyword. Chasing inline code with more pattern is the deterministic-code-doing-a-
 # judgment's-job that principle 9's corollary forbids.
+# WHETHER A DIRECTIVE CONTAINS CODE, BY SHAPE. This is a TRIGGER — its only job is to decide
+# whether one focused reasoner call is worth making, and the reasoner still rules quote-versus-
+# dictation — so over-firing is cheap and a miss is not.
+#
+# It used to be spelled in Python and POSIX: `def `, `import `, `pip install`, `pytest`, `sudo`,
+# `sed -i`, `cat `. Java, Rust, Go and Node are half the battery and none of them match any of that,
+# so the guard simply never ran on them. Measured, ternary-bonsai/java 0040 — steer: "drop the
+# dependency entirely and handle CSV parsing inline in Importer.java"; the task: "Use a third-party
+# Java CSV library ... do not write a CSV parser." The steer shipped unchecked and the coder built
+# exactly what it said.
+#
+# The shapes below are language-neutral: a statement terminator or a brace at end of line covers
+# C-family and Rust; a call at the start of a line covers everything; a bare word followed by a
+# flag-shaped argument covers any shell command in any ecosystem. The Python keywords are kept
+# because they cost nothing and still fire first on Python.
 _CODE_SHAPED = re.compile(
     r"```"                                              # a fenced block of any kind
-    r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # a code LINE
-    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )"      # a command LINE
+    r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # python
+    r"|^[ \t]*\S.*[;{}]\s*$"                            # a statement or brace line: java/rust/go/c/js
+    r"|^[ \t]*\w+(?:[.:]{1,2}\w+)*\s*\([^)\n]*\)"       # a call at the head of a line
+    r"|^[ \t]*\$?\s*[\w./-]+(?:\s+[\w./=-]+)*\s+--?[\w-]+"  # a command with a flag: `mvn -q test`
     r"|\b\w+(?:\.\w+)+\([^)\n]*\)",                    # an inline dotted CALL: `pkg.fn(arg)`
     re.M)
 

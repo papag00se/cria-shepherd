@@ -243,3 +243,58 @@ class ARuminatingReplyIsNotADirectiveTests(unittest.TestCase):
         src = inspect.getsource(loop.author_steer)
         self.assertEqual(src.count("_ruminating_reply("), 2)   # tooled + toolless branch
         self.assertIn("loop.steer_degenerate", src)
+
+
+class TheTriggerIsNotSpelledInPythonTests(unittest.TestCase):
+    """The dictation guard never ran on half the battery.
+
+    _CODE_SHAPED decides whether one focused reasoner call is worth making. It listed `def `,
+    `import `, `pip install`, `pytest`, `sudo`, `sed -i`, `cat ` — Python and POSIX. Java, Rust, Go
+    and Node match none of that, so on those languages the guard did not exist.
+
+    Scope, stated honestly: this trigger asks "is there code here to copy". It is not the guard for
+    "the steer picked the implementation" — ternary-bonsai/java 0040's "drop the dependency entirely
+    and handle CSV parsing inline in Importer.java" is pure prose and would not fire on any shape
+    test; that one belongs to the steer_diagnose rule about choosing an implementation. What is fixed
+    here is narrower and real: a directive that quotes or invents an actual Java, Rust, Go or Node
+    line now reaches the reasoner, where before only Python and POSIX did.
+
+    Over-firing is cheap by design — the reasoner still rules quote-versus-dictation — so the shapes
+    are broad. What must not happen is firing on ordinary prose.
+    """
+
+    def fires(self, text):
+        return bool(loop._CODE_SHAPED.search(text))
+
+    def test_every_language_in_the_battery_is_reachable(self):
+        for lang, line in (("java", "Set WORKERS_ENABLED = true;"),
+                           ("rust", "let total: u32 = parse(s)?;"),
+                           ("go", "if err != nil {"),
+                           ("node", "const x = require('commander');"),
+                           ("ruby", "Countries::Country.new('FR')"),
+                           ("python", "def total(self):")):
+            with self.subTest(lang=lang):
+                self.assertTrue(self.fires(line))
+
+    def test_a_shell_command_in_any_ecosystem_fires(self):
+        # A flag is what separates a command from a sentence by shape. `npm run build` has none and
+        # reads exactly like prose ("please run build"), so it does not fire — an accepted miss: the
+        # cost is one reasoner call not made, never a wrong ruling.
+        for cmd in ("mvn -q test", "cargo build --release", "go test -v ./...", "npm --prefix . ci"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(self.fires(cmd))
+
+    def test_ordinary_prose_does_not(self):
+        for prose in (
+                "Read the file and fix what the failing check names.",
+                "The build failed because the module is missing from the manifest.",
+                "Open cart.go - the error is on the line the compiler names.",
+                "Run the tests again before editing anything else."):
+            with self.subTest(prose=prose[:32]):
+                self.assertFalse(self.fires(prose))
+
+    def test_the_python_shapes_still_fire(self):
+        """Kept — they cost nothing and still match first on Python."""
+        for line in ("import os", "assert x == 1", "class Cart:"):
+            with self.subTest(line=line):
+                self.assertTrue(self.fires(line))

@@ -239,3 +239,48 @@ class NeverCutMidWordTests(unittest.TestCase):
     def test_the_short_real_case_is_untouched(self):
         out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _reads(REAL))
         self.assertEqual(out["reason"], REAL)                 # fits the budget: carried whole
+
+
+class TheAnchorMissMustNotShipSentenceZeroTests(unittest.TestCase):
+    """When the reasoner's quoted sentence is not found in the thinking, the anchored excerpt is
+    worthless — and this defaulted to index 0, shipping the model warming up instead of its ruling.
+
+    ternary-bonsai/ruby 0085. Recovered: "the code was broken because it used the wrong API
+    (`EuCountries.eu_members` instead of `ISO3166.EUCountry.codes.include?(code)`)". Delivered to
+    the coder: "Let me check if there's a way to see what happened after my write_file call." —
+    sentence zero. cria paid for the recovery, it worked, and the answer was binned at the last step.
+    """
+
+    THINKING = ("Let me check if there's a way to see what happened after my write_file call. "
+                "I will look at the gem docs. The constant is wrong.")
+
+    def test_an_unfound_anchor_uses_the_recovered_sentence(self):
+        recovered = "the code used EuCountries.eu_members instead of ISO3166.EUCountry.codes"
+        out = loop.verdict_from_reasoning(self.THINKING, "satisfied", _Rlog(), "x",
+                                          _ask("NOT_DONE: " + recovered))
+        self.assertIn("EuCountries.eu_members", out["reason"])
+
+    def test_it_does_not_ship_the_opening_sentence(self):
+        out = loop.verdict_from_reasoning(
+            self.THINKING, "satisfied", _Rlog(),
+            "x", _ask("NOT_DONE: the code used the wrong constant for EU membership"))
+        self.assertNotIn("Let me check if there", out["reason"])
+
+    def test_the_miss_is_recorded(self):
+        rlog = _Rlog()
+        loop.verdict_from_reasoning(self.THINKING, "satisfied", rlog, "x",
+                                    _ask("NOT_DONE: a sentence that is not in the thinking"))
+        kw = next(kw for k, kw in rlog.events if k == "loop.verdict_from_reasoning")
+        self.assertTrue(kw.get("anchor_missed"))
+
+    def test_a_found_anchor_still_carries_the_sentences_after_it(self):
+        """Unchanged: the diagnosis usually lives in the sentences FOLLOWING the ruling."""
+        out = loop.verdict_from_reasoning(self.THINKING, "satisfied", _Rlog(), "x",
+                                          _ask("NOT_DONE: I will look at the gem docs"))
+        self.assertIn("The constant is wrong", out["reason"])
+
+    def test_a_bare_NOT_DONE_still_falls_back_to_the_judges_text(self):
+        """Deliberately kept: with no quoted sentence there is no anchor to miss."""
+        out = loop.verdict_from_reasoning(self.THINKING, "satisfied", _Rlog(), "x",
+                                          _ask("NOT_DONE"))
+        self.assertTrue(out["reason"])
