@@ -239,6 +239,47 @@ def is_external(path: str, workspace: str | None) -> bool:
     return full != ws and not full.startswith(ws + os.sep)
 
 
+def escapes_workspace(path: str, workspace: str | None) -> bool:
+    """True when ``path`` resolves outside ``workspace`` AFTER following symlinks — the containment
+    question for a path cria is about to ACT on (execute, delete), where the thing exists.
+
+    THE COMPANION TO :func:`is_external`, AND THE DIFFERENCE IS THE POINT. `is_external` is lexical
+    on purpose: it must answer for a write target that does not exist yet, and `normpath` alone stops
+    `..` escaping. But a symlink inside the workspace pointing out is INTERNAL to a lexical check and
+    OUTSIDE to a real one, so the two answers genuinely differ — and both are correct for their own
+    caller.
+
+    Nothing said so. `probegate.sweep_litter` hand-rolled the realpath version because deleting
+    through a symlink is how you delete someone else's files, while `writeproxy` used the lexical one
+    because a refusal must work on a path the model has only proposed. Two right answers, two
+    implementations, no name for either distinction — so a third caller (`execcheck`, which runs the
+    coder's program, and `planner_tools`, which runs a research shell) picked NEITHER and simply did
+    not check. "Is this safe here" had three implementations that could not agree.
+
+    Fails CLOSED: an unresolvable path, an unreadable parent or no known workspace all answer True.
+    A path cria cannot place is a path cria must not act on."""
+    if not path or not path.strip() or not workspace:
+        return True
+    try:
+        base = os.path.realpath(os.path.expanduser(str(workspace)))
+        p = os.path.expanduser(str(path).strip())
+        full = p if os.path.isabs(p) else os.path.join(base, p)
+        # realpath the PARENT: the leaf itself may be a symlink we are about to remove rather than
+        # follow, and resolving it would ask about its target instead of about the link.
+        parent = os.path.realpath(os.path.dirname(full) or base)
+        whole = os.path.realpath(full)
+    except (OSError, ValueError):
+        return True
+    # The directory ITSELF is inside itself. Resolving only the parent answers "is my container
+    # inside the base", which is False for the base — caught when planner_tools' `_within` started
+    # delegating here and `_within(root, root)` flipped from True to False with the whole suite still
+    # green. The parent is what must not be followed for a LEAF (a symlink we may be deleting);
+    # the whole path settles the base case.
+    if whole == base:
+        return False
+    return parent != base and not parent.startswith(base + os.sep)
+
+
 # System I/O plumbing — NOT external data. `2>/dev/null`, `> /dev/stderr`, `/dev/fd/…` etc. are
 # ordinary shell redirection targets and device files; never treat them as an external file access.
 # /proc and /sys are read-only kernel views a coder legitimately inspects. This guard is about the

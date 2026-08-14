@@ -33,7 +33,7 @@ import shlex
 import shutil
 from dataclasses import dataclass, field
 
-from . import dedup, jsontext
+from . import dirguard, dedup, jsontext
 from . import probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -996,22 +996,16 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     root = getattr(plan, "workspace", "") or ""
     if not body or not root:
         return []
-    try:
-        base = os.path.realpath(root)
-    except OSError:
-        return []
     removed: list[str] = []
     for rel in (ln.strip() for ln in body.splitlines()):
-        if not rel or os.path.isabs(rel):
+        # ONE OWNER for "does this path leave the workspace". This used to be a hand-rolled
+        # realpath-the-parent dance here, correct but private, while writeproxy asked dirguard a
+        # LEXICAL version of the same question and the two disagreed on a symlink pointing out.
+        # Both answers were right for their caller and neither had a name, so execcheck and
+        # planner_tools — which also act in the workspace — checked nothing at all.
+        if not rel or os.path.isabs(rel) or dirguard.escapes_workspace(rel, root):
             continue
-        target = os.path.join(base, rel)
-        # realpath on the PARENT: the leaf itself may be a symlink we must unlink rather than follow.
-        try:
-            parent = os.path.realpath(os.path.dirname(target))
-        except OSError:
-            continue
-        if parent != base and not parent.startswith(base + os.sep):
-            continue
+        target = os.path.join(os.path.realpath(root), rel)
         try:
             if os.path.islink(target) or os.path.isfile(target):
                 os.unlink(target)

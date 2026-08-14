@@ -428,10 +428,16 @@ Every string the model reads goes in `cria/prompts/*.txt` (via `prompts.load` / 
   harness; what CRIA needs may be run by cria.** An earlier wording said "never touches the
   workspace", which stopped being true and was left standing — a stale boundary is worse than a
   wide one, because an audit measures against it and a maintainer believes it.
-- **What that costs, and the part still owed:** cria's own subprocesses are outside the harness's
-  sandbox, and `dirguard` — which has one enforcement point — is used by none of the three direct
-  execution sites (`execcheck`, `planner_tools`, `probegate`'s sweep). So "is this safe to run
-  here" currently has three implementations that cannot agree. Open.
+- **One owner for "is this path inside the workspace".** cria's own subprocesses are outside the
+  harness's sandbox, so containment is cria's to enforce — and it had three implementations that
+  disagreed. `dirguard.is_external` is LEXICAL (it must answer for a write target that does not exist
+  yet); `probegate.sweep_litter` hand-rolled a realpath version (deleting THROUGH a symlink is how
+  you delete someone else's files); `execcheck` — which runs the coder's program with cria's own
+  PATH — checked nothing at all. Both existing answers were right for their own caller, which is the
+  trap: two correct answers and no name for the distinction, so the site that most needed one picked
+  neither. `dirguard.escapes_workspace` is now the named companion for a path cria is about to ACT
+  on, and all three sites use it. `planner_tools` keeps its own POLICY — the gather writes only to a
+  scratchpad, never the workspace, the inverse of the others — and shares only the primitive.
 - **Owns no rendering either** — every tool cria exposes must reduce to a primitive the harness
   already knows how to both *run and display*; never a cria-only tool the harness must be taught
   to draw.

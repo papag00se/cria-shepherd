@@ -35,7 +35,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
-from . import probediscovery, prompts, toolpath
+from . import dirguard, probediscovery, prompts, toolpath
 
 # How long a delivered program gets to show it works. Long enough for a network round trip, short
 # enough that a server that never returns does not hold the gate open.
@@ -426,7 +426,17 @@ def run(root: str, command: str, timeout: int = RUN_TIMEOUT_S) -> tuple[int | No
         # green gate over a broken program, on a Node cell that then scored 1/4. Only PATH is
         # borrowed (toolpath.env), and the program still launches by argv with no shell, so nothing
         # about quoting or injection changes.
-        p = subprocess.run(resolve_interpreter(shlex.split(command)), cwd=root,
+        argv = resolve_interpreter(shlex.split(command))
+        # CONTAINMENT, from the one owner. This runs the coder's program in cria's OWN process, so
+        # the harness sandbox does not cover it — and until now it checked nothing at all, because
+        # "does this path leave the workspace" had two private implementations and no name, so the
+        # site that most needed one used neither. Every path-shaped argument must resolve inside the
+        # workspace after symlinks; anything else is not run and says why.
+        outside = [a for a in argv[1:] if ("/" in a or a.startswith("~"))
+                   and dirguard.escapes_workspace(a, root)]
+        if outside:
+            return None, f"not run: {outside[0]} is outside the workspace"
+        p = subprocess.run(argv, cwd=root,
                            capture_output=True, text=True, env=toolpath.env(),
                            timeout=timeout)
         return p.returncode, ((p.stdout or "") + (p.stderr or ""))[:OUTPUT_CAP]

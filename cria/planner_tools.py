@@ -23,6 +23,7 @@ import json
 import hashlib
 import os
 
+from . import dirguard
 from . import content_reduce
 import re
 import subprocess
@@ -298,8 +299,18 @@ def _net_write_targets(parts: list[str]) -> tuple[list[str], bool]:
 
 
 def _within(path: str, root: str) -> bool:
-    root = os.path.normpath(root)
-    return path == root or path.startswith(root.rstrip("/") + "/")
+    """Is ``path`` inside ``root``? The MECHANISM comes from the one owner; the POLICY below is this
+    module's own and deliberately the inverse of everyone else's.
+
+    cria has three places that act in a directory and each had its own containment code. Two were
+    answering the same question ("does this leave the workspace") and disagreed on a symlink; that is
+    now `dirguard.escapes_workspace`. This one is NOT the same question — the gather may write ONLY
+    to a scratchpad and never to the workspace, the opposite of the other two — so the policy stays
+    here. What is shared is the primitive, which had no business being written a third time.
+
+    Symlink-resolving, because a write target reached through a link out of the scratchpad is a write
+    outside it, and this module runs a real shell."""
+    return not dirguard.escapes_workspace(path, root)
 
 
 def _under_write_roots(target: str, scratch: str | None, workspace: str | None) -> bool:
