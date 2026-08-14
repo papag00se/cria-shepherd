@@ -825,6 +825,18 @@ def _respill_command(command: str) -> str:
     return re.sub(r"(?<![\w.])/" + re.escape(tail) + r"(?=[/\s\"']|$)", "./" + tail, command)
 
 
+def _pyq(s: str) -> str:
+    """A Python string literal safe to embed inside the single-quoted `python3 -c '...'` body.
+
+    json.dumps handles the Python side — backslashes, newlines, double quotes. It does NOT escape an
+    APOSTROPHE, and an apostrophe is the one character that ends the shell's quoting: a note reading
+    "each page\u0027s description" closed the `-c '` early and bash died on the rest of the line. So
+    every `\u0027` is re-encoded as a unicode escape, which Python decodes back to an apostrophe and
+    the shell never sees at all."""
+    import json as _json
+    return _json.dumps(s).replace("'", "\\u0027")
+
+
 def _search_command(args: dict, brave_key: str) -> str:
     """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
     shared `brave` module (same request the planner's in-process search builds), then parsed to
@@ -832,6 +844,10 @@ def _search_command(args: dict, brave_key: str) -> str:
     per-request maximum and prints EVERY returned result (no display slice) with a total-count header
     so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
     query = str(args.get("query") or "")
+    # Composed before the parse below, which needs both: the spill path to write, and the pointer to
+    # print when the brief listing does not fit inline.
+    target, msg = webfetch.search_spill(query)
+    inline_note = prompts.load("search_inline_note")
     url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load
@@ -840,15 +856,32 @@ def _search_command(args: dict, brave_key: str) -> str:
     # own code/detail was right there in the same body. The model then concludes the source doesn't
     # exist and starts guessing. Surface the API's own error text instead; only a genuinely empty
     # result set says "no results".
-    parse = (r"""python3 -c 'import sys,json"""
+    # TITLES AND LINKS ARE THE ANSWER; DESCRIPTIONS ARE THE NOISE. Every search was spilled to disk
+    # whatever its size and the model got a pointer, and the model did not open the file. Measured,
+    # nemotron-elastic/go: the coder said "Ok, I'm stuck. Let's search for a decimal library", the
+    # spill file's fourth line read "decimal package - github.com/shopspring/decimal - Go Packages",
+    # and the go.mod it shipped required `github.com/elliott/decimal v1.6.0`. A package that does not
+    # exist. Zero spill reads across 124 calls in that cell.
+    #
+    # This function's own comment named the DESCRIPTIONS as the snippet poison, which is true and is
+    # the whole special case: titles and links are short, and they are exactly the fact a model needs
+    # when it is choosing a dependency. So search now obeys the size rule cria already owns for
+    # command output — inline when it fits, spill when it does not — instead of spilling always.
+    # The full results with descriptions are written to the spill file either way, so the grep route
+    # and the ledger entry are unchanged.
+    parse = (r"""python3 -c 'import sys,json,os"""
              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
              r""";e=d.get("error") or d.get("message")"""
-             r""";body="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
-             r""";print(("%d results:\n"%len(r))+body if r else ("search API error: "+json.dumps(e) if e else "no results"))'""")
+             r""";T=""" + _pyq(target) +
+             r""";full="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
+             r""";os.makedirs(os.path.dirname(T) or ".",exist_ok=True)"""
+             r""";r and open(T,"w").write(("%d results:\n"%len(r))+full)"""
+             r""";brief=("%d results:\n"%len(r))+"\n".join("%s\n  %s"%(x.get("title",""),x.get("url","")) for x in r)+"\n"+""" + _pyq(inline_note) +
+             r""";print(brief if len(brief.encode())<=""" + str(content_reduce_mod.INLINE_RESULT_MAX_BYTES) +
+             r""" else """ + _pyq(msg) + r""") if r else print("search API error: "+json.dumps(e) if e else "no results")'""")
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
     # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
-    target, msg = webfetch.search_spill(query)
     tdir = os.path.dirname(target) or "."
     # NO `rm -f` and NO `chmod 444`: the harness sandbox (Codex) HARD-REJECTS `rm -f` ("rm -f style
     # commands are not permitted"), which broke EVERY web_search — the model read the refusal as "the
@@ -861,9 +894,10 @@ def _search_command(args: dict, brave_key: str) -> str:
     # model's web_search result (which it then reads as an API-permissions problem and hallucinates an
     # endpoint). The `||` hands it a clean, model-facing "unparseable/transient — retry" line instead.
     fallback = prompts.load("search_unparsable")
+    # The parse writes the spill file itself now (it decides what to print based on size), so this is
+    # a plain pipeline rather than a redirect-then-announce.
     return (f"mkdir -p {_qbash(tdir)} && "
-            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} > {_qbash(target)} "
-            f"&& printf %s {_qbash(msg)} "
+            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
             f"|| printf %s {_qbash(fallback)}")
 
 
