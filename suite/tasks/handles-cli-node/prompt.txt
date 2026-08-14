@@ -1,6 +1,6 @@
 Turn the Ada Handle resolver into a command-line tool:
 
-Accept the handle as an argument. Support `--json` and `--help`, and exit non-zero when the handle cannot be resolved. Output the holder's address and the number of handles that holder owns. 
+Accept the handle as an argument. Support `--json` and `--help`, and exit non-zero when the handle cannot be resolved. Output the resolved address, the holder's address and the number of handles that holder owns. 
 
 Replace the deprecated `request` package with modern Node's built-in `fetch`, and remove `request` from the dependencies. The tool must run with no `node_modules` directory present. 
 
