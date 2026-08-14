@@ -23,7 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 40% (-60) | 100% (+50) | 100% | **81%** | 77.8 | 24 | 177 |
-| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 75% (+75) | 100% | **63%** | 58.8 | 12 | 49 |
+| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 75% (+75) | 100% (0) | **63%** | 57.9 | 13 | 55 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% (0) | 100% (+50) | 0% | **56%** | 40.9 | 22 | 54 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% (0) | 25% (0) | 0% | **11%** | 128.7 | 20 | 78 |
 
@@ -55,7 +55,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | handles-cli-node | node | qwen35 | 75% | 100% | **+25** | 81→202 | 12→24 |
 | handles-cli-node | node | ternary-bonsai | 50% | 100% | **+50** | 42→32 | 13→8 |
 | handles-cli-node | node | nemotron-elastic | 0% | 25% | **+25** | 2→41 | 7→8 |
-| rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→41 | 2→7 |
+| rust-toml-cli | rust | gemma4 | 75% | 100% | **+25** | 8→73 | 2→14 |
 | rust-toml-cli | rust | qwen35 | 100% | 100% | 0 | 58→187 | 6→27 |
 | rust-toml-cli | rust | ternary-bonsai | 0% | 0% | 0 | 41→49 | 16→31 |
 | rust-toml-cli | rust | nemotron-elastic | 0% | 0% | 0 | 2→76 | 7→16 |
@@ -105,7 +105,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | handles-cli-node | node | nemotron-elastic | BASE | 0% | 7 | 2 | 123.1 | exited |
 | handles-cli-node | node | nemotron-elastic | CRIA | 25% | 8 | 41 | 133.3 | exited |
 | rust-toml-cli | rust | gemma4 | BASE | 75% | 2 | 8 | 60.4 | exited |
-| rust-toml-cli | rust | gemma4 | CRIA | 100% | 7 | 41 | 61.2 | exited |
+| rust-toml-cli | rust | gemma4 | CRIA | 100% | 14 | 73 | 55.6 | exited |
 | rust-toml-cli | rust | qwen35 | BASE | 100% | 6 | 58 | 75.2 | exited |
 | rust-toml-cli | rust | qwen35 | CRIA | 100% | 27 | 187 | 83.7 | exited |
 | rust-toml-cli | rust | ternary-bonsai | BASE | 0% | 16 | 41 | 40.5 | milestone-miss-15min |
