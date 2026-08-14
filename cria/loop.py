@@ -3209,7 +3209,8 @@ class Loop:
                       steers=sess.flail_steers_this_step, drives=sess.drive_count)
         if (sess.nudge_reason or self._ctx.reasoner_role is None
                 or sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
-                or not _flail_candidate(sess.recent_reasoning)
+                or not _flail_candidate(sess.recent_reasoning,
+                                        getattr(sess.plan, "task", "") or "")
                 or sess.drive_count - sess.last_flail_drive < FLAIL_COOLDOWN):
             return
         sess.last_flail_drive = sess.drive_count
@@ -3686,7 +3687,8 @@ class Loop:
         # recent thinking and, ONLY if it judges the coder genuinely stuck, authors one unstick step. The
         # cheap lexical pre-filter + a cooldown gate the reasoner call; the reasoner is the real judge.
         if steer is None and self._ctx.reasoner_role is not None and not rewritten and not sess.done_probe \
-                and _flail_candidate(sess.recent_reasoning) \
+                and _flail_candidate(sess.recent_reasoning,
+                                     getattr(sess.plan, "task", "") or "") \
                 and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
             sess.last_flail_drive = sess.drive_count
             diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog,
@@ -7277,13 +7279,37 @@ def _record_reasoning(sess, comp: dict) -> None:
         sess.recent_reasoning = (sess.recent_reasoning + [r])[-FLAIL_WINDOW:]
 
 
-def _flail_candidate(window: list[str]) -> bool:
+def _flail_candidate(window: list[str], task: str = "") -> bool:
     """LENIENT pre-filter: does the recent reasoning look like it MIGHT be circling on a failure? Skips
     windows with no struggle language (clear progress) so the reasoner isn't spent on healthy work — the
-    reasoner then makes the real call. Needs a full window of FLAIL_WINDOW turns first."""
+    reasoner then makes the real call. Needs a full window of FLAIL_WINDOW turns first.
+
+    THE TASK'S OWN WORDS ARE NOT THE CODER'S STRUGGLE. A coder quoting its brief back to itself —
+    "the importer must not CRASH on malformed rows", "handle the FAILURE case" — was scored as
+    struggling in words it did not choose. Of the nine fires that could be checked in the walk, two
+    matched only on spans copied from the pinned task. Subtracting the task before matching removes a
+    known-false input from an existing trigger; it adds no heuristic (#11: only a deterministic
+    anomaly earns a reasoner call)."""
     if len(window) < FLAIL_WINDOW:
         return False
-    return sum(1 for r in window if _STRUGGLE_RE.search(r)) >= FLAIL_MIN_STRUGGLING
+    return sum(1 for r in window
+               if _STRUGGLE_RE.search(_minus_task_spans(r, task))) >= FLAIL_MIN_STRUGGLING
+
+
+# Sentences of the pinned task, normalised, so a reasoning turn that repeats one can have it removed
+# before the struggle vocabulary is applied. Whole sentences only: a shared word is not a quote.
+def _minus_task_spans(reasoning: str, task: str) -> str:
+    if not task.strip():
+        return reasoning
+    out = reasoning
+    # Split on colons and semicolons as well as sentence enders: a task line reads "Handle malformed
+    # input safely: the importer must not crash on a bad row", and the coder quotes back the CLAUSE
+    # after the colon, not the whole line.
+    for sn in re.split(r"(?<=[.!?;:])\s+|\n+", task):
+        s = " ".join(sn.split())
+        if len(s) >= 24 and s.lower() in " ".join(out.split()).lower():
+            out = re.sub(re.escape(s), " ", out, flags=re.I)
+    return out
 
 
 def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog,

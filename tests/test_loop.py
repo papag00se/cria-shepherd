@@ -6362,3 +6362,56 @@ class RoleplaySteerTagDialectTests(unittest.TestCase):
         from cria.loop import _ROLEPLAY_STEER
         ok = "Use read_file on tests/x.py to see the real lines, then make one targeted edit."
         self.assertFalse(_ROLEPLAY_STEER.search(ok))
+
+
+class TheStruggleFilterDoesNotCountTheTaskTests(unittest.TestCase):
+    """The flail pre-filter scored a coder as struggling in words it did not choose.
+
+    A coder quoting its own brief back to itself — "the importer must not CRASH on a bad row",
+    "report the FAILURE count" — matched the struggle vocabulary. Of the nine fires the walk could
+    check, two matched only on spans copied from the pinned task, and each one spent a reasoner call
+    and pulled a working coder off its line. Subtracting the task before matching removes a
+    known-false input from an existing trigger; it adds no heuristic (#11).
+    """
+
+    TASK = ("Handle malformed input safely: the importer must not crash on a bad row, "
+            "and must report the failure count.")
+
+    def window(self, text):
+        from cria.loop import FLAIL_WINDOW
+        return [text] * FLAIL_WINDOW
+
+    def test_quoting_the_task_is_not_struggling(self):
+        from cria.loop import _flail_candidate
+        quoted = ("I need to make sure the importer must not crash on a bad row, and must report "
+                  "the failure count. Writing it now.")
+        self.assertFalse(_flail_candidate(self.window(quoted), self.TASK))
+
+    def test_real_struggle_still_fires(self):
+        from cria.loop import _flail_candidate
+        stuck = "That failed again. I am stuck on this error. Let me try another approach."
+        self.assertTrue(_flail_candidate(self.window(stuck), self.TASK))
+
+    def test_a_clause_after_a_colon_is_subtracted_too(self):
+        """Task lines read "Handle X safely: the importer must not crash", and the coder quotes back
+        the clause, not the whole line."""
+        from cria.loop import _minus_task_spans
+        out = _minus_task_spans("the importer must not crash on a bad row, and must report the "
+                                "failure count.", self.TASK)
+        self.assertNotIn("crash", out)
+
+    def test_a_shared_word_is_not_a_quote(self):
+        """Only whole spans of 24+ characters are removed — otherwise the subtraction would eat the
+        coder's own words wherever they happened to overlap."""
+        from cria.loop import _minus_task_spans
+        self.assertIn("crash", _minus_task_spans("it will crash", self.TASK))
+
+    def test_with_no_task_known_nothing_changes(self):
+        from cria.loop import _flail_candidate
+        quoted = ("I need to make sure the importer must not crash on a bad row, and must report "
+                  "the failure count. Writing it now.")
+        self.assertTrue(_flail_candidate(self.window(quoted), ""))
+
+    def test_a_short_window_still_never_fires(self):
+        from cria.loop import _flail_candidate
+        self.assertFalse(_flail_candidate(["stuck, failed, error"], self.TASK))
