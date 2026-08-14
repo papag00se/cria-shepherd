@@ -793,41 +793,6 @@ class StuckStepReplanTests(unittest.TestCase):
         "tried stdout and out on the fixture and both failed with AttributeError",
     ]
 
-    def test_flail_steer_fires_and_spends_budget_when_under_cap(self):
-        # under the cap + circling + past the cooldown → exactly ONE steer, budget spent by one
-        loop = self._loop(_Scripted([_text("you keep re-reading the file; write the missing return")]))
-        sess = self._sess()
-        sess.flail_steers_this_step = 0
-        sess.drive_count, sess.last_flail_drive = 999, 0        # cooldown long elapsed
-        sess.recent_reasoning = list(self._CIRCLING)
-        loop._flail_steer_if_circling(sess, {"messages": []}, 2, _Rlog())
-        self.assertEqual(sess.flail_steers_this_step, 1)       # spent one
-        self.assertTrue(sess.nudge_reason)                     # a steer was authored and set
-
-    def test_flail_steer_capped_per_step_then_silent(self):
-        # ANTI-NOISE (the live footgun): the flail steer is only COOLDOWN-gated, so a step stuck for
-        # hundreds of drives drew ~25 steers — each redirecting the coder, cria's own steers thrashing an
-        # already-stuck coder. Capped per step: with the budget spent, NO further steer even while circling
-        # and long past the cooldown.
-        from cria.loop import MAX_FLAIL_STEERS_PER_STEP
-        loop = self._loop(_Scripted([_text("write the missing return")]))
-        sess = self._sess()
-        sess.flail_steers_this_step = MAX_FLAIL_STEERS_PER_STEP  # budget spent this step
-        sess.drive_count, sess.last_flail_drive = 999, 0
-        sess.recent_reasoning = list(self._CIRCLING)
-        loop._flail_steer_if_circling(sess, {"messages": []}, 2, _Rlog())
-        self.assertEqual(sess.nudge_reason, "")                  # capped → no steer authored
-        self.assertEqual(sess.flail_steers_this_step, MAX_FLAIL_STEERS_PER_STEP)
-
-    def test_advance_resets_the_flail_budget(self):
-        # the cap is per-STEP — advancing to a new step earns a fresh budget (else a later step inherits an
-        # exhausted budget and never gets an unstick nudge). _advance resets it alongside the replan flags.
-        loop = self._loop(_Scripted([_verdict(done=True)]))
-        sess = self._sess(); sess.flail_steers_this_step = 3
-        loop._advance(sess, "k", _body(), 1, 3, _Rlog())
-        self.assertEqual(sess.flail_steers_this_step, 0)
-
-
 def _done(text="looks done"):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 
@@ -3669,10 +3634,10 @@ class AuthorSteerInspectsTests(unittest.TestCase):
             bodies.append(body)
             return json.dumps(replies[len(bodies) - 1]).encode()
 
-        gs = types.SimpleNamespace(recent_writes=["api.json"], spin_path="")
+        gs = types.SimpleNamespace(gate_stall=3, recent_writes=["api.json"], spin_path="")
         steer = author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                              {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
-                             condition="flail", reasoning_window=["thinking"])
+                             condition="thrash", reasoning_window=["thinking"])
         return steer, bodies
 
     def test_author_reads_a_file_then_steers_grounded_in_what_it_read(self):
@@ -3795,7 +3760,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         from cria.loop import author_steer
         from cria.probegate import GateOutcome
         gs, ws = self._gs(), tempfile.mkdtemp()
-        for cond in ("repetition", "wheel_spin", "thrash", "flail"):
+        for cond in ("repetition", "wheel_spin", "thrash"):   # "flail" removed with its steer
             out = author_steer(self._chat("read the real file and run the failing test"), None, ws, gs,
                                {"messages": []}, _Rlog(), condition=cond, outcome=GateOutcome(ran=False),
                                reasoning_window=["keep guessing at the attr"])
@@ -3814,19 +3779,19 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         checks = "test_resolve.py:31: AssertionError: 'addr1e0…0002' != 'addr1e0…002'"
         rlog = _Rlog()
         first = author_steer(self._chat("fix the expected literal on line 31"), None, ws, gs,
-                             {"messages": []}, rlog, condition="flail", truth_text=checks)
+                             {"messages": []}, rlog, condition="thrash", truth_text=checks)
         self.assertIn("line 31", first)                      # the FIRST diagnosis still lands
         # ONE SECOND LOOK (operator ruling 2026-08-04): the never-re-invoke rule was measured on
         # the blind-author corpus, where a second ask necessarily re-guessed. A sighted author now
         # gets exactly one more considered pass at unchanged findings…
         second = author_steer(self._chat("actually the assertions are swapped"), None, ws, gs,
-                              {"messages": []}, rlog, condition="flail", truth_text=checks)
+                              {"messages": []}, rlog, condition="thrash", truth_text=checks)
         self.assertIn("swapped", second)                     # …which LANDS
         # …and the THIRD ask on the same unmoved findings is where suppression begins: cria repeats
         # the CHECKER'S OWN LINES (or stays silent when they are already visible) — never a fresh
         # third re-guess, which is what g22's ten-contradiction spiral cost.
         third = author_steer(self._chat("no wait, the address is cut off mid-string"), None, ws, gs,
-                             {"messages": []}, rlog, condition="flail", truth_text=checks)
+                             {"messages": []}, rlog, condition="thrash", truth_text=checks)
         if third is not None:
             self.assertNotIn("cut off", third)               # reattached checker lines, not the re-guess
             self.assertIn("AssertionError", third)
@@ -3836,11 +3801,11 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         # ...and when the checks ARE already in front of the coder, cria stays silent as before.
         visible = author_steer(self._chat("another re-guess"), None, ws, gs,
                                {"messages": [{"role": "user", "content": checks}]}, rlog,
-                               condition="flail", truth_text=checks)
+                               condition="thrash", truth_text=checks)
         self.assertIsNone(visible)
         self.assertIn(("loop.steer_same_checks",), [(k,) for k, _ in rlog.events])
         moved = author_steer(self._chat("now fix the import on line 3"), None, ws, gs,
-                             {"messages": []}, rlog, condition="flail",
+                             {"messages": []}, rlog, condition="thrash",
                              truth_text="resolve.py:3: undefined name 'requests'")
         self.assertIn("line 3", moved)                       # findings MOVED → cria speaks again
 
@@ -4660,51 +4625,6 @@ class SingleItemModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class FlailCapVisibilityTests(unittest.TestCase):
-    """The flail-steer cap is DELIBERATE — uncapped, one stuck step drew ~25 steers and cria's own
-    nudges thrashed an already-stuck coder. But reaching it leaves no trace, so a log shows three
-    steers and cannot say whether the fourth was unnecessary or unavailable. Those are different
-    situations: the first means the coder recovered, the second means every reasoned intervention
-    cria has for this step is now spent.
-
-    MEASURED (run 0727-140517): step 3 burned 86+ calls against a red gate naming the exact missing
-    symbol, having spent 3 of 3 flail steers and its one stuck-replan shot. The gate kept speaking —
-    cria is not mute — but nothing recorded that the reasoned layer had run out.
-
-    The cap does not change. Only the record does."""
-
-    def _role(self):
-        from cria.config import Role
-        return Role(name="reasoner", backend="local")
-
-    def _loop_and_sess(self, used):
-        from cria.loop import MAX_FLAIL_STEERS_PER_STEP
-        ctx = _ctx(_Scripted([_toolcall()]), _Scripted([_text("ON_TRACK")]))
-        ctx.reasoner_role = self._role()
-        loop = Loop(ctx)
-        sess = PlanSession(plan=_plan(3))
-        sess.flail_steers_this_step = used
-        sess.recent_reasoning = ["let me try again", "let me try again", "let me try again"]
-        sess.drive_count = 99
-        return loop, sess, MAX_FLAIL_STEERS_PER_STEP
-
-    def test_reaching_the_cap_is_recorded_once(self):
-        loop, sess, cap = self._loop_and_sess(used=None)
-        sess.flail_steers_this_step = cap
-        rlog = _Rlog()
-        loop._flail_steer_if_circling(sess, _body(), 3, rlog)
-        self.assertIn("loop.flail_exhausted", rlog.kinds())
-        rlog2 = _Rlog()
-        loop._flail_steer_if_circling(sess, _body(), 3, rlog2)
-        self.assertNotIn("loop.flail_exhausted", rlog2.kinds(), "it should say so ONCE, not every drive")
-
-    def test_below_the_cap_says_nothing_about_exhaustion(self):
-        loop, sess, cap = self._loop_and_sess(used=0)
-        rlog = _Rlog()
-        loop._flail_steer_if_circling(sess, _body(), 3, rlog)
-        self.assertNotIn("loop.flail_exhausted", rlog.kinds())
 
 
 class GaveUpVsFinishedTests(unittest.TestCase):
@@ -6166,10 +6086,10 @@ class AuthorForcedAnswerVoiceTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {
                 "role": "assistant", "content": "You are looping; make one targeted edit."}}]}).encode()
 
-        gs = types.SimpleNamespace(recent_writes=["a.py"], spin_path="")
+        gs = types.SimpleNamespace(gate_stall=3, recent_writes=["a.py"], spin_path="")
         author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                      {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
-                     condition="flail", reasoning_window=["thinking"])
+                     condition="thrash", reasoning_window=["thinking"])
         forced = [m for b in bodies for m in b["messages"]
                   if m.get("role") == "user" and "Answer NOW" in str(m.get("content"))]
         self.assertTrue(forced)
@@ -6253,29 +6173,6 @@ class SteerBlindnessAndCodeDictationTests(unittest.TestCase):
         self.assertIn("undefined name", gs.last_checks_text)
         track_gate_progress(gs, "")                       # GREEN clears it — no stale red
         self.assertEqual(gs.last_checks_text, "")
-
-    def test_flail_author_receives_the_checks_as_truth(self):
-        import tempfile
-
-        from cria.config import Role
-        from cria.loop import GuardState, author_flail_steer
-        d = tempfile.mkdtemp()
-        gs = GuardState()
-        gs.last_checks_text = "tests/test_x.py:12: undefined name 'client'"
-        gs.recent_writes, gs.spin_path, gs.workspace_root = ["a.py"], "", d
-        seen = []
-
-        def chat(body, rlog):
-            seen.append(body)
-            return json.dumps({"choices": [{"message": {
-                "role": "assistant", "content": "You are looping; read the file and fix line 12."}}]}).encode()
-
-        author_flail_steer(chat, Role(name="reasoner", backend="local"), ["thinking"],
-                           {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
-                           workspace_root=d, gs=gs)
-        user = seen[0]["messages"][-1]["content"]
-        self.assertIn("undefined name 'client'", user)     # the checks reached the author
-        self.assertNotIn("(no check results for this steer)", user)
 
     def test_code_dictating_steers_are_dropped_prose_survives(self):
         from cria.loop import _grounded_steer_or_none
@@ -6370,59 +6267,6 @@ class RoleplaySteerTagDialectTests(unittest.TestCase):
         from cria.loop import _ROLEPLAY_STEER
         ok = "Use read_file on tests/x.py to see the real lines, then make one targeted edit."
         self.assertFalse(_ROLEPLAY_STEER.search(ok))
-
-
-class TheStruggleFilterDoesNotCountTheTaskTests(unittest.TestCase):
-    """The flail pre-filter scored a coder as struggling in words it did not choose.
-
-    A coder quoting its own brief back to itself — "the importer must not CRASH on a bad row",
-    "report the FAILURE count" — matched the struggle vocabulary. Of the nine fires the walk could
-    check, two matched only on spans copied from the pinned task, and each one spent a reasoner call
-    and pulled a working coder off its line. Subtracting the task before matching removes a
-    known-false input from an existing trigger; it adds no heuristic (#11).
-    """
-
-    TASK = ("Handle malformed input safely: the importer must not crash on a bad row, "
-            "and must report the failure count.")
-
-    def window(self, text):
-        from cria.loop import FLAIL_WINDOW
-        return [text] * FLAIL_WINDOW
-
-    def test_quoting_the_task_is_not_struggling(self):
-        from cria.loop import _flail_candidate
-        quoted = ("I need to make sure the importer must not crash on a bad row, and must report "
-                  "the failure count. Writing it now.")
-        self.assertFalse(_flail_candidate(self.window(quoted), self.TASK))
-
-    def test_real_struggle_still_fires(self):
-        from cria.loop import _flail_candidate
-        stuck = "That failed again. I am stuck on this error. Let me try another approach."
-        self.assertTrue(_flail_candidate(self.window(stuck), self.TASK))
-
-    def test_a_clause_after_a_colon_is_subtracted_too(self):
-        """Task lines read "Handle X safely: the importer must not crash", and the coder quotes back
-        the clause, not the whole line."""
-        from cria.loop import _minus_task_spans
-        out = _minus_task_spans("the importer must not crash on a bad row, and must report the "
-                                "failure count.", self.TASK)
-        self.assertNotIn("crash", out)
-
-    def test_a_shared_word_is_not_a_quote(self):
-        """Only whole spans of 24+ characters are removed — otherwise the subtraction would eat the
-        coder's own words wherever they happened to overlap."""
-        from cria.loop import _minus_task_spans
-        self.assertIn("crash", _minus_task_spans("it will crash", self.TASK))
-
-    def test_with_no_task_known_nothing_changes(self):
-        from cria.loop import _flail_candidate
-        quoted = ("I need to make sure the importer must not crash on a bad row, and must report "
-                  "the failure count. Writing it now.")
-        self.assertTrue(_flail_candidate(self.window(quoted), ""))
-
-    def test_a_short_window_still_never_fires(self):
-        from cria.loop import _flail_candidate
-        self.assertFalse(_flail_candidate(["stuck, failed, error"], self.TASK))
 
 
 class CriaDoesNotNarrateItsOwnAbortAsAnAnswerTests(unittest.TestCase):

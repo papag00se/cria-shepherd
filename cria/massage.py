@@ -934,7 +934,7 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
 #      opens before the call, so the call sits inside a code block the model is DISPLAYING, refuses
 #      it. Both are structural facts about the token stream, not lexical guesses about intent.
 #
-# The reasoning text itself is NEVER modified. Only `tool_calls` is added. The flail detector, the
+# The reasoning text itself is NEVER modified. Only `tool_calls` is added. The
 # rumination detector and `verdict_from_reasoning` all read `reasoning_content`, and rewriting it
 # under them would change what they see for no gain (principle 2: the safe class is additive).
 

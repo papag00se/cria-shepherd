@@ -1,3 +1,5 @@
+# (was condition="flail" — the quiet-flail steer is removed; see tests/test_flail.py. The
+# mechanism under test here is author_steer itself, so any live condition exercises it.)
 """The 2026-08-04 provenance retunes: guards rebased off blind-author-era evidence.
 
 Operator ruling: dictated code and first-person steers are observe-only (tested in their own
@@ -29,30 +31,6 @@ def _sess():
     return PlanSession(plan=Plan(id="x", task="t", created="c", items=[PlanItem("s")]))
 
 
-class FlailBudgetResetTests(unittest.TestCase):
-    def test_moved_findings_reset_the_budget(self):
-        sess = _sess()
-        sess.flail_steers_this_step = 3
-        sess.flail_cap_logged = True
-        track_gate_progress(sess, "app.py:3: undefined name 'x'")   # first finding: movement
-        self.assertEqual(sess.flail_steers_this_step, 0)
-        self.assertFalse(sess.flail_cap_logged)
-
-    def test_unchanged_findings_keep_the_cap(self):
-        sess = _sess()
-        track_gate_progress(sess, "app.py:3: undefined name 'x'")
-        sess.flail_steers_this_step = 3
-        track_gate_progress(sess, "app.py:3: undefined name 'x'")   # same finding: no reset
-        self.assertEqual(sess.flail_steers_this_step, 3)
-
-    def test_green_resets_the_budget(self):
-        sess = _sess()
-        track_gate_progress(sess, "app.py:3: undefined name 'x'")
-        sess.flail_steers_this_step = 3
-        track_gate_progress(sess, "")                                # green: movement
-        self.assertEqual(sess.flail_steers_this_step, 0)
-
-
 class SameChecksSecondLookTests(unittest.TestCase):
     """The one-second-look mechanics live on the session flag; author_steer consumes it."""
 
@@ -70,22 +48,22 @@ class SameChecksSecondLookTests(unittest.TestCase):
         checks = "app.py:3: undefined name 'x'"
         # First steer on these findings: records steered_checks_text.
         author_steer(lambda b, r: json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode(),
-                     None, None, gs, body, rlog, condition="flail", truth_text=checks)
+                     None, None, gs, body, rlog, condition="thrash", truth_text=checks)
         self.assertEqual(gs.steered_checks_text, checks)
         self.assertFalse(gs.same_checks_relooked)
         # Second call, SAME findings: the one second look is granted (the author runs — our stub
         # returns ON_TRACK so the result is None either way) and the flag is spent.
         author_steer(lambda b, r: json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode(),
-                     None, None, gs, body, rlog, condition="flail", truth_text=checks)
+                     None, None, gs, body, rlog, condition="thrash", truth_text=checks)
         self.assertTrue(gs.same_checks_relooked)
         # Third call, SAME findings: suppressed — reattach or silence, never a fresh authoring.
         out = author_steer(lambda b, r: json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode(),
-                           None, None, gs, body, rlog, condition="flail", truth_text=checks)
+                           None, None, gs, body, rlog, condition="thrash", truth_text=checks)
         self.assertTrue(any(k in ("loop.steer_checks_reattached", "loop.steer_same_checks")
                             for k in rlog.kinds()))
         # Findings MOVE: the second look rearms.
         author_steer(lambda b, r: json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode(),
-                     None, None, gs, body, rlog, condition="flail", truth_text="other.py:9: new error")
+                     None, None, gs, body, rlog, condition="thrash", truth_text="other.py:9: new error")
         self.assertFalse(gs.same_checks_relooked)
 
 

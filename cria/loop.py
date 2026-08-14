@@ -283,8 +283,6 @@ class PlanSession(GuardState):
     unexecuted_nudges: int = 0  # bounded pushes for a turn that PASTED the file instead of writing it
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
-    flail_steers_this_step: int = 0  # flail steers authored this STEP (capped at MAX_FLAIL_STEERS_PER_STEP)
-    flail_cap_logged: bool = False    # the cap-reached notice is emitted ONCE per step, not per drive
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
     # Every DISTINCT gate finding-set this step has produced, oldest first. `last_gate_flag` answers
@@ -293,7 +291,7 @@ class PlanSession(GuardState):
     # finding-set they had already left. Bounded; only the signatures are kept, never the text.
     gate_signatures: list = field(default_factory=list)
     oscillation_note: str = ""   # set when the gate returns to a finding-set it had left
-    # The last check output as TEXT, for the steer author. The flail trigger carries no gate outcome,
+    # The last check output as TEXT, for the steer author. Some triggers carry no gate outcome,
     # so its author saw the header "GROUND TRUTH FROM THE REPO'S CHECKS:" with NOTHING under it — in
     # 6 of 6 gemma runs, on the MAJORITY of steers (57/57, 88/109, 87/117, 69/74, 79/109, 31/47).
     # Authoring blind, it invented endpoints, fields, paths and flags, and the coder obeyed. cria HELD
@@ -310,8 +308,6 @@ class PlanSession(GuardState):
     steered_checks_text: str = ""
     gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
-    recent_reasoning: list[str] = field(default_factory=list)  # coder's last FLAIL_WINDOW reasonings (flail detector)
-    last_flail_drive: int = -100  # drive_count at the last flail diagnosis (cooldown gate)
 
     def __post_init__(self) -> None:
         # SEED the durable fetch ledger with what the PLANNER's research already read. Those facts
@@ -404,29 +400,13 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
-        _reset_flail_budget(gs)   # checks went GREEN — the target moved; a sighted author may steer again
         return
     if finding == gs.gate_sig:
         gs.gate_stall += 1
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
-        _reset_flail_budget(gs)   # findings MOVED — see _reset_flail_budget
 
-
-def _reset_flail_budget(gs: GuardState) -> None:
-    """Fresh flail-steer budget when the gate findings MOVE (or go green).
-
-    Provenance audit 2026-08-04: the per-step cap (MAX_FLAIL_STEERS_PER_STEP) was sized from ONE
-    07-25 run whose 25 thrashing steers were authored BLIND (pre-ab51e59); the blindness was fixed
-    five days later, and the campaign walks repeatedly record the capped channel giving CORRECT
-    directives before going silent (gemma4 run 1785824758: 3 steers, cap, then ~60 spiral calls).
-    Operator ruling: the anti-thrash intent stays — 3 steers against an UNMOVING target still
-    silences — but a sighted author working a target that moves is never capped out. Reset only on
-    advance was the old rule; reset on movement is the new one."""
-    if getattr(gs, "flail_steers_this_step", 0):
-        gs.flail_steers_this_step = 0
-        gs.flail_cap_logged = False
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
@@ -2182,7 +2162,6 @@ class Loop:
         coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
         coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
-        _record_reasoning(sess, coder)  # keep the coder's thinking for the quiet-flail detector
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
         # Judge an outgoing web_search's query (off-target → a better query). Before the tracking, so the
@@ -2371,9 +2350,7 @@ class Loop:
         intervention = guard_intervene(sess, body, rlog, step=idx, workspace_root=sess.workspace_root)
         if intervention is not None:
             return intervention
-        sess.drive_count += 1  # session-wide drive counter (feeds the flail cooldown; read only here + single-item)
-        # QUIET-FLAIL catcher (parity with the single-item driver), CAPPED per step — see the method.
-        self._flail_steer_if_circling(sess, body, idx, rlog)
+        sess.drive_count += 1  # session-wide drive counter
         # PERIODIC ground-truth check-in WITHIN a long step (M2 parity with the plan-off driver): every
         # GATE_EVERY_CODER_TURNS acting turns, run the repo's checks so a step that edits many DIFFERENT
         # things for dozens of turns (never spiraling, never claiming done) still gets ground truth — the
@@ -2744,8 +2721,6 @@ class Loop:
         # chose no-cap (a step never advances unverified), so a stall is LOGGED loudly instead.
         if nudge and nudge == sess.last_gate_flag:
             rlog.emit("loop.gate_stalled", level="warning", step=idx)
-        if (nudge or "") != sess.last_gate_flag:
-            _reset_flail_budget(sess)   # plan-ON sibling of track_gate_progress's movement reset
         sess.last_gate_flag = nudge or ""
         # OSCILLATION: this exact finding-set has been here before, with a different one in between.
         # Two errors that are each other's cause — clearing A re-creates B — and every individual fix
@@ -2942,7 +2917,7 @@ class Loop:
         # satisfied at coder call 4 and stayed the LAST user turn for seven consecutive turns,
         # telling a weak model to restart at "read and plan" after every finished piece of work.
         # Four byte-identical db.py writes and two identical app.py writes followed; those tripped
-        # cria's own repetition and flail detectors, which fired six reasoner interventions, which
+        # cria's own repetition detector, which fired six reasoner interventions, which
         # produced the rabbit hole that cost the run. 3/4 unaided became 2/4 assisted.
         #
         # Strictly ADDITIVE (#2): this can only make the check fire MORE often than before, and the
@@ -3040,8 +3015,6 @@ class Loop:
         sess.unexecuted_nudges = 0
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
-        sess.flail_steers_this_step = 0  # ...and a fresh flail-steer budget
-        sess.flail_cap_logged = False    # ...so the next step can report its own exhaustion
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
@@ -3189,37 +3162,6 @@ class Loop:
             rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
             return self._work(sess, key, body, rlog)
         return None
-
-    def _flail_steer_if_circling(self, sess: PlanSession, body: dict, idx: int, rlog) -> None:
-        """QUIET-FLAIL catcher (parity with the single-item driver): when the coder's recent REASONING is
-        circling and nothing else is nudging, a reasoner reads its thinking and — only if genuinely stuck —
-        authors ONE unstick steer. The cheap lexical pre-filter + the cooldown gate the reasoner call.
-        CAPPED at MAX_FLAIL_STEERS_PER_STEP per step (reset on ADVANCE): the cooldown SPACES steers but does
-        not BOUND their total, so a step stuck for hundreds of drives drew ~25 — each redirecting the coder,
-        so cria's own steers thrashed an already-stuck coder (assists are footguns; silence over noise). A
-        few grounded nudges, then SILENCE — the gate/satisfaction/advance carry it from there."""
-        if (sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
-                and not sess.flail_cap_logged and self._ctx.reasoner_role is not None):
-            # Say ONCE that the reasoned nudges for this step are spent. The cap itself is measured
-            # and stays (uncapped, one stuck step drew ~25 steers and cria's own nudges thrashed the
-            # coder) — but "the coder recovered" and "cria has nothing left" are different situations
-            # and looked identical in the log. The gate keeps speaking either way; this is the record.
-            sess.flail_cap_logged = True
-            rlog.emit("loop.flail_exhausted", level="warn", step=idx,
-                      steers=sess.flail_steers_this_step, drives=sess.drive_count)
-        if (sess.nudge_reason or self._ctx.reasoner_role is None
-                or sess.flail_steers_this_step >= MAX_FLAIL_STEERS_PER_STEP
-                or not _flail_candidate(sess.recent_reasoning,
-                                        getattr(sess.plan, "task", "") or "")
-                or sess.drive_count - sess.last_flail_drive < FLAIL_COOLDOWN):
-            return
-        sess.last_flail_drive = sess.drive_count
-        diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog,
-                                  workspace_root=sess.workspace_root, gs=sess)
-        if diag:
-            sess.flail_steers_this_step += 1  # spend one of the step's few unstick nudges (then SILENCE)
-            sess.nudge_reason, sess.steer_source = diag, "reasoning appears to be circling"
-            rlog.emit("loop.flail_steer", step=idx, drive=sess.drive_count)
 
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
         """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
@@ -3658,7 +3600,7 @@ class Loop:
                 sess.steer_source = "periodic check-in"
         # (No stall terminator: cria never ends a non-converging session by handing back to the human —
         # the mission is for the model to succeed on its own. A persistent RED drives the reasoned
-        # thrash-assist above and the redirect/flail steers to keep getting the coder unstuck, never a
+        # thrash-assist above and the redirect steers to keep getting the coder unstuck, never a
         # give-up. Stall detection/escalation may return later, only after every unstick lever is built.)
         # A guard probe (repetition/wheel-spin) result, or a fresh detection this turn.
         steer, intervention = None, None
@@ -3682,20 +3624,6 @@ class Loop:
             return intervention
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
-        # QUIET-FLAIL catcher: nothing above is steering, but the coder's REASONING has been circling on a
-        # failure (the thrash the gate misses — the checks aren't even red). A no-tools reasoner reads its
-        # recent thinking and, ONLY if it judges the coder genuinely stuck, authors one unstick step. The
-        # cheap lexical pre-filter + a cooldown gate the reasoner call; the reasoner is the real judge.
-        if steer is None and self._ctx.reasoner_role is not None and not rewritten and not sess.done_probe \
-                and _flail_candidate(sess.recent_reasoning,
-                                     getattr(sess.plan, "task", "") or "") \
-                and sess.drive_count - sess.last_flail_drive >= FLAIL_COOLDOWN:
-            sess.last_flail_drive = sess.drive_count
-            diag = author_flail_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.recent_reasoning, body, rlog,
-                                      workspace_root=sess.workspace_root, gs=sess)
-            if diag:
-                steer, sess.steer_source = diag, "reasoning appears to be circling"
-                rlog.emit("loop.flail_steer", plan_off=True, drive=sess.drive_count)
         # PERIODIC SATISFACTION CHECK — the off-ramp for a session that finished but cannot stop.
         done_now = self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
@@ -5635,7 +5563,7 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
 
 
 # ---- ONE reasoned steer author behind EVERY detector. A detector (repetition / wheel-spin / thrash /
-# flail) is a cheap deterministic TRIGGER; the steer itself is always REASONED here, grounded in the real
+# is a cheap deterministic TRIGGER; the steer itself is always REASONED here, grounded in the real
 # session + the churned files' real on-disk bytes + the repo's checks (+ the coder's private reasoning
 # when that was the trigger). It replaces the family of canned "stop rewriting / do something different"
 # templates that could prescribe a broken tool or be misread as "abandon the file". The reasoner may
@@ -5651,9 +5579,6 @@ _STEER_TRIGGER = {
     "thrash": lambda gs, step: (
         f"The repo's own checks have failed with the SAME error for {gs.gate_stall} rounds while it kept "
         f"editing — it is not converging."),
-    "flail": lambda gs, step: (
-        "Its recent private reasoning (below) looks like it may be circling on a failure, while no check "
-        "is currently steering it."),
 }
 
 
@@ -6242,8 +6167,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                  reasoning_window=None) -> str | None:
     """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
     FULL grounded picture — the real session (scrubbed of cria's own plumbing AND the harness's own agent
-    prompt), the churned files' real ON-DISK bytes, the repo's check output, and (for the flail trigger)
-    the coder's recent private reasoning — and let it diagnose why the coder is stuck and give ONE
+    prompt), the churned files' real ON-DISK bytes and the repo's check output — and let it diagnose why the coder is stuck and give ONE
     concrete, grounded next step. Returns the directive, or ``None`` when the reasoner judges the coder is
     actually progressing (``ON_TRACK``) or yields nothing — the caller decides whether to fall back.
 
@@ -6585,7 +6509,7 @@ def _steer_or_none(text: str) -> str | None:
 # suppress a directive, cannot veto a rescue, and touches no completion verdict. And whatever it
 # recovers goes through `_grounded_steer_or_none` like any other authored steer: roleplay markers,
 # ungrounded URLs, dictated code, a service the ledger shows answering, a false line citation. The
-# outer caps are untouched too — MAX_FLAIL_STEERS_PER_STEP, FLAIL_COOLDOWN and the same-checks
+# outer caps are untouched too — the same-checks
 # suppression all gate before author_steer ever calls the model.
 #
 # A TRIGGER, deliberately over-firing — the same contract as _BLAME_WORDS and _CODE_SHAPED.
@@ -6960,7 +6884,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     ("fetch the response from <invented>, parse the JSON …") is wrong as a whole, and excising the URL
     would leave cria authoring a mutilated instruction — repairing a guess with another guess. The
     callers that need a signal already have a grounded one to fall back to (the canned redirect, the
-    raw check truth); the flail caller falls back to silence, which is the correct assist here."""
+    raw check truth); a caller with none falls back to silence, which is the correct assist."""
     if not directive:
         return None
     directive = _dedupe_doubled(directive)
@@ -7249,34 +7173,12 @@ def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardS
                         condition="thrash", truth_text=truth, step_text="") or truth
 
 
-# ---- QUIET-FLAIL detector: the coder's REASONING is circling (re-trying the same failed thing) while
-# no gate/guard is steering. The gate catches "the checks stay red"; this catches "the coder keeps
-# THINKING the same thing" — the thrash the capsys/venv sessions showed with almost no gate activity.
-# A cheap LENIENT lexical pre-filter (below) only decides whether to spend a reasoner call; the reasoner
-# makes the real stuck/not-stuck call. Calibrated on real captured reasoning: fires on both thrash
-# sessions, never on the clean one. See docs + tests/test_flail.py.
-FLAIL_WINDOW = 4             # coder reasonings examined for circling
-FLAIL_MIN_STRUGGLING = 2     # of the window, how many must show struggle language to spend a reasoner call
-FLAIL_COOLDOWN = 5           # coder drives between flail diagnoses (a steer needs room to land)
-MAX_FLAIL_STEERS_PER_STEP = 3  # cap flail steers on ONE step. The cooldown SPACES them but does not BOUND
-#                                the total, so a step stuck for hundreds of drives drew ~25 steers — each
-#                                redirecting the coder, so cria's OWN steers thrashed an already-stuck coder
-#                                (assists are footguns; silence over noise). A few grounded unstick nudges,
-#                                then SILENCE and let the gate/satisfaction/advance carry it. Reset on advance.
-# BROAD struggle vocabulary — a PRE-FILTER, not a judge: its only job is to skip windows with no failure
-# language at all (obvious progress) so the reasoner isn't run on healthy work. The reasoner judges.
-_STRUGGLE_RE = re.compile(
-    r"\b(?:fail(?:ed|ing|ure)?|doesn't|does not|didn't|isn't|is not|wasn't|can't|cannot|won't|error|"
-    r"broke|broken|still|again|instead|guessing|keep|the real|tried|another|revert|retry|no longer|"
-    r"but the|however|wrong|invalid|not exist|neither|turns out|mistake)\b", re.IGNORECASE)
-
-
 def _reasoning_of(comp: dict) -> str:
     """The coder's private reasoning from a completion — the split-out ``reasoning_content`` when the
     server provides it, ELSE the message ``content`` (a model that inlines its thinking with no separate
     channel). Mirrors the rumination watcher's ``reasoning or content`` fallback (upstream.py) so the
-    quiet-flail detector isn't silently INERT for any model that doesn't split reasoning out — the
-    `_reasoning_of` used to read only reasoning_content, disabling the whole flail assist for such a model."""
+    watcher isn't silently INERT for any model that doesn't split reasoning out — reading only
+    reasoning_content once disabled a whole assist for such models (principle 19)."""
     for ch in comp.get("choices", []):
         msg = ch.get("message") or {}
         r = msg.get("reasoning_content") or msg.get("reasoning") or msg.get("content")
@@ -7285,59 +7187,36 @@ def _reasoning_of(comp: dict) -> str:
     return ""
 
 
-def _record_reasoning(sess, comp: dict) -> None:
-    """Keep the coder's last FLAIL_WINDOW reasonings on the session for the flail pre-filter."""
-    r = _reasoning_of(comp)
-    if r:
-        sess.recent_reasoning = (sess.recent_reasoning + [r])[-FLAIL_WINDOW:]
-
-
-def _flail_candidate(window: list[str], task: str = "") -> bool:
-    """LENIENT pre-filter: does the recent reasoning look like it MIGHT be circling on a failure? Skips
-    windows with no struggle language (clear progress) so the reasoner isn't spent on healthy work — the
-    reasoner then makes the real call. Needs a full window of FLAIL_WINDOW turns first.
-
-    THE TASK'S OWN WORDS ARE NOT THE CODER'S STRUGGLE. A coder quoting its brief back to itself —
-    "the importer must not CRASH on malformed rows", "handle the FAILURE case" — was scored as
-    struggling in words it did not choose. Of the nine fires that could be checked in the walk, two
-    matched only on spans copied from the pinned task. Subtracting the task before matching removes a
-    known-false input from an existing trigger; it adds no heuristic (#11: only a deterministic
-    anomaly earns a reasoner call)."""
-    if len(window) < FLAIL_WINDOW:
-        return False
-    return sum(1 for r in window
-               if _STRUGGLE_RE.search(_minus_task_spans(r, task))) >= FLAIL_MIN_STRUGGLING
-
-
-# Sentences of the pinned task, normalised, so a reasoning turn that repeats one can have it removed
-# before the struggle vocabulary is applied. Whole sentences only: a shared word is not a quote.
-def _minus_task_spans(reasoning: str, task: str) -> str:
-    if not task.strip():
-        return reasoning
-    out = reasoning
-    # Split on colons and semicolons as well as sentence enders: a task line reads "Handle malformed
-    # input safely: the importer must not crash on a bad row", and the coder quotes back the CLAUSE
-    # after the colon, not the whole line.
-    for sn in re.split(r"(?<=[.!?;:])\s+|\n+", task):
-        s = " ".join(sn.split())
-        if len(s) >= 24 and s.lower() in " ".join(out.split()).lower():
-            out = re.sub(re.escape(s), " ", out, flags=re.I)
-    return out
-
-
-def author_flail_steer(reasoner_chat, reasoner_role, window: list[str], body: dict, rlog,
-                       workspace_root=None, gs=None) -> str | None:
-    """The reasoned FLAIL-assist (flail trigger) — a thin wrapper over :func:`author_steer`. The pre-filter
-    fired on the coder's circling PRIVATE reasoning (which the transcript doesn't carry), so we pass that
-    reasoning window alongside the real session; the reasoner decides stuck-or-ON_TRACK. The session's
-    GuardState and workspace root ride along: without ``gs`` the DURABLE fetch facts are invisible, so a
-    spec fetched long ago (since floored out of the window) was reported "still unread" — two flail steers
-    then sent the coder back to re-reading it (run 0729-gemma4 pon2 calls 0046/0175) — and without the
-    root the author judged file churn blind to the files' real on-disk bytes."""
-    return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-                        condition="flail", reasoning_window=window,
-                        truth_text=getattr(gs, "last_checks_text", "") if gs is not None else "")
-
+# THE QUIET-FLAIL STEER IS GONE (operator, 2026-08-13: "I don't like that word list thing. It should
+# be removed. The whole steer.").
+#
+# It decided WHEN TO INTERRUPT THE CODER by matching struggle vocabulary — stuck, failed, error,
+# wrong, again — in the coder's own private reasoning. Two of the last four thinking blocks matching
+# spent a reasoner call, and if that call produced anything the coder was redirected.
+#
+# Why the instrument was wrong, not merely mistuned:
+#   * it read words the coder did not choose — quoting the pinned task back to itself scored as
+#     struggling, in two of the nine fires the walk could check;
+#   * it fired on healthy work — a 53% arm rate on one task, and half of the fires that reached the
+#     reasoner came back ON_TRACK;
+#   * when it fired wrongly the author still had to say something. qwen35/node 0030: cria's own
+#     trigger text read "looks like it may be circling", and the directive that came out was "fix the
+#     CLI to output \"Invalid handle\" when the handle doesn't contain a dot, as the tests expect" —
+#     a requirement no one had asked for, which the coder then built;
+#   * tuning it is the tell (#4, #9's corollary). A rule that needs an exception list should have
+#     been a question, and the word list IS the exception list.
+#
+# Removed rather than replaced. The obvious replacement — "no bytes changed on disk across N drives"
+# — has never been measured as a stuck signal, and a genuinely stuck coder often does keep varying
+# its actions; swapping one unmeasured trigger for another is how four revisions of a similar rule
+# each cost a run. The safe direction is REMOVE (#1), and everything that catches a real stall is
+# still here: the completion gate, the repetition guard, the wheel-spin probe, the satisfaction
+# check, and the coder's own checks.
+#
+# `_record_reasoning` and the window it kept go with it: nothing else ever read them. The
+# answer-contradicts-thinking rescue reads the CURRENT completion, not a window, and is grounded in
+# a structural fact (the reply carries a verdict its own thinking denies) rather than a vocabulary.
+# `_reasoning_of` stays — the rescue and the captures both use it.
 
 def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> dict:
     """Swap one tool call for a web_fetch of ``url`` and attach ``note`` telling the coder cria did it."""

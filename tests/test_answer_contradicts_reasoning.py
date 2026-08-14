@@ -1,3 +1,5 @@
+# (was condition="flail" — the quiet-flail steer is removed; see tests/test_flail.py. The
+# mechanism under test here is author_steer itself, so any live condition exercises it.)
 """cria acted on a one-word ANSWER while that same completion's REASONING said the opposite.
 
 Measured on the ladder walks and in ~/.cria/calls. Two phases carry the defect and are covered here:
@@ -162,12 +164,12 @@ class SteerAuthorReadsItsOwnThinkingTests(unittest.TestCase):
                 # file's real length — the fixture must be tall enough for the citation to be true.
                 f.write("x = 1\ny = 2\nz = 3\na = 4\nb = 5\nc = 6\n")
         chat = _scripted(replies)
-        gs = types.SimpleNamespace(recent_writes=["handle_resolver.py"], spin_path="",
+        gs = types.SimpleNamespace(gate_stall=3, recent_writes=["handle_resolver.py"], spin_path="",
                                    steered_checks_text="", fetched_pages={})
         rlog = _Rlog()
         steer = loop.author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                                   {"messages": [{"role": "user", "content": "task"}]}, rlog,
-                                  condition="flail", reasoning_window=["thinking"])
+                                  condition="thrash", reasoning_window=["thinking"])
         return steer, chat.bodies, rlog
 
     def test_the_directive_behind_a_bare_ON_TRACK_is_recovered(self):

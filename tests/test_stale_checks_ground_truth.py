@@ -1,3 +1,5 @@
+# (was condition="flail" — the quiet-flail steer is removed; see tests/test_flail.py. The
+# mechanism under test here is author_steer itself, so any live condition exercises it.)
 """cria may not restate test failures the coder has already cleared.
 
 The coder has its own shell and runs pytest itself; cria's gate cache does not know. So cria kept
@@ -86,7 +88,7 @@ class TheAuthorActuallyDropsItTests(unittest.TestCase):
         gs.same_checks_relooked = True          # the streak's third ask: repeat/silence territory
         rlog = self._Rlog()
         out = author_steer(self.ON_TRACK, None, None, gs, self._body(cleared), rlog,
-                           condition="flail", truth_text=STALE_TESTS)
+                           condition="thrash", truth_text=STALE_TESTS)
         return out, rlog.events
 
     def test_a_cleared_suite_stops_the_you_have_not_cleared_them_repeat(self):
