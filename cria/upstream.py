@@ -41,12 +41,6 @@ _RENDER_TIMEOUT_S = 8
 _WATCH_STRIDE = 400
 
 
-# How long a stream may produce NO parsed delta of any kind before cria calls it dead. See the
-# abort in chat_watched for the measurement: 456s is the slowest legitimate first token in 12,394
-# recorded samples, so this aborts none of them.
-DEAD_STREAM_SECONDS = 480
-
-
 class UpstreamError(Exception):
     """The upstream model server could not be reached or errored."""
 
@@ -342,11 +336,17 @@ class Upstream:
         caller to forward. Emits ``upstream.request`` / ``upstream.first_token`` /
         ``upstream.done`` with TTFT + tok/s. Token count uses the upstream ``usage``
         block when present, else counts content deltas as a proxy."""
-        resp, sent_estimate, _ = self._open_with_refit(body, True, rlog)
+        resp, sent_estimate, capture_path = self._open_with_refit(body, True, rlog)
         t0 = time.monotonic()
         t_first: float | None = None
         content_chunks = 0
         usage: dict | None = None
+        # THE PROXY PATH LOGGED NO REASONING AT ALL. It forwards raw SSE and only counted content
+        # deltas, so every passthrough turn's thinking went to the harness — which strips it from
+        # history — and nowhere else. 34 of the 47 long turns in one sweep were this path, and not
+        # one had a reasoning file to read. The accumulation is a list append per delta; the write
+        # happens once, in the finally, so it survives a client disconnect mid-generator too.
+        reasoning: list[str] = []
         try:
             for raw in resp:
                 if raw.startswith(b"data:"):
@@ -362,12 +362,28 @@ class Upstream:
                                         ttft_ms=round((t_first - t0) * 1000, 1),
                                     )
                                 content_chunks += 1
+                            for ch in obj.get("choices") or []:
+                                d = ch.get("delta") or {}
+                                rc = d.get("reasoning_content") or d.get("reasoning")
+                                if rc:
+                                    reasoning.append(rc)
+                                    if t_first is None:
+                                        # A reasoning delta IS a first token. Counting only CONTENT
+                                        # meant a turn that thought for four minutes and then errored
+                                        # looked, in the log, like a stream that never spoke.
+                                        t_first = time.monotonic()
+                                        rlog.emit("upstream.first_token",
+                                                  ttft_ms=round((t_first - t0) * 1000, 1),
+                                                  channel="reasoning")
                             if obj.get("usage"):
                                 usage = obj["usage"]
                 yield raw
         finally:
             resp.close()
             t_end = time.monotonic()
+            # Whether the generator ran to [DONE], the client hung up, or something raised.
+            self._save_reasoning(capture_path, "".join(reasoning), None, rlog,
+                                 ending="" if usage else "the stream ended without a usage block")
             tokens = (usage or {}).get("completion_tokens") or content_chunks
             self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
             tok_s = (
@@ -457,6 +473,7 @@ class Upstream:
         stream_error: str | None = None
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
+        saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
         # of two scalars; cleared in the finally so a finished call never shows a stale rate.
@@ -513,31 +530,6 @@ class Upstream:
                 # Degenerate-run backstop (independent of the rumination watcher: it fires even on a
                 # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
                 # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
-                # A STREAM THAT HAS SAID NOTHING IS DEAD, whatever the server thinks it is doing.
-                # Measured, gemma4/ruby call 0009: upstream.done {"total_ms": 730418.5, "tokens":
-                # 44510, "aborted": false} with NO preceding upstream.first_token — twelve minutes,
-                # 44,510 tokens billed, and content, reasoning_content and tool_calls all null. The
-                # server buffered an unterminated tool call and sent zero deltas, so the rumination
-                # watcher and the degenerate-tail backstop both read an empty string and neither
-                # could fire. Of principle 6's three backstops only n_ctx was live (timeout is
-                # 7200s), and n_ctx by construction burns the whole remaining window first. 91 such
-                # streams across the corpus, 372 minutes.
-                #
-                # A byte count and a clock, not judgment, and it reuses the abort-and-re-prompt the
-                # degenerate backstop already owns (#24: the invariant belongs at the wire).
-                #
-                # THE BOUND IS MEASURED, NOT GUESSED. Across 12,394 recorded first tokens the slowest
-                # legitimate one is 456s (p99.9 is 184s, p99 is 32s). 480s therefore aborts none of
-                # them and still recovers 37 of the 372 dead minutes. The conservative end on
-                # purpose: a cold 27B has already been mistaken for a dead model once (cc8e8c7), and
-                # most dead streams sit BELOW the slowest real first token, so no safe bound can
-                # catch them — that overlap is why this does not reach for a tighter number.
-                if (aborted is None and t_first is None
-                        and time.monotonic() - t0 >= DEAD_STREAM_SECONDS):
-                    aborted = {"dead_stream": True, "seconds": round(time.monotonic() - t0)}
-                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
-                              seconds=aborted["seconds"])
-                    break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
                     # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
                     # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,
@@ -558,10 +550,23 @@ class Upstream:
                             rlog.emit("rumination.abort", level="warning",
                                       hits=verdict.get("hits"), reasoning_tokens=verdict.get("reasoning_tokens"))
                             break  # drop the receiver → server stops generating, slot freed
+        except BaseException as e:                       # noqa: BLE001 — re-raised below
+            # WHATEVER KILLED THE READ, THE THINKING SURVIVES IT. Saved here rather than only on the
+            # clean path, because the turns where the answer is lost are the ones whose reasoning is
+            # worth most.
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
+                                 ending=f"{type(e).__name__}: {e}")
+            saved = True
+            raise
         finally:
             resp.close()
             rlog.live_t0 = None  # the ticker must never compute a rate from a finished call
         if stream_error is not None:
+            # …and before the buffered re-ask discards it. The model really did think this; the only
+            # thing wrong with the turn is that its transport broke.
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
+                                 ending=f"the stream errored and the request was re-asked buffered: {stream_error}")
+            saved = True
             # Re-ask the SAME request buffered. The answer still comes from the model — cria is not
             # repairing the fragment, it is discarding it and asking again down a path that works.
             # The watcher is forfeited for this turn (nothing to watch in a buffered call), which is
@@ -582,7 +587,8 @@ class Upstream:
             completion["timings"] = {"predicted_n": tokens,
                                      "predicted_ms": round((t_end - (t_first or t0)) * 1000, 3),
                                      "source": "cria-measured"}
-        self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
+        if not saved:
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
         callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
         self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
         rlog.emit("upstream.done", total_ms=round((t_end - t0) * 1000, 1), tokens=tokens,
@@ -590,24 +596,44 @@ class Upstream:
         return json.dumps(completion).encode("utf-8")
 
 
-    def _save_reasoning(self, capture_path: str | None, text: str, aborted, rlog) -> None:
+    def _save_reasoning(self, capture_path: str | None, text: str, aborted, rlog,
+                        ending: str = "") -> None:
         """Persist the coder's FULL reasoning block — UNTRUNCATED — to a sibling of the call capture
         (``NNNN-<phase>.reasoning.txt``), so every ``<think>`` is inspectable after the fact. cria
         watches the reasoning live for the rumination detector and would otherwise discard it (the
         harness strips reasoning from history), so this is the only record of what the model thought.
         Best-effort; no-op when there's no reasoning or capture is off. A ``coder.reasoning`` event
-        points at the file (with token/char counts + whether the detector aborted this turn)."""
+        points at the file (with token/char counts + whether the detector aborted this turn).
+
+        WHETHER THE STREAM FINISHED OR NOT (operator, 2026-08-13: "I want all streamed reasoning
+        logged. Whether it finishes or not."). This used to run only on the ONE clean exit past the
+        stream-error branch, so two whole classes of turn wrote nothing:
+
+          * a mid-stream error — cria re-asks the request buffered and RETURNS from inside the loop's
+            aftermath, discarding everything the model had already thought;
+          * any exception in the read loop — the `finally` closed the socket and nothing saved.
+
+        Those are exactly the turns whose thinking is worth most, because the answer is gone. The
+        save now happens on every exit, and ``ending`` names which one so a partial file is never
+        mistaken for a complete one."""
         if not text or not capture_path:
             return
         # When the rumination detector aborted this turn, bracket the reasoning with a loud marker so
         # a fired guard is obvious IN the file (not just cross-referenced from the log). Non-fired
         # reasoning stays pure (the full block, no header) so it's still greppable/diffable as-is.
+        bar = "─" * 72
         if aborted:
-            bar = "─" * 72
             body = (f"⟦RUMINATION GUARD FIRED⟧ {aborted.get('hits')} second-guessing markers"
                     f" · ~{aborted.get('reasoning_tokens')} reasoning tokens · aborted mid-stream"
                     f" and re-prompted to refocus\n{bar}\n{text}\n\n"
                     f"⟦— reasoning stream ABORTED HERE by the rumination guard —⟧\n")
+        elif ending:
+            # An UNFINISHED block, labelled as one at both ends. A partial trace read as a complete
+            # one is the same lie as a truncated file (#5b) — and the label is the whole reason this
+            # is worth keeping rather than dropping.
+            body = (f"⟦INCOMPLETE REASONING⟧ the stream did not finish: {ending}\n"
+                    f"⟦what the model had thought up to that point is below, unclipped⟧\n{bar}\n"
+                    f"{text}\n\n⟦— stream ENDED HERE: {ending} —⟧\n")
         else:
             body = text  # the WHOLE block — deliberately not clipped
         try:
@@ -615,7 +641,8 @@ class Upstream:
             rpath = p.parent / (p.stem + ".reasoning.txt")
             rpath.write_text(body, encoding="utf-8")
             rlog.emit("coder.reasoning", path=str(rpath), chars=len(text),
-                      reasoning_tokens=len(text) // 4, aborted=bool(aborted))
+                      reasoning_tokens=len(text) // 4, aborted=bool(aborted),
+                      incomplete=bool(ending), ending=ending or None)
         except OSError as e:
             rlog.emit("coder.reasoning_error", level="info", error=str(e))
 
