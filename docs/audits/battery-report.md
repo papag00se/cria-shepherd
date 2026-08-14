@@ -23,7 +23,7 @@ judging. What each model does on its own.
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 40% (-60) | 50% | 100% | **74%** | 79.1 | 27 | 184 |
-| 🟠 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 0% | 100% | **52%** | 59.4 | 14 | 48 |
+| 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 75% (+75) | 100% | **63%** | 58.8 | 12 | 49 |
 | 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% (0) | 50% | 0% | **48%** | 41.6 | 23 | 55 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% (0) | 25% | 0% | **11%** | 128.0 | 23 | 93 |
 
@@ -51,7 +51,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | feed-pipeline-java | java | qwen35 | 40% | 40% | 0 | 69→371 | 6→46 |
 | feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→46 | 16→16 |
 | feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→66 | 4→16 |
-| handles-cli-node | node | gemma4 | 75% | 0% | **-75** | 21→21 | 2→16 |
+| handles-cli-node | node | gemma4 | 75% | 75% | 0 | 21→26 | 2→4 |
 | handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→241 | 12→38 |
 | handles-cli-node | node | ternary-bonsai | 50% | 50% | 0 | 42→36 | 13→10 |
 | handles-cli-node | node | nemotron-elastic | 0% | 25% | **+25** | 2→133 | 7→31 |
@@ -97,7 +97,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | feed-pipeline-java | java | nemotron-elastic | CRIA | 0% | 16 | 66 | 128.1 | milestone-miss-15min |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
-| handles-cli-node | node | gemma4 | CRIA | 0% | 16 | 21 | 60.9 | milestone-miss-15min |
+| handles-cli-node | node | gemma4 | CRIA | 75% | 4 | 26 | 57.5 | exited |
 | handles-cli-node | node | qwen35 | BASE | 75% | 12 | 81 | 75.6 | exited |
 | handles-cli-node | node | qwen35 | CRIA | 50% | 38 | 241 | 82.7 | exited |
 | handles-cli-node | node | ternary-bonsai | BASE | 50% | 13 | 42 | 40.3 | exited |
