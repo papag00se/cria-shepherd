@@ -31,8 +31,29 @@ RUMINATION_MARKERS = (
     "i'm overthinking", "am i overthinking", "let me start over", "wait no", "actually no",
 )
 
-# How many markers a reasoning stream must contain before we call it a loop.
-DEFAULT_MARKER_THRESHOLD = 6
+# How DENSE the markers must be before we call it a loop — hits per 1,000 reasoning tokens.
+#
+# THIS WAS AN ABSOLUTE COUNT (6 markers, any length) AND IT WAS A HARD CAP IN DISGUISE. Because the
+# arm only opens past half the budget, a long reply had almost certainly said "actually" or "wait"
+# six times by then whatever it was doing. Measured over the 713 captured reasoning traces of 2,000+
+# tokens: of the 131 that reach the gate, the old rule aborted 125 — 95%. Principle 6 says runaway is
+# caught by rumination, timeout and n_ctx and never by a short hard cap; at 95% this WAS the short
+# hard cap.
+#
+# What it cost, nemotron-elastic/java 0017: "⟦RUMINATION GUARD FIRED⟧ 10 second-guessing markers ·
+# ~8254 reasoning tokens · aborted mid-stream". The text it killed was `write_file … pom.xml …
+# <?xml version="1.0" encoding="UTF` — cut mid-write. That trace's density is 1.21 markers per 1,000
+# tokens, BELOW the 3.84 median: it was aborted for being long, not for circling. The run landed zero
+# edits and its final workspace was byte-identical to the seed.
+#
+# 10 per 1,000 is one marker every hundred tokens, sustained. It sits above the p90 of the measured
+# distribution (9.27), so ordinary long reasoning passes, and well below every real spiral in the
+# corpus (the densest five run 15-27). It trips 12% of gated traces where the old rule tripped 95%.
+# The raw-length backstop at full budget is unchanged and still catches a marker-free runaway.
+DEFAULT_MARKER_RATE_PER_1K = 10.0
+# Retained so a very short burst cannot trip on rate alone: at the gate this is already implied, and
+# it keeps the arm meaningful if a caller lowers the budget.
+MIN_MARKERS = 6
 # Reasoning-token budget when the role hasn't set output_reserve. Models that can't control
 # thinking blow through it; the gate ensures we only flag once they've had a fair shot at normal
 # reasoning. The detector's budget is seeded from output_reserve (NOT the hard cap max_tokens).
@@ -122,15 +143,15 @@ class Detector:
     """Stateless rumination check. Construct one per role (holds only budget + threshold); the
     ``check`` call is pure, so a single instance is safely shared across concurrent streams."""
 
-    def __init__(self, budget: int, threshold: int = DEFAULT_MARKER_THRESHOLD) -> None:
+    def __init__(self, budget: int, rate_per_1k: float = DEFAULT_MARKER_RATE_PER_1K) -> None:
         self.budget = budget if budget and budget > 0 else DEFAULT_REASONING_BUDGET
-        self.threshold = max(threshold, 1)
+        self.rate_per_1k = max(float(rate_per_1k), 0.1)
 
     @classmethod
     def from_reasoning_budget(cls, budget: int | None) -> "Detector":
         """Build from a reasoning-token budget — the caller passes the role's ``output_reserve``
         (a sane proxy for expected output magnitude). ``None`` → the built-in default."""
-        return cls(budget if budget else DEFAULT_REASONING_BUDGET, DEFAULT_MARKER_THRESHOLD)
+        return cls(budget if budget else DEFAULT_REASONING_BUDGET, DEFAULT_MARKER_RATE_PER_1K)
 
     def budget_gate(self) -> int:
         """Below half the budget we NEVER flag, regardless of marker count."""
@@ -140,11 +161,13 @@ class Detector:
         """Return ``{"hits", "reasoning_tokens"}`` when the reasoning looks like a loop (caller
         should abort the in-flight request and re-prompt), else ``None``.
 
-        Two arms, both behind the half-budget gate: markers ≥ threshold, OR raw length ≥ full
-        budget (the length backstop catches a marker-free runaway)."""
+        Two arms, both behind the half-budget gate: marker DENSITY >= the rate, OR raw length >= full
+        budget (the length backstop catches a marker-free runaway). Density, not a count, because a
+        count is a length test wearing a detector's clothes — see DEFAULT_MARKER_RATE_PER_1K."""
         if reasoning_tokens < self.budget_gate():
             return None
         hits = count_markers(reasoning_so_far)
-        if reasoning_tokens >= self.budget or hits >= self.threshold:
+        dense = hits >= MIN_MARKERS and (hits / max(reasoning_tokens, 1)) * 1000 >= self.rate_per_1k
+        if reasoning_tokens >= self.budget or dense:
             return {"hits": hits, "reasoning_tokens": reasoning_tokens}
         return None

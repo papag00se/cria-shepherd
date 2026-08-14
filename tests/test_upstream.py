@@ -260,7 +260,7 @@ class ChatWatchedTests(unittest.TestCase):
     def test_saves_full_reasoning_untruncated_to_capture_sibling(self):
         import tempfile
         from pathlib import Path
-        det = rumination.Detector(budget=10_000_000, threshold=999)  # never fires — capture a normal turn
+        det = rumination.Detector(budget=10_000_000, rate_per_1k=999)  # never fires — capture a normal turn
         # ~23k chars; must NOT be clipped. VARIED, not one sentence x500: the degeneration guard now
         # catches any repeating period, and a fixture that repeats one sentence is itself the shape it
         # exists to stop. The point of this test is length, not repetition.
@@ -283,7 +283,7 @@ class ChatWatchedTests(unittest.TestCase):
     def test_ruminating_reasoning_file_is_marked(self):
         import tempfile
         from pathlib import Path
-        det = rumination.Detector(budget=1000, threshold=3)  # fires
+        det = rumination.Detector(budget=1000, rate_per_1k=3)  # fires — the chunk is ~450 markers/1k
         chunk = "actually wait hmm let me reconsider on second thought " * 10
         lines = [_sse(_delta(reasoning_content=chunk)) for _ in range(20)] + [b"data: [DONE]\n"]
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,7 +296,7 @@ class ChatWatchedTests(unittest.TestCase):
             self.assertIn("let me reconsider", saved)               # the full reasoning is still there
 
     def test_rumination_abort_cuts_stream_early(self):
-        det = rumination.Detector(budget=1000, threshold=3)  # gate 500 tok; fires fast
+        det = rumination.Detector(budget=1000, rate_per_1k=3)  # gate 500 tok; fires fast
         chunk = "actually wait hmm let me reconsider on second thought " * 10  # ~530 chars, many markers
         lines = [_sse(_delta(reasoning_content=chunk)) for _ in range(20)] + [b"data: [DONE]\n"]
         resp = _FakeResp(lines)

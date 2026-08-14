@@ -8,5 +8,12 @@ multi = old_string matches {{N}} places in {{PATH}} — add surrounding lines so
 escalate = you have failed to edit this file {{PRIOR}} times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n{{CUR}}\n---
 escalate_unread = you have failed to edit this file {{PRIOR}} times — you cannot pin its exact current text. STOP editing it. The file is too large to quote here: read {{PATH}} in full first, then produce the corrected FULL file in a single write_file call.
 anchor = your old_string is not an exact match. Your copy first differs from the file at LINE {{LINE}}. Here is the file's real text around it:\n---\n{{ANCHOR}}\n---\nUse THESE lines verbatim in old_string — line {{LINE}} is where your copy is wrong, and a line you remember that is not shown here is not in the file.
+# The SAME situation with no line number computed. It used to render the `anchor` body with "?"
+# substituted, producing "your copy first differs from the file at LINE ?" and "line ? is where your
+# copy is wrong". Measured, nemotron-elastic/java 0031 — the coder read it and answered "But we need
+# to find exact line. Let's view file again", and spent the rest of the run hunting a line cria had
+# never located. A message that cannot name a line must not print one (5b): this one says what is
+# true — there is no exact match, here is the real text — and claims nothing else.
+anchor_noline = your old_string is not an exact match. Here is the file's real text where it should be:\n---\n{{ANCHOR}}\n---\nUse THESE lines verbatim in old_string. A line you remember that is not shown here is not in the file.
 identical = old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text. Read the file, then make one targeted edit.
 no_anchor = your old_string is not in the file (likely a stale copy). Read the file to get its exact current text, then make one targeted edit.

@@ -133,7 +133,16 @@ def compose(fail: dict, prior: int) -> str:
         # resubmitting a byte-identical old_string three times against a hint that showed it text it
         # believed it already had. The divergence index is computed where the mismatch is found; it
         # only has to be carried out.
-        return report("anchor", anchor=anchor, line=fail.get("line") or "?")
+        # NO LINE, NO CLAIM ABOUT A LINE. This filled the same template with "?" when the divergence
+        # index was absent, so cria told the coder "your copy first differs from the file at LINE ?"
+        # and "line ? is where your copy is wrong". nemotron-elastic/java 0031 answered "But we need
+        # to find exact line. Let's view file again" and spent the rest of the run looking for a line
+        # cria had never located. The two situations get two messages (#4: the fallback that printed
+        # a placeholder where a fact belongs is deleted, not reworded).
+        line = fail.get("line")
+        if line in (None, "", 0):
+            return report("anchor_noline", anchor=anchor)
+        return report("anchor", anchor=anchor, line=line)
     return report("no_anchor")
 
 

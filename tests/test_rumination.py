@@ -31,13 +31,31 @@ class DetectorTests(unittest.TestCase):
         text = "actually wait hmm let me reconsider actually wait"
         self.assertIsNone(det.check(text, 100))  # packed markers but under the 5000-token gate
 
-    def test_above_gate_with_threshold_hits_flags(self):
+    def test_above_gate_with_dense_markers_flags(self):
+        """The arm is DENSITY now, not a count — see DEFAULT_MARKER_RATE_PER_1K. This text is
+        ~40 markers per 1,000 tokens, which is circling by any reading."""
         det = rumination.Detector(1000, 3)
-        self.assertIsNotNone(det.check("Actually, wait. Hmm, let me reconsider.", 600))
+        self.assertIsNotNone(det.check("Actually, wait. Hmm, let me reconsider. " * 6, 600))
 
-    def test_above_gate_below_threshold_stays_ok(self):
+    def test_above_gate_below_the_rate_stays_ok(self):
         det = rumination.Detector(1000, 5)
         self.assertIsNone(det.check("I'll check the file. Actually, that's fine. Proceeding.", 600))
+
+    def test_a_long_reply_is_not_a_loop(self):
+        """THE measured false positive: nemotron-elastic/java 0017 was aborted mid-write_file at
+        10 markers over 8,254 tokens — 1.21 per 1,000, BELOW the 3.84 corpus median. It was killed
+        for being long. That run landed zero edits and ended byte-identical to the seed."""
+        det = rumination.Detector(16384)
+        self.assertIsNone(det.check("actually " * 10 + "x" * (8254 * 4 - 90), 8254))
+
+    def test_a_real_spiral_still_fires(self):
+        det = rumination.Detector(16384)
+        self.assertIsNotNone(det.check("actually wait " * 60 + "x" * 1000, 8300))
+
+    def test_a_handful_of_markers_never_fires_on_rate_alone(self):
+        """MIN_MARKERS keeps a short dense burst from tripping the arm by itself."""
+        det = rumination.Detector(1000, 1)
+        self.assertIsNone(det.check("actually wait", 600))
 
     def test_length_backstop_fires_without_markers(self):
         # The real incident: a marker-FREE reasoning runaway that consumes the whole budget must
