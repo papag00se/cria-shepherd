@@ -187,7 +187,12 @@ def main() -> None:
                   f"{STABILITY_RUNS} runs gave {len(seen)} distinct result(s)"}
 
     # --- 4: the review
-    rv = next((p for p in ws.rglob("REVIEW.md") if ".git" not in p.parts), None)
+    # CASE IS NOT THE PROPERTY THE TASK ASKS FOR. `rglob("REVIEW.md")` is case-sensitive, so a
+    # review written to `review.md` scored zero for its capitalisation. The task asks for a
+    # document describing remaining problems with file names and line numbers; it never says how
+    # to case the filename. A check may only fail a run over the property the task names.
+    rv = next((p for p in sorted(ws.rglob("*"))
+               if p.is_file() and p.name.lower() == "review.md" and ".git" not in p.parts), None)
     rtext = rv.read_text(errors="replace") if rv else ""
     # A LOCATED FINDING IS A FILE AND A NUMBER NEAR EACH OTHER. The task asks for a review whose
     # findings say WHERE; it never says how to write a location down. This matched

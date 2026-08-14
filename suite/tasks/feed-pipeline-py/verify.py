@@ -127,7 +127,12 @@ def main() -> None:
         "detail": f"workers enabled: {workers_on}; 8 runs gave {len(totals_seen)} distinct result(s)"}
 
     # --- 4: the review
-    rv = next((p for p in ws.rglob("REVIEW.md") if ".git" not in p.parts), None)
+    # CASE IS NOT THE PROPERTY THE TASK ASKS FOR. `rglob("REVIEW.md")` is case-sensitive, so a
+    # review written to `review.md` scored zero for its capitalisation. The task asks for a
+    # document describing remaining problems with file names and line numbers; it never says how
+    # to case the filename. A check may only fail a run over the property the task names.
+    rv = next((p for p in sorted(ws.rglob("*"))
+               if p.is_file() and p.name.lower() == "review.md" and ".git" not in p.parts), None)
     rtext = rv.read_text(errors="replace") if rv else ""
     located = re.findall(r"[\w/]+\.py[:\s]+\d+|line\s+\d+", rtext, re.I)
     substantial = len(rtext.split()) >= 60

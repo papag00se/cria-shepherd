@@ -150,7 +150,9 @@ def main() -> None:
 
     # Discount codes come from a file, and a MISSING file still works — the prompt asks for the
     # fallback explicitly, and "works only when the file exists" is the usual half-done shape.
-    cfg = next((p for p in ws.rglob("discounts.json") if ".git" not in p.parts), None)
+    # Case-forgiving: the task names the file, not its capitalisation.
+    cfg = next((p for p in sorted(ws.rglob("*"))
+                if p.is_file() and p.name.lower() == "discounts.json" and ".git" not in p.parts), None)
     cfg_ok, cfg_detail = False, "no discounts.json"
     if cfg is not None:
         try:

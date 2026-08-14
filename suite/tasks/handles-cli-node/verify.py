@@ -154,7 +154,10 @@ def main() -> None:
     r["parts"]["tests_incl_live"] = {"ok": live_ok, "detail": live_detail}
 
     # --- Dockerfile rides with the CLI point: a container that cannot be built is not a delivery.
-    dockerfile = next((p for p in ws.rglob("Dockerfile") if ".git" not in p.parts), None)
+    # Case-forgiving for the same reason the review check is: the task asks for a container image
+    # definition, not for a particular capitalisation. `dockerfile` is a real spelling in the wild.
+    dockerfile = next((p for p in sorted(ws.rglob("*"))
+                       if p.is_file() and p.name.lower() == "dockerfile" and ".git" not in p.parts), None)
     dtext = dockerfile.read_text(errors="replace").lower() if dockerfile else ""
     docker_sane = bool(dockerfile) and "from" in dtext and ("node" in dtext) and \
         any(k in dtext for k in ("cmd", "entrypoint"))
