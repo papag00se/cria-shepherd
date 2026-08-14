@@ -414,9 +414,24 @@ Every string the model reads goes in `cria/prompts/*.txt` (via `prompts.load` / 
 [`feedback_prompts_in_files`].
 
 ### 23. Architectural boundaries (stated as `## Principle:` in [`shephard.md`](shephard.md))
-- **Owns no executors** — cria is a bidirectional transform on the tool-call stream; it never
-  touches the workspace, and lowers rich tools (`write_file`, `web_fetch`) to the one primitive
-  every harness runs (`shell`), re-presenting the result inbound.
+- **Lowers every MODEL-FACING tool to `shell`** — cria is a bidirectional transform on the
+  tool-call stream: rich tools (`write_file`, `web_fetch`) become the one primitive every harness
+  runs, and the result is re-presented inbound as the original tool. That is what makes cria port
+  to any harness, and it is unconditional.
+- **…but cria DOES execute, on its own side, for its own ends.** It runs the repo's tests, the
+  syntax floor, the linters, the exec-check that starts the delivered program, the planner's
+  read-only gathers, and it deletes the litter its own probes create. This is the actor/supervisor
+  half `shephard.md` records, and it is deliberate — a probe cria composes for the harness cannot
+  clean up after itself (the Codex sandbox hard-rejects an `rm`, which once killed every gate), and
+  a check whose result cria must parse is cheaper run directly than round-tripped.
+  **The rule is not "cria never runs anything." It is: what the MODEL sees goes through the
+  harness; what CRIA needs may be run by cria.** An earlier wording said "never touches the
+  workspace", which stopped being true and was left standing — a stale boundary is worse than a
+  wide one, because an audit measures against it and a maintainer believes it.
+- **What that costs, and the part still owed:** cria's own subprocesses are outside the harness's
+  sandbox, and `dirguard` — which has one enforcement point — is used by none of the three direct
+  execution sites (`execcheck`, `planner_tools`, `probegate`'s sweep). So "is this safe to run
+  here" currently has three implementations that cannot agree. Open.
 - **Owns no rendering either** — every tool cria exposes must reduce to a primitive the harness
   already knows how to both *run and display*; never a cria-only tool the harness must be taught
   to draw.

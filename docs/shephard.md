@@ -21,8 +21,13 @@
 
 The marketable catalog of every assist — name first, one line each — is in [heuristic-assists.md](heuristic-assists.md); the why + code pointers in [local-coder-massaging.md](../../codex-local/docs/spec/local-coder-massaging.md).
 
-## Principle: Shephard owns no executors
-- **What it is** — never touches the workspace; a bidirectional transform on the tool-call stream. Model works with rich tools (`write_file`, `web_fetch`); harness only runs primitives (ideally just `shell`).
+## Principle: every MODEL-FACING tool is lowered to `shell`
+*(This was "Shephard owns no executors — never touches the workspace". The lowering half is still
+exactly right and is why it ports. The "never touches the workspace" half stopped being true: cria
+runs the repo's tests, the syntax floor, the linters, the exec-check that starts the delivered
+program, and the planner's gathers, and it removes its own probes' litter itself. See the
+actor/supervisor note below, which recorded the shift and never made it back up to this heading.)*
+- **What it is** — a bidirectional transform on the tool-call stream. Model works with rich tools (`write_file`, `web_fetch`); harness only runs primitives (ideally just `shell`).
 - **Outbound** — `write_file` → `printf %s '<base64>' | base64 -d > path` (byte-exact, escaping-proof); `web_fetch` → `curl`. `shell`, not `write_file`, is the one primitive every harness exposes — lowering to it is what ports.
 - **Inbound** — re-present the recorded `shell` call + result as the original tool, so the model never sees the shell. Recognized statelessly from a `# shephard-write:<path>` sentinel (survives restarts). The old one-way `write_file → printf` failed by skipping this half.
 - **Why it ports** — harness supplies only executors (Rust vehicle: `codex-core`); all intelligence is stream transforms (`codex-routing`).
