@@ -10,7 +10,7 @@ rewrites itself after every cell.
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 16 of 24 in flight. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 17 of 24 in flight. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -34,7 +34,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 13 | feed-pipeline-java | gemma4 | 0% | −80 | 16 | 54 | its rewrite of `Importer.java` dropped the seed's first line, `package pipeline;`. The file still compiles — javac puts it in the default package — so nothing complained, and the checker's `import pipeline.Importer` then found nothing. All five checks died on one missing line; killed at the 15-minute floor. Walk running |
 | 14 | feed-pipeline-java | qwen35 | 40% | −60 | 46 | 371 | fast and wrong. It hit **29.9× against a 4.0× bar** and lost the point anyway because the totals no longer match the seed's. The quoted-comma row is mis-parsed despite declaring `opencsv`, and no REVIEW.md was written in 371 calls — the cheapest point on the board. Five more oversize refusals in the same band. Walk running in three parts |
 | 15 | feed-pipeline-java | ternary-bonsai | 0% | 0 | 16 | 46 | never compiled. `mvn compile` failed and stayed failed; killed at the 15-minute floor with one gate fired. Flat against last cycle, which was also 0% |
-| 16 | feed-pipeline-java | nemotron-elastic | | | | | |
+| 16 | feed-pipeline-java | nemotron-elastic | 0% | 0 | 16 | 66 | never compiled either. One near-miss: it *did* write REVIEW.md — 419 words — but with zero located findings, and the prompt asks for a file name and line number on every issue. Flat against last cycle |
 | 17 | handles-cli-node | gemma4 | | | | | |
 | 18 | handles-cli-node | qwen35 | | | | | |
 | 19 | handles-cli-node | ternary-bonsai | | | | | |
@@ -90,6 +90,15 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
   spirals or helping to sink it needs a read, not a count (#23b). Queued for the walk phase.
 
 ### Environment notes — established, deliberately NOT changed mid-cycle
+
+- **Java is NOT blocked by its environment — checked directly.** The seed compiles clean out of the
+  box, offline (`mvn -o compile`) and online. A third-party CSV dependency added to the `pom.xml`
+  resolves and downloads (commons-csv 1.10.0, plus six versions already in `~/.m2` from earlier
+  runs). So the task's mandatory "use a third-party Java CSV library" is satisfiable, and the three
+  `mvn compile failed` cells are the models' own broken code plus the cria faults the walks found —
+  not a wall like Ruby's. The cached `.m2` artifacts are contamination of the same shape as the Ruby
+  gem but benign: the `pom.xml` must still declare the dependency and that declaration is what the
+  checker reads.
 
 - **`bundle` is not on this box's PATH.** Debian ships the binaries as `bundle3.2` / `bundler3.2`
   and nothing provides the unversioned name, so `bundle install` and `bundle exec` both answer
