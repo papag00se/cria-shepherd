@@ -124,6 +124,17 @@ Ranks are assigned in the rank phase, once the walk has said how many cells each
 
 ### Environment notes — established, deliberately NOT changed mid-cycle
 
+- **A foreign server owns port 8081 on this box, and it answered the Python task's requests.**
+  Confirmed live: `uvicorn` pid 479454, `app.compaction_main:app --host 127.0.0.1 --port 8081`, from
+  `/home/jesse/src/coding-agent-router`, started 2026-08-13 23:21 — during the campaign. In
+  `orders-api-py × nemotron-elastic` the model tried four times to start its own service (calls 0123,
+  0148, 0166, 0172) and never bound once; every 404 it then chased came from that server. The final
+  score is still honest, because `verify.py` starts the service on a port it chooses itself — but the
+  model could not test its own work for the whole run.
+  **This is the operator's process and the operator's call. Not touched.**
+  Backlog entry 30 recorded this exact collision in an earlier campaign and filed it `nothing-to-fix,
+  1 occurrence`. That judgement was wrong and the entry is re-opened.
+
 - **Java is NOT blocked by its environment — checked directly.** The seed compiles clean out of the
   box, offline (`mvn -o compile`) and online. A third-party CSV dependency added to the `pom.xml`
   resolves and downloads (commons-csv 1.10.0, plus six versions already in `~/.m2` from earlier

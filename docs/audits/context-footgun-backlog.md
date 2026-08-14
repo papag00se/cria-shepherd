@@ -1257,8 +1257,16 @@ stand as a note.
 
 ### 30. A fixed port on a shared box
 
-- **Occurrences:** 1 · **Languages:** 1 (python) · **Models:** 1 (gemma4)
-- **Fix belongs at:** nothing-to-fix
+- **Occurrences:** 2 · **Languages:** 1 (python) · **Models:** 2 (gemma4, nemotron-elastic)
+- **Fix belongs at:** the environment — RE-OPENED 2026-08-14, the `nothing-to-fix` call was wrong
+
+*Re-opened.* It happened again in cycle 1, `orders-api-py × nemotron-elastic`. Confirmed live while
+writing this: `uvicorn` pid 479454 serving `app.compaction_main:app` on `127.0.0.1:8081` out of
+`/home/jesse/src/coding-agent-router`, started 23:21 on 2026-08-13 — during the campaign. The model
+tried four times to start its own service and never bound; every 404 it chased came from that
+server. `verify.py` picks its own port, so the score is honest, but the model spent the run unable
+to exercise its own work. Filing a live cross-process collision as "the model should not hard-code a
+port" put the fix on the party that cannot see the problem.
 
 *Chain.* model hard-codes 8081 instead of asking the OS for a free port -> the suite runs the workspace
 directly on the shared box -> an unrelated service answers -> ~20 calls of writes, kills and

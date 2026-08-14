@@ -6490,3 +6490,702 @@ from the captures, not inferred from the delta.
 **What it means for the fix phase.** The three negative cells are the priority, above any cell that
 is merely low. A cell where cria is level with the plain proxy costs nothing; a cell where cria is
 60 points behind it is cria spending a model's whole run on cria.
+
+---
+
+## feed-pipeline-java_ternary-bonsai_codex_poff_1786692025
+
+Commit 92bd677 (`BATTERY2 CRIA ternary-bonsai … p4`). 46 calls, 964.4 s wall, terminal
+`milestone-miss-15min` (score 0 against a floor of 1, recheck confirmed). Score 0/5 — the second
+consecutive cycle this cell has scored zero. Phases: **20 coder, 7 research-check, 7 critic,
+7 critic-confirm, 3 reasoner, 1 classifier, 1 research-step.** Twenty-one of forty-six calls (46%)
+were judges. Assists recorded: `loop.periodic_gate` 1, `loop.periodic_gate_result` 1,
+`loop.repetition` 1 — the roll-up undercounts, there were **two** gate runs (the second fired on
+`running the repo's checks (repeated action detected)`) and one reasoned steer.
+
+The whole run in one line: at three minutes the model wrote an `Importer.java` importing two classes
+that do not exist in any version of Apache Commons CSV (`CSVReader`,
+`org.apache.commons.csv.formatoptions.FormatOptions` — those are opencsv's and nobody's), the build
+went red on that and stayed red for the remaining thirteen minutes, and cria spent 46% of the run's
+calls on judges that certified the file as DONE, refused the coder's read of it four times, and told
+the steer reasoner that the compile output contained no parseable line while quoting six of them in
+the same turn.
+
+**The clock, from the run log** (start 00:20:46):
+
+| +time | call | what |
+|---:|---:|---|
+| 0m22 | 0002 | research-step answers `src/main/java/pipeline/Importer.java` — plan step 1 of 2 |
+| 1m54 | 0013 | writes `pom.xml` with `commons-csv` **1.3.0** |
+| 3m06 | 0017 | writes `Importer.java` with `CSVReader` + `FormatOptions` — **the fatal write** |
+| 3m30 | 0018 | `mvn clean compile -q` → exit 1, artifact 1.3.0 not in central; cria's dependency note names the **project's own GAV** |
+| 4m17 | 0022 | pom → 1.5 (correct); then `read_file` whole → `⟦ctx:denied⟧` **#1** |
+| 4m22–7m10 | 0023–0036 | 7 critic + 7 critic-confirm calls → **`done: true`**, **CONSISTENT** |
+| 7m17 | 0037 | `read_file` whole → `⟦ctx:denied⟧` **#2** |
+| 7m18 | 0038 | repetition note ("this exact call 2 times") |
+| 7m24 | 0039 | `read_file` lines 1–30 → sees `import org.apache.commons.csv.CSVReader;` |
+| 7m34 | 0040 | `mvn clean compile -q` → **the six real errors**; gate 1 → `⟦ctx:checks⟧` (six errors) **and** `⟦ctx:steer⟧` ("a specific line could not be parsed") |
+| 9m07 | 0041 | `mvn dependency:tree` → `BUILD SUCCESS`, `commons-csv:jar:1.5:compile` |
+| 10m37 | 0042 | `mvn dependency:resolve; ls target/dependency/…` → `no jar yet`; `read_file` whole → `⟦ctx:denied⟧` **#3** |
+| 10m48 | — | gate 2 (repeated-action) → `⟦ctx:checks⟧`, same six errors |
+| 10m51 | 0043–0044 | reasoner; trigger = **"It keeps repeating the SAME action 3×: `read_file …Importer.java`"** |
+| 11m22 | 0045 | `⟦ctx:steer⟧ [REDIRECT]` delivered; coder re-runs `mvn dependency:resolve` → `no jar yet` |
+| 13m28 | 0046 | `read_file` whole → `⟦ctx:denied⟧` **#4**; killed |
+
+The first `mvn clean compile` at 0017 deleted the seed's tracked `target/classes/pipeline/*.class`
+(`git status` in the archive: `D target/classes/pipeline/Importer.class`). So the stale-class
+camouflage that confused the gemma4 run is absent here — this is a clean, uncamouflaged zero.
+
+Findings ranked worst first.
+
+---
+
+### 1. The plan step cria authored was a bare filename, and it turned twenty-one judge calls into a rubber stamp for a build that had never compiled
+
+**what happened.** cria's research-step produced the string `src/main/java/pipeline/Importer.java` —
+a path, not a sentence, and a path the task never names. That string became plan step 1 of 2 and was
+restated in **every one of the 46 prompts**. A step whose whole text is a filename has exactly one
+completion criterion a judge can find: does the file exist. The critic found that it did, wrote
+`done: true` while its own reasoning said the build had failed, and the confirm judge agreed. The run
+never reached step 2, which is where `REVIEW.md` lived.
+
+**cria fault: yes**
+
+**evidence.** CALL 0002, the research-step, in full:
+
+```
+--- SAY (full) ---
+src/main/java/pipeline/Importer.java
+```
+
+Its own reasoning, one line above, shows it answered a different question than the one asked:
+
+> "But the instruction says 'Plan one step only' - I need to first inspect the existing code before
+> making any changes. Let me read the source files to understand what's there.
+> I'll start by reading the main Java file, pom.xml, and README.md…"
+
+The prompt it was answering (CALL 0002, verbatim) asks for something else entirely:
+
+```
+If coding requires reading an external source first, output one sentence naming that source and what
+task-specific names, structures, or behavior must be learned from it. Do not invent paths, files,
+URLs, or endpoints not named in the task.
+Otherwise, output exactly: NONE
+```
+
+It invented a path the task never named — the one thing the prompt explicitly forbids —
+and `research.step_defect` let it through. Checked arm by arm against `cria/research.py:363`:
+`_LOCATION_TOKENS` is `("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")`, which contains
+no source-file extension in any of the battery's six languages; `_GUESS_SHAPES` wants a braced
+template, a `/v\d+/` path, or an auth phrase; `_PRODUCTION_VERBS` finds no verb because there is no
+verb. The one defect the sentence actually has — *it is a location, and the task never named it* — is
+the arm that exists and does not cover `.java`.
+
+What that step then cost, call by call:
+
+```
+CALL 0029 [critic]  → {"done": true, "reason": "Importer.java file exists on disk at 10,198 bytes
+with complete implementation including thread-safe accumulation (ConcurrentHashMap + AtomicInteger),
+validation logic for malformed rows, O(n) SKU deduplication via HashSet, and proper CSV parsing via
+Apache Commons CSV. …", "proposed_fix": ""}
+```
+
+The critic's own reasoning, in the same call, contains the contradiction whole:
+
+> "3. The build failed due to an outdated dependency version, but the fix was applied
+>  The code is there and written, though compilation hasn't been verified yet. Since the file exists
+> on disk with substantive content and **the step specifically targets creating this Java class
+> rather than running it**, I can assess whether the work is complete based on what's actually
+> present."
+
+and again at CALL 0025:
+
+> "the step is about creating/modifying the Java source file itself - not specifically about running
+> a build. The file IS created and contains all the necessary code."
+
+It is not misreading the step. The step says nothing but a filename, so "the file exists" *is* the
+step. The critic's own rule sheet — *"If this step's own command, test, or runtime behavior fails,
+`done=false`"* — has nothing to bind to, because a filename names no command.
+
+Then `critic-confirm` ran seven more calls, read the entire 10,198-byte file (chunk05 lines 36–285),
+saw `import org.apache.commons.csv.CSVReader;` on line 3, and answered:
+
+```
+CONSISTENT
+The file exists at the claimed path with the exact byte size and all described features
+(thread-safe ConcurrentHashMap/AtomicInteger accumulation, validation logic, O(n) HashSet
+deduplication, and Apache Commons CSV 1.5 parsing).
+```
+
+**Cost.** 4m22s → 7m10s: 168 seconds and 14 model calls, 17% of a 16-minute run, on a step whose text
+cannot be judged. Add the 7 research-checks (finding 7) and it is 21 of 46 calls. The loop did **not**
+act on the `done: true` — the log stays on `step 1/2` at 7m10s, 7m18s, 7m24s, 7m36s, 9m07s, 10m37s
+and 11m22s, so a red gate held the advance closed (#13 behaving). Which makes the whole 168 seconds
+pure loss: a wrong verdict, correctly ignored, paid for in full.
+
+**And it is why `review_written` reads `no REVIEW.md`.** The coder was never once handed the task; it
+was handed a filename, 46 times, with `Do ONLY this step (1 of 2), then stop`. Even a green build
+could not have scored that check.
+
+**A → B → C.** A: `step_defect` has a location arm whose token list only knows web-spec extensions,
+so a bare source path passes as "one sentence naming a source". B: the plan's first step is a
+filename, and its completion criterion collapses to file-existence. C: three judges spend 46% of the
+run ruling `done` / `CONSISTENT` on a file that had never compiled, and the deliverable in step 2 is
+never reached.
+
+**fixable at A? Yes, and the smallest fix is not a bigger token list.** Two, in order of value:
+(a) The arm that should have fired is *"names a location the task itself never named"*, and it is
+already written — it is just keyed on six web extensions. The general shape is **"the answer is a
+path, and that path is not in the task's own words"**: a token with a path separator or a file
+extension, absent from the task text. That is one predicate over two strings, no language table, and
+it is strictly the same rule the docstring already claims to enforce.
+(b) *The step text is the judge's only criterion, so a step with no verb must not reach a judge.*
+`step_defect` refuses a sentence with a BUILD verb; it accepts a sentence with **no verb at all**,
+which is worse — a build verb at least tells the critic what to look for. A step that names no action
+should take the safe null (`""`, no research step, plan = the task) exactly as NONE does.
+
+**principle.** #2 corollary (cria does not AUTHOR work — and a plan step that is a filename is cria's
+scaffolding standing in for the task), #9 corollary and #20/`feedback_matchers_by_shape` (the location
+list is overfit to "browse an API spec"; `.java`, `.rb`, `.go`, `.rs`, `.py` are all outside it),
+#13 (the judges failed OPEN on a step they had no criterion for; only the red gate saved it).
+
+---
+
+### 2. cria refused the coder's read of its own file four times, then fired the run's only steer on the loop that refusal created — while cria's own judge read the same file whole in the same run
+
+**what happened.** `Importer.java` is 10,198 bytes; `READ_INLINE_MAX` is 9,000. Every whole
+`read_file` the coder made was refused with a sentence about truncation. The coder tried four times.
+On the third, cria's repetition detector fired — *"It keeps repeating the SAME action 3× without the
+outcome changing: `read_file {"path":"…/Importer.java"}`"* — and that is the trigger that produced the
+only reasoned steer in the entire run. The steer never mentions the refusal. Meanwhile
+`critic-confirm` at CALL 0032 called `read_file` on the same path and was handed all 10,198 bytes.
+
+**cria fault: yes**
+
+**evidence.** The refusal, identical all four times (CALL 0037's prompt Δ, chunk05:413):
+
+```
+⟦ctx:denied⟧ /tmp/…/src/main/java/pipeline/Importer.java is large — reading it whole would be
+truncated (you'd get the head and tail with the middle cut, and act on a false view). Read it
+deliberately instead: grep for what you need (e.g. grep -n "<keyword>" /tmp/…/Importer.java), or
+read a specific line range with read_file start_line/end_line.
+```
+
+Fired at CALL 0022, 0037, 0042 and 0046 — four of the coder's twenty calls, 20% of its budget. CALL
+0046 is the last call of the run.
+
+The repetition note at CALL 0038, cria telling the model to stop doing the thing cria is blocking:
+
+```
+[you have now made this exact call 2 times and it failed the same way every time — the earlier copies
+were folded away, so this is the only record of it. Tried: read_file(/tmp/…/Importer.java). Repeating
+it will fail the same way. It has not answered the question, so do not read its result as the answer:
+use a different tool, or fix what made it fail, before asking again.]
+```
+
+*"fix what made it fail"* — the coder cannot; what made it fail is cria's own threshold.
+
+The steer trigger at CALL 0043, verbatim:
+
+```
+WHAT TRIPPED THE DETECTOR:
+It keeps repeating the SAME action 3× without the outcome changing: read_file
+{"path":"/tmp/…/src/main/java/pipeline/Importer.java"}
+```
+
+The steer reasoner was handed a transcript in which three of those refusals appear verbatim
+(chunk07 lines 138, 140, 155) and authored a directive that does not mention them at all:
+
+```
+⟦ctx:steer⟧ [REDIRECT]
+The coder keeps recompiling after changing pom.xml but never verifies what Maven actually downloads
+or which imports match the real API. Read the actual compiled error output, identify which specific
+class/method is missing, then fix only that import — don't rewrite the file again.
+```
+
+**And the same file, read whole, by cria's own judge — CALL 0032, `critic-confirm`:**
+
+```
+--- TOOL CALL read_file (full args) ---
+{"path":"src/main/java/pipeline/Importer.java"}
+```
+→ 250 lines returned intact, `package pipeline;` through the closing brace, no cut, no refusal.
+
+So in one run, one file, cria says both *"reading it whole would be truncated"* and hands it over
+whole. The judge's read is in-process and the coder's is lowered through the harness, which is why
+they differ — but that is a fact about **cria's plumbing**, stated to the model as a fact about the
+file (#5b, the tell exactly).
+
+**Was the refusal load-bearing on the outcome? No — and that matters.** The coder read lines 1–30 at
+CALL 0039 and again at 0045, and saw `import org.apache.commons.csv.CSVReader;` both times. The bad
+line was never hidden. What the refusal cost was four calls, one false stuck-signal, and the run's
+entire steer budget.
+
+**Was the truncation claim even true?** Marginally. `INLINE_RESULT_MAX_BYTES = 9000`, chosen for
+"headroom under the 10,000-byte budget for the harness's own framing lines". The file is 10,198 bytes
+— about 200 bytes over the harness's real budget, plus framing. cria refused a read that would have
+lost roughly 2% of a file, four times, at the cost of 20% of the coder's calls.
+
+**A → B → C.** A: the whole-read guard is a hard byte threshold with no relief valve, and the model
+has no way to satisfy it except by guessing line ranges for a file it cannot see the shape of. B: the
+coder retries the same read; cria's repetition detector counts those retries as the coder looping. C:
+the run's only reasoned steer is spent on a loop cria manufactured, and it is authored blind to the
+cause because the trigger reports the coder's action and not cria's answer to it.
+
+**fixable at A? Yes, three ways, and the first is nearly free.**
+1. **Serve it in pages instead of refusing it.** cria already knows the byte count and already has a
+   ranged-read path. A whole read of an 11 KB file is `1..N` then `N+1..EOF`, disclosed
+   (`lines 1–160 of 250; call again with start_line=161`). That is #5 done properly — bound by
+   PAGING, never by refusal — and it is what `content_reduce`'s own docstring says the constant is for.
+2. **A refusal must not feed the stuck detector.** A repeated call whose result is a cria refusal is
+   not the coder looping, it is cria looping. The detector keys on `(tool, args)` and should exclude
+   results carrying the denied mark, or — better — trigger a *different*, honest message: *"this read
+   is being refused by the file-size guard; it is 10,198 bytes, read it in two ranges"*.
+3. **If a refusal does reach the steer author, say so in the trigger.** The seat was told the coder
+   repeats an action; it was not told cria is the one returning the same answer. It could not have
+   diagnosed this from the evidence it was handed.
+
+**principle.** #5b (a claim about cria's threshold stated as a claim about the file, contradicted in
+the same run by cria's own judge), #2 (a guard that blocks the first attempt traps the loop — this one
+blocked all four), #1 (the assist became the footgun), #16 (the stuck signal was cria's own doing).
+
+---
+
+### 3. In one turn cria handed the model the six located compile errors and a sentence saying no line could be parsed — then gave the false one to the steer reasoner as authority-tier-1 ground truth
+
+**what happened.** Gate 1 ran `mvn -q compile`, which printed six errors each with a file, a line and
+a column. cria's `⟦ctx:checks⟧` carried all six. The `⟦ctx:steer⟧` composed from the *same probe
+report*, delivered in the *same turn*, said a specific line could not be parsed and quoted the Maven
+help URL. Three calls later that false sentence was the `GROUND TRUTH FROM THE REPO'S CHECKS` block in
+the steer reasoner's prompt. This is the gemma4 walk's finding 3, unfixed, costing a second cell.
+
+**cria fault: yes**
+
+**evidence.** The `⟦ctx:checks⟧` at CALL 0040 (chunk06:876–891), cria's own words, first lines:
+
+```
+⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the checker's OWN
+message and the line it flagged; resolve what each one names with the smallest change that makes it
+actually work…
+[ERROR] /tmp/…/src/main/java/pipeline/Importer.java:[3,30] cannot find symbol
+  symbol:   class CSVReader
+  location: package org.apache.commons.csv
+[ERROR] /tmp/…/src/main/java/pipeline/Importer.java:[4,44] package org.apache.commons.csv.formatoptions does not exist
+…
+[ERROR] /tmp/…/src/main/java/pipeline/Importer.java:[238,44] incompatible types: java.lang.Double cannot be converted to int
+```
+
+The `⟦ctx:steer⟧` in the same turn (chunk06:982–986):
+
+```
+⟦ctx:steer⟧ I am giving you the CURRENT state of the repo (syntax & tests). …
+the repo's own checks FAILED, but a specific line could not be parsed from the output:
+$ mvn -q compile — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+$ mvn test — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+Run that exact check yourself and read the actual error, then fix the real cause…
+```
+
+and the reasoner prompt at CALL 0043 (chunk07:163–167), where it is labelled authority #1:
+
+```
+GROUND TRUTH FROM THE REPO'S CHECKS:
+the repo's own checks FAILED, but a specific line could not be parsed from the output:
+$ mvn -q compile — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/…/MojoFailureException
+```
+
+**Root, traced to the byte.** Two readers of one probe report disagree:
+
+* `probegate.interpret_gate` scrapes the probe section's error-class **lines** — that path works and
+  is why `⟦ctx:checks⟧` is correct and complete.
+* `proberun.completion_block_nudge` → `block_findings` reads the parsed `Finding` list, and there is
+  none, because `probeparse.split_diag` requires `": "` to separate location from message:
+
+  ```python
+  def split_diag(s):
+      if ": " not in s:
+          return None
+  ```
+
+  Maven prints `…/Importer.java:[3,30] cannot find symbol` — a colon followed by `[`, never `": "`.
+  Zero findings, so `gate_error_text` falls through to `failed_unparsed_probes`, which prints
+  `f"$ {r.command} — {r.summary}"`, and `summary` for a probe with no findings is the **last**
+  error-ish line, which for Maven is always the help URL.
+
+**Did it change the outcome?** The reasoner read past it — its private thinking at 0043 quotes the
+real errors from the transcript (*"The error shows `cannot find symbol: class CSVReader`"*) rather
+than the ground-truth block. So: **NOTHING** here, saved by the reasoner ignoring the section cria
+told it to trust most. That is luck, not design, and the gemma4 run's reasoner did not get lucky.
+
+**A → B → C.** A: `split_diag` cannot read Maven's `path:[line,col] message` form. B: the parsed
+finding list is empty for every Java compile failure, so cria's summariser reports the tail of the
+output and asserts that no line could be parsed. C: the steer channel and the reasoner's
+highest-authority section both carry a sentence the same turn's `⟦ctx:checks⟧` disproves.
+
+**fixable at A? Yes — and prefer the second.**
+(a) Teach `split_diag` the bracket form. Correct, cheap, and exactly the by-shape rule the operator
+has flagged twice: it is one more punctuation spelling of a kernel the parser already handles.
+(b) **Stop the two readers from disagreeing.** `probegate` already extracted the right lines from the
+same output — that is what `⟦ctx:checks⟧` prints. `gate_error_text` should read *that* result, not
+re-derive from an empty `Finding` list. One extraction, one truth, no per-language punctuation.
+(c) Independently, and cheaply: drop the sentence *"a specific line could not be parsed from the
+output"*. cria cannot know that; it knows only that **cria** did not parse one. Say what is true —
+*"the check failed; here is what it printed"* — and quote the checker's **first** error line, not its
+last (every compiler and build tool puts the diagnosis first and the boilerplate last).
+
+**principle.** #5b (the tell — an assertion the world, and cria's own other output, contradicts),
+#12 (surface the metric from the authoritative event; two derivations of one event), #24 in spirit
+(one property, one owner).
+
+---
+
+### 4. cria told the model the build could not resolve the project's own coordinates
+
+**what happened.** Maven said it could not find `org.apache.commons:commons-csv:jar:1.3.0`. cria
+appended a note in its own voice naming `com.example:feed-importer:jar:1.0:` — the project itself —
+and told the coder to check it "against what the repository actually publishes".
+
+**cria fault: yes**
+
+**evidence.** CALL 0018's tool result (chunk01:420–429), Maven's line and cria's note beneath it:
+
+```
+[ERROR] Failed to execute goal on project feed-importer: Could not resolve dependencies for project
+com.example:feed-importer:jar:1.0: Could not find artifact org.apache.commons:commons-csv:jar:1.3.0
+in central (https://repo.maven.apache.org/maven2) -> [Help 1]
+…
+Note: the build could not resolve `com.example:feed-importer:jar:1.0:`. Check the groupId, artifactId
+and version in pom.xml against what the repository actually publishes — a version that does not exist
+fails exactly like this. Fix the dependency; the code that uses it is not what failed here.
+```
+
+Every clause is false of `com.example:feed-importer:jar:1.0`. It resolved fine. It is not published
+anywhere and never will be. It is the project.
+
+**Root.** `probeparse._DEPENDENCY_MISSING`, the java row:
+
+```python
+("java", re.compile(r"Could not resolve dependencies[^\n]*?([\w.-]+:[\w.-]+:[\w.:-]+)")),
+```
+
+The `?` makes it lazy, so it takes the **first** GAV after the phrase — which in Maven's sentence is
+always *the project*, because Maven's own wording is "Could not resolve dependencies **for project
+<yours>**: Could not find artifact **<theirs>**". The artifact that is actually missing is named right
+there, after `Could not find artifact`. The `names_a_workspace_file` guard, which exists to stop
+exactly this class of mistake, splits on `[./\\:]` and tests `com` — no `com` directory in a Maven
+project laid out as `src/main/java/pipeline/` — so it does not suppress.
+
+**Did it change the outcome? Nothing.** The coder read past it — CALL 0018's reasoning is *"The
+version 1.3.0 doesn't exist in Maven Central. Let me check what versions are available for
+commons-csv"* — searched, and picked a real version. Recorded because the note is loaded and pointed
+the wrong way, and the next model that believes cria's voice over Maven's spends its run editing a
+correct `<groupId>`.
+
+**A → B → C.** A: a lazy regex takes the first GAV in a sentence whose first GAV is structurally the
+wrong one. B: cria asserts, in its own voice, that the project cannot be resolved. C: no cost here
+because the model ignored it; the failure mode is a coder that edits its own coordinates.
+
+**fixable at A? Yes, one line.** Anchor on the phrase that names the missing thing:
+`Could not find artifact ([\w.-]+:[\w.-]+:[\w.:-]+)`. Maven prints it verbatim, always, and it is the
+authoritative event (#12) rather than the first token that happens to be GAV-shaped. Keep the
+"Could not resolve dependencies" phrase as the *trigger* if you like; take the name from the other
+clause.
+
+**principle.** #5b, #12, #8 (a lazy regex making a judgment the output states outright).
+
+---
+
+### 5. The task's one hard external dependency was never routed to a read, and the model spent thirteen minutes guessing at an API it could have fetched in one call
+
+**what happened.** The task says *"Use a third-party Java CSV library for parsing quoted CSV"*. The
+model chose Apache Commons CSV and then invented its API — `CSVReader`, `reader.readRecord()`,
+`FormatOptions.DEFAULT_FORMAT`. None of those exist in commons-csv, at any version (they are opencsv's
+shape). It saw `cannot find symbol: class CSVReader` **four times** and never once opened the
+library's documentation. cria's research machinery — the one mechanism built for exactly this — asked
+the question, got a local file path back (finding 1), and then ruled `NOT_RESEARCH` seven times.
+
+**cria fault: none for the hallucination; yes for the routing**
+
+**evidence.** The write at CALL 0017, first four lines of `content`:
+
+```
+package pipeline;
+
+import org.apache.commons.csv.CSVReader;
+import org.apache.commons.csv.formatoptions.FormatOptions;
+```
+
+The model's belief, at CALL 0042, after seeing the error twice:
+
+> "In Apache Commons CSV 1.x (versions 1.0-1.5), the API is:
+> - `org.apache.commons.csv.CSVReader` - exists
+> - No `FormatOptions` class in v1.5 - that was added later"
+
+Both halves are false and it never checked either. At CALL 0045, after the steer, it doubled down on
+the classpath theory instead:
+
+> "I see the real issue now — the CSV library isn't actually available on the classpath despite
+> `dependency:tree` reporting success."
+
+— having just been told by `mvn dependency:tree` (CALL 0041) `\- org.apache.commons:commons-csv:jar:1.5:compile` and `BUILD SUCCESS`.
+
+It reinforced that with a probe that answers a different question. `mvn dependency:resolve` does not
+copy jars into `target/dependency` (that is `dependency:copy-dependencies`), so:
+
+```
+$ mvn dependency:resolve -q 2>&1 | tail -5; ls target/dependency/org/apache/commons/commons-csv-*.jar 2>/dev/null || echo "no jar yet"
+→ no jar yet
+```
+
+ran at CALL 0042 **and again** at CALL 0045 and 0046, each time printing `no jar yet`, each time read
+as confirmation. cria's repetition guard did not fire on that pair — it had fired on the read.
+
+**What cria had and did not use.** The coder's own system prompt says, in cria's voice:
+
+```
+- RESEARCH & INVESTIGATE FIRST: If the task depends on an external thing (an API, a library, a
+  service, a file format), READ its real source/docs before writing code against it.
+```
+
+`web_fetch` was in the tool list all 46 calls. `web_search` was used once, for a version number, and
+the search supervisor at CALL 0019 approved it and recommended a *better search string* rather than
+the obvious `web_fetch` of `https://commons.apache.org/proper/commons-csv/apidocs/` — which the
+reasoner's own prompt invites it to do ("*If the task names a specific API/domain/library and the
+right next move is to READ it, make the recommendation a concrete URL to fetch*"). The task names the
+library class of thing; the coder had named the specific library in the query it was about to run.
+
+**A → B → C.** A: the research step, asked what external source must be read, named a local file
+(finding 1) — so no reading step existed, and `research-check` then answered `NOT_RESEARCH` on it
+seven times, closing the question permanently. B: the model writes against a remembered API. C: six
+compile errors that no amount of re-compiling can resolve, for thirteen minutes.
+
+**fixable at A? Partly, and carefully.** Do **not** add a rule that says "a task naming a library must
+fetch its docs" — that is a task-specific injection and the doctrine forbids it. The general and
+already-built move is the one that misfired: `authored_research_step` must be allowed to produce a
+real reading step here, and it could not because its answer was accepted as-is. Fix finding 1's arm
+(a) — *the answer is a path the task never named* — and this task's retry prompt gets one more swing
+at the question the model actually needed answered. The search supervisor is the second, cheaper
+lever: it already knows how to return a URL instead of a query, and on a query that names a specific
+library it should prefer the URL (#9 — one purposeful call against thirteen minutes of thrash).
+
+**principle.** #8 (the reasoner judges, grounded on evidence — nobody gathered the evidence),
+#9 (a purposeful call is cheap next to a thrashing one), #1 (no new task-specific assist; fix the
+general mechanism that was already there and inert).
+
+---
+
+### 6. No probe ran before the critic ruled, and cria told the critic so
+
+**what happened.** cria convened fourteen judge calls at 4m22s. At that moment the coder had run
+`mvn clean compile` once and it had failed. cria's gate had not run at all, and the critic's prompt
+said so in as many words. The first gate ran at 7m34s — three minutes *after* the judges started and
+twenty-four seconds after they finished.
+
+**cria fault: yes**
+
+**evidence.** The critic prompt at CALL 0023 and 0029, verbatim:
+
+```
+GROUND-TRUTH CHECKS (lint · type-check · tests · git): SYNTAX FLOOR: did not run
+PROBES: none ran — the gate command produced no output.
+```
+
+Both statements were true and both were cria's own doing: the periodic gate had not yet reached its
+cadence. cria therefore asked a weak model to certify a step with the strongest evidence it owns
+switched off, on a project where the cheap probe (`mvn -q compile`, `ProbeCost.Moderate`) takes 1.6
+seconds — the coder's own run of it at CALL 0039 took `Wall time: 1.5820 seconds`.
+
+That probe, run at 4m22s instead of 7m34s, produces the six errors, lands in
+`GROUND-TRUTH CHECKS`, and the critic — whose rule sheet says *"If this step's own command, test, or
+runtime behavior fails, `done=false`"* — cannot write `done: true`. Fourteen calls and 168 seconds
+either do not happen or reach the right answer.
+
+**A → B → C.** A: the gate runs on a turn cadence; the critic runs on a step-age cadence; the two are
+independent. B: a judge can be convened while cria's own ground truth is stale or absent, and is told
+"none ran" as if that were a neutral fact rather than a repairable one. C: the strongest judge in the
+loop rules on file existence alone.
+
+**fixable at A? Yes, and it is a scheduling change, not a new mechanism.** **A judge that reads
+`GROUND-TRUTH CHECKS` must not be convened while that section is empty and the gate is cheap enough to
+run.** cria already knows both halves: the probe plan carries `ProbeCost`, and `gate_fresh` records
+whether ground truth is current. Run the gate first, then ask. This is #10 stated as an ordering:
+cria verifies by doing *before* it asks anyone to judge, not after.
+
+**principle.** #10 (verify by doing — the probe existed, was cheap, and was not run at the one moment
+it decided something), #13 (a judge with no ground truth failed open), #8 (deterministic code gathers
+the facts *then* the reasoner judges — here the reasoner judged first).
+
+---
+
+### 7. The research-check asked the same unanswerable question seven times
+
+**what happened.** `research-check` ran at calls 0005, 0007, 0010, 0012, 0014, 0016 and 0020 — seven
+model calls, one after nearly every coder turn in the first half of the run. All seven returned
+`{"verdict": "NOT_RESEARCH"}`. The step text never changed; it could not have produced any other
+answer.
+
+**cria fault: yes (small, and it is pure clock in a clock-killed run)**
+
+**evidence.** Seven identical verdicts. The reasoning is the same paragraph each time — CALL 0016:
+
+> "The current step is about fixing bugs and improving performance in Importer.java. This is clearly
+> a BUILD/FIX task, not a research task. … The verdict should be NOT_RESEARCH because this is a BUILD
+> task (fixing/improving code), not a READING task."
+
+and CALL 0012:
+
+> "This step is about BUILDING/FIXING code - not about reading documents to find out what's there."
+
+The re-ask is driven by `Loop._research_check`'s evidence fingerprint
+(`evidence_changed = fingerprint != sess.research_evidence`, `cria/loop.py:2930`) — every new file the
+coder reads changes the fingerprint and re-arms the check. The docstring's own bound —
+*"the same set of sources is never judged twice, so a step that reads nothing new costs nothing"* —
+holds, and is the wrong bound: the coder read five files in the first twenty calls, so the evidence
+changed five times and the check ran seven.
+
+**The asymmetry the code misses.** `DONE` and `NOT_DONE` genuinely depend on the evidence — new
+sources can satisfy a reading step. **`NOT_RESEARCH` does not.** It is a property of the step's own
+text: this step does not ask for reading. No amount of new evidence can make a build step become a
+reading step. Once answered, it is answered.
+
+**Cost.** Six wasted reasoner calls, roughly 50 seconds of a run killed by a wall clock, 13% of the
+call budget. Not the reason it failed; on a 15-minute floor, not nothing either.
+
+**fixable at A? Yes, three lines.** Latch `NOT_RESEARCH` per step id. The evidence-fingerprint re-arm
+stays for the two verdicts that depend on evidence.
+
+**principle.** #9 (optimize TOTAL calls — the anti-churn one-shot bound this mechanism is supposed to
+have does not cover the one verdict that is evidence-independent), #15 (the cadence was measured
+against the DONE case and applied to all three).
+
+---
+
+### 8. Everything cria stated in its own voice that the world contradicts (#5b)
+
+Four, all quoted above with their calls:
+
+| # | cria said | the world | call |
+|---|---|---|---|
+| 1 | "the build could not resolve `com.example:feed-importer:jar:1.0:`" | that is the project; `org.apache.commons:commons-csv:jar:1.3.0` is what was missing, named in the same line | 0018 |
+| 2 | "`…/Importer.java` is large — reading it whole would be truncated" | cria's own `critic-confirm` read all 10,198 bytes intact 15 calls later | 0022, 0037, 0042, 0046 |
+| 3 | "the repo's own checks FAILED, but a specific line could not be parsed from the output" | six file:line:col errors, quoted in full in the same turn by cria's own `⟦ctx:checks⟧` | 0040 (steer), 0043 (ground-truth block) |
+| 4 | "Repeating it will fail the same way… fix what made it fail" | what made it fail is cria's byte threshold; the coder cannot fix it | 0038 |
+
+Two of the four (2 and 4) are cria describing **cria** in the indicative and calling it the world —
+the exact tell principle 5b names. One (1) is a partial matcher's output presented as a fact. One (3)
+is cria contradicting cria inside a single turn.
+
+---
+
+### 9. Recent fixes — did they behave?
+
+**The cheap `mvn compile` probe — FIRED TWICE, AND IT IS THE ONLY REASON THE MODEL SAW ITS ERRORS
+FROM cria.** `probediscovery.build_jvm` adds `[mvn, -q, compile]`; both gates ran it and both produced
+a correct, complete `⟦ctx:checks⟧`. Keep it. Two caveats, both recorded rather than acted on:
+(a) its findings are unparseable, which is what produced finding 3's false sentence; (b) the comment
+that justifies it — *"with no cheap compile probe, every Java run in the six-language battery reported
+'SYNTAX FLOOR: did not run'"* — describes a hole the fix did not close, because the probe is
+registered `ProbeKind.BuildCheck`, not `SyntaxCheck`. `SYNTAX FLOOR: did not run` is still what the
+critic prompt says at CALL 0023. Same shape as the gemma4 walk's note on `validate-before-lower`: the
+code claims a coverage it does not have and the next reader will believe the comment. **Carried as a
+candidate for the fix phase, not acted on here.**
+
+**The Java syntax floor in `validate-before-lower` — DID NOT FIRE, still not in the table.**
+`writeproxy._EXT_CMD` is `{.rb, .js, .mjs, .cjs, .php, .go}`. `.java` and `.rs` remain absent, exactly
+as the gemma4 walk recorded on 08-13. It would not have helped here either — the fatal file is
+syntactically valid Java; its imports are the problem, and no parse check reads imports. Recorded only
+because the claim is now confirmed twice from the source.
+
+**Reasoning logged on unfinished streams — DID NOT FIRE.** All 46 calls end `[finish: stop]` or
+`[finish: tool_calls]`. No rumination abort, no length cut. No evidence either way. (Note the one
+slow turn: the log records `(coder - 13m28s ~1.4 tok/s)` across 11m22s–13m28s — 126 seconds for one
+turn. Whatever that was, no guard fired and none should have; it produced a normal tool call.)
+
+**The derived probe output cap — DID NOT FIRE.** The gate script carried the arithmetic
+(`-le 8500`, `head -c 4250`) on all three commands and never reached it; the largest gate result was
+~7.4 KB and carries no `…[middle N bytes elided…]` marker. **No mvn output was discarded anywhere in
+this run** — the answer to "did cria's oversize refusal throw away compile errors" is no. The 9,000-byte
+`READ_INLINE_MAX` on `read_file` is a different mechanism and it fired four times (finding 2).
+
+**Completion-judge report framing / the verdict tool — DID NOT FIRE.** Zero `task_complete`, zero
+done-critic, zero completion probes. The model never claimed to be finished. No evidence either way
+from this cell — for the third cycle running, the completion machinery is untested by the cells that
+fail on the clock.
+
+**The cached-check age note — FIRED IN FORM, DATED NOTHING.** The reasoner prompt at CALL 0043 carries
+the instruction:
+
+```
+  1. GROUND TRUTH FROM THE REPO'S CHECKS and the fetch record — real output from real runs.
+     Trust the words; check the DATE. That section says when it last ran and what has been
+     written since.
+```
+
+and the `GROUND TRUTH FROM THE REPO'S CHECKS:` section three lines below carries **no date and no
+age**. Fourth cell in this cycle with the identical observation. Here the checks were *three seconds
+old* (gate 2 at 10m48s, reasoner at 10m51s) and the reasoner had no way to know that. One
+unconditional `— ran 3 s ago, nothing written since` is the whole fix and it has now been asked for
+four times.
+
+**The litter sweep — did not delete anything that mattered.** No `loop.gate_swept` in this run's
+assists, and the archived workspace's `git status` shows the seed's tracked classes deleted by the
+coder's own `mvn clean` at CALL 0017, not by cria. The gemma4 cell's finding 2 does not recur here
+because `mvn clean` got there first.
+
+**Workspace pollution — RECURS.** `git status` in the archive shows `?? tmp/`, and the workspace holds
+`tmp/read-only/search-apache_commons_csv_maven_central_latest_version.txt` (9,736 B). Same as the Ruby
+run's finding 7, already on the backlog, confirmed again in the Java column (#7).
+
+---
+
+### 10. This cell scored 0% in two cycles running. Model, task, or cria?
+
+**Plainly: the model wrote the bug, and cria's machinery was pointed at the wrong things for the whole
+sixteen minutes. The task is not the problem here.**
+
+**The model.** It invented `org.apache.commons.csv.CSVReader` and
+`org.apache.commons.csv.formatoptions.FormatOptions`, saw `cannot find symbol` four times, asserted
+twice in writing that those classes exist, and never spent one of its twenty calls opening the
+library's documentation — with `web_fetch` in its tool list and its own system prompt telling it to.
+It also chose to re-run `mvn dependency:resolve` three times and read `no jar yet` as evidence, when
+`mvn dependency:tree` had already told it the jar was resolved. That is a model failure and no harness
+change makes the hallucination not happen.
+
+**The task.** Not the blocker in this run. The tracked-`.class` camouflage never got a chance —
+`mvn clean` deleted it at call 0017. The dependency resolves; the environment is fine; the checks are
+behavioural. The one task-side note stands from the gemma4 walk (a Java seed should ship source and a
+pom, not build output), and it did not bite here.
+
+**cria.** Three things it did cost real budget in a run killed by a clock:
+
+* **21 of 46 calls (46%) were judges ruling on a step whose text was a filename** — and the one
+  verdict they reached was wrong, and was correctly discarded. That is finding 1, and it is the single
+  largest thing in this walk.
+* **4 of the coder's 20 calls were spent on a read cria would not serve**, and the run's only steer
+  was spent on the loop that created. Finding 2.
+* **The gate ran at 7m34s.** Everything before that — including all fourteen critic calls — was judged
+  with cria's own ground truth switched off. Finding 6.
+
+**What would have to change for it to reach even one check.** Be precise, because it is not much and
+it is not the same thing as "fix cria":
+
+The five checks are `messy_feed_handled`, `substantially_faster`, `race_fixed_workers_on`,
+`review_written`, `csv_library`. Four of the five are gated on `build()` succeeding — `mvn compile`
+plus `dependency:build-classpath`. `review_written` is not: it needs only a `REVIEW.md` with 60+ words
+and two located findings, and the model could have written it in one call at any point.
+
+So the cheapest single point is **REVIEW.md, and cria is what kept it out of scope.** The coder was
+handed `Do ONLY this step (1 of 2), then stop: src/main/java/pipeline/Importer.java` on all 46 calls
+and never saw step 2. Fix finding 1 — a research step that is a bare path takes the safe null, so the
+plan is `[the task]` and the coder holds the whole prompt — and `review_written` is reachable in a
+single call from minute one, independent of the build. That is 1/5 = 20%, from one change, with no new
+mechanism.
+
+The other four all need the two hallucinated imports replaced by `CSVParser`/`CSVFormat`, which is a
+three-line edit the model had the errors for at 7m34s and eight minutes to make. Whether it would have
+made it is a model question. What cria can do is stop spending that window elsewhere: findings 2, 6
+and 7 together are ~14 calls and ~6 minutes of a 16-minute run — 4 refused reads, 14 judge calls
+before any probe ran, and 6 duplicate research-checks — none of which moved the build one line.
+
+**principle.** #16 (assume cria caused it until proven otherwise — here the hallucination is genuinely
+the model's, and the *budget* is genuinely cria's), the operator's rule that the only target is 100%:
+the reachable next check is `review_written`, and what blocks it is a plan step cria authored.
