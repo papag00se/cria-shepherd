@@ -24,7 +24,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 100% | 50% | 100% | **85%** | 80.5 | 31 | 192 |
 | 🟡 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 80% | 0% | 100% | **67%** | 60.5 | 13 | 47 |
-| 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 75% | 0% | 50% | 0% | **52%** | 43.4 | 25 | 60 |
+| 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% | 50% | 0% | **48%** | 42.2 | 23 | 54 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 75% | 0% | 25% | 0% | **15%** | 132.6 | 26 | 92 |
 
 ## What the assists were worth
@@ -45,7 +45,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | cart-billing-go | go | nemotron-elastic | 0% | 0% | 0 | 6→51 | 7→16 |
 | orders-api-py | python | gemma4 | 100% | 100% | 0 | 32→71 | 21→21 |
 | orders-api-py | python | qwen35 | 50% | 50% | 0 | 76→131 | 20→29 |
-| orders-api-py | python | ternary-bonsai | 25% | 75% | **+50** | 66→124 | 31→61 |
+| orders-api-py | python | ternary-bonsai | 25% | 50% | **+25** | 66→92 | 31→47 |
 | orders-api-py | python | nemotron-elastic | 25% | 75% | **+50** | 14→200 | 2→61 |
 | feed-pipeline-java | java | gemma4 | 80% | 80% | 0 | 18→43 | 14→12 |
 | feed-pipeline-java | java | qwen35 | 40% | 100% | **+60** | 69→418 | 6→76 |
@@ -85,7 +85,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | qwen35 | BASE | 50% | 20 | 76 | 72.8 | exited |
 | orders-api-py | python | qwen35 | CRIA | 50% | 29 | 131 | 77.9 | exited |
 | orders-api-py | python | ternary-bonsai | BASE | 25% | 31 | 66 | 38.7 | milestone-miss-30min |
-| orders-api-py | python | ternary-bonsai | CRIA | 75% | 61 | 124 | 44.2 | milestone-miss-60min |
+| orders-api-py | python | ternary-bonsai | CRIA | 50% | 47 | 92 | 37.2 | milestone-miss-45min |
 | orders-api-py | python | nemotron-elastic | BASE | 25% | 2 | 14 | 138.8 | exited |
 | orders-api-py | python | nemotron-elastic | CRIA | 75% | 61 | 200 | 141.0 | milestone-miss-60min |
 | feed-pipeline-java | java | gemma4 | BASE | 80% | 14 | 18 | 55.0 | exited |

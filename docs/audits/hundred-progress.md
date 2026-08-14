@@ -28,7 +28,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 8 | cart-billing-go | nemotron-elastic | 0% | −20 | 16 | 51 | cria's own spilled fetch, saved as `…decimal.go` inside the workspace, was compiled by `go build ./...` — all five checks died on it |
 | 9 | orders-api-py | gemma4 | **100%** | 0 | 21 | 71 | |
 | 10 | orders-api-py | qwen35 | 50% | −25 | 29 | 131 | model defect, reproduced: its `init()` runs `CREATE TABLE IF NOT EXISTS` (a no-op on the pre-migration database the checker supplies) then `UPDATE orders SET status=…` on a column that was never added — service exits 1, two checks die with it |
-| 11 | orders-api-py | ternary-bonsai | *in flight* | | | | |
+| 11 | orders-api-py | ternary-bonsai | 50% | −25 | 47 | 92 | killed at 45 min for sitting below the floor. Scored 2 at the 15-, 30- and 45-minute marks and never moved. The route answers 200 but the body carries neither the items nor the total, and eleven of its own tests fail. The stuck detector fired three times and changed nothing — walk running |
 | 12 | orders-api-py | nemotron-elastic | | | | | |
 | 13 | feed-pipeline-java | gemma4 | | | | | |
 | 14 | feed-pipeline-java | qwen35 | | | | | |
