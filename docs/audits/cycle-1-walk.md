@@ -6434,3 +6434,59 @@ none of it.
 That is not a finding about the trilemma, and it is not a finding about the 15-minute floor. It is
 the strongest single argument for the first finding in this section: the difference between 3/5 and
 0/5 on this cell is not what the model can do, it is how many of its turns get spent obeying cria.
+
+---
+
+## Cross-run — what the assists are actually worth
+
+The Ruby walk ended on a comparison nobody had made this cycle: the BASE run of that same cell — cria
+as a plain proxy, no planner, no steers, no gates, no judges — scored **60%**. The CRIA run scored
+**0%**. So the table got built for all 24.
+
+| cell | BASE | CRIA | Δ |
+|---|---:|---:|---:|
+| shipping-rates-rb × gemma4 | 40% | 20% | **−20** |
+| shipping-rates-rb × qwen35 | 80% | 100% | +20 |
+| shipping-rates-rb × ternary-bonsai | 80% | 80% | 0 |
+| shipping-rates-rb × nemotron-elastic | 60% | 0% | **−60** |
+| cart-billing-go × gemma4 | 100% | 100% | 0 |
+| cart-billing-go × qwen35 | 100% | 100% | 0 |
+| cart-billing-go × ternary-bonsai | 0% | 100% | +100 |
+| cart-billing-go × nemotron-elastic | 0% | 0% | 0 |
+| orders-api-py × gemma4 | 100% | 100% | 0 |
+| orders-api-py × qwen35 | 50% | 50% | 0 |
+| orders-api-py × ternary-bonsai | 25% | 50% | +25 |
+| orders-api-py × nemotron-elastic | 25% | 50% | +25 |
+| feed-pipeline-java × gemma4 | 80% | 0% | **−80** |
+| feed-pipeline-java × qwen35 | 40% | 40% | 0 |
+| feed-pipeline-java × ternary-bonsai | 0% | 0% | 0 |
+| feed-pipeline-java × nemotron-elastic | 0% | 0% | 0 |
+| handles-cli-node × gemma4 | 75% | 75% | 0 |
+| handles-cli-node × qwen35 | 75% | 100% | +25 |
+| handles-cli-node × ternary-bonsai | 50% | 100% | +50 |
+| handles-cli-node × nemotron-elastic | 0% | 25% | +25 |
+| rust-toml-cli × gemma4 | 75% | 100% | +25 |
+| rust-toml-cli × qwen35 | 100% | 100% | 0 |
+| rust-toml-cli × ternary-bonsai | 0% | 0% | 0 |
+| rust-toml-cli × nemotron-elastic | 0% | 0% | 0 |
+
+**Better in 7 cells, worse in 3, level in 14. Net +145 points.** The assists earn their keep — and
+they have three own-goals, every one of them already traced in the sections above:
+
+- **java × gemma4, −80.** A wheel-spin steer fired on a build that had just gone green and sent the
+  coder back in; the rewrite that followed dropped `package pipeline;`.
+- **ruby × nemotron, −60.** In 57 calls the model wrote **one 56-byte file** — `diff -r seed workspace`
+  returns `.git`, `tmp/`, `Gemfile` and nothing else. Twenty-six calls went to hunting a gem that was
+  already installed, thirteen to re-running a check whose parsed output cria said "could not be
+  parsed", twelve to cria's own judges. Two writes, both the same Gemfile. The BASE arm shipped the
+  express zone, the README rate table and a green hidden contract in 41 calls.
+- **ruby × gemma4, −20.** The dead-gem chain, already recorded.
+
+**The caveat, stated rather than buried:** the BASE rows were earned earlier in the campaign on an
+older code state, so this is a comparison across two code states, not a controlled A/B. It is
+directionally solid — a −60 and a −80 are not measurement noise — and the per-cell causes are read
+from the captures, not inferred from the delta.
+
+**What it means for the fix phase.** The three negative cells are the priority, above any cell that
+is merely low. A cell where cria is level with the plain proxy costs nothing; a cell where cria is
+60 points behind it is cria spending a model's whole run on cria.

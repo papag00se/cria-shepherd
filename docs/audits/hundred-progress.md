@@ -57,6 +57,21 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 Δ is percentage points against the previous run of the same cell, whatever prompt revision it was
 earned against. Run ids are on the rows in `suite/results/results.jsonl`.
 
+### The assists, measured against the plain proxy
+
+Better in 7 cells, worse in 3, level in 14. **Net +145 points.** The three own-goals are the fix
+phase's priority, above any cell that is merely low:
+
+| cell | BASE | CRIA | Δ | cause, from the walk |
+|---|---:|---:|---:|---|
+| feed-pipeline-java × gemma4 | 80% | 0% | **−80** | a wheel-spin steer fired on a build that had just gone green; the rewrite it prompted dropped `package pipeline;` |
+| shipping-rates-rb × nemotron | 60% | 0% | **−60** | 57 calls, two writes, both the same Gemfile. 26 calls hunting a gem already installed, 13 re-running a check cria said it could not parse, 12 on cria's own judges |
+| shipping-rates-rb × gemma4 | 40% | 20% | **−20** | the dead-gem chain |
+
+Caveat stated rather than buried: the BASE rows were earned earlier on an older code state, so this
+is two code states, not a controlled A/B. A −60 and a −80 are not noise, and every cause here is
+read from the captures rather than inferred from the delta.
+
 ### Findings ledger — cycle 1
 
 Seeded from work already done; the walk phase appends to it.
