@@ -41,6 +41,12 @@ _RENDER_TIMEOUT_S = 8
 _WATCH_STRIDE = 400
 
 
+# How long a stream may produce NO parsed delta of any kind before cria calls it dead. See the
+# abort in chat_watched for the measurement: 456s is the slowest legitimate first token in 12,394
+# recorded samples, so this aborts none of them.
+DEAD_STREAM_SECONDS = 480
+
+
 class UpstreamError(Exception):
     """The upstream model server could not be reached or errored."""
 
@@ -507,6 +513,31 @@ class Upstream:
                 # Degenerate-run backstop (independent of the rumination watcher: it fires even on a
                 # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
                 # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
+                # A STREAM THAT HAS SAID NOTHING IS DEAD, whatever the server thinks it is doing.
+                # Measured, gemma4/ruby call 0009: upstream.done {"total_ms": 730418.5, "tokens":
+                # 44510, "aborted": false} with NO preceding upstream.first_token — twelve minutes,
+                # 44,510 tokens billed, and content, reasoning_content and tool_calls all null. The
+                # server buffered an unterminated tool call and sent zero deltas, so the rumination
+                # watcher and the degenerate-tail backstop both read an empty string and neither
+                # could fire. Of principle 6's three backstops only n_ctx was live (timeout is
+                # 7200s), and n_ctx by construction burns the whole remaining window first. 91 such
+                # streams across the corpus, 372 minutes.
+                #
+                # A byte count and a clock, not judgment, and it reuses the abort-and-re-prompt the
+                # degenerate backstop already owns (#24: the invariant belongs at the wire).
+                #
+                # THE BOUND IS MEASURED, NOT GUESSED. Across 12,394 recorded first tokens the slowest
+                # legitimate one is 456s (p99.9 is 184s, p99 is 32s). 480s therefore aborts none of
+                # them and still recovers 37 of the 372 dead minutes. The conservative end on
+                # purpose: a cold 27B has already been mistaken for a dead model once (cc8e8c7), and
+                # most dead streams sit BELOW the slowest real first token, so no safe bound can
+                # catch them — that overlap is why this does not reach for a tighter number.
+                if (aborted is None and t_first is None
+                        and time.monotonic() - t0 >= DEAD_STREAM_SECONDS):
+                    aborted = {"dead_stream": True, "seconds": round(time.monotonic() - t0)}
+                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
+                              seconds=aborted["seconds"])
+                    break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
                     # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
                     # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,
