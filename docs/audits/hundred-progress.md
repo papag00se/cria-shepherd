@@ -98,6 +98,17 @@ two winning runs, only the **gate** demonstrably changed the outcome, and only w
 only copy of the finding. The rest confirmed or cost calls. That is an argument for **pruning**, which
 principle 1 already says is the safe direction — not for reverting this cycle's work.
 
+### Fix-phase state, cycle 1
+
+Landed and live: the shared gate budget · `-lic` so cria can see `node` · spill files always `.txt` ·
+Maven/MSVC diagnostics parse · the live-execution probe honours the project's declared command · the
+search note names its file · a killed run keeps its last reasoning · the assists ledger stops
+dropping events · **the inbound exec bound deleted** · the XML parameter boundary · four verifiers
+made case-forgiving · **cria now observes whether the harness truncates instead of assuming it**.
+
+Built and removed: an exec-output spill (a fourth duplicate of machinery that already existed twice)
+and a steer-rename guard (fixed nothing — see below). Two of thirteen were waste.
+
 ### REVERTED — the `data/review.md` guard fixed nothing
 
 Built and removed the same day. The walk ranked it "the likely root of `review_written` failing" and
