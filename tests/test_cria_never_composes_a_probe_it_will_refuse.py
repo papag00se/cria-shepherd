@@ -51,17 +51,15 @@ class AMaximalProbeResultSurvivesTests(unittest.TestCase):
         return (f"Chunk ID: be2fc9\nWall time: 0.9s\nProcess exited with code 1\nOutput:\n"
                 f"{payload}\n{proberun.PROBE_EXIT_SENTINEL}1")
 
-    def test_a_result_at_the_cap_is_not_refused(self):
-        out = writeproxy._bounded_exec_result(self.envelope("x" * proberun.PROBE_OUTPUT_CAP_BYTES))
-        self.assertNotIn("too much to return", out)
+    def test_a_result_at_the_cap_reaches_the_model_whole(self):
+        body = self.envelope("x" * proberun.PROBE_OUTPUT_CAP_BYTES)
+        msgs = [{"role": "tool", "tool_call_id": "t1", "content": body}]
+        self.assertEqual(writeproxy.represent_inbound(msgs, None)[0]["content"], body)
 
-    def test_and_a_genuine_flood_reaches_the_model_too_now(self):
-        """The inbound refusal is GONE — it ran on the wrong side of the wire, on a result the
-        harness had already captured and delivered, and it could not prevent the harness cut it was
-        named for. A flood is the context floor's problem, which is the one place window-fitting may
-        lose anything (#5), and `content_reduce` is the lossless-first owner above it."""
-        big = self.envelope("x" * 40000)
-        self.assertEqual(writeproxy._bounded_exec_result(big), big)
+    def test_the_inbound_bound_is_gone(self):
+        """A flood is the context floor's problem now -- the one place window-fitting may
+        lose anything (#5) -- and `content_reduce` is the lossless-first owner above it."""
+        self.assertFalse(hasattr(writeproxy, "_bounded_exec_result"))
 
 
 class TheComposedProbeStillDisclosesItsOwnElisionTests(unittest.TestCase):

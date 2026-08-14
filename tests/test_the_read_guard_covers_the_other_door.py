@@ -29,10 +29,11 @@ read its own 389-line file by any route; and the first link in the chain that co
 
 import pathlib
 import tempfile
+import os
 import unittest
 
 from cria import content_reduce, writeproxy
-from cria.writeproxy import READ_INLINE_MAX, _bounded_exec_result
+from cria.writeproxy import READ_INLINE_MAX
 
 
 def result(n_lines: int, prefix: str = "SKU", exit_code: int = 0) -> str:
@@ -40,37 +41,45 @@ def result(n_lines: int, prefix: str = "SKU", exit_code: int = 0) -> str:
     return f"Chunk ID: be2fc9\nWall time: 0.9s\nProcess exited with code {exit_code}\nOutput:\n{body}"
 
 
-class TheCodersOwnOutputIsNoLongerBoundedTests(unittest.TestCase):
+class TheCodersOwnOutputReachesTheModelWholeTests(unittest.TestCase):
+    """Asserted through `represent_inbound`, the real entry point. The identity function these tests
+    used to call was deleted: once the bound came off it was a 33-line docstring around
+    `return content`, plus a caller branch that could never be taken and a log event that could never
+    fire. Pinning an identity function proves nothing about the pipeline."""
+
+    def inbound(self, body: str) -> str:
+        msgs = [{"role": "tool", "tool_call_id": "t1", "content": body}]
+        return writeproxy.represent_inbound(msgs, None)[0]["content"]
+
     def test_a_huge_result_passes_through_untouched(self):
-        """THE REMOVAL. 900 lines is ~19,800 bytes and used to come back as a refusal."""
+        """900 lines is ~19,800 bytes and used to come back as a refusal."""
         big = result(900)
-        self.assertEqual(_bounded_exec_result(big, "mvn -q compile"), big)
+        self.assertEqual(self.inbound(big), big)
 
     def test_the_measured_case_passes_through(self):
-        """`mvn -q compile` is 9,390 bytes on the java task — every Maven run in one session was
+        """`mvn -q compile` is 9,390 bytes on the java task -- every Maven run in one session was
         discarded, and the model saw its 18 compile errors once, by accident, via bare javac."""
-        body = "x" * 9390
-        r = f"Process exited with code 1\nOutput:\n{body}"
-        self.assertEqual(_bounded_exec_result(r, "mvn -q compile"), r)
+        r = f"Process exited with code 1\nOutput:\n{'x' * 9390}"
+        self.assertEqual(self.inbound(r), r)
 
     def test_nothing_is_written_to_the_workspace(self):
-        """A spill helper added here and removed the same day wrote into the workspace from cria's
-        own process — a third naming path beside `_spill_name` and `search_spill_name`, and the one
+        """A spill helper added and removed the same day wrote into the workspace from cria's own
+        process -- a third naming path beside `_spill_name` and `search_spill_name`, and the one
         thing the other two deliberately avoid (#7)."""
         self.assertFalse(hasattr(writeproxy, "_spill_exec_output"))
+        self.assertFalse(hasattr(writeproxy, "_bounded_exec_result"))
         with tempfile.TemporaryDirectory() as ws:
-            import os
             cwd = os.getcwd()
             try:
                 os.chdir(ws)
-                _bounded_exec_result(result(900), "mvn -q compile")
+                self.inbound(result(900))
                 self.assertEqual(os.listdir("."), [])
             finally:
                 os.chdir(cwd)
 
     def test_a_small_result_is_still_identical(self):
         small = result(5)
-        self.assertEqual(_bounded_exec_result(small), small)
+        self.assertEqual(self.inbound(small), small)
 
 
 class TheOutboundUseOfTheNumberSurvivesTests(unittest.TestCase):

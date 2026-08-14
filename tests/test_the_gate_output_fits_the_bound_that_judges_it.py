@@ -134,21 +134,18 @@ class TheWholeGateFitsTests(unittest.TestCase):
         self.assertEqual(planned(2).notes, [])
 
 
-class TheInboundRefusalIsGoneAndTheOutboundCapRemainsTests(unittest.TestCase):
-    """The operator's 2026-08-12 ruling was about ELISION — never hand back a clipped view. It is
-    intact: cria still elides nothing on the way in. What went is the inbound REFUSAL, which was a
-    different thing wearing the same number, on a result the harness had already delivered whole.
-
-    The outbound cap this file exists for is untouched: cria still decides how much its OWN composed
-    probes print, which is the half of the number that was ever coherent."""
-
-    def test_the_coders_result_now_reaches_the_model_whole(self):
-        body = "Output:" + ("x" * (content_reduce.INLINE_RESULT_MAX_BYTES + 1000))
-        self.assertEqual(writeproxy._bounded_exec_result(body, "some command"), body)
+class TheOutboundCapRemainsTests(unittest.TestCase):
+    """The inbound refusal is gone -- it ran on a result the harness had already delivered whole, so
+    it could not prevent the harness cut it was named for, and the function that did it has been
+    deleted. What this file exists for is the OUTBOUND cap, which is the half of the number that was
+    ever coherent: cria still decides how much its own composed probes print."""
 
     def test_the_gate_still_sizes_its_own_probes(self):
         cap, _ = proberun.probe_output_budget(6)
         self.assertIn(f"-le {cap}", planned(6).script)
+
+    def test_the_inbound_bound_is_gone_for_good(self):
+        self.assertFalse(hasattr(writeproxy, "_bounded_exec_result"))
 
 
 if __name__ == "__main__":

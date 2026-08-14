@@ -1189,42 +1189,6 @@ def _debinarized(content: str) -> str:
     return content_reduce_mod.binary_note(len(content.encode("utf-8", "replace")), None)
 
 
-def _bounded_exec_result(content: str, command: str = "") -> str:
-    """Returns ``content`` unchanged. THE INBOUND BOUND IS GONE — it was on the wrong side of the wire.
-
-    The story was: the harness truncates every tool result in its history at 10,000 bytes, so cria
-    must stay under it. The 10,000 is real (`TruncationPolicyConfig::bytes(10_000)`,
-    models-manager/src/model_info.rs:83 — the production profile for local models, not a test
-    fixture). Nothing after that held.
-
-    THE DIRECTION IS WRONG. This ran inside :func:`represent_inbound`, on a result the HARNESS had
-    already run, already captured and already applied its own policy to. cria never writes the
-    harness's history, so refusing here cannot prevent a harness cut — it can only withhold from the
-    model what the harness successfully delivered. The number is coherent OUTBOUND, where cria
-    composes the command and decides how much it prints (`proberun.compose_probe_command`, the search
-    inline cap); those keep it.
-
-    AND IT WAS NOT HAPPENING. Zero harness cut markers across all 50 captured sessions, both marker
-    forms. The largest tool result cria has actually sent upstream is 160,447 bytes, intact — sixteen
-    times the limit it supposedly could not exceed.
-
-    THE JOB WAS ALREADY OWNED, TWICE. `content_reduce` is "MIME-aware, lossless-first reduction of a
-    single oversized tool output" — its own first line — and the context floor is the one place
-    window-fitting may lose anything (#5). A second, cruder owner answering by DISCARD is the
-    duplicate. A spill helper added here earlier the same day was a third naming-and-writing path
-    beside `_spill_name` and `search_spill_name`, and it wrote into the workspace from cria's own
-    process, which the other two deliberately avoid (#7). Both are gone.
-
-    WHAT IT COST while it stood, from cycle 1 of the 100% campaign: 24% of all 1,179 command results
-    discarded — p75 of real output is 8,424 bytes, so the bound sat at the third quartile of normal.
-    The gate was blinded in 7 of 24 cells: twice reporting "the repo's automated checks pass" over a
-    red pytest, once telling its own judge "PROBES: none ran" 5.24 seconds after one had. A model
-    could not read its own 389-line source file by any route and went web-searching a `file://` URL.
-    And it is the first link in the chain that cost `cart-billing-go × nemotron-elastic` every check.
-    """
-    return content
-
-
 def _blind_pipe_failure(command: str, content: str) -> bool:
     """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
     line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
@@ -1449,17 +1413,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
                 # The note states only computable facts: nonzero exit, empty output, a filter present.
                 out.append({**m, "content": content + "\n\n" + prompts.load("filtered_failure_note")})
+            elif content != str(m.get("content") or ""):
+                out.append({**m, "content": content})   # the binary-soup cleanse changed it
             else:
-                bounded = _bounded_exec_result(content, own_cmds.get(tid, ""))
-                if bounded != content:
-                    if rlog is not None:
-                        rlog.emit("writeproxy.exec_output_bounded", level="info",
-                                  chars=len(content), cmd=(own_cmds.get(tid, "") or "")[:80])
-                    out.append({**m, "content": bounded})
-                elif content != str(m.get("content") or ""):
-                    out.append({**m, "content": content})   # the binary-soup cleanse changed it
-                else:
-                    out.append(m)
+                out.append(m)
         else:
             out.append(m)
     if swapped and rlog is not None:
