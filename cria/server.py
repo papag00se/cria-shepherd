@@ -21,6 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import bodykeys
 from . import (callcapture, compat, focustrim, groundtruth, massage, probegate, prompts,
                responses, rumination, selfcompact)
 from .classify import Classifier
@@ -665,7 +666,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         ⟦cria⟧ note already in the content (the repetition/wheel-spin probes). 'No hidden guards':
         under the flag a fired guard is always visible; with the flag off, all of it is stripped."""
         ic = self.server.cfg.indicators
-        notes = completion.pop("cria_notes", None) or []
+        notes = completion.pop(bodykeys.NOTES, None) or []
         if ic.enabled and ic.assists:
             for note in reversed(notes):  # each note becomes its own ⟦cria⟧ line, ahead of the content
                 _prepend_content_line(completion, f"{MARKER}{note}")

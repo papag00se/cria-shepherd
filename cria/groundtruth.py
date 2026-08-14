@@ -142,6 +142,15 @@ def lint_digest(root: str, runner: Runner) -> Optional[str]:
 # A quoted literal in a step ('goose', "papagoose", `--live`) that the step expects to end up IN the
 # artifact it names. Bounded length so a quoted sentence isn't treated as a token.
 _STEP_LITERAL = re.compile(r"['\"`]([^'\"`\s]{3,30})['\"`]")
+# A FILENAME-SHAPED TOKEN in a plan step. Lives here, beside the sibling pattern that reads the other
+# kind of token out of the same string, because both answer "what does this step name?".
+#
+# It used to live in loop.py and be reached by `from .loop import _STEP_ARTIFACT` inside a function
+# body — a deferred import, which is the classic tell for a cycle someone worked around rather than
+# broke. loop imports groundtruth at module level, so that one edge made the two mutually dependent
+# and neither testable in isolation. A regex has no business being the reason an 8,000-line driver is
+# a dependency of a fact-gatherer.
+_STEP_ARTIFACT = re.compile(r"[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})[`'\")]?")
 
 
 def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[str]]]:
@@ -167,7 +176,6 @@ def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[st
     evidence rather than enforced as a gate."""
     if not step or not root or not os.path.isdir(root):
         return []
-    from .loop import _STEP_ARTIFACT   # the module's one file-token pattern
     lits = [m.group(1) for m in _STEP_LITERAL.finditer(step)]
     lits = [l for l in lits if "/" not in l and "." not in l]   # a path/filename is not a value
     if not lits:

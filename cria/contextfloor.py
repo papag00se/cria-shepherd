@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from . import bodykeys
 from . import toolargs
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
@@ -678,4 +679,4 @@ def reserve_for(body: dict) -> int:
             return 0
         return v if v > 0 else 0
 
-    return _pos_int(body.get("cria_output_reserve")) or _pos_int(body.get("max_tokens")) or DEFAULT_GEN_RESERVE
+    return _pos_int(body.get(bodykeys.OUTPUT_RESERVE)) or _pos_int(body.get("max_tokens")) or DEFAULT_GEN_RESERVE

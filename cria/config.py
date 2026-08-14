@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import bodykeys
 from . import prompts, reasoning
 
 # Where ``Config.load(None)`` looks, in order, when no explicit path is given.
@@ -288,8 +289,7 @@ class Role:
             # massage.merge_for_alternation) because `apply` runs mid-pipeline and every later
             # append — focustrim's repeat-note, a rumination/truncation retry turn — defeated a
             # merge done here. That is what 400-looped nemotron-nano run 1786243834 to death.
-            from .massage import MERGE_TURNS_KEY  # deferred: massage → writeproxy → config cycles
-            body[MERGE_TURNS_KEY] = True
+            body[bodykeys.MERGE_TURNS] = True
         if self.think_protocol == "system_directive":
             _set_reasoning_directive(body, self.reasoning)
         if self.collapse_system_prompt:
@@ -311,7 +311,7 @@ class Role:
         if self.output_reserve is not None:
             # A cria-internal hint the context floor reads for the input/output split; NOT a wire
             # field — `Upstream._prep` strips it before the body is sent to (or captured for) the model.
-            body["cria_output_reserve"] = self.output_reserve
+            body[bodykeys.OUTPUT_RESERVE] = self.output_reserve
         # Translate the ONE portable reasoning value into this backend's convention. reasoning.py
         # is the shared translator — same function for local template models and remote providers.
         reasoning.apply_reasoning(body, self.reasoning, self.think_protocol)

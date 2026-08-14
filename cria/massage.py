@@ -17,6 +17,7 @@ import json
 import re
 import uuid
 
+from . import bodykeys
 from . import jsontext
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
@@ -1958,10 +1959,10 @@ _USER_SIDE = ("user", "tool")
 # The cria-internal body hint that turns this on, set by `Role.apply` from the role's
 # `merge_consecutive_turns` and consumed + stripped by `Upstream._prep`. Same contract as
 # `cria_output_reserve`: a hint cria carries on the body, never a wire field.
-MERGE_TURNS_KEY = "cria_merge_turns"
+MERGE_TURNS_KEY = bodykeys.MERGE_TURNS
 # A turn whose only action named a tool that does not exist. cria-internal, consumed and stripped by
 # the loop, never on the wire. See the refusal site in recover_reasoning_tool_calls.
-LOST_CALL_KEY = "cria_lost_call"
+LOST_CALL_KEY = bodykeys.LOST_CALL
 
 
 def merge_for_alternation(messages: list) -> list:

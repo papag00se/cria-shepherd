@@ -20,6 +20,7 @@ import urllib.request
 from pathlib import Path
 from typing import Iterator
 
+from . import bodykeys
 from . import callcapture, contextfloor, failover, massage, rumination, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
@@ -253,7 +254,7 @@ class Upstream:
             if body.get(massage.MERGE_TURNS_KEY):
                 msgs = massage.merge_for_alternation(msgs)
             out["messages"] = msgs
-        out.pop("cria_output_reserve", None)  # cria-internal reserve hint — never goes on the wire
+        out.pop(bodykeys.OUTPUT_RESERVE, None)  # cria-internal reserve hint — never goes on the wire
         out.pop(massage.MERGE_TURNS_KEY, None)  # ditto — the alternation hint is cria's, not the API's
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         capture_path = None
@@ -763,7 +764,7 @@ def _assemble_completion(model, content, reasoning, tool_acc, finish, usage, abo
     if usage:
         completion["usage"] = usage
     if aborted:
-        completion["cria_rumination"] = aborted
+        completion[bodykeys.RUMINATION] = aborted
     return completion
 
 

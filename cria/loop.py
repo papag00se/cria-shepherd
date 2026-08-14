@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
+from . import bodykeys
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner
@@ -4493,7 +4494,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
 
 
 # A file-looking token in a step's text: `test_resolve_handle.py`, src/main.go, "README.md".
-_STEP_ARTIFACT = re.compile(r"[`'\"(]?([\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})[`'\")]?")
+_STEP_ARTIFACT = groundtruth._STEP_ARTIFACT   # defined one level down; see the note there
 
 
 # A step that AUTHORS a file, as opposed to one that merely mentions a path. `grep -n 'x' spec.json`
@@ -5237,7 +5238,7 @@ def _add_note(completion: dict, note: str) -> None:
     is visible under the flag. A SEPARATE channel from content, so the loop's parroted-banner scrub
     (_strip_completion_banners) can't drop cria's own intentional notes."""
     if note:
-        completion.setdefault("cria_notes", []).append(note)
+        completion.setdefault(bodykeys.NOTES, []).append(note)
 
 
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
@@ -6557,7 +6558,7 @@ def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
     # content at all. The model never said ON_TRACK; cria did, on its behalf, and then built a steer
     # on the answer it invented (#12 — every sentence cria says about an action comes from the event
     # that produced it, and the abort IS the event here).
-    if comp.get("cria_rumination") or (comp.get("choices") or [{}])[0].get("finish_reason") == "rumination":
+    if comp.get(bodykeys.RUMINATION) or (comp.get("choices") or [{}])[0].get("finish_reason") == "rumination":
         rlog.emit("loop.steer_rescue_skipped", level="info", why="stream aborted by a guard")
         return None
     reasoning = _reasoning_of(comp)
@@ -7458,7 +7459,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     attempt = 0
     conv = list(body.get("messages") or [])
     while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
-        v = coder.get("cria_rumination") or {}
+        v = coder.get(bodykeys.RUMINATION) or {}
         attempt += 1
         rlog.emit("loop.rumination", step=step, attempt=attempt,
                   hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens"))
@@ -7477,7 +7478,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         rlog.phase = f"{phase}-focus{attempt}"
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
-    coder.pop("cria_rumination", None)  # internal marker — never forward it
+    coder.pop(bodykeys.RUMINATION, None)  # internal marker — never forward it
     for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
         if ch.get("finish_reason") == "rumination":
             ch["finish_reason"] = "stop"
@@ -7562,7 +7563,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # reads as non-acting and the caller gates on ground truth rather than a corrupt file.
         rlog.emit("loop.truncated_dropped", step=step)
         _drop_tool_calls(coder)
-    coder.pop("cria_rumination", None)  # a retry may itself ruminate — never forward the marker
+    coder.pop(bodykeys.RUMINATION, None)  # a retry may itself ruminate — never forward the marker
     for ch in coder.get("choices", []):
         if ch.get("finish_reason") == "rumination":
             ch["finish_reason"] = "stop"
