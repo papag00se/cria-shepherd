@@ -9246,3 +9246,990 @@ model escaped only by switching to `edit_file`.
 
 The trailing call is always `task_complete`, which is a recent addition to the menu. So a feature
 added to make completion cleaner is corrupting the write that precedes it.
+
+## orders-api-py_gemma4_codex_poff_1786679396
+
+Commit 736c6fb. 71 calls, 1,247 s (21 min of a 30-min budget), 58,781 output tokens at 58.7 tok/s,
+terminal `exited`. **Score 4/4 — every check green, and already 4/4 at the 15-minute milestone floor.**
+Phases: coder 52, classifier 1, research-step 1, research-check 2, self-compact 1, proxy 1, reasoner 1,
+exec-intent 1, satisfaction 4, satisfaction-confirm 7.
+
+Shape of the run in one line: the model read both source files, rewrote `orders/db.py` and
+`orders/app.py` in six calls, spent thirteen calls chasing a threading bug in its own test file, fixed
+it, called `task_complete`, was sent back once by the completion gate over a duplicated class, cleaned
+that up, and then spent the last fourteen calls being judged.
+
+This is a control walk, so the headline is a negative one: **almost nothing cria injected changed the
+outcome.** The two decisions that produced the 4/4 — dropping `CREATE UNIQUE INDEX` for a plain index,
+and giving each test its own database file — were both the model's own, taken with no injection in
+front of them. The findings below are ranked by what they tell the fix phase, not by how much they hurt
+here, because here they mostly did not hurt at all.
+
+---
+
+### 1. cria's own completion gate had its output thrown away by cria's own oversize refusal — twice — and the derived-cap fix is why it still nearly worked
+
+**what happened.** The composed probe ran four commands into one `exec_command` result. Twice the
+concatenated result crossed 9,000 bytes and the whole thing was replaced by the refusal. cria's gate
+parser then read a refusal instead of a check report.
+
+**cria fault: yes** (and it is the single most useful thing in this walk).
+
+**evidence.** CALL 0021, the probe's result in full:
+
+```
+[9,247 bytes over 183 lines — too much to return, so nothing is shown. Nothing was truncated: the
+command ran and its output was discarded, not cut. …]
+```
+
+CALL 0036, the same probe again:
+
+```
+[8,899 bytes over 178 lines — too much to return, so nothing is shown. …]
+```
+
+The composed command is visible verbatim at CALL 0021 and is four `cd … && __cria_out=$(…)` blocks —
+`compileall`, `pyflakes`, `pytest`, and the netns re-run — each carrying its own
+
+```
+if [ "$__cria_n" -le 8500 ]; then printf '%s\n' "$__cria_out"; else … head -c 4250 … tail -c 4250 … fi
+```
+
+**A → B → C.** A: `proberun.PROBE_OUTPUT_CAP_BYTES = content_reduce.INLINE_RESULT_MAX_BYTES - 500` is
+derived per COMMAND — the 8,500 above. B: `compose_probe_command` emits three or four such commands into
+ONE shell invocation, so the result cria has to accept can legitimately be 4 × 8,500 + envelope. C:
+`writeproxy._bounded_exec_result` compares `len(content)` — envelope plus every command's output — against
+9,000, and discards the lot. The 8,899-byte case shows how tight it is: the BODY was under 9,000 and the
+harness envelope (`Chunk ID`, `Wall time`, `Original token count`, `Process exited with code`, `Output:`)
+pushed the whole thing over.
+
+**fixable at A? Yes, and it is arithmetic again.** The cap that was derived from the accepting bound has to
+be derived from the accepting bound *divided by the number of commands in the plan* — or the composed
+script has to keep one running byte budget across all of its commands rather than one per command. The
+existing test `tests/test_cria_never_composes_a_probe_it_will_refuse.py` asserts
+`PROBE_OUTPUT_CAP_BYTES + PROBE_ENVELOPE_RESERVE_BYTES <= INLINE_RESULT_MAX_BYTES` — true for one command,
+and this run is the counter-example for four.
+
+**why it was survivable here, and this is the contrast the fix phase wants.** Both discards landed on gates
+whose findings the model had *already obtained by itself*. At CALL 0021 the model had just written its test
+file and had not yet run anything, so the lost gate cost it nothing it did not learn at CALL 0027 from its
+own `python3 -m unittest`. At CALL 0036 the model had the traceback in hand from CALL 0035. The gate that
+mattered — CALL 0045, the one that found the duplicated `Handler` — produced a *small* report (one pyflakes
+line) and got through. **The trigger condition is not "the gate fired", it is "the gate's report was the
+only copy of the finding".** In the java cell it was the only copy nine times; here it never was.
+
+**principle.** #5 (the one lossless-first place), #10 (a probe cria runs is deterministic ground truth —
+unless cria eats it), #12.
+
+---
+
+### 2. The completion gate is the only injection whose content the model acted on — and the defect it caught was cosmetic
+
+**what happened.** At CALL 0042 an `edit_file` whose `new_string` was the WHOLE file and whose `old_string`
+was only the tail duplicated `orders/app.py`'s docstring, imports and `class Handler`. The model's own
+verification passed on that file. cria's pyflakes floor caught it on the `task_complete` gate and sent the
+model back.
+
+**cria fault: HELPED**
+
+**evidence.** CALL 0044, the model's own check on the corrupted file, then `task_complete`:
+
+```
+Ran 4 tests in 4.021s
+
+OK
+```
+```
+task_complete {"summary":"Added GET /customers/<name>/orders route, added status field with migration
+logic and customer index to the database, replaced string-formatted SQL with parameterized queries,
+and added HTTP integration tests."}
+```
+
+CALL 0045, the gate result and the steer that followed it:
+
+```
+⟦ctx:checks⟧ the repo's own checks report these error-class problems …
+/tmp/…/orders/app.py:44:1: redefinition of unused 'Handler' from line 18
+  the flagged line on disk — line 44: `class Handler(BaseHTTPRequestHandler):`
+```
+```
+⟦ctx:steer⟧ not done yet — the repo's own checks are failing:
+[GROUND TRUTH — the repo's own checks fail] …
+$ python3 -m pyflakes … — /tmp/…/orders/app.py:44: redefinition of unused 'Handler' from line 18
+```
+
+The model's next action was an `edit_file` on `orders/app.py` — it acted on the injection immediately.
+At CALL 0049, after the compaction, it read the file and said so in its own words:
+
+> "It seems to have some duplicated code at the end… Yes, it is duplicated exactly. I should clean that up."
+
+**verdict: changed the course** — this is the only injection in the run the model's reasoning follows.
+**But be strict about what it bought.** The duplicate was harmless: the second `class Handler` shadows the
+first, `serve` is defined once, the two trailing `if __name__ == "__main__"` blocks are back to back and the
+first blocks forever. The score was 4/4 with the duplicate in place and 4/4 without it. cria's largest
+assist, on its best turn of the run, caught a real defect that cost nothing — and the cleanup consumed
+roughly a dozen calls (0045, 0047–0059).
+
+**principle.** #10 (verify by doing) — the gate did exactly what it exists for; #1 is the counterweight
+(the value of an assist is measured in outcomes, not in findings).
+
+---
+
+### 3. The repetition note told the model that three runs "returned the exact same result" when the first one failed and the last two passed
+
+**what happened.** The note fired on `python3 -m unittest tests/test_http.py` at CALL 0059, immediately
+after that command had just gone green.
+
+**cria fault: yes (#5b)**
+
+**evidence.** The delivered bytes at CALL 0059, arriving directly after an `OK`:
+
+```
+[you have now made this exact call 3 times and it returned the exact same result every time — the
+earlier copies were folded away, so this is the only record of it. Tried: exec_command(python3 -m
+unittest tests/test_http.py). Repeating it again will return that same result: it has told you
+everything it can. Read what it already returned above, or take a DIFFERENT action.]
+```
+
+The three results were not the same. CALL 0027:
+
+```
+Process exited with code 1
+Output:
+[10,104 bytes over 181 lines — too much to return, so nothing is shown. …]
+```
+
+CALL 0044 and CALL 0058, both:
+
+```
+Process exited with code 0
+…
+Ran 4 tests in 4.026s
+
+OK
+```
+
+Exit 1 with four errors, then exit 0 with four passes, is the largest change of state a test command can
+report. The fingerprint is on the tool ARGS (correctly — `project_repetition_plumbing_jitter`), but the
+SENTENCE makes a claim about the RESULTS that nothing checked.
+
+**A → B → C.** A: the repeat detector keys on the argument fingerprint. B: the note it composes asserts
+"it returned the exact same result every time" and "it has told you everything it can". C: on a command
+whose result has just flipped from red to green, cria states a false fact and tells the model to stop
+running it.
+
+**fixable at A? Yes — say only what was checked.** Either compare the results before claiming they match
+(they are in hand; the guard already folds them away), or drop the result clause and keep the true half:
+"you have now made this exact call N times". Run B's variant of the same note is already honest, because
+what it asserts happens to be true there — `[you have now made this exact call 2 times and it failed the
+same way every time]` on two byte-identical refusals.
+
+**survivable here** because the model had already read the `OK` in the same turn and was writing its final
+summary. It would not be survivable on a model still deciding whether its fix worked.
+
+**principle.** #5b (a claim cria makes in its own voice must be true of the world now), #12 (surface the
+metric from the authoritative event — the results ARE the event).
+
+---
+
+### 4. cria's edit refusal told the model to read the file; cria's repetition guard then flagged the read
+
+**what happened.** Two assists in consecutive turns gave opposite instructions.
+
+**cria fault: yes**
+
+**evidence.** CALL 0023, the identical-edit refusal:
+
+```
+⟦ctx:edit⟧ db.py — old_string and new_string are identical — this edit changes nothing, and you cannot
+pin the exact current text. Read the file, then make one targeted edit.
+```
+
+CALL 0024: `read_file {"path":"orders/db.py"}` — exactly what it was told.
+
+CALL 0025, the very next turn:
+
+```
+[you have now made this exact call 2 times and it returned the exact same result every time … Tried:
+read_file(orders/db.py). Repeating it again will return that same result … take a DIFFERENT action.]
+```
+
+**A → B → C.** A: the edit refusal ends with an imperative to read. B: the repetition guard counts that read
+against a fingerprint that already holds one copy. C: the model is told to read and then told the read was
+wasted. Cost one call; the model shrugged and re-derived the file state from the transcript.
+
+**fixable at A? Yes** — a read that cria's own refusal just ordered is not a repeat. The guard is
+session-scoped state (#23) and the refusal is a cria event, so the exemption is one flag, not a heuristic.
+
+**principle.** #1 (every assist can become a footgun — including against another assist), #2.
+
+---
+
+### 5. The whole-file read refusal on `test_output.txt` cost five calls to recover one traceback
+
+**what happened.** The model redirected its failing test run to a file, tried to read it, was refused,
+and needed five more calls to get the traceback out.
+
+**cria fault: yes, and it is the same refusal that was fatal in the java cell**
+
+**evidence.** CALL 0030:
+
+```
+⟦ctx:denied⟧ test_output.txt is large — reading it whole would be truncated (you'd get the head and tail
+with the middle cut, and act on a false view). Read it deliberately instead: grep for what you need
+(e.g. grep -n "<keyword>" test_output.txt), or read a specific line range with read_file start_line/end_line.
+```
+
+The model followed the advice literally and it did not work: CALL 0031 `grep "FAIL" test_output.txt` →
+`FAILED (errors=4)`; CALL 0032 the same with `| head -n 20` → the same line; CALL 0033 `grep -A 5 "FAIL"`
+→ the same line again; CALL 0034 `cat test_output.txt` → the 10,104-byte discard. Only CALL 0035,
+`grep -n "FAIL" test_output.txt && sed -n "1,20p" test_output.txt`, produced the traceback that named
+`orders/db.py`, line 45.
+
+**why it was survivable here.** The file was 25,889 bytes of repeated socketserver tracebacks: the answer
+lived in the FIRST twenty lines, so a head-anchored read found it. In the java cell the same refusal met a
+389-line source file where the needed line was in the middle, and there is no `sed -n "1,20p"` that finds
+it. **The trigger condition is whether the thing the model needs is positionally recoverable, not the file
+size** — and the refusal's own advice ("grep for what you need") assumes the model already knows the word
+to grep for. Here it did not; three greps for `FAIL` returned the summary line and nothing else.
+
+**fixable at A? Yes**, and it is the same fix the java walk proposed: reduce, do not discard. A head+tail
+elision of a 25 KB log with the middle disclosed would have handed the traceback over in call 0030.
+
+**principle.** #5 (lossless-first), #2 (recovery is the safe class).
+
+---
+
+### 6. The live-execution probe refused to run the command the project itself declares
+
+**what happened.** The exec-intent judge answered `python3 -m pytest`, which is the command the project's
+own manifest declares. cria then declined to run it because `pytest` is not a file on disk.
+
+**cria fault: yes**
+
+**evidence.** CALL 0060, exec-intent, with the declared-commands block cria itself supplied:
+
+```
+COMMANDS THIS PROJECT DECLARES FOR ITSELF (from its README and its build manifest …):
+  python3 -m pytest
+```
+```
+{"runs": true, "command": "python3 -m pytest", "success": "Test suite passed"}
+```
+
+CALL 0061, what cria published to the satisfaction judge:
+
+```
+⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because pytest is
+not an entry point on disk. Everything else the checks cover passed. This says nothing about whether the
+program works, only that the run could not be established.
+```
+
+`cria/execcheck.py:230` puts `-m` in `_FLAG_VALUE_IS_PROGRAM`, so `program_token("python3 -m pytest")`
+resolves to `pytest`; `corroborate` then hits `if not in_disk: return False, f"{tok} is not an entry point
+on disk"` at line 336 — **before** it ever consults `in_declared`, which was True. This is the exact defect
+already fixed one branch up for `cargo run` / `go test` (`_PROJECT_RUNNERS`, line 213), whose comment
+records the identical incident: *"cria published 'Live execution inconclusive — the delivered program was
+not run, because cargo run is not an entry point on disk', and the coder answered … after it had run both,
+successfully."* `python -m <module>` is the same shape — a module is not a file — and it is not in the list.
+
+**fixable at A? Yes.** Two candidates, both already present in the file: add the `-m` form to the
+project-runner branch (a module resolved from a declared command has no file to be), or move the
+`in_declared` rescue above the `in_disk` veto so a command the manifest declares is never vetoed for not
+being a filename. The second is the safer direction under #13.
+
+**why it was survivable here.** The note reached the satisfaction judge only — it never entered the coder's
+context. The judge had the coder's own `Ran 4 tests … OK` in the same prompt and ignored the inconclusive
+line entirely (its reasoning at CALL 0064 cites the passing run and never mentions live execution). In the
+rust cell the same sentence reached the CODER and sent it back to re-verify a workspace it had already
+verified. **That is the trigger condition: the damage is in the routing, not in the sentence.**
+
+**principle.** #5b, #13 (fail open only toward "keep working"), #24's corollary (fix the path that produced
+the incident — the head-first resolver landed without covering `-m`).
+
+---
+
+### 7. The wheel-spin steer confirmed what the model was already doing, at the cost of one reasoner call and one coder turn
+
+**what happened.** The rewrite detector fired at CALL 0053 after five writes to `orders/app.py`. The
+reasoner produced a directive; the model complied and learned nothing new.
+
+**cria fault: none — but it is noise, not help**
+
+**evidence.** The trigger: *"It has rewritten the file `orders/app.py` at least 5 times with varying content
+and it still is not converging."* The directive delivered at CALL 0054:
+
+```
+⟦ctx:steer⟧ Stop rewriting orders/app.py in its entirety, as you have "rewritten the file orders/app.py at
+least 5 times with varying content and it still is not converging." Run python3 -m unittest
+tests/test_http.py via exec_command to verify your latest changes against all requirements before
+attempting further edits.
+```
+
+The model's next reasoning does reference it — *"The user wants me to stop rewriting it in its entirety and
+instead run the tests"* — so this is not a steer that missed. But the action it commanded (`python3 -m
+unittest tests/test_http.py`) is the action the model had already taken twice, at CALL 0050 and CALL 0051,
+both green, and it took it a third time at CALL 0054 to the same result. The directive also opens on a false
+premise it inherited from the detector: the model had *already stopped* rewriting — the dedup edit landed at
+the end of CALL 0052 and the reasoner's own evidence bundle records `→ result: Wrote orders/app.py`.
+
+**verdict: confirmed what it was already doing.** Cost: one reasoner inference and one coder turn.
+
+Worth noting what the reasoner did *right*: its own reasoning talks itself out of three drafts that would
+have chosen the implementation, explicitly checking the prompt's "Do not choose the IMPLEMENTATION" and
+"cannot use because" rules before settling. The fences in `steer_diagnose` are working.
+
+**principle.** #3 (silence over noise — the file had converged and the checks were clean; the correct output
+here was `ON_TRACK`), #9 (a purposeful call is cheap — this one was not purposeful).
+
+---
+
+### 8. What the assists cost
+
+**19 of 71 calls (27%) were cria's own inference**, none of them coder work: classifier 1, research-step 1,
+research-check 2, self-compact 1, compaction proxy 1, reasoner 1, exec-intent 1, satisfaction 4,
+satisfaction-confirm 7.
+
+**On top of that, roughly six coder turns went to answering or recovering from an injection**: five
+(CALL 0030–0035, less the one read that would have happened anyway) to dig a traceback out from behind the
+whole-file read refusal, and one (CALL 0054) to re-run a green test because a steer said to. Call it
+**25 of 71 — one call in three — spent on cria rather than on the orders service.**
+
+The sharpest version of the cost: **the run scored 4/4 at the 15-minute milestone floor and then ran for
+another six minutes. Twelve of the final fourteen calls (0060–0071) were completion machinery** — one
+exec-intent, four satisfaction, seven satisfaction-confirm — and every one of them re-read files that had
+not changed since CALL 0057. The confirm judge alone spent seven calls re-listing two directories and
+re-reading three files to answer one yes/no question it could have answered from the satisfaction judge's
+own reads.
+
+**cria fault: yes** — not a bug, a budget. Seven confirm calls to re-read what the judge one seat over just
+read is the shape #9 warns about from the other side: cheap purposeful calls are worth it, and this is the
+same call repeated.
+
+---
+
+### 9. The assist ledger records zero repetition notes; the transcript carries five
+
+**what happened.** `assists` for this run lists `loop.periodic_gate 3, loop.periodic_gate_result 3,
+loop.gate 2, loop.gate_swept 4, loop.wheel_spinning 1, route.compaction 1, context.self_compact 1` and no
+`loop.repetition` at all.
+
+**cria fault: yes (reporting only)**
+
+**evidence.** Five distinct repeat notes reached the model: CALL 0011 (`read_file(orders/app.py)`),
+CALL 0025 (`read_file(orders/db.py)`), CALL 0029 (`exec_command(python3 -m unittest … > test_output.txt …)`),
+CALL 0057 (`edit_file(orders/app.py)`), CALL 0059 (`exec_command(python3 -m unittest tests/test_http.py)`).
+Run B, by contrast, records `loop.repetition: 1` and delivered two.
+
+The count matters because the repeat note is a model-facing injection and finding 3 above shows it can state
+a false fact. An assist that does not appear in the ledger cannot be base-rated (#15) and did not appear in
+any cross-run tally in this document.
+
+**fixable at A? Yes** — emit the event where the note is composed (the focustrim path), not only where
+`loop.repetition` is emitted.
+
+**principle.** #12 (surface every metric from the authoritative event), #15.
+
+---
+
+### 10. Everything cria stated in its own voice that the world contradicts (#5b)
+
+| call | cria said | the world |
+|:--|:--|:--|
+| 0059 | "you have now made this exact call 3 times and it **returned the exact same result every time**" | exit 1 with four errors, then two exit-0 `OK` runs |
+| 0059 | "Repeating it again will return that same result: **it has told you everything it can**" | it had just told the model something new — that the suite went green |
+| 0061 | "the delivered program was not run, because **pytest is not an entry point on disk**" | `python3 -m pytest` is the command the project's own manifest declares, and cria had just quoted that manifest to the exec-intent judge |
+| 0025 | the repeat note flagged a read that cria's own refusal at 0023 had ordered | — |
+
+None of the four cost this run anything. All four are the same class: a sentence in the indicative with no
+live check behind it.
+
+---
+
+### 11. Recent fixes — did they behave?
+
+**The derived probe output cap — HURT, in the sense that it is still not enough.** It fired correctly
+per-command (`-le 8500` is visible in every composed probe) and still lost the whole gate twice, at 9,247
+and 8,899 bytes, because the bound it was derived against is applied to all four commands at once. See
+finding 1. The fix is right and the arithmetic is one step short.
+
+**The completion-judge report framing — helped, quietly.** The satisfaction prompt at CALL 0061 opens
+"THE CODER'S REAL ACTIONS AND THEIR OUTPUTS SO FAR (ground truth)", discloses its own elision
+(`[9,975 characters of EARLIER actions elided to keep this readable — the most recent actions follow in
+full; the durable fetch facts below are complete and unaffected]`), and dedups repeated gate results
+(`⟦ctx:checks⟧ (same result as a later check below — omitted here so the same finding isn't repeated
+across turns)`). The judge's reasoning at 0064 works from the quoted `OK` and from files it read itself.
+No false fact entered from this direction.
+
+**The cached-check age note — helped.** The gate's own prose at CALL 0053 and CALL 0059 states what it did
+and did not establish without hedging on a clean result: *"The checks above cover syntax and lint only — no
+test command was composed, so nothing here says whether this project's tests pass. Test code in
+tests/run_unit_tests.py will not run: pytest only runs tests named test_*.py or *_test.py. The same tests
+(0f/6p) pass with the network switched off."* Every clause is true; the `run_unit_tests.py` clause is a real
+fact the model never worked out for itself.
+
+**The verdict tool — never fired.** The satisfaction system prompt declares a `verdict` tool
+(`declaration:verdict{… satisfied, reason, proposed_fix …}`) and the judge did not call it: CALL 0064
+answered in a fenced JSON block in SAY. The confirm judge likewise answered in prose. cria's parser recovered
+both, so nothing broke — but the tool bought nothing in this run and its presence in the tool list is
+schema the judge paid tokens for.
+
+**Reasoning on unfinished streams — never fired.** The one reasoner call (0053) reports
+`THE CODER'S RECENT PRIVATE THINKING … (not captured for this trigger)`. The trigger was a file-rewrite
+count, and the prompt itself says the section is "present only when the trigger was its thinking". No
+thinking-triggered detector fired in this run, so the fix had no opportunity.
+
+**Search inlining — never fired.** No `web_search` in this run.
+
+**Rumination abort — never fired.** No rumination event in the assists ledger or the transcript.
+
+---
+
+## cart-billing-go_ternary-bonsai_codex_poff_1786674074
+
+Commit 736c6fb. 54 calls, 990 s (16.5 min of a 30-min budget), 14,297 output tokens at 41.5 tok/s,
+terminal `exited`. **Score 5/5 — the biggest single gain in the cycle: 0% against the plain proxy, 100%
+with cria driving.** Phases: coder 32, classifier 1, research-step 1, research-check 3, self-compact 1,
+reasoner 3, steer-code 1, exec-intent 1, satisfaction 5, satisfaction-confirm 6.
+
+Shape of the run in one line: the model diagnosed the truncation bug from the prompt alone before reading
+anything, wrote the whole solution in five calls against a decimal API it had guessed, then spent nineteen
+calls failing to find that API's real signatures — three 404s and five workspace-guard refusals — and
+finally read the signatures out of the Go compiler's own error messages, which is where cria's gate had been
+putting them the whole time.
+
+**The one-line answer to "which assist earned its place": the periodic gate.** It is the only mechanism in
+either run that put a fact in front of the model that the model could not otherwise get to, at the moment it
+needed it. Everything else here either confirmed, cost calls, or both.
+
+---
+
+### 1. The gate's flagged-line rendering is what carried this cell
+
+**what happened.** The model had committed to `github.com/shopspring/decimal` and written code against an
+API it had invented. Every route to the real API failed — pkg.go.dev 404 twice, raw.githubusercontent 404
+once, the module cache blocked five times. The compiler errors were the only description of the API that
+ever reached it, and cria delivered them twice with the offending source line attached.
+
+**cria fault: HELPED**
+
+**evidence.** CALL 0023, the gate result — note the `the flagged line on disk` lines, which the model's own
+`go test` output at CALL 0022 did **not** contain:
+
+```
+⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the checker's OWN message
+and the line it flagged …
+./cart.go:49:71: cannot use it.Quantity (variable of type int) as int64 value in argument to decimal.NewFromInt
+  the flagged line on disk — line 49: `sum = sum.Add(decimal.NewFromFloat(it.Price).Mul(decimal.NewFromInt(it.Quantity)))`
+./cart.go:68:26: too many arguments in call to taxed.Round
+  the flagged line on disk — line 68: `total := taxed.Round(2, decimal.RoundingHalfEven)`
+	have (number, unknown type)
+	want (int32)
+./cart.go:68:34: undefined: decimal.RoundingHalfEven
+```
+
+The model's reasoning at CALL 0028 reads the API out of exactly these four messages, one by one:
+
+> "1. `cannot use it.Quantity (variable of type int) as int64 value in argument to decimal.NewFromInt` — So
+> `NewFromInt` takes an `int64`, not `int`. I need to cast… 2. `too many arguments in call to taxed.Round`
+> with `have (number, unknown type)` and `want (int32)` — So `Round` only takes one argument (the precision
+> as int32)… 3. `undefined: decimal.RoundingHalfEven` — Confirms there's no such constant in this version.
+> 4. … `Float64()` returns two values; I need to use the first one only."
+>
+> "Now I know the API from the error messages. Let me fix all four issues."
+
+**verdict: changed the course.** Not because the errors were unavailable — `go test` printed them too — but
+because the gate is what kept them in front of the model across nineteen calls of failed documentation
+hunting, and because the `the flagged line on disk` annotation is cria's own addition and is what makes each
+message point at a specific call rather than a line number. `go vet` in the gate also produced the first
+error a full call before `go build` would have.
+
+Second delivery at CALL 0041, on green, and it stayed honest:
+
+```
+⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems. The test command still
+succeeds with the network switched off — nothing in it failed without the real service. The command that
+ran did not ask this runner for a per-test count, so whether every test still ran is not established, only
+that none of them failed. Whether that matters depends on what this task asked for.
+```
+
+**principle.** #10 (verify by doing; cria picks the command and the format), #12 (the finding is keyed to
+the checker's own message and the file's own line).
+
+---
+
+### 2. cria's workspace guard blocked the model from reading the library it had just been told to add, five times
+
+**what happened.** With the docs 404'd, the model tried to read the downloaded module out of the Go module
+cache. `dirguard` refused every attempt, because the module cache is outside the workspace.
+
+**cria fault: yes**
+
+**evidence.** Five refusals, chunk IDs `15c1b1`, `0f2003`, `243b7b`, `390499`, `b28e0b`, at CALL 0026, 0028,
+0031, 0033 and 0035, all identical:
+
+```
+⟦ctx:denied⟧ Writing/reading outside the working directory is not permitted here — keep every file you read
+or write inside the project directory (/tmp/suite-cart-billing-go_ternary-bonsai_codex_poff_1786674074-ajok0mv7).
+The path '/pkg/github.com/shopspring/decimal/' is outside it; use a path within the project instead.
+```
+
+**A → B → C.** A: the task says "Add a third-party Go decimal module … and use it for cart calculations" —
+so a dependency's source is now part of what the model must read. B: `dirguard` bounds every read to the
+workspace, and Go puts module sources in `$GOPATH/pkg/mod`, always outside it. C: eleven calls (0025–0035)
+went to the detour, five of them consumed entirely by the refusal.
+
+**fixable at A?** Partly, and carefully. The guard is doing its job and it is a documented backstop, not a
+sandbox (`project_external_dir_permission`). The honest reading is that the refusal is correct and the
+*message* is the fixable part: it names what is forbidden and nothing about what would work. The model never
+tried `go doc github.com/shopspring/decimal` — a read-only command that runs inside the workspace and prints
+the exact signatures it spent eleven calls hunting. A refusal that is telling a coder it may not read a
+dependency's files is in a position to say that the language's own doc tool is inside the boundary.
+
+**why it was survivable here.** Go's compiler errors carry the full signature (`want (int32)`, `(f float64,
+exact bool)`), so the API was recoverable from the failure itself. In a language whose compiler says less —
+or for a library whose *semantics* rather than its signatures were in question — the same five refusals are
+a dead end.
+
+**principle.** #2 (a guard's message must tell the coder MORE, not less), #7 (the guard exists for a good
+reason and stays).
+
+---
+
+### 3. The steer was judged DICTATES and shipped verbatim anyway — with a line of invented Go in it
+
+**what happened.** cria's own gate on steer content answered DICTATES. The directive was delivered to the
+coder unchanged, including a code fragment that does not compile.
+
+**cria fault: yes**
+
+**evidence.** CALL 0036, the judge, reading the directive and ruling on it:
+
+> "The directive provides `_ := sub.Float64()[0]` and `subF, _ := sub.Float64()`. These are code snippets.
+> So it DICTATES."
+
+```
+--- SAY (full) ---
+DICTATES
+```
+
+CALL 0037, what reached the coder — the same bytes, prefixed `[REDIRECT]`:
+
+```
+⟦ctx:steer⟧ [REDIRECT]
+Read line 70 of cart.go and fix it NOW.** The error is literal: > sub.Float64() (value of type (f float64,
+exact bool)) in single-value context That method returns **two values**. On line 70 you call sub.Float64()
+inside a printf argument list where one value is expected. Pick the smallest fix that makes both Float64()
+calls consume their second return value — either _ := sub.Float64()[0] , or subF, _ := sub.Float64() .
+Then run go test -v and stop until it passes.
+```
+
+`_ := sub.Float64()[0]` is not valid Go on three counts — `_ :=` is illegal, you cannot index a multi-value
+call, and `Float64()` returns no slice. This is precisely the failure mode the judge's own prompt was written
+against: *"one such directive told the coder to add `pytest.register_pytest_mark("live")`, which is not a
+real function."*
+
+The steer also **worked**: the model had burned four turns on the blocked `ls $GOPATH` and its next reasoning
+goes straight at line 70 —
+
+> "The issue is clear: `sub.Float64()` returns two values `(f float64, exact bool)`, but I'm using it in a
+> single-value context. Let me fix this by assigning to variables with `_` for the unused second return value."
+
+— and it picked the second, valid alternative. **verdict: changed the course, and survived its own poison by
+coin-flip.** `loop.steer_dictated_code: 1` in the assists ledger shows the event WAS recorded; the recording
+is not wired to the delivery.
+
+**A → B → C.** A: `steer-code` is a one-word judge whose answer nothing consumes. B: a DICTATES verdict is
+logged and the steer ships. C: the coder receives unverified code as an imperative from a seat that
+outranks its own reading.
+
+**fixable at A? Yes, and it is the cheapest fix in either run.** The judge already runs and already answers
+correctly — 1 call, 1 word. Either drop the steer on DICTATES (safe null, #4/#13) or re-author it once with
+the code stripped. Shipping a verdict you do not act on is strictly worse than not asking: it costs the call
+AND delivers the harm.
+
+**principle.** #13 (fail closed on a bad verdict), #8 (the judge exists so code can act on it), #1.
+
+---
+
+### 4. The repetition note is what broke the workspace-guard loop
+
+**what happened.** After the same denied command three times, the note fired and the model changed tack in
+the very next sentence.
+
+**cria fault: HELPED**
+
+**evidence.** CALL 0030, delivered after the third `⟦ctx:denied⟧`:
+
+```
+[you have now made this exact call 2 times and it failed the same way every time — the earlier copies were
+folded away, so this is the only record of it. Tried: exec_command(cd /tmp/…-ajok0mv7 && go list -m -json
+github.com/shopspring/decimal 2>&1; ls $(go env GOPATH)/pkg/github.com/shopspring/decimal/ 2>/dev/null ||
+echo "no pkg dir"). Repeating it will fail the same way. It has not answered the question, so do not read
+its result as the answer: use a different tool, or fix what made it fail, before asking again.]
+```
+
+The model's next reasoning names the note's content:
+
+> "The issue is that `go list -m` and `ls $(go env GOPATH)/...` are trying to access paths outside the
+> working directory. Let me try a different approach - I'll just run `go test` directly since we already
+> have the module downloaded via `go get`."
+
+**verdict: changed the course.** Note the wording contrast with Run A finding 3: here the claim is
+"it **failed the same way** every time", which is true of two byte-identical refusals, and the note adds
+"It has not answered the question, so do not read its result as the answer" — a correct and useful thing to
+say about a refusal. This is the repeat note at its best.
+
+It did not hold: the loop resumed at CALL 0031 and the note fired again at CALL 0033 ("3 times"). Two turns
+of relief for one note.
+
+**principle.** #12 (fingerprint the args), #3.
+
+---
+
+### 5. The search-loop escape note redirected the model off URL guessing
+
+**what happened.** After three consecutive 404s from guessed documentation URLs, cria appended a note to the
+fetch result and the model stopped guessing.
+
+**cria fault: HELPED (weakly)**
+
+**evidence.** CALL 0025, appended to the third failure:
+
+```
+HTTP 404 Not Found · https://raw.githubusercontent.com/shopspring/decimal/v1.4.0/decimal/decimal.go
+…
+⚠ 3 fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or
+take a different step.
+```
+
+The model's next reasoning takes the "different step" branch:
+
+> "The Go modules cache has already downloaded v1.4.0 successfully (`go mod tidy` succeeded), so I can
+> inspect it locally from the vendor directory or use `go doc`. Let me check what's available in the module
+> cache."
+
+It never fetched another URL. **verdict: changed the course** — though it changed it into the guard-refusal
+loop of finding 2, which is not the note's fault.
+
+The durable fetch ledger alongside it was also correct throughout — three entries, each with its real status,
+and the standing caveat *"A failure on one URL says nothing about any other URL"* (`898ef78`'s split of 2xx
+from failures, behaving as designed).
+
+**principle.** #2 (additive and recovery-class), #5b (the ledger stated only what came back).
+
+---
+
+### 6. Search inlining dropped every result description and pointed at a file it never named
+
+**what happened.** The one `web_search` of the run came back as twenty title+URL pairs with no descriptions,
+followed by a pointer to a file whose name appears nowhere in the message.
+
+**cria fault: yes (#5b) — the same defect as shipping-rates-rb finding 6**
+
+**evidence.** CALL 0019, the complete tool result, first and last lines:
+
+```
+20 results:
+GitHub - shopspring/decimal: Arbitrary-precision fixed-point decimal numbers in Go · GitHub
+  https://github.com/shopspring/decimal
+…
+decimal package - github.com/hellodword/pgx-zero-dep/zero-dep-vendor/github.com/shopspring/decimal - Go Packages
+  https://pkg.go.dev/github.com/hellodword/pgx-zero-dep/zero-dep-vendor/github.com/shopspring/decimal
+(the full results, with each page's description, are in the file named above — read it if a title is not
+enough to choose)
+```
+
+"the file named above" — nothing above names a file. The file does exist:
+`tmp/read-only/search-github.com_shopspring_decimal_latest_version.txt`, confirmed in the archived workspace.
+The model never opened it.
+
+**why it was survivable here, and this is the useful half.** The model needed exactly one datum — the current
+version string — and version strings live in URLs. Two of the twenty results carry `v1.4.0` in the URL path
+(`https://deps.dev/go/github.com/shopspring/decimal/v1.4.0`,
+`https://github.com/shopspring/decimal/blob/v1.4.0/decimal.go`). The model's whole reasoning at CALL 0019 is
+one line: *"The latest version is v1.4.0. Let me use that instead."* **The descriptions were dropped and the
+answer survived because it rode in a URL.** In the Ruby cell the answer was a 2013 date that lived only in a
+description, and dropping it cost the run.
+
+**fixable at A? Yes** — name the file. The path is in hand at composition time; the sentence that refers to it
+is composed by cria.
+
+**principle.** #5b (a pointer must point at something), #5 (prefer a labelled summary over silent loss — the
+descriptions are the loss).
+
+---
+
+### 7. The workspace-guard refusal names a path the coder never asked for
+
+**what happened.** Every one of the five denials quotes `'/pkg/github.com/shopspring/decimal/'` as the
+offending path. The coder wrote `$(go env GOPATH)/pkg/github.com/shopspring/decimal/`.
+
+**cria fault: yes (#5b, minor)**
+
+**evidence.** Coder command at CALL 0026:
+
+```
+ls -la $(go env GOPATH)/pkg/github.com/shopspring/decimal/ 2>/dev/null || echo "no vendor dir"
+```
+
+cria's answer:
+
+```
+The path '/pkg/github.com/shopspring/decimal/' is outside it; use a path within the project instead.
+```
+
+The guard stripped the unexpanded `$(go env GOPATH)` and reported the remainder as if it were the path. It is
+not: `/pkg/github.com/shopspring/decimal/` is a path that appears nowhere and exists nowhere. The refusal's
+verdict is right; the fact it states about the world is not.
+
+**survivable** because the model read the point ("paths outside the working directory") rather than the
+literal string. Fixable at A by quoting the coder's own token verbatim, including the unexpanded
+substitution — which would also have told the model *why* the guard could not evaluate it.
+
+**principle.** #5b, #96becb0's rule (cria may SELECT the real text, never substitute its own).
+
+---
+
+### 8. cria's spill file is in the workspace
+
+**what happened.** The archived workspace contains `tmp/read-only/search-github.com_shopspring_decimal_latest_version.txt`
+next to `cart.go`.
+
+**cria fault: yes (already on the backlog; confirmed again here)**
+
+**evidence.** The satisfaction judge's own `list_dir` at CALL 0044:
+
+```
+.git/
+cart.go (1627 B)
+cart_test.go (1247 B)
+discounts.json (66 B)
+go.mod (70 B)
+go.sum (177 B)
+tmp/
+```
+
+The judge then spent a paragraph of reasoning on it — *"tmp/ - temporary directory (probably not relevant)"*,
+*"tmp/ - temporary files"* — exactly the "cria's artifacts become the model's context" failure #7 names.
+
+**survivable** because Go ignores a directory with no `.go` files and the verifier's `rglob("*.go")` finds
+nothing in it. In the Ruby cell the equivalent pollution grew the workspace inventory by 902 files and killed
+the run.
+
+**principle.** #7.
+
+---
+
+### 9. The search supervisor spent a call to say nothing, and answered in a shape nothing can use
+
+**what happened.** The reasoner at CALL 0018 judged the query on-target and returned a null recommendation.
+
+**cria fault: none (correct verdict) — but see the shape**
+
+**evidence.**
+
+```
+{"on_target": true, "recommendation": null}
+```
+
+The prompt asks for *"a better query, OR a concrete https:// URL to fetch"*; `null` is not either, and the
+prompt gives no instruction for the on-target case. The verdict was right — the query was on target and the
+search answered it — so the safe null was the right outcome. The cost is one reasoner inference on a query
+that had nothing wrong with it, which is the trade #9 explicitly accepts.
+
+**verdict: noise, correctly.**
+
+---
+
+### 10. The live-execution probe declined again, on a different branch
+
+**evidence.** CALL 0044, in the satisfaction judge's prompt:
+
+```
+⟦ctx:live-execution⟧ Live execution inconclusive — the delivered program was not run, because no file in the
+workspace is an entry point by its language's convention. Everything else the checks cover passed. This says
+nothing about whether the program works, only that the run could not be established.
+```
+
+This is `execcheck.corroborate`'s `if not entries` branch (line 319) — true here: `cartsvc` is a library with
+no `main`, and the task never asked for a binary. **cria fault: none.** The sentence is accurate and hedged.
+
+It still cost the judge attention: CALL 0047's reasoning circles the word "binary" for four paragraphs —
+*"The task says 'move discount codes … next to the binary' … There's no main.go visible … I think the intent
+was just to have the discounts.json file in the same directory as the code files"* — and reaches the right
+answer the long way. Same routing point as Run A finding 6: the note reached a judge, not the coder, and a
+judge with the real evidence in front of it recovers.
+
+---
+
+### 11. What the assists cost
+
+**22 of 54 calls (41%) were cria's own inference** — classifier 1, research-step 1, research-check 3,
+self-compact 1, reasoner 3, steer-code 1, exec-intent 1, satisfaction 5, satisfaction-confirm 6 — a higher
+share than Run A because the coder finished in fewer turns.
+
+**Plus five coder turns consumed outright by the workspace-guard refusal** (CALL 0026, 0028, 0031, 0033,
+0035), and three more turns in the same detour that the refusal shaped. **Roughly 30 of 54 calls — more than
+half — were cria machinery or the coder answering it.**
+
+The completion tail again: the last code change landed at CALL 0038 and the tests went green at CALL 0039.
+**Calls 0043–0054, twelve consecutive calls, are exec-intent plus eleven judge calls on a workspace that had
+not changed** — and the confirm judge (0049–0054) re-read the same four files the satisfaction judge
+(0044–0048) had just read, reaching the same answer.
+
+The research-check judge is the cheapest thing to question: three calls (0005, 0007, 0009) to answer "have
+the three files been read yet" about a step the coder wrote itself and was already executing. Its reasoning
+at CALL 0007 spends nine paragraphs oscillating — *"Wait, let me reconsider… Actually, wait… Wait, let me
+reconsider once more"* — over whether two of three files is DONE, and the answer changes nothing about what
+the coder does next.
+
+---
+
+### 12. Everything cria stated in its own voice that the world contradicts (#5b)
+
+| call | cria said | the world |
+|:--|:--|:--|
+| 0019 | "the full results … are in **the file named above**" | no file is named above; the file is `tmp/read-only/search-github.com_shopspring_decimal_latest_version.txt` |
+| 0026, 0028, 0031, 0033, 0035 | "The path **'/pkg/github.com/shopspring/decimal/'** is outside it" | the coder wrote `$(go env GOPATH)/pkg/github.com/shopspring/decimal/`; the quoted path exists nowhere |
+| 0037 | the steer offered `_ := sub.Float64()[0]` as one of two fixes | not valid Go on three counts, and cria's own judge had said so one call earlier |
+
+All three were survivable. The first because the answer was in a URL, the second because the model read the
+principle not the string, the third because there were two options and the other one compiled.
+
+---
+
+### 13. Recent fixes — did they behave?
+
+**The derived probe output cap — nothing, and that is the finding.** Zero oversize refusals in this run: the
+composed probe was `go vet` + `go build` + `go test -count=1` + the netns re-run, and Go's failure output is
+terse — the largest gate report in the run is under 1,500 bytes. Set against Run A's two discards at 9,247 and
+8,899, **the trigger condition is the language's verbosity, not the task**: the same probe shape, the same
+cap, one language over the line and one nowhere near it.
+
+**The completion-judge report framing — helped.** Same behaviour as Run A: the elision is disclosed, repeated
+gate results are deduped (`⟦ctx:checks⟧ (same result as a later check below — omitted here so the same
+finding isn't repeated across turns)`), and the judge's verdict at CALL 0048 quotes the real passing run.
+
+**The cached-check age note — helped, and this is its best showing.** CALL 0041, on a fully green gate:
+*"The command that ran did not ask this runner for a per-test count, so whether every test still ran is not
+established, only that none of them failed."* That is true (`go test ./...` without `-v` reports `ok` per
+package, not per test), it is a real limit on what the green means, and it stops short of hedging the pass —
+exactly the line #3 draws.
+
+**The verdict tool — never fired, again.** Declared in the satisfaction tool list; CALL 0048 answered with
+nine bullet points of prose followed by a bare JSON object, and CALL 0054 the same. Two runs, two models, two
+harness dialects, zero calls to the tool.
+
+**Reasoning on unfinished streams — never fired.** Both reasoner triggers here were action-repetition
+(`It keeps repeating the SAME action 3× without the outcome changing`), and both prompts carry
+`THE CODER'S RECENT PRIVATE THINKING … (not captured for this trigger)`.
+
+**Search inlining — helped and hurt in the same message.** See finding 6: it saved a file read the model would
+probably not have made, and it dropped the descriptions and mis-pointed at the file.
+
+**Rumination abort — never fired.**
+
+---
+
+## Cross-run — what a working assist looks like, and what the successes cost
+
+Two runs, 125 calls, 9/9 checks. Read together they say four things the failure walks could not.
+
+**One assist earns its place unambiguously: the periodic gate, when its report is the only copy of the
+finding.** In Run B it kept four compiler messages — annotated with the source line cria read off disk — in
+front of a model that had lost every other route to the API, and the model's reasoning walks them one by one.
+In Run A the same gate caught a duplicated class the model's own green test suite could not see. Nothing else
+in either run put a fact in front of the coder that the coder could not otherwise reach.
+
+**Two more earn a qualified place: the repetition note and the fetch-failure note**, both of which broke a
+real loop and both of whose effect is visible in the next sentence of the model's reasoning. The repetition
+note is also the source of the worst false fact in either run — the difference between its good showing (Run
+B: "it **failed the same way** every time", true) and its bad one (Run A: "it **returned the exact same
+result** every time", false) is one clause that nothing checks.
+
+**Everything else was confirmation or cost.** The wheel-spin steer in Run A commanded an action the model had
+already taken twice. The search supervisor in Run B spent a call to say the query was fine. The research-check
+judge spent five calls across the two runs adjudicating whether files the coder was actively reading had been
+read. And in both runs the completion machinery ran long after the score was fixed: **Run A spent 12 of its
+last 14 calls, and Run B 12 of its last 12, judging a workspace that had stopped changing.**
+
+**The bill: 19/71 and 22/54 calls are cria's own inference; adding the coder turns spent answering or
+recovering from an injection puts both runs at roughly one call in three, and Run B at more than half.**
+A 100% cell that spends a third of its calls on cria is still a finding, and the finding is that the
+completion tail — exec-intent, then a satisfaction judge with tools, then a confirm judge with the same tools
+re-reading the same files — is where the money goes. In both runs the confirm judge reached the same verdict
+from the same files the satisfaction judge had just read, and in both runs it took six or seven calls to do
+it.
+
+**And the contrast the fix phase asked for — three bugs fired in a success and did no damage, and in each
+case the reason is specific:**
+
+| bug | fatal elsewhere because | survivable here because |
+|:--|:--|:--|
+| oversize refusal eats the gate | the gate's report was the only copy of the compiler's answer (java: nine times) | Run A's two discards landed on findings the model already had; Run B never triggered it — Go's output is terse |
+| `⟦ctx:denied⟧ … is large` on a whole-file read | the needed line was in the middle of a 389-line source | the needed traceback was in the first 20 lines of a 25 KB log, so `sed -n "1,20p"` found it |
+| live-execution "not an entry point on disk" | the note reached the CODER and sent it to re-verify work it had already verified | the note reached only the judges, who had the real passing run in the same prompt |
+
+Two of those three are about *routing and position*, not about the check itself — which points the fix at
+where a refusal's output goes and what it leaves behind, not at whether the refusal should fire.
+
+
+---
+
+## Cross-run — the control: what the assists are worth when they WORK
+
+Two cells that scored 100% were walked on purpose, because nineteen autopsies make a biased sample.
+The answer is uncomfortable and it is the most useful thing in this document.
+
+### Only one assist earned its place
+
+**The gate — and only when its report is the only copy of the finding.** In `orders-api-py × gemma4`
+the gate caught a duplicated `Handler` class that the model's own green test run could not see (call
+0045); it is the only injection whose text the model's reasoning actually follows. In
+`cart-billing-go × ternary-bonsai` the gate's *"the flagged line on disk"* annotation carried the
+whole cell: after three 404s and five guard refusals, the compiler's own messages were the only
+description of the decimal API left, and the model read all four signatures out of them.
+
+Everything else in both runs either confirmed what the model was already doing, or cost calls, or
+both. That is the honest reading, and it is what principle 1 predicts.
+
+### What the assists cost in a winning run
+
+| | cria inference calls | with recovery turns | of total |
+|---|---:|---:|---:|
+| `orders-api-py × gemma4` | 19 | ~25 | of 71 |
+| `cart-billing-go × ternary-bonsai` | 22 | ~30 | of 54 |
+
+Between a third and a half of a *successful* run is cria. In the first, twelve of the last fourteen
+calls judged a workspace that had been 4/4 since the fifteen-minute mark.
+
+### The trigger condition — why the same bugs were survivable here
+
+This is what the fix phase needs, and it is not severity. It is **routing and position**:
+
+- **The oversize refusal kills only when the gate's report is the sole copy of the finding.** It
+  fired twice in the Python win (9,247 and 8,899 bytes) and cost nothing, because the model's own
+  test run held the same facts. Go's terse output never tripped it at all. It was fatal in Java and
+  Rust because there the discarded bytes were the *only* statement of the error.
+- **The whole-file read refusal kills only when the needed line is not positionally recoverable.**
+  Five calls to extract one traceback here; a rewrite-from-memory in Java, where the model needed the
+  shape of the whole file.
+- **The "not an entry point" refusal kills only when it reaches the CODER.** In the Python win it
+  reached a judge that was already holding a real passing test run, and was ignored.
+
+So the same three defects range from a tax to a total loss depending on whether a second copy of the
+fact exists elsewhere in the context. That is a strong argument for fixing them at the source rather
+than adding a compensating assist: the compensation is exactly what is already there by luck.
+
+### Confirmed again in both runs
+
+- The assists ledger records **zero** repetition notes for the Python win; **five** reached the model.
+- The `steer-code` judge answered **DICTATES** and the steer shipped verbatim anyway, carrying
+  `_ := sub.Float64()[0]`, which is not valid Go. The model happened to pick the other alternative.
+  Third occurrence in the cycle of a correct DICTATES verdict being computed and then not enforced.
+- Search inlining still ends "the file named above" with no file named above — third cell.
+- The spill directory still sits inside the graded workspace, and here the satisfaction judge spent a
+  paragraph reasoning about it.
+- A repetition note claimed three runs "returned the exact same result" when the first exited 1 with
+  four errors and the last two printed `OK` — a false fact fired on a green run.
