@@ -18,7 +18,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 
 | # | task | model | score | Δ pts | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
-| 1 | shipping-rates-rb | gemma4 | 20% | −80 | 17 | 68 | biggest regression of the cycle — not yet diagnosed, walk it first |
+| 1 | shipping-rates-rb | gemma4 | 20% | −80 | 17 | 68 | chose a dead gem. `eu_countries` 0.0.2 (2014) opens with `require "iso3166"`, an entry point gone from modern `countries`, so `require 'eu_countries'` raises LoadError and the four checks that load the library all die on it. The fifth only reads the README. Walk in progress on the question that matters: it declared done on a library that cannot load, and the completion gate did not stop it |
 | 2 | shipping-rates-rb | qwen35 | **100%** | +40 | 8 | 92 | |
 | 3 | shipping-rates-rb | ternary-bonsai | 80% | 0 | 16 | 52 | |
 | 4 | shipping-rates-rb | nemotron-elastic | 0% | 0 | 16 | 57 | |
@@ -60,6 +60,21 @@ Seeded from work already done; the walk phase appends to it.
 | — | 3 | calls the model made that never happened | open | |
 
 Ranks are assigned in the rank phase, once the walk has said how many cells each one cost.
+
+### Environment notes — established, deliberately NOT changed mid-cycle
+
+- **`bundle` is not on this box's PATH.** Debian ships the binaries as `bundle3.2` / `bundler3.2`
+  and nothing provides the unversioned name, so `bundle install` and `bundle exec` both answer
+  "command not found" — for every model, on every Ruby run. The models fall back to `gem install`,
+  which ignores the Gemfile's resolution and installs the newest transitive dependencies, which is
+  how a 2014 gem ends up paired with a 2024 one that no longer exports what it requires.
+- **It is a hazard, not a blocker.** `shipping-rates-rb`'s verifier runs bare `ruby -Ilib`, so the
+  intended solution never needed bundler: `gem install countries` puts the gem on the default load
+  path and `require "countries"` just works. Three runs prove it — every Ruby run that chose
+  `countries` scored 60–100%, and both runs that chose `eu_countries` collapsed.
+- **So the environment stays as it is.** Installing the binstub mid-campaign would change what is
+  being measured and invalidate every Ruby row. What the walk has to answer instead is what cria
+  told the model when `bundle` failed, and why nothing caught a library that could not load.
 
 ### Log
 
