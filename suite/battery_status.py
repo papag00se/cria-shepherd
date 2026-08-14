@@ -46,6 +46,12 @@ TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")          # order matters: the whole BASE arm first
 
+# Tasks whose PROMPT changed at the current revision, so a cell-to-cell swing across it is not
+# like-for-like. Marked `*` in the grid rather than hidden: the number is still real, it just is not
+# only the model that moved. p4 (2026-08-13): handles-cli-node names the resolved address the
+# checker already scored; feed-pipeline-java stopped calling a repeated SKU bad data.
+REWORDED = ("handles-cli-node", "feed-pipeline-java")
+
 
 def rows() -> list[dict]:
     if not RESULTS.exists():
@@ -70,6 +76,41 @@ def cell(rs: list[dict], arm: str, model: str, task: str) -> dict | None:
         if r.get("model") == model and r.get("task") == task and f" {arm} " in f" {note} ":
             return r
     return None
+
+
+def prompt_rev(r: dict | None) -> str:
+    """The task-prompt revision a row was earned against — the last `pN` token in its note."""
+    if not r:
+        return ""
+    toks = [w for w in str(r.get("note", "")).split() if len(w) > 1 and w[0] == "p" and w[1:].isdigit()]
+    return toks[-1] if toks else ""
+
+
+def prior_cell(rs: list[dict], arm: str, model: str, task: str, current: dict | None) -> dict | None:
+    """The standing row for this cell from the PREVIOUS prompt revision.
+
+    Keyed on the revision, not on time: two rows earned against different task wording are not the
+    same measurement, which is the whole reason battery_run stamps `pN` on every note. A cell whose
+    prompt changed is still shown, but marked, so nobody reads a wording change as a model result."""
+    rev = prompt_rev(current)
+    if not rev:
+        return None
+    older = [r for r in rs
+             if r.get("model") == model and r.get("task") == task
+             and f" {arm} " in f" {str(r.get('note', ''))} "
+             and not r.get("superseded") and prompt_rev(r) and prompt_rev(r) != rev]
+    return older[-1] if older else None
+
+
+def delta_of(now: dict | None, before: dict | None) -> str:
+    """`(+1)` / `(-2)` / `(=)` in CHECKS, or "" when there is nothing to compare against."""
+    if not now or not before:
+        return ""
+    a, b = now.get("score"), before.get("score")
+    if a is None or b is None:
+        return ""
+    d = float(a) - float(b)
+    return " (=)" if abs(d) < 0.001 else f" ({d:+.0f})"
 
 
 def in_flight() -> str | None:
@@ -168,7 +209,17 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
                        m, cells, have))
     for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
-        got = " | ".join(score_of(c) if c else "·" for c in cells)
+        # …WITH THE MOVEMENT SINCE THE PREVIOUS PROMPT REVISION. The percentage alone cannot say
+        # whether a run got better; the operator asked for the swing per cell, in CHECKS, because a
+        # check is the unit the tasks are actually scored in. A `*` marks a cell whose task wording
+        # changed between the two revisions — there the swing is not a like-for-like comparison.
+        def _with_delta(c, tk):
+            if not c:
+                return "·"
+            before = prior_cell(rs, arm, m, tk, c)
+            star = "*" if (before and tk in REWORDED) else ""
+            return score_of(c) + delta_of(c, before) + star
+        got = " | ".join(_with_delta(c, tk) for c, tk in zip(cells, TASKS))
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
         out.append(f"| {_badge(overall)} {m} | {got} | **{overall:.0f}%** | {rate} "

@@ -22,10 +22,10 @@ judging. What each model does on its own.
 
 | model | ruby | go | python | java | node | rust | total | avg tok/s | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| 🟡 qwen35 | 60% | 80% | 75% | 100% | 50% | 100% | **78%** | 82.4 | 45 | 258 |
-| 🟡 gemma4 | 100% | 60% | 100% | 80% | 0% | 100% | **74%** | 61.9 | 21 | 57 |
-| 🔴 ternary-bonsai | 80% | 0% | 75% | 0% | 50% | 0% | **33%** | 45.6 | 31 | 66 |
-| 🔴 nemotron-elastic | 0% | 20% | 75% | 0% | 25% | 0% | **19%** | 137.0 | 29 | 108 |
+| 🟡 qwen35 | 100% (+2) | 80% | 75% | 100% | 50% | 100% | **85%** | 81.9 | 36 | 209 |
+| 🟡 gemma4 | 20% (-4) | 100% (+2) | 100% | 80% | 0% | 100% | **67%** | 60.8 | 18 | 52 |
+| 🔴 ternary-bonsai | 80% (=) | 0% | 75% | 0% | 50% | 0% | **33%** | 44.5 | 25 | 58 |
+| 🔴 nemotron-elastic | 0% (=) | 20% | 75% | 0% | 25% | 0% | **19%** | 135.4 | 29 | 104 |
 
 ## What the assists were worth
 
@@ -35,11 +35,11 @@ bought with 15× the calls is not the same result as one bought with fewer
 
 | task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |
 |---|---|---|---|---|---|---|---|
-| shipping-rates-rb | ruby | gemma4 | 40% | 100% | **+60** | 26→94 | 3→31 |
-| shipping-rates-rb | ruby | qwen35 | 80% | 60% | **-20** | 32→382 | 3→61 |
-| shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→97 | 14→49 |
-| shipping-rates-rb | ruby | nemotron-elastic | 60% | 0% | **-60** | 41→77 | 11→16 |
-| cart-billing-go | go | gemma4 | 100% | 60% | **-40** | 13→35 | 2→7 |
+| shipping-rates-rb | ruby | gemma4 | 40% | 20% | **-20** | 26→68 | 3→17 |
+| shipping-rates-rb | ruby | qwen35 | 80% | 100% | **+20** | 32→92 | 3→8 |
+| shipping-rates-rb | ruby | ternary-bonsai | 80% | 80% | 0 | 57→52 | 14→16 |
+| shipping-rates-rb | ruby | nemotron-elastic | 60% | 0% | **-60** | 41→57 | 11→16 |
+| cart-billing-go | go | gemma4 | 100% | 100% | 0 | 13→36 | 2→7 |
 | cart-billing-go | go | qwen35 | 100% | 80% | **-20** | 36→57 | 3→7 |
 | cart-billing-go | go | ternary-bonsai | 0% | 0% | 0 | 21→47 | 16→16 |
 | cart-billing-go | go | nemotron-elastic | 0% | 20% | **+20** | 6→124 | 7→31 |
@@ -65,15 +65,15 @@ bought with 15× the calls is not the same result as one bought with fewer
 | task | language | model | arm | score | min | calls | tok/s | terminal |
 |---|---|---|---|---:|---:|---:|---:|---|
 | shipping-rates-rb | ruby | gemma4 | BASE | 40% | 3 | 26 | 60.4 | exited |
-| shipping-rates-rb | ruby | gemma4 | CRIA | 100% | 31 | 94 | 61.8 | exited |
+| shipping-rates-rb | ruby | gemma4 | CRIA | 20% | 17 | 68 | 57.2 | exited |
 | shipping-rates-rb | ruby | qwen35 | BASE | 80% | 3 | 32 | 77.2 | exited |
-| shipping-rates-rb | ruby | qwen35 | CRIA | 60% | 61 | 382 | 80.7 | milestone-miss-60min |
+| shipping-rates-rb | ruby | qwen35 | CRIA | 100% | 8 | 92 | 77.4 | exited |
 | shipping-rates-rb | ruby | ternary-bonsai | BASE | 80% | 14 | 57 | 40.1 | exited |
-| shipping-rates-rb | ruby | ternary-bonsai | CRIA | 80% | 49 | 97 | 43.5 | exited |
+| shipping-rates-rb | ruby | ternary-bonsai | CRIA | 80% | 16 | 52 | 37.3 | exited |
 | shipping-rates-rb | ruby | nemotron-elastic | BASE | 60% | 11 | 41 | 127.2 | exited |
-| shipping-rates-rb | ruby | nemotron-elastic | CRIA | 0% | 16 | 77 | 142.6 | milestone-miss-15min |
+| shipping-rates-rb | ruby | nemotron-elastic | CRIA | 0% | 16 | 57 | 132.9 | milestone-miss-15min |
 | cart-billing-go | go | gemma4 | BASE | 100% | 2 | 13 | 59.9 | exited |
-| cart-billing-go | go | gemma4 | CRIA | 60% | 7 | 35 | 64.4 | exited |
+| cart-billing-go | go | gemma4 | CRIA | 100% | 7 | 36 | 62.3 | exited |
 | cart-billing-go | go | qwen35 | BASE | 100% | 3 | 36 | 76.6 | exited |
 | cart-billing-go | go | qwen35 | CRIA | 80% | 7 | 57 | 83.3 | exited |
 | cart-billing-go | go | ternary-bonsai | BASE | 0% | 16 | 21 | 42.9 | milestone-miss-15min |
