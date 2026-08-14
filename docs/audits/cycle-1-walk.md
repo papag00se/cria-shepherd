@@ -1884,3 +1884,1455 @@ confirmed here from the source.
 **Not re-verified, carried as a candidate:** the claim that `.java` is missing from
 `validate-before-lower`'s extension table while a comment says the hole was closed. Left for the
 fix phase to confirm before anything is changed on the strength of it.
+
+---
+
+## feed-pipeline-java_qwen35_codex_poff_1786689199
+
+Walked in three parts by three readers — 106 chunks over 371 calls is more than one reader can hold,
+and a chunk skipped is a walk that did not happen. Ranges: 001–036, 037–071, 072–106.
+
+### Part 1 — chunks 001–036
+
+Calls 0001–0117. Everything after call 0117 is **beyond my range**.
+
+---
+
+## 0. Plain narrative of what happened in chunks 001–036
+
+**Calls 0001–0017 — a good start, one self-inflicted wrong turn.** The classifier and research-step behave. The coder explores, reads `Importer.java`, `pom.xml`, both feeds, and at call 0014 writes a complete, sensible replacement: `ConcurrentHashMap` totals, `AtomicInteger` rowCount, a `HashSet` for `knownSkus` (kills the O(n²)), `parseQuantity`/`parsePrice` that tolerate blanks and `$`, `WORKERS_ENABLED = true`. One bug it never notices: the file *imports* `org.apache.commons.csv.*` while the comment and the pom dependency it adds at call 0015 say **opencsv**. Two different libraries.
+
+**Calls 0018–0053 — a 35-call compile fight over one library.** Every round is: run the composed check, get a real compiler error, make one edit. The errors are genuinely progressive (`package org.apache.commons.csv does not exist` → `CSVParser.DEFAULT` not found → `unreported exception CsvValidationException` → `never thrown in body of corresponding try`), so the coder *is* converging, slowly. Three separate reasoner steers fire during this stretch, and all three are built on a cria-generated falsehood — that the check output was truncated — when the exact `file:[line,col]` errors were sitting in the coder's context. At call 0050 it finally compiles. At 0053 it runs, and cria discards the output.
+
+**Calls 0054–0064 — the high-water mark.** The importer works. `imported 40000 rows covering 9000 SKUs`; two runs `diff` clean ("DETERMINISTIC"); the messy feed gives `imported 5 rows covering 7 SKUs` with **SKU-0007: 25.00** — the quoted-comma row parsed correctly. At this point three of the five checks would plausibly have passed. Timing is 0.328 s.
+
+**Calls 0065–0083 — the collapse.** Convinced it needs 4×, the model rewrites the file wholesale into a ForkJoinPool design and, in the same write, defines its **own inner `AtomicInteger` class** with `return ++value` — reintroducing exactly the race the task asked it to fix. From call 0068 onward the file crosses cria's large-file threshold and **the whole-file read is refused**, so the model can only see 100-line windows. It spends the next fifteen calls deleting a class it cannot see in one view, re-issuing identical no-op edits, and misreading a `NoClassDefFoundError` on its own inner class as a visibility problem — corrupting the class with a duplicated constructor block in the process.
+
+**Calls 0084–0117 — churn under a compaction.** A clean rewrite at 0083 gets it compiling again; briefing #2 at 0085 is accurate and flags the missing `REVIEW.md`. Then the redirect at 0110 tells it to create **`data/review.md`** — the wrong name in the wrong place. It re-reads the file in windows, writes a *duplicate* `incrementSkipped` method (0111), deletes it, then rewrites `load` to return `List<String[]>` while `accumulateRow` still takes a `Map` (0115) — two type errors — and the last write in my range (0117) drops `parseQuantity`/`parsePrice` from the file entirely while still calling them.
+
+**What it got right:** the CSV library choice, the quoted-comma row, the O(n²) fix, thread-safe totals, a genuinely deterministic result, and correct handling of every messy-row type.
+**Where it went wrong:** an unnecessary whole-file rewrite for a speed target it had no baseline for, done blind because it could not read its own file.
+
+---
+
+## 1. cria's steer named the wrong deliverable file — `data/review.md` instead of `REVIEW.md`
+
+**what happened.** The stuck-reasoner directive at call 0109 ordered the coder to create `data/review.md`. The task says `REVIEW.md`; the verifier looks for `ws.rglob("REVIEW.md")`, which is case-sensitive, so a file named `data/review.md` scores zero.
+
+**cria fault: yes**
+
+**evidence.** Call 0109 `--- SAY (full) ---`:
+> `After that, create `data/review.md` documenting the remaining problems and risks in the code you've changed, including file names and line numbers for every issue.`
+
+Delivered verbatim at call 0110 as:
+> `⟦ctx:steer⟧ [REDIRECT] STOP running the same import command twice … After that, create data/review.md documenting the remaining problems and risks in the code you've changed, including file names and line numbers for every issue.`
+
+The task text in the same prompt (call 0110 line 15) reads: `Add `REVIEW.md` describing remaining problems or risks in the code you changed.` The steer prompt cria composes for that seat forbids exactly this (call 0020, its own system text): *"Do not choose the IMPLEMENTATION. Which library to use, which data structure, which flag, which output format, **which file to create** — those belong to the TASK or to the coder, never to you."*
+
+**A → B → C.** cria's earlier dirguard refusals pushed everything the coder wrote into `data/` (`data/run1.txt`, `data/run2.txt`, `data/profile_test.java`) → the steer author, reading that session, inferred `data/` was the writable place and invented a path and a lowercase filename → the one deliverable that was still trivially winnable got aimed at a filename the checker cannot see.
+
+**fixable at A?** Yes, at the steer author. The directive should quote the deliverable as the *task* names it and stop — never synthesise a path. Two concrete guards: (a) when the directive names a file the TASK also names, substitute the task's exact spelling; (b) extend the existing `steer-code` DICTATES judge, or add one narrow question, to catch "the directive invents a path or filename the task did not use". The judge already exists and is already being called on this text (call 0029 shows the seat), so this is one extra criterion, not an extra call.
+
+**principle.** #2 corollary (cria does not AUTHOR work), #5b (cria stated a filename the task contradicts).
+
+---
+
+## 2. The model could not read its own 309-line file whole — by any route — for the rest of the run
+
+**what happened.** From call 0068 onward `read_file` on `Importer.java` is refused as "large". The shell fallback (`cat`) is refused too. The model is left with 100-line windows for a file it is restructuring, and every structural duplicate it creates survives because it never sees the whole thing at once.
+
+**cria fault: yes**
+
+**evidence.** Call 0068:
+> `⟦ctx:denied⟧ /tmp/…/Importer.java is large — reading it whole would be truncated (you'd get the head and tail with the middle cut, and act on a false view). Read it deliberately instead: grep for what you need … or read a specific line range with read_file start_line/end_line.`
+
+Repeated at calls 0075, 0088, 0090, 0102, 0110. At call 0089 the model measured the file itself:
+> `309 /tmp/…/src/main/java/pipeline/Importer.java`
+and reasoned at call 0089: *"The file is only 309 lines, so I can read it all at once."* — then got the same refusal at 0090.
+
+The shell escape hatch is closed too. Call 0113, `cat src/main/java/pipeline/Importer.java`:
+> `[10,093 bytes over 319 lines — too much to return, so nothing is shown. Nothing was truncated: the command ran and its output was discarded, not cut.]`
+
+For contrast, the same file at 7,599 bytes / 225 lines read fine at call 0049. The threshold sits between ~7.6 KB and ~9.8 KB.
+
+**what it cost, concretely.**
+- Duplicate inner `AtomicInteger` class (written 0066): the model issued the *same* removal edit at calls 0071, 0072, 0074, 0075 and 0077 before a windowed read at 0078 finally showed it gone.
+- Duplicate `private final` field + constructor block written blind at call 0081, discovered only at 0083 (`249: private final List<Map<String, String>> rows;` immediately after an identical pair at 242–243).
+- Duplicate `incrementSkipped(String reason)` method written at call 0111 and only caught at 0114 by a 60-line window.
+- The `List<String[]>` / `Map` type mismatch at 0115, written without ever seeing `accumulateRow`'s signature and the new `load` on one screen.
+
+**A → B → C.** A whole-file read is refused on a ~10 KB source → the model edits blind through 100-line windows → it writes three separate structural duplicates and one type mismatch, each costing 3–6 calls to find and undo.
+
+**fixable at A?** Yes. The refusal is defending against a truncation that the context floor exists to make unnecessary — a 10 KB file is nothing next to the window, and the model was already routinely receiving 8.5 KB check blobs in the same turns. Raise the read cap so a source file the model is *editing* is always returnable whole, or return the whole file with an explicit line-count header instead of refusing. If a cap must exist, it should scale with the free window, not sit at a fixed ~8 KB, and it must never apply to a file the coder wrote this session.
+
+**principle.** #2 (a guard that blocks the *first* attempt can trap the loop), #5 counter-nuance (a disclosed cap is allowed; a flat refusal that destroys the model's only view is not), #5b (asserting a 309-line file is too large is a claim about cria's bound, not about the world).
+
+---
+
+## 3. The steer author was handed a false "GROUND TRUTH" — that the check output could not be parsed
+
+**what happened.** Four times, cria told its own reasoner that the checks failed but "a specific line could not be parsed from the output", quoting only the `[Help 1]` URL — while the coder, in the very same turn, received the full `file:[line,col]` compiler errors. Every steer built on that premise told the coder to go re-run a command whose output it already had.
+
+**cria fault: yes**
+
+**evidence.** Call 0020, the reasoner's `GROUND TRUTH FROM THE REPO'S CHECKS` section:
+> `the repo's own checks FAILED, but a specific line could not be parsed from the output:`
+> `$ mvn -q compile — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException`
+> `$ mvn test — exited 1: [ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException`
+> `Run that exact check yourself and read the actual error, then fix the real cause…`
+
+What the coder had actually received one message earlier (call 0018):
+> `⟦ctx:checks⟧ … [ERROR] /tmp/…/Importer.java:[3,30] package org.apache.commons.csv does not exist … :[134,31] cannot find symbol  symbol: class CSVParser`
+
+The reasoner believed it. Call 0020 `--- THINK (full) ---`:
+> *"The checks output is truncated and doesn't show the actual error messages … The key issue is: **The coder needs to read the actual Maven error output to understand what's failing.**"*
+
+Same false premise at 0028 (*"they're seeing a truncated output (`tail -c 600`) that doesn't show the real error"*), 0036 (*"the actual error message is being truncated"*), 0044 (*"the actual error is just `[ERROR] [Help 1]` … without the actual error message"*).
+
+**what reached the coder, and what it did.**
+- Call 0021 `⟦ctx:steer⟧ Run mvn compile (without -q to see actual errors) and read the full error output. The current check output is truncated at [ERROR] [Help 1]…` → coder reasoning immediately after: *"The error shows that `CSVParser.DEFAULT` doesn't exist in the OpenCSV API I'm using."* — it ignored the steer and fixed the real error. **Did nothing.**
+- Call 0030 (same text, re-delivered despite a DICTATES verdict — see §6) → coder reasoning: *"I need to run mvn compile without the truncation to see the actual error messages clearly."* → call 0031 runs `mvn -q compile 2>&1` and gets byte-identical output to what it already had. **Made things worse — one turn burned.**
+- Call 0037 `⟦ctx:steer⟧ Read the actual compilation error by running mvn compile 2>&1 without -q … then fix the exception handling at line 140` → coder reasoning: *"The error says line 156 has an unreported exception."* — it corrected cria's stale line number itself. **Did nothing** (see §8).
+- Calls 0069 and 0117 receive the same block verbatim a fourth and fifth time.
+
+**A → B → C.** The check-summariser's line-extractor does not recognise Maven's `file:[line,col]` shape, so it reports "could not be parsed" → cria writes that as GROUND TRUTH, ranked #1 authority, above the real output → the reasoner spends three calls diagnosing a truncation that does not exist and issues directives the coder must ignore or waste a turn obeying.
+
+**fixable at A?** Yes, two places. (a) Teach the extractor Maven's `path:[line,col] message` form so real lines are surfaced — cheap and specific. (b) The general fix, which matters more: when the extractor finds nothing, cria must not assert *"a specific line could not be parsed"* as ground truth to its own reasoner while the raw output is right there. Pass the raw block through (it is ≤ 8.5 KB by construction) and say nothing, or say "no line extracted; the raw output follows".
+
+**principle.** #5b (a claim built on a partial matcher is a claim about cria, not the world), #12 (surface from the authoritative event, never a re-parse), #3 (silence over noise when there is no high-confidence signal).
+
+---
+
+## 4. Oversize-output refusal discarded the importer's first successful run, and later its own source
+
+**what happened.** Twice, a command the model ran produced a normal-sized output that cria threw away entirely rather than reduce.
+
+**cria fault: yes**
+
+**evidence.** Call 0053, the first time the working importer produced a per-SKU summary:
+> `[9,877 bytes over 450 lines — too much to return, so nothing is shown. Nothing was truncated: the command ran and its output was discarded, not cut. Ask it a smaller question and run it again: send it to a file and search that (`> out.txt 2>&1` then `grep -n <what you are looking for> out.txt`), match it directly (`| grep <what you are looking for>`), or count instead of listing (`| wc -l`). Exit status is above and is accurate…]`
+
+Call 0113, `cat src/main/java/pipeline/Importer.java`:
+> `[10,093 bytes over 319 lines — too much to return, so nothing is shown…]`
+
+**assessment.** The message is honest — it does not pretend the output was truncated, and it names the remedies. But it is still a total loss of a 9.8 KB payload in a turn where cria's own composed check block routinely delivers 8.5 KB. The 0053 case cost one recovery turn (`| head -20` at 0054, which worked). The 0113 case is worse: combined with §2 it left the model with **no route at all** to view its own file.
+
+**A → B → C.** A ~9 KB output exceeds the return cap → the whole thing is dropped → the model's only view of the artefact it is editing disappears, and the shell escape hatch that §2 recommends is closed by the same cap.
+
+**fixable at A?** Yes. The lossless-first reduction the composed probes already use (`head -c 4250 … middle N bytes elided … tail -c 4250`) should apply to *any* oversize shell output, not only to cria's own probe wrapper. Discarding everything is the one behaviour the reduction path exists to avoid.
+
+**principle.** #5 (never destroy information the model reads), #6 (bound runaway, do not hard-cap).
+
+---
+
+## 5. `NoClassDefFoundError` on a freshly compiled inner class after a green build
+
+**what happened.** `mvn -q compile` exits 0 with no output; the very next command fails because the inner class's `.class` file is not on disk. The model misdiagnoses it as a Java visibility problem and corrupts the source.
+
+**cria fault: yes**
+
+**evidence.** Call 0079 → `mvn -q compile 2>&1` → `Process exited with code 0`, `Output:` (empty). Call 0080:
+> `Error: Unable to initialize main class pipeline.Importer`
+> `Caused by: java.lang.NoClassDefFoundError: pipeline/Importer$ProcessAllRows`
+
+Coder reasoning immediately after:
+> *"The issue is that `ProcessAllRows` is a non-public inner class and the JVM can't find it. Let me make it public or use a different approach."*
+
+That diagnosis is wrong, and acting on it produced the duplicate-constructor corruption seen at call 0083 (`245–248` and `252–255` both defining `ProcessAllRows(List<Map<String, String>> rows)`).
+
+The mechanism is the established one: the seed ships **tracked** `.class` files at `target/classes/pipeline/` (`Importer.class`, `Importer$Summary.class`); the newly emitted `Importer$ProcessAllRows.class` is **untracked**, so a litter sweep in the probe window removes it while the tracked pair survives — leaving a `target/classes` that looks built and is not. The same sweep is visible in the final workspace: `data/run1.txt`, `data/run2.txt` and `target/cp.txt` that the model created and relied on are all gone, while `cp.txt` at the root survives.
+
+**A → B → C.** Seed ships tracked build output → sweep_litter deletes only the untracked half → `mvn -q compile` says nothing to do / succeeds, but `target/classes` is half-empty → the model gets a runtime error with no compiler error behind it, guesses at the cause, and damages working code.
+
+**fixable at A?** Yes, and at the cheapest place: **stop shipping `target/` in the seed** (`suite/tasks/feed-pipeline-java/seed/target/` — `_verify_cp.txt`, `classes/pipeline/*.class`, `maven-status/`). It is build output, it is what makes the sweep asymmetric, and the verifier rebuilds it anyway (`build()` runs `mvn -B -q compile` first). Failing that, the sweep must exclude the project's declared build directory entirely.
+
+**principle.** #5b (a green compile followed by a missing class is cria's world contradicting cria's report), #2 (the sweep DELETED something the model relied on).
+
+---
+
+## 6. A steer judged DICTATES was delivered anyway, verbatim
+
+**what happened.** The `steer-code` guard read the directive, ruled DICTATES, and the identical text still reached the coder in the next call.
+
+**cria fault: yes**
+
+**evidence.** Call 0029, `[steer-code]`, `--- SAY (full) ---`: `DICTATES`. Its reasoning: *"The prompt explicitly lists 'not a command to run verbatim' as something NOT allowed. The directive says: 'Run mvn compile without the tail -c 600 truncation' … Therefore, it is DICTATES."*
+
+Call 0030's prompt then carries:
+> `⟦ctx:steer⟧ Run mvn compile without the tail -c 600 truncation to see the actual compilation error messages, then read the full output before making another edit. The generic MojoFailureException is hiding the real issue — you need to see what Maven is actually reporting so you can fix the specific cause instead of rewriting the file repeatedly without understanding the error.`
+
+Byte-for-byte the judged text. The coder obeyed at call 0031 and burned a turn re-running a command whose output it already had.
+
+**A → B → C.** Judge fires and says DICTATES → the drop does not happen (or happens after the injection is already composed) → a directive the guard rejected steers the coder into a wasted turn, and the reasoner call plus the judge call are both spent for nothing.
+
+**fixable at A?** The judge is doing its job; the wiring is not. The DICTATES verdict must gate the injection, not accompany it. Also worth noting for tuning: the judge here is arguably over-firing — "run the check yourself" is the one action the steer prompt explicitly *encourages* ("Prefer inspecting reality before another rewrite: … run the exact failing check"). Two of cria's own prompts contradict each other, and the cheaper fix is to align them so the directive is never authored in that form.
+
+**principle.** #16 (read what actually reached the model), #4 (a guard that runs and does nothing is worse than no guard).
+
+---
+
+## 7. A stale failing check was served after a newer passing one
+
+**what happened.** The coder received "no error-class problems", then, two calls later, a `⟦ctx:checks⟧` block reporting the *older* ForkJoinPool failure with its original timestamp. It re-applied a fix that was already on disk.
+
+**cria fault: yes**
+
+**evidence.** Call 0075 → `⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.` Call 0076 → the same channel:
+> `[ERROR] /tmp/…/Importer.java:[235,13] method invoke in class java.util.concurrent.ForkJoinPool cannot be applied to given types;`
+> `[INFO] Finished at: 2026-08-13T23:42:12-07:00`
+
+That timestamp is the *same run* first shown at call 0069. The model then re-issued the `pool.invoke(new ProcessAllRows(rows), 0)` → `pool.invoke(new ProcessAllRows(rows))` edit at call 0076 — and a read at the same call's tail shows line 235 already read `pool.invoke(new ProcessAllRows(rows));`.
+
+None of the `⟦ctx:checks⟧` blocks in my range carry an age or "as of" marker.
+
+**A → B → C.** A check result is cached and re-emitted without an age → the model treats it as current, ranks it above its own newer green run → it re-applies a landed fix and loses a turn.
+
+**fixable at A?** Yes — this is exactly what the **cached-check age note** fix is for, and it did not fire anywhere in chunks 001–036. Stamp every re-served block with when it ran and what has been written since, or suppress a cached failure once a newer clean run exists.
+
+**principle.** #5b, #12.
+
+---
+
+## 8. A steer quoted a line number the current error no longer used
+
+**what happened.** cria told the coder to fix line 140; the live compiler error was at 156 and 166.
+
+**cria fault: yes (minor)**
+
+**evidence.** Call 0037: `⟦ctx:steer⟧ … then fix the exception handling at line 140 — the error states CsvValidationException is unreported.` The `⟦ctx:checks⟧` block immediately above it in the same prompt: `Importer.java:[166,19] exception … is never thrown in body of corresponding try statement` and `:[156,45] unreported exception …`.
+
+Coder reasoning right after: *"The error says line 156 has an unreported exception."* — it used the right number. **Did nothing**, but only because the model outranked cria.
+
+**fixable at A?** Same root as §3 — the reasoner was working from the stale summary rather than the live block. Fix §3 and this goes with it.
+
+**principle.** #5b.
+
+---
+
+## 9. Workspace-guard refusals cost four turns, and one of them stated a false path
+
+**what happened.** Four commands were refused for writing outside the workspace. Three were correct (`/tmp/cp.txt`, `/tmp/run1.txt` twice). The fourth names a path the command never used.
+
+**cria fault: yes for the fourth; none for the other three**
+
+**evidence.** Call 0102, the model runs `cat > data/profile_test.java << 'EOF' … EOF` followed by `javac -d target/classes data/profile_test.java`. cria replies:
+> `⟦ctx:denied⟧ Writing/reading outside the working directory is not permitted here … The path '/' is outside it; use a path within the project instead.`
+
+Every path in that command is workspace-relative. `'/'` appears nowhere as a target. The model abandoned its profiling attempt entirely — which mattered, because profiling was the one way it could have discovered it had **no seed baseline to measure 4× against**.
+
+**A → B → C.** A heredoc body containing `/` characters (e.g. `1_000_000.0`, `java.io.*` imports) is parsed as a write target → cria refuses and names `'/'` as the offending path → the model drops its only attempt at a speed measurement.
+
+**fixable at A?** Yes, in the path extractor: a heredoc body is data, not a set of paths. Extract redirect targets from the redirect operators, not from a scan of the whole command text.
+
+**principle.** #5b (a refusal must be true of the world and must be able to say what makes it true).
+
+---
+
+## 10. The totals divergence — what my range does and does not settle
+
+**what happened.** `substantially_faster` failed on `same totals: False`, not on speed. The parsing and counting rules that decide which rows count were all written inside my range and never revisited; none of them, on their own, explains a divergence on the verifier's clean 120,000-row feed.
+
+**cria fault: none** (the writes are the model's)
+
+**evidence — the rules, as written and as they stayed.**
+
+The counting rule, call 0014 / 0017 (unchanged through 0117):
+```
+if (quantity == null) { incrementSkipped("blank_quantity"); return false; }
+if (price == null)    { incrementSkipped("blank_price");    return false; }
+double value = quantity * price;
+totals.merge(sku, value, Double::sum);
+rowCount.incrementAndGet();
+```
+`rowCount` counts only rows that parse. On the seed, `rowCount` counts every row it accumulates and throws on a bad one — so the two agree on any feed with no bad rows, which the verifier's `make_big_feed` produces.
+
+Duplicate SKUs are handled correctly and never de-duplicated: `totals.merge(sku, value, Double::sum)` sums repeats, and the model verified it against the messy feed at call 0060 — *"SKU-0001 appears twice with qty=5, price=10.00 each, so total = 50.00 + 50.00 = 100.00 ✓"*. The task's "A SKU appearing on several rows is normal — those rows all count" is satisfied by this code.
+
+Quantity is parsed as `Double` where the seed used `Integer.parseInt`. On the generated feed quantities are integers 1–40, so this changes nothing.
+
+`skus` is counted over **all** loaded rows, including skipped ones — visible at call 0060 as `imported 5 rows covering 7 SKUs` for a file with 7 distinct SKUs and 2 skipped rows. The model noticed the numbers and never questioned them. This affects `skus`, which the speed check does not compare.
+
+The one write in my range that *would* have changed the totals is call 0115, where `load` returns `List<String[]>` **including the header row** (`out.add(header)`) and `knownSkus` counts `r[0]` over that list — the header would have been counted as a SKU. It never ran: it failed to compile (`String[] cannot be converted to Map<String,String>`, call 0117's check) and was reverted in the same turn.
+
+**verdict.** The divergence is **not authored in chunks 001–036**. The rules here are correct for the verifier's feed. The last write in my range (call 0117) removes `parseQuantity` and `parsePrice` from the file while `accumulate` and `accumulateRow` still call them — the file is mid-collapse when my range ends, and the divergence is most likely authored downstream. Beyond my range.
+
+---
+
+## 11. Interventions that helped
+
+**`⟦ctx:edit⟧` identical-string refusal — helped, every time.**
+Calls 0033, 0074, 0075, 0077 (and in the 0073 evidence bundle):
+> `⟦ctx:edit⟧ Importer.java — old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text. Read the file, then make one targeted edit.`
+Coder reasoning after 0033: *"I need to add a try-catch for CsvValidationException in the load method. Let me read the full method and add the exception handling."* — it moved to a real edit. True, specific, actionable. Note the irony: the remedy it prescribes ("Read the file") is the one action §2 refuses.
+
+**Repetition notes — true, and helped once.**
+Call 0075: `[you have now made this exact call 2 times and it failed the same way every time … use a different tool, or fix what made it fail, before asking again.]` → coder switched to a ranged read. Also fired at 0079, 0090, 0102, 0104 (8 across the run). Never misfired in my range.
+
+**The REVIEW.md redirect at call 0073 — the best steer in the range.**
+> `**STOP rewriting Importer.java** — the code compiles, runs, and passes checks. **READ the current Importer.java file** … then **create REVIEW.md** in the project root documenting any remaining issues or risks…`
+Correctly grounded (it checked the file list and found no REVIEW.md), correctly prioritised, and the coder obeyed at call 0074. It names `REVIEW.md` in the project root — **correctly**. Its successor at 0110 broke it (§1).
+
+**Both compaction briefings — accurate, and preserved the deliverable.**
+Call 0043 and call 0085 both quote real errors, both mark unverified claims as unverified, both keep "No `REVIEW.md` has been created yet" alive across the boundary. Call 0085's briefing is exemplary. Neither invented progress. Neither dropped the full task text, which is re-attached in the recomposed prompt (call 0086 lines 7–15). No fault.
+
+---
+
+## 12. Recent fixes — did they fire?
+
+| fix | fired in range? | verdict |
+|:--|:--|:--|
+| derived probe output cap | yes, every composed check | **helped.** The `if [ "$__cria_n" -le 8500 ]; then … else head -c 4250 … tail -c 4250` wrapper never actually elided anything — every check output fit. Cost nothing, lost nothing. |
+| cheap `mvn compile` probe | yes | **helped.** 0.6–1.1 s per round (call 0079: `Wall time: 0.6761 seconds`), so the ~18 check rounds cost seconds, not minutes. |
+| reasoning logged on unfinished streams | yes | **helped.** `--- THINK (full) ---` is present on nearly every call including `[finish: stop]` ones; without it §3 and §5 could not have been diagnosed. |
+| completion-judge report framing | not seen | no completion judge fired in 0001–0117. |
+| cached-check age note | **not seen** | its absence is finding §7 — a stale block was served with no age marker. |
+| verdict tool | not seen | no verdict/`task_complete` call in range. |
+
+---
+
+## 13. Summary of cria's own voice contradicting the world (#5b)
+
+1. `"a specific line could not be parsed from the output"` — the lines were in the coder's context in the same turn (0020, 0028, 0036, 0044).
+2. `"Importer.java is large — reading it whole would be truncated"` — 309 lines, 9.8 KB, and the model had measured it itself (0068, 0075, 0088, 0090, 0102, 0110).
+3. `"The path '/' is outside it"` — no such path appeared in the command (0102).
+4. A `⟦ctx:checks⟧` failure dated `23:42:12` served after a newer clean check, with no age marker (0076).
+5. `"fix the exception handling at line 140"` — the live errors were 156 and 166 (0037).
+6. `create data/review.md` — the task and the verifier both say `REVIEW.md` (0110).
+### Part 2 — chunks 037–071
+
+Range walked: calls **0118 → 0274** (35 chunks, read in order). Two compactions
+(chunk046 ≈ call 0138, chunk066 ≈ call 0240), three oversize output refusals,
+four delivered steers, three repetition notes, ~18 gate injections.
+
+---
+
+## Plain narrative of chunks 037–071
+
+**Call 0118 opens on a workspace that already scores 3/5.** `pom.xml` declares
+`opencsv 5.9`, `WORKERS_ENABLED = true`, the clean feed gives
+`imported 40000 rows covering 9000 SKUs / SKU-00000: 4326.28 …`, and the messy feed
+gives `imported 5 rows covering 7 SKUs … SKU-0007: 25.00` — the quoted-comma row
+parses. Only two things are missing: the summary does not print skipped counts, and
+there is no REVIEW.md. Everything after this point is the model trying to see its own
+310-line file, failing, and rebuilding it from memory.
+
+**0118–0126 — the whole-file-rewrite cascade.** `read_file` on `Importer.java` is
+refused (`⟦ctx:denied⟧ … is large`), then `cat Importer.java` is refused
+(`[10,093 bytes over 319 lines — too much to return…]`). Unable to see the file whole,
+the model writes it whole from memory — twice. The first rewrite retypes `load()` as
+`List<String[]>` but leaves two `Map`-typed call sites (`incompatible types:
+java.lang.String[] cannot be converted to java.util.Map<...>`); the second rewrite
+**silently drops `parseQuantity` and `parsePrice`** (`cannot find symbol: method
+parseQuantity`). Four calls go to re-reading 40-line slices to discover the two methods
+it deleted, then re-adding them.
+
+**0127–0181 — the phantom bug and the phantom file.** Compile now succeeds and the
+program still will not run: `NoClassDefFoundError: pipeline/Importer$ProcessAllRows`.
+`ls target/classes/pipeline/` shows only `Importer$Summary.class` and `Importer.class`.
+This is cria's litter sweep (see finding 1). cria's steer tells the coder the inner class
+has a "structural issue"; the coder spends ~14 calls staring at correct Java, tries
+`mvn exec:java` (same error), tries `rm -rf target/classes` (blocked by command safety),
+finally runs `mvn clean compile` — which fixes the class but **deletes `target/cp.txt`**,
+the classpath file every one of its commands reads. It regenerates the classpath to
+`./cp.txt` (project root) and keeps looking in `target/cp.txt`. cria's next steer
+canonises the wrong path and forbids running the program until that file exists. Twelve
+more calls. At ~0181 a `find … -name cp.txt` breaks the loop.
+
+**0182–0217 — real work.** The program runs again (0.246 s, identical totals across
+3 runs, `All runs identical`). The coder adds `pool.shutdown()`, a `NUM_WORKERS`-sized
+pool, `accumulateRowWithErrors` (adds a `missing_sku` reason), `accumulateRowOptimized`,
+`ProcessAllRowsOptimized`, and — the one check-moving change in my whole range —
+a `skipped rows:` block in `main()`. The messy feed now prints
+`skipped rows: / blank_price: 1 / blank_quantity: 2`, which is what makes
+`messy_feed_handled` pass at the end.
+
+**0218–0274 — the judges eat the budget.** Four consecutive satisfaction calls issue the
+identical `list_dir(".")` and get the identical answer. One satisfaction call spends its
+entire output looping "let me check if there's a Summary.java file" ~14 times. The
+completion gate's exec-output judge answers NO three times on output that is correct.
+REVIEW.md is still not written when my range ends, and the coder has switched to timing
+with `mvn exec:java` (1.16 s incl. Maven startup) and concluded it got 4× *slower*.
+
+**Real work vs circling.** Real: 0182–0217 (~35 calls). Circling: 0118–0126
+(9 calls of rewrite/repair), 0127–0181 (~55 calls on two cria-caused phantoms),
+0218–0274 (~55 calls of judge churn and re-reading the same file in slices). Roughly
+**110 of the 157 calls in my range were circling, and the two longest circles were
+started by cria.**
+
+The two direction changes, quoted:
+
+> call 0126 (after cria's first steer): *"The checks report no compilation errors, so my
+> previous edit worked. Now I need to verify the core requirements…"* — and it ran a
+> command against stale build output.
+
+> call 0182: *"Let me check the pom.xml for the dependency plugin configuration - it seems
+> like it's skipping writing the file when no changes are found."* — the first correct
+> thought about cp.txt, reached only after `find` showed the real path.
+
+---
+
+## 1. cria's litter sweep deletes the model's compiled inner classes; the run is dead for 55 calls
+
+**what happened** `mvn -q compile` inside cria's own gate creates
+`target/classes/pipeline/Importer$ProcessAllRows.class`. That file is untracked, so
+`sweep_litter` unlinks it. `Importer.class` and `Importer$Summary.class` survive because
+the seed ships them tracked. Maven's tracked `maven-status/*.lst` then says the module is
+up to date, so every later `mvn compile` exits 0 and never restores the class.
+
+**cria fault: yes**
+
+**evidence**
+- Seed tracking (`git ls-files suite/tasks/feed-pipeline-java`):
+  `seed/target/classes/pipeline/Importer$Summary.class`, `seed/target/classes/pipeline/Importer.class`,
+  `seed/target/maven-status/.../createdFiles.lst`, `.../inputFiles.lst` — and nothing else under `target/`.
+- Call 0126: `Error: Unable to initialize main class pipeline.Importer / Caused by: java.lang.NoClassDefFoundError: pipeline/Importer$ProcessAllRows`
+- Call 0128: `ls -la target/classes/pipeline/` → `Importer$Summary.class`, `Importer.class` — nothing else.
+- Call 0132: `mvn compile -q` → `Process exited with code 0 / Original token count: 0 / Output:` (nothing to do).
+- `cria/probegate.py:956 sweep_litter` — unlinks every `??` path inside the workspace with no build-output exclusion; `interpret_gate` calls it on *every* gate, pass or fail (`probegate.py:1004`).
+
+**A → B → C** A: the gate runs `mvn compile` and then deletes every file that appeared,
+which for Java is the build output. B: the program cannot start, and the tracked
+maven-status makes the fix (`mvn compile`) a no-op. C: 55 calls chasing a bug that does
+not exist; `substantially_faster` and `review_written` never got the budget.
+
+**fixable at A?** Yes, two places. `cria/probegate.py::sweep_litter` should not delete
+paths under a build-output directory the probe itself wrote (`target/`, `build/`,
+`__pycache__`, `.gradle`, `node_modules`) — the sweep exists to remove *fixtures*, not
+artifacts of the check it just ran. Cheaper and more general: sweep only paths whose
+directory did not already exist before the probe, or exclude any path under a directory
+that is partially tracked. And the seed should not ship `target/` at all
+(`suite/tasks/feed-pipeline-java/seed/target/`) — tracked `.class` files are what make the
+half-deleted state look like a compiler bug.
+
+**principle** #2 (a guard may not make something already working worse), #10 (a probe that
+destroys its own ground truth is not ground truth).
+
+---
+
+## 2. cria told the coder, in its own voice, that correct code had a structural fault
+
+**what happened** With the class file deleted, the reasoner concluded the *source* was at
+fault and issued a REDIRECT ordering the coder to find and fix a nonexistent defect.
+
+**cria fault: yes**
+
+**evidence** — call 0133 reasoner output, delivered at call 0134 as:
+
+> `⟦ctx:steer⟧ [REDIRECT]`
+> `The compiler succeeded but Importer$ProcessAllRows.class is missing from target/classes/pipeline/ . This prevents the main class from running. Read lines 230-240 of Importer.java to inspect the ProcessAllRows inner class definition and its structure—something in it is preventing proper compilation. Fix whatever structural issue prevents that inner class from being compiled into a .class file, then recompile and run.`
+
+Model reasoning immediately after (call 0134): *"The compiler succeeded but the inner class
+ProcessAllRows is missing from the compiled output. This is strange. Let me look at the file
+more carefully to see if there's a syntax issue with the inner class definition."*
+Two calls later it invents a theory outright: *"The inner class `ProcessAllRows` is not
+being serialized properly. This is a known issue with ForkJoinPool…"*, and the
+satisfaction judge later repeats it as fact:
+`"Threading bug not fixed - ProcessAllRows inner class doesn't implement Serializable, causing NoClassDefFoundError at runtime (line 233)"`.
+
+**Verdict on the steer: made things worse.** It converted "a file is missing" into
+"your code is wrong", and the fiction propagated into the completion verdict.
+
+**A → B → C** A: sweep deletes the class. B: the reasoner has no line saying so, so it
+asserts a cause. C: the coder and the judge both spend calls on a Serializable fix for a
+class that compiles fine.
+
+**fixable at A?** Yes — fix 1 removes the trigger. At B, `cria/probegate.py` already knows
+exactly what it deleted (`sweep_litter` returns the list, stored on `GateOutcome.swept`);
+that list must reach the steer author, and the steer must not assert a cause it cannot
+name evidence for.
+
+**principle** #5b (cria never states a false fact about the world), #16 (assume cria caused
+it), #8 (the reasoner may only judge on the evidence gathered).
+
+---
+
+## 3. cria's transcript elision cut the one line that identified the missing file, then the steer canonised the wrong path
+
+**what happened** Maven printed the real location of `cp.txt`. cria's head+tail elision of
+that 396-char log removed exactly that line before the reasoner saw it. The reasoner then
+authored a steer naming the wrong path and forbidding the coder from running the program
+until a file appeared there that never would.
+
+**cria fault: yes**
+
+**evidence**
+- What the coder actually saw (call 0173):
+  `[INFO] Skipped writing classpath file '/tmp/suite-feed-pipeline-java_qwen35_codex_poff_1786689199-trjkefom/cp.txt'.  No changes found.`
+- What the reasoner saw at call 0175:
+  `→ exit 0: [INFO] Scanning for projects... [INFO] [INFO] ---------------------< com.example:feed-importer >---------------------- [INFO] Building feed-importer 1.0 [INFO] --------------------------------[ jar ]-...[396 chars elided; head+tail kept — re-read the source for the middle]...----------------------------------------------- [INFO] Total time: 0.497 s`
+  The elided middle *is* the `Skipped writing classpath file '…/cp.txt'` line.
+- The steer it produced, delivered at call 0177:
+  `⟦ctx:steer⟧ [REDIRECT] … Run ls -la target/ to confirm cp.txt is missing, then run mvn dependency:build-classpath -Dmdep.outputFile=cp.txt -q with the quiet flag to suppress output, then immediately verify with ls target/cp.txt before attempting to run the Java program again. Do not run the Java executable until the classpath file actually exists.`
+- Reality one call later (0181): `find … -name 'cp.txt'` → `/tmp/suite-…-trjkefom/cp.txt`
+  (project root, 635 B, and the satisfaction judge's own `list_dir` at 0167 had shown
+  `cp.txt (635 B)` in the root all along).
+
+Model reasoning after the steer (call 0177): *"The context tells me that target/cp.txt
+doesn't exist even though the mvn command said it was skipped. I need to force the file to
+be created…"* — it adopts the wrong path and keeps forcing.
+
+**Verdict on the steer: made things worse**, and its last sentence is a hard gate
+("Do not run the Java executable until…") on a condition that could not be met.
+
+**A → B → C** A: `mvn clean` deleted the harness-supplied `target/cp.txt`; the elision
+then deleted the sentence naming where the replacement went. B: the reasoner invented
+"the plugin isn't writing the file". C: ~12 calls of the same three commands.
+
+**fixable at A?** Two places. (a) The head+tail elision for the reasoner's session view
+should keep whole lines and prefer lines that name a path or an error over the Maven
+banner — a 396-char log should not be elided at all (`cria/planner.py` session rendering /
+the `[N chars elided; head+tail kept]` composer). (b) A steer must never contain an
+absolute prohibition ("do not run X until Y") — that is the pinned-mandate shape that
+principle #2's corollary forbids.
+
+**principle** #5 counter-nuance (bounding a composed prompt is allowed, deleting the
+decisive fact is not), #2 corollary (cria does not author inescapable mandates), #5b.
+
+---
+
+## 4. The completion gate refused to run the program at all, then judged output it had silently cut
+
+**what happened** The `exec-intent` judge answered `runs: false` the first time, so cria
+never ran the program during that gate. Later it answered `runs: true`, and cria fed the
+judge a program output it had **truncated mid-number with no marker**. The pass/fail then
+swung on wording the judge re-invents each time.
+
+**cria fault: yes**
+
+**evidence**
+- Call 0139: `{"runs": false, "command": "nothing runnable has been written yet", "success": "nothing runnable has been written yet"}` — for a task whose declared commands cria had just listed to it (`mvn -q exec:java -Dexec.mainClass=pipeline.Importer …`). Its reasoning: *"This is a code-fixing task, not a program-execution task… So `runs` should be false."*
+- Calls 0165 / 0192 / 0215 / 0243 / 0268: every exec-output prompt ends
+  `  SKU-00187: 6105.97` / `  SKU-00188: ` / *(blank)* / `Answer YES if what it printed is that result.`
+  The output stops mid-line at SKU-00188 with no `…elided…` marker. The judge cannot tell
+  a cut from a crash.
+- Same program, same output, three different verdicts, decided purely by the criterion the
+  intent judge happened to write:
+  - 0164 `"success": "imports the CSV feed and prints summary with skus, rows, and totals counts"` → **YES**
+  - 0191/0214/0242/0267 `"success": "… and skipped-row counts by reason"` → **NO**
+- The NO then became an assertion to the next judge:
+  `⟦ctx:live-execution⟧ The delivered program was run and did not show the result it was meant to.`
+  Call 0247 reasoning: *"the live-execution context says 'what it printed is not that result'. This is a discrepancy that needs to be resolved."*
+
+**A → B → C** A: a judge free-writes the success criterion per call, and cria clips the
+evidence without disclosing it. B: the same working run reads as pass or fail at random,
+and one arm of the gate never runs the program at all. C: the run's only behavioural
+ground truth is noise; the `NoClassDefFoundError` era passed the gate 18 times.
+
+**fixable at A?** Yes. (a) The exec-output prompt must disclose the clip
+(`…[N of M lines shown]…`) — the counter-nuance to #5 permits a cap only when disclosed.
+(b) `success` should be pinned once per task, not re-derived per gate, or the judge should
+be asked the narrower question "did it run and produce its summary" and the deliverable
+checks left to the satisfaction judge. (c) The `runs:false` answer should not be accepted
+when the project's declared-commands list is non-empty and names a main class — that is a
+fail-open on missing ground truth (#13).
+
+**principle** #5b / #5 counter-nuance (undisclosed clip), #12 (surface the metric from the
+authoritative event), #13 (fail closed on completion).
+
+---
+
+## 5. cria tells the model the workspace file list is complete when it is not
+
+**what happened** Both compaction prompts and the exec-intent prompt end the file listing
+with an absolute claim, and both omit everything under `target/` — the exact directory the
+model was debugging.
+
+**cria fault: yes**
+
+**evidence** — compaction prompt, chunk046 (call 0138) and again chunk066 (call 0240):
+
+> `FILES ON DISK RIGHT NOW … src/main/java/pipeline/Importer.java (9889 B) / data/run2.txt … / pom.xml (1066 B) / README.md (370 B) / data/feed_messy.csv (235 B) / data/feed.csv (1211931 B)`
+> `This list is complete — a file not listed here does not exist in the workspace.`
+
+At that moment `target/classes/pipeline/Importer.class`, `target/cp.txt`,
+`target/_verify_cp.txt` and `cp.txt` all existed; two of them were the subject of the
+active investigation. The exec-intent prompt makes the same omission
+(`WORKSPACE FILES … : src/main/java/pipeline/Importer.java (9889 B)`).
+
+**A → B → C** A: the lister skips `target/` (reasonably) but the sentence claims
+completeness (not reasonable). B: the compaction briefing and the intent judge both reason
+as if no build output exists. C: the briefing at 0138 says *"Running `java -cp
+target/classes:$(cat target/cp.txt) pipeline.Importer data/feed.csv` produces output showing
+row and SKU counts"* — at a moment when that command had failed on the previous five
+attempts.
+
+**fixable at A?** Yes — drop the sentence or scope it
+("source files only; build output not listed"). One line, wherever the
+`This list is complete` string lives.
+
+**principle** #5b (the tell: a sentence in the indicative with no live check behind it).
+
+---
+
+## 6. The compaction briefing erased the fact that the program did not run
+
+**what happened** The first compaction (chunk046) was written while the importer had been
+dead for five consecutive calls. The briefing reports it as working.
+
+**cria fault: yes (contributory)**
+
+**evidence** — briefing written at call 0138, opening section:
+
+> `**What now WORKS**` … `Running java -cp target/classes:$(cat target/cp.txt) pipeline.Importer data/feed.csv produces output showing row and SKU counts and per-SKU totals (e.g., "imported 40000 rows covering 9000 SKUs" …)`
+> `**CURRENT state** — The build compiles without errors — mvn compile exits with code 0.` … `The performance … takes about 0.4 seconds real time with 4 workers enabled.`
+
+The word `NoClassDefFoundError` appears nowhere. The last five real runs before it were
+all `Error: Unable to initialize main class pipeline.Importer`.
+
+Two things fed that: the file list above (finding 5), and cria's own repeated gate line
+`⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems` — which the
+briefing echoes verbatim as "the build compiles without errors". The briefing then became
+the *only* evidence the satisfaction judge had (call 0144, tools withdrawn):
+`{"satisfied": false, "reason": "The REVIEW.md file is missing … While the code appears to compile and run …"}`.
+
+**A → B → C** A: the compactor prompt asks for "what you have built" before "what is
+broken", and the ground-truth blocks cria supplies say only that lint passed. B: the
+briefing records a 20-call-old success as the current state. C: for the next ~30 calls the
+completion judge believes the program works and scores only REVIEW.md as missing.
+
+**fixable at A?** Yes. The compaction prompt already has cria-supplied ground-truth
+sections; add the last real exit status of the project's own run command (cria has it —
+it is the same `⟦ctx:live-execution⟧` fact it emits elsewhere) so "what is broken" is
+grounded rather than remembered. Ordering the prompt "what is broken" first would also help.
+
+**principle** #5 (never destroy information the model relies on), #13.
+
+---
+
+## 7. Whole-file reads are refused on a 310-line source file, and that refusal is what caused the deletions
+
+**what happened** Every attempt to see `Importer.java` whole is refused. Both routes are
+closed — the `read_file` tool and `cat`. The model's response is to write the file whole
+from memory, which is where methods get dropped.
+
+**cria fault: yes**
+
+**evidence**
+- `⟦ctx:denied⟧ /tmp/…/Importer.java is large — reading it whole would be truncated (you'd get the head and tail with the middle cut, and act on a false view). Read it deliberately instead…` (calls 0118, 0125, 0126, 0147, 0149, and again at 0206) — on a file of **9,889 bytes / 310 lines**.
+- `[10,093 bytes over 319 lines — too much to return, so nothing is shown…]` (call 0118, `cat Importer.java`).
+- `[10,107 bytes over 480 lines — too much to return…]` (calls 0183 and 0189).
+- Model reasoning at call 0148, after `wc -l` says 310: *"The file is 310 lines, which should be manageable to read in full. Let me read it completely."* → refused again.
+- The consequence, call 0118→0119: the whole-file rewrite that dropped both parse helpers →
+  `cannot find symbol: method parseQuantity(java.lang.String)` ×4.
+
+The repetition note did help here — after
+`[you have now made this exact call 2 times and it failed the same way every time … use a different tool]`
+the model switched to line ranges. But by then the damage pattern (read in slices → rewrite
+from memory) was set, and it recurred at 0206 with the note firing a third time.
+
+**A → B → C** A: the read cap sits below the size of an ordinary Java class, and the exec
+path caps at the same place. B: the model can only ever hold ~100 lines of its own file.
+C: three whole-file rewrites, two of which broke the build; ~15 calls of repair.
+
+**fixable at A?** Yes. The `⟦ctx:denied⟧` large-read steer
+(`cria/prompts/large_read_steer.txt`) and the derived-output cap should be raised well
+above a normal source file, and the two should not both close at once — the point of the
+refusal is to avoid a *silent* truncation, and a 310-line file can be returned losslessly.
+A cheaper variant of the same fix: when the file is under the context floor's own budget,
+return it whole and say so.
+
+**principle** #2 (a guard must not block the first attempt), #5 (the fix for truncation is
+lossless delivery, not refusal), #1 (the assist became the footgun).
+
+---
+
+## 8. The satisfaction judge loops without any repetition guard
+
+**what happened** Four consecutive judge calls issue byte-identical `list_dir(".")`; one
+judge call spends its entire reasoning budget repeating a single question ~14 times. The
+repetition note that protects the coder does not protect the judge.
+
+**cria fault: yes**
+
+**evidence**
+- Calls **0218, 0219, 0220, 0221** — each: `<function=list_dir><parameter=path>.</parameter>` → identical
+  `.git/ / README.md (370 B) / cp.txt (635 B) / data/ / pom.xml (1066 B) / src/ / target/`.
+  Its own reasoning each time: *"Let me check if REVIEW.md exists:"*, *"Let me use the list_dir tool properly:"*, *"Let me check if REVIEW.md exists in the root:"*.
+- Call **0165-area satisfaction (chunk055/056)** — ~400 lines of output, e.g.
+  *"Looking at the recent actions, I don't see a `Summary` class definition. This is strange."*
+  repeated verbatim 12+ times, with *"Wait, I think I need to use the `list_dir` tool to check the directory structure. Let me do that."* four times. The trigger is visible in its own words:
+  *"I think the issue is that the recent actions are truncated and don't show the full Importer.java file."*
+  cria had elided the class out of the judge's transcript view.
+- cria's bound did eventually fire — `You have inspected enough. Answer NOW with ONLY the JSON verdict:` — which is the right mechanism, applied several calls too late.
+
+The forced answer then carried a fabrication straight out of the truncated view:
+`"The WORKERS_ENABLED flag is used but not visible in the inspected code."` It is on line 30.
+
+Two smaller defects in the same block: the forced-answer prompt asks for
+`{"done": true|false, …}` while the judge (correctly, per its tool schema) returns
+`{"satisfied": false, …}`; and at call 0170 the judge emitted a `verdict` tool call whose
+`reason` parameter contained the rest of the JSON as literal text
+(`… NoClassDefFoundError: pipeline/Importer$ProcessAllRows.", "proposed_fix": "Add implements Serializable …"}`).
+
+**A → B → C** A: judge phases get no repetition note and no dedup on identical tool calls;
+their transcript view is elided harder than the coder's. B: the judge cannot see the code,
+so it loops looking for it. C: ~10 calls of the 45-minute budget burned per gate, and a
+false finding shipped in the verdict.
+
+**fixable at A?** Yes — apply the existing repeat-note / fold-away machinery to every
+phase that has tools, not just `coder-s1`; and give the judge the same file view the coder
+gets (it has `read_file`; the elision is what breaks it). Align the forced-answer key with
+the `verdict` tool's schema.
+
+**principle** #23 ("guard state is session-scoped" — but the guard should cover every
+seat), #5 counter-nuance, #9 (a purposeful call is cheap; a repeated identical one is not).
+
+---
+
+## 9. cria's cheap `mvn compile` probe reports green on a build that cannot start
+
+**what happened** The gate ran `mvn -q compile`, got exit 0 from an incremental no-op, and
+said so — 18 times across a stretch where the program could not load its main class.
+
+**cria fault: partial — the wording is scoped, the probe is not**
+
+**evidence** — repeated verbatim at calls 0132, 0135, 0157, 0161, 0165, 0177, 0180, …:
+
+> `⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems. The checks above cover syntax and lint only — no test command was composed, so nothing here says whether this project's tests pass. No mvn test tests were found …`
+
+and the reasoner's ground-truth block:
+
+> `the repo's own checks that ran (lint / type-check / syntax) found no error-class problems in your current edits. If you still need to change this file, make a small TARGETED edit at the specific line — do not rewrite the whole file again.`
+
+At every one of those moments `java -cp target/classes:… pipeline.Importer data/feed.csv`
+exited 1. The disclaimer is honest about tests; it says nothing about the fact that
+`mvn compile` returning 0 on an up-to-date module proves nothing about the artifact.
+
+**Helped / nothing / hurt: hurt.** It is the sentence the compaction briefing quoted as
+"The build compiles without errors" (finding 6), and the sentence the reasoner leaned on
+when it blamed the source (finding 2).
+
+**A → B → C** A: the cheap probe's exit code is treated as the check result. B: cria says
+"no error-class problems" about a workspace whose only executable is broken. C: every
+consumer downstream — briefing, reasoner, satisfaction judge — inherits a false green.
+
+**fixable at A?** Yes, and cheaply: the same gate already knows how to run the project's
+declared run command. When the Java probe's compile is a no-op (Maven prints nothing and
+touches nothing), the gate should say "nothing to compile" rather than "no problems", and
+the "TARGETED edit, do not rewrite the whole file" advice should not be attached to a
+green that was never earned.
+
+**principle** #10 (verify by doing), #3 (silence over a signal you cannot stand behind),
+#5b.
+
+---
+
+## 10. The "targeted edit, do not rewrite" advice fires while the model is being denied any whole-file view
+
+**what happened** cria's ground-truth block tells the reasoner *"do not rewrite the whole
+file again"* in the same run where cria refuses every whole-file read.
+
+**cria fault: yes (interaction)**
+
+**evidence** — the reasoner's `GROUND TRUTH FROM THE REPO'S CHECKS` block at calls 0124,
+0133, 0160, 0175: `If you still need to change this file, make a small TARGETED edit at
+the specific line — do not rewrite the whole file again.` Meanwhile the coder is refused
+whole reads at 0118/0125/0126/0147/0149/0206.
+
+**A → B → C** A: two assists point in opposite directions. B: the model must edit
+surgically a file it is not allowed to see. C: `edit_file` with a stale `old_string`
+succeeds against the wrong region — e.g. call 0118's edit that produced a **duplicate
+`incrementSkipped(String)` method** (`static void incrementSkipped(String reason)` twice,
+lines 40 and 47), which the model then had to detect and undo.
+
+**fixable at A?** Yes — the same fix as finding 7. Raise the read cap so the two assists
+are consistent.
+
+**principle** #1 (every assist can become a footgun), #2.
+
+---
+
+## 11. The `loop.steer_dictated_code` drops are not in my range — the dictated commands were delivered
+
+**what happened** Both steers in my range dictated shell commands, and both were delivered
+(fences stripped, command intact). Neither was dropped.
+
+**cria fault: none for the drop; the dictation itself is questionable**
+
+**evidence**
+- Call 0124 authored a fenced block; delivered at 0125 as
+  `⟦ctx:steer⟧ STOP rewriting the Importer.java file. … Run this to verify actual performance: cd /tmp/suite-…-trjkefom && time java -cp target/classes:$(cat target/cp.txt) pipeline.Importer data/feed.csv Then check if REVIEW.md exists…`
+  The model executed it verbatim (`--- TOOL CALL exec_command --- {"cmd":"cd /tmp/… && time java -cp target/classes:$(cat target/cp.txt) pipeline.Importer data/feed.csv"}`) and got
+  `Error: Unable to initialize main class pipeline.Importer / NoClassDefFoundError: pipeline/Importer$ProcessAllRows` — because the steer's command runs stale build output without recompiling. **Two calls wasted; the steer's own command manufactured the first sighting of the phantom bug.**
+- Call 0175's steer was delivered at 0177 with its commands and the `Do not run the Java executable until…` clause (finding 3).
+
+So: **the two drops reported for this run are beyond my range.** Where dictation *did*
+land, it hurt both times — once by running stale classes, once by naming a wrong path.
+
+**fixable at A?** The steer author should surface the fact and let the coder pick the
+command (principle #2: cria never substitutes its own action for the coder's). If a
+command is dictated at all, it must be self-contained (`mvn -q compile && java …`).
+
+**principle** #2 corollary, #4.
+
+---
+
+## 12. The totals divergence does not originate in my range
+
+**what happened** `substantially_faster` failed on `same totals: False`. Nothing in chunks
+037–071 changes the numbers.
+
+**cria fault: none**
+
+**evidence** — the per-SKU totals are byte-identical at every point I read, before and
+after every rewrite that compiled:
+- call 0118 (start of range): `imported 40000 rows covering 9000 SKUs / SKU-00000: 4326.28 / SKU-00001: 6557.34 / SKU-00002: 3183.88 / SKU-00003: 6092.97`
+- call 0185 (after the rewrites): identical, and `SKU-08999: 4505.27` at the tail
+- call 0250 (end of range, via `mvn exec:java`): identical again
+- messy feed unchanged throughout: `imported 5 rows covering 7 SKUs / SKU-0001: 100.00 / SKU-0003: 46.50 / SKU-0004: 14.50 / SKU-0007: 25.00`, later plus `skipped rows: / blank_price: 1 / blank_quantity: 2`
+- determinism proved twice: `Deterministic: outputs match` (0118) and `All runs identical - determinism verified` (0197)
+
+The only semantic change in my range that *could* move a count is
+`accumulateRowOptimized` / `accumulateRowWithErrors` adding
+`if (sku == null || sku.trim().isEmpty()) { incrementSkipped("missing_sku"); return; }`
+— a row whose SKU is blank is now dropped rather than accumulated under `""`. The
+verifier's generated feed has a non-blank SKU on every row, so this cannot produce the
+divergence.
+
+One latent inconsistency worth recording for whoever walks the tail: `rows` counts only
+accepted rows (`rowCount.incrementAndGet()` after both parses succeed) while
+`knownSkus` counts SKUs over **all** rows including skipped ones — so `skus` and `rows`
+already describe different row sets. The prompt's "A SKU appearing on several rows is
+normal — those rows all count" is honoured (`totals.merge` sums duplicates; the messy feed's
+duplicated SKU-0001 correctly totals `100.00` = 2 × 5 × 10.00).
+
+**Whatever made `rows`/`total` diverge, and whatever produced 29.9×, happened beyond my
+range.** In my range the code is still OpenCSV + ForkJoinPool at 0.246 s.
+
+---
+
+## 13. Recent fixes — did they fire, and did they help?
+
+| fix | fired in range | verdict |
+|:--|:--|:--|
+| derived probe-output cap | yes — `[10,093 bytes over 319 lines…]` (0118), `[10,107 bytes over 480 lines…]` (0183, 0189) | **hurt.** All three fired on ordinary artefacts (a 310-line source file; the program's own 480-line output). The message is honest and the recovery advice is good, but at 10 KB it fires on the normal case and pushed the model into whole-file rewrites (finding 7). |
+| cheap `mvn compile` probe | yes — every gate | **hurt** as used. Exit 0 on an incremental no-op is reported as "no error-class problems" while the artifact is unloadable (finding 9). |
+| reasoning logged on unfinished streams | yes | **helped (for the walker).** Every `[finish: stop]` call still carries `--- THINK (full) ---`; without it findings 2, 3 and 8 could not have been diagnosed. No effect on the model. |
+| completion-judge report framing (the authority ladder, "the coder's own words … frequently wrong") | yes — every reasoner prompt | **nothing, and once harmful.** The reasoner obeyed the ladder's *form* but had no ground-truth line for the real fault, so it promoted its own guess to fact (finding 2). The ladder cannot help when tier 1 is silent about the thing that is broken. |
+| cached-check age note ("Trust the words; check the DATE. That section says when it last ran and what has been written since") | yes — every reasoner prompt | **nothing.** No reasoner in my range acted on the date; the section it points at was never stale in a way that mattered. Dead weight so far. |
+| verdict tool | yes — calls 0170, 0247 | **mixed.** 0247 used it cleanly. 0170 produced a malformed call: the whole tail of the JSON leaked into the `reason` string (`… pipeline/Importer$ProcessAllRows.", "proposed_fix": "Add implements Serializable …"}`), i.e. the model wrote JSON *inside* an XML parameter. Also the forced-answer prompt asks for key `done` while the tool's key is `satisfied`. |
+| repetition note | yes — 3× (0149, 0178, 0206) | **helped.** Each time the model changed tool or approach on the next call. Its absence on judge phases is finding 8. |
+| bounded judge ("You have inspected enough. Answer NOW…") | yes — 2× | **helped**, but fires several calls after the loop starts. |
+
+---
+
+## Ranked summary (worst first)
+
+1. Litter sweep deletes the compiled inner class → 55 calls on a phantom bug (cria, 0126–0181)
+2. Steer asserts a structural fault in correct code (cria, 0133→0134)
+3. Elision removes the line naming `cp.txt`; steer then canonises the wrong path and forbids running (cria, 0175→0177)
+4. Completion gate: `runs:false` once, then judges silently-truncated output with a criterion that changes per call (cria, 0139 / 0165 / 0192 / 0215 / 0243 / 0268)
+5. "This list is complete — a file not listed here does not exist" is false (cria, 0138, 0240)
+6. Compaction briefing reports a dead program as working (cria, 0138)
+7. Whole-file read refused on a 310-line file, both routes → rewrites from memory that drop methods (cria, 0118–0126, 0206)
+8. Judge phases loop with no repetition guard; one call is pure rumination (cria, 0218–0221 and chunk055)
+9. `mvn compile` no-op reported as "no error-class problems" 18× while the program cannot start (cria, throughout)
+10. "Make a targeted edit, do not rewrite" issued while whole-file reads are denied (cria, 0124/0133/0160/0175)
+11. Dictated steer commands ran stale build output (cria, 0125); no `steer_dictated_code` drop in this range
+12. Totals divergence: not born here — totals byte-identical from 0118 to 0274
+### Part 3 — chunks 072–106
+
+Range: CALL 0275 → CALL 0372 (the end). Phases seen: `coder-s1`, `satisfaction`,
+`satisfaction-recover`, `satisfaction-noreason`, `reasoner` (steer author ×3, search
+supervisor ×2), `exec-intent`/`exec-output` ×3, `proxy` (compaction briefing) ×2.
+
+---
+
+## 0. Plain narrative of the last third, and the ending
+
+At CALL 0275 the workspace was **already worth 4 of 5 points**: OpenCSV in `pom.xml`,
+`WORKERS_ENABLED = true`, deterministic across three runs, and the messy feed printing
+correct per-SKU money including the quoted-comma row —
+
+```
+imported 5 rows covering 7 SKUs
+  SKU-0001: 100.00
+  SKU-0003: 46.50
+  SKU-0004: 14.50
+  SKU-0007: 25.00
+skipped rows:
+  blank_price: 1
+  blank_quantity: 2
+```
+
+`SKU-0007: 25.00` is exactly the byte the `csv_library` check greps for. Only `REVIEW.md`
+was missing. From there the last third destroyed the working code and never wrote the file.
+
+The chain: a steer at 0282 told it to fix a threading bug that did not exist and to hit a
+speed target that could not be hit → it replaced `accumulateRowOptimized` with a
+`Result`-returning `accumulateRowLocally` (0291) → whole-file rewrite (0294) whose
+`parallelProcess` merges **one key called `"TOTAL"`** and sets `rowCount` to `rows.size()`
+→ compile error (0306) → fixed (0306) → from 0322 onward every run prints
+
+```
+imported 40000 rows covering 9000 SKUs
+  TOTAL: 60336.33
+```
+
+and the messy feed prints `imported 8 rows covering 7 SKUs / TOTAL: 25.00`. Per-SKU totals
+are gone; `SKU-0007` no longer appears anywhere. That is the state the verifier scored.
+
+It was **not lost at the end — it was close**. Its last real reasoning, CALL 0371, is the
+correct and complete diagnosis:
+
+> "**The threading bug**: The `parallelProcess()` method at lines 325-337 is incorrectly
+> merging results. It only looks at a single "TOTAL" value instead of properly merging
+> per-SKU totals from all chunks."
+
+and, on its own cosmetic patch from 0357:
+
+> "The comment says "FIX: accumulate instead of overwrite" but the code still overwrites.
+> This needs to be fixed."
+
+It then called `read_file` on `pom.xml` (CALL 0372) and the run was killed mid-stream —
+`[no response captured]`. One `edit_file` away from restoring per-SKU totals, and with
+`REVIEW.md` still unwritten.
+
+Final workspace confirms: no `REVIEW.md`; `totals.merge("TOTAL", result.value, Double::sum)`
+still at line 331.
+
+---
+
+## 1. Four judge verdicts named the missing REVIEW.md; not one reached the coder
+
+**What happened.** cria's completion judge ran four times in my range and every time
+answered `satisfied: false` with `proposed_fix` = "Create REVIEW.md…". None of those four
+`proposed_fix` strings was ever injected into the coder's stream. The only mention of
+REVIEW.md that ever reached the model came from a *different* mechanism (the wheel-spin
+steer at 0324), 50 calls later.
+
+**cria fault: yes.**
+
+**Evidence.**
+- CALL 0275 `[satisfaction]` SAY: `{"satisfied": false, "reason": "REVIEW.md file is missing
+  from the project root as required by the task…", "proposed_fix": "Create REVIEW.md in the
+  project root describing remaining problems or risks in the changed code, including file
+  names and line numbers for each issue…"}`
+  → CALL 0276 `[coder-s1]` PROMPT Δ is `\n</think>\n\n<tool_call>…edit_file…` — no
+  `⟦ctx:steer⟧`, nothing from the verdict.
+- CALL 0304 `[satisfaction-noreason]` SAY: `{"satisfied": false, "reason": "The REVIEW.md
+  file is missing and has not been created…", "proposed_fix": "Create the REVIEW.md file in
+  the project root…"}`
+  → CALL 0305 PROMPT Δ is the coder's own `write_file` echo. Nothing injected.
+- CALL 0334 `[satisfaction]` SAY: `{"satisfied": false, "reason": "REVIEW.md is missing
+  (required deliverable not created)…", "proposed_fix": "Create REVIEW.md in project root
+  documenting any remaining problems or risks with file names and line numbers…"}`
+  → CALL 0335 PROMPT Δ carries only `⟦ctx:checks⟧` and the coder's own turns.
+- CALL 0356 `[satisfaction]` `--- TOOL CALL verdict (full args) ---`
+  `{"satisfied":false,…"(5) REVIEW.md has not been created."…}` → CALL 0357 PROMPT Δ: the
+  coder's own `read_file`. Nothing injected.
+
+**A → B → C.** A: the completion judge is wired only to *decide whether the run may stop*,
+not to *tell the coder anything*. B: four correct findings of the cheapest missing
+deliverable are computed at real model cost and thrown away. C: `review_written` scores 0
+after 371 calls, and the run burns its remaining time on code that was already passing.
+
+**Fixable at A?** Yes. When `satisfied:false` and the judge names a deliverable that does
+not exist on disk, the `proposed_fix` should ride into the next coder turn as a
+`⟦ctx:steer⟧`. It is a fact about the world (the file is not there — check the filesystem,
+which the judge already did with `list_dir`), not a judgment, so it clears the "silence over
+noise" bar (rule 3) and it is additive, not a redirection away from working code (rule 2).
+
+**Principle.** #3 (a high-confidence actionable signal must be spoken), #9 (the purposeful
+call was made four times and paid for; discarding it is pure waste), #13 (the judge
+correctly failed closed but the information was still dropped).
+
+---
+
+## 2. cria's own run-the-program judge said YES to output that had lost per-SKU totals
+
+**What happened.** cria ran the program itself three times through
+`exec-intent` → `exec-output`. Twice, the expected result explicitly named per-SKU totals
+and skipped-row counts, the program printed neither, and cria's judge answered `YES`.
+Because the judge said YES, cria injected nothing — the coder got no signal that its
+output was broken.
+
+**cria fault: yes.**
+
+**Evidence.**
+- CALL 0326 `[exec-intent]` SAY: `{"runs": true, "command": "mvn -q exec:java …", "success":
+  "Skipped row counts by reason and summary with skus, rows, totals printed to stdout"}`
+  CALL 0327 `[exec-output]` prompt: `WHAT IT PRINTED (exit code 0):\nimported 40000 rows
+  covering 9000 SKUs\n  TOTAL: 60336.33` → SAY: `YES`.
+- CALL 0354 `[exec-intent]` SAY: `"success": "prints summary with skus, rows, totals, and
+  skipped-row counts by reason"`; CALL 0355 prompt: same two lines → SAY: `YES`.
+- (For contrast, at CALL 0296 the same judge said `YES` to a 188-line per-SKU dump — the
+  correct answer. It is not that the judge is a constant; it said YES to both.)
+
+**A → B → C.** A: the `exec-output` judge is asked one under-specified yes/no ("Answer YES
+if what it printed is that result") with no instruction to check that every named element
+appears. B: a two-line output missing both named elements passes. C: the one deterministic
+ground-truth probe cria owns — "run it and look" (rule 10) — returned green on the exact
+defect that cost `substantially_faster` and `csv_library`.
+
+**Fixable at A?** Yes, at the `exec-output` prompt. The intent step already produced a list
+of named elements ("skus, rows, totals, and skipped-row counts by reason"). Ask the judge to
+answer per element and fail if any is absent, rather than one gestalt YES. This is
+tightening a composed judge prompt, which rule 5's counter-nuance explicitly permits.
+
+**Principle.** #10 (verify by doing — the probe ran and its verdict was worthless), #13
+(fail closed: an unmet named element must not read as YES), #8 (the judge prompt did not
+fence the question narrowly enough to be answerable).
+
+---
+
+## 3. `⟦ctx:denied⟧ …is large` on a 389-line file — the single biggest call sink in my range
+
+**What happened.** cria refuses whole-file reads of `Importer.java` (12,816–13,035 bytes,
+388–390 lines) on the ground that the read "would be truncated". It fired at least ten
+times in my range. Twice the coder escaped by calling `web_search` with a `file://` URL,
+and cria let both searches through — injecting 20 and 19 junk web results (Jenkins
+pipelines, Qwen tool-calling bug reports) into the coder's context.
+
+**cria fault: yes.**
+
+**Evidence.**
+- The refusal, verbatim, ×10 (0282, 0284, 0287, 0292, 0293, 0306, 0310, 0335, 0338, 0362,
+  0366, 0369): `⟦ctx:denied⟧ …/Importer.java is large — reading it whole would be truncated
+  (you'd get the head and tail with the middle cut, and act on a false view).`
+- The model twice measured the file itself and disagreed out loud —
+  CALL 0365 THINK: *"The file is 389 lines, which is manageable. Let me read it in full."*
+  CALL 0366 THINK: *"The file is 389 lines, which is not that large."*
+- CALL 0310 THINK: *"Let me read the file in sections to understand its structure."* →
+  `web_search {"query":"file:///tmp/…/Importer.java"}`.
+- CALL 0311 `[reasoner]` (search supervisor) SAY: `{"on_target": false, "recommendation":
+  "Use the `read_file` tool with path `/tmp/…/Importer.java` to inspect the current code
+  instead of searching the web."}` — **the search ran anyway** at CALL 0312, returning
+  `20 results: How do I import a Java library in Jenkins pipeline… / GitHub -
+  hubmapconsortium/codex-pipeline… / Qwen3.6-35B-A3B-4bit returns thinking-only responses…`
+- CALL 0363, same supervisor, same class of query (`read file /tmp/…/Importer.java`), now
+  SAY: `{"on_target": true, "recommendation": "Reading the Importer.java file is the correct
+  next step…"}` → CALL 0364 returns `19 results` including
+  `r/Vllm … Qwen 3.5 27B/35BA3B Tool Calling Issues` and `vLLM 0.19 may lose tool calls…`.
+- Fallout: an oversize `cat` refusal (CALL 0351: `[10,095 bytes over 314 lines — too much to
+  return, so nothing is shown]`), then a dirguard refusal when it tried to spill the file
+  outside the workspace (CALL 0352: `⟦ctx:denied⟧ Writing/reading outside the working
+  directory is not permitted… The path '/tmp/importer_full.txt' is outside it`), then a
+  command-safety refusal on `rm -rf target/classes` (CALL 0320).
+
+**A → B → C.** A: the read-file size gate is set well below what this model's window can
+hold, and it is stated as a fact about truncation that the world does not support for a
+13 KB file. B: the coder cannot ever see the whole class at once, so it reasons about
+`ProcessChunk` and `main` from disjoint 100-line windows and never notices that `totals`
+has one key. C: dozens of wasted calls, two poisoned web searches, and the defect stayed
+invisible until CALL 0371 — when it finally saw lines 250–400 in one read.
+
+**Fixable at A?** Yes, in the read-file gate. The bound should be derived from the live
+window budget the context floor already computes, not a fixed byte threshold; a file that
+fits should be returned whole. And the refusal text should state the real number ("13,035
+bytes; your remaining budget is X") rather than asserting a truncation that would not
+happen. Secondary fix at the search supervisor: when `on_target` is false the search must
+not proceed — a guard whose verdict is discarded is worse than no guard.
+
+**Principle.** #5b (cria asserts "reading it whole would be truncated" with no live check
+that it would), #1 (an assist that fires ten times and produces a web search for a local
+file), #16 (the derail was cria's, not the model's — the model measured the file and said
+so twice).
+
+---
+
+## 4. Every cria injection in my range, with the model's next reasoning
+
+| # | call | injection | what the model did next | verdict |
+|---|---|---|---|---|
+| 1 | 0282 | `⟦ctx:steer⟧ [REDIRECT] … "1) 4× speedup (currently ~1.4s, need <0.35s), 2) fix threading bug and re-enable parallel workers, 3) add REVIEW.md. Stop benchmarking. Read the parallel processing section of Importer.java (lines 250-345)… Then make ONE targeted edit to enable parallel workers while fixing the threading bug"` | THINK: *"The steering message is correct - I've been looping through benchmark runs without making actual code changes."* Then rewrote the accumulator. | **made things worse** — see §5 |
+| 2 | 0283 | repetition note: `[you have now made this exact call 2 times and it returned the exact same result every time… Tried: read_file(…Importer.java)]` | 2,000-word rumination; reached the truth (*"the current code is already producing identical results. So maybe the threading bug was already fixed?"*) and abandoned it | nothing / mild harm |
+| 3 | 0275, 0282, 0284, 0292, 0293, 0306 | `⟦ctx:edit⟧ Importer.java — old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text.` (×6) | CALL 0292 THINK: *"which means the file wasn't actually changed. Let me check the current state of the file"* | **harmful** — see §8 |
+| 4 | 0280, 0290, 0292 etc. | `⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems… No mvn test tests were found` (×12+) | no reaction; occasionally *"The checks didn't run."* (0315) | nothing, and see §6 |
+| 5 | 0282+ | `⟦ctx:denied⟧ …is large` (×10) | drove two `web_search` escapes | **harmful** — §3 |
+| 6 | 0296 / 0327 / 0355 | `exec-output` judge → `YES` (so **no** injection) | — | **harmful** — §2 |
+| 7 | 0306 | `⟦ctx:continuation⟧ … "The build compiles successfully (mvn compile exits 0)… 0.25 seconds… 40,000 rows, 9,000 SKUs with per-SKU totals matching expected values"` | reran everything from scratch | stale/false — §7 |
+| 8 | 0307 | `[proxy]` compaction briefing authored | — | see §7 |
+| 9 | 0308 / 0358 | `⟦ctx:continuation⟧ … "The build fails to compile with errors … at lines 284, 285, 305, 306, 310, 312, 313 … remove the `final` keyword from the `Result` class fields"` | CALL 0318 THINK: *"the compilation error mentioned in the summary is NOT present"* | **harmful** — §7 |
+| 10 | 0325 | `⟦ctx:steer⟧ [REDIRECT] … "**REVIEW.md has not been created** … Create REVIEW.md in the workspace root now"` | THINK: *"I need to stop the verification loop and focus on the remaining deliverables… 3. Create REVIEW.md with remaining issues"* → then called `read_file` on the whole file → `⟦ctx:denied⟧` | **helped, then was cancelled by #5** |
+| 11 | 0340, 0350, 0358 | `⟦ctx:denied⟧ You already ran web_search "…importer.java", which is near-identical to "…Importer.java". Its results were saved to ./tmp/read-only/search-file_…txt` | ignored the file; re-ran cria's own check blob | nothing |
+| 12 | 0352 | `⟦ctx:denied⟧ Writing/reading outside the working directory is not permitted here… The path '/tmp/importer_full.txt' is outside it` | went back to 100-line reads | correct but a dead end |
+| 13 | 0368 | `⟦ctx:steer⟧ [REDIRECT] "Stop trying to read the entire Importer.java file repeatedly—it keeps getting denied as too large… Run exec_command — cmd="grep -n 'new Thread\|thread\|parallel\|Future\|Executor\|ThreadPool' …"` | ignored the grep, read lines 1–100 | **nothing** — and note it says nothing about REVIEW.md or the broken totals; the last steer of the run is about how to read a file |
+| 14 | 0349 | harness: `failed to parse function arguments: invalid type: string "[{\"step\": …}]" , expected a sequence` | immediately reverted to `web_search` | **harmful** — §9 |
+| 15 | 0320 | `rejected: rm -f style commands are not permitted. Use a safer approach` | switched to `mvn clean compile` | helped |
+
+Two `loop.steer_dictated_code` drops were reported for the run; none of the three steers in
+my range carried code, so those drops are beyond my range.
+
+---
+
+## 5. The steer that started the collapse (CALL 0281 → delivered 0282)
+
+**What happened.** The wheel-spin steer told the coder to fix a threading bug that was
+already fixed, to re-enable workers that were already on, and to hit a speed target derived
+from shell wall-clock that the verifier does not measure. The coder obeyed and rewrote the
+accumulator into the shape that lost per-SKU totals.
+
+**cria fault: yes.**
+
+**Evidence.**
+- Delivered bytes, CALL 0282: `⟦ctx:steer⟧ [REDIRECT] … The task requires: 1) 4× speedup
+  (currently ~1.4s, need <0.35s), 2) fix threading bug and re-enable parallel workers,
+  3) add REVIEW.md. Stop benchmarking. Read the parallel processing section of Importer.java
+  (lines 250-345)… Then make ONE targeted edit to enable parallel workers while fixing the
+  threading bug—focus on how the shared `totals` and `rowCount` are being accessed across
+  threads.`
+- The steer author's own reasoning at CALL 0281: *"The parallel workers are currently OFF
+  (as mentioned in README.md)"* — read off the **seed's** stale README
+  (`Parallel workers are switched off. Turning them on changed the totals between runs.`)
+  while `Importer.java:31` in front of it read
+  `public static final boolean WORKERS_ENABLED = true;   // parallel processing enabled`.
+- The `1.4s → <0.35s` figure comes from
+  `time java -cp target/classes:$(mvn -q dependency:build-classpath …) pipeline.Importer …`
+  — JVM start-up plus a whole Maven invocation inside command substitution. The verifier's
+  `BENCH` calls `summarize` directly after a warm-up and reports 29.9×. The target cria
+  handed the model is unreachable by any change to `summarize`.
+- Immediately after: CALL 0282 THINK *"The steering message is correct… The fix should: 1.
+  Have each worker collect results locally in a private map, then merge at the end"* →
+  CALL 0291 replaces `accumulateRowOptimized` with `accumulateRowLocally` returning a scalar
+  `Result` → CALL 0294 whole-file rewrite with
+  `totals.merge("TOTAL", result.value, Double::sum);` and
+  `rowCount.addAndGet(rows.size());`.
+- Contrast with what the model had already worked out one call earlier, at CALL 0283:
+  *"I already ran the code three times and the results were identical. So the threading bug
+  might not be present in the current code."* and *"the current code is already producing
+  identical results. So maybe the threading bug was already fixed?"* — the classic
+  "found it then lost it".
+
+**A → B → C.** A: the steer author is handed the task text plus a transcript, and it
+restates the task's *premises* ("fix the threading bug", "re-enable workers") as *current
+findings* without checking `WORKERS_ENABLED` on disk; and it converts a shell wall-clock
+number into a numeric performance target. B: the coder, which had just concluded the race
+was already fixed, believes cria over itself. C: a rewrite that keeps one map key and
+counts every row — 29.9× faster and wrong, which is exactly the failure mode
+`substantially_faster` exists to catch.
+
+**Fixable at A?** Yes, in `steer_diagnose`. The prompt already forbids stating an unverified
+cause ("Do not state a CAUSE you have not verified… Measured across twenty-four such
+directives, the coder's own reading was right and the directive was wrong every single
+time") — that clause was violated twice in one paragraph. Two additions that are facts, not
+judgments: (a) forbid restating a task premise as a present finding unless the steer author
+read the relevant line off disk with its `read_file` tool (it has one; it did not use it);
+(b) forbid quoting a wall-clock number from the transcript as a target, because the
+transcript's timings include process start-up the task's bar does not.
+
+**Principle.** #5b (two false facts in cria's own voice: workers off, and a 0.35s target),
+#8 (a directive that picked the implementation direction), #16, and the steer prompt's own
+"do not state a CAUSE you have not verified" clause.
+
+---
+
+## 6. `mvn -q compile` reported green over stale class files, then the program would not start
+
+**What happened.** After a `write_file`, `mvn -q compile` printed
+`Nothing to compile - all classes are up to date` and exited 0; cria's `⟦ctx:checks⟧` turned
+that into "no error-class problems"; the program then died with
+`NoClassDefFoundError: pipeline/Importer$ProcessChunk`.
+
+**cria fault: yes (contributory).**
+
+**Evidence.**
+- CALL 0316: `[INFO] --- maven-compiler-plugin:3.13.0:compile … [INFO] Nothing to compile -
+  all classes are up to date. [INFO] BUILD SUCCESS` — immediately after the 0306 rewrite.
+- CALL 0315 `⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.`
+- CALL 0319: `Error: Unable to initialize main class pipeline.Importer / Caused by:
+  java.lang.NoClassDefFoundError: pipeline/Importer$ProcessChunk`
+- CALL 0321, after `mvn clean compile`: `[INFO] Recompiling the module because of changed
+  source code. [INFO] Compiling 1 source file`.
+- The seed ships tracked `.class` files at `target/classes/pipeline/` (established), and
+  `sweep_litter` removes untracked files created during a probe window (established) — which
+  is precisely the pair that leaves stale tracked classes newer than the source and the new
+  inner-class file gone.
+
+**A → B → C.** A: the periodic gate runs `mvn -q compile` in a tree where the tracked seed
+classes survive and freshly generated ones do not. B: Maven's up-to-date check short-circuits
+and the gate reports green over a build that does not exist. C: the coder loses several
+calls to a `NoClassDefFoundError` it cannot explain, and — worse — a "checks passed" line
+sits in its context while the program is unrunnable (rule 5b again).
+
+**Fixable at A?** Yes. For a Java project the cheap compile probe should be `mvn -q -o
+clean compile` (or the gate should exclude the build-output directory from the litter sweep,
+so the two stop fighting). The deeper fix is at the seed: build output should not be tracked
+in the task's git tree at all.
+
+**Principle.** #5b, #10 (a probe whose green does not correspond to a runnable program),
+#12.
+
+---
+
+## 7. Compaction briefings carried a fixed problem forward for ~50 calls and demoted the real one
+
+**What happened.** Six compactions in the run; two `[proxy]` briefings in my range. The
+first froze a compile error that the very last action before it had already fixed; the
+second recorded the broken `TOTAL` output under "What now works" and downgraded the correct
+root-cause diagnosis to a maybe.
+
+**cria fault: yes.**
+
+**Evidence — briefing 1 (CALL 0307, re-served at 0308 and again at 0358).**
+> "The build fails to compile with errors in `src/main/java/pipeline/Importer.java` at lines
+> 284, 285, 305, 306, 310, 312, 313 … these are in the `Result` class fields which are
+> declared `final`…"
+> "**What remains to be done:** Fix the compilation errors … by removing the `final` keyword
+> from the `Result` class fields."
+
+The write that removed `final` (`static class Result { Double value; boolean valid;`) landed
+at CALL 0306, *before* the briefing was composed — the briefing's own transcript shows
+`tool: Wrote src/main/java/pipeline/Importer.java` as its last line. At CALL 0358 the same
+paragraph is served **directly above** a `⟦ctx:compacted⟧` block that quotes
+`196:         Double value; 197:         boolean valid;` — cria delivers the claim and its
+refutation in the same prompt.
+
+Downstream cost:
+- CALL 0318 THINK: *"the compilation error mentioned in the summary is NOT present"* — a
+  wasted reconciliation.
+- CALL 0356's judge spent its whole reasoning on it (*"This is confusing… There's no `final`
+  keyword visible here. But the summary says there ARE compilation errors."*) and then still
+  asserted it as fact in the verdict: `"(1) Compilation errors exist in Importer.java at
+  lines 284, 285…"`.
+
+**Evidence — briefing 2 (CALL 0359, served at 0360).**
+> "**What now works** — The importer compiles and runs against `data/feed.csv` (40,000 rows,
+> 9,000 SKUs, total 60336.33)…"
+> "**What remains** … The `ProcessChunk.compute()` method **may** have a threading bug where
+> it only keeps one value instead of summing all valid values from chunks — **needs
+> verification**."
+
+At the time this was written the model had already *established* that defect twice, in full,
+at CALL 0345 (*"the per-SKU totals are lost in parallel mode"*) and CALL 0353 (*"This
+overwrites the value instead of accumulating"*). The briefing turned a confirmed root cause
+into an unverified suspicion, and filed the wrong number under "works".
+
+**A → B → C.** A: the briefing is authored from a transcript window that both lags the last
+tool result and flattens confidence. B: a fixed bug is carried forward as live, and a live
+bug is carried forward as hypothetical. C: post-compaction the coder re-derives from scratch
+each time (0308, 0360 both open with `list_dir`), and the one thing it had actually nailed
+has to be nailed a third time — at CALL 0371, thirty seconds before the kill.
+
+**Fixable at A?** Partly. The briefing prompt is already given `FILES ON DISK RIGHT NOW
+(gathered from the filesystem just now)`; it should also be given the **last check/probe
+result** as a dated ground-truth line, so "the build fails to compile" cannot outlive the
+write that fixed it. And the `⟦ctx:continuation⟧` wrapper should not repeat a briefing
+unchanged across two compactions (0308 and 0358 are byte-identical, ~50 calls apart).
+
+**Principle.** #5b, #5 (a labelled summary is allowed; a summary that contradicts the world
+is not), #23b at the level of cria's own bookkeeping.
+
+---
+
+## 8. The identical-edit refusal hid the fact the model actually needed
+
+**What happened.** After `accumulateRowOptimized` had been renamed out of existence, the
+coder kept sending edits whose `old_string` was that vanished method. cria answered six
+times with "old_string and new_string are identical", never with "that text is not in the
+file any more".
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0292 tool result: `⟦ctx:edit⟧ Importer.java — old_string and new_string
+are identical — this edit changes nothing, and you cannot pin the exact current text. Read
+the file, then make one targeted edit.` The file at that moment (CALL 0293, `sed -n
+'165,210p'`) contains `static Result accumulateRowLocally(…)` and no
+`accumulateRowOptimized`. The model's conclusion at CALL 0292: *"the old_string and
+new_string are identical, which means the file wasn't actually changed."* — the opposite of
+what had happened; the file had been changed, by the model, one call earlier.
+
+**A → B → C.** A: the identical-string check runs before the does-old_string-exist check, so
+the less informative message wins. B: the coder is told its edit was a no-op and infers its
+earlier write did not land. C: three further identical no-op edits and a whole-file rewrite
+(0294) that it might not have reached for had it been told "that method no longer exists —
+you renamed it to `accumulateRowLocally`".
+
+**Fixable at A?** Yes, in the edit guard: check `old_string in file` first and say so; only
+fall back to the identical-strings message when the anchor is actually present. Strictly
+more true, strictly more useful, no new judgment.
+
+**Principle.** #5b (the message is true of the *arguments* and misleading about the *world*),
+#2 (a recovery-class message must tell the coder more, not less).
+
+---
+
+## 9. The one correct plan the model produced was destroyed by an argument-parse failure
+
+**What happened.** At CALL 0348 the model wrote a seven-step plan whose step 1 is the exact
+root cause and whose step 7 is `REVIEW.md`. The `update_plan` call failed to parse and the
+plan was lost; the model's very next action was the junk `web_search`.
+
+**cria fault: yes (massage / tool-argument boundary).**
+
+**Evidence.**
+- CALL 0348 args: `[{"step": "Fix the threading bug in parallelProcess - the
+  ProcessChunk.compute() method is not summing all valid values from chunks, only keeping one
+  value"}, … {"step": "Create REVIEW.md documenting remaining problems"}]`
+- CALL 0349 tool result: `failed to parse function arguments: invalid type: string
+  "[{\"step\": \"Fix the threading bug…\"}]", expected a sequence at line 1 column 610`
+- CALL 0349 THINK is empty; the action is
+  `web_search {"query":"file:///tmp/…/Importer.java"}`.
+
+The model emitted the array inside an XML `<parameter=plan>` tag; it arrived at the harness
+as a JSON *string* rather than a *sequence*. That is exactly the class of XML-parameter vs
+embedded-JSON mismatch `massage` exists to normalise (cf. `b3556f1`), and it did not fire for
+`update_plan`'s array-typed parameter.
+
+**A → B → C.** A: an array-typed tool parameter delivered through the XML dialect is not
+coerced to a list. B: the tool errors, the plan is discarded, and the error text carries no
+hint about the shape expected. C: the only written record of the correct diagnosis and the
+missing deliverable evaporates; the model falls back to the behaviour that had already failed.
+
+**Fixable at A?** Yes, in `massage`: when a tool's schema types a parameter as an array and
+the XML body parses as a JSON array, pass the parsed list. Deterministic, no judgment,
+harness-agnostic.
+
+**Principle.** #24 (an invariant about the body the tool actually receives belongs at the
+wire), #19 (dialect handling is cria's job, not the model's).
+
+---
+
+## 10. cria's own probe command leaked into the transcript and the coder replayed it
+
+**What happened.** The composed gate command (`__cria_out=$(timeout -k 5 240 python3 -c …)`,
+~2,088 chars) appears verbatim in the coder's own tool log, and from CALL 0343 onward the
+coder issues it *as its own tool call*, repeatedly.
+
+**cria fault: yes.**
+
+**Evidence.** CALL 0343 `--- TOOL CALL exec_command (full args) ---` is a character-for-
+character reproduction of cria's gate blob, including `__cria_out`, `__cria_ec`,
+`__cria_test_ec` and the `unshare -rn` re-run. Repeated at 0344, 0350, 0358, 0368. Each one
+comes back as `⟦ctx:checks⟧ …no error-class problems` — no new information, several seconds
+of wall clock each. One of them leaked raw Maven noise the coder then puzzled over:
+`[ERROR] Could not create local repository at /root/.m2/repository` (CALL 0337, from the
+network-off re-run under `unshare`), which is cria's probe failing, not the project.
+
+Note the literal token `__cria_out` in the model's context — a proper-noun leak of the
+kind rule 17 exists to prevent.
+
+**A → B → C.** A: the gate borrows the coder's shell, so its command lands in the coder's
+own history. B: the weak model treats a command in its history as a command it should run.
+C: five wasted calls, plus a spurious `/root/.m2` error the model had to explain away.
+
+**Fixable at A?** Yes: represent the gate's turn inbound as the finding only
+(`⟦ctx:checks⟧ …`), with the composed command elided the way refused write bodies already
+are (`[elided 810 chars — this write was REFUSED…]`). cria owns `represent_inbound`; this is
+the same shape as the web_fetch envelope leak.
+
+**Principle.** #17 (the model sees `__cria_`), #1, #7 (cria's own artefacts becoming the
+model's context).
+
+---
+
+## 11. The kill: churning, not converging — but one call from the fix
+
+**What happened.** The run was stopped at the 45-minute floor during CALL 0372, a
+`read_file` of `pom.xml`, with `[no response captured]`.
+
+**cria fault: none (for the kill itself).**
+
+**Evidence.** The last twelve calls (0360–0372) are a post-compaction restart: `list_dir`,
+whole-file read → denied, `web_search` → 19 junk results, `wc -l`, whole-file read → denied
+→ repetition note → whole-file read → denied → steer #13 (about how to read a file) →
+100-line reads. Pure churn, and all of it caused by §3.
+
+But CALL 0371, the second-to-last, is the payoff: having finally seen lines 250–400 in one
+read, the model states the defect exactly — *"It only looks at a single "TOTAL" value
+instead of properly merging per-SKU totals from all chunks"* — and notices its own fake fix
+— *"The comment says "FIX: accumulate instead of overwrite" but the code still overwrites."*
+Then it read `pom.xml` and time ran out.
+
+So: **churning for eleven calls, correct on the twelfth, killed on the thirteenth.** Nothing
+about the kill is wrong; what is wrong is that the eleven churning calls were manufactured by
+cria's own read refusal, and that the same insight had already been reached at CALL 0345 and
+thrown away by a compaction (§7).
+
+**Principle.** #14 is satisfied (cria never handed back to a human). The waste is upstream.
+
+---
+
+## 12. Everything cria stated in its own voice that the world contradicts (#5b)
+
+1. `⟦ctx:denied⟧ …Importer.java is large — reading it whole would be truncated` — 13,035
+   bytes, 390 lines; no truncation would have occurred. ×10.
+2. Steer 0282: `4× speedup (currently ~1.4s, need <0.35s)` — the bar is measured on
+   `summarize()` excluding JVM start-up; the run scored 29.9×.
+3. Steer author 0281's premise `The parallel workers are currently OFF (as mentioned in
+   README.md)` while `WORKERS_ENABLED = true` sat on line 31. (Reached the coder as
+   "re-enable parallel workers".)
+4. `⟦ctx:edit⟧ …old_string and new_string are identical` when the true and more useful fact
+   was that `old_string` no longer existed in the file. ×6.
+5. `⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems` at CALL
+   0315 — the program at that moment could not start
+   (`NoClassDefFoundError: pipeline/Importer$ProcessChunk`).
+6. `⟦ctx:continuation⟧ "The build fails to compile with errors … at lines 284, 285, …"`
+   served at 0308 and again at 0358, long after the fix; contradicted by the compacted block
+   printed immediately below it.
+7. `⟦ctx:continuation⟧ "processing 40,000 rows covering 9,000 SKUs in about 0.25 seconds"`
+   (0306) — every measurement in the transcript is 1.1–1.4 s.
+8. `exec-output` judge `YES` for "prints summary with skus, rows, totals, and skipped-row
+   counts by reason" against output containing none of the three. ×2.
+
+---
+
+## 13. Recent fixes — did they fire?
+
+| fix | fired? | effect |
+|---|---|---|
+| derived probe-output cap (`…-le 8500 … head -c 4250 … tail -c 4250`) | yes, on every gate | **nothing** — the gate output was always small; but the cap's sibling, the raw oversize refusal (`[10,095 bytes over 314 lines — too much to return, so nothing is shown]`, CALL 0351), **hurt**: it blocked `cat Importer.java` and pushed the coder into the out-of-workspace spill that dirguard then denied |
+| cheap `mvn compile` probe | yes, ~12× | **hurt** — `Nothing to compile - all classes are up to date` over stale tracked classes reported green while the program could not start (§6) |
+| reasoning logged on unfinished streams | yes | **helped the walk** — CALL 0371's diagnosis and CALL 0372's `[no response captured]` are only legible because of it; no effect on the run |
+| completion-judge report framing (`satisfaction-recover`, `satisfaction-noreason`) | yes | **partly helped** — CALL 0303 correctly returned `UNCLEAR` for thinking that had not concluded, and the 0304 re-ask produced a clean `satisfied:false` naming REVIEW.md. Wasted, because nothing was injected (§1) |
+| cached-check age note ("Trust the words; check the DATE… If the coder has edited a file the findings name, they describe the code as it WAS") | yes, in both steer prompts | **nothing** — the steer authors did not use it; 0281 quoted the seed README as current, 0367 quoted nothing from disk |
+| verdict tool | yes, CALL 0356 | **helped structurally** — a clean `--- TOOL CALL verdict ---` instead of prose. The content was still poisoned by the stale briefing (`"Compilation errors exist in Importer.java at lines 284, 285…"`), and the verdict went nowhere |
+
+---
+
+## 14. On the specific check failures, from my range
+
+- **`substantially_faster` — "same totals: False".** Not a parsing problem and not a
+  duplicate-SKU problem. `parallelProcess` writes a single key:
+  `totals.merge("TOTAL", result.value, Double::sum)` (final workspace, line 331), and
+  `ProcessChunk.compute()` *assigns* rather than accumulates
+  (`chunkResult.value = localResult.value;`), so each ≤1000-row leaf contributes only its
+  last valid row. `rowCount.addAndGet(rows.size())` counts every row read, skipped ones
+  included — which happens to match the seed on the clean big feed (all rows valid) but is
+  wrong in principle, and visibly wrong on the messy feed: `imported 8 rows` while
+  simultaneously reporting 3 skipped.
+- **`csv_library` — "quoted-comma row (SKU-0007) missing or mis-parsed".** OpenCSV parses it
+  correctly; at CALL 0275 the program printed `SKU-0007: 25.00`. The point was lost because
+  the `"TOTAL"` rewrite removed every per-SKU line: the messy feed now prints
+  `TOTAL: 25.00` (CALL 0339), so the checker's `SKU-0007\D+25\.00` cannot match. The
+  behavioural check is sound; what it caught was the same single defect as #2, not a parser.
+- **`review_written` — "no REVIEW.md".** Never written. Four judge verdicts named it (§1),
+  one steer named it (0325), one plan listed it (0348, destroyed by the parse failure), and
+  three compaction briefings listed it under "what remains". The model acknowledged it at
+  CALL 0325 (*"3. Create REVIEW.md with remaining issues"*) and was immediately swallowed by
+  the read-file refusal.
+
+**The one-sentence version:** one steer built on two false facts turned a 4-of-5 workspace
+into a 2-of-5 one, a file-size refusal spent the remaining 90 calls, and every mechanism
+that correctly found the missing REVIEW.md was one that had no way to tell the coder.
+
+### Verified against the capture, after the three-part walk
+
+Re-checked rather than taken on the readers' word.
+
+**CONFIRMED — cria named the wrong file for a deliverable.** The steer authored at call 0109 reads:
+
+> `…the threading section of the code to understand what needs to be fixed. After that, create data/review.md`
+
+The task asks for `REVIEW.md` and `verify.py:190` looks for it with `ws.rglob("REVIEW.md")` — case-sensitive, and `data/review.md` does not match. cria's own steer-author prompt forbids choosing which file to create. One check, lost by a filename. (#2's corollary, #5b.)
+
+**Carried as the readers' findings, with their call numbers, not independently re-verified here:** the four
+completion-judge verdicts whose `proposed_fix` said "Create REVIEW.md" and were never injected
+(0275, 0304, 0334, 0356); the whole-file read refusals on `Importer.java` at 9,889–13,035 bytes; the
+`sweep_litter` deletion of the untracked inner-class file. Each is quoted with call numbers in the
+part sections above. The fix phase confirms before acting.
+
+### The one thing all three readers found independently
+
+None of them could see the others' ranges, and all three reported it: **cria would not let the model
+read its own source file.** `Importer.java` grew from 9,889 to 13,035 bytes over the run, and from
+call 0068 to the kill every whole-file read of it was refused — by `⟦ctx:denied⟧ … is large` on the
+`read_file` route and by `[N bytes over M lines — too much to return]` on the `cat` route. The model
+said out loud, twice, "389 lines, which is not that large". It then edited through 100-line windows
+and rewrote from memory, producing three structural duplicates, a dropped `parseQuantity`/`parsePrice`
+pair, and finally two `web_search` calls against a `file://` URL — trying to read its own file through
+a web search because every other route was closed.
+
+That is the same 9,000-byte bound as the gate-refusal finding, reached from the other side. One number
+governs both what cria's own probe may return and what the coder may read of its own code, and 9,000
+bytes is roughly 300 lines of Java.

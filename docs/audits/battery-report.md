@@ -24,7 +24,7 @@ judging. What each model does on its own.
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | 🟡 qwen35 | 100% (+40) | 100% (+20) | 50% (-25) | 40% (-60) | 50% | 100% | **74%** | 79.1 | 27 | 184 |
 | 🟠 gemma4 | 20% (-80) | 100% (+40) | 100% (0) | 0% (-80) | 0% | 100% | **52%** | 59.4 | 14 | 48 |
-| 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% | 50% | 0% | **48%** | 42.2 | 23 | 54 |
+| 🟠 ternary-bonsai | 80% (0) | 100% (+100) | 50% (-25) | 0% (0) | 50% | 0% | **48%** | 41.6 | 23 | 55 |
 | 🔴 nemotron-elastic | 0% (0) | 0% (-20) | 50% (-25) | 0% | 25% | 0% | **11%** | 130.1 | 24 | 88 |
 
 ## What the assists were worth
@@ -49,7 +49,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | orders-api-py | python | nemotron-elastic | 25% | 50% | **+25** | 14→175 | 2→46 |
 | feed-pipeline-java | java | gemma4 | 80% | 0% | **-80** | 18→54 | 14→16 |
 | feed-pipeline-java | java | qwen35 | 40% | 40% | 0 | 69→371 | 6→46 |
-| feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→43 | 16→16 |
+| feed-pipeline-java | java | ternary-bonsai | 0% | 0% | 0 | 35→46 | 16→16 |
 | feed-pipeline-java | java | nemotron-elastic | 0% | 0% | 0 | 9→35 | 4→17 |
 | handles-cli-node | node | gemma4 | 75% | 0% | **-75** | 21→21 | 2→16 |
 | handles-cli-node | node | qwen35 | 75% | 50% | **-25** | 81→241 | 12→38 |
@@ -93,7 +93,7 @@ bought with 15× the calls is not the same result as one bought with fewer
 | feed-pipeline-java | java | qwen35 | BASE | 40% | 6 | 69 | 75.2 | exited |
 | feed-pipeline-java | java | qwen35 | CRIA | 40% | 46 | 371 | 74.3 | milestone-miss-45min |
 | feed-pipeline-java | java | ternary-bonsai | BASE | 0% | 16 | 35 | 38.9 | milestone-miss-15min |
-| feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 43 | 46.6 | milestone-miss-15min |
+| feed-pipeline-java | java | ternary-bonsai | CRIA | 0% | 16 | 46 | 43.1 | milestone-miss-15min |
 | feed-pipeline-java | java | nemotron-elastic | BASE | 0% | 4 | 9 | 134.0 | exited |
 | feed-pipeline-java | java | nemotron-elastic | CRIA | 0% | 17 | 35 | 140.6 | milestone-miss-15min |
 | handles-cli-node | node | gemma4 | BASE | 75% | 2 | 21 | 60.5 | exited |
