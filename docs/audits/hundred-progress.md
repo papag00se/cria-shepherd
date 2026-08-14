@@ -81,14 +81,14 @@ three that should be examined for removal. Nothing to revert.
 
 | fix | verdict | what the walks saw |
 |---|---|---|
-| reasoning logged on unfinished streams | **KEEP — the best fix of the batch** | named helping or decisive in most walks; several findings were only diagnosable because of it. One gap: a killed run still loses its last reasoning |
-| rumination rate change | **KEEP** | guard right 5/5 in the Rust cell, 4/4 in Ruby; aborts down on every cell that ran under it |
-| the p4 task-prompt corrections | **KEEP** | +75, +50, +50 — the three biggest gains in the cycle |
+| reasoning logged on unfinished streams | **KEEP — for observability, not for score** | counted across the walk sections: 6 clear "helped", 4 "did not fire", 6 ambiguous. And every "helped" means it made the WALK possible, not that it moved a run. It is the reason a dozen findings in this document exist. One gap: a killed run still loses its last reasoning |
+| rumination rate change | **KEEP — on the readings, not the counts** | abort RATE went **down on 5 cells and up on 4**, including `rust-toml-cli × nemotron` 0/76 → 5/57. The case for keeping it is that where a walk actually read the aborts they were right 5/5 (Rust) and 4/4 (Ruby) — a reading, not a tally |
+| the p4 task-prompt corrections | **KEEP — but it is a repair, not an advance** | the +75/+50/+50 are real deltas against the previous run, and misleading as causation. `handles-cli-node` scored 4/4 and 3/4 under earlier wording; the **p3** revision crashed it to 0/2/2/1; p4 restored it to 3/4/4/1. gemma4 is still below the 4/4 it held before p3 |
 | derived probe output cap | **CORRECT IT** | this is rank 1. The intent was right and the arithmetic was wrong: 8,500 per command against a 9,000 bound applied to all the commands at once |
 | search inlining | **CORRECT IT** | titles inline was right; the note still ends "the file named above" with no file named above — third cell |
 | PATH oracle | **CORRECT IT** | right idea, `bash -lc` should be `-lic`; misses every version manager |
 | cheap `mvn compile` probe | **CORRECT IT** | helped early in one cell, reported green over a no-op in two others |
-| cached-check age note | **EXAMINE FOR REMOVAL** | "fired in form, dated nothing" — five cells running, never once acted on by a steer author |
+| cached-check age note | **EXAMINE FOR REMOVAL** | counted across the walk sections rather than quoted from one: "never fired" ×5, "fired in form, dated nothing" ×3, "fired, did nothing" ×2, "fired on an empty section" ×1. **Zero positive results anywhere** |
 | verdict tool | **EXAMINE** | fired in a minority of chances; once ended a run cleanly, once malformed its own arguments |
 | completion-judge report framing | **EXAMINE** | mostly nothing; stopped the model damaging working code once, hurt once |
 
