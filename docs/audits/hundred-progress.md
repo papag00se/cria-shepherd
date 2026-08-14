@@ -4,13 +4,13 @@
 is `docs/goals/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which
 rewrites itself after every cell.
 
-**Target: 24 of 24 cells at 100%.** Currently 9.
+**Target: 24 of 24 cells at 100%.** Currently 10.
 
 ---
 
 ## Cycle 1
 
-**Phase: RUN** — started 2026-08-13, cell 19 of 24 in flight. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
+**Phase: RUN** — started 2026-08-13, cell 20 of 24 in flight. Java column complete: 0 / 40 / 0 / 0. Walks of the finished cells run
 alongside it; no fix lands until the run phase ends.
 
 Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.log`
@@ -37,7 +37,7 @@ Driver: `python3 suite/cycle_run.py --start <n>` · log `docs/audits/cycle-run.l
 | 16 | feed-pipeline-java | nemotron-elastic | 0% | 0 | 16 | 66 | never compiled either. One near-miss: it *did* write REVIEW.md — 419 words — but with zero located findings, and the prompt asks for a file name and line number on every issue. Flat against last cycle |
 | 17 | handles-cli-node | gemma4 | 75% | **+75** | 4 | 26 | biggest gain of the cycle, and the fastest cell yet — 26 calls, three and a half minutes. The p4 prompt fix landed: the CLI now prints address, holder and count, which is exactly what the checker asked for and the old wording did not. Only `tests_incl_live` failed — its tests pass with the network blocked, so they are mocked, not live |
 | 18 | handles-cli-node | qwen35 | **100%** | +50 | 24 | 202 | all four green, including the live test — `npm test` passes with the network and fails without it, which is exactly the property the check is asking for |
-| 19 | handles-cli-node | ternary-bonsai | | | | | |
+| 19 | handles-cli-node | ternary-bonsai | **100%** | +50 | 9 | 32 | all four green in 32 calls, live test included. One rumination abort, one gate, nothing else needed |
 | 20 | handles-cli-node | nemotron-elastic | | | | | |
 | 21 | rust-toml-cli | gemma4 | | | | | |
 | 22 | rust-toml-cli | qwen35 | | | | | |
