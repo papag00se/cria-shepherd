@@ -20,6 +20,7 @@ so the timing excludes JVM start-up and the numbers compare like with like.
 """
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -145,9 +146,21 @@ def main() -> None:
     # --- 2: speed, against the seed's own implementation on the same big feed
     big = tmp / "big.csv"
     make_big_feed(big)
-    seed_cp, _ = build(HERE / "seed")
+    # BUILD THE BASELINE IN A COPY, NOT IN THE REPO. `build()` runs `mvn compile` and
+    # `dependency:build-classpath`, both of which WRITE — so pointing it at HERE/"seed" compiled the
+    # reference implementation inside the git working tree on every scoring run. That is how five
+    # build artefacts came to be tracked (target/classes/*.class, maven-status/*.lst,
+    # _verify_cp.txt): they appeared under the author's feet during 0c16f52, whose long commit
+    # message never mentions them, and they have been committed ever since.
+    #
+    # The baseline must be built on THIS machine — that is the whole point of timing it here — but
+    # nothing required it to be built in the tracked tree, and this function already makes temp dirs
+    # two lines above. Scoring a run must not dirty the repo.
+    seed_copy = tmp / "seed-baseline"
+    shutil.copytree(HERE / "seed", seed_copy)
+    seed_cp, _ = build(seed_copy)
     theirs, their_out = (timed_run(ws, their_cp, big) if built else (None, build_detail))
-    mine, _ = (timed_run(HERE / "seed", seed_cp, big) if seed_cp else (None, ""))
+    mine, _ = (timed_run(seed_copy, seed_cp, big) if seed_cp else (None, ""))
     speed_ok, speed_detail = False, "importer did not complete on the large feed"
     if theirs and mine:
         # Correct FIRST: same row count and same money, to 2dp. Fast-because-wrong scores nothing.
