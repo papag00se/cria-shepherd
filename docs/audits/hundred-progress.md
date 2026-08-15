@@ -34,7 +34,8 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 3 | shipping-rates-rb | ternary-bonsai | **20%** | **−60** | 31 | 56 | **cria sent this cell into a wall it built.** Ten `writeproxy.blocked_external` refusals, each one answering "run `bundle install --path vendor/bundle`" — and **there is no `bundle` on this box**. Calls 0037–0057, roughly half the coder budget and the last twenty minutes, went on install attempts that could not succeed. Only the untouched seed tests pass; the README still names one zone and nothing was built. Killed at the 30-minute floor. See below |
 | 4 | shipping-rates-rb | nemotron-elastic | **40%** | **+40** | 45 | 191 | up from zero, and the most informative cell of the cycle so far. The completion judge ran eleven times, named the missing `zone_for` **four times with a written fix**, and the coder was told none of it — then flipped to `satisfied: true` on a claim that is false on disk. Ends 2/5 with deliverable 4 absent and `PER_KILO` missing its `express` entry. See below |
 | 5 | cart-billing-go | gemma4 | **80%** | **−20** | 14 | 32 | four of five green — the rounding fix, `discounts.json` with the fallback, the stderr log line, and a real third-party decimal module imported by non-test source. The one loss is **the seeded `TestSubtotal` deleted from `cart_test.go`**. Not a cria fault, and not laziness either: see the measurement below |
-| 6 | cart-billing-go | qwen35 | *running* | | | | |
+| 6 | cart-billing-go | qwen35 | **100%** | 0 | 6 | 58 | all five green in under six minutes. Held from last cycle. One wheel-spin probe, one gate, three `task_complete` claims each verified |
+| 7 | cart-billing-go | ternary-bonsai | *running* | | | | |
 
 ### MEASURED, NOT BUILT — models delete seeded tests, at 2%
 
