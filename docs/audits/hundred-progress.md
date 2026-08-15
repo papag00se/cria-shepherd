@@ -8,6 +8,35 @@ rewrites itself after every cell.
 
 ---
 
+## Cycle 2 — not yet started
+
+**Phase: FIX (cycle 1's), then RUN.** Thirteen cria changes have landed since cycle 1's run ended and
+none of them has been measured. That is what cycle 2 is for.
+
+### Environment, verified clean 2026-08-14
+
+- **The leaked gems are gone.** `countries-8.1.0` / `unaccent-0.4.0` uninstalled. They had inflated
+  four Ruby rows since 2026-08-10; re-scored with the directory hidden those runs were 1/5, 1/5, 1/5.
+  The untouched seed now scores an honest 0/5.
+- **The Java seed's tracked build output is gone**, and so is the reason it existed — `verify.py`
+  built its speed baseline inside the git tree. It builds a copy now, and `suite/tasks/.gitignore`
+  stops the same class of artefact returning from any seed.
+- Check both before every run phase: `user_install_listing()` and `git status --short suite/tasks`.
+
+### Carried into cycle 2's fix phase
+
+| finding | state |
+|---|---|
+| the periodic satisfaction check fires at drive 80 and almost no run gets there — 14 firings across 24 cells, 3 cells | open, needs a replay before touching |
+| 8 cells got no completion judgement of any kind; their scores were 20/0/0/50/0/0/0/0 | open, same investigation |
+| 12 × HTTP 503 hard-failed instead of retried — the ported table says "switch models", wrong for a single endpoint | open, operator ruling |
+| `loop.py:3279` lets a regex decide alone; `8bdeee2` wired only the satisfaction site | open |
+| `failover.py` — the chain-walk engine never shipped; the docs claim it did | open |
+| six verdict-word readers with divergent strip sets | open, latent — zero occurrences measured |
+| `_verdict` / `_satisfaction_verdict` are the same 60-line algorithm twice | open |
+
+---
+
 ## Cycle 1
 
 **Phase: WALK** — the run phase finished 2026-08-14 02:45, all 24 cells scored.
