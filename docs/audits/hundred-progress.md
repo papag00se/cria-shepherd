@@ -32,7 +32,62 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 1 | shipping-rates-rb | gemma4 | **80%** | **+60** | 32 | 101 | four of five green, and the dead-gem chain that sank this cell last cycle is gone — tests, hidden contract, express zone and the full 8/8 rate table all pass. The one loss is `country_zone_mapping`, and the cause is not a dependency problem: **the model never wrote `Shipping.zone_for` at all.** `lib/shipping/rates.rb` is the workspace's only source file and it contains no `zone_for` and no mention of `countries`/`ISO3166`, while `Gemfile` declares `gem "countries"` and `vendor/bundle` holds the installed gem. It set the dependency up and never used it. Deliverable 4 of 5, simply not attempted |
 | 2 | shipping-rates-rb | qwen35 | **40%** | **−60** | 9 | 88 | **cria killed this cell.** The run ended on six consecutive HTTP 400s against a 259 KB briefing body, 67% of which is the `vendor/bundle` gem tree. Two checks were still red when it died, from a model defect reproduced cold: `Country[...]` inside `module Shipping` resolves to `Shipping::Country` → `NameError`, and the fix (`ISO3166::Country`) was in the doc cria had just size-gated at 9,645 bytes against a 9,000 bound. See below |
 | 3 | shipping-rates-rb | ternary-bonsai | **20%** | **−60** | 31 | 56 | **cria sent this cell into a wall it built.** Ten `writeproxy.blocked_external` refusals, each one answering "run `bundle install --path vendor/bundle`" — and **there is no `bundle` on this box**. Calls 0037–0057, roughly half the coder budget and the last twenty minutes, went on install attempts that could not succeed. Only the untouched seed tests pass; the README still names one zone and nothing was built. Killed at the 30-minute floor. See below |
-| 4 | shipping-rates-rb | nemotron-elastic | *running* | | | | |
+| 4 | shipping-rates-rb | nemotron-elastic | **40%** | **+40** | 45 | 191 | up from zero, and the most informative cell of the cycle so far. The completion judge ran eleven times, named the missing `zone_for` **four times with a written fix**, and the coder was told none of it — then flipped to `satisfied: true` on a claim that is false on disk. Ends 2/5 with deliverable 4 absent and `PER_KILO` missing its `express` entry. See below |
+| 5 | cart-billing-go | gemma4 | *running* | | | | |
+
+### RANK 1 — the judge knew, four times, and the coder was never told
+
+This is the c1-13 question with fresh bytes behind it, and it is no longer abstract. One cell,
+`shipping-rates-rb × nemotron-elastic`, eleven completion judgements, read in full from the captured
+responses.
+
+**Four correct NOT-satisfied verdicts, each naming the missing deliverable by name:**
+
+| call | verdict | what it said |
+|---|---|---|
+| 0041 | `satisfied: false` | "…the **`zone_for` method for two-letter country codes**, EU-membership detection via a third-party gem, and the new tests for these features have not been implemented yet" — with a `proposed_fix` spelling out the mapping |
+| 0059 | `satisfied: false` | "the express service…, the **`Shipping.zone_for(code)` lookup**, the README rate table… are all missing or incomplete" |
+| 0072 | `satisfied: false` | enumerated 1–5, item (2) is **`Shipping.zone_for(code)`… has not been implemented** |
+| 0086 | `satisfied: false` | "the Counties gem used for EU detection has not been added…, so **`require "countries"` will fail**" |
+
+Every one of those is specific, correct, actionable, and was **logged only**. `_periodic_satisfaction`
+may end a session, never steer it, so none of it reached the coder.
+
+**Then the judge flipped, and it was wrong:**
+
+> `0090` — `"satisfied": true`, "All five required changes are implemented: … **`Shipping.zone_for`
+> using the third-party Countries gem for EU detection** …"
+
+That is false on disk. Reproduced cold from the archived workspace:
+
+```
+-e:1:in `<main>': undefined method `zone_for' for Shipping:Module (NoMethodError)
+```
+
+`zone_for` does not exist. Neither does `PER_KILO["express"]`, which is why `express_zone` fails.
+
+**The brake held, for the wrong reason.** `0091-satisfaction-confirm` returned `consistent: false`
+and stopped the false completion — the fail-closed design working. But its stated reason is itself a
+false fact about the task:
+
+> "The claimed completion mentions adding tests and a README rate table, **which are not listed as
+> required changes in the task**."
+
+They are listed. "Add tests for it" is part of item 2 and "Add a README rate table" is item 3 of the
+five numbered changes. The right answer was reached on a wrong premise.
+
+**So the mechanism failed in both directions in one run.** It computed the truth four times and threw
+it away; it then asserted the opposite and was caught by a check that misread the task. What
+survived is a cell that ends at 2 of 5 with the judge having known the answer since call 0041.
+
+**This is the ruling the operator still owes.** The c1-13 note asked whether a NOT-satisfied verdict
+naming a *specific missing deliverable* is still "judgment" in the sense the no-steer rule meant.
+Four verdicts here name a Ruby method by name and carry a written fix. The timer objection — "steering
+off a clock is noise on a clock" — does not obviously cover a verdict whose content is a named,
+checkable absence.
+
+**Not changed. Not proposed as a change.** Recorded with the bytes so the ruling can be made on
+evidence rather than on the shape of the rule.
 
 ### RANK 1 — cria's refusal prescribes a command that does not exist on this machine
 
