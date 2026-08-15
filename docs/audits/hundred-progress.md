@@ -29,7 +29,78 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 
 | # | task | model | score | Δ pts | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
-| 1 | shipping-rates-rb | gemma4 | *running* | | | | |
+| 1 | shipping-rates-rb | gemma4 | **80%** | **+60** | 32 | 101 | four of five green, and the dead-gem chain that sank this cell last cycle is gone — tests, hidden contract, express zone and the full 8/8 rate table all pass. The one loss is `country_zone_mapping`, and the cause is not a dependency problem: **the model never wrote `Shipping.zone_for` at all.** `lib/shipping/rates.rb` is the workspace's only source file and it contains no `zone_for` and no mention of `countries`/`ISO3166`, while `Gemfile` declares `gem "countries"` and `vendor/bundle` holds the installed gem. It set the dependency up and never used it. Deliverable 4 of 5, simply not attempted |
+| 2 | shipping-rates-rb | qwen35 | *running* | | | | |
+
+### Cell 1 read in full — one refutation, and the 9,000-byte question answered the other way
+
+#### REFUTED before it was written down — "cria's bundler route cost the check"
+
+The candidate was clean and wrong, and it is worth recording because it nearly went in the ledger.
+`dirguard._INSTALL_REMEDY` prefers `gem_bundler` (`bundle3.2 install --path vendor/bundle`) over
+`gem_direct`, and its own comment at `dirguard.py:184-186` names the failure mode — "installing to
+vendor/bundle without putting it on the load path is the failure that cost a 100% ruby run." The
+cell then lost exactly the check that reads third-party requires. The chain wrote itself.
+
+The refutation took one command: open the archived workspace. `lib/shipping/rates.rb` is its only
+source file, and it has **no `zone_for` and no mention of `countries` or `ISO3166` anywhere outside
+`vendor/`**. The load path cannot have cost a point for code that was never written. Deliverable 4
+was not attempted; the Gemfile and the installed gem are set-up with nothing built on top of them.
+
+What the walk still has to answer is the 100% question: what in the context would have let the model
+notice it had skipped one of five numbered deliverables.
+
+#### DEMONSTRATED — the harness really does truncate, and cycle 1's "zero markers" was wrong
+
+`harness.truncated_a_result` — the observer that landed after cycle 1 precisely to stop cria
+believing a remembered number — fired on the first cell of this cycle. Cycle 1 recorded "grep 50
+sessions, both forms: **zero**" and concluded the 9,000-byte bound was "guarding a mechanism nobody
+can currently demonstrate." It is now demonstrated.
+
+Read, not counted. Two distinct cut results in cell 1:
+
+| | role | bytes | cut |
+|---|---|---:|---|
+| first, call 0064 | `tool` | 10,207 | `…436 tokens truncated…` |
+| second, call 0102 | `user` | 253,790 | same marker |
+
+The first, opened and read: a 142-line `vendor/bundle/gems/countries-8.1.0/**` file listing, cut in
+the middle of the translation YAMLs. Nothing of value was lost — it is a directory listing of
+`countries-ne.yaml`, `countries-ru.yaml`, `countries-ab.yaml` and 130 more. So the policy is real
+**and** the one instance in this cell destroyed nothing. Both halves matter: the bound's premise is
+true, and this is not yet evidence that the bound is earning its cost.
+
+#### The observer over-reports, by the rule it exists to serve
+
+`assists` shows `harness.truncated_a_result: 34`. There were **two** cut results. `note_harness_cuts`
+runs from `represent_inbound` on every inbound turn and re-scans the whole message list, so one cut
+already in history is counted again on every later turn — 23 copies of the first, 12 of the second.
+
+That is rule 12 — surface a metric from the authoritative event, never a re-count — broken inside the
+instrument built to settle a rule-5b argument. Anyone reading `assists` gets 17× the real number, in
+the direction that argues for the bound. Fix phase, tier 2: count a cut once, keyed on the result it
+belongs to.
+
+#### CONFIRMED, third occurrence — the prompt is half gem tree
+
+Cycle 1's ledger item 10 recorded a 167 KB briefing against a 48 K window, 46% of it the gem tree
+cria told the coder to create. Cell 1 of cycle 2, measured on the captured body:
+
+- **253,790 bytes**, 3,834 lines
+- **1,810 lines mention `vendor/` — 47% of the lines, 166,416 bytes**
+- top prefixes are `vendor/bundle/doc/countries-8.1.0/ri/...` and
+  `vendor/bundle/gems/countries-8.1.0/lib/countries/data/...`
+
+The two decisions that produce this are both deliberate and both documented, and the fix reverts
+neither. `groundtruth.BUILD_ARTIFACT_DIRS` excludes `vendor` on purpose — "real source directories in
+some projects and whose cost of being wrong is hiding a deliverable" — and `workspace_inventory` is
+complete on purpose — "a bounded list weakens the one clause that makes it decisive."
+
+The third fact neither decision had: **cria itself told the coder to create this tree.**
+`dirguard._INSTALL_REMEDY`'s ruby route prescribes `--path vendor/bundle`. A package manager's
+install prefix that cria named in its own advice is not the coder's source, and cria knows it is not,
+because cria chose the path. That is the seam — not "exclude vendor", which would hide a real
+deliverable in a PHP or vendored-Go repo.
 
 ### Run-phase investigations — the carried items, answered read-only
 
