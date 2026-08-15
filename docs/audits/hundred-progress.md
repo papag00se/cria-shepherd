@@ -39,7 +39,62 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 8 | cart-billing-go | nemotron-elastic | 0% | 0 | 31 | 94 | flat at zero, **but the cria fault that caused last cycle's zero is fixed and verified.** Last cycle `go build ./...` compiled cria's own spilled fetch, saved as `…decimal.go`. This cycle every file in `tmp/read-only/` ends `.txt` — 8 of 8, zero non-`.txt` — and the build never sees them. The new cause is the model's: `cart_test.go:46` calls `got.String()` while `cart.go` still returns `float64`, so it rewrote the test to a decimal API and never changed the implementation. `decimal_money_library` says it plainly — declared in `go.mod`, "imported by non-test source: none" |
 | 9 | orders-api-py | gemma4 | **100%** | 0 | 38 | 133 | all four green, held. The route returns alice's items and a total, the migration keeps old rows readable and adds both the status column and the customer index, the integration tests make real HTTP calls, and the injection is closed with the table intact. Two wheel-spin diagnoses and twelve gate sweeps along the way |
 | 10 | orders-api-py | qwen35 | **100%** | **+50** | 10 | 78 | all four green in under ten minutes. The migration defect that halved this cell last cycle — `CREATE TABLE IF NOT EXISTS` as a no-op against the pre-migration database, then `UPDATE orders SET status` on a column never added — is gone; old rows read, the status column and customer index are both there |
-| 11 | orders-api-py | ternary-bonsai | *running* | | | | |
+| 11 | orders-api-py | ternary-bonsai | 50% | 0 | 46 | 71 | flat, and it **went backwards while running**: 3 of 4 at the 15-minute mark, 3 at 30, **2 at 45**. The route and the migration both pass; the integration suite ends 2 failed and the injection probe cannot get a normal lookup through. Along the way cria's gate deleted the task's own `orders.db` — see below, and it did **not** cost the score |
+| 12 | orders-api-py | nemotron-elastic | *running* | | | | |
+
+### TIER 2 — "my probe created it" is not the same as "it is mine to delete"
+
+Cycle 1 filed this as "the litter sweep deletes untracked build output — wrong as *leave the
+workspace as I found it*". Read properly, the mechanism is more careful than that and the problem is
+more interesting.
+
+`probegate.sweep_litter` does not delete untracked files. It deletes the **difference** in git's `??`
+set across the gate's own probe run — "the untracked files the gate's OWN probes created" — and it is
+bounded three ways (git must call it untracked, it must resolve inside the workspace, any failure is
+skipped). Nothing guesses.
+
+**The assumption underneath it is the bug.** cria's probe *is the project's own build and test
+command* (#10 — verify by doing). So anything those commands legitimately produce is attributed to
+cria's probe and removed.
+
+Counted across every log on disk, keyed on the emitted event:
+
+| | |
+|---|---:|
+| gate sweeps logged | 121 |
+| non-build paths swept | **18, across 9 sessions** |
+
+and the paths themselves say it:
+
+| path | times |
+|---|---:|
+| `orders.db` — the Python task's live database | **12** |
+| `Cargo.lock` — the Rust project's lockfile | **5** |
+| `target/` — genuinely build output | 1 |
+
+*(`sample` is a sample; 18 is a floor, not a count.)*
+
+**On cell 11, verified in the log:** `20:25:53`, session `01a00711`, four paths swept, `orders.db`
+among them, ten minutes into the run. `git status` in the archived workspace confirms `?? orders.db`
+— the seed does not ship it, `orders/db.py` creates it, and the gate's own test run is what made it
+appear.
+
+**And it did not cost the score — checked, because the chain was too neat to trust.**
+`verify.py::Service.__enter__` stashes any existing `orders.db` and installs its own prepared
+database at that exact path (lines 79–81), *because* the seed reads `orders.db` relative to cwd. So
+the final checks never see the model's database. What the deletion cost is the model's own testing,
+mid-run, against a file that vanished under it.
+
+**Fix at A, and it reverts nothing.** The sweep's question should not be "did this appear while my
+probe ran" but "did *cria's own composed command* write this". cria knows which commands it composed
+and which are the project's — the gate plan holds both. A probe that runs `cargo test` produces
+cargo's artifacts, and those are the project's, not cria's.
+
+**Ranked 2, not 1**, because no cell loss is demonstrated: the Python verifier is immune by
+construction and cargo regenerates its lockfile. It is on the list because deleting a file the coder
+is actively using is a footgun whether or not this quarter's verifier happens to be insulated from
+it — and because `Cargo.lock` deletion changes which crate versions resolve, in a column where two
+of four models never built.
 
 ### REFUTED — the 305 KB of raw HTML in the workspace is not cria's doing
 
