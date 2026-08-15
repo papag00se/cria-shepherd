@@ -36,7 +36,36 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 5 | cart-billing-go | gemma4 | **80%** | **−20** | 14 | 32 | four of five green — the rounding fix, `discounts.json` with the fallback, the stderr log line, and a real third-party decimal module imported by non-test source. The one loss is **the seeded `TestSubtotal` deleted from `cart_test.go`**. Not a cria fault, and not laziness either: see the measurement below |
 | 6 | cart-billing-go | qwen35 | **100%** | 0 | 6 | 58 | all five green in under six minutes. Held from last cycle. One wheel-spin probe, one gate, three `task_complete` claims each verified |
 | 7 | cart-billing-go | ternary-bonsai | **100%** | 0 | 34 | 75 | all five green, held from last cycle. Ten `writeproxy.blocked_external` refusals here too — and unlike the Ruby column it cost nothing, because `go get` records the dependency in `go.mod` project-locally and never needs a machine-wide install. The same guard, the same count, two different outcomes: the Ruby remedy is the broken half |
-| 8 | cart-billing-go | nemotron-elastic | *running* | | | | |
+| 8 | cart-billing-go | nemotron-elastic | 0% | 0 | 31 | 94 | flat at zero, **but the cria fault that caused last cycle's zero is fixed and verified.** Last cycle `go build ./...` compiled cria's own spilled fetch, saved as `…decimal.go`. This cycle every file in `tmp/read-only/` ends `.txt` — 8 of 8, zero non-`.txt` — and the build never sees them. The new cause is the model's: `cart_test.go:46` calls `got.String()` while `cart.go` still returns `float64`, so it rewrote the test to a decimal API and never changed the implementation. `decimal_money_library` says it plainly — declared in `go.mod`, "imported by non-test source: none" |
+| 9 | orders-api-py | gemma4 | *running* | | | | |
+
+### REFUTED — the 305 KB of raw HTML in the workspace is not cria's doing
+
+Four of the 76 spilled files across every archived workspace are raw `<!DOCTYPE html>` — 305 KB,
+301 KB, 51 KB, 50 KB, 708 KB between them, all on `nemotron-elastic`, across both Go and Ruby and
+both cycles. One of them is named `…_README.md.txt` and is a GitHub error page. It looked like
+cria's HTML-to-text extraction failing and falling back to raw markup, which would be a fallback
+(#4) producing a mislabelled file (#5b).
+
+It is not. Every one of them was requested with `"raw": true` **by the model**:
+
+```
+{"url":"https://github.com/guyp/decimal/blob/main/README.md","raw":true}
+{"url":"https://rubygems.org/gems/countries","raw":true}
+```
+
+`webfetch.py:151` honours that flag exactly as its docstring says it must — "the caller wants the
+literal source… `raw` is about the bytes the model reads." Flattening it would be cria overriding an
+explicit instruction. No fault, no fix.
+
+What the same read did turn up, deduplicated by `tool_call` id rather than counted across prompt
+copies: cell 4 issued **10 distinct fetches, three of them the same `rubygems.org/gems/countries`
+URL with `raw: true`** — 51 KB of markup, three times. The durable fetch ledger exists to tell the
+coder it already has that. Worth a look in the walk; not ranked on three occurrences.
+
+*(Method note: the first count of these fetches said 97. That was the same call re-counted once per
+prompt it appeared in — the identical mistake the truncation observer makes, made by hand, one
+subsection after writing it up. Dedupe by call id, always.)*
 
 ### MEASURED, NOT BUILT — models delete seeded tests, at 2%
 
