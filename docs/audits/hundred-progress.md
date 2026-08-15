@@ -125,6 +125,39 @@ Corroborating: **`route.retry_same`, `route.failover` and `upstream.retry` have 
 zero occurrences in every log on disk.** So even the retry-once-on-timeout that *is* wired has never
 actually fired in production.
 
+#### 5. CONFIRMED, but the carried note named the wrong function
+
+The carried line read "`loop.py:3279` lets a regex decide alone; `8bdeee2` wired only the
+satisfaction site." Half right, and the half that is wrong changes what gets fixed.
+
+`verdict_from_reasoning` — the function at that line number today — **is** wired at both sites.
+`loop.py:3413` builds `recover` from `self._ctx.reasoner_role` and hands it to both calls at 3417 and
+3418, exactly as `8bdeee2`'s message claims; the satisfaction site does the same at 464–469. Nothing
+to fix there.
+
+The real asymmetry is its neighbour, five lines down:
+
+| site | call |
+|---|---|
+| satisfaction, `loop.py:1546` | `_claims_impossible_action(obj, rlog, "satisfaction", fab_ask)` |
+| step critic, `loop.py:3284` | `_claims_impossible_action(obj, rlog, "critic")` |
+
+The `ask` argument is missing at the critic. `_claims_impossible_action`'s own docstring sets the
+contract — "TRIGGER, THEN JUDGE… **With no reasoner the trigger decides alone**, exactly as before" —
+so the degraded mode is deliberate, and reserved for having no reasoner. At the critic site a
+reasoner is available and simply is not passed, so the mode meant for a missing reasoner runs with
+one present. When `_JUDGE_ACTION_CLAIM` hits, the regex discards the verdict on its own; the
+docstring names the false hits it cannot separate ("I ran the tests" vs "I ran through the
+checklist"), and the cost of each is a good verdict thrown away and a retry burned.
+
+**Prevalence: zero.** `loop.verdict_fabricated_action` has never been emitted — not once, at either
+phase, in every log on disk. Denominator stated honestly: the logs only reach back to 2026-08-12,
+four days, but that window contains cycle 1's entire 24-cell run, and the critic path was busy in it
+(57 `loop.step_done`, 10 `loop.step_incomplete`).
+
+So: a real inconsistency, a one-argument fix, and **tier 4 by impact** — recorded, not scheduled
+above anything that actually cost a check (#15).
+
 ### Environment, verified clean 2026-08-14
 
 - **The leaked gems are gone.** `countries-8.1.0` / `unaccent-0.4.0` uninstalled. They had inflated
