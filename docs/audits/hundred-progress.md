@@ -31,6 +31,100 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 |---:|---|---|---:|---:|---:|---:|---|
 | 1 | shipping-rates-rb | gemma4 | *running* | | | | |
 
+### Run-phase investigations — the carried items, answered read-only
+
+The run phase forbids touching `cria/`, so the carried items that were filed "needs a replay before
+touching" got their read-only half done while cell 1 ran. Three of the seven now have answers, and
+two of those answers are **refutations**.
+
+#### 1. REFUTED — the 12 × HTTP 503 cost zero cells
+
+The carried line said "12 × HTTP 503 hard-failed instead of retried." The count is right and the
+consequence is wrong.
+
+Every 503 in every log is in one of three bursts, each a few seconds long: 08-12 22:58:00–06,
+08-14 03:46:36–42, 08-14 03:51:00–03. Read in full, each burst has the same shape — `server.stop
+{"reason": "interrupt"}`, then a handful of turns from a session that was already running, then
+`server.stop` again. That is the campaign driver restarting `cria.service` between cells while a
+**leftover harness session from the previous cell** keeps POSTing. `connection refused` comes first
+(the endpoint is down), then 503 (llama.cpp is up but still loading the model).
+
+The check that settles it: **no scored run's `capture_dir` matches any of those three session ids**
+(`019ff802`, `019ffe31`, `019ffe61`), across all 24 rows. They produced no row because they were not
+cells. Cost to the campaign: zero checks, zero cells.
+
+What is still true, and is now correctly ranked as cosmetic: `classify_failure` maps 503 to
+`MODEL_UNAVAILABLE`, whose only action is walk-the-chain, and with the single-endpoint chain
+`("upstream",)` that walk immediately returns `ChainExhausted`, so `upstream.chat` re-raises. A
+transient "model is loading" is not retried. Worth fixing on its merits; not worth a tier.
+
+#### 2. REFUTED — the context-window fallback is not a leak
+
+Those same bursts show `context.window {"source": "fallback", "n_ctx": 8192}` where the real window
+is 49152, and the floor then drops turns against the smaller number. That looks like a transient
+error silently shrinking the window for the life of the process. It is not.
+`upstream._resolve_window` sets `_window_final` **only on success**, re-probes on every call until
+`_MAX_PROPS_ATTEMPTS`, and then keeps re-probing every `_PROPS_RETRY_EVERY`. The docstring names the
+incident it was built for. Self-healing, bounded, no fix.
+
+#### 3. CONFIRMED and quantified — the completion judge is absent exactly where it is needed
+
+This is the real one, and it merges two carried items that turn out to be one root.
+
+`_periodic_satisfaction` is the only completion judgement that does **not** need the coder to claim
+done. It fires on a drive counter: `satisfaction_check_start = 80`, `every = 20` (this box's
+`cria.toml`; the code default is 100/25).
+
+Counted from the authoritative phase counts on all 24 cycle-1 rows:
+
+| | cells |
+|---|---:|
+| reached the drive-80 threshold | **5 of 24** |
+| never reached it | **19 of 24** |
+| scored 0–50% | 11 |
+| …of those, reached the threshold | **3** |
+
+And the judgement census, counted from the events rather than inferred — `loop.satisfaction_check`,
+`loop.done_critic`, `loop.done`, `loop.done_unverified`, `loop.satisfaction_confirm`,
+`loop.satisfaction_failclosed`, `loop.done_confirm`, per session:
+
+**Seven cells got no completion judgement of any kind.** Their scores: 0, 0, 0, 0, 0, 20%, 50%.
+Every single cell that got no judgement is a cell that failed. Every cell that scored 100% got one.
+*(The carried note said eight cells; seven is what the events say.)*
+
+The reason the threshold is 80 is written down. `27512a9` built the check for a session that
+**finished the work and could not stop** — "176+ calls on a done task" — and for that purpose a late
+first check is correct; you do not ask "is it done?" at drive 5. `d4308bc` made the cadence tunable
+because "different models spiral at different rates."
+
+So the reason is still true *for the problem it was built for*, and it is the wrong shape for the
+problem the campaign found. A → B → C, in plain words:
+
+- **A** — the trigger is a drive counter, a proxy for "this session has gone on a long time."
+- **B** — a run that is going badly is usually a *short* run (killed at a 15-minute milestone floor),
+  so it never reaches the counter.
+- **C** — cria forms no opinion at all about whether the task is done, on precisely the runs where
+  that opinion is the thing missing.
+
+**Not fixed in this cycle, deliberately.** Two reasons. One code state per cycle. And the experiment
+that would justify a change has to run against the model, which is busy running cells — replaying
+`judge_satisfaction` now would contend for the same GPU and corrupt the timings the cycle is
+measuring. The fix phase runs it: replay the 19 short cells' captured evidence at drives 20/40/60 and
+count how often the judge would have said *satisfied* on a red run. If that number is not ~zero, the
+threshold is load-bearing as a false-completion guard (#13) and must not move.
+
+#### 4. CONFIRMED — the failover chain-walk never shipped
+
+`failover.run`, `Attempt`, `NextInChain`, `ChainExhausted` and `_walk` have **zero production call
+sites**; `grep` finds `fo.run` only in `tests/test_failover.py`. The one live use is
+`upstream.py:438`, calling `decide_action` with a one-element chain to get retry-once-on-timeout.
+The module docstring advertises "a small buffered `run` executor that drives them," which is true of
+the file and not of the running system.
+
+Corroborating: **`route.retry_same`, `route.failover` and `upstream.retry` have never been emitted —
+zero occurrences in every log on disk.** So even the retry-once-on-timeout that *is* wired has never
+actually fired in production.
+
 ### Environment, verified clean 2026-08-14
 
 - **The leaked gems are gone.** `countries-8.1.0` / `unaccent-0.4.0` uninstalled. They had inflated
