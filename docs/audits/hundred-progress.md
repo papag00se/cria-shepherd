@@ -37,7 +37,8 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 6 | cart-billing-go | qwen35 | **100%** | 0 | 6 | 58 | all five green in under six minutes. Held from last cycle. One wheel-spin probe, one gate, three `task_complete` claims each verified |
 | 7 | cart-billing-go | ternary-bonsai | **100%** | 0 | 34 | 75 | all five green, held from last cycle. Ten `writeproxy.blocked_external` refusals here too — and unlike the Ruby column it cost nothing, because `go get` records the dependency in `go.mod` project-locally and never needs a machine-wide install. The same guard, the same count, two different outcomes: the Ruby remedy is the broken half |
 | 8 | cart-billing-go | nemotron-elastic | 0% | 0 | 31 | 94 | flat at zero, **but the cria fault that caused last cycle's zero is fixed and verified.** Last cycle `go build ./...` compiled cria's own spilled fetch, saved as `…decimal.go`. This cycle every file in `tmp/read-only/` ends `.txt` — 8 of 8, zero non-`.txt` — and the build never sees them. The new cause is the model's: `cart_test.go:46` calls `got.String()` while `cart.go` still returns `float64`, so it rewrote the test to a decimal API and never changed the implementation. `decimal_money_library` says it plainly — declared in `go.mod`, "imported by non-test source: none" |
-| 9 | orders-api-py | gemma4 | *running* | | | | |
+| 9 | orders-api-py | gemma4 | **100%** | 0 | 38 | 133 | all four green, held. The route returns alice's items and a total, the migration keeps old rows readable and adds both the status column and the customer index, the integration tests make real HTTP calls, and the injection is closed with the table intact. Two wheel-spin diagnoses and twelve gate sweeps along the way |
+| 10 | orders-api-py | qwen35 | *running* | | | | |
 
 ### REFUTED — the 305 KB of raw HTML in the workspace is not cria's doing
 
