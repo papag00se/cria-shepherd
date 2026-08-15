@@ -1695,3 +1695,202 @@ Recorded here because it should govern the next fix phase, not just this one.
   on **routing and position** — whether a second copy of the fact exists elsewhere in the context —
   not on severity. That argues for fixing them at source, never for adding a compensating assist.
 - The safe direction is REMOVE (#1). c1-24 is the first candidate and there will be others.
+
+---
+
+# Cycle 2 (c2) — findings from the live run
+
+Folded in as each cell landed rather than in a batch at the end. Ruby, Go and Python columns
+complete (cells 1–12); Java, Node and Rust still to run. Every entry below was read from the
+captured bodies or the structured events, and several were **refuted** by the experiment that could
+have refuted them — those are recorded too, because a refutation is a result.
+
+## Tier 1 (c2) — broke working code or killed runs
+
+### c2-1. The context floor is not a fit guarantee on a single oversized message
+
+- **Occurrences:** 3 bodies over the window, 2 of them fatal · **Languages:** 1 (ruby) · **Models:** 2 (gemma4, qwen35)
+- **Fix belongs at:** A (the floor's levers) — independent of c2-2
+- **Evidence:** `shipping-rates-rb × qwen35`, capture `0100-proxy.json`, 2026-08-15 16:43:38–45
+
+*Chain.* the harness asks for a compaction briefing -> cria composes it as ONE user message of
+259,474 bytes -> the floor's three levers all work at message granularity and there are two messages
+and no tools -> the floor completes having changed nothing -> the server rejects the body six times
+and the session ends with two checks red.
+
+*What happens.* `contextfloor` can bound the tool schema, reduce oversized tool OUTPUTS, and drop
+whole oldest TURNS. A body of `n_messages: 2` with `n_tools: 0` and no tool messages offers none of
+those a grip. Twelve consecutive floor and refit events log `msg_before=65761 msg_after=65761
+turns_dropped=0 outputs_reduced=0`. `context.refit` records the server's own count —
+`real: 100131` against `n_ctx: 49152` — and cria re-sends the same message tokens anyway.
+
+*Worst example.* Six `HTTP Error 400: Bad Request` in seven seconds, then the run is over. The same
+shape killed cycle 1's cell 1 at 167 KB with twelve rejections, and survived at 253 KB on this
+cycle's cell 1.
+
+*Realised cost.* One cell taken from 100% to 40%; one cell in cycle 1 killed outright.
+
+*Proposed fix.* `docs/principles.md` #5 calls the floor "the ONE lossless-first place" that
+guarantees the body fits. Either the floor gains a lever on a single oversized message, or it stops
+claiming a guarantee it cannot keep and says so on the way out — a silent no-op that ends in a 400 is
+the worst of the three options. Note the counter-nuance: this is a prompt **cria composed**, so
+bounding it breaks no never-truncate rule (#5's own carve-out).
+
+### c2-2. cria's install refusal prescribes a binary this machine does not have
+
+- **Occurrences:** 10 refusals in one cell · **Languages:** 1 (ruby, but the mechanism is per-ecosystem) · **Models:** 1 measured
+- **Fix belongs at:** A (`dirguard._tool_present` knows the real name; the sentence never receives it)
+- **Evidence:** `shipping-rates-rb × ternary-bonsai`; `which bundle` → nothing, `/usr/bin/bundle3.2` exists
+
+*Chain.* `_tool_present("bundle")` returns True because `_versioned_variant` finds `bundle3.2` ->
+the `gem_bundler` route wins selection -> `prompts/install_remedy.txt:20` emits the hardcoded literal
+`bundle install --path vendor/bundle` -> the coder runs a command that does not exist, ten times.
+
+*What happens.* The versioned-name discovery was added precisely so a route would not be offered
+that the box cannot take. It fixed the half that CHOOSES and never reached the half that WRITES. The
+prompt file's own header records the original incident and the rule it broke (#5b), directly above
+the line that still breaks it.
+
+*Worst example.* Calls 0037–0057 are one continuous install fight: `--path vendor/bundle`, then
+`--user-dir ~/.rubygems`, then `--user-dir vendor/bundle` (not valid gem syntax), then
+`which bundler`, then curling the `.gem` and the `bundler` gem down by hand. `bundle3.2` is never
+tried, because nothing ever names it.
+
+*Realised cost.* Roughly half the coder budget and the last twenty minutes of a 30-minute run.
+80% → 20%.
+
+*Proposed fix.* Render the discovered binary into the sentence. Corroborating evidence that the
+guard itself is sound: `cart-billing-go × ternary-bonsai` took the SAME ten `blocked_external`
+refusals and scored 100%, because `go get` is project-local and the Go remedy names a command that
+works.
+
+### c2-3. The completion judge names the missing deliverable and the coder is never told
+
+- **Occurrences:** 4 verdicts in one cell, each naming the same absent method · **Languages:** 1 measured · **Models:** 1 measured
+- **Fix belongs at:** an operator ruling, not a code change — carried from c1-13
+- **Evidence:** `shipping-rates-rb × nemotron-elastic`, satisfaction responses 0041 / 0059 / 0072 / 0086 / 0090 / 0091
+
+*Chain.* `_periodic_satisfaction` may END a session but never STEER it -> a judge that computes a
+specific, checkable absence has nowhere to put it -> the coder finishes the run without it.
+
+*What happens.* Four `satisfied: false` verdicts each name `Shipping.zone_for` as not implemented and
+each carries a written `proposed_fix`. All logged only. The judge then returns `satisfied: true`
+asserting `zone_for` exists — false on disk, reproduced cold as
+`undefined method 'zone_for' for Shipping:Module`. The `satisfaction-confirm` brake catches it
+(`consistent: false`), on a stated reason that is itself wrong: it claims tests and a README "are not
+listed as required changes", and they are items 2 and 3 of five.
+
+*Realised cost.* Cell ends 2 of 4 with the answer known since call 0041. Cycle 1 recorded the same
+shape on `feed-pipeline-java × qwen35`, where the missed deliverable was a REVIEW.md worth 20 points
+and needing sixty words.
+
+*Proposed fix.* None proposed. The c1-13 note asks whether a NOT-satisfied verdict naming a
+**specific missing deliverable** is still "judgment" in the sense the no-steer rule meant. The
+timer objection — steering off a clock is noise on a clock — does not obviously cover a verdict whose
+content is a named, checkable absence. Recorded with the bytes so the ruling is made on evidence.
+
+### c2-4. The only coder-independent completion check is out of reach on the runs that need it
+
+- **Occurrences:** 19 of 24 cells never reach the trigger · **Languages:** all 6 · **Models:** all 4
+- **Fix belongs at:** A (the trigger is a drive counter)
+- **Evidence:** counted on all 24 cycle-1 rows from `phases`, and on the judgement events per session
+
+*Chain.* the trigger is `drive_count >= satisfaction_check_start` (80 on this box, 100 in code) -> a
+run that is going badly is usually a SHORT run, killed at a 15-minute milestone floor -> it never
+reaches the counter -> cria forms no opinion at all about whether the task is done, on precisely the
+runs where that opinion is what is missing.
+
+*What happens.* Five of twenty-four cells reached the threshold. Of the eleven cells scoring 0–50%,
+three did. Seven cells got **no completion judgement of any kind** — scores 0, 0, 0, 0, 0, 20%, 50%.
+Every cell with no judgement failed; every cell at 100% had one.
+
+*Why it is 80.* Written down and still true for the problem it was built for. `27512a9` built the
+check for a session that "finished the work but never STOPS" — 176+ calls on a done task — and a late
+first check is right for that. `d4308bc` made the cadence tunable because models spiral at different
+rates. The reason is sound and the shape is wrong for the second problem the campaign found.
+
+*Proposed fix.* Not yet. The experiment that would justify moving it must run first: replay
+`judge_satisfaction` against the captured evidence of the 19 short cells at drives 20/40/60 and count
+how often it would have said SATISFIED on a red run. If that number is not ~zero the threshold is
+load-bearing as a false-completion guard (#13) and must not move. Deferred out of the run phase
+because the replay needs the GPU the cells are using.
+
+## Tier 2 (c2) — lost checks or corrupted the record
+
+### c2-5. "My probe created it" is not "it is mine to delete"
+
+- **Occurrences:** 18 non-build paths across 9 sessions, from 121 sweeps · **Languages:** 2 (python, rust) · **Models:** several
+- **Fix belongs at:** A (the sweep's question)
+
+*Chain.* the gate's ground truth is the project's own build and test command (#10) -> those commands
+legitimately create durable project artifacts -> the before/after diff on git's `??` set attributes
+them to cria's probe -> cria deletes a file the project needs.
+
+*What happens.* `probegate.sweep_litter` is careful and bounded three ways, and the assumption
+underneath it is what fails. Swept: `orders.db` ×12 (the Python task's live database),
+**`Cargo.lock` ×5** (the Rust lockfile), `target/` ×1 (genuinely build output). `sample` is a
+sample, so 18 is a floor.
+
+*Refuted as a score cause, on the one cell where it was checked.*
+`orders-api-py::verify.py::Service.__enter__` stashes any existing `orders.db` and installs its own
+prepared database at that path, so the final checks never see the model's. What the deletion cost is
+the model's own testing, mid-run, against a file that vanished under it.
+
+*Proposed fix.* Ask "did cria's OWN composed command write this", not "did this appear while my
+probe ran". The gate plan holds both sets of commands. Ranked 2 because no cell loss is demonstrated
+— but `Cargo.lock` deletion changes which crate versions resolve, in a column where two of four
+models never built.
+
+### c2-6. The truncation observer re-counts, in the report that argues for the bound
+
+- **Occurrences:** 34 events for 2 real cuts in one cell; 27 and 13 in two others · **Languages:** 2 · **Models:** 3
+- **Fix belongs at:** A (`note_harness_cuts` re-scans history)
+
+*Chain.* `note_harness_cuts` runs from `represent_inbound` on every inbound turn -> it re-scans the
+whole message list -> a cut already in history is counted again on every later turn.
+
+*What happens.* Cell 1 shows `harness.truncated_a_result: 34`. There were **two** cut results: one
+`tool` message of 10,207 bytes and one `user` message of 253,790, appearing in 23 and 12 captures
+respectively. Anyone reading `assists` gets roughly 17× the real number, in the direction that argues
+for keeping the 9,000-byte bound.
+
+*Why it matters more than the arithmetic.* This is rule 12 — surface a metric from the authoritative
+event, never a re-count — broken inside the instrument built to settle a rule-5b argument about a
+remembered number.
+
+*Proposed fix.* Count a cut once, keyed on the result it belongs to.
+
+*What it does NOT change.* The observer's headline finding stands and is important: **the harness
+really does truncate.** Cycle 1 grepped 50 sessions, found zero markers, and concluded the bound was
+"guarding a mechanism nobody can currently demonstrate." It is now demonstrated. The one cut opened
+and read in full destroyed nothing — a 142-line listing of `countries-*.yaml` translation files, cut
+in the middle. Both halves are true at once.
+
+## Tier 4 (c2) — recorded, not scheduled
+
+| # | finding | measured | state |
+|---|---|---|---|
+| c2-7 | **`_claims_impossible_action` is not given a reasoner at the step-critic site.** `loop.py:1546` passes `fab_ask`; `loop.py:3284` passes nothing, so the trigger-decides-alone mode the docstring reserves for having NO reasoner runs with one available | `loop.verdict_fabricated_action` has **never fired**, at either phase, in four days of logs covering all of cycle 1 | open — one argument, no urgency |
+| c2-8 | **models delete seeded tests** | 7 of 368 rows (1.9%), two tasks, two languages, three models. Four of the seven are the same Go test, whose float comparison stops compiling once the task's required decimal type lands — a designed-in collision | open — below the bar to ADD a guard (#1, #15) |
+| c2-9 | the model retyped a 61-character generated workspace path into every `cd` and corrupted it twice — once dropping a word, once a digit | 2 occurrences, 1 cell | not cria's; the suite chooses the path and could shorten it |
+
+## Refuted (c2) — candidates that did not survive their own test
+
+Recorded because a refutation is a result, and because two of these were one edit away from being
+acted on.
+
+| candidate | how it died |
+|---|---|
+| **"12 × HTTP 503 hard-failed instead of retried"** (carried from c1) | Every 503 sits in one of three few-second bursts, each bracketed by `server.stop` — a leftover harness session from the previous cell POSTing while the model swaps. **No scored run's `capture_dir` matches any of those three session ids.** Zero cells, zero checks. The classification quirk is real and cosmetic |
+| **"a transient endpoint miss shrinks the window to 8192 for the process"** | `_resolve_window` sets `_window_final` only on success, re-probes every call until the attempt budget, then every `_PROPS_RETRY_EVERY`. Self-healing, bounded, docstring names the incident |
+| **"cria's bundler route cost cell 1 the third-party check"** | The archived workspace has **no `zone_for` and no mention of `countries` outside `vendor/`**. A load path cannot cost a point for code that was never written. Deliverable 4 was not attempted |
+| **"cria spills raw HTML as if it were a README"** (708 KB across 4 files) | Every one was requested with `"raw": true` **by the model**. `webfetch.py:151` honours it by contract — "the caller wants the literal source" |
+| **"`8bdeee2` wired only the satisfaction site"** (carried from c1) | `verdict_from_reasoning` IS wired at both sites — `loop.py:3413` builds `recover` and passes it at 3417 and 3418. The carried note named the wrong function; the real gap is its neighbour, filed as c2-7 |
+| **"the gate's litter sweep cost cell 11 its checks"** | The Python verifier installs its own prepared database at the swept path. Filed as c2-5 at tier 2 on its own merits |
+
+### Method note, recorded against myself
+
+The first count of cell 4's `web_fetch` calls came out at 97. The real number is 10. The other 87
+were one call re-counted once per prompt it appeared in — **the identical defect I had just written
+up as c2-6, made by hand, one subsection later.** Dedupe by `tool_call` id, always. Rule 23b applies
+to the person reading the captures as much as to the code.
