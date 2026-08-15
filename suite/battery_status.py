@@ -187,6 +187,31 @@ def _avg(rows: list[dict], key: str, scale: float = 1.0) -> str:
     return f"{sum(vals) / len(vals) * scale:.0f}" if vals else "—"
 
 
+def _overall_pct(cs: list[dict]) -> float | None:
+    """Checks passed over checks attempted, across a set of cells. The same weighting the headline
+    uses, factored out so the total and its delta cannot compute it two different ways (#12)."""
+    total = sum(float(c.get("max_score") or 0) for c in cs)
+    return 100.0 * sum(float(c.get("score") or 0) for c in cs) / total if total else None
+
+
+def _overall_delta(rs: list[dict], arm: str, model: str, cells: list[dict | None]) -> str:
+    """The total's movement since the previous run, in percentage points.
+
+    ON THE SAME CELLS, BOTH SIDES. Part-way through a cycle a model has current rows for the
+    languages that have run and prior rows for all six; comparing today's three against last time's
+    six is two different questions subtracted. A cell counts only when it has BOTH rows.
+    """
+    pairs = [(c, prior_cell(rs, arm, model, tk, c)) for c, tk in zip(cells, TASKS) if c]
+    pairs = [(c, p) for c, p in pairs if p]
+    if not pairs:
+        return ""
+    now, before = _overall_pct([c for c, _ in pairs]), _overall_pct([p for _, p in pairs])
+    if now is None or before is None:
+        return ""
+    d = now - before
+    return " (0)" if abs(d) < 0.5 else f" ({d:+.0f})"
+
+
 def _arm_grid(rs: list[dict], arm: str) -> list[str]:
     """One row per model, one column per language. The shape the operator reads first."""
     langs = [language(t) for t in TASKS]
@@ -201,9 +226,7 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         # OVERALL is checks-passed over checks-attempted, not the mean of the percentages. A task
         # carrying six checks should weigh more in the headline than one carrying three — that is
         # the point of letting check counts differ.
-        passed = sum(float(c.get("score") or 0) for c in have)
-        total = sum(float(c.get("max_score") or 0) for c in have)
-        overall = 100.0 * passed / total if total else 0.0
+        overall = _overall_pct(have) or 0.0
         ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
                        m, cells, have))
     for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
@@ -216,7 +239,8 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         got = " | ".join(_with_delta(c, tk) for c, tk in zip(cells, TASKS))
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
-        out.append(f"| {_badge(overall)} {m} | {got} | **{overall:.0f}%** | {rate} "
+        out.append(f"| {_badge(overall)} {m} | {got} | **{overall:.0f}%**"
+                   f"{_overall_delta(rs, arm, m, cells)} | {rate} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     if len(out) == 2:
         out.append("| _no runs yet_ |" + " |" * (len(TASKS) + 3))
@@ -237,6 +261,11 @@ def report(rs: list[dict]) -> str:
     out += _arm_grid(rs, "BASE")
     out += ["", "## Assisted — assists ON", ""]
     out += _arm_grid(rs, "CRIA")
+    out += ["",
+            "Every number carries its movement since that cell's previous run, in percentage points.",
+            "The **total** is checks passed over checks attempted across the row — a six-check task",
+            "weighs more than a three-check one — and its delta is computed only over cells that have",
+            "both a current and a previous run, so a part-finished cycle compares like with like."]
 
     pairs = [(t, m, cell(rs, "BASE", m, t), cell(rs, "CRIA", m, t)) for t in TASKS for m in MODELS]
     pairs = [(t, m, b, c) for t, m, b, c in pairs if b and c]
