@@ -158,6 +158,43 @@ four days, but that window contains cycle 1's entire 24-cell run, and the critic
 So: a real inconsistency, a one-argument fix, and **tier 4 by impact** — recorded, not scheduled
 above anything that actually cost a check (#15).
 
+### What actually blocks the 15 non-100% cells
+
+Read off `verify.py`'s own failure details on all 24 cycle-1 rows, not off the scores. Grouped by
+check, most-failed first:
+
+| times failed | check | reading |
+|---:|---|---|
+| 4 | `feed-pipeline-java::substantially_faster` | qwen35 hit **29.9× against a 4.0× bar** and lost it anyway on "same totals: False"; the other three never compiled |
+| 4 | `feed-pipeline-java::review_written` | **the cheapest point on the board** — sixty words, two line numbers, no build. Missed in all four cells, one of them 371 calls long |
+| 4 | `feed-pipeline-java::csv_library` | qwen35 and gemma4 declared the dependency and still mis-parse the quoted-comma row; the other two never built |
+| 3 | `feed-pipeline-java::race_fixed_workers_on` | "import spawned 0 thread(s) (need >=2)" — the concurrency half of the task is not attempted at all |
+| 3 | `orders-api-py::customer_orders_route` | the route answers (200, or 0 when the service never bound) but carries neither the items nor the total |
+| 3 | `shipping-rates-rb::suite_green_tests_intact` | one deleted seed test (ternary, 80%), one LoadError chain (gemma4), one genuine failure (nemotron) |
+| 2 | `rust-toml-cli::builds` | `E0308` / `E0277`+`E0599` — two models never compiled, and the other two checks are `skipped: project does not build` behind them |
+| 2 | `handles-cli-node::tests_incl_live` | tests pass with the network blocked — mocked, not live |
+| 2 | `orders-api-py::integration_tests` | 3 and 11 of the models' own tests failing |
+
+Three things follow that the fix phase should aim at, in this order.
+
+**`feed-pipeline-java` is the campaign's worst column and its cheapest win.** 0 / 40% / 0 / 0. The
+`review_written` check needs no build, no library and no concurrency, and was missed four times out
+of four. Cycle 1 already established why in one of those cells: the completion judge computed the
+exact missing deliverable ("Create REVIEW.md") four separate times and **the coder was never told**,
+because `_periodic_satisfaction` may only end a session, never steer it — the deliberate decision
+recorded under "SURFACED — c1-13".
+
+**That joins finding 3 above into one thread.** On 19 of 24 cells the completion judge never runs at
+all; on the cells where it does run and finds a specific missing deliverable, what it found is
+logged and discarded. Both halves have to hold for the finding to reach the coder, and today neither
+reliably does. This is the rank-1 candidate for cycle 2's fix phase, and its second half needs the
+operator's ruling, which is still open.
+
+**One cria fault is already visible in this table and is under test this cycle.**
+`cart-billing-go × nemotron-elastic` failed all five checks because cria's own spilled fetch, saved
+as `…decimal.go` inside the workspace, was compiled by `go build ./...`. The fix — spill files are
+always `.txt` — landed after cycle 1's run. Cell 8 of this cycle is the measurement.
+
 ### Environment, verified clean 2026-08-14
 
 - **The leaked gems are gone.** `countries-8.1.0` / `unaccent-0.4.0` uninstalled. They had inflated
