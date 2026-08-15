@@ -30,7 +30,97 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | # | task | model | score | Δ pts | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
 | 1 | shipping-rates-rb | gemma4 | **80%** | **+60** | 32 | 101 | four of five green, and the dead-gem chain that sank this cell last cycle is gone — tests, hidden contract, express zone and the full 8/8 rate table all pass. The one loss is `country_zone_mapping`, and the cause is not a dependency problem: **the model never wrote `Shipping.zone_for` at all.** `lib/shipping/rates.rb` is the workspace's only source file and it contains no `zone_for` and no mention of `countries`/`ISO3166`, while `Gemfile` declares `gem "countries"` and `vendor/bundle` holds the installed gem. It set the dependency up and never used it. Deliverable 4 of 5, simply not attempted |
-| 2 | shipping-rates-rb | qwen35 | *running* | | | | |
+| 2 | shipping-rates-rb | qwen35 | **40%** | **−60** | 9 | 88 | **cria killed this cell.** The run ended on six consecutive HTTP 400s against a 259 KB briefing body, 67% of which is the `vendor/bundle` gem tree. Two checks were still red when it died, from a model defect reproduced cold: `Country[...]` inside `module Shipping` resolves to `Shipping::Country` → `NameError`, and the fix (`ISO3166::Country`) was in the doc cria had just size-gated at 9,645 bytes against a 9,000 bound. See below |
+| 3 | shipping-rates-rb | ternary-bonsai | *running* | | | | |
+
+### RANK 1 — the context floor is not a fit guarantee, and it killed cell 2
+
+Every link below is read from the captured body or the structured events, not inferred from the
+score. This is the third occurrence of the same shape and the second time it has killed a cell.
+
+**What happened, in order, on `shipping-rates-rb × qwen35`:**
+
+1. `16:43:37` — `route.compaction {"role": "compactor"}`. The harness asks for a briefing.
+2. The body cria composes for it is **`n_messages: 2`** — one system prompt and **one 259,474-byte
+   user message**. `rendered_chars: 263,147`, `msg_tokens: 67,647`, against `n_ctx: 49152`.
+3. `contextfloor` runs. Six times, plus six refits. Every single one logs the same thing:
+
+   ```
+   context.floor  window=49152  msg_before=65761  msg_after=65761
+                  turns_dropped=0  outputs_reduced=0  tools_compressed=0
+   ```
+
+   **It reduced nothing.** Not once, in twelve attempts.
+4. `context.refit {"real": 100131, "est": 65762, "n_ctx": 49152}` — the server tells cria the body is
+   really **100,131 tokens against a 49,152 window**, twice over. cria refits and sends the same
+   65,761 message tokens again.
+5. `16:43:38 → 16:43:45` — **six `HTTP Error 400: Bad Request`**, one per attempt. The session ends.
+
+**Why the floor could not act, which is the actual bug.** The floor has three levers and all three
+operate at message granularity: bound the tool schema, reduce oversized tool *outputs*, and drop
+whole oldest *turns*. This body has **zero tools, zero tool messages, and two messages** — one of
+which is the system prompt and the other of which is the payload. There is nothing for any lever to
+grip, so the floor completes, reports `over_budget`, changes nothing, and the caller sends anyway.
+
+`docs/principles.md` #5 calls the floor "the **one** lossless-first place" that guarantees the body
+fits the window. On a single oversized message that guarantee does not hold, and nothing downstream
+notices — the only signal is a 400 from the server.
+
+**What is in the 259 KB.** Measured on the captured body: **1,966 of 3,117 lines mention `vendor/` —
+63% of lines, 175,174 bytes, 67% of the payload.** The top prefixes are
+`vendor/bundle/doc/countries-3.1.0/ri/lib/countries/data/…` (473 lines) and
+`vendor/bundle/gems/countries-3.1.0/lib/countries/data/…` (473 lines).
+
+**The full chain, each link verified:**
+
+| | link | evidence |
+|---|---|---|
+| A | cria's install advice prescribes `--path vendor/bundle` | `dirguard._INSTALL_REMEDY`, ruby route `gem_bundler` |
+| B | the coder follows it and the tree lands in the workspace | `vendor/bundle/gems/countries-3.1.0/` in the archive |
+| C | `vendor` is deliberately outside `BUILD_ARTIFACT_DIRS`, and the inventory is deliberately complete | `groundtruth.py:207-209`, `workspace_inventory` docstring |
+| D | so the composed body is 67% gem tree | 175,174 of 259,474 bytes, counted on the capture |
+| E | the floor cannot reduce a single message | `msg_before == msg_after`, 12 consecutive floor/refit events |
+| F | six 400s, session over, two checks still red | `upstream.error` ×6, 16:43:38–45 |
+
+**Fix at A and at E, not at C.** C is a documented decision with a live reason (`vendor` is real
+source in PHP and vendored Go) and reverting it would hide deliverables. A is the seam already
+identified on cell 1: a package manager's install prefix that **cria itself named** in its own advice
+is not the coder's source, and cria knows the path because cria chose it. E is independent and worth
+fixing on its own — a fit guarantee that silently does not hold on a one-message body is a false
+guarantee, and the honest floor either reduces that message or says it cannot.
+
+**Prior occurrences of the same shape:** cycle 1 cell 1 (167 KB, server refused 12×, cell killed),
+cycle 2 cell 1 (253 KB, 47% vendor, survived at 80%), cycle 2 cell 2 (259 KB, 67% vendor, refused
+6×, cell killed). Not a one-off; it lands whenever a Ruby run installs a gem.
+
+### The 9,000-byte bound gated the document that held cell 2's answer
+
+Separate from the above and also cria's, on the same cell.
+
+The model's `zone_for` calls `Country[...]` from inside `module Shipping`, so Ruby resolves
+`Shipping::Country` and raises `NameError: uninitialized constant Shipping::Country`. Reproduced cold
+from the archived workspace:
+
+```
+lib/shipping/rates.rb:25:in `zone_for': uninitialized constant Shipping::Country (NameError)
+Did you mean?  Countries
+```
+
+The correct constant in `countries` 3.x is `ISO3166::Country`. At `16:43:37` — the last coder action
+of the run — the model tried to read `./tmp/read-only/www.rubydoc.info_gems_countries_3.1.0.txt`, the
+rubydoc page cria had spilled for it. **That file is 9,645 bytes and contains `ISO3166::Country`.**
+`writeproxy` size-gates a whole-file spill read at `READ_INLINE_MAX = INLINE_RESULT_MAX_BYTES = 9000`
+and steered it to grep instead. 645 bytes over the line, on the one document that held the fix, at
+the last call before the 400s.
+
+Stated precisely, because the code is careful about this and so should the finding be: the gate does
+not refuse — it hands back a grep steer, and the size test runs on the harness's filesystem. What is
+certain is that the whole-file read did not happen, the model never learned the constant, and the
+run ended eight seconds later.
+
+This is the same 9,000-byte constant whose justification cycle 1 could not reproduce and cell 1 of
+this cycle finally demonstrated. Both facts now stand together: the harness's truncation policy is
+real, **and** the bound cria derived from it is still costing reads that would have fitted.
 
 ### Cell 1 read in full — one refutation, and the 9,000-byte question answered the other way
 
