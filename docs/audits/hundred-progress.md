@@ -42,7 +42,89 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 11 | orders-api-py | ternary-bonsai | 50% | 0 | 46 | 71 | flat, and it **went backwards while running**: 3 of 4 at the 15-minute mark, 3 at 30, **2 at 45**. The route and the migration both pass; the integration suite ends 2 failed and the injection probe cannot get a normal lookup through. Along the way cria's gate deleted the task's own `orders.db` — see below, and it did **not** cost the score |
 | 12 | orders-api-py | nemotron-elastic | **75%** | **+25** | 61 | 134 | three of four, and the closest this model has come. Held 3/4 at every milestone — 15, 30, 45, 60 — and ran out the full hour rather than being floored early, which is new. The route, the migration and the injection fix all pass. **One stray file costs the fourth**: the model wrote a scratch `test_init.py` at the repo root at call 0117 doing `import db` (the module is `orders.db`), and pytest aborts the whole suite on the collection error before running a single test. **Not cria's** — cria put `1 error during collection` and `ERROR test_init` into **15 consecutive prompts** from call 0121 to the kill, and the model had fourteen calls and 17 rumination aborts in that window and never deleted the file |
 | 13 | feed-pipeline-java | gemma4 | 0% | 0 | 16 | 35 | flat at zero, and **one typo is the whole cell**: `mvn compile` fails on a single error, `cannot find symbol: class CSVRecordRecord` at `Importer.java:96` — the model wrote the word twice. Nothing else is wrong with the build. All five checks fail behind it. **Not cria's**: `CSVRecordRecord` appears in **10 request bodies**, `cannot find symbol` in 9, `BUILD FAILURE` in 8 — the model was told plainly and repeatedly. Killed at the 15-minute floor with 29 coder calls, three of which cria refused as malformed (`write_missing_arg` ×2, `edit_missing_arg` ×1) — 10% of the budget, on a cell whose budget was the binding constraint |
-| 14 | feed-pipeline-java | qwen35 | *running* | | | | |
+| 14 | feed-pipeline-java | qwen35 | **100%** | **+60** | 76 | 492 | **the first 100% ever scored on `feed-pipeline-java`**, the campaign's worst column. All five: messy feed handled with skipped rows reported, **70.3× against a 4.0× bar with the totals matching** (29.9× and mismatched totals last cycle), 4 worker threads with one distinct result across 8 runs, `csv_library` importing the quoted-comma row at 25.00, and **`review_written` at 828 words with 13 located findings** — a check missed 4 of 4 last cycle. And it was **5/5 at the 30-minute milestone and ran for 45 more minutes**; see below |
+| 15 | feed-pipeline-java | ternary-bonsai | *running* | | | | |
+
+### RANK 1 — the completion judge is not judging. It is going silent, and silence means "not done"
+
+Cell 14 finished the work at the 30-minute milestone and ran for **45 more minutes and ~300 more
+calls** before cria would agree. Read end to end, the reason is not that the judge was wrong twelve
+times. It is that **the judge never answered at all**, and the fail-closed rule turns every silence
+into a "not done".
+
+**The trace, from the structured events:**
+
+```
+22:34:53  satisfaction_check  drive= 80  satisfied=false
+22:38:38  satisfaction_check  drive=100  satisfied=false
+22:42:50  satisfaction_check  drive=120  satisfied=false
+   … 160, 180, 200, 220, 240, 260, 280, 300, 320 — all satisfied=false …
+23:35:04  satisfaction_check  drive=340  satisfied=TRUE   ← 45 minutes later
+23:35:50  loop.gate  blocked=false
+                                            budget-killed one minute later
+```
+
+Three `task_complete` claims from the model in between (22:39, 23:26, 23:28), each answered by
+`done_critic satisfied=false`.
+
+**What the replies actually contain.** 66 satisfaction-phase responses:
+
+| | count |
+|---|---:|
+| empty content | **58** |
+| containing the word `satisfied` at all | **4** |
+| `finish_reason: tool_calls` (the judge inspecting — legitimate, no verdict expected yet) | 23 |
+| **`finish_reason: stop`, no tool calls, empty content** | **43** |
+
+Forty-three turns where the judge stopped having said nothing. Of those, **40 carry reasoning**, and
+the reasoning shows what happened — verbatim from `0091-satisfaction.response.json`:
+
+```
+Now let me run the tests and verify the importer works correctly. I'll also check if REVIEW.md exists.
+
+<tool_call>
+<function=exec_command>
+<parameter=cmd>
+ls -la /tmp/suite-feed-pipeline-java_qwen35_codex_poff_1786832410-bwezzbyl/
+</parameter>
+```
+
+The judge is emitting its tool call as **literal text inside the reasoning channel**, in a dialect
+cria did not lift into structured `tool_calls` — and it is asking for `exec_command`, which a
+read-only judge does not hold (`massage.reasoning_call_off_menu` fired 10 times). So the turn ends
+with no content, no tool call, and no verdict.
+
+**A → B → C:**
+
+- **A** — the judge wants a tool, writes the call as prose in its thinking, and asks for one that is
+  off its own menu.
+- **B** — cria gets `finish_reason: stop`, empty content, no tool calls. `judge_satisfaction` has no
+  verdict to parse, so #13 applies: an undecidable judge means NOT done.
+- **C** — twelve consecutive "not done" verdicts on a workspace that was already scoring 5 of 5, and
+  a finished session cannot end.
+
+**Why the existing recoveries did not save it.** They fired hard — `massage.reasoning_call_recovered`
+248 times in this run — and `verdict_from_reasoning` is wired at this exact site. But
+`verdict_from_reasoning` recovers **only a NOT-satisfied ruling, never an approval**, and that
+one-direction guarantee is deliberate and structural: a recovered approval could end a session on
+unfinished work. So when a judge's answer is lost, the only thing recoverable from it is "keep
+working". A completed task is *unrecognisable through a lost verdict, by design.*
+
+**This is the exact mirror of cell 4** and the pair is the argument. Cell 4: the judge was RIGHT four
+times, named the missing method, and was forbidden from telling the coder. Cell 14: the judge was
+SILENT twelve times, and silence is the only thing that could have ended a finished run. The same
+subsystem, failing in opposite directions, in one cycle.
+
+**Cost here:** ~45 minutes and roughly 300 of 492 calls on a cell that was already perfect, plus 118
+satisfaction-phase model calls — **24% of the whole run** — most of them producing nothing. The score
+survived only because the work was already done.
+
+**Fix belongs at B.** A judge turn that ends with no content, no tool call and reasoning that
+contains an unlifted or off-menu tool call is not an undecidable verdict — it is a *malformed turn*,
+and cria can tell the two apart from the authoritative event (`finish_reason`, `tool_calls`,
+`reasoning_content`). Fail-closed is right for a judge that considered and could not decide; it is
+the wrong reading of a judge that never got to speak. This does not weaken #13: nothing here proposes
+recovering an approval from reasoning.
 
 ### TIER 2 — "my probe created it" is not the same as "it is mine to delete"
 
