@@ -31,7 +31,65 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 |---:|---|---|---:|---:|---:|---:|---|
 | 1 | shipping-rates-rb | gemma4 | **80%** | **+60** | 32 | 101 | four of five green, and the dead-gem chain that sank this cell last cycle is gone — tests, hidden contract, express zone and the full 8/8 rate table all pass. The one loss is `country_zone_mapping`, and the cause is not a dependency problem: **the model never wrote `Shipping.zone_for` at all.** `lib/shipping/rates.rb` is the workspace's only source file and it contains no `zone_for` and no mention of `countries`/`ISO3166`, while `Gemfile` declares `gem "countries"` and `vendor/bundle` holds the installed gem. It set the dependency up and never used it. Deliverable 4 of 5, simply not attempted |
 | 2 | shipping-rates-rb | qwen35 | **40%** | **−60** | 9 | 88 | **cria killed this cell.** The run ended on six consecutive HTTP 400s against a 259 KB briefing body, 67% of which is the `vendor/bundle` gem tree. Two checks were still red when it died, from a model defect reproduced cold: `Country[...]` inside `module Shipping` resolves to `Shipping::Country` → `NameError`, and the fix (`ISO3166::Country`) was in the doc cria had just size-gated at 9,645 bytes against a 9,000 bound. See below |
-| 3 | shipping-rates-rb | ternary-bonsai | *running* | | | | |
+| 3 | shipping-rates-rb | ternary-bonsai | **20%** | **−60** | 31 | 56 | **cria sent this cell into a wall it built.** Ten `writeproxy.blocked_external` refusals, each one answering "run `bundle install --path vendor/bundle`" — and **there is no `bundle` on this box**. Calls 0037–0057, roughly half the coder budget and the last twenty minutes, went on install attempts that could not succeed. Only the untouched seed tests pass; the README still names one zone and nothing was built. Killed at the 30-minute floor. See below |
+| 4 | shipping-rates-rb | nemotron-elastic | *running* | | | | |
+
+### RANK 1 — cria's refusal prescribes a command that does not exist on this machine
+
+The fix for this was written, its incident recorded in two places, and it corrected the half that
+chooses the route without ever reaching the half that writes the sentence.
+
+**Verified cold, just now:**
+
+```
+$ which bundle      → nothing
+$ ls /usr/bin/bundle*  → /usr/bin/bundle3.2   /usr/bin/bundler3.2
+```
+
+**What the model was told, ten times, verbatim from the captured tool result:**
+
+> `⟦ctx:denied⟧ Installing into the shared system or user environment is not permitted here — an
+> install must land inside the project directory (…), and this one would not. Install it into the
+> project instead: add the gem to a `Gemfile` and run `bundle install --path vendor/bundle`.`
+
+**Why it says that.** `dirguard._INSTALL_REMEDY` lists the ruby routes as
+`(("gem_bundler", ("bundle",)), ("gem_direct", ("gem",)))` and picks the first whose tools are all
+present. `_tool_present("bundle")` returns **True** — because `_versioned_variant` finds
+`bundle3.2`, which is exactly what it was built to do. So `gem_bundler` wins the selection, and
+`cria/prompts/install_remedy.txt:20` then emits the plain name:
+
+```
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `bundle install --path vendor/bundle`.
+```
+
+The binary name is a hardcoded literal. Nothing interpolates the name that was actually found.
+
+**The same file's header comment describes this exact bug, as history:**
+
+> *A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA IS GUESSING. The ruby row prescribed `bundle install
+> --path vendor/bundle`, and `bundle` is not installed on the box the battery runs on. Two runs
+> followed the advice into `bundle: command not found` and spent the rest of the run on transport
+> rather than the task. cria refused a real command and answered with an imaginary one — the same
+> class as stating a false fact, one step removed (#5b).*
+
+`dirguard.py:209-217` carries the matching note for the discovery half. Both halves of the fix are
+written down; only one of them shipped. cria now *selects* a route on the strength of `bundle3.2`
+and *tells* the coder to run `bundle`.
+
+**What it cost, from the captured commands.** Twenty-one distinct commands in the run; calls
+0037–0057 are one continuous install fight — `gem install eu_countries --path vendor/bundle`,
+`--user-dir ~/.rubygems`, `--user-dir vendor/bundle` (not valid gem syntax), `which bundler`,
+`gem install bundler`, then curling the `.gem` and the `bundler` gem down by hand. The model never
+tried `bundle3.2`, because nothing ever told it that name. Score 20% against 80% last cycle.
+
+**Fix at A.** The route's discovered binary must be the one the sentence names — `_versioned_variant`
+already holds it. This reverts no intent; it finishes one that is stated twice in comments and
+once in a prompt file header.
+
+**Second-order, worth a line:** two of the model's commands carry a corrupted workspace path —
+`/tmp/suite-shipping-rb_…` with `rates` dropped, and `…_178681235-…` with a digit dropped. A 61-character
+generated path retyped by a 9B model into every single `cd`. Not cria's bug, but the suite chooses
+that path, and it is a cheap thing to shorten.
 
 ### RANK 1 — the context floor is not a fit guarantee, and it killed cell 2
 
