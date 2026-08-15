@@ -33,7 +33,43 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 2 | shipping-rates-rb | qwen35 | **40%** | **−60** | 9 | 88 | **cria killed this cell.** The run ended on six consecutive HTTP 400s against a 259 KB briefing body, 67% of which is the `vendor/bundle` gem tree. Two checks were still red when it died, from a model defect reproduced cold: `Country[...]` inside `module Shipping` resolves to `Shipping::Country` → `NameError`, and the fix (`ISO3166::Country`) was in the doc cria had just size-gated at 9,645 bytes against a 9,000 bound. See below |
 | 3 | shipping-rates-rb | ternary-bonsai | **20%** | **−60** | 31 | 56 | **cria sent this cell into a wall it built.** Ten `writeproxy.blocked_external` refusals, each one answering "run `bundle install --path vendor/bundle`" — and **there is no `bundle` on this box**. Calls 0037–0057, roughly half the coder budget and the last twenty minutes, went on install attempts that could not succeed. Only the untouched seed tests pass; the README still names one zone and nothing was built. Killed at the 30-minute floor. See below |
 | 4 | shipping-rates-rb | nemotron-elastic | **40%** | **+40** | 45 | 191 | up from zero, and the most informative cell of the cycle so far. The completion judge ran eleven times, named the missing `zone_for` **four times with a written fix**, and the coder was told none of it — then flipped to `satisfied: true` on a claim that is false on disk. Ends 2/5 with deliverable 4 absent and `PER_KILO` missing its `express` entry. See below |
-| 5 | cart-billing-go | gemma4 | *running* | | | | |
+| 5 | cart-billing-go | gemma4 | **80%** | **−20** | 14 | 32 | four of five green — the rounding fix, `discounts.json` with the fallback, the stderr log line, and a real third-party decimal module imported by non-test source. The one loss is **the seeded `TestSubtotal` deleted from `cart_test.go`**. Not a cria fault, and not laziness either: see the measurement below |
+| 6 | cart-billing-go | qwen35 | *running* | | | | |
+
+### MEASURED, NOT BUILT — models delete seeded tests, at 2%
+
+Base-rated before proposing anything (#15), across every row in `results.jsonl` that has captures:
+
+| | |
+|---|---:|
+| rows scanned | 368 |
+| rows where a seeded test was deleted | **7 (1.9%)** |
+
+Spread: two tasks (`cart-billing-go` ×4, `shipping-rates-rb` ×3), two languages, three models
+(`gemma4` ×5, `nemotron-elastic`, `ternary-bonsai`). So it is not one model's tic and not one
+language's, but it is thin.
+
+**And four of the seven are the same test, for a reason that is not carelessness.**
+`cart-billing-go`'s seed has:
+
+```go
+func TestSubtotal(t *testing.T) {
+    c := &Cart{Items: []Item{{"pen", 2.50, 4}, {"pad", 5.00, 1}}}
+    if got := c.Subtotal(); got != 15.00 { … }
+}
+```
+
+and the task says *"Stop using `float64` for money arithmetic… Keep the `Item` struct field types
+unchanged; convert values inside the cart."* A model that returns `decimal.Decimal` from `Subtotal()`
+makes `got != 15.00` stop compiling, and deleting the test is the shortest way out. Keeping
+`Subtotal() float64` and converting internally is available and is what the prompt intends — but the
+collision is designed in, and it is where four of the seven landed.
+
+**Nothing built.** A guard here would be exactly the regression-only shape #2 sanctions ("never
+delete correct content" — removing a currently-passing test makes something already working worse),
+and equally it would risk blocking a legitimate deletion, which #2 forbids just as firmly. At 1.9%
+the bar to ADD is not met. Recorded with the number so the next cycle can re-rank it rather than
+re-discover it.
 
 ### RANK 1 — the judge knew, four times, and the coder was never told
 
