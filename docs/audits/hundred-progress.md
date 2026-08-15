@@ -8,10 +8,28 @@ rewrites itself after every cell.
 
 ---
 
-## Cycle 2 — not yet started
+## Cycle 2 — RUN in flight
 
-**Phase: FIX (cycle 1's), then RUN.** Thirteen cria changes have landed since cycle 1's run ended and
-none of them has been measured. That is what cycle 2 is for.
+**Phase: RUN.** Started **2026-08-15 09:02**, cell 1 of 24, task-major.
+Driver `python3 suite/cycle_run.py` · log `docs/audits/cycle-run.log`.
+
+Thirteen cria changes landed after cycle 1's run and none of them had been measured. That is what
+this run measures. `cria.service` was restarted onto the current code state immediately before the
+first cell; **nothing under `cria/` changes until the run phase ends.**
+
+### Environment, verified clean 2026-08-15 (before cell 1)
+
+- **`user_install_listing()` — no Ruby gems at all.** The `countries` / `unaccent` leak that inflated
+  four Ruby rows is still gone. The listing carries only the pre-existing maven/cargo/go/npm/py
+  baseline, and the tripwire is a per-run *diff* (`run.py:354` before, `run.py:455` after), so a
+  standing baseline cannot inflate a score — only something installed *during* a cell can.
+- **`git status --short suite/tasks` — clean.** No verifier is writing into the repo.
+
+### Cells — cycle 2
+
+| # | task | model | score | Δ pts | min | calls | what happened |
+|---:|---|---|---:|---:|---:|---:|---|
+| 1 | shipping-rates-rb | gemma4 | *running* | | | | |
 
 ### Environment, verified clean 2026-08-14
 
