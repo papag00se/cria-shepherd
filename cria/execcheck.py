@@ -315,8 +315,6 @@ def corroborate(claim: str, readme: list[str], entries: list[str],
     in_declared = any(program_token(r) == tok for r in declared)
     in_disk = any(os.path.normpath(e) == tok or os.path.basename(e) == os.path.basename(tok)
                   for e in entries)
-    if not entries:
-        return False, "no file in the workspace is an entry point by its language's convention"
     # A PROJECT RUNNER HAS NO FILE TO BE. `program_token` resolves `cargo run` / `go test` /
     # `mvn exec:java` to the runner plus its subcommand, because for those the target is the whole
     # project and any filename on the line is an INPUT. Asking whether "cargo run" is a file on disk
@@ -332,6 +330,12 @@ def corroborate(claim: str, readme: list[str], entries: list[str],
         if not in_declared:
             return False, f"no manifest in this workspace declares {tok}"
         return True, ""
+    # Only NOW is "is there an entry-point file" the right question. This test used to sit above the
+    # runner branch, so a library-shaped project — one whose entry point is `go test` or `cargo run`
+    # rather than a file — was refused before the branch written for it could answer (#24's
+    # corollary: the head-first half landed without its caller).
+    if not entries:
+        return False, "no file in the workspace is an entry point by its language's convention"
     # THE PROJECT'S OWN ANSWER OUTRANKS A FILE TEST. `in_declared` is read three lines above and was
     # then never consulted before this veto, so a command the project itself documents was refused
     # for not looking like a path. Measured across cycle 1 of the 100% campaign — six of twenty-four

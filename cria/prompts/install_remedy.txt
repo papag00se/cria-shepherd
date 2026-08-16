@@ -21,7 +21,7 @@ pip_venv = First check whether you need it at all: the package may already be im
 
 npm_local = Drop the global flag: `{{NPM}} install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
 
-gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`.
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. That install is reachable only under bundler — anything started as plain `ruby` still fails to require it, including tests or scripts you did not write. Run it with `{{BUNDLE}} exec`, or make the library loadable without bundler.
 
 gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable by putting that directory on the load path — `ruby -Ilib -e "..."` needs `GEM_HOME=vendor/bundle` set, or `$LOAD_PATH.unshift` the gem's `lib` directory from your code.
 

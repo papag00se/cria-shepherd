@@ -147,6 +147,25 @@ def msg_digest(m: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
+def is_env_context(m: dict) -> bool:
+    """A harness-injected environment/instructions preamble (not the real task) that some
+    harnesses prepend as a user message. cria recognizes the known conventions — e.g. Codex's
+    `<environment_context>` (cwd/shell/date) and `<user_instructions>` blocks; a harness that
+    sends none simply has its FIRST user message treated as the task, which is the right default.
+
+    ONE OWNER. This lived in `loop` while `serialize` below picked the first user-role message with
+    no such check, on a comment asserting the harness frame was dropped upstream — which
+    `_drop_harness_frame` does not do: it keeps the preamble. So the task the whole transcript is
+    judged against was the harness's cwd/shell banner, rendered whole, while the real task was
+    treated as ordinary history. loop imports selfcompact and not the reverse, so the owner lives
+    here and loop calls it."""
+    c = m.get("content")
+    if isinstance(c, list):
+        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    c = c or ""
+    return "<environment_context>" in c or "<user_instructions>" in c
+
+
 def serialize(messages: list[dict], defang: bool = False) -> str:
     """The transcript span → one string fed to a model.
 
@@ -182,12 +201,13 @@ def serialize(messages: list[dict], defang: bool = False) -> str:
     # exist anywhere it can see. Every line below already names the file, the command and the error,
     # which ARE things the coder can find, and the lines are in order. Nothing needed the index.
     #
-    # THE FIRST USER TURN IS THE TASK, and it alone is rendered whole — see _defanged_line. The
-    # harness frame is dropped upstream of here, so the first user-role message is the task/context
-    # every other line is judged against, and cria holds no second copy of it.
-    root = next((i for i, m in enumerate(messages) if m.get("role") == "user"), -1)
-    return "\n".join(line for i, m in enumerate(messages)
-                     if (line := _defanged_line(m, whole=(i == root))))
+    # No message is privileged any more. This used to single out "the first user-role message" as
+    # the one rendered UNCUT, on the belief that the harness frame was dropped upstream — which
+    # `_drop_harness_frame` does not do, so on any harness that sends an `<environment_context>`
+    # banner the north star was cwd/shell/date. Since nothing here is cut (#5), there is nothing
+    # for the exemption to grant, and the wrong assumption goes with it rather than being fixed in
+    # place. `is_env_context` remains the one owner of the question for the callers that still ask.
+    return "\n".join(line for m in messages if (line := _defanged_line(m)))
 
 
 # The harness's exec envelope, whose shape is the thing a model copies when it fakes a result.
@@ -221,7 +241,7 @@ _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 # proberun.compose_probe_command already uses on probe output, and for the same reason.
 
 
-def _defanged_line(m: dict, whole: bool = False) -> str:
+def _defanged_line(m: dict) -> str:
     """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax.
 
     NOTHING HERE IS CLIPPED (#5: cria never truncates, and it does not matter that the reader is a
@@ -237,8 +257,7 @@ def _defanged_line(m: dict, whole: bool = False) -> str:
     are already STUBBED to their on-disk reference by :func:`stub_old_write_args` (de-duplication),
     and window fit belongs to the context floor, which is lossless-first by construction.
 
-    ``whole`` now only marks the ROOT TASK MESSAGE, which is still rendered without the role prefix
-    every other line carries."""
+    Every line carries its role prefix; no message is exempt, because no message is cut."""
     role = m.get("role")
     text = _text(m).strip()
     calls = m.get("tool_calls") or []

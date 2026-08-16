@@ -3857,7 +3857,7 @@ def session_key(headers, messages: list[dict]) -> str:
     header; else key on the ORIGINAL (first) user message, which is stable across a
     task's requests even as cria rewrites what it sends the coder.
 
-    The fallback SKIPS harness env-context preambles (``_is_env_context``), keying on the
+    The fallback SKIPS harness env-context preambles (``selfcompact.is_env_context``), keying on the
     first REAL user message — the same message ``_history_root`` fingerprints. Keying on a
     stable preamble collided every conversation in a repo onto one ``task:`` key, which made
     a NEW task look like a compaction-rewrite of the old one (false ``rewritten``) and leaked
@@ -3867,7 +3867,7 @@ def session_key(headers, messages: list[dict]) -> str:
         if sid:
             return f"sid:{sid}"
     for m in messages:
-        if m.get("role") == "user" and not _is_env_context(m):
+        if m.get("role") == "user" and not selfcompact.is_env_context(m):
             return f"task:{_task_key(_content_text(m.get('content')))}"
     return "task:none"
 
@@ -4007,7 +4007,7 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     (``_stable_session`` gates it): their key derives from this very root, so a rewritten root
     mints a new key and simply looks like a new session (recorded in docs/port-fidelity-audit.md)."""
     for m in messages:
-        if m.get("role") == "user" and not _is_env_context(m):
+        if m.get("role") == "user" and not selfcompact.is_env_context(m):
             text = _content_text(m.get("content"))
             return text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
     return "", ""
@@ -4373,7 +4373,7 @@ def reframe_preamble(m: dict) -> dict:
     six-language battery it relayed another repo's development doctrine into a bare /tmp task. Only
     instructions cria can find in an instruction file inside the workspace the preamble names are
     relayed; everything else is dropped. The environment fields are unaffected."""
-    if m.get("role") != "user" or not _is_env_context(m):
+    if m.get("role") != "user" or not selfcompact.is_env_context(m):
         return m
     new = _reframe_preamble_text(_msg_text_content(m))
     return {**m, "content": new} if new else m
@@ -4469,18 +4469,6 @@ def _reframe_preamble_text(text: str) -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
-def _is_env_context(m: dict) -> bool:
-    """A harness-injected environment/instructions preamble (not the real task) that some
-    harnesses prepend as a user message. cria recognizes the known conventions — e.g. Codex's
-    `<environment_context>` (cwd/shell/date) and `<user_instructions>` blocks; a harness that
-    sends none simply has its FIRST user message treated as the task, which is the right default."""
-    c = m.get("content")
-    if isinstance(c, list):
-        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-    c = c or ""
-    return "<environment_context>" in c or "<user_instructions>" in c
-
-
 def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
@@ -4539,7 +4527,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         if m.get("role") in ("system", "developer"):
             continue  # harness agent boilerplate → replaced by cria's coder_system above
         out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice; the real TASK is KEPT
-        if not acked and m.get("role") == "user" and not _is_env_context(m):
+        if not acked and m.get("role") == "user" and not selfcompact.is_env_context(m):
             # The user's real task just went in as history — acknowledge it's been decomposed, so it
             # reads as the overall GOAL (background), not a fresh "do it all now" ask. Consecutive
             # assistant turns (this ack + the first work turn) are merged upstream (_merge_consecutive_assistant).
