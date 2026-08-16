@@ -6,11 +6,45 @@
 
 ---
 
+## Cycle 4 — RUN in flight
+
+**Phase: RUN.** Started 2026-08-16 16:5x on the post-sweep code state, `8be9ea8`. Twenty-four cells, **model-major** for the first time — one model loaded, then taken through all six languages, so the grid fills a readable ROW at a time instead of a column.
+
+**Pre-run checks, both clean:**
+- `git status --short suite/tasks` — empty. No verifier writing into the repo.
+- The user-level install listing carries **no `gem:` entries**. The `countries-8.1.0` leak that inflated four Ruby rows for weeks is gone, and `shipping-rates-rb` is the one task whose third-party check a user-level package could satisfy without a manifest. The go/maven/npm/cargo caches are present and are *not* the same hazard: those four verifiers require a declaration in the manifest that a warm download cache cannot supply. Recorded as a fact; the per-row `user_install_leak` delta remains the tripwire.
+- The service restarted at **16:47:40**, ten seconds after `8be9ea8`, and every fix from this cycle's FIX phase was confirmed present in the **importable module** — not just in the file. That check exists because chaining the restart and the launch into one backgrounded command once raced and invalidated a whole run.
+
+**What changed since cycle 3**, in one line each — the full ledger is [`sweep-fix-progress.md`](sweep-fix-progress.md):
+
+| # | fix | why it should move a cell |
+|---:|---|---|
+| 1 | harness-compaction detector had **never fired** (0 events vs 139 compactions) | a gate result lost to a compaction now gets re-issued instead of vanishing |
+| 2 | a gate cria READ was discarded when the turn returned through the guard-probe door | green→red on a redirect turn no longer leaves cria believing green |
+| 3 | the window is learned from what the server accepts; the runaway guard gates on evidence, not on "stop probing" | 8,192-fallback runs destroyed 934 protected messages; runaways to `total_tokens = 49152` were untouched |
+| 4 | dirguard: **492 of 1,225** captured refusals named nothing the coder could change | a tool signature written as a command, and `$(go env GOPATH)/…` tails, are no longer refused |
+| 5 | `go test -v` | the deleted-test signal was structurally mute on Go |
+| 6 | one owner for "is this a test file" | JUnit's `TestImporter.java` prefix convention read as ordinary source |
+| 7 | `rake` / `make` / `mix` / `gradle` are runnable | whole languages' deliverables were accepted as the entry point then refused as unrunnable |
+| 8 | shell tool matched by family | a harness whose shell has an unfamiliar name had it deleted from the menu |
+| 9 | 2.1 MB of duplicate payload folded out of coder prompts (882 of 6,614) | ~522K tokens back |
+| 10 | a judge's proposed fix clears the steer bar; the done note claims only what ran | invented URLs and false verification claims |
+
+Cells land here as they finish.
+
+| # | task | model | score | Δ | min | calls | what happened |
+|---:|---|---|---:|---:|---:|---:|---|
+
+---
+
 ## Cycle 2 — RANK complete, FIX next
 
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
-## Cycle 3 — RUN in flight (restarted 04:48)
+## Cycle 3 — RUN stopped at 8 of 24, then WALK + RANK + FIX
+
+**Eight valid cells**, 04:48–07:51, task-major. The run was stopped there deliberately: the walk had enough to work with and the fix phase was the bottleneck. Findings in `docs/audits/cycle-3-walk.md`, fixes in `docs/audits/cycle-3-fixes.md`, and the application-wide sweep that followed in `docs/audits/application-sweep.md` + `sweep-fix-progress.md`.
+
 
 **Restarted three times, and the third restart is the one that counts.** The run below begins 2026-08-16 04:48 on the eight-fix code state, with the service verified up first.
 
