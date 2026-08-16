@@ -1779,10 +1779,16 @@ class WheelSpinTests(unittest.TestCase):
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
         captured = {}
+        # EVERY reasoner call, in order. The AUTHORING pass is first; the dictated-code one-shot
+        # (`_steer_ask`) now follows it, because the wheel-spin reading is finally recorded as gate
+        # state and that check has findings to compare a steer against. Last-call-wins would assert
+        # about the wrong pass.
+        asked: list = []
 
         class _Reasoner:                           # the wheel-spin is now REASONED, not canned
             def __call__(self, body, rlog):
-                captured["user"] = body["messages"][-1]["content"]
+                asked.append(body["messages"][-1]["content"])
+                captured["user"] = asked[0]
                 return json.dumps({"choices": [{"message": {"content":
                     "Read handler.py as it stands on disk and run the failing check to see the real error."}}]}).encode()
 

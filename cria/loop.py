@@ -2789,13 +2789,19 @@ class Loop:
         outcome = read_gate(sess.gate_plan, probe, rlog)
         # Guard-probe result (repetition redirect / wheel-spin ground truth) — shared with the
         # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
+        # It records the reading itself (record_gate_state) before returning, so this early return
+        # no longer discards a gate that the guard happened to be reading on the same turn.
         steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._probe_author)
         if steer is not None:
             return self._renudge(sess, key, body, steer, rlog)
+        # The reading is state whichever way this turn goes. Captured BEFORE the mirror overwrites it,
+        # because the stall signal is "the same finding as last time" and comparing the new flag with
+        # itself is always true.
+        prev_flag = sess.last_gate_flag
+        record_gate_state(sess, outcome, gate_findings_text(outcome))
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
-            sess.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
             rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
             digest = prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body, rlog)
@@ -2823,9 +2829,8 @@ class Loop:
         # Convergence signal (ported): the SAME flagged issues twice = the model is stuck, not
         # converging. codex-local ACCEPTS at that point with an UNRESOLVED banner; cria's operator
         # chose no-cap (a step never advances unverified), so a stall is LOGGED loudly instead.
-        if nudge and nudge == sess.last_gate_flag:
+        if nudge and nudge == prev_flag:
             rlog.emit("loop.gate_stalled", level="warning", step=idx)
-        sess.last_gate_flag = nudge or ""
         # OSCILLATION: this exact finding-set has been here before, with a different one in between.
         # Two errors that are each other's cause — clearing A re-creates B — and every individual fix
         # is locally correct, so nothing else in cria can see it. Walked on
@@ -2842,22 +2847,13 @@ class Loop:
                 prior.append(sig)
                 del prior[:-GATE_SIGNATURE_WINDOW]
         sess.gate_git = outcome.git_state
-        # Mirror guard_gate_verdict's gate-state onto the plan-ON path — WITHOUT this, last_gate_red /
-        # last_gate_testless are only ever set by the plan-off readers, so the anti-laundering rollup
-        # override (_briefing_gate_ground_truth) and the C4 vacuous-green evidence (_reopen_if_unsatisfied)
-        # were dead on every real multi-step plan — exactly where "ground truth over judgment" needs them.
-        if nudge is not None:
-            sess.last_gate_red = True
-            sess.gate_fresh = False      # red never satisfies the completion backstop
-        else:
-            sess.last_gate_red = False   # ran and genuinely clean → GREEN
-            sess.gate_fresh = True       # fresh ground truth — the completion backstop is satisfied
-            sess.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
-            sess.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
-            if (lost := passing_test_regression(sess, outcome.report)):
-                sess.nudge_reason = sess.nudge_reason or lost
-                rlog.emit("loop.tests_regressed", level="warning", step=idx,
-                          high=sess.tests_passed_high)
+        # The plan-ON extras on top of the shared mirror (record_gate_state, called above with the
+        # reading): the repo-wide regression check, which needs the report and only makes sense on a
+        # gate that came back GREEN.
+        if not sess.last_gate_red and (lost := passing_test_regression(sess, outcome.report)):
+            sess.nudge_reason = sess.nudge_reason or lost
+            rlog.emit("loop.tests_regressed", level="warning", step=idx,
+                      high=sess.tests_passed_high)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
         # A RED gate is GROUND TRUTH about the REPOSITORY — it is not, by itself, a verdict on THIS
@@ -5423,6 +5419,53 @@ def _check_state_words(gs) -> str:
     return words["passed"] if getattr(gs, "last_gate_ran", False) else words["never_ran"]
 
 
+def gate_findings_text(outcome) -> str:
+    """What a gate reading says is WRONG, as one string — "" when it is clean or never ran.
+
+    Two arms, because a check can fail without printing anything cria can locate: the located
+    error-class findings, and a check that RAN and exited non-zero with nothing parseable (a test
+    that died on a bare traceback, a build that errored). Without the second arm a failing check
+    whose output did not parse read as a genuine pass."""
+    if not outcome.ran:
+        return ""
+    findings = proberun.completion_block_nudge(outcome.report)
+    if findings:
+        return findings
+    failed = proberun.failed_unparsed_probes(outcome.report)
+    if failed:
+        return "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
+    return ""
+
+
+def record_gate_state(gs: GuardState, outcome, findings: str) -> None:
+    """A gate reading becomes session state HERE, and only here. Every reader calls this.
+
+    There were three readers and two of them wrote the state inline, in their own words, with their
+    own idea of which fields mattered — and the third, :func:`guard_probe_steer`, wrote NONE of it.
+    That third one reads the very same probe result as the completion gate (same call id, same plan)
+    and then RETURNED the steer, so on a repetition-redirect or wheel-spin turn the whole reading was
+    thrown away: `last_gate_red` kept whatever the PREVIOUS gate said. A gate that went green→red on
+    such a turn left cria believing green, which is the completion side of #13 failing open.
+
+    A gate that could not RUN is a neutral non-signal: never red, never green, and it must not touch
+    the stall streak (:func:`track_gate_progress` says so in its own words). It still counts as
+    ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set."""
+    gs.last_gate_ran = bool(outcome.ran)
+    if not outcome.ran:
+        gs.gate_fresh = True     # ATTEMPTED — cria's own inability must never wedge a real 'done'
+        return
+    if findings:
+        gs.last_gate_red = True
+        gs.gate_fresh = False    # red never satisfies the completion backstop
+        track_gate_progress(gs, findings)
+        return
+    gs.last_gate_red = False     # ran and genuinely clean → GREEN
+    gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
+    gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
+    gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
+    track_gate_progress(gs, "")
+
+
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     """Read a completion-gate probe's result and return a block-steer when the repo's checks FAILED,
     else None (genuinely clean, or the checks couldn't run → fail-open, don't wedge). The OBJECTIVE half
@@ -5437,30 +5480,12 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     as a genuine 'done'."""
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = read_gate(gs.gate_plan, probe, rlog)
-    gs.last_gate_ran = bool(outcome.ran)
+    findings = gate_findings_text(outcome)
+    record_gate_state(gs, outcome, findings)
     if not outcome.ran:
-        gs.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
         rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False)  # #12: say which happened
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
-    findings = proberun.completion_block_nudge(outcome.report)
-    if findings:
-        gs.last_gate_red = True
-        gs.gate_fresh = False  # red never satisfies the completion backstop
-        track_gate_progress(gs, findings)
-        return findings
-    failed = proberun.failed_unparsed_probes(outcome.report)
-    if failed:  # a check ran and FAILED (no parseable line) → the 'done' isn't genuine
-        gs.last_gate_red = True
-        gs.gate_fresh = False  # red never satisfies the completion backstop
-        msg = "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
-        track_gate_progress(gs, msg)
-        return msg
-    gs.last_gate_red = False  # ran and genuinely clean → GREEN
-    gs.gate_fresh = True      # fresh ground truth — the completion backstop is satisfied
-    gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence for the judge
-    gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
-    track_gate_progress(gs, "")
-    return None
+    return findings or None
 
 
 def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
@@ -7752,6 +7777,10 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
         return None
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = read_gate(gs.gate_plan, probe, rlog)
+    # THE READING IS STATE, whatever cria does with the steer. This is the same probe result the
+    # completion gate reads (same call id, same plan) and it used to be read here and dropped on the
+    # floor, so a gate that flipped green→red on a redirect/wheel-spin turn left last_gate_red False.
+    record_gate_state(gs, outcome, gate_findings_text(outcome))
     if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
         gs.steer_source = "repetition guard"
