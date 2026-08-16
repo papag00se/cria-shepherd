@@ -397,19 +397,33 @@ the real `in_eu?` was on line 166 of the file cria was holding.
 The sibling key immediately below (`no_spec_here`) exists because this exact over-claiming was
 already narrowed once, for a different case. `no_structure` is the same class, unnarrowed.
 
-## 15. The repetition steer states a count it never measured — VERIFIED
+## 15. The repetition steer calls three different commands "the SAME action" — VERIFIED, after a correction
 
-`cria/loop.py:5629-5631`:
+`cria/loop.py:5631-5632`:
 ```python
 "repetition": lambda gs, step: (
-    f"It keeps repeating the SAME action {REPEAT_FINGERPRINT_N}× without the outcome changing: …"),
+    f"It keeps repeating the SAME action {REPEAT_FINGERPRINT_N}× without the outcome changing: {gs.repeat_action}"),
 ```
 
-The number in the sentence is the **threshold constant**, not the observed count. Cell 1 call 0024
-told the reasoner the coder had run `gem install countries` three times. It ran once — the
-fingerprint had matched `gem list countries` against `gem install countries`. The reasoner repeated
-the false count back verbatim and wrote its redirect on that basis. Doctrine 12: surface a metric
-from the authoritative event, never a re-count.
+**My first reading of this was wrong and I am correcting it.** I said the number was a constant
+standing in for an unmeasured count. The number is fine: the detector fires at
+`matches + 1 >= REPEAT_FINGERPRINT_N` (`loop.py:4973`) and flushes both windows on firing, so in
+practice it fires at exactly three and "3×" is true.
+
+**What is false is the rest of the sentence.** The fingerprint is a deliberately fuzzy nature-match —
+`loop.py:81` describes it as catching a coder that "jitters one flag or word without changing what
+it's doing". So three *different* commands routinely trip it. `gs.repeat_action` is then built from
+**the last matched call only** (`loop.py:4994`). cria therefore asserts that three commands were "the
+SAME action" and names one of them.
+
+Cell 1, call 0024: cria told the reasoner the coder had repeated `gem install countries` three times.
+It had run `gem install countries` once; the other two matches were `gem list countries` — a
+*different* command, and one the coder ran precisely because cria's own earlier note had told it to
+take a different action. The reasoner swallowed it — *"The coder called it three times in a row… The
+coder ignored the instruction in the error message"* — and wrote its redirect on that basis.
+
+**Fix at A** is therefore not "pass the observed count". It is: name what actually matched, or say the
+actions were *similar* rather than *the same*.
 
 ## 16. One naive picker where another module already defends — VERIFIED
 
@@ -465,28 +479,58 @@ Ordered by points recoverable × confidence. Every candidate names the A in A→
 
 | # | Fix at A | Cells | Evidence |
 |---|---|---|---|
-| 1 | Remove or evidence-fence "What remains to be done" in `selfcompact_summary.txt`; stop labelling a model-written summary "(ground truth)" to the judge | 2, 6 | VERIFIED — 2 points in cell 6 alone, reproduced |
-| 2 | Rename the `__cria_*` gate variables; move the sentinel matcher with them; widen the guard test | all, worst in 8 | VERIFIED — the model copies the idiom and gets "exit 0" on a failed build |
-| 3 | The steer author must not name a symbol, version, or library the ground truth in the same prompt contradicts | 4, 7, 8 | VERIFIED (cell 8), REPORTED (4, 7) |
-| 4 | Stop clipping the check block the steer author reasons from (head-200 + tail-200 vs a 307-char preamble) | 4, 7 | REPORTED, precise |
-| 5 | dirguard must not refuse a malformed command on its stray tokens — refuse the shape, or say the command was unparseable | 8 | VERIFIED |
-| 6 | Mark the plan-off root task as protected so the context floor cannot evict it | 2, 3, 6 | VERIFIED, with prevalence |
-| 7 | Give `gem_bundler` the reachability half `gem_direct` already has | 2 | VERIFIED by reproduction |
-| 8 | Do not re-inject a killed degenerate loop into its own retry prompt | 8 | VERIFIED |
-| 9 | Make the ruby `dependency_note` distinguish "not installed" from "installed and unreachable" | 1, 2, 3 | VERIFIED |
-| 10 | Narrow `no_structure` the way `no_spec_here` was already narrowed | 1, 2, 3, 4 | VERIFIED |
-| 11 | Do not collapse newlines in a tool result before the supervisor reads it (`selfcompact.py:261`) | 8 | REPORTED, precise |
-| 12 | Pass the observed repetition count, not the threshold constant | 1 | VERIFIED |
-| 13 | Dedup `selfcompact.py:188` onto `loop._is_env_context` | 5 | VERIFIED |
-| 14 | Give the operator's gap-naming ruling a cadence and a gate that can actually reach a stuck cell | all | VERIFIED |
+| 1 | The research step must not answer a third-party-API question by reading a local file and returning DONE — its reader is workspace-scoped and structurally cannot check the thing it is asked to check | 7, 8 | VERIFIED — 4 points in cell 8, reproduced |
+| 2 | Remove or evidence-fence "What remains to be done" in `selfcompact_summary.txt`; stop labelling a model-written summary "(ground truth)" to the judge; make its file-list rule two-directional (it forbids claiming a file was created, not claiming one is missing) | 2, 6, 8 | VERIFIED — 2 points in cell 6 alone, reproduced |
+| 3 | Rename the `__cria_*` gate variables; move the sentinel matcher with them; widen the guard test | all, worst in 8 | VERIFIED — the model copies the idiom and gets "exit 0" on a failed build |
+| 4 | The steer author must not name a symbol, version, or library the ground truth in the same prompt contradicts | 4, 7, 8 | VERIFIED (cell 8), REPORTED (4, 7) |
+| 5 | Stop clipping the check block the steer author reasons from (head-200 + tail-200 vs a 307-char preamble) | 4, 7 | REPORTED, precise |
+| 6 | dirguard must not refuse a malformed command on its stray tokens — refuse the shape, or say the command was unparseable | 8 | VERIFIED |
+| 7 | Mark the plan-off root task as protected so the context floor cannot evict it | 2, 3, 6 | VERIFIED, with prevalence |
+| 8 | Give `gem_bundler` the reachability half `gem_direct` already has | 2 | VERIFIED by reproduction |
+| 9 | Do not re-inject a killed degenerate loop into its own retry prompt | 8 | VERIFIED |
+| 10 | Make the ruby `dependency_note` distinguish "not installed" from "installed and unreachable" | 1, 2, 3 | VERIFIED |
+| 11 | Narrow `no_structure` the way `no_spec_here` was already narrowed | 1, 2, 3, 4 | VERIFIED |
+| 12 | Do not collapse newlines in a tool result before the supervisor reads it (`selfcompact.py:261`) | 8 | REPORTED, precise |
+| 13 | The repetition steer must name what actually matched, or say *similar* rather than *the same* — not "pass the observed count", which was my own misread | 1 | VERIFIED, after correction |
+| 14 | Dedup `selfcompact.py:188` onto `loop._is_env_context` | 5 | VERIFIED |
+| 15 | Give the operator's gap-naming ruling a cadence and a gate that can actually reach a stuck cell | all | VERIFIED |
+
 
 ---
 
-# Anatomy of cell 8 — five cria defects on one identifier
+# Anatomy of cell 8 — the model guessed a whole library, and the mechanism meant to stop that said DONE
 
-Worth setting out in full, because it is the cell where the model's own mistake was smallest and
-cria's contribution largest. The model wrote `decimal.NewFromFloat64` at call 0013, three minutes in.
-The real name is `NewFromFloat`. It never fixed it in 94 more calls. Here is why.
+**Correction to my own brief, which was wrong and which I wrote.** I told the walkers cell 8 turned
+on one invented identifier, `decimal.NewFromFloat64`. It does not. I ran the experiment: fixing that
+name alone leaves the score at **1/5** — two more invented APIs surface immediately. Cell 8's
+workspace reaches **5/5, success: true** only after four corrections, all of them
+`shopspring/decimal` API names the model made up:
+
+| what the model wrote | what exists |
+|---|---|
+| `decimal.NewFromFloat64(x)` | `decimal.NewFromFloat(x)` |
+| `sub - sub.Mul(pctDec)` | `sub.Sub(sub.Mul(pctDec))` — `-` is not defined on a Decimal |
+| `taxed.RoundTo(2)` | `taxed.Round(2)` |
+| `rounded.ToFloat64()` | `rounded.InexactFloat64()` |
+
+Everything else was already right on disk: the discounts file and its fallback, the stderr logging,
+the regression test, the module declaration. **Four names stood between 1/5 and a clean pass.**
+
+That changes the root. This is not "cria kept one typo alive." The model was reconstructing an entire
+third-party API from memory and never read a line of its documentation — **zero `web_search` and zero
+`web_fetch` calls in 107 turns**, with both tools in its menu the whole time. On its last call it
+wrote *"Let's check docs"* and talked itself out of it.
+
+**And cria has a mechanism for exactly this.** The research step exists to make the coder read the
+real source before building against it. In cell 8 it resolved *"add a third-party Go decimal module"*
+to reading the local `cart.go` and returned **DONE at call 0006**. Its reader is workspace-scoped, so
+it structurally cannot check a third-party API name — the precise error its own prompt tells it to
+hunt. Cell 7 shows the same failure in a different costume: the research step answered with the bare
+filename `go.mod`, which then became "Do ONLY this step (1 of 2): go.mod" in all 34 coder prompts.
+
+**That is the strongest new root in this walk.** Two cells, two models, same mechanism, same shape.
+
+What follows is what cria then did to keep the wrong names alive once they were written.
 
 1. **cria endorsed the invented name.** The periodic-gate steer (0042/0044) said to use
    `decimal.NewFromFloat64` — with the compiler's `undefined: decimal.NewFromFloat64` printed 23
@@ -516,3 +560,30 @@ contradicted it and the fifth cut short the investigation.
 
 Each must be checked against existing incident comments and test docstrings before landing — several
 touch code that carries the opposite incident.
+
+
+## Vetting — does any of this undo an earlier fix?
+
+A separate pass checked every candidate against git history, incident comments and test docstrings.
+Test docstrings in this repo record the incident a test was written for, so they are the primary
+evidence. Results, and they change how several of these must be landed:
+
+| # | Verdict | What the check found |
+|---|---|---|
+| 1 research step | not yet vetted | raised after the vetting pass ran |
+| 2 compaction summary | **MODIFY FIRST** | `tests/test_compaction_contract_stated_once.py:42` pins the literal `"What remains to be done"`, and that file records a *previous* trim of this prompt being reverted. Fence the bullet against the evidence rule that already exists on line 13 — do not delete it. |
+| 2b "(ground truth)" label | **MODIFY FIRST** | Dropping the fold would revert `e4d1122` (a judge ruled a live build "the coder hasn't started"). The *label* is unpinned, and `verify_user.txt` already owns the right wording: `"CODER'S SUMMARY (a claim — trust the tool output above over this)"`. Relabel, don't remove. |
+| 3 `__cria_*` rename | **MODIFY FIRST** | Leak confirmed, but `probegate.py:835`'s litter regex depends on the names being disjoint, seven test files hard-code them, and `probediscovery.py:863` leaks `.cria` as well — the rename as scoped closes only half of it. |
+| 8 `gem_bundler` | **SAFE TO LAND** | The reachability sentence is a recorded fix that landed on `gem_direct` only. Must use `{{BUNDLE}}`; a literal `bundle exec` would recreate the exact incident `test_install_remedy_names_the_real_binary.py` exists for. |
+| 10 `dependency_note` | **MODIFY FIRST** | `test_a_missing_dependency_says_so.py:66` pins `"load path"` with the docstring *"'Install it' was never the missing step — every one of these had it installed"*. Narrow by adding a disk condition; never by deleting that half. |
+| 11 `no_structure` | **MODIFY FIRST** | Two tests pin the wording (`assertIn("nothing read so far DEFINES", out)`, docstring *"the swagger-shell case this note was built for is untouched"*). Its sibling was narrowed by adding a **condition** at `loop.py:5911`, not by rewording. Do the same. |
+| 13 repetition steer | **DO NOT LAND as first written** | The count premise was false — see the correction above. The re-scoped fix (name what matched) is untested against history. |
+| 14 `selfcompact.py:188` | **SAFE TO LAND** | Completes `9c4b5f5` rather than reverting it: `_drop_harness_frame` explicitly *keeps* the preamble, so that module's "harness frame is dropped upstream" comment is false. `_is_env_context` must move to a shared module — loop imports selfcompact, not the reverse. |
+| exec-intent early return | **SAFE TO LAND** | Blame settles it: the early return is from 2026-08-01, the `_PROJECT_RUNNERS` branch from 2026-08-13 landed *below* it, and the newer fix's own comment names the miss ("the head-first half landed without its caller"). No test passes `entries=[]`. |
+
+**The cross-cutting lesson, and it is the important one.** Candidates 2, 10 and 11 are one shape: a
+prompt sentence that is true of the incident it was written for and over-claims outside it, with a
+test pinning the incident's wording. This repo has settled that remedy twice already (`57e203c`,
+`ec05c36`): **add a condition, do not soften the pinned sentence.** Candidates 8 and 14 are the mirror
+shape — a fix that landed on one of two siblings and never reached the other — and both are clean to
+complete.
