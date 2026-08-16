@@ -25,6 +25,31 @@ Started **2026-08-15 23:10** on the six-fix code state.
 | 3 | shipping-rates-rb | ternary-bonsai | 0% | **−20** | 16 | 48 | killed at the 15-minute floor. **The install fight is much shorter** — 3 `blocked_external` against cycle 2's 10, and the model got the gem (`third-party requires: ['countries']`) instead of spending half its budget failing to. It ran out of clock on the work instead: README still names one zone, it wrote no tests of its own, and `country_zone_mapping` dies on the same bare-`ruby` LoadError as cells 1 and 2. Worth noting `express_zone` reads **"prices 14.99 24.99 (want 14.99 24.99)"** and still fails — it is a compound check and the other half, "model wrote its own tests", is False |
 | 4 | shipping-rates-rb | nemotron-elastic | 0% | **−40** | 25 | 65 | exited on its own. Every failing check is a `require` LoadError, and `country_zone_mapping` shows the model reaching straight into the tree — `third-party requires: ['vendor/countries/countries']`. 7 `blocked_external`, 4 rumination aborts, no runaway |
 | 5 | cart-billing-go | gemma4 | **100%** | **+20** | 6 | 38 | all five green in six minutes. The seeded `TestSubtotal` deletion that cost this cell 20 points last cycle did not happen — `suite_green_plus_regression_test` passes, the rounding is right at 48.58, `discounts.json` works with and without the file, the stderr line carries all three fields, and a real decimal module is imported by non-test source |
+| 6 | cart-billing-go | qwen35 | **100%** | 0 | 30 | 225 | all five green, held. **And this is the operator's ruling working, live** — see below |
+
+### THE OPERATOR'S RULING, VALIDATED ON CELL 6
+
+`loop.satisfaction_gap_named` fired **five times**, and all five reached the coder — verified by
+counting the request bodies carrying the steer, not by trusting the event:
+
+```
+08:45:35  decimal.NewFromString() was used incorrectly in a single-value context
+08:48:38  the discount code 'SUMMER25' is not being applied (output shows 'di…
+08:52:50  the binary isn't finding the discounts.json file at runtime, which breaks the end-to-end flow
+08:55:21  live execution shows discount=none when SUMMER25 code was provided
+09:00:32  cmd/main.go has a critical bug: it reads the disc…
+```
+
+Five checks, five **distinct** gaps — the never-twice-running bound held, so none of this was the
+clock-noise the original no-steer decision was defending against. Every one names a specific,
+checkable defect rather than an opinion about completeness.
+
+**And the cell scored 5 of 5.** `discounts_from_file` and `logging` both pass, which are precisely
+the checks the discount bug named at 08:48, 08:52 and 08:55 would have failed.
+
+Before the ruling, all five of those verdicts were computed and thrown away. This is the mechanism
+cycle 2 measured going silent on `Shipping.zone_for` four times while the cell ended 2 of 4 with the
+method missing.
 
 ### REGRESSION — MINE. The install fix cost the Ruby column 15 points
 
