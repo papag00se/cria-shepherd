@@ -305,7 +305,7 @@ class PlanSession(GuardState):
     # 6 of 6 gemma runs, on the MAJORITY of steers (57/57, 88/109, 87/117, 69/74, 79/109, 31/47).
     # Authoring blind, it invented endpoints, fields, paths and flags, and the coder obeyed. cria HELD
     # this text the whole time.
-    last_checks_text: str = ""
+
     # The check text the LAST authored steer was written against. A detector firing again over check
     # output that has not moved means the previous steer did not land — and re-describing the same
     # findings in fresh prose is the failure mode measured across 24 runs: ~554 steers, 61% authored
@@ -403,9 +403,19 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     across gates = no progress → the reasoned thrash-assist). A COULDN'T-RUN gate must NOT call this
     (it is a neutral non-signal — neither red nor green).
 
-    It also PERSISTS the check text for the steer author. Every gate path funnels through here, so
-    this one line covers plan-on and plan-off alike."""
-    gs.last_checks_text = finding or ""
+    IT ALSO PERSISTS THE FINDING-SET, and this is the one place that can. `last_gate_flag` is read by
+    five seats — `_gate_notes`, `_briefing_gate_ground_truth`, `author_steer`, `judge_satisfaction`'s
+    `gate_findings=` at three call sites, and the server's checks note — and its only writer used to
+    be `_verify_after_probe`, the plan-ON per-step gate. `Loop.drive` returns into
+    `_drive_single_item` at the `sess.synthetic` dispatch BEFORE that writer is reached, so on a
+    plan-off session it was never written: 348 of 410 suite rows and all 129 captured sessions are
+    plan-off, which means the anti-laundering briefing override, the judge's red evidence and the
+    steer author's finding-set were all silent while cria was holding the findings.
+
+    It used to write `last_checks_text` here instead — a second carrier with ZERO readers, whose own
+    docstring claimed it fed the steer author. One field, written at the one funnel every gate path
+    reaches (#23: one owner)."""
+    gs.last_gate_flag = finding or ""
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""

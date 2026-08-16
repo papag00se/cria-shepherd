@@ -6198,13 +6198,17 @@ class SteerBlindnessAndCodeDictationTests(unittest.TestCase):
     steers that DICTATE code — the author is the same weak model, its code is usually broken, and
     the coder transcribes it verbatim."""
 
-    def test_the_last_check_text_is_persisted_for_the_author(self):
+    def test_the_finding_set_is_persisted_where_the_five_readers_look(self):
+        """It used to persist `last_checks_text`, which nothing read. The five seats that need the
+        finding-set all read `last_gate_flag`, whose only writer was the plan-ON per-step gate —
+        unreachable on the plan-off path every real run takes."""
         from cria.loop import GuardState, track_gate_progress
         gs = GuardState()
         track_gate_progress(gs, "tests/test_x.py:12: undefined name 'client'")
-        self.assertIn("undefined name", gs.last_checks_text)
+        self.assertIn("undefined name", gs.last_gate_flag)
         track_gate_progress(gs, "")                       # GREEN clears it — no stale red
-        self.assertEqual(gs.last_checks_text, "")
+        self.assertEqual(gs.last_gate_flag, "")
+        self.assertFalse(hasattr(gs, "last_checks_text"))  # the second carrier is gone
 
     def test_code_dictating_steers_are_dropped_prose_survives(self):
         from cria.loop import _grounded_steer_or_none
