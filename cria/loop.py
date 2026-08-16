@@ -5554,19 +5554,11 @@ _FAIL_WORDS = re.compile(r"(?im)\b\d+ failed\b|^FAILED\b|^\s*---\s*FAIL:|\bFAILU
 _PATH_LINE = re.compile(r"(?im)^[^\n]*?([\w./\\-]+\.\w+):\d+:")
 
 
+# Moved to probediscovery, which owns TEST_CONVENTIONS — execcheck needed the same answer and had
+# been carrying a narrower private copy of it (#23: one owner).
 def _looks_like_a_test_path(path: str) -> bool:
-    """True when this path is a test file by any language's own convention."""
     from . import probediscovery
-    name = path.replace("\\", "/").rsplit("/", 1)[-1]
-    parts = path.replace("\\", "/").split("/")
-    if any(seg in ("test", "tests", "spec", "specs", "__tests__") for seg in parts[:-1]):
-        return True
-    for conv in probediscovery.TEST_CONVENTIONS:
-        if any(fnmatch.fnmatch(name, g) for g in conv.globs):
-            return True
-        if any(d in parts for d in conv.dirs):
-            return True
-    return False
+    return probediscovery.looks_like_a_test_path(path)
 
 
 def _is_test_finding(checks: str) -> bool:

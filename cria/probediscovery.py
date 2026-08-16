@@ -1109,6 +1109,35 @@ TEST_CONVENTIONS: tuple = (
 )
 
 
+# Directory names that mean "tests live here" in EVERY language, independent of any one convention
+# row: a file's own name need not say `test` when the tree already does.
+TEST_DIR_NAMES = ("test", "tests", "spec", "specs", "__tests__")
+
+
+def looks_like_a_test_path(path: str) -> bool:
+    """True when this path is a test file by any language's own convention.
+
+    ONE owner (#23), because there were two and the private one was narrower. `execcheck` carried its
+    own regex, in which ``Test`` and ``Tests`` had to END the stem — so JUnit's PREFIX
+    convention `TestImporter.java`, `ImporterTestCase.java` and jest's `__tests__/` directory all
+    read as ordinary source, and a workspace whose only entry point was in a test file was counted as
+    "this project has a program". `TEST_CONVENTIONS` already knew every one of those shapes.
+
+    Its one behaviour worth keeping came the other way: `conftest.py` is pytest scaffolding, not a
+    test, and the convention globs correctly do not claim it — so it is no longer called one."""
+    norm = path.replace("\\", "/")
+    name = norm.rsplit("/", 1)[-1]
+    parts = norm.split("/")
+    if any(seg in TEST_DIR_NAMES for seg in parts[:-1]):
+        return True
+    for conv in TEST_CONVENTIONS:
+        if any(fnmatch.fnmatch(name, g) for g in conv.globs):
+            return True
+        if any(d in parts for d in conv.dirs):
+            return True
+    return False
+
+
 def _language_files(root: Path, conv: TestConvention) -> list[str]:
     """This language's source files, with vendored/build trees pruned by the .gitignore templates —
     so a venv full of pytest's OWN test suite never reads as "this project has tests"."""
