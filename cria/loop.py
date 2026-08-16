@@ -296,6 +296,11 @@ class PlanSession(GuardState):
     # twice in a prompt whose newest check block showed failing tests, while the honest `never_ran`
     # wording the prompt file already carries fired zero times.
     last_gate_ran: bool = False
+    # The last exec-intent question and its answer, keyed on what the question was BUILT from. The
+    # question is "how does this project run itself"; it moves only when the task or the workspace
+    # moves, and re-asking an unchanged one is the repeat #9's bound forbids.
+    exec_intent_key: str = ""
+    exec_intent_reply: str = ""
     # The highest PASSING test count any green gate has reported this session. Regression-only (#2):
     # it exists so cria can state, as a fact from the runner's own tally (#12), that the suite used
     # to pass more tests than it does now. See `passing_test_regression`.
@@ -1641,6 +1646,15 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
             # …and what the project says about ITSELF. cria parses these already and
             # uses them to veto this very answer; withholding them made the probe guess.
             declared=execcheck.declared_listing(root))
+        # ONE ANSWER PER QUESTION. This runs on every completion attempt, and the question is built
+        # from the task, the workspace listing and the project's declared commands — so when none of
+        # those has moved, the prompt is byte-identical and so is the answer. Measured over five
+        # days: 240 exec-intent calls, 104 of them byte-identical repeats (43%), 82,221 completion
+        # tokens; one session asked the same question seven times. #9 spends a call to ground the
+        # next action and bounds it with exactly this: a call that does not move the plan must not
+        # repeat. Keyed on the prompt itself, so any real change re-asks.
+        key = hashlib.sha1((system + "\x00" + user).encode("utf-8", "replace")).hexdigest()
+        cached = getattr(sess, "exec_intent_reply", "") if getattr(sess, "exec_intent_key", "") == key else ""
         # REASONING OFF, and a cut answer is no answer. This asks for three JSON fields and nothing
         # else — there is nothing here to think about, and thinking is what killed it. Its first and
         # only live firing, ada-handles_mellum2_codex_poff_1785714194 call 0032: `finish_reason=length`,
@@ -1649,11 +1663,18 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
         # check built to catch a green gate over a broken program, 0 for 1. Every sibling judge already
         # does one of these two things (force_think_off at _satisfaction_verdict, the truncation retry
         # at the critic); this call did neither.
-        comp = _judge_completion(reasoner_chat, reasoner_role, system, user, rlog,
-                                 phase="exec-intent", workspace_root="", force_think_off=True)
-        if massage.is_truncated(comp):
-            rlog.emit("loop.exec_intent_truncated", level="warn")
-            return ""   # a cut intent is not an intent; say nothing rather than guess a command
+        if cached:
+            rlog.emit("loop.exec_intent_reused", level="info", key=key[:8])
+            intent_text = cached
+        else:
+            comp = _judge_completion(reasoner_chat, reasoner_role, system, user, rlog,
+                                     phase="exec-intent", workspace_root="", force_think_off=True)
+            if massage.is_truncated(comp):
+                rlog.emit("loop.exec_intent_truncated", level="warn")
+                return ""   # a cut intent is not an intent; say nothing rather than guess a command
+            intent_text = _completion_text(comp) or ""
+            if intent_text.strip():
+                sess.exec_intent_key, sess.exec_intent_reply = key, intent_text
         # The output-vs-expectation question is the reasoner's (see execcheck.evaluate). Reasoning
         # OFF and temperature 0: it answers one word from a fixed set, like every other closed
         # question cria asks. No reasoner configured → evaluate() falls back to today's silence.
@@ -1661,8 +1682,7 @@ def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_r
         match_ask = (lambda sysm: summarize(reasoner_chat, off, sysm, _ASK_USER_TURN, rlog,
                                             phase="exec-output", temperature=0.0) or "") \
             if reasoner_role is not None else None
-        result = execcheck.evaluate(root, execcheck.parse_intent(_completion_text(comp) or ""),
-                                    ask=match_ask)
+        result = execcheck.evaluate(root, execcheck.parse_intent(intent_text), ask=match_ask)
         rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
                   exit_code=result.exit_code)
         # THE CODER GETS IT TOO. Walked on both 2026-08-07 runs, and it is the whole resolver_cli
