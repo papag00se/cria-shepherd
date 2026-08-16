@@ -1,0 +1,3 @@
+[OUTPUT GUARD] Your last turn ran for a long time and produced nothing at all — no answer, no reasoning, and no readable tool call. It was stopped so the rest of the turn is not lost to it.
+
+Nothing you had in progress survived, so there is nothing to continue from. Start the next step fresh and keep it SMALL: one tool call, the simplest concrete action you already know is needed. If you were part-way through writing a large file, write it in pieces rather than all at once.

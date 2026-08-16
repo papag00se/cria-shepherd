@@ -486,6 +486,8 @@ class Upstream:
         stream_error: str | None = None
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
+        chunks_seen = 0     # SSE frames carrying a choices delta
+        streamed_chars = 0  # of those, how many characters cria could actually read
         saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
@@ -513,6 +515,7 @@ class Upstream:
                     err = obj["error"]
                     stream_error = str(err.get("message") or err) if isinstance(err, dict) else str(err)
                     break
+                chunks_seen += 1
                 for choice in obj.get("choices", []):
                     delta = choice.get("delta") or {}
                     if delta.get("content"):
@@ -536,6 +539,7 @@ class Upstream:
                                  *(((tc.get("function") or {}).get("arguments")) for tc in (tcs or []))):
                         if frag:
                             gen_tail = (gen_tail + frag)[-rumination.DEGENERATE_RUN_CHARS:]
+                            streamed_chars += len(frag)   # anything cria could actually read
                             rlog.live_chars += len(frag)  # the ticker's live tok/s numerator
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
@@ -544,6 +548,17 @@ class Upstream:
                 # Degenerate-run backstop (independent of the rumination watcher: it fires even on a
                 # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
                 # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
+                # DEAD STREAM. Chunks keep coming and nothing cria can read is in them — no
+                # content, no reasoning, no tool-call fragment. See rumination.DEAD_STREAM_CHUNKS for
+                # the call this was measured on: 42,744 tokens and 11.7 minutes to an empty message,
+                # stopped only by n_ctx. It is not a cap: a real write_file accumulates from its
+                # first delta and never reaches this, which is exactly why the rumination watcher can
+                # afford to skip arguments.
+                if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
+                    aborted = {"dead_stream": True, "chunks": chunks_seen}
+                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
+                              chunks=chunks_seen)
+                    break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
                     # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
                     # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,

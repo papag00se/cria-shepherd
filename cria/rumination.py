@@ -80,6 +80,33 @@ DEGENERATE_RUN_CHARS = 2048
 MIN_DEGENERATE_REPEATS = 3
 
 
+# A DEAD STREAM: chunks keep arriving and NOTHING cria can read is in them. Not a runaway of bad
+# output — an absence of output, for as long as the server will keep going.
+#
+# Measured, cycle 3 cell 1 (shipping-rates-rb × gemma4), the whole cell in one call:
+#     {"message": {"role": "assistant", "content": null}, "finish_reason": "length",
+#      "usage": {"completion_tokens": 42744, "prompt_tokens": 6408, "total_tokens": 49152}}
+#     "timings": {"predicted_n": 42744, "predicted_ms": 703592}
+# 42,744 tokens, 11.7 minutes, and the assembled message is empty — no content, no reasoning, no
+# tool-call fragment. 6,408 + 42,744 = 49,152 is n_ctx exactly, so the ONLY thing that stopped it was
+# running out of window. Every other call in that run finished under 17 seconds. Cycle 2's run of the
+# same cell hit the identical shape (43,616 tokens, 754.9 s) and survived only because it landed with
+# clock to spare. Across every log on disk: 14 calls over 300 s in 12 distinct sessions.
+#
+# WHY THE OTHER TWO GUARDS CANNOT SEE IT. The rumination detector reads reasoning (or content when
+# the server does not split it out) and there is none. The degenerate-tail backstop reads a tail that
+# never fills, because nothing is being appended to it. Both are looking at bytes; the defect is that
+# there are no bytes.
+#
+# WHY THIS IS NOT A CAP (#6). It never bounds how much a model may produce — a legitimate 40,000-token
+# write_file accumulates into tool-call arguments from its first delta and is untouched, which is the
+# whole reason the rumination watcher excludes arguments in the first place. This fires only when the
+# stream has run this long having accumulated NOTHING, which is a turn that cannot produce a result
+# whatever happens next.
+DEAD_STREAM_CHUNKS = 400
+
+
+
 def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
     """True when the last ``window`` characters of ``text`` are a single repeated character — a stuck
     single-token stream. Cheap (inspects only the tail), so it can run per streaming stride."""

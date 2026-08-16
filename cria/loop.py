@@ -7539,7 +7539,11 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # reasoning pass hit 0 second-guessing phrases … after ~2048 reasoning tokens" — a stated
         # cause of ZERO hits (self-refuting), a character count relabelled as tokens, and advice
         # aimed at the wrong behaviour. Rule 5b: cria states the trigger it actually has.
+        # THREE detectors abort a turn now, and a third failure gets a third notice for the reason
+        # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
+        # or to stop repeating a passage, would name a behaviour that did not happen (5b).
         conv = conv + [{"role": "user", "content": (
+            prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
             prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),
                            tokens=v.get("reasoning_tokens", "many")))}]
