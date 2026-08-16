@@ -64,20 +64,46 @@ Everything the guard is for still holds.
 ### 11. One owner for "is this a test file"
 `execcheck` kept a private regex in which `Test`/`Tests` had to END the stem, so JUnit's prefix convention `TestImporter.java`, `ImporterTestCase.java` and jest's `__tests__/` all read as ordinary source — while `TEST_CONVENTIONS` listed all three by name. In execcheck that decides whether a workspace has a program at all. **Fixed**: the classifier moved beside the table it reads; both callers defer. `conftest.py` is now correctly not a test.
 
+### 12. The steer author's private-thinking section was never filled
+`author_steer` took a `reasoning_window=` and rendered five prompt lines plus an authority-list entry around it. No production caller ever passed one — its only producer was `_record_reasoning`, deleted with the flail detector. Every real steer carried the header, the instructions for reading it, and "(not captured for this trigger)". **Removed**, completing that decision rather than reversing it.
+
+### 13. `Upstream(context_window=)` promised a TOML key that did not exist
+Its docstring says the configured value is authoritative — "`context_window` in the toml" — and there was no key, so the path was reachable only from tests. On a box where /props cannot be read cria had no way to be *told* the answer; it committed the 8,192 fallback instead. **Wired** on `[defaults]`, documented in `cria.example.toml`, `0` = discover.
+
+### 14. The shell tool was matched by a list of six names it happened to have met
+Gemini CLI's `run_shell_command` and Cline's `execute_command` are in no such list. On either, `find_shell_tool` returns None (the plan loop declines every turn), the writeproxy has no lowering target, and **`focus_tools` DELETES the tool** — anything in none of its three sets is dropped. cria would take the coder's shell away for having an unfamiliar name. **Fixed**: matched by name shape (#18), checked against all twelve tool names in the captures.
+
+### 15. `go test` never printed a count, so the deleted-test signal was mute on Go
+`passing_test_regression` is the one signal that catches a coder destroying working code, and it reads the runner's own tally. `go test` without `-v` prints one line per PACKAGE and nothing per test, so the tally was empty and the detector correctly stayed silent — forever. probeparse's own table already said "go test -v · one `--- PASS:` per test": the parser expected the flag, the composer never sent it. **Fixed**; `-count=1` untouched.
+
+### 16. A green gate that composed no test command said nothing
+`undiscoverable_tests` reports test files a runner will NOT see. A `package.json` with no `scripts.test` and no jest config yields zero test probes while `lookup.test.js` sits there with a perfectly good name — so it stayed quiet, and the gate reported "no error-class problems" with no qualifier. **Fixed** by disclosing the other half of the same question. No runner is invented: `node --test` stays out of the floor table for the reason already recorded there, and a test pins that.
+
+### 17. The completion note claimed verification when nothing had verified anything
+`guard_gate_verdict` returns None for a green gate AND for one that could not run. The note read that None one way in both cases, and shipped the same claim on the no-shell path where no gate is composed at all. **Fixed**: composed at release from `last_gate_ran`, both wordings in prompts/.
+
+### 18. dirguard judged tokens before establishing they were a command
+See #10. Replayed over every captured refusal: **492 of 1,225 occurrences (40%)** were a parameter value or the tail of an unresolved `$(...)`.
+
+### 19. 37 test modules could silently skip their own last classes
+A class defined after `unittest.main()` does not run when the file is executed directly; `test_writeproxy.py` had two guards. Under pytest everything was collected, so the suite was honest — but a check that silently does not run is indistinguishable from one that passes, which is this whole sweep's theme. **Fixed** in all 37, with a meta-test so it cannot drift back.
+
+### 20. A coverage test hid a rename behind a `hasattr` fallback
+`test_the_living_replan_passes_the_sessions_ledger_through` widened its scan to the whole `Loop` class when the method could not be found, so it would have passed on some other call site's line. **Fixed**, plus the link it could not see (`_replan_tail` → `reassess_remaining` → the judge).
+
+## Checked and NOT a defect
+
+- **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
+- **Three tests with "no assertions".** All three are "must not raise" smoke tests, where an exception IS the failure.
+- **`test_research_check_wiring.py` certifying a retired rule.** It does not. `_research_check` still never calls `_advance`, and the test is the regression guard pinning that. What was stale was a COMMENT in `loop.py` calling the reading-fact-to-critic wiring "the next change" — it landed some time ago. Corrected.
+- **The "checks passed" wording with no gate.** Already fixed by `_check_state_words` before this sweep ran; the finding predates it.
+- **The steer author's unchanged-findings guard.** Already fixed by routing `checks_now` through `last_gate_flag`; the finding predates it.
+
 ## Still open
 
 From the sweep, not yet addressed:
 
-- the steer author's "don't re-diagnose unchanged findings" guard — 0 fires in 5 days
-- "The repo's automated checks pass" when the gate never ran — 80 fires, honest wording 0
-- superseded-write stamps: six stamps for one file at four different byte counts
-- a spill file named before it exists
-- `guard_truncation` "partway through writing the file" on turns marked not-a-write
-- Go's deleted-test detector (structurally dead: `go test` without `-v`)
-- `package.json` bare node test yields zero probes
-- `focus_tools` can delete the harness shell tool on Gemini/Cline
-- `_runnable` refuses `rake test` / `mix test` / `make run` that `corroborate` accepts
-- `satisfaction_done_note` claims the repo's checks verified a run where none ran
+- superseded-write stamps: six stamps for one file at four different byte counts (believed fixed by `_last_write_index_by_path`; needs a replay against the captures to confirm)
+- `guard_truncation` "partway through writing the file" on turns marked not-a-write (believed fixed by the `truncated_call` arm; same)
 - the periodic check-in restating check output 140 bytes above it
-- `failover.run` has zero production callers; `Upstream(context_window=)` has no TOML key
-- test modules that certify a rule the code no longer follows, and two that execute zero assertions
+- **`failover.run` and `Router.route_chain` have no production callers.** Deleting them removes the multi-backend failover chain the TOML documents — a product decision, so it is recorded here rather than taken. `upstream.chat` uses the module's POLICY with the loop written out, and its docstring now says so.

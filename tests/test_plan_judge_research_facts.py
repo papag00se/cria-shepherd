@@ -76,10 +76,18 @@ class WiringTests(unittest.TestCase):
                       inspect.getsource(loop.Loop._reopen_if_unsatisfied))
 
     def test_the_living_replan_passes_the_sessions_ledger_through(self):
-        src = inspect.getsource(loop.Loop._replan_tail) if hasattr(loop.Loop, "_replan_tail") else ""
-        if not src:
-            src = inspect.getsource(loop.Loop)
+        """No hasattr fallback. It used to widen to the WHOLE Loop class when the method could not be
+        found, which is a rename hiding behind a default — the assertion would still pass on some
+        OTHER call site's line and say nothing about this one (#4: a fallback that hides the failure
+        it was written to catch)."""
+        src = inspect.getsource(loop.Loop._replan_tail)
         self.assertIn("facts=session_research_facts", src)
+
+    def test_the_replan_reaches_the_judge_through_reassess(self):
+        """The link the source scan above cannot see: _replan_tail hands its facts to
+        reassess_remaining, which is what actually calls the judge."""
+        self.assertIn("reassess_remaining(", inspect.getsource(loop.Loop._replan_tail))
+        self.assertIn("reasoned_noise_indices(", inspect.getsource(loop.reassess_remaining))
 
     def test_the_loop_reader_abstains_on_an_empty_session(self):
         self.assertEqual(loop.session_research_facts([], None), "")
