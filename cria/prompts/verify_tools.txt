@@ -33,4 +33,4 @@ answer_now_steer = You have inspected enough. Answer NOW with the short unstick 
 verdict = Give your final answer. Call this once, when you have finished looking. Do not call it and another tool in the same turn.
 verdict_satisfied = true only when every requested deliverable is present, verified and working; false otherwise.
 verdict_reason = A short evidence-based verdict: what proves completion, or the exact deliverable that is missing, failing, fake or unproven.
-verdict_fix = When satisfied is false, one executable next step that resolves the stated problem. Empty string when true.
+verdict_fix = When satisfied is false, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. Empty string when true.

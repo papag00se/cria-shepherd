@@ -290,6 +290,12 @@ class PlanSession(GuardState):
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # Did the last completion gate actually RUN? `guard_gate_verdict` returns None for BOTH a green
+    # gate and a gate that could not run, so its callers could not tell them apart and two of the
+    # three hardcoded "The repo's automated checks pass". Measured: that wording shipped 80 times,
+    # twice in a prompt whose newest check block showed failing tests, while the honest `never_ran`
+    # wording the prompt file already carries fired zero times.
+    last_gate_ran: bool = False
     # The highest PASSING test count any green gate has reported this session. Regression-only (#2):
     # it exists so cria can state, as a fact from the runner's own tally (#12), that the suite used
     # to pass more tests than it does now. See `passing_test_regression`.
@@ -2384,7 +2390,7 @@ class Loop:
                 sess.plan.items.append(fix)
         sess.plan.status = "in_progress"
         sess.nudge_reason = prompts.render("done_incomplete", reason=reason,
-                                           check_state=prompts.load_map("done_check_state")["passed"],
+                                           check_state=_check_state_words(sess),
                                            exec_finding=_exec_finding_line(sess))
         sess.steer_source = "completion critic (task not fully done)"
         self._persist_plan(sess.plan, rlog)
@@ -3680,7 +3686,7 @@ class Loop:
                 # actually satisfied. cria never lets a still-incomplete task exit early — the model
                 # finishes the real work on its own; there is no "give up after one look".
                 sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
-                                                   check_state=prompts.load_map("done_check_state")["passed"],
+                                                   check_state=_check_state_words(sess),
                                                    exec_finding=_exec_finding_line(sess))
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
@@ -5338,6 +5344,17 @@ def _add_note(completion: dict, note: str) -> None:
         completion.setdefault(bodykeys.NOTES, []).append(note)
 
 
+def _check_state_words(gs) -> str:
+    """The check-state clause of `done_incomplete`, chosen by what actually happened.
+
+    `guard_gate_verdict` returns None for a green gate AND for a gate that could not run, so callers
+    that hardcoded the "passed" wording asserted a check they had no evidence for. The prompt file has
+    carried the honest alternative since it was written, and its own header records this exact
+    incident — the fix reached one of three callers. #5b, then #13."""
+    words = prompts.load_map("done_check_state")
+    return words["passed"] if getattr(gs, "last_gate_ran", False) else words["never_ran"]
+
+
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     """Read a completion-gate probe's result and return a block-steer when the repo's checks FAILED,
     else None (genuinely clean, or the checks couldn't run → fail-open, don't wedge). The OBJECTIVE half
@@ -5352,8 +5369,10 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     as a genuine 'done'."""
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = read_gate(gs.gate_plan, probe, rlog)
+    gs.last_gate_ran = bool(outcome.ran)
     if not outcome.ran:
         gs.gate_fresh = True  # ATTEMPTED — the completion backstop honours the same fail-open
+        rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False)  # #12: say which happened
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
     findings = proberun.completion_block_nudge(outcome.report)
     if findings:

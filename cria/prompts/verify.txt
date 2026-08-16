@@ -16,7 +16,7 @@ Rules:
 Output fields:
 - `done`: `true` only when THIS step is proven complete; otherwise `false`.
 - `reason`: short, specific evidence showing what succeeded, failed, is missing, or remains unproven.
-- `proposed_fix`: if `done=false`, ONE imperative next action the coder can perform with its available tools to advance THIS step. Name the exact known command/file/source when available; never invent one. If `done=true`, use `""`.
+- `proposed_fix`: if `done=false`, NAME what this step still needs — the deliverable, behaviour or file that is missing or wrong — in one line. What must become true, not how to make it true: never a command, a library, an approach, or a filename the step did not name. Choosing the implementation is the coder's job, and a judge that picks one is authoring the work. If `done=true`, use `""`.
 
 Output only:
-{"done": true|false, "reason": "<specific evidence-based finding>", "proposed_fix": "<one imperative next action or empty string>"}
+{"done": true|false, "reason": "<specific evidence-based finding>", "proposed_fix": "<the missing thing named, or empty string>"}
