@@ -283,8 +283,21 @@ def _defanged_line(m: dict) -> str:
     return f"{who}: {flat}"
 
 
-def compaction_request(messages: list[dict], files_list: str = "") -> str:
+def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None) -> str:
     """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
+
+    ``gate_plan`` is the live ``probegate.GatePlan``. Every other caller of ``clean_gate_results``
+    passes it; this one did not, and the plan is where five facts live — which probe is a hard
+    failure (without it, a build that exited non-zero printing only advisory-shaped lines cleans to
+    "no error-class problems"), the workspace root that lets a zero-tests result name the stranded
+    test file, the untested list, the delimiter facts, and the offline re-run.
+
+    Scope, measured rather than assumed: a RAW gate blob does not currently reach here. Both callers
+    filter ``_ANCHOR_MARKERS`` out of the summarizer's input first, and ``___CRIA_GATE_`` is one of
+    them — 0 of 70 real self-compact prompts carry a raw marker, and the last gate state is appended
+    deterministically instead (``server._last_checks_note``). So this argument changes no output
+    today; it exists because the alternative is one caller of four holding a different rule about
+    what the cleaner is allowed to be told, which is how the two compaction paths drifted before.
 
     ``files_list`` is ``groundtruth.workspace_inventory`` — what is on disk RIGHT NOW. Without it
     cria asked a model to describe a workspace it had never been shown, and it filled the gap:
@@ -321,7 +334,7 @@ def compaction_request(messages: list[dict], files_list: str = "") -> str:
     # newest. The bytes of the older ones are on disk, which is the only current version.
     # Evidence, then disk, then the ask — the ask stays LAST for the reason above.
     disk = f"\n\n{files_list.strip()}" if files_list.strip() else ""
-    return (serialize(stub_old_write_args(probegate.clean_gate_results(messages)))
+    return (serialize(stub_old_write_args(probegate.clean_gate_results(messages, gate_plan)))
             + disk + "\n\n" + prompts.load("compact_closing_ask"))
 
 

@@ -101,7 +101,7 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
                 self.assertNotIn("selfcompact.serialize(probegate.clean_gate_results(", src,
                                  "compose via selfcompact.compaction_request, not by hand")
         # the composer itself is the one legitimate site
-        self.assertIn("probegate.clean_gate_results(messages)",
+        self.assertIn("probegate.clean_gate_results(messages, gate_plan)",
                       inspect.getsource(selfcompact.compaction_request))
 
     def test_the_summarizer_input_stubs_superseded_write_bodies(self):

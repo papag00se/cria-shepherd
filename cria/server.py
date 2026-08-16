@@ -206,7 +206,18 @@ def _last_checks_note(server, sess_key: str) -> str:
     return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
 
 
-def _compaction_transcript(messages: list, files_list: str = "") -> str:
+def _session_gate_plan(server, sess_key: str):
+    """The live GatePlan for this session, or None. Same store lookup as :func:`_last_checks_note`.
+
+    The harness-compaction path composes a transcript from the HARNESS's messages, which carry raw
+    gate results that never passed through the loop's cleaner. Without the plan those clean to the
+    most forgiving sentence cria can produce (see selfcompact.compaction_request)."""
+    loop = getattr(server, "loop", None)
+    sess = loop._store.get(sess_key) if loop is not None else None
+    return getattr(sess, "gate_plan", None) if sess is not None else None
+
+
+def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None) -> str:
     """The conversation to be briefed, as flat text — the SAME preparation cria's internal
     compaction and steer author use: the harness's agent frame dropped (Codex ships ~7.8K tokens of
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
@@ -234,10 +245,10 @@ def _compaction_transcript(messages: list, files_list: str = "") -> str:
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.
-    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list)
+    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan)
 
 
-def _compaction_body(pbody: dict, workspace_root: str | None = None) -> dict:
+def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None) -> dict:
     """The compaction request, re-asked in CRIA'S OWN WORDS.
 
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
@@ -267,7 +278,8 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None) -> dict:
             pbody.get("messages", []),
             # …AND THE DISK, for the same reason the self-compaction sibling now passes it: a writer
             # shown no workspace invents one. ONE mechanism, both paths.
-            groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"))},
+            groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"),
+            gate_plan)},
     ]}
 
 
@@ -325,6 +337,11 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
                 return t
         return ""
 
+    # Derived ONCE for both halves. The retry (1) composed its request with neither the disk
+    # inventory nor the gate plan that the first pass gets, while the appendix (2) below derived the
+    # same key again a few lines down. One derivation, both users.
+    sk = session_key({}, body.get("messages", []))
+    ws = _session_cwd(sk, body.get("messages", []))
     text = _text_of(comp).strip()
     truncated = massage.is_truncated(comp)
     if not text or massage.has_tool_call_leak(text) or truncated:
@@ -337,7 +354,15 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
         # for weak models: prose only, no tools, name real files, quote real checks.
         pb = {**pb, "messages": [
             {"role": "system", "content": prompts.load("selfcompact_summary")},
-            {"role": "user", "content": _compaction_transcript(pb.get("messages", []))},
+            # The SAME two grounding facts the first pass gets. This retry composed the request
+            # without them: no disk inventory (so the writer that already invented a file is asked
+            # again with nothing to check itself against) and no gate plan (so a red gate cleans to
+            # cria's most forgiving sentence). It is the pass that runs precisely when the first one
+            # produced garbage — the one that can least afford to be given less.
+            {"role": "user", "content": _compaction_transcript(
+                pb.get("messages", []),
+                groundtruth.workspace_inventory(ws or "", flavor="briefing"),
+                _session_gate_plan(server, sk))},
         ]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
@@ -366,8 +391,6 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
     # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
     # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
-    sk = session_key({}, body.get("messages", []))
-    ws = _session_cwd(sk, body.get("messages", []))
     inventory = _workspace_listing(ws)
     checks = _last_checks_note(server, sk)
     facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
@@ -959,7 +982,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
             if _is_compaction_request(body.get("messages", [])):
-                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", [])))
+                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", [])),
+                                         _session_gate_plan(server, sk))
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
                 body.get("model", ""),
@@ -996,7 +1020,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
         if _is_compaction_request(body.get("messages", [])):
-            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", [])))
+            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", [])),
+                                     _session_gate_plan(server, sess_key))
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:

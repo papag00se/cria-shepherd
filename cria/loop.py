@@ -2707,7 +2707,10 @@ class Loop:
                                      # The writer never saw it and invented files that never
                                      # existed. Same fact, given before the question.
                                      workspace_inventory(sess.workspace_root or "",
-                                                         flavor="briefing")), rlog,
+                                                         flavor="briefing"),
+                                     # …and the gate plan, so the cleaner reports what the gate
+                                     # actually found rather than its most forgiving branch.
+                                     getattr(sess, "gate_plan", None)), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
                                  rlog) + _briefing_gate_ground_truth(sess),
