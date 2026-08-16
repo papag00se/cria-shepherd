@@ -7973,13 +7973,19 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # Measured over five days: all 17 truncations had `path is None`, so 17 of 17 told the model
         # its last write was refused and that it stopped "partway through writing the file" (#5b).
         was_write = _truncated_write_path(coder) is not None or _last_write_path_seen
+        key = ("selfcut_write" if selfcut else "truncated_write") if was_write else "truncated_call"
         _add_note(coder, ("output stopped early mid-write — partial write refused (retry in smaller pieces)"
                           if was_write and selfcut else
                           "output hit the token limit — partial write refused (retry in smaller pieces)"
                           if was_write else
                           "output ended before the call was complete — partial call refused"))
-        _refusal_turn(body, prompts.load_map("call_refused")[
-            ("selfcut_write" if selfcut else "truncated_write") if was_write else "truncated_call"])
+        _refusal_turn(body, prompts.load_map("call_refused")[key])
+        # WHICH SENTENCE WENT OUT, in the event that produced it (#12). The `path`/`selfcut` fields on
+        # `loop.truncated` describe the DETECTION; nothing recorded the wording, so the incident this
+        # branch was written for — 17 of 17 truncations telling the model its WRITE was refused when
+        # cria's own `path is None` said it was not a write — was invisible in the log and had to be
+        # reconstructed from prompt captures. Now it is one field.
+        rlog.emit("loop.truncated_refused", step=step, wording=key, was_write=was_write)
     elif attempt:  # recovered after steering to incremental writes
         _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
     return coder
