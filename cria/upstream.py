@@ -84,6 +84,12 @@ class Upstream:
         self._props_seen = False          # source (chat_template + chat_template_caps)
         self._window = context_window if context_window else _UNSET
         self._window_final = bool(context_window)  # a configured value is authoritative — no probe
+        # Is the current window a number cria INVENTED? `_window_final` answers a different question
+        # ("stop probing"), and the window guard was gated on it — so the guard was off in exactly the
+        # cases that produce runaways: before the first successful probe, and forever after the
+        # fallback was committed. Evidence (config, /props, the server's own 400, a prompt the server
+        # ACCEPTED) turns this off; only `_FALLBACK_WINDOW` turns it on.
+        self._window_guessed = False
         self._props_attempts = 0
         self._models_attempts = 0
         if self._api_key and context_window is None:
@@ -185,6 +191,7 @@ class Upstream:
             if isinstance(n_ctx, int) and n_ctx > 0:
                 self._window = n_ctx
                 self._window_final = True
+                self._window_guessed = False
                 rlog.emit("context.window", source="props", n_ctx=n_ctx)
                 return self._window
             rlog.emit("context.window", level="info", source="props", error="no n_ctx in /props")
@@ -193,6 +200,7 @@ class Upstream:
         # Discovery missed this attempt: keep the floor ALIVE on a safe fallback (never cache
         # None = "no floor"), and retry next call until the attempt budget commits the fallback.
         self._window = _FALLBACK_WINDOW
+        self._window_guessed = True
         if self._props_attempts == _MAX_PROPS_ATTEMPTS:
             rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW,
                       retry_every=_PROPS_RETRY_EVERY)
@@ -269,9 +277,43 @@ class Upstream:
                                                phase=getattr(rlog, "phase", None), url=self._chat_url, rendered=rendered)
         return json.dumps(out).encode("utf-8"), sent_estimate, capture_path
 
-    def _calibrate(self, model, prompt_tokens, estimate: int, rlog) -> None:
+    def _window_at_least(self, prompt_tokens, rlog) -> None:
+        """A prompt the server ACCEPTED proves its window is at least that big.
+
+        THE FALLBACK IS NOT CONSERVATIVE, it is destructive, and cria held the disproof in its hand
+        on every call. Measured over the captured log-days: 52 floor runs against the 8,192 fallback,
+        `over_budget` on 52 of 52, 934 PROTECTED messages destroyed across 6 sessions — while the
+        model's real window was 49,152, six times larger, and the server was answering every one of
+        those calls and reporting the real prompt size back in `usage`. Erring LARGE is recoverable
+        (a 400 → :func:`_overflow_refit` re-preps once against the server's own count, 47 of them in
+        the same window); erring small is silent and permanent.
+
+        A lower bound, so the window is NOT marked final and /props probing continues. Only ever
+        raises, and never touches a configured or discovered window — those are authoritative. #12:
+        the number comes from the authoritative event, not from a constant someone chose."""
+        if self._window_final or not isinstance(prompt_tokens, int) or prompt_tokens <= 0:
+            return
+        if self._window is _UNSET or self._window is None or prompt_tokens > self._window:
+            was = None if self._window is _UNSET else self._window
+            rlog.emit("context.window", level="warning", source="accepted-prompt",
+                      n_ctx=prompt_tokens, was=was)
+            self._window = prompt_tokens
+            self._window_guessed = False   # measured, not invented — even though it is a lower bound
+
+    def _calibrate(self, model, usage, estimate: int, rlog) -> None:
         """Learn the real÷estimate density from a call's REAL prompt-token count (server usage), so
-        the floor budgets against truth on later turns. Best-effort — no-op without a usage count."""
+        the floor budgets against truth on later turns. Best-effort — no-op without a usage count.
+
+        The same record also proves how much the server FIT — see :func:`_window_at_least`."""
+        usage = usage if isinstance(usage, dict) else {}
+        prompt_tokens = usage.get("prompt_tokens")
+        # TOTAL, not prompt: the server held the prompt AND the completion at once, so total_tokens
+        # is the true lower bound on its window. Using the prompt alone would set the window to
+        # roughly the prompt size, and the floor's budget is window MINUS the output reserve — which
+        # on a 20k prompt would leave 3.6k and trim harder than the guess it replaced.
+        self._window_at_least(usage.get("total_tokens")
+                              or ((prompt_tokens or 0) + (usage.get("completion_tokens") or 0))
+                              or None, rlog)
         shifted = tokenratio.record(model, prompt_tokens, estimate)
         if shifted is not None:
             rlog.emit("context.calibrated", model=model, real=prompt_tokens, est=estimate, ratio=round(shifted, 2))
@@ -294,8 +336,17 @@ class Upstream:
             return None
         tokenratio.record(model, real, sent_estimate)  # also nudge the running per-model average
         density = float(real) / float(sent_estimate)
+        n_ctx = inner.get("n_ctx") if isinstance(inner, dict) else None
         rlog.emit("context.refit", level="warning", model=model, real=real, est=sent_estimate,
-                  n_ctx=(inner.get("n_ctx") if isinstance(inner, dict) else None), safety=round(density, 2))
+                  n_ctx=n_ctx, safety=round(density, 2))
+        # THE SERVER JUST STATED ITS WINDOW. It was being logged and thrown away while the floor ran
+        # against a guess. This is the same class of authority as /props — the server's own number
+        # about its own context — so it is FINAL, unlike the accepted-prompt lower bound above.
+        if isinstance(n_ctx, int) and n_ctx > 0 and not self._window_final:
+            rlog.emit("context.window", source="server-error", n_ctx=n_ctx,
+                      was=(None if self._window is _UNSET else self._window))
+            self._window, self._window_final = n_ctx, True
+            self._window_guessed = False
         return density
 
     def _open_with_refit(self, body: dict, stream: bool, rlog) -> tuple:
@@ -402,7 +453,7 @@ class Upstream:
             self._save_reasoning(capture_path, "".join(reasoning), None, rlog,
                                  ending="" if usage else "the stream ended without a usage block")
             tokens = (usage or {}).get("completion_tokens") or content_chunks
-            self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
+            self._calibrate(body.get("model"), usage, sent_estimate, rlog)
             tok_s = (
                 round(tokens / (t_end - t_first), 1)
                 if (t_first is not None and t_end > t_first and tokens)
@@ -450,7 +501,7 @@ class Upstream:
                 time.sleep(action.wait_ms / 1000.0)
         t_end = time.monotonic()
         usage = (_try_json(raw) or {}).get("usage")
-        self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
+        self._calibrate(body.get("model"), usage, sent_estimate, rlog)
         tokens = (usage or {}).get("completion_tokens")
         tok_s = round(tokens / (t_end - t0), 1) if (tokens and t_end > t0) else None
         rlog.emit(
@@ -495,15 +546,20 @@ class Upstream:
         streamed_chars = 0  # of those, how many characters cria could actually read
         # The room this generation has: the model's window minus what the prompt already spent.
         #
-        # ONLY WHEN THE WINDOW WAS ACTUALLY DISCOVERED. `_resolve_window` returns a deliberately
-        # conservative FALLBACK when /props cannot be read, and computing room from a guess would
-        # abort real generations on a model whose true window is six times larger — the "cap output"
-        # footgun principle 6 exists to forbid, arrived at by arithmetic instead of by a constant.
-        # A test caught exactly that: a legitimate 31,735-character reasoning block tripped it
-        # against the 8,192 fallback. Unknown window → this guard is simply off, which is the same
-        # safe direction every other unknown takes here.
+        # ONLY WHEN THE WINDOW IS NOT A GUESS. `_resolve_window` returns a deliberately conservative
+        # FALLBACK when /props cannot be read, and computing room from a guess would abort real
+        # generations on a model whose true window is six times larger — the "cap output" footgun
+        # principle 6 exists to forbid, arrived at by arithmetic instead of by a constant. A test
+        # caught exactly that: a legitimate 31,735-character reasoning block tripped it against the
+        # 8,192 fallback.
+        #
+        # But this gated on `_window_final`, which answers "stop probing", not "is this number real".
+        # A window learned from a prompt the server ACCEPTED (`_window_at_least`) is measured and not
+        # final, and under the old test the guard stayed off for it — off, that is, in precisely the
+        # sessions where /props was unreachable and a runaway was most likely to go unnoticed.
+        # `_window_guessed` asks the question that matters: did cria invent this number?
         _win = self._resolve_window(rlog) or 0
-        window_room = max(0, _win - sent_estimate) if (_win and self._window_final) else 0
+        window_room = max(0, _win - sent_estimate) if (_win and not self._window_guessed) else 0
         saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
@@ -653,7 +709,7 @@ class Upstream:
         if not saved:
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
         callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
-        self._calibrate(body.get("model"), (usage or {}).get("prompt_tokens"), sent_estimate, rlog)
+        self._calibrate(body.get("model"), usage, sent_estimate, rlog)
         rlog.emit("upstream.done", total_ms=round((t_end - t0) * 1000, 1), tokens=tokens,
                   tok_per_s=tok_s, from_usage=bool(usage), aborted=bool(aborted))
         return json.dumps(completion).encode("utf-8")
