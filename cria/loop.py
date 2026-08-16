@@ -189,6 +189,10 @@ class GuardState:
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    # The last gap the PERIODIC completion check named to the coder. Its only job is to stop the
+    # same verdict being re-delivered: that check fires on a drive counter, so an unchanged workspace
+    # produces an unchanged verdict, and one cycle-2 cell produced twelve consecutive identical ones.
+    last_gap_named: str = ""
     nudge_reply: str = ""  # the coder's own no-tool-call reply the pending nudge is ABOUT — re-framed
     # views rebuild history from the harness body, which never saw an internal prose turn, so without
     # this the unexecuted-write nudge says "your last message contained the file's contents" about a
@@ -3542,7 +3546,38 @@ class Loop:
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
                   satisfied=satisfied)
         if not satisfied:
-            return None   # do NOT steer — the reason is judgment, not ground truth. Log only.
+            # THE OPERATOR'S RULING, 2026-08-15. This path used to `return None` — log only — on the
+            # grounds that a timer's verdict is judgment rather than ground truth, and that steering
+            # off a clock is noise on a clock (#3, #11). Cycle 2 measured what that cost. On
+            # shipping-rates-rb × nemotron-elastic the judge returned NOT-satisfied four times
+            # (calls 0041, 0059, 0072, 0086), each naming `Shipping.zone_for` as not implemented and
+            # each carrying a written fix; the coder heard none of it and the cell ended 2 of 4 with
+            # that method still absent — reproduced cold as `undefined method 'zone_for'`. Cycle 1
+            # recorded the same shape on feed-pipeline-java × qwen35, where the unheard deliverable
+            # was a REVIEW.md worth 20 points that needed sixty words and no build.
+            #
+            # The ruling: a verdict that NAMES a specific missing deliverable is not the timer's
+            # opinion, it is a checkable absence, and it may reach the coder.
+            #
+            # Bounded three ways, because the original objection was right about the noise:
+            #   - only when the judge actually said something — an empty reason stays silent (#3);
+            #   - only when nothing else is steering this turn (the caller's `blocked` covers the
+            #     guard steers; this covers a nudge already parked for the next turn);
+            #   - and NEVER the same reason twice running. feed-pipeline-java × qwen35 produced
+            #     TWELVE consecutive not-satisfied verdicts on a workspace already scoring 5 of 5;
+            #     twelve identical steers is precisely the clock-noise the old comment defended
+            #     against, and this is what keeps that objection satisfied.
+            #
+            # It carries the judge's REASON only. `proposed_fix` stays unused on this path: naming
+            # the gap is what was ruled on, choosing the implementation is not (#2's corollary, and
+            # steer_diagnose's own "Do not choose the IMPLEMENTATION").
+            named = (reason or "").strip()
+            if named and not sess.nudge_reason and named != (sess.last_gap_named or "").strip():
+                sess.last_gap_named = named
+                sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
+                sess.steer_source = "completion check (deliverable not found)"
+                rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120))
+            return None   # never ENDS the session on a not-satisfied verdict — that is unchanged
         probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True

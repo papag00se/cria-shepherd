@@ -69,3 +69,105 @@ class GatingTests(unittest.TestCase):
         self.assertIsNone(self._loop()._periodic_satisfaction(
             s, {"messages": []}, None, plan_off=False, blocked=False)
             if hasattr(self._loop(), "_ctx") else None)
+
+
+class NamesTheMissingDeliverableTests(unittest.TestCase):
+    """THE OPERATOR'S RULING, 2026-08-15 — a NOT-satisfied verdict that NAMES a specific missing
+    deliverable may reach the coder.
+
+    The incident: on shipping-rates-rb x nemotron-elastic the judge returned NOT-satisfied four
+    times, each naming `Shipping.zone_for` as not implemented and each carrying a written fix, and
+    the coder was told none of it. The cell ended 2 of 4 with that method still absent, reproduced
+    cold as `undefined method 'zone_for' for Shipping:Module`.
+
+    What is NOT changed and is pinned below: this path still never ENDS a session on a not-satisfied
+    verdict, and it still carries only the judge's REASON, never its proposed_fix — naming the gap
+    was the ruling, choosing the implementation was not.
+    """
+
+    class _Sess:
+        drive_count = 80
+        nudge_reason = ""
+        last_gap_named = ""
+        steer_source = ""
+        done_probe = False
+        last_gate_red = False
+        last_gate_flag = ""
+        workspace_root = ""
+        gate_plan = None
+        plan = None
+
+    class _Rlog:
+        def __init__(self): self.events = []
+        def emit(self, kind, **kw): self.events.append((kind, kw))
+
+    class _Ctx:
+        reasoner_chat = object()
+        reasoner_role = None
+        satisfaction_check_start = 80
+        satisfaction_check_every = 20
+
+    def _run(self, sess, verdict=(False, "Shipping.zone_for(code) has not been implemented.", "")):
+        lp = loop.Loop.__new__(loop.Loop)
+        lp._ctx = self._Ctx()
+        rlog = self._Rlog()
+        saved = (loop.judge_satisfaction, loop._satisfaction_evidence,
+                 loop._gate_notes, loop.live_execution_marker)
+        loop.judge_satisfaction = lambda *a, **k: verdict
+        loop._satisfaction_evidence = lambda *a, **k: "evidence"
+        loop._gate_notes = lambda *a, **k: ""
+        loop.live_execution_marker = lambda *a, **k: ""
+        try:
+            out = lp._periodic_satisfaction(sess, {"messages": [{"role": "user", "content": "t"}]},
+                                            rlog, plan_off=True, blocked=False)
+        finally:
+            (loop.judge_satisfaction, loop._satisfaction_evidence,
+             loop._gate_notes, loop.live_execution_marker) = saved
+        return out, rlog
+
+    def test_the_named_gap_reaches_the_coder(self):
+        """FAILS BEFORE: the old code returned None and set nothing, so the coder never heard it."""
+        s = self._Sess()
+        out, rlog = self._run(s)
+        self.assertIsNone(out, "a not-satisfied verdict must never END the session")
+        self.assertIn("zone_for", s.nudge_reason, "the named deliverable never reached the coder")
+        self.assertTrue(any(k == "loop.satisfaction_gap_named" for k, _ in rlog.events))
+
+    def test_it_never_repeats_the_same_verdict(self):
+        """The check fires on a drive counter, so an unchanged workspace yields an unchanged verdict.
+        feed-pipeline-java x qwen35 produced TWELVE consecutive identical not-satisfied verdicts on a
+        workspace already scoring 5 of 5; twelve identical steers is the clock-noise the original
+        no-steer decision was defending against."""
+        s = self._Sess()
+        self._run(s)
+        first = s.nudge_reason
+        self.assertTrue(first)
+        s.nudge_reason = ""                     # the coder consumed it
+        self._run(s)                            # same verdict again
+        self.assertEqual("", s.nudge_reason, "the same gap was named twice")
+
+    def test_a_changed_verdict_does_reach_the_coder(self):
+        s = self._Sess()
+        self._run(s)
+        s.nudge_reason = ""
+        self._run(s, verdict=(False, "REVIEW.md has not been written.", ""))
+        self.assertIn("REVIEW.md", s.nudge_reason)
+
+    def test_an_empty_reason_stays_silent(self):
+        """Silence over noise (#3) — a judge that said nothing has nothing to hand on."""
+        s = self._Sess()
+        self._run(s, verdict=(False, "", ""))
+        self.assertEqual("", s.nudge_reason)
+
+    def test_it_does_not_stomp_a_steer_already_parked(self):
+        s = self._Sess(); s.nudge_reason = "an earlier guard's steer"
+        self._run(s)
+        self.assertEqual("an earlier guard's steer", s.nudge_reason)
+
+    def test_the_proposed_fix_is_not_carried(self):
+        """Naming the gap was the ruling; choosing the implementation was not (#2's corollary)."""
+        s = self._Sess()
+        self._run(s, verdict=(False, "zone_for is missing.",
+                              "Add ISO3166::Country and map GB to domestic"))
+        self.assertIn("zone_for", s.nudge_reason)
+        self.assertNotIn("ISO3166", s.nudge_reason)
