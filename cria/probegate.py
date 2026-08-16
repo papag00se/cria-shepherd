@@ -705,13 +705,45 @@ _GATE_CD_GUARD = re.compile(r"^\s*cd\s+.*\|\|\s*exit\s+97\s*$")
 _GATE_LITTER = re.compile(r"__cria_(?:pre|post|new)\b")
 
 
+# The capture wrapper `proberun.compose_probe_command` builds, reduced to the command inside it.
+# Deliberately anchored on the SHAPE (`$(timeout … <argv> </dev/null 2>&1)`) rather than on cria's
+# variable names, so a rename cannot silently turn this back off.
+_GATE_WRAPPER = re.compile(
+    r"""(?x)^\s*(?:cd\s+\S+\s+&&\s+)?          # the cd guard, when present
+        \w+=\$\(\s*timeout\s+(?:-k\s+\S+\s+)?\S+\s+   # __x_out=$(timeout [-k GRACE] LIMIT
+        (?P<cmd>.+?)\s*</dev/null\s*2>&1\s*\);           # …the real command…
+        .*$""")
+
+
 def _strip_gate_plumbing(cmd: str) -> str:
     """Drop cria's gate scaffolding from a composed gate command, keeping only the real probe commands
-    (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains."""
-    kept = [ln for ln in cmd.splitlines()
-            if not (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
-                    or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln))]
-    return "\n".join(ln for ln in kept if ln.strip()).strip()
+    (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains.
+
+    IT NOW DOES WHAT IT SAYS. It dropped whole LINES matching four scaffolding patterns — but the
+    capture wrapper is ONE line with the real command inside it, so every probe line rode through
+    complete: `cd /tmp/… && __cria_out=$(timeout -k 5 240 pytest -q </dev/null 2>&1); __cria_ec=$?;
+    …; printf 'EXIT:%d\n' "$__cria_ec"`. Measured on one day of real prompts: 131,946 occurrences of
+    cria's own variable names across 1,433 coder prompts — 6.1% of every byte cria sent the coder and
+    31.6% of the worst single prompt.
+
+    Three harms, one cause. Three different models COPIED the wrapper back into their own commands
+    (21 responses, 5 sessions; one reproduced the whole four-probe script including the offline leg),
+    and the copy always exits 0 because its last statement is a `printf`. The repetition detector's
+    fingerprint drowned: the boilerplate contributes ~35 shared words against a real command's 1–4,
+    so `cat main.go` matched `mv cart.go .` — three live fires, each costing a probe and a reasoned
+    redirect. And the steer author's transcript, defanged precisely so there is "nothing a model can
+    COPY", carried 557 characters of runnable shell per call.
+
+    Rules 17 and 5b: the model never sees the token, and never sees an idiom that lies about its own
+    exit status."""
+    out = []
+    for ln in cmd.splitlines():
+        if (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
+                or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln)):
+            continue
+        m = _GATE_WRAPPER.match(ln)
+        out.append(m.group("cmd") if m else ln)
+    return "\n".join(ln for ln in out if ln.strip()).strip()
 
 
 def _strip_command_plumbing(m: dict) -> dict:
