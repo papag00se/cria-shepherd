@@ -8,9 +8,23 @@ rewrites itself after every cell.
 
 ---
 
-## Cycle 2 — RUN complete, WALK next
+## Cycle 2 — WALK in flight
 
-**Phase: WALK.** The run phase ran **2026-08-15 09:02 → 20:31**, all 24 cells, 11.3 hours of wall
+**Phase: WALK.** Started **2026-08-15 20:5x**. Nine runs prepared with `suite/walk.py` — 297 chunk
+files, 17.1 MB — and **eight agents reading them line by line**, per `docs/walk-prompt.md`. Findings
+land in `docs/audits/cycle-2-walk.md`, one `## <run_id>` per run.
+
+| agent | run | why it was picked |
+|---|---|---|
+| 1 | `shipping-rates-rb × qwen35` | −60, cria killed it with a 259 KB body |
+| 2 | `shipping-rates-rb × ternary-bonsai` | −60, ten refusals naming a binary that does not exist |
+| 3–4 | `feed-pipeline-java × qwen35` (head / tail, 153 chunks) | 100% but 45 minutes and ~300 calls wasted after finishing |
+| 5 | `cart-billing-go × nemotron-elastic` | 0%, and the spill-to-`.txt` fix needs checking for new harm |
+| 6 | `orders-api-py × ternary-bonsai` | the score went BACKWARDS mid-run; find the regression |
+| 7 | the three 15-minute floored cells | one trivial compile error each, cria surfaced all three |
+| 8 | `feed-pipeline-java × nemotron-elastic` | four rumination aborts ate 7 of 17 minutes |
+
+The run phase ran The run phase ran **2026-08-15 09:02 → 20:31**, all 24 cells, 11.3 hours of wall
 clock and 2,239 calls. Driver `python3 suite/cycle_run.py` · log `docs/audits/cycle-run.log`.
 
 ### Cycle 2 result
