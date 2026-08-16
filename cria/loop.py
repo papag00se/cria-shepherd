@@ -5347,13 +5347,29 @@ def gate_error_text(outcome) -> str:
     injecting the "the checks pass, but that's not proof of correct behaviour — keep fixing" hedge just
     makes the model distrust a genuine pass and keep working (it can't stop). Judging "is the task
     actually done" is the done-gate's + satisfaction check's job; the periodic gate only surfaces real
-    problems early."""
+    problems early.
+
+    NEVER SAY "no line could be parsed" WHEN A LINE WAS PARSED. The two readers below look at the
+    same report and used to be exclusive: any findings at all returned early, and the unparsed
+    hard-failures were dropped. When findings were empty for the probe cria happened to ask about,
+    the `ground_truth_failed` wording — "a specific line could not be parsed from the output" —
+    went out in the same turn as a `⟦ctx:checks⟧` block quoting the located error, with the coarse
+    text quoting Maven's trailing `[Help 1]` URL instead. Measured in cycle 2 at five occurrences
+    across two runs (feed-pipeline-java × qwen35 calls 0018/0045/0056/0170, × gemma4 call 0020), and
+    it is the same sentence `probeparse.split_diag`'s comment already records costing the Java column
+    0 / 40 / 0 / 0 in cycle 1. That fix repaired the PARSER; this one stops the two readers
+    contradicting each other. Both are now surfaced together, and the "could not be parsed" framing
+    is reserved for the case where nothing was.
+    """
     if not outcome.ran:
         return ""
     findings = proberun.completion_block_nudge(outcome.report)
+    failed = proberun.failed_unparsed_probes(outcome.report)
+    if findings and failed:
+        return prompts.render("ground_truth_failed_also",
+                              findings=findings, failed="\n".join(failed))
     if findings:
         return findings
-    failed = proberun.failed_unparsed_probes(outcome.report)
     if failed:
         return prompts.render("ground_truth_failed", failed="\n".join(failed))
     return ""

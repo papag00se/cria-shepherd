@@ -1,0 +1,5 @@
+{{FINDINGS}}
+
+Separately, these checks also FAILED without printing a line anyone could locate:
+{{FAILED}}
+Run those yourself and read what they actually print. The located findings above are the ones to fix first.
