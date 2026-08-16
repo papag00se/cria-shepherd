@@ -123,6 +123,12 @@ DEAD_STREAM_CHUNKS = 400
 #   - DEAD_STREAM_CHUNKS needs NOTHING readable to have arrived, and argument fragments did arrive;
 #   - `timeout_seconds` is 7200 on this box, deliberately, because a slow CPU model can take minutes.
 #
+# COUNTED IN FRAMES. An SSE frame carrying a choices delta is the server saying "here is a token",
+# and that is true whatever the delta contains. The first cut counted characters cria had managed to
+# accumulate and missed the very call it was built for — 43,873 tokens against 43,932 of room —
+# because those tokens arrived in a shape the reader does not collect. A backstop cannot depend on
+# understanding what it is backing up.
+#
 # What is left is arithmetic cria already holds: the window, and the tokens the prompt used. Past
 # `window - prompt`, the server will stop with finish_reason=length and the result is discarded
 # whatever happens next — so aborting there destroys nothing that was going to survive. It buys back

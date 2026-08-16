@@ -32,15 +32,34 @@ from cria import rumination
 from cria.upstream import Upstream
 
 
+class ItCountsFramesNotCharacters(unittest.TestCase):
+    """The first cut counted `streamed_chars // 4` and missed the exact call it was built for -
+    cycle 3 cell 1's re-run, 43,873 tokens against 43,932 of room - because the tokens arrived in a
+    delta shape the reader does not accumulate. A backstop cannot depend on understanding what it is
+    backing up; a frame carrying a choices delta is the server saying "here is a token"."""
+
+    def test_the_guard_keys_on_the_frame_counter(self):
+        import inspect
+        from cria.upstream import Upstream
+        src = inspect.getsource(Upstream.chat_watched)
+        # CODE only — the comment above the guard quotes the old expression on purpose, to record
+        # what was wrong with it, so a substring search over the source would match its own history.
+        code = [ln for ln in src.splitlines() if not ln.strip().startswith("#")]
+        guard = next(ln for ln in code if "WINDOW_EXHAUSTED_FRACTION" in ln)
+        self.assertIn("chunks_seen", guard)
+        self.assertNotIn("streamed_chars", guard)
+
+
 class TheFractionIsNotACap(unittest.TestCase):
     def test_it_fires_only_near_the_very_end_of_the_room(self):
         self.assertGreaterEqual(rumination.WINDOW_EXHAUSTED_FRACTION, 0.85)
         self.assertLess(rumination.WINDOW_EXHAUSTED_FRACTION, 1.0)
 
-    def test_the_measured_case_would_trip_it(self):
-        """44,058 generated against 44,058 of room."""
-        room = 49152 - 5094
-        self.assertGreaterEqual(44058, room * rumination.WINDOW_EXHAUSTED_FRACTION)
+    def test_the_measured_cases_would_trip_it(self):
+        """Both shapes seen in cycle 3, in frames."""
+        for room, frames in ((49152 - 5094, 44058), (49152 - 5220, 43873)):
+            with self.subTest(room=room):
+                self.assertGreaterEqual(frames, room * rumination.WINDOW_EXHAUSTED_FRACTION)
 
     def test_an_ordinary_large_write_does_not(self):
         """A 6,000-token file into a 49k window is nowhere near it."""

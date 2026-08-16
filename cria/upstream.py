@@ -570,12 +570,18 @@ class Upstream:
                 # discarded. Aborting here keeps nothing from surviving that would have; what it buys
                 # is a LABELLED turn with a notice the coder can act on. See
                 # rumination.WINDOW_EXHAUSTED_FRACTION for the three cycle-3 measurements.
+                # COUNTED IN FRAMES, NOT IN CHARACTERS CRIA MANAGED TO READ. The first cut of this
+                # used `streamed_chars // 4` and did not fire on the very call it was built for
+                # (cycle 3 cell 1 re-run, 43,873 tokens against 43,932 of room): the tokens were
+                # arriving in a delta shape the reader does not accumulate, so the character counter
+                # stayed far behind the token count while the server happily emitted 43,873 of them.
+                # A frame that carried a choices delta is the server saying "here is a token" — it is
+                # true whatever the delta contains, which is exactly the property a backstop needs.
                 if aborted is None and window_room > 0 and \
-                        streamed_chars // 4 >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
-                    aborted = {"window_exhausted": True, "room": window_room,
-                               "generated": streamed_chars // 4}
+                        chunks_seen >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
+                    aborted = {"window_exhausted": True, "room": window_room, "frames": chunks_seen}
                     rlog.emit("rumination.abort", level="warning", window_exhausted=True,
-                              room=window_room, generated=streamed_chars // 4)
+                              room=window_room, frames=chunks_seen)
                     break
                 if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
                     aborted = {"dead_stream": True, "chunks": chunks_seen}
