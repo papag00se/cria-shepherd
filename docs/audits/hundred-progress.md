@@ -48,7 +48,34 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 17 | handles-cli-node | gemma4 | 75% | 0 | 16 | 36 | three of four, held. The CLI prints address, holder and count, `--json` and `--help` both work, a bad handle exits non-zero, `request` is gone from both `package.json` and the source, and the Dockerfile is right. **Same single loss as last cycle**: `tests_incl_live` — its tests pass with the network blocked, so they are mocked. Not a cria fault and not an impossible check: two of the four models passed it last cycle. This model chose to mock, twice running |
 | 18 | handles-cli-node | qwen35 | **100%** | 0 | 6 | 59 | all four green in six minutes, live test included — `npm test` passes with the network and fails without, which is exactly the property the check asks for. Held from last cycle. **And the completion machinery worked**: one `task_complete`, one `done_critic`, one gate, session over. The same subsystem that burned 45 minutes and 118 calls on cell 14 closed this one in a single exchange — so the defect there is not "the judge is slow", it is the silent-turn path |
 | 19 | handles-cli-node | ternary-bonsai | **100%** | 0 | 36 | 66 | all four green, live test included, held from last cycle. Climbed the whole way — 2/4 at fifteen minutes, 3/4 at thirty, 4/4 at the end — which is the shape a milestone floor is meant to allow and did |
-| 20 | handles-cli-node | nemotron-elastic | *running* | | | | |
+| 20 | handles-cli-node | nemotron-elastic | 50% | **+25** | 18 | 74 | up from 25%. The live test now passes with the network and fails without, and the Dockerfile is right. Both losses are **one line**: `lookup.js:44` assigns to a `const`, so `node lookup.js goose` dies with `TypeError: Assignment to constant variable` — which fails `cli_behaviour` outright and fails `request_removed`'s "runs with no node_modules" for the same reason (there are no dependencies at all). **Not cria's, verified**: cria ran the program seven times, reported `it exited 1` to the coder in 7 prompts and to the judge in 7 more, and the completion critic refused 8 of 9 done-claims. The model saw the TypeError in its own command output and shipped it anyway |
+| 21 | rust-toml-cli | gemma4 | *running* | | | | |
+
+### CANDIDATE — a `confirmed` run of the TEST suite followed a failing run of the PROGRAM
+
+Filed as a candidate, not a finding: the event sequence is suggestive and the critic's reasoning has
+not been read. Cell 20, verbatim from the log:
+
+```
+02:23:04  exec_check  not_observed  node lookup.js goose   exit 1
+02:23:23  done_critic satisfied=false
+02:24:03  exec_check  CONFIRMED     npm run test           exit 0
+02:24:24  done_critic satisfied=TRUE      ← session ends
+```
+
+`exec-intent` picks the command to run per completion attempt. Seven times it picked
+`node lookup.js goose` — the deliverable — and four of those exited 1. The eighth time it picked the
+test suite, which passed, and the verdict `confirmed` is the one the design makes silent (#3: on a
+clean signal, say nothing). The critic then approved, with the last known state of the actual program
+being "it crashes".
+
+The tests pass because the CLI's failure is in its argument parsing, which the tests do not exercise.
+
+**What would settle it**: read the critic's evidence bundle at 02:24:24 and see whether the earlier
+`not_observed` markers were still in it, or whether the `confirmed` displaced them. If a `confirmed`
+on any command can erase a known-failing run of the deliverable, that is a fail-open on ground truth
+cria already holds. If the markers were all present and the critic simply weighed them, it is a
+judgement call and not a defect. **Not concluded either way.**
 
 ### CORRECTED — cell 16 was not slow. I read the wrong session.
 
