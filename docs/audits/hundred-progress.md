@@ -8,10 +8,51 @@ rewrites itself after every cell.
 
 ---
 
-## Cycle 2 — RUN in flight
+## Cycle 2 — RUN complete, WALK next
 
-**Phase: RUN.** Started **2026-08-15 09:02**, cell 1 of 24, task-major.
-Driver `python3 suite/cycle_run.py` · log `docs/audits/cycle-run.log`.
+**Phase: WALK.** The run phase ran **2026-08-15 09:02 → 20:31**, all 24 cells, 11.3 hours of wall
+clock and 2,239 calls. Driver `python3 suite/cycle_run.py` · log `docs/audits/cycle-run.log`.
+
+### Cycle 2 result
+
+| | cycle 1 | cycle 2 |
+|---|---:|---:|
+| checks passed / attempted | — | **66 / 108 = 61.1%** |
+| mean of the 24 cell percentages | 53.8% | **62.1%** |
+| cells at 100% | 9 | **9** |
+
+**Read that honestly.** The mean is up 8.3 points and the number of perfect cells did not move. Nine
+and nine — but not the same nine, and the composition is better: `feed-pipeline-java`, which had
+never scored above 40% in the campaign's history, produced a 100% and an 80%; `rust-toml-cli × qwen35`
+and both Python leaders held; and the two Ruby cells cria broke are the reason the count did not rise.
+
+By language:
+
+| task | cells | mean | vs cycle 1 |
+|---|---|---:|---|
+| `orders-api-py` | 100, 100, 50, 75 | **81%** | up from 75% |
+| `handles-cli-node` | 75, 100, 100, 50 | **81%** | up from 75% |
+| `cart-billing-go` | 80, 100, 100, 0 | 70% | down from 75% |
+| `rust-toml-cli` | 100, 100, 0, 0 | 50% | flat |
+| `shipping-rates-rb` | 80, 40, 20, 40 | **45%** | **down from 50%** |
+| `feed-pipeline-java` | 0, 100, 80, 0 | **45%** | **up from 10%** |
+
+And by model, from the grid — `qwen35` is now green at 89% with five of six languages perfect:
+
+| model | total | Δ |
+|---|---:|---:|
+| qwen35 | **89%** | +7 |
+| gemma4 | 70% | +7 |
+| ternary-bonsai | 59% | +4 |
+| nemotron-elastic | 26% | +15 |
+
+**The two things standing between this cycle and a much higher number are both cria's**, both in the
+Ruby column, both traced to the line, and both listed below: the context floor that cannot fit a
+single oversized message (cell 2, −60) and the install refusal naming a binary this box does not
+have (cell 3, −60). A third, the `review_written` matcher, is a verifier defect worth a full 20
+points on cell 15.
+
+### Environment, verified clean 2026-08-15 (before cell 1)
 
 Thirteen cria changes landed after cycle 1's run and none of them had been measured. That is what
 this run measures. `cria.service` was restarted onto the current code state immediately before the
@@ -52,7 +93,7 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 21 | rust-toml-cli | gemma4 | **100%** | 0 | 16 | 64 | all four green, held — clean build, 3/3 dotted-key lookups, the missing-key error contract, tests and README |
 | 22 | rust-toml-cli | qwen35 | **100%** | 0 | 17 | 129 | all four green, held. Heavily assisted again — 4 periodic gates, 3 completion probes, 6 `task_complete` claims each verified, one gate red-advance, one poisoned search refused — and landed |
 | 23 | rust-toml-cli | ternary-bonsai | 0% | 0 | 16 | 25 | flat at zero, and again **one line**: `src/main.rs:54` calls `part.as_str()` on something already a `&str`, and `str::as_str` is unstable — `error[E0658]: use of unstable library feature`. Delete six characters and it builds. **cria's cycle-1 defect on this exact cell is fixed**: last cycle "two gates ran and not one `⟦ctx:checks⟧` block reached the model"; this cycle three `⟦ctx:checks⟧` blocks did, `could not compile` reached it in 14 prompts and `error[E…]` in 12. Killed at the 15-minute floor with 25 calls |
-| 24 | rust-toml-cli | nemotron-elastic | *running* | | | | |
+| 24 | rust-toml-cli | nemotron-elastic | 0% | 0 | 16 | 44 | flat at zero. `error[E0106]: missing lifetime specifier`, two errors, nothing builds. The number that stands out is **`editrecovery.escalated: 11`** — the only cell in the whole cycle to fire it, eleven times in 44 calls. A quarter of its turns went on edits that would not apply |
 
 ### CANDIDATE — a `confirmed` run of the TEST suite followed a failing run of the PROGRAM
 
