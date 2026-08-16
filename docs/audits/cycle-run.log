@@ -33,3 +33,5 @@
 [18:05:45] (17/24) handles-cli-node x gemma4 — start
 [18:22:15] (17/24) handles-cli-node x gemma4 — exit 0
 [18:22:15] (18/24) handles-cli-node x qwen35 — start
+[18:29:06] (18/24) handles-cli-node x qwen35 — exit 0
+[18:29:06] (19/24) handles-cli-node x ternary-bonsai — start
