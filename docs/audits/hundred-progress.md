@@ -13,6 +13,25 @@ rewrites itself after every cell.
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
 list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
+### The cell-15 re-run: 0%, and it does NOT validate the verifier fix
+
+The superseded row was re-run under the new code state and scored **0 of 5**, killed at the
+15-minute floor after 20 calls with `mvn compile failed` and no REVIEW.md written at all. So the
+matcher change is still unexercised — there is nothing to match.
+
+**Checked first, because the reflex is self-suspicion: none of the six fixes threw.** The session's
+418 events contain zero entries at `error` or `warn` level, and the run never reached a gate, a
+steer or a satisfaction check.
+
+**What it exposes is the floor, not the fix.** This cell is bimodal. The 80% run compiled inside the
+first fifteen minutes, cleared the milestone and got seventy minutes; this one did not, and died at
+fifteen with 20 calls on a model that generates at ~40 tok/s. Same task, same prompt revision, same
+code state, 80 → 0. That is not a regression to diagnose, it is the variance the floor converts into
+a cliff, and it belongs in the record next to every other cell floored at fifteen minutes this
+cycle.
+
+The row stands at 0% and cycle 3 re-runs the cell along with the other 23.
+
 ### FIX PHASE — cycle 2, what landed
 
 | # | fix | commit shape | test |
