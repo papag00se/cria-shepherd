@@ -13,6 +13,20 @@ rewrites itself after every cell.
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
 list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
+### FIX PHASE — cycle 2, what landed
+
+| # | fix | commit shape | test |
+|---:|---|---|---|
+| 1 | **The periodic completion check may NAME a missing deliverable to the coder** — the operator's ruling. Bounded: empty reason stays silent, a parked steer is never stomped, and the same reason never goes twice running | `cria/loop.py`, `prompts/periodic_gap.txt` | 7 new, 4 fail before |
+| 2 | **The install route names the binary that was actually found** — `_resolved_tool` owns "is it there" and "what is it called" together; every route fills a `{{TOOL}}` token. Live on this box the ruby answer is now `bundle3.2 install --path vendor/bundle` | `cria/dirguard.py`, `prompts/install_remedy.txt` | 6 new, 3 fail before |
+| 3 | **Never say "no line could be parsed" while quoting the line** — the two readers of one gate report were exclusive and now surface together; it also stops a real failing check being dropped whenever another probe happened to parse | `cria/loop.py`, `prompts/ground_truth_failed_also.txt` | 6 new, 1 fails before |
+| 4 | **`review_written` accepts a markdown table** — the window was four non-word characters and a table cell needs five. Verifier defect; cell 15's row marked `superseded` and re-run | `suite/tasks/feed-pipeline-java/verify.py` | 4 new, 1 fails before |
+| 5 | **Fold the install tree cria itself prescribed** — 64% of the body that died was `vendor/bundle` lines; without them it fits with room to spare. Keyed on a relative path so `vendor` stays listable and a committed `vendor/mycompany/` is still enumerated. Folded, not dropped, so the completeness clause survives | `cria/groundtruth.py` | 9 new + an anti-drift pin reading `install_remedy.txt` |
+| 6 | **The completion judge is no longer handed the coder's tool vocabulary** — judges get names without parameters (the steer author keeps them); `satisfaction.txt` gains principle 8's measured fence and an answer for the case it cannot settle; `proposed_fix` asks what must become true, not how | `cria/loop.py`, `prompts/satisfaction.txt` | 9 new, 8 fail before |
+
+Every one carries a fails-before/passes-after test proven against the pre-change file, `python3 -m
+pytest` green at 3502, and `cria.service` restarted onto it.
+
 ### SURFACED, NOT CHANGED — the litter sweep is defending against the opposite incident
 
 I built the tier-2 sweep fix (bound the sweep to `BUILD_ARTIFACT_DIRS`, so `orders.db` ×12 and
