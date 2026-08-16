@@ -27,6 +27,9 @@ Started **2026-08-15 23:10** on the six-fix code state.
 | 5 | cart-billing-go | gemma4 | **100%** | **+20** | 6 | 38 | all five green in six minutes. The seeded `TestSubtotal` deletion that cost this cell 20 points last cycle did not happen — `suite_green_plus_regression_test` passes, the rounding is right at 48.58, `discounts.json` works with and without the file, the stderr line carries all three fields, and a real decimal module is imported by non-test source |
 | 6 | cart-billing-go | qwen35 | **100%** | 0 | 30 | 225 | all five green, held. **And this is the operator's ruling working, live** — see below |
 | 7 | cart-billing-go | ternary-bonsai | **100%** | 0 | 16 | 55 | all five green, held, in 55 calls. One gate, one done-critic, one satisfaction confirm — the completion machinery closed it in a single exchange, the shape cell 18 of cycle 2 showed and cell 14 did not |
+| 8 | cart-billing-go | nemotron-elastic | 20% | **+20** | 31 | 92 | **off zero for the first time in the campaign.** `decimal_money_library` passes — declared in `go.mod` *and* imported by non-test source, which is the exact clause it failed on last cycle ("imported by non-test source: none"). The build still does not compile (`cart.go:57:64: too many errors`) so the other four fall behind it. Six degenerate aborts and one phrase abort; no runaway, longest call 126.7 s |
+
+**Go column complete: 100 / 100 / 100 / 20 = 80%**, against cycle 2's 80 / 100 / 100 / 0 = 70%.
 
 ### THE OPERATOR'S RULING, VALIDATED ON CELL 6
 
