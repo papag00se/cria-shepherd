@@ -1,12 +1,10 @@
 # The 24-pair walk — what cria gets wrong, and where it is still shaped like one Python task
 
-Both arms of all 24 battery cells were read call by call: 48 runs, 813 chunks, 1,186 incidents across two
-passes. Every claim below traces to a verbatim quote in a capture. Method note in `battery-walk.md`.
+Both arms of all 24 battery cells were read call by call: 48 runs, 813 chunks, 1,186 incidents across two passes. Every claim below traces to a verbatim quote in a capture. Method note in `battery-walk.md`.
 
 ## 1. "Model own fault" was mostly context
 
-The first pass filed 302 incidents as the model's own mistake. 241 could be re-located in the transcript and
-were re-read at the call, with the model's reasoning, to find what it was actually looking at.
+The first pass filed 302 incidents as the model's own mistake. 241 could be re-located in the transcript and were re-read at the call, with the model's reasoning, to find what it was actually looking at.
 
 | attributed cause | count | share |
 |---|---:|---:|
@@ -21,9 +19,7 @@ were re-read at the call, with the model's reasoning, to find what it was actual
 cria is implicated in 105 of 241 (44%); the task prompts in another
 39. Of the contextual causes, 17 carry a Python or ada-handles assumption.
 
-`genuinely-model` at 37% is real and was not inflated away — a hallucinated stdlib API with nothing in the
-context pointing at it stays the model's. But it is a minority of the bucket, and the bucket was the largest
-in the walk.
+`genuinely-model` at 37% is real and was not inflated away — a hallucinated stdlib API with nothing in the context pointing at it stays the model's. But it is a minority of the bucket, and the bucket was the largest in the walk.
 
 ## 2. The fifteen fixable classes
 

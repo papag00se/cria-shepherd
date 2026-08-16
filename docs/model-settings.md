@@ -1,8 +1,6 @@
 # Recommended settings per model
 
-**cria's source of truth** for the local model fleet on `127.0.0.1:18084`. (Ported from
-codex-local and now maintained here.) Keep it updated when settings change or a model is
-added/verified.
+**cria's source of truth** for the local model fleet on `127.0.0.1:18084`. (Ported from codex-local and now maintained here.) Keep it updated when settings change or a model is added/verified.
 
 Settings live in **two files**, split by whether they need a model reload:
 
@@ -11,19 +9,15 @@ Settings live in **two files**, split by whether they need a model reload:
 | **Server launch** | `~/.config/llama-fleet/models.toml` (read by `llama-fleet`) | model source, quant, **ctx**, KV, GPU layers, chat template | a **model-server restart** (`systemctl restart llama-<model>`) — rare |
 | **Client / per-role** | `~/.cria/cria.toml` `[roles.<role>]` | **sampling** (temperature/top_p/top_k/repeat_penalty/min_p/max_tokens) + **reasoning** | a **cria restart** (seconds) — no model reload |
 
-cria attaches the **role's** sampling + reasoning to **every request** it makes for that
-role (`temperature`, `repeat_penalty`, … and reasoning as `chat_template_kwargs.enable_thinking`).
-The launcher's sampling is only a fallback — so tune in `cria.toml`, not `models.toml`.
+cria attaches the **role's** sampling + reasoning to **every request** it makes for that role (`temperature`, `repeat_penalty`, … and reasoning as `chat_template_kwargs.enable_thinking`). The launcher's sampling is only a fallback — so tune in `cria.toml`, not `models.toml`.
 
-> **One 3080, one model at a time** (`-np 1`). Swap with `systemctl` (the `llama-fleet`
-> launcher reads `models.toml`); see §Server launch.
+> **One 3080, one model at a time** (`-np 1`). Swap with `systemctl` (the `llama-fleet` launcher reads `models.toml`); see §Server launch.
 
 ---
 
 ## Per-model recommended settings
 
-Sampling is **client-side** (`cria.toml`); set the role you're driving to these. Server
-launch (`models.toml`) is uniform except model + template (see §Server launch).
+Sampling is **client-side** (`cria.toml`); set the role you're driving to these. Server launch (`models.toml`) is uniform except model + template (see §Server launch).
 
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
@@ -39,84 +33,37 @@ launch (`models.toml`) is uniform except model + template (see §Server launch).
 
 ### Considered and REJECTED for the Llama-family slot (2026-08-08, closed 2026-08-09)
 
-cria's coder path is ~100% tool calls and its assists assume a thinking channel, so a Llama-family
-model needs BOTH. **The slot is now CLOSED — all three candidates failed, the third on grounds no
-model choice can fix.** Three were tried:
+cria's coder path is ~100% tool calls and its assists assume a thinking channel, so a Llama-family model needs BOTH. **The slot is now CLOSED — all three candidates failed, the third on grounds no model choice can fix.** Three were tried:
 
-- **Dolphin 3.0 (Llama-3.1-8B)** — trained for function calling (`hermes-function-calling-v1`) but
-  instruct-only, no thinking channel. Would have changed the family AND removed reasoning in one
-  step, confounding the question the slot exists to answer.
-- **DeepSeek-R1-Distill-Llama-8B** — reasoning, but tool use was never a training objective.
-  MEASURED on this box: **0/4, 30 calls, ZERO assistant turns ever entered the conversation.** It
-  emitted an invented `<tool name="web_fetch" call="begin">` in prose; llama.cpp parsed no tool
-  call, the harness recorded no action, and every turn restarted from the task. Pinning llama.cpp's
-  `llama-cpp-deepseek-r1.jinja` (the embedded template has NO tools branch at all) was necessary and
-  not sufficient — the template can express a call the model cannot produce. DeepSeek's own distill
-  discussion: tool use "is not one of the main goals for the model"; Fireworks lists R1 tool calling
-  as "Not supported"; R1-0528 added it, but its 8B distill is Qwen3-based and would have been our
-  fifth Qwen.
-- **NVIDIA Llama-3.1-Nemotron-Nano-8B-v1** — the only 8B Llama derivative with BOTH halves (post
-  trained for reasoning AND tool calling; BFCL v2 Live 63.9/63.6). cria's side worked: the
-  alternation merge, the `detailed thinking on` system directive and real `tool_calls` arrays all
-  reached the wire. **RETIRED 2026-08-09 anyway, because the RUNTIME cannot serve it.** When the
-  model answers without calling a tool it emits `<TOOLCALL>[]`, and llama.cpp 500s with
-  `Unexpected empty grammar stack after accepting piece: >[] (71510)` — 56 crashes in one 8-minute
-  run, ~34 of 81 calls dead. Two combining root causes: the single token `>[]` both completes the
-  auto-derived `<TOOLCALL>` trigger and carries text past it, and llama.cpp's generated tool-call
-  grammar has no production for an empty array. MEASURED: 3/3 reproduction on "answer without a
-  tool"; a build **1,275 commits newer crashes identically**; `--jinja` off does not help;
-  `detailed thinking off` does not help. Upstream #14413 open since 2025-06-27, fix PR #19503
-  rejected as "too invasive", no native `<TOOLCALL>` parser (PR #15083 closed unmerged), no flag to
-  disable the lazy tool-call grammar. The public runs this family's tool calling on **vLLM with an
-  NVIDIA out-of-tree plugin**, never on llama.cpp — and the 8B-v1 repo does not even ship that
-  plugin. Re-open only behind a vLLM backend or a merged llama.cpp fix.
+- **Dolphin 3.0 (Llama-3.1-8B)** — trained for function calling (`hermes-function-calling-v1`) but instruct-only, no thinking channel. Would have changed the family AND removed reasoning in one step, confounding the question the slot exists to answer.
+- **DeepSeek-R1-Distill-Llama-8B** — reasoning, but tool use was never a training objective. MEASURED on this box: **0/4, 30 calls, ZERO assistant turns ever entered the conversation.** It emitted an invented `<tool name="web_fetch" call="begin">` in prose; llama.cpp parsed no tool call, the harness recorded no action, and every turn restarted from the task. Pinning llama.cpp's `llama-cpp-deepseek-r1.jinja` (the embedded template has NO tools branch at all) was necessary and not sufficient — the template can express a call the model cannot produce. DeepSeek's own distill discussion: tool use "is not one of the main goals for the model"; Fireworks lists R1 tool calling as "Not supported"; R1-0528 added it, but its 8B distill is Qwen3-based and would have been our fifth Qwen.
+- **NVIDIA Llama-3.1-Nemotron-Nano-8B-v1** — the only 8B Llama derivative with BOTH halves (post trained for reasoning AND tool calling; BFCL v2 Live 63.9/63.6). cria's side worked: the alternation merge, the `detailed thinking on` system directive and real `tool_calls` arrays all reached the wire. **RETIRED 2026-08-09 anyway, because the RUNTIME cannot serve it.** When the model answers without calling a tool it emits `<TOOLCALL>[]`, and llama.cpp 500s with `Unexpected empty grammar stack after accepting piece: >[] (71510)` — 56 crashes in one 8-minute run, ~34 of 81 calls dead. Two combining root causes: the single token `>[]` both completes the auto-derived `<TOOLCALL>` trigger and carries text past it, and llama.cpp's generated tool-call grammar has no production for an empty array. MEASURED: 3/3 reproduction on "answer without a tool"; a build **1,275 commits newer crashes identically**; `--jinja` off does not help; `detailed thinking off` does not help. Upstream #14413 open since 2025-06-27, fix PR #19503 rejected as "too invasive", no native `<TOOLCALL>` parser (PR #15083 closed unmerged), no flag to disable the lazy tool-call grammar. The public runs this family's tool calling on **vLLM with an NVIDIA out-of-tree plugin**, never on llama.cpp — and the 8B-v1 repo does not even ship that plugin. Re-open only behind a vLLM backend or a merged llama.cpp fix.
 
 ### Still in `models.toml`, NOT on the ladder
 
-- **fabliq-reasoning** (8B) — `mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF`, `fabliq-toggle.jinja`.
-  Retired from the suite; its unit is `disabled` and `inactive`, and it is in no sampling or SERVICES
-  table. The entry stays so the launch config is reproducible. It auto-started on :18084 once after a
-  WSL restart and had to be stopped by hand — if you see an unexpected model serving, check this one.
+- **fabliq-reasoning** (8B) — `mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF`, `fabliq-toggle.jinja`. Retired from the suite; its unit is `disabled` and `inactive`, and it is in no sampling or SERVICES table. The entry stays so the launch config is reproducible. It auto-started on :18084 once after a WSL restart and had to be stopped by hand — if you see an unexpected model serving, check this one.
 - **zaya1** (8B) — draft-PR arch, launchable but never laddered. See §Server launch for its fork.
 - **gemma4-finetune** (12B) — replaced by stock `gemma4` on 2026-08-05; kept for its history rows.
 
 ### Considered and DROPPED: **Moonlight-16B-A3B-Instruct** (2026-08-01)
 
-Raised by the operator, investigated, and dropped the same day. Recorded here so it is not raised
-again without new information.
+Raised by the operator, investigated, and dropped the same day. Recorded here so it is not raised again without new information.
 
-**Why it was dropped: no evidence it does tool calling.** cria drives a tool-use loop; a model that
-cannot emit a tool call cannot be a coder or a planner here. Checked
-[Moonshot's card](https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct), all three GGUF
-conversions, the [OpenRouter listing](https://openrouter.ai/moonshotai/moonlight-16b-a3b-instruct)
-and vLLM's tool-parser list — **not one mentions function or tool calling**. The model is a research
-artifact: the demonstration model for Moonshot's Muon-optimizer paper, whose point was that Muon
-scales, not that the model is an agent. `mmnga`'s conversion removed its chat template outright,
-calling it "custom" — a custom non-tool template.
+**Why it was dropped: no evidence it does tool calling.** cria drives a tool-use loop; a model that cannot emit a tool call cannot be a coder or a planner here. Checked [Moonshot's card](https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct), all three GGUF conversions, the [OpenRouter listing](https://openrouter.ai/moonshotai/moonlight-16b-a3b-instruct) and vLLM's tool-parser list — **not one mentions function or tool calling**. The model is a research artifact: the demonstration model for Moonshot's Muon-optimizer paper, whose point was that Muon scales, not that the model is an agent. `mmnga`'s conversion removed its chat template outright, calling it "custom" — a custom non-tool template.
 
 **Two other facts that would have hurt anyway:**
 
 - **8K context.** The fleet runs at 48K. An agentic coding run compacts constantly at 8K.
-- **It does not fit comfortably.** The 3080 has 10,240 MiB; the smallest sane quant
-  (`gabriellarson` Q3_K_M) is 8.29 GB, `mmnga` IQ4_XS 8.74 GB, `noctrex` MXFP4_MOE 9.3 GB. That was
-  the TurboQuant condition the operator attached — and `deepseek2` being a mainline llama.cpp arch
-  meant it probably *would* have loaded. The tool-calling gap is what settles it, not the VRAM.
+- **It does not fit comfortably.** The 3080 has 10,240 MiB; the smallest sane quant (`gabriellarson` Q3_K_M) is 8.29 GB, `mmnga` IQ4_XS 8.74 GB, `noctrex` MXFP4_MOE 9.3 GB. That was the TurboQuant condition the operator attached — and `deepseek2` being a mainline llama.cpp arch meant it probably *would* have loaded. The tool-calling gap is what settles it, not the VRAM.
 
-**What would change the decision:** an instruct/agent release from Moonshot at this scale that
-documents tool calling — the operator's own read ("maybe an agent version will come out later").
-Kimi-family agent models are the line to watch. A community fine-tune that merely adds a tool
-template is NOT sufficient; the capability has to be trained in.
+**What would change the decision:** an instruct/agent release from Moonshot at this scale that documents tool calling — the operator's own read ("maybe an agent version will come out later"). Kimi-family agent models are the line to watch. A community fine-tune that merely adds a tool template is NOT sufficient; the capability has to be trained in.
 
-**Note for whoever revisits this:** the base `moonshotai/Moonlight-16B-A3B` is a raw completion model
-with no instruction tuning — never a candidate. There is no coder-specific variant. Everything else
-on the Hub is a re-quant or fine-tune of Instruct.
+**Note for whoever revisits this:** the base `moonshotai/Moonlight-16B-A3B` is a raw completion model with no instruction tuning — never a candidate. There is no coder-specific variant. Everything else on the Hub is a re-quant or fine-tune of Instruct.
 
-> ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or
-> empirically before treating them as recommended.
+> ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or empirically before treating them as recommended.
 
 > **Dense vs MoE, read from the GGUF headers (2026-08-01)** — `general.architecture` plus
-> `<arch>.expert_count` / `expert_used_count`, never a card or a name. The fleet is **five dense,
-> four MoE**:
+> `<arch>.expert_count` / `expert_used_count`, never a card or a name. The fleet is **five dense, four MoE**:
 >
 > | dense | | MoE | experts (active) |
 > |---|---|---|---|
@@ -126,73 +73,18 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > | qwopus 9B | `qwen35` | | |
 > | ornith 9B | `qwen35` | | |
 >
-> `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot
-> launch — fix that before putting it in any run order.
+> `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot launch — fix that before putting it in any run order.
 
-> **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT**
-> contain MTP layers (`--spec-type draft-mtp` is a FATAL load error — the service crash-loops, no
-> graceful fallback). `--spec-type ngram-cache` works and **doubled decode: 8.3 → 17.1 tok/s**
-> (48% draft acceptance on code; n_draft=8). Set per-model in llama-fleet models.toml extra_flags.
-> KV: `-ctk q8_0 -ctv q4_0` (asymmetric; K drives logits, V tolerates 4-bit).
+> **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT** contain MTP layers (`--spec-type draft-mtp` is a FATAL load error — the service crash-loops, no graceful fallback). `--spec-type ngram-cache` works and **doubled decode: 8.3 → 17.1 tok/s** (48% draft acceptance on code; n_draft=8). Set per-model in llama-fleet models.toml extra_flags. KV: `-ctk q8_0 -ctv q4_0` (asymmetric; K drives logits, V tolerates 4-bit).
 
-> **draft-dspark — measured dead end on this box (2026-07-28):** the companion 3.6B drafter
-> (`Ternary-Bonsai-27B-dspark-Q4_1.gguf`, 6 blocks, drafts 4-token blocks conditioned on target
-> hidden-state taps at layers 1/16/31/46/61) *loads and runs* on the spare GTX 1080
-> (`cuda_device` widened to both GPUs, `--spec-draft-device CUDA1 --spec-draft-ngl all
-> --spec-draft-n-max 4` — n-max MUST equal the drafter's `block_size=4`). Three structural costs
-> sank it: (1) its staging forward covers the **full target context** (~216 KiB compute buffer per
-> position on the draft device → 49K ctx needs 10.4 GiB, so ctx had to drop to 24K just to fit);
-> (2) target-side tap capture cut **prefill ~3× (360 → ~112 tok/s)** and **disables prompt-cache
-> reuse** — every agentic call would re-prefill its whole history; (3) each draft round is a
-> full-context drafter forward on Pascal → **decode 4.2–4.8 tok/s**, *below the 8.3 no-spec
-> baseline* and falling with depth. Acceptance itself was good (62%, ~3.5 tok/target-forward ≈
-> 29 tok/s if drafting were free) — the drafter wants a fast co-resident device, not a spare
-> Pascal. Re-try only with a second fast GPU; until then ngram-cache stays.
+> **draft-dspark — measured dead end on this box (2026-07-28):** the companion 3.6B drafter (`Ternary-Bonsai-27B-dspark-Q4_1.gguf`, 6 blocks, drafts 4-token blocks conditioned on target hidden-state taps at layers 1/16/31/46/61) *loads and runs* on the spare GTX 1080 (`cuda_device` widened to both GPUs, `--spec-draft-device CUDA1 --spec-draft-ngl all --spec-draft-n-max 4` — n-max MUST equal the drafter's `block_size=4`). Three structural costs sank it: (1) its staging forward covers the **full target context** (~216 KiB compute buffer per position on the draft device → 49K ctx needs 10.4 GiB, so ctx had to drop to 24K just to fit); (2) target-side tap capture cut **prefill ~3× (360 → ~112 tok/s)** and **disables prompt-cache reuse** — every agentic call would re-prefill its whole history; (3) each draft round is a full-context drafter forward on Pascal → **decode 4.2–4.8 tok/s**, *below the 8.3 no-spec baseline* and falling with depth. Acceptance itself was good (62%, ~3.5 tok/target-forward ≈ 29 tok/s if drafting were free) — the drafter wants a fast co-resident device, not a spare Pascal. Re-try only with a second fast GPU; until then ngram-cache stays.
 
-> **draft models are off the table for this target entirely (measured 2026-07-28):** a
-> vocab-exact Qwen3.5-0.8B Q6 drafter co-resident on the 3080 (same `qwen35` family, 248320
-> vocab, fits in the spare ~2 GB at 49K — no dspark-style staging buffer) still measured
-> **2.4 tok/s vs ngram's 7.1** on an identical deep-context (6.9K) benchmark, despite 51%
-> acceptance and drafting costing only 2.8s of the 105s total. Root cause: the 27B is a
-> **hybrid-SSM** (`qwen35` arch, recurrent layers) — its state cannot rewind, so every
-> speculative round pays ~2s of checkpoint save/restore machinery (`-cms 8` changed nothing:
-> it's the state copies, not re-prefill distance). Only opportunistic near-free drafting
-> (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU.
-> The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
+> **draft models are off the table for this target entirely (measured 2026-07-28):** a vocab-exact Qwen3.5-0.8B Q6 drafter co-resident on the 3080 (same `qwen35` family, 248320 vocab, fits in the spare ~2 GB at 49K — no dspark-style staging buffer) still measured **2.4 tok/s vs ngram's 7.1** on an identical deep-context (6.9K) benchmark, despite 51% acceptance and drafting costing only 2.8s of the 105s total. Root cause: the 27B is a **hybrid-SSM** (`qwen35` arch, recurrent layers) — its state cannot rewind, so every speculative round pays ~2s of checkpoint save/restore machinery (`-cms 8` changed nothing: it's the state copies, not re-prefill distance). Only opportunistic near-free drafting (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU. The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
 
 > **TurboQuant KV = THE win — live since 2026-07-28.** The "no fork has both" assumption died on
-> a search: **`jarkevithwlad/turboquant-prismml-cuda` v1.0.1** merges PrismML's Q2_0_g128 kernels
-> with amesianx TurboQuant; the sm86 (RTX3090Ti) Linux release runs on the 3080 (needs
-> `libnccl.so.2` — copied into the build dir from the `nvidia-nccl-cu12` pip wheel; KV type names
-> are `tbq3/tbq4/tbqp3/tbqp4`, NOT the atomic fork's `turbo2/3/4`). Same-build A/B, ternary-27B
-> on the 3080, `-fa on`: **tg128@d8192 11.3 → 48.7 t/s (4.3×)**, pp2048 168 → 845, pp@8K 22 → 189,
-> shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent.
-> **CORRECTED MECHANISM (operator-prompted, f16 control 2026-07-28): the wall was the QUANTIZED-KV
-> CODE PATH, not KV bandwidth.** Same build, tg64@d8192: q8_0/q4_0 = 11.3, tbq3 = 48.7,
-> **f16 = 61.1** — plain f16 beats turbo. TurboQuant's real win is the COMBINATION: its cache
-> code avoids the pathological quantized path AND fits 49K ctx (~5.6 GB f16 KV + 6.7 GB weights
-> exceeds the 3080; f16 caps ctx at ~20K). Untested knob: tbq4 (more quality margin, still fits). Live serving verified 53 t/s with correct output; no `--spec-type`
-> (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 +
-> ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet
-> proven — the next goal runs referee it.** *(Update, same day: run m15 completed the goal fully
-> unaided on this config with zero incoherence — first quality referee PASSED.)* Earlier
-> fun-sized data point: the AtomicBot fork (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`)
-> also works, even on the Pascal 1080 (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks
-> the prism kernels.
+> a search: **`jarkevithwlad/turboquant-prismml-cuda` v1.0.1** merges PrismML's Q2_0_g128 kernels with amesianx TurboQuant; the sm86 (RTX3090Ti) Linux release runs on the 3080 (needs `libnccl.so.2` — copied into the build dir from the `nvidia-nccl-cu12` pip wheel; KV type names are `tbq3/tbq4/tbqp3/tbqp4`, NOT the atomic fork's `turbo2/3/4`). Same-build A/B, ternary-27B on the 3080, `-fa on`: **tg128@d8192 11.3 → 48.7 t/s (4.3×)**, pp2048 168 → 845, pp@8K 22 → 189, shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent. **CORRECTED MECHANISM (operator-prompted, f16 control 2026-07-28): the wall was the QUANTIZED-KV CODE PATH, not KV bandwidth.** Same build, tg64@d8192: q8_0/q4_0 = 11.3, tbq3 = 48.7, **f16 = 61.1** — plain f16 beats turbo. TurboQuant's real win is the COMBINATION: its cache code avoids the pathological quantized path AND fits 49K ctx (~5.6 GB f16 KV + 6.7 GB weights exceeds the 3080; f16 caps ctx at ~20K). Untested knob: tbq4 (more quality margin, still fits). Live serving verified 53 t/s with correct output; no `--spec-type` (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 + ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet proven — the next goal runs referee it.** *(Update, same day: run m15 completed the goal fully unaided on this config with zero incoherence — first quality referee PASSED.)* Earlier fun-sized data point: the AtomicBot fork (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`) also works, even on the Pascal 1080 (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks the prism kernels.
 
-> **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet
-> default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow +
-> 8K depth, r=3, zero errors): tg@8K deltas par to −13% (lfm25 277→249,
-> mellum2/ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The
-> ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode
-> term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several
-> MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only.
-> **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** —
-> tg64@d32768 q8_0→turbo3: lfm25 230→163, ornith 68→49, qwopus 67→50,
-> gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read
-> dequant overhead scales while the savings never arrive. ONE inconclusive cell: mellum2's q8_0
-> control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either
-> number if mellum2 ever goes live again.
+> **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow + 8K depth, r=3, zero errors): tg@8K deltas par to −13% (lfm25 277→249, mellum2/ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only. **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** — tg64@d32768 q8_0→turbo3: lfm25 230→163, ornith 68→49, qwopus 67→50, gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read dequant overhead scales while the savings never arrive. ONE inconclusive cell: mellum2's q8_0 control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either number if mellum2 ever goes live again.
 
 > **Context-vs-speed tradeoff, qwythos (measured 2026-07-28; tg64, tok/s):**
 >
@@ -201,56 +93,19 @@ on the Hub is a re-quant or fine-tune of Instruct.
 > | q8_0   | 80 | 68 | 51 | 38 | — | **~143K** |
 > | turbo3 | 76 | 59 | 49 | 33 | 26 | **~375K** |
 >
-> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB,
-> turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12%
-> slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is
-> the only limit; note the fleet's 49K default is conservative for this model — 131K on plain
-> q8_0 fits TODAY. **ornith and qwopus are KV-identical** (same 32 blocks / every-4th attention /
-> 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K,
-> which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim):
-> a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0
-> on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB),
-> never by load-probing.
+> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB, turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12% slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is the only limit; note the fleet's 49K default is conservative for this model — 131K on plain q8_0 fits TODAY. **ornith and qwopus are KV-identical** (same 32 blocks / every-4th attention / 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K, which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim): a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0 on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB), never by load-probing.
 >
-> **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K /
-> 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA
-> (1024-token window on most of its 48 layers) keeps KV small at any context, so turbo has no
-> reach advantage either. TurboQuant: nothing to offer gemma4.** 131K verified on q8_0; the 262K
-> training cap likely fits too.
+> **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K / 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA (1024-token window on most of its 48 layers) keeps KV small at any context, so turbo has no reach advantage either. TurboQuant: nothing to offer gemma4.** 131K verified on q8_0; the 262K training cap likely fits too.
 
-> **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that
-> produced run m15 — the first fully unaided goal success):**
+> **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that produced run m15 — the first fully unaided goal success):**
 >
-> ```toml
-> [roles.classifier]
-> backend = "local"
-> reasoning = "on"
-> temperature = 0.0
-> repeat_penalty = 1.1
+> ```toml [roles.classifier] backend = "local" reasoning = "on" temperature = 0.0 repeat_penalty = 1.1
 >
-> [roles.reasoner]                      # the planner + the step/task critic
-> backend = "local"
-> reasoning = "on"
-> temperature = 0.6
-> top_p = 0.90
-> top_k = 40
-> repeat_penalty = 1.1
+> [roles.reasoner]                      # the planner + the step/task critic backend = "local" reasoning = "on" temperature = 0.6 top_p = 0.90 top_k = 40 repeat_penalty = 1.1
 >
-> [roles.coder]
-> backend = "local"
-> reasoning = "on"
-> temperature = 0.2
-> top_p = 0.95
-> top_k = 20
-> repeat_penalty = 1.1
-> output_reserve = 16384                # input-side reserve; keeps a big write_file uncut
+> [roles.coder] backend = "local" reasoning = "on" temperature = 0.2 top_p = 0.95 top_k = 20 repeat_penalty = 1.1 output_reserve = 16384                # input-side reserve; keeps a big write_file uncut
 >
-> [roles.compactor]
-> backend = "local"
-> reasoning = "off"
-> temperature = 0.0
-> repeat_penalty = 1.1
-> ```
+> [roles.compactor] backend = "local" reasoning = "off" temperature = 0.0 repeat_penalty = 1.1 ```
 
 ---
 
@@ -263,83 +118,40 @@ Meta's Llama chat-template lineage enforces alternation literally:
   {{- raise_exception('Conversation roles must alternate between user/tool and assistant') -}}
 ```
 
-Every even position must be user-or-tool, every odd one assistant. **cria's whole anchor mechanism
-is consecutive user turns** — ⟦ctx:checks⟧, ⟦ctx:steer⟧, ⟦ctx:facts⟧ each arrive as their own
-message — so a Llama-lineage model rejects cria outright. Measured on nemotron-nano: the FIRST coder
-call, system plus three user turns, returned 400 twice and the run died in 24 seconds having made
-two calls.
+Every even position must be user-or-tool, every odd one assistant. **cria's whole anchor mechanism is consecutive user turns** — ⟦ctx:checks⟧, ⟦ctx:steer⟧, ⟦ctx:facts⟧ each arrive as their own message — so a Llama-lineage model rejects cria outright. Measured on nemotron-nano: the FIRST coder call, system plus three user turns, returned 400 twice and the run died in 24 seconds having made two calls.
 
-`[roles.<name>] merge_consecutive_turns = true` collapses each run of consecutive same-SIDE messages
-into one. Side, not role: the template renders a `tool` result as a user turn, so `{user, tool}` is
-one side and `{assistant}` the other — merging by role alone would miss the common tool-result-then-
-anchor pair. Nothing is dropped or reordered; cria's anchors are self-delimiting blocks so
-concatenation reads exactly as separate turns did. A merged run keeps its first message's role, so a
-leading tool result keeps its `<TOOL_RESPONSE>` framing, and an assistant turn carrying `tool_calls`
-is never folded into or out of.
+`[roles.<name>] merge_consecutive_turns = true` collapses each run of consecutive same-SIDE messages into one. Side, not role: the template renders a `tool` result as a user turn, so `{user, tool}` is one side and `{assistant}` the other — merging by role alone would miss the common tool-result-then- anchor pair. Nothing is dropped or reordered; cria's anchors are self-delimiting blocks so concatenation reads exactly as separate turns did. A merged run keeps its first message's role, so a leading tool result keeps its `<TOOL_RESPONSE>` framing, and an assistant turn carrying `tool_calls` is never folded into or out of.
 
-**Who needs it.** Only Llama-lineage templates. Checked in the GGUFs: Qwen3.5, Qwythos and
-Nemotron-H carry zero alternation guards. Note the two Nemotrons are unrelated — `nemotron-elastic`
-is NVIDIA's own mamba-hybrid architecture with its own permissive template; `nemotron-nano` is a
-Llama-3.1 derivative and inherits Meta's convention.
+**Who needs it.** Only Llama-lineage templates. Checked in the GGUFs: Qwen3.5, Qwythos and Nemotron-H carry zero alternation guards. Note the two Nemotrons are unrelated — `nemotron-elastic` is NVIDIA's own mamba-hybrid architecture with its own permissive template; `nemotron-nano` is a Llama-3.1 derivative and inherits Meta's convention.
 
-Every shape was verified against the live server, 400 before and 200 after: three stacked anchors, a
-tool result followed by an anchor, and two consecutive assistant turns.
+Every shape was verified against the live server, 400 before and 200 after: three stacked anchors, a tool result followed by an anchor, and two consecutive assistant turns.
 
 ---
 
 ## `collapse_system_prompt` — where the instruction goes
 
-cria writes every instruction it gives into a **system** message: the coder frame, every judge, the
-steer author, the compactor, the classifier. Right for most chat templates, wrong for some, and
-until 2026-08-08 nothing in cria knew the difference — 12 construction sites, no owner.
+cria writes every instruction it gives into a **system** message: the coder frame, every judge, the steer author, the compactor, the classifier. Right for most chat templates, wrong for some, and until 2026-08-08 nothing in cria knew the difference — 12 construction sites, no owner.
 
-`[roles.<name>] collapse_system_prompt = true` folds every leading system message into the front of
-the first user turn. One place (`Role.apply`, the same hook that translates sampling and reasoning),
-so it covers every request that role makes. Off by default; `suite/sampling.py` writes it per model
-on each swap, exactly like sampling, so a stale value cannot survive a model change.
+`[roles.<name>] collapse_system_prompt = true` folds every leading system message into the front of the first user turn. One place (`Role.apply`, the same hook that translates sampling and reasoning), so it covers every request that role makes. Off by default; `suite/sampling.py` writes it per model on each swap, exactly like sampling, so a stale value cannot survive a model change.
 
-**When to set it.** Read the model's chat template, not its card alone. The question is whether the
-template has somewhere to PUT a system message:
+**When to set it.** Read the model's chat template, not its card alone. The question is whether the template has somewhere to PUT a system message:
 
-- **r1-llama** — the case that prompted the knob, but currently **OFF**. The template captures the message and emits it as
-  `{{bos_token}}{{ns.system_prompt}}` — bare, after BOS, before the first `<｜User｜>` marker. The
-  text reaches the model but lands outside the conversation structure it was trained on, and cria's
-  system prompts run to thousands of characters. Its loop also keeps only the LAST system message,
-  so a second one is discarded silently; the fold joins them in order instead.
+- **r1-llama** — the case that prompted the knob, but currently **OFF**. The template captures the message and emits it as `{{bos_token}}{{ns.system_prompt}}` — bare, after BOS, before the first `<｜User｜>` marker. The text reaches the model but lands outside the conversation structure it was trained on, and cria's system prompts run to thousands of characters. Its loop also keeps only the LAST system message, so a second one is discarded silently; the fold joins them in order instead.
 
-  **Why it is off anyway (researched 2026-08-08).** The card says no system prompt, but real-world
-  reports are split. One of the model's own developers measured a system prompt at temp 0.7 as
-  *"close to the 'no system prompt'"* result, and another user reports the QwQ system prompt working
-  fine; against that, one credible report of the model *"hung up repeatedly second guessing itself in
-  a loop"* inside the recommended temperature range, and cline filed a real degradation for exactly
-  this. DeepSeek's own issue asking the question was closed as stale with no maintainer answer. So:
-  a named failure mode to watch for, not a settled fact. cria also never sends more than one system
-  message — measured, 527 of 527 captured bodies across six sessions — so the multi-message discard
-  is hypothetical here. Turning the fold on for the first run would confound the question this model
-  is on the ladder to answer. Flip it and re-run if the loop symptom appears.
+  **Why it is off anyway (researched 2026-08-08).** The card says no system prompt, but real-world reports are split. One of the model's own developers measured a system prompt at temp 0.7 as *"close to the 'no system prompt'"* result, and another user reports the QwQ system prompt working fine; against that, one credible report of the model *"hung up repeatedly second guessing itself in a loop"* inside the recommended temperature range, and cline filed a real degradation for exactly this. DeepSeek's own issue asking the question was closed as stale with no maintainer answer. So: a named failure mode to watch for, not a settled fact. cria also never sends more than one system message — measured, 527 of 527 captured bodies across six sessions — so the multi-message discard is hypothetical here. Turning the fold on for the first run would confound the question this model is on the ladder to answer. Flip it and re-run if the loop symptom appears.
 
   Sources: HF discussions on the Qwen-32B and Qwen-7B distills, DeepSeek-R1 issue #33, cline #5477.
-- **Everything else on the ladder** — does not. Qwen-, Gemma-, Nemotron- and ternary-derived
-  templates all have a real system slot.
+- **Everything else on the ladder** — does not. Qwen-, Gemma-, Nemotron- and ternary-derived templates all have a real system slot.
 
-The fold preserves order, never drops text, and creates a user turn when a body has none (a judge
-asked system-only would otherwise lose its whole question).
+The fold preserves order, never drops text, and creates a user turn when a body has none (a judge asked system-only would otherwise lose its whole question).
 
 ---
 
 ## Reasoning ON / OFF — the mechanism and per-model reality (verified 2026-07-08)
 
-**How it works.** Reasoning is toggled entirely by the **server-side chat template**, driven by
-one per-request boolean. cria (like codex-local's `ollama.rs`) sends **only**
-`chat_template_kwargs.enable_thinking = <bool>` on the wire — nothing else. The magic is in each
-model's `*-toggle.jinja`: when `enable_thinking=false` it **prefills an empty, closed think block**
-into the generation prompt — `<think>\n\n</think>\n\n` (Qwen family) or an empty `<|channel>thought`
-(Gemma). It is a **prefill, not a directive** (grepping all six templates for "do not think / answer
-directly" returns zero hits). The empty block is a *trained control signal*: "reasoning already done,
-answer now."
+**How it works.** Reasoning is toggled entirely by the **server-side chat template**, driven by one per-request boolean. cria (like codex-local's `ollama.rs`) sends **only** `chat_template_kwargs.enable_thinking = <bool>` on the wire — nothing else. The magic is in each model's `*-toggle.jinja`: when `enable_thinking=false` it **prefills an empty, closed think block** into the generation prompt — `<think>\n\n</think>\n\n` (Qwen family) or an empty `<|channel>thought` (Gemma). It is a **prefill, not a directive** (grepping all six templates for "do not think / answer directly" returns zero hits). The empty block is a *trained control signal*: "reasoning already done, answer now."
 
-**So OFF works only on models trained to honor that signal.** The toggle files prefill **byte-identical
-bytes** for the models that work and the ones that don't — the divergence is the model, not the template.
+**So OFF works only on models trained to honor that signal.** The toggle files prefill **byte-identical bytes** for the models that work and the ones that don't — the divergence is the model, not the template.
 
 | Model | ON | OFF (`enable_thinking=false`) | Why |
 |-------|----|--------------------------------|-----|
@@ -351,51 +163,31 @@ bytes** for the models that work and the ones that don't — the divergence is t
 | **maple-preview** | ✅ | ⚠ UNVERIFIED | embedded template, no `*-toggle.jinja` earned yet. ON is certain — 25/25 sampled coder replies carried `reasoning_content`. OFF has never been exercised |
 | **nemotron-nano** | ✅ `detailed thinking on` | ✅ `detailed thinking off` | **cria's THIRD reasoning convention** — the switch is a sentence in the system prompt, not a body parameter. `reasoning.system_directive()` renders it; `config._set_reasoning_directive` prepends it to the leading system message (the mutation lives with the messages, same as the chat_template OFF prefill). Reasoning-unset leaves the model's own default alone |
 
-**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF).
-Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet
-still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) —
-a model limitation to check when adding a model, not a missing manipulation.
+**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF). Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) — a model limitation to check when adding a model, not a missing manipulation.
 
-**The per-model "manipulation" you built** was exactly these `*-toggle.jinja` files (and, for a
-whole-instance off, `.reason-off` launch scripts that bake the `-nothink` template via
-`--chat-template-file`, plus `--reasoning-format deepseek` for ornith). qwopus's *stock* template
-hardcoded `<think>` with no gate — which is precisely why the toggle had to be hand-built.
+**The per-model "manipulation" you built** was exactly these `*-toggle.jinja` files (and, for a whole-instance off, `.reason-off` launch scripts that bake the `-nothink` template via `--chat-template-file`, plus `--reasoning-format deepseek` for ornith). qwopus's *stock* template hardcoded `<think>` with no gate — which is precisely why the toggle had to be hand-built.
 
-**What cria does on `reasoning = "off"` (SHIPPED — `LocalRole.apply` / `clean_content` in `config.py`).**
-Per request cria applies THREE things so OFF works on any loaded model without per-model config:
+**What cria does on `reasoning = "off"` (SHIPPED — `LocalRole.apply` / `clean_content` in `config.py`).** Per request cria applies THREE things so OFF works on any loaded model without per-model config:
 1. `chat_template_kwargs.enable_thinking = false` — suppresses thinking on the native-off models.
-2. appends a **mild no-think directive** to the system message ("Do not think out loud or narrate your
-   reasoning. Respond directly.") — makes prose-deliberating template families answer directly.
+2. appends a **mild no-think directive** to the system message ("Do not think out loud or narrate your reasoning. Respond directly.") — makes prose-deliberating template families answer directly.
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
 **Honest result (verified end-to-end 2026-07-08):**
 - **Native-off models** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
-- On a prose-deliberating template family, OFF engages and is clean on direct tasks, but
-  reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never
-  breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a
-  reasoning-trained model loses accuracy when starved of reasoning), so the directive is
-  deliberately mild.
+- On a prose-deliberating template family, OFF engages and is clean on direct tasks, but reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a reasoning-trained model loses accuracy when starved of reasoning), so the directive is deliberately mild.
 
 **Guidance:**
-- Flip any role `reasoning = "on"` / `"off"` in `~/.cria/cria.toml` and restart cria — it takes effect
-  per request, no model reload, no per-model wiring needed.
+- Flip any role `reasoning = "on"` / `"off"` in `~/.cria/cria.toml` and restart cria — it takes effect per request, no model reload, no per-model wiring needed.
 - `cria.toml` ships every role `reasoning = "on"` (clean fleet-wide; also what coding wants).
-- If a role needs **terse** OFF output, point it at a **native-off model** (mellum2 or a Qwen-derived
-  one).
+- If a role needs **terse** OFF output, point it at a **native-off model** (mellum2 or a Qwen-derived one).
 
 ---
 
 ## Server launch (`models.toml`) — uniform except model + template
 
-All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto
--sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` ·
-`--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) ·
-`--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
+All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
-Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three
-override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does
-not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64`
-and `/usr/lib/wsl/lib`.
+Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
 
 | Model | Fork | Why |
 |-------|------|-----|
@@ -419,9 +211,7 @@ and `/usr/lib/wsl/lib`.
 
 - **`-ub 512` is required** — a larger prefill micro-batch overflows the 10 GB 3080.
 - **All fit the single 3080** (9Bs ~7.3 GB Q6_K; the 12B MoEs ~7–8 GB).
-- The `*-toggle.jinja` templates gate on `enable_thinking` so the per-request flag works. Keep
-  `--reasoning-budget` at default — launching with `--reasoning-budget 0` pins the whole instance
-  no-think and defeats per-request control.
+- The `*-toggle.jinja` templates gate on `enable_thinking` so the per-request flag works. Keep `--reasoning-budget` at default — launching with `--reasoning-budget 0` pins the whole instance no-think and defeats per-request control.
 
 ---
 

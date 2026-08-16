@@ -2,12 +2,7 @@
 
 **Model** ternary-bonsai 27B · **harness** codex, planner off · **wall** 30 min/cell · **1 Aug 2026**
 
-One problem in every language, so the language is the only variable. A walk means reading
-EVERY call in the run end to end — never a grep, a sample or a count over the capture.
-Each cell is read call by call
-from `~/.cria/calls/<session>/`, pairing `NNNN-<phase>.prompt.txt` (what cria sent) with
-`NNNN-<phase>.reasoning.txt` (what the model made of it). Scores come from `verify.py`, which runs
-the deliverables — never from a claim.
+One problem in every language, so the language is the only variable. A walk means reading EVERY call in the run end to end — never a grep, a sample or a count over the capture. Each cell is read call by call from `~/.cria/calls/<session>/`, pairing `NNNN-<phase>.prompt.txt` (what cria sent) with `NNNN-<phase>.reasoning.txt` (what the model made of it). Scores come from `verify.py`, which runs the deliverables — never from a claim.
 
 For every wrong turn, four questions in order. Only when all four fail is it a model wall.
 
@@ -30,9 +25,7 @@ For every wrong turn, four questions in order. Only when all four fail is it a m
 | C6 | PHP | ⬜ not run | — | — | — | — |
 | C7 | Java | ⬜ not run | — | — | — | — |
 
-**The headline:** JavaScript succeeded on the **lowest** throughput of the four — 24.9 tok/s against
-Go's 41.8. It wasn't budget. Each failing language died on something its toolchain demands and
-JavaScript never asks for.
+**The headline:** JavaScript succeeded on the **lowest** throughput of the four — 24.9 tok/s against Go's 41.8. It wasn't budget. Each failing language died on something its toolchain demands and JavaScript never asks for.
 
 ---
 
@@ -56,8 +49,7 @@ reasoner   8 calls   638s   ← as much as the coder
                     1197s of an 1830s wall
 ```
 
-Seven of those eight reasoner calls were **consecutive**, producing one directive. Each inspection
-round re-sends the whole transcript plus every file read so far:
+Seven of those eight reasoner calls were **consecutive**, producing one directive. Each inspection round re-sends the whole transcript plus every file read so far:
 
 ```
 round 1    47K chars
@@ -70,18 +62,13 @@ That single steer cost **544 seconds — 9 of the 30 minutes**.
 
 ### What it was stuck on
 
-One bug, from call 13 to the wall: mocking `urllib.request.urlopen`. The coder's helper built a
-`MagicMock`, and `resp.read().decode()` handed back another mock instead of bytes:
+One bug, from call 13 to the wall: mocking `urllib.request.urlopen`. The coder's helper built a `MagicMock`, and `resp.read().decode()` handed back another mock instead of bytes:
 
 ```
 TypeError: the JSON object must be str, bytes or bytearray, not MagicMock
 ```
 
-Its own diagnosis at call 13 was **correct**: *"the mock chain isn't returning proper bytes/str
-values."* It knew. What it could not find was why its fix didn't take. Call 15 is 11,617 characters
-of private reasoning that traces the chain five separate times and concludes *"Wait, that should
-work!"*, *"this should work"*, *"but the error says it got a MagicMock"* — a model correctly
-refusing to believe a false premise it had been handed.
+Its own diagnosis at call 13 was **correct**: *"the mock chain isn't returning proper bytes/str values."* It knew. What it could not find was why its fix didn't take. Call 15 is 11,617 characters of private reasoning that traces the chain five separate times and concludes *"Wait, that should work!"*, *"this should work"*, *"but the error says it got a MagicMock"* — a model correctly refusing to believe a false premise it had been handed.
 
 The premise was false in two places, and one of them was cria's.
 
@@ -94,14 +81,9 @@ The premise was false in two places, and one of them was cria's.
 | withheld? | No. |
 | wording? | Not the wording — the code. |
 
-Steer 2's *prose* was exactly right, and better than anything the coder produced:
-*"`MagicMock.__enter__()` yields a **new** MagicMock — not the one with `.read` set."* That is the
-whole answer, and it is the one fact the coder never found on its own (call 15 asserts the
-opposite: *"MagicMock's `__enter__` returns self by default"* — it does not).
+Steer 2's *prose* was exactly right, and better than anything the coder produced: *"`MagicMock.__enter__()` yields a **new** MagicMock — not the one with `.read` set."* That is the whole answer, and it is the one fact the coder never found on its own (call 15 asserts the opposite: *"MagicMock's `__enter__` returns self by default"* — it does not).
 
-So cria held the diagnosis the coder needed, said it correctly, and then buried it under a fix that
-could not work. The coder rewrote the same test file **five times** against that advice, never wrote
-the live test, never wrote the README.
+So cria held the diagnosis the coder needed, said it correctly, and then buried it under a fix that could not work. The coder rewrote the same test file **five times** against that advice, never wrote the live test, never wrote the README.
 
 Verified by running all four forms:
 
@@ -112,9 +94,7 @@ cria steer 2's line, at module scope      NameError: name 'self' is not defined
 __enter__.return_value = resp             OK                            ← what actually works
 ```
 
-**Verdict: a cria fault of CONTENT, not only cost.** The earlier pass of this walk recorded "the
-advice was right and the model understood it." That was wrong — I read the diagnoses, which were
-right, and never ran the code, which was not.
+**Verdict: a cria fault of CONTENT, not only cost.** The earlier pass of this walk recorded "the advice was right and the model understood it." That was wrong — I read the diagnoses, which were right, and never ran the code, which was not.
 
 **Fixed — two things:**
 
@@ -156,8 +136,7 @@ FAIL  handles-resolver/handles [setup failed]
 
 ### But the walk found a separate cria defect
 
-The gate ran `go test ./...` **148 times** in that run. Go replays a cached pass without executing
-anything:
+The gate ran `go test ./...` **148 times** in that run. Go replays a cached pass without executing anything:
 
 ```
 run 1                  ok  example.com/x  0.001s
@@ -165,12 +144,9 @@ run 2 (no edits)       ok  example.com/x  (cached)
 run 2 with -count=1    ok  example.com/x  0.001s
 ```
 
-So a green gate could rest on tests that **never ran** — and it hides precisely the failures that
-come and go with no code change: a live test whose API is down, a flake, anything time-dependent.
+So a green gate could rest on tests that **never ran** — and it hides precisely the failures that come and go with no code change: a live test whose API is down, a flake, anything time-dependent.
 
-**Fixed** — [`8fd698d`](#). Galling detail: I had found and fixed this identical trap in the suite's
-own Go verifier hours earlier and never thought to check whether cria's gate carried the same
-command. It did.
+**Fixed** — [`8fd698d`](#). Galling detail: I had found and fixed this identical trap in the suite's own Go verifier hours earlier and never thought to check whether cria's gate carried the same command. It did.
 
 ---
 
@@ -202,13 +178,9 @@ Call `enable_time` on the runtime builder to enable timers.
 | withheld? | No. Four steers, all naming real lines. |
 | wording? | No. |
 
-**Verdict: model wall plus clock.** Two failing assertions and an async-runtime misconfiguration.
-cria behaved correctly throughout — recorded as a clean cell rather than dressed up as a finding.
+**Verdict: model wall plus clock.** Two failing assertions and an async-runtime misconfiguration. cria behaved correctly throughout — recorded as a clean cell rather than dressed up as a finding.
 
-One observation, not a defect: the coder **never once ran the binary** (`cargo run` appears zero
-times in its tool calls), so the Tokio panic was invisible for the whole run. cria's gate runs
-`check`/`clippy`/`test` and deliberately never executes arbitrary binaries, which is the right
-call for a generic gate.
+One observation, not a defect: the coder **never once ran the binary** (`cargo run` appears zero times in its tool calls), so the Tokio panic was invisible for the whole run. cria's gate runs `check`/`clippy`/`test` and deliberately never executes arbitrary binaries, which is the right call for a generic gate.
 
 ---
 
@@ -223,8 +195,7 @@ call for a generic gate.
 | resolver CLI | 🟢 | `node src/index.js goose` → address + holder + count |
 | README | 🟢 | install / run / test |
 
-Independently re-checked by hand, because a verifier's first pass with a real model deserves the
-same scrutiny as a failure:
+Independently re-checked by hand, because a verifier's first pass with a real model deserves the same scrutiny as a failure:
 
 ```
 $ node src/index.js goose
@@ -238,8 +209,7 @@ $ unshare -rn node --test     → # pass 3  # fail 1     ← the live test is re
 
 ### The four questions
 
-Nothing went wrong to interrogate. **One steer in the whole run**, and it was a restraint —
-"the checks found no error-class problems… make a small TARGETED edit rather than rewriting".
+Nothing went wrong to interrogate. **One steer in the whole run**, and it was a restraint — "the checks found no error-class problems… make a small TARGETED edit rather than rewriting".
 
 ### What this cell says
 
@@ -249,19 +219,15 @@ reasoner      3 calls   514s
 self-compact  1 call    192s
 ```
 
-Crew share was **56%** — the same as everywhere else. What differed is that the coder's calls were
-*cheap*: 13s each against C1's 40s, because JavaScript solutions are shorter and the prompts stayed
-small. Same budget, nearly triple the turns.
+Crew share was **56%** — the same as everywhere else. What differed is that the coder's calls were *cheap*: 13s each against C1's 40s, because JavaScript solutions are shorter and the prompts stayed small. Same budget, nearly triple the turns.
 
-**The success wasn't cria steering well. It was cria staying out of the way** — one steer, no
-thrash, and a language with no compile step, no borrow checker, and no async runtime to configure.
+**The success wasn't cria steering well. It was cria staying out of the way** — one steer, no thrash, and a language with no compile step, no borrow checker, and no async runtime to configure.
 
 ---
 
 ## What this phase says so far
 
-**Three cria defects found and fixed** — and the third is in the advice itself, which the first
-pass of this walk wrongly cleared:
+**Three cria defects found and fixed** — and the third is in the advice itself, which the first pass of this walk wrongly cleared:
 
 | | from | fix |
 |:--|:--|:--|
@@ -269,12 +235,9 @@ pass of this walk wrongly cleared:
 | `go test` gate could report a pass it never ran | C2 | `8fd698d` |
 | **the steer author wrote code it cannot run — both C1 steers shipped a broken fix under a correct diagnosis** | C1 | `1d49456` |
 
-The method failure worth recording: I read the steers' *diagnoses*, found them accurate, and wrote
-"the advice was right." I never ran the code they contained. Reading a fix is not checking it —
-the same rule cria itself is built on (verify by doing, not by reading) applies to the walk.
+The method failure worth recording: I read the steers' *diagnoses*, found them accurate, and wrote "the advice was right." I never ran the code they contained. Reading a fix is not checking it — the same rule cria itself is built on (verify by doing, not by reading) applies to the walk.
 
-**Two cells walked clean.** C3 and C4 produced no cria-side finding. Saying so plainly rather than
-manufacturing one.
+**Two cells walked clean.** C3 and C4 produced no cria-side finding. Saying so plainly rather than manufacturing one.
 
 **The steer count tracks the outcome, inversely:**
 
@@ -284,19 +247,11 @@ manufacturing one.
 | C1 Python | 3 | 🔴 0/4 |
 | C3 Rust | 4 | 🔴 0/4 |
 
-Whether few steers *cause* success or merely accompany it is unresolved — a run that is going well
-trips fewer detectors by construction. Worth watching across the remaining cells, not concluding
-from three.
+Whether few steers *cause* success or merely accompany it is unresolved — a run that is going well trips fewer detectors by construction. Worth watching across the remaining cells, not concluding from three.
 
 ### Caveats a reader needs
 
-- **Every cell was killed at the wall**, including the 4/4 — it had finished its deliverables and
-  moved on. Read `terminal` beside `score`, never instead of it.
-- **Crew share didn't move.** cria's own reasoner and judge calls take 47–62% of model time across
-  these cells, and 54% median across 28 earlier sessions. The size bound capped the worst tail, not
-  the total.
-- **One run per cell is coverage, not a verdict.** Ten earlier runs of one task scored
-  2, 0, 2, 2, 1, 2, 1, 3, 2, 0. Variance exceeds any single fix's effect.
-- **Only Go and JavaScript verifiers have met a real model.** Ruby, PHP and Java are wired and
-  smoke-tested but unproven, so a surprising result there is as likely to be the verifier as the
-  model.
+- **Every cell was killed at the wall**, including the 4/4 — it had finished its deliverables and moved on. Read `terminal` beside `score`, never instead of it.
+- **Crew share didn't move.** cria's own reasoner and judge calls take 47–62% of model time across these cells, and 54% median across 28 earlier sessions. The size bound capped the worst tail, not the total.
+- **One run per cell is coverage, not a verdict.** Ten earlier runs of one task scored 2, 0, 2, 2, 1, 2, 1, 3, 2, 0. Variance exceeds any single fix's effect.
+- **Only Go and JavaScript verifiers have met a real model.** Ruby, PHP and Java are wired and smoke-tested but unproven, so a surprising result there is as likely to be the verifier as the model.

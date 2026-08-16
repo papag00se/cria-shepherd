@@ -1,9 +1,6 @@
 # Heuristic Assists — implemented in cria
 
-A terse index of the assists cria **actually implements** today, in five families. One line each.
-Design rationale and code pointers live in [local-coder-massaging.md](local-coder-massaging.md);
-the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in
-[port-fidelity-audit.md](audits/port-fidelity-audit.md).
+A terse index of the assists cria **actually implements** today, in five families. One line each. Design rationale and code pointers live in [local-coder-massaging.md](local-coder-massaging.md); the conceptual overview in [shephard.md](shephard.md); still-unbuilt levers in [port-fidelity-audit.md](audits/port-fidelity-audit.md).
 
 ## Nudges — directives/refusals the model sees
 

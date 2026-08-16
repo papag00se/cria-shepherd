@@ -1,7 +1,6 @@
 # Language bias in cria's assists — the six-language battery
 
-47 findings from reading cria's own source against 24 assisted runs in Ruby, Go, Python, Java, JavaScript
-and Rust. Every location was verified by reading it. Severity is what the walks actually showed.
+47 findings from reading cria's own source against 24 assisted runs in Ruby, Go, Python, Java, JavaScript and Rust. Every location was verified by reading it. Severity is what the walks actually showed.
 
 | severity | count |
 |---|---:|
