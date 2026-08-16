@@ -450,7 +450,31 @@ def _is_write_call(tc: dict) -> bool:
     return ((tc or {}).get("function") or {}).get("name") in _WRITE_TOOL_NAMES
 
 
-def _stub_write_args(m: dict, landed=None) -> dict:
+def _last_write_index_by_path(msgs: list[dict]) -> dict:
+    """path -> index of the LAST write-tool call that targeted it.
+
+    `stub_old_write_args` kept ONE index for the whole span, so every older write was stamped with
+    the on-disk wording whatever path it touched. A coder that writes one file three times produced
+    three "this exact content is on disk at PATH" stamps for that path, two of them false — measured
+    at six stamps and four different byte counts for a single Ruby file in one real prompt (#5b)."""
+    out: dict = {}
+    for i, m in enumerate(msgs):
+        if not isinstance(m, dict):
+            continue
+        for tc in (m.get("tool_calls") or []):
+            if not _is_write_call(tc):
+                continue
+            fn = tc.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "")
+            except ValueError:
+                continue
+            if isinstance(args, dict):
+                out[str(args.get("path") or args.get("file_path") or "?")] = i
+    return out
+
+
+def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | None = None) -> dict:
     """A COPY of message ``m`` with big write-tool argument bodies replaced by an elision stub.
 
     ``landed`` maps tool_call_id -> bool (the paired tool result confirmed the write). The on-disk
@@ -477,7 +501,12 @@ def _stub_write_args(m: dict, landed=None) -> dict:
         outcome = (landed or {}).get(tc.get("id"))
         if outcome is None:
             new_calls.append(tc); continue      # no paired result → no claim in either direction
-        stub_key = "write_stub" if outcome else "write_stub_refused"
+        if not outcome:
+            stub_key = "write_stub_refused"
+        elif last_by_path is not None and last_by_path.get(path, idx) != idx:
+            stub_key = "write_stub_superseded"   # it landed, then a later write replaced it
+        else:
+            stub_key = "write_stub"
         touched = False
         for key in _WRITE_ARG_KEYS:
             v = args.get(key)
@@ -528,7 +557,9 @@ def stub_old_write_args(msgs: list[dict]) -> list[dict]:
     landed = _write_outcomes(msgs)
     last_write = max((i for i, m in enumerate(msgs)
                       if any(_is_write_call(tc) for tc in (m.get("tool_calls") or []))), default=None)
-    return [m if (i == last_write or not m.get("tool_calls")) else _stub_write_args(m, landed)
+    last_by_path = _last_write_index_by_path(msgs)
+    return [m if (i == last_write or not m.get("tool_calls"))
+            else _stub_write_args(m, landed, i, last_by_path)
             for i, m in enumerate(msgs)]
 
 

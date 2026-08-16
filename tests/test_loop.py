@@ -6088,8 +6088,14 @@ class AuthorSessionStubsSupersededWritesTests(unittest.TestCase):
         ]
         out = selfcompact.serialize(selfcompact.stub_old_write_args(msgs))
         self.assertNotIn("def test_live_api(self)", out)        # superseded body → stub
-        self.assertIn("on disk at t.py", out)                    # ...pointing at the real file
         self.assertIn("def test_live_api_real", out)             # live working set stays whole
+        # AND THE STUB TELLS THE TRUTH. This used to assert "on disk at t.py" for the SUPERSEDED
+        # write — which is the one thing that is not on disk, since w2 replaced it. The test pinned
+        # the falsehood: one real prompt carried six such stamps for a single Ruby file at four
+        # different byte counts, at most one of which could be true (#5b).
+        self.assertIn("EARLIER version of t.py", out)
+        self.assertIn("replaced by a later write", out)
+        self.assertNotIn("this exact content is on disk at t.py", out)
 
 
 class AuthorForcedAnswerVoiceTests(unittest.TestCase):

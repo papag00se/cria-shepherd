@@ -9,3 +9,10 @@ write_stub = [elided {{CHARS}} chars — this exact content is on disk at {{PATH
 # steer author's "the side_effect fix landed" hallucination (0144), which the coder believed for
 # ~30 calls. The refused form keeps the elision and drops the claim.
 write_stub_refused = [elided {{CHARS}} chars — this write was REFUSED (see the tool result below); the content never reached disk]
+
+# A write that LANDED and was then SUPERSEDED by a later write to the same path. Its content is not
+# what is on disk, so it may not carry write_stub's claim. `last_write` was one index across the
+# whole span, so every older write got the on-disk wording whatever path it touched: one real prompt
+# carried six of them for a single Ruby file at four different byte counts, and at most one could be
+# true (#5b).
+write_stub_superseded = [elided {{CHARS}} chars — an EARLIER version of {{PATH}}, replaced by a later write in this session; read_file for what is actually on disk now]
