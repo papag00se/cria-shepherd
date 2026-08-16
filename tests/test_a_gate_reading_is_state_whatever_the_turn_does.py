@@ -18,7 +18,9 @@ the PREVIOUS gate. Failing open toward "done" is the one direction #13 forbids.
 THE SHAPE OF THE BUG, not just the instance: three readers of one fact, two writing the state inline
 in their own words with their own idea of which fields mattered, and the third writing none. So this
 is fixed by extraction rather than by adding a fourth copy — `record_gate_state` is now the only
-place a reading becomes state, and `gate_findings_text` the only place "is it red" is decided.
+place a reading becomes state, and `gate_error_text` the only place "is it red" is decided.
+(A FOURTH reader turned up while wiring it: `guard_periodic_result`, whose omission was
+`last_gate_ran` — a check-in that ran was indistinguishable from one that never happened.)
 
 Two things that were plan-off-only now hold on both paths, and both are the fail-CLOSED direction:
 the stall streak (`track_gate_progress`, whose docstring already said it must be the one funnel), and
@@ -29,7 +31,7 @@ kept `completion_block_nudge` for the STEP verdict; only the recorded state uses
 import unittest
 
 from cria import loop, proberun
-from cria.loop import GuardState, gate_findings_text, record_gate_state
+from cria.loop import GuardState, gate_error_text, record_gate_state
 from cria.probegate import GateOutcome
 
 
@@ -108,12 +110,12 @@ class TheGuardProbeTurnRecordsItTests(unittest.TestCase):
         def fake_findings(o):
             return findings
 
-        real_read, real_find = loop.read_gate, loop.gate_findings_text
-        loop.read_gate, loop.gate_findings_text = fake_read_gate, fake_findings
+        real_read, real_find = loop.read_gate, loop.gate_error_text
+        loop.read_gate, loop.gate_error_text = fake_read_gate, fake_findings
         try:
             return loop.guard_probe_steer(gs, {"messages": []}, _Rlog(), author=loop.CANNED, step=1)
         finally:
-            loop.read_gate, loop.gate_findings_text = real_read, real_find
+            loop.read_gate, loop.gate_error_text = real_read, real_find
 
     def test_a_wheel_spin_turn_records_a_red_gate(self):
         gs = self._gs(spin=True)
@@ -146,19 +148,25 @@ class TheGuardProbeTurnRecordsItTests(unittest.TestCase):
 
 class TheRednessDecisionHasOneOwnerTests(unittest.TestCase):
     def test_a_gate_that_never_ran_is_not_red(self):
-        self.assertEqual(gate_findings_text(outcome(ran=False)), "")
+        self.assertEqual(gate_error_text(outcome(ran=False)), "")
 
-    def test_the_unparsed_failure_arm_is_kept(self):
-        """A test that died on a bare traceback prints nothing cria can locate. Without this arm it
-        read as a genuine pass — the reason plan-off has always had it."""
+    def test_there_is_no_second_redness_function(self):
+        """The first cut of this fix added one — a private copy of gate_error_text with a
+        hand-written prefix, which is the fifth copy of a rule that already had an owner. Worse, it
+        reproduced the bug gate_error_text exists to fix: it returned the located findings OR the
+        unparseable failures, never both."""
+        self.assertFalse(hasattr(loop, "gate_findings_text"))
+
+    def test_both_failure_classes_are_surfaced_together(self):
+        """A located finding and a check that failed with nothing parseable are not alternatives."""
         import inspect
-        src = inspect.getsource(gate_findings_text)
-        self.assertIn("failed_unparsed_probes", src)
-        self.assertIn("completion_block_nudge", src)
+        src = inspect.getsource(gate_error_text)
+        self.assertIn("findings and failed", src)
 
     def test_no_reader_writes_the_state_inline_any_more(self):
         import inspect
-        for fn in (loop.guard_gate_verdict, loop.guard_probe_steer, loop.Loop._verify_after_probe):
+        for fn in (loop.guard_gate_verdict, loop.guard_probe_steer, loop.Loop._verify_after_probe,
+                   loop.guard_periodic_result):
             with self.subTest(fn=fn.__name__):
                 src = inspect.getsource(fn)
                 self.assertIn("record_gate_state(", src)
@@ -191,6 +199,52 @@ class _Rlog:
 
     def kinds(self):
         return [k for k, _ in self.events]
+
+
+class ThePeriodicCheckInKeepsItsOneDifferenceTests(unittest.TestCase):
+    """A periodic check-in is a real gate run — so it records the reading — but the coder has NOT
+    claimed done, and letting its clean result set `gate_fresh` would pre-satisfy the completion
+    backstop for a 'done' that arrives later. That single field is the reason this reader is not
+    simply the shared one."""
+
+    def _gs(self):
+        gs = GuardState()
+        gs.periodic_probe = True
+        gs.gate_plan = object()
+        gs.probe_call_id = "c1"
+        return gs
+
+    def _run(self, gs, err, ran=True):
+        got = outcome(ran=ran)
+        real_read, real_err = loop.read_gate, loop.gate_error_text
+        loop.read_gate = lambda plan, probe, rlog: got
+        loop.gate_error_text = lambda o: err
+        try:
+            return loop.guard_periodic_result(gs, {"messages": []}, _Rlog())
+        finally:
+            loop.read_gate, loop.gate_error_text = real_read, real_err
+
+    def test_a_clean_check_in_does_not_mark_ground_truth_fresh(self):
+        gs = self._gs()
+        gs.gate_fresh = False
+        self._run(gs, "")
+        self.assertFalse(gs.gate_fresh)
+        self.assertFalse(gs.last_gate_red)
+        self.assertTrue(gs.last_gate_ran)
+
+    def test_a_red_check_in_records_the_finding(self):
+        gs = self._gs()
+        out = self._run(gs, "cart.go:12: undefined: Total")
+        self.assertIn("undefined: Total", out)
+        self.assertTrue(gs.last_gate_red)
+        self.assertIn("undefined: Total", gs.last_gate_flag)
+
+    def test_a_check_in_that_could_not_run_says_nothing_and_records_that_it_did_not(self):
+        gs = self._gs()
+        gs.last_gate_red = True
+        self.assertIsNone(self._run(gs, "", ran=False))
+        self.assertTrue(gs.last_gate_red)      # no evidence either way
+        self.assertFalse(gs.last_gate_ran)
 
 
 if __name__ == "__main__":

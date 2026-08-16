@@ -2798,7 +2798,7 @@ class Loop:
         # because the stall signal is "the same finding as last time" and comparing the new flag with
         # itself is always true.
         prev_flag = sess.last_gate_flag
-        record_gate_state(sess, outcome, gate_findings_text(outcome))
+        record_gate_state(sess, outcome, gate_error_text(outcome))
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
@@ -5272,18 +5272,18 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     # just makes the model distrust the pass and keep working (feeding the can't-stop spiral).
     err = gate_error_text(outcome)
     rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
-    if err:
-        gs.last_gate_red = True
-        track_gate_progress(gs, err)            # RED → streak++, stall on an unchanged finding
-    elif outcome.ran:
-        gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
-        gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
-        gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
-        if (lost := passing_test_regression(gs, outcome.report)):
-            rlog.emit("loop.tests_regressed", level="warning", high=gs.tests_passed_high)
-            track_gate_progress(gs, "")
-            return prompts.render("periodic_gate", truth=lost)
-        track_gate_progress(gs, "")             # GREEN → reset the streak/stall
+    # THE SHARED MIRROR (record_gate_state). This was a fourth hand-written copy, and what it left
+    # out was `last_gate_ran` — so a periodic check-in that ran was indistinguishable from one that
+    # never happened to every later reader of that field. `gate_fresh` is DELIBERATELY not part of
+    # what a periodic check-in claims: the coder has not said done, so its clean result must not
+    # pre-satisfy the completion backstop for a 'done' that comes later. That is the one field this
+    # path owns differently, and it is restored right after.
+    fresh_before = gs.gate_fresh
+    record_gate_state(gs, outcome, err)
+    gs.gate_fresh = fresh_before
+    if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
+        rlog.emit("loop.tests_regressed", level="warning", high=gs.tests_passed_high)
+        return prompts.render("periodic_gate", truth=lost)
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
         return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
@@ -5419,24 +5419,6 @@ def _check_state_words(gs) -> str:
     return words["passed"] if getattr(gs, "last_gate_ran", False) else words["never_ran"]
 
 
-def gate_findings_text(outcome) -> str:
-    """What a gate reading says is WRONG, as one string — "" when it is clean or never ran.
-
-    Two arms, because a check can fail without printing anything cria can locate: the located
-    error-class findings, and a check that RAN and exited non-zero with nothing parseable (a test
-    that died on a bare traceback, a build that errored). Without the second arm a failing check
-    whose output did not parse read as a genuine pass."""
-    if not outcome.ran:
-        return ""
-    findings = proberun.completion_block_nudge(outcome.report)
-    if findings:
-        return findings
-    failed = proberun.failed_unparsed_probes(outcome.report)
-    if failed:
-        return "the repo's own checks did not pass — resolve these before finishing:\n" + "\n".join(failed)
-    return ""
-
-
 def record_gate_state(gs: GuardState, outcome, findings: str) -> None:
     """A gate reading becomes session state HERE, and only here. Every reader calls this.
 
@@ -5480,7 +5462,12 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     as a genuine 'done'."""
     probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
     outcome = read_gate(gs.gate_plan, probe, rlog)
-    findings = gate_findings_text(outcome)
+    # gate_error_text, not a private copy: it surfaces the located findings AND the checks that
+    # failed without a parseable line TOGETHER. This function used to pick one or the other, which
+    # is the exact contradiction gate_error_text was written to end — a turn that said "a specific
+    # line could not be parsed" while a ⟦ctx:checks⟧ block in the same prompt quoted the located
+    # error. Its wording lives in prompts (#22); the old one was an inline f-string here.
+    findings = gate_error_text(outcome)
     record_gate_state(gs, outcome, findings)
     if not outcome.ran:
         rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False)  # #12: say which happened
@@ -7780,7 +7767,7 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     # THE READING IS STATE, whatever cria does with the steer. This is the same probe result the
     # completion gate reads (same call id, same plan) and it used to be read here and dropped on the
     # floor, so a gate that flipped green→red on a redirect/wheel-spin turn left last_gate_red False.
-    record_gate_state(gs, outcome, gate_findings_text(outcome))
+    record_gate_state(gs, outcome, gate_error_text(outcome))
     if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
         gs.steer_source = "repetition guard"
