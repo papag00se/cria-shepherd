@@ -13,6 +13,40 @@ rewrites itself after every cell.
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
 list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
+### SURFACED, NOT CHANGED — the litter sweep is defending against the opposite incident
+
+I built the tier-2 sweep fix (bound the sweep to `BUILD_ARTIFACT_DIRS`, so `orders.db` ×12 and
+`Cargo.lock` ×5 stop being deleted), it passed, and then I read the test file it broke.
+`tests/test_gate_leaves_no_litter.py`'s own docstring:
+
+> *"Measured on the six-language battery: a leftover `orders.db` from one gate run made the next
+> run's schema assertions fail, and the coder was sent to debug cria's own litter."*
+
+**Sweeping `orders.db` is a deliberate fix for a measured incident, in the opposite direction.** The
+gate runs the repo's tests in the live workspace; those tests write a database; leaving it makes the
+NEXT gate assert against stale state and cria then reports, under its strongest header, a failure it
+manufactured itself.
+
+**Reverted, per the fix-phase rule** — an item that undoes a deliberate earlier decision gets
+surfaced and stopped on, not landed.
+
+Both findings are real and they are about the same file:
+
+| | claim | evidence |
+|---|---|---|
+| the earlier decision | leaving it makes cria manufacture the next gate's failure | six-language battery, recorded in the test's docstring |
+| cycle 2's walk | deleting it removes what the model is testing against | 18 non-build paths, 9 sessions; `orders.db` ×12, `Cargo.lock` ×5 |
+
+And the walk **refuted its own cost**: `verify.py` stashes any existing `orders.db` and installs its
+own, so the deletion cost the model's mid-run testing and no checks. The earlier incident's cost was
+a coder sent to debug cria's litter.
+
+**What would resolve it rather than pick a side:** the gate should not run the project's tests *in
+the live workspace* at all — the collision only exists because cria's ground truth and the coder's
+working tree are the same directory. That is a larger change than a fix phase should smuggle in, and
+it is the operator's call. `Cargo.lock` is separable and safe on its own: nothing writes it but
+cargo, and no incident says it must go.
+
 ### The ranked list — cycle 2
 
 Ranked on cells cost, whether it broke working code, whether it is a false fact, how many models and
