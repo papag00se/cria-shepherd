@@ -50,7 +50,11 @@ class UpstreamPortedTests(DiscoveryCase):
         # `-count=1`, not the bare form: `go test` replays a cached pass without executing
         # anything, and a gate that reports tests green having run none is the vacuous-green shape
         # the gate exists to prevent (see GoTestCacheTests).
-        self.assertIn("go test -count=1 ./...", c)
+        # `-v` for a sibling reason: without it Go prints one `ok <pkg>` line per PACKAGE and nothing
+        # per test, so runner_tally reads no count and passing_test_regression — the one signal that
+        # sees a deleted passing test — is structurally silent on Go.
+        # See tests/test_go_prints_a_countable_tally.py.
+        self.assertIn("go test -count=1 -v ./...", c)
 
     def test_python_probe_discovery_prefers_uv_and_config_gated(self):  # T3
         write(self.d, "pyproject.toml",

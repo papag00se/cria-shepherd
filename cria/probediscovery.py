@@ -492,7 +492,15 @@ def build_go(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     # API is now down, a flake, anything time- or network-dependent. Verified on this box: run one
     # prints "ok 0.001s", run two prints "ok (cached)", run two with -count=1 executes again.
     # Caught while walking P1-C2 (handles-go), where the gate ran `go test ./...` 148 times.
-    out.append(cand(ProbeKind.Test, ["go", "test", "-count=1", "./..."], d, conf, 90,
+    # `-v` is required for the same class of reason as `-count=1`. Without it `go test` prints one
+    # `ok  <pkg>  0.003s` line per package and NOTHING per test, so `runner_tally` — which reads the
+    # runner's own summary and is what every count in cria comes from (#12) — returns "" and
+    # `gate_passing_tests` returns -1. That makes `passing_test_regression` structurally silent on
+    # Go: the one signal that sees a coder DELETE a passing test cannot fire, and the shape it exists
+    # to catch (an append written as a replace, a seeded test going out with the old text) was
+    # measured on cart-billing-go. probeparse's own tally table already says "go test -v · one
+    # `--- PASS:` / `--- FAIL:` per test"; the parser expected the flag and the composer never sent it.
+    out.append(cand(ProbeKind.Test, ["go", "test", "-count=1", "-v", "./..."], d, conf, 90,
                     ProbeCost.Moderate, "go test across all packages"))
     # external tools: lower confidence (may not be installed / configured)
     out.append(cand(ProbeKind.StaticAnalysis, ["golangci-lint", "run"], d, 60,
