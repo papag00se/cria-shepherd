@@ -6361,7 +6361,18 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # contradicting the last, while the diff sat in the coder's own context pointing at the exact
     # character ("- addr1e000…0002  ?  -"). The check output is the better steer, it is already in
     # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
+    # THE FINDING-SET, WHOEVER TRIGGERED. `truth_text` is passed only by the thrash caller; the
+    # repetition and wheel-spin callers pass nothing, so `checks_now` was "" for them — the guard
+    # compared against an empty string, never suppressed, and then OVERWROTE the stored streak with
+    # "" a few lines down, so the next thrash steer saw no streak either. Measured over five days:
+    # `loop.steer_same_checks` fired ZERO times, and 318 steers passed no check text against 44 that
+    # did. One session shows two redirects wiping the streak between thrash steers at stall 2, 3 and
+    # 4 on one unchanged finding-set — three fresh diagnoses of one pytest state, which is precisely
+    # what this guard exists to stop. `last_gate_flag` is the authoritative finding-set every other
+    # seat reads (#12); taking it here makes the guard live on every trigger, not one of three.
     checks_now = (truth_text or "").strip()
+    if not checks_now and gs is not None:
+        checks_now = (getattr(gs, "last_gate_flag", "") or "").strip()
     # STALE FAILURES ARE NOT GROUND TRUTH. The coder runs the tests itself, out of band, and cria's
     # gate cache does not know — so cria kept restating failures the disk had already cleared, under
     # the word GROUND TRUTH, in prompts that carried the contradiction (see the helper). Dropped, not
