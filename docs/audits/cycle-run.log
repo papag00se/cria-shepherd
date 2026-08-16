@@ -49,3 +49,5 @@
 [20:31:15] CYCLE COMPLETE — 24 cells, arm CRIA
 [chain] cell 15 re-run finished; starting cycle 3
 [23:10:38] (1/24) shipping-rates-rb x gemma4 — start
+[23:27:07] (1/24) shipping-rates-rb x gemma4 — exit 0
+[23:27:07] (2/24) shipping-rates-rb x qwen35 — start

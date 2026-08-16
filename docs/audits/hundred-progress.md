@@ -13,6 +13,48 @@ rewrites itself after every cell.
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
 list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
+## Cycle 3 — RUN in flight
+
+Started **2026-08-15 23:10** on the six-fix code state.
+
+| # | task | model | score | Δ | min | calls | what happened |
+|---:|---|---|---:|---:|---:|---:|---|
+| 1 | shipping-rates-rb | gemma4 | 0% | **−80** | 16 | 14 | one call ate the cell — see below |
+
+### TIER 1 (c3) — a single call generates ~43,000 tokens and burns twelve minutes
+
+**Not caused by this cycle's fixes, and checked before saying so.** Cycle 2's run of the *same cell*
+hit the identical runaway — 754.9 s for 43,616 tokens — and still scored 80%, because it landed with
+enough clock left. Cycle 3's landed inside the first fifteen minutes and the milestone floor took the
+cell. Same task, same prompt, same model, one call's position deciding 80 points.
+
+Cycle 3 cell 1, from `upstream.done`:
+
+```
+06:24:43   703.6s   42,744 tokens   60.8 tok/s
+```
+
+Every other call in that run is 0.8–17 s. **That one call is 11.7 of the run's 15.9 minutes and it
+produced nothing** — `loop.truncated` and `loop.truncated_dropped` both fired, so the guard correctly
+threw away a self-truncated write.
+
+**Prevalence, counted across every log on disk:** 14 calls over 300 s, in **12 distinct sessions**.
+Eleven of them are the same shape — 37,000 to 44,500 tokens, 680–783 seconds.
+
+**Why nothing stops it.** Principle 6 says runaways are caught by the streaming rumination detector,
+`timeout_seconds` and n_ctx, never a short hard cap — and here none of the three fires:
+
+- the rumination detector watches the **reasoning** channel; this is content and tool arguments,
+- `output_reserve = 16384` is an input-side reserve, not an output cap, and `max_tokens` is
+  deliberately unset on the coder (`cria.toml:99`, "don't set on the coder"),
+- so generation runs to ~43,000 tokens and only the truncation guard catches the result, after the
+  twelve minutes are spent.
+
+**The fix is not a cap** — that is the footgun principle 6 exists to forbid, and the mid-write cut is
+exactly what `guard_truncation` was built for. The gap is that the *streaming* watcher does not watch
+this channel: cria is already reading the stream, already aborts on a reasoning runaway, and could
+abort on a content/arguments runaway on the same evidence. Next fix phase; one code state per cycle.
+
 ### The cell-15 re-run: 0%, and it does NOT validate the verifier fix
 
 The superseded row was re-run under the new code state and scored **0 of 5**, killed at the
