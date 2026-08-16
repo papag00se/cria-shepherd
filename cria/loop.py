@@ -235,6 +235,9 @@ class GuardState:
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
+    # (reason, exec_marker) for a satisfaction-accepted 'done', held until the gate's result decides
+    # which claim the note may open with. Empty when the held text is the coder's own words.
+    pending_done_parts: tuple = ()
     # The plan-ON completion backstop's OWN probe id. Deliberately NOT ``done_probe``: the plan-ON
     # periodic satisfaction check also sets done_probe and nothing on the plan path consumes it, so
     # keying the backstop off done_probe read whatever stale result probe_call_id pointed at by the
@@ -1625,15 +1628,24 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         str(retry.get("proposed_fix") or "").strip()
 
 
-def satisfaction_done_note(reason: str, exec_marker: str = "") -> str:
-    """The completion text forwarded when the satisfaction check + repo checks agree the task is done.
+def satisfaction_done_note(reason: str, exec_marker: str = "", *, checks_ran: bool = True) -> str:
+    """The completion text forwarded when the satisfaction check accepts a 'done'.
+
+    `checks_ran` decides which claim it opens with, and it has to, because `guard_gate_verdict`
+    returns None for a green gate AND for one that could not run — the same fail-open every other
+    seat honours. The old wording asserted "verified by the completion check AND THE REPO'S OWN
+    CHECKS" in both cases, and in the second case nothing had verified anything: a false fact about
+    the world, stated in the session's last message (#5b). The same wording also shipped on the
+    no-shell path, where no gate was even composed. Both wordings live in prompts/ (#22); the answer
+    comes from `last_gate_ran`, which every gate reader now writes (see record_gate_state).
 
     `exec_marker` is the LIVE EXECUTION result (cria/execcheck.py) and is APPENDED, never gating:
     the repo's own checks prove a workspace compiles, lints and passes its tests, and none of that
     can tell you the delivered program does anything. Measured across 51 archived runs: 13 (25%)
     contained no entry point at all and not one of those ever scored full marks. The marker is empty
     on a confirmed run and on a task that needs no run, so a clean signal stays silent."""
-    note = f"Task complete — verified by the completion check and the repo's own checks. {reason}".strip()
+    words = prompts.load_map("satisfaction_done")
+    note = f"{words['checked' if checks_ran else 'unchecked']} {reason}".strip()
     return f"{note}\n\n{exec_marker}".strip() if exec_marker else note
 
 
@@ -3704,11 +3716,17 @@ class Loop:
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
             sess.probe_call_id = probe_tc["id"]
+            # Held as PIECES, not as prose: the note's opening claim depends on whether the gate
+            # actually ran, and that is not known until its result comes back next turn. The
+            # exec_marker is what must not be recomputed (it costs a reasoner call).
+            sess.pending_done_parts = (reason, exec_marker)
             sess.pending_done = satisfaction_done_note(reason, exec_marker)   # reuse; never run twice
             sess.steer_source = "completion check (task satisfied)"
             return _completion_toolcalls([probe_tc],
                                          note="cria completion check: the task looks done — verifying the repo's checks")
-        return _completion_final(satisfaction_done_note(reason))  # no shell to verify → end fail-open
+        # No shell to verify → end fail-open, and SAY that nothing verified it. This path composes no
+        # gate at all, so the "and the repo's own checks" claim was false here every single time.
+        return _completion_final(satisfaction_done_note(reason, checks_ran=False))
 
     def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False) -> dict | None:
         """The single-item coder turn with the SAME protections the loop gives its coder: the
@@ -3745,7 +3763,10 @@ class Loop:
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
                 rlog.emit("loop.gate", plan_off=True, blocked=False)
+                parts, sess.pending_done_parts = sess.pending_done_parts, ()
                 held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
+                if parts:   # recompose now that the gate's own answer is in
+                    held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
                 return _completion_final(held or "Done.")
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if sess.periodic_probe:

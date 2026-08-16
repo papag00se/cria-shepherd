@@ -34,9 +34,14 @@ class Rule2_AdditiveNeverBlocks(unittest.TestCase):
             self.assertIsInstance(execcheck.ExecResult(v).marker, str)
 
     def test_the_live_execution_marker_is_APPENDED_to_a_completion(self):
-        src = inspect.getsource(loop.satisfaction_done_note)
-        self.assertIn("exec_marker", src)
-        self.assertIn("Task complete", src)   # the completion still stands on its own
+        """Driven, not read: the wording moved into prompts/ (#22), so a source scan for the literal
+        was asserting where the string LIVES, not that the completion still stands on its own."""
+        note = loop.satisfaction_done_note("The CLI resolves handles.", "⟦ctx:live-execution⟧ ran ok")
+        self.assertIn("Task complete", note)
+        self.assertIn("The CLI resolves handles.", note)
+        self.assertTrue(note.endswith("⟦ctx:live-execution⟧ ran ok"))
+        # …and with no marker the completion is unchanged, never emptied by its absence.
+        self.assertIn("Task complete", loop.satisfaction_done_note("done."))
 
     def test_a_failed_exec_check_never_affects_the_completion(self):
         src = inspect.getsource(loop.live_execution_marker)

@@ -1,0 +1,5 @@
+# The completion text forwarded when a 'done' is accepted. Two openings, chosen by whether the
+# repo's own checks ACTUALLY RAN — guard_gate_verdict returns None for a green gate AND for one
+# that could not run, and claiming the second as verification is a false fact about the world (5b).
+checked = Task complete — verified by the completion check and the repo's own checks.
+unchecked = Task complete — the completion check is satisfied. The repo's own checks could not be run here, so nothing has verified this against them.
