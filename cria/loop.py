@@ -8262,9 +8262,18 @@ def _mark_own_notes(session: str) -> str:
     wording."""
     if not session:
         return session
+    # …INCLUDING THE ONE cria ACTUALLY WRITES INTO THE HISTORY. The three keys were the completion
+    # sentinel, the rollup marker and a prior steer — all of which cria injects and then largely
+    # replaces, so they are rarely in the span this runs over. The continuation reframe is not like
+    # them: cria composes it and the harness stores it AS the conversation, so it is in the history
+    # by construction. Measured across one day, 1,926 real prompts: ⟦ctx:continuation⟧ in 526 of
+    # them, ⟦ctx:steer⟧ in 150 — and the tag this function exists to add in ZERO. cria's own reframe
+    # is precisely the feedback loop described above: cria's account of the work becomes the grounds
+    # for cria's next directive, with more confidence each round.
+    own = (indicators.SENTINEL, selfcompact.SUMMARY_MARKER, "⟦ctx:steer⟧", CONTINUATION_MARKER)
     out = []
     for line in session.splitlines():
-        if indicators.SENTINEL in line or selfcompact.SUMMARY_MARKER in line or "⟦ctx:steer⟧" in line:
+        if any(mark in line for mark in own):
             out.append(f"{line}   [EARLIER NOTE FROM THIS SYSTEM — not evidence]")
         else:
             out.append(line)
