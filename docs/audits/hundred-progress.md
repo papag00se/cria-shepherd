@@ -8,9 +8,43 @@ rewrites itself after every cell.
 
 ---
 
-## Cycle 2 — WALK in flight
+## Cycle 2 — RANK complete, FIX next
 
-**Phase: WALK.** Started **2026-08-15 20:5x**. Nine runs prepared with `suite/walk.py` — 297 chunk
+**Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
+list is below and folded into `docs/audits/context-footgun-backlog.md`.
+
+### The ranked list — cycle 2
+
+Ranked on cells cost, whether it broke working code, whether it is a false fact, how many models and
+languages it reached, and how cheap the real fix is.
+
+| # | tier | finding | cost | fix at |
+|---:|---|---|---|---|
+| 1 | 1 | **The completion judge is handed the coder's tool menu and told to author an executable command.** `satisfaction.txt:22` requires *"one executable next step… include the exact command when a run is required"*, and `_coder_tools_summary` pastes `exec_command` with all nine of its parameter names into the judge's context. The judge's hallucinated calls copy those exact parameter names. Its fence says "never write code" but not the doctrine's measured pair — *"You have NO tools"* and *"Do not think about HOW any of this would be built"*. 43 of 66 judge turns on one cell ended saying nothing at all, and fail-closed read every silence as "not done" | 45 min and ~300 calls on one cell; 12 false not-dones | `cria/prompts/satisfaction.txt` + the `coder_tools` thread |
+| 2 | 1 | **cria's install advice creates a tree, then reads it back into its own prompt.** The census cria appends to a refusal was **64% `vendor/bundle` lines** — 42,140 of 65,801 tokens. Without them the body is 23,661 against a 45,056 budget and fits easily | the 259 KB body, six 400s, −60 on cell 2 | the install-denial site records the path it prescribed |
+| 3 | 1 | **The install remedy names a binary this box does not have.** `_tool_present` finds `bundle3.2` and the name is discarded before it reaches the sentence, which still says `bundle` | −60 on cell 3, ~half a coder budget | `dirguard._local_install_advice` renders the discovered name |
+| 4 | 1 | **A steer stated "no code changes have been made to address performance"** while cria's own prompt showed the thread pool, the concurrent map and the O(n) dedup — and the model then replaced header-keyed column lookup with hardcoded indices | broke working code on the cycle's best cell | the steer author's evidence bundle |
+| 5 | 1 | **"a specific line could not be parsed from the output", printed beneath the parsed line.** 5+ occurrences across two runs. `probeparse.split_diag` was fixed for exactly this and its comment records the incident; the **steer-selection path still disagrees with the checks block** | the Java column, two cycles | the selection path, not the parser |
+| 6 | 2 | **cria refused a whole-file read 56× saying it "would be truncated" — while its own judge read the same file whole, untruncated, three times in the same run.** A bound cria imposed, stated as a fact about the world | 8 calls reassembling a readable file | `READ_INLINE_MAX` claim wording |
+| 7 | 2 | **The rumination guard names a trigger its own detector rejected.** All three aborts fired on raw length; the message says "hit N second-guessing phrases". Two of four aborts destroyed coherent in-progress file drafts | 2 lost drafts, 1 cell | `loop.py:7479` needs a third notice |
+| 8 | 2 | **The critic's action log elides the call line and keeps the result**, so a successful fetch appears with no call that produced it — the critic then ruled the research step undone, twice, and 21% of one run's tool calls went to re-fetching one page | two Rust cells | the elision keeps call lines |
+| 9 | 2 | **`exec-intent` invents a fresh success criterion each cycle.** Three wordings on byte-identical output gave YES, NO, NO; the strictest demanded a skipped-row breakdown from a feed with no bad rows | 7 false live-execution facts | pin the criterion per session |
+| 10 | 2 | **Two owners for the checks preamble.** The one that fires ~30× is an inline f-string at `probegate.py:547` with no "a test YOU wrote is yours" carve-out; its sibling prompt file has it. Also a rule-22 violation | model reversed a correct fix | one owner |
+| 11 | 2 | **`find=` answers "no match" about a document containing the term** when the query is regex-escaped — and cria primes that spelling itself | the ISO3166 answer, on the cell it killed | third re-read in `find_in` |
+| 12 | 3 | `_doc_format` says "It is YAML" of an HTML page on one leading `Word:` line | noise | second signal or silence |
+| 13 | 3 | cria has **no memory of what was green**. Its only cross-round state is a git-status digest with no filenames, so a check going from passing to failing is indistinguishable from one that always failed | the cell that regressed | a green-set per round |
+| 14 | 3 | `unsupported call: task_complete` for a tool cria advertises in the same turn | 7 turns | honour or stop listing |
+
+**Two deliberate decisions need the operator, not a fix.** cria substitutes its own `web_fetch` when the
+search supervisor returns a URL (`loop.py:477-478`, documented) — it collides with principle 2's
+corollary and put a phantom 404 in the durable ledger for 86 calls. And `_periodic_satisfaction` may
+end a session but never steer it, which is why four correct verdicts naming a missing method never
+reached the coder.
+
+**One verifier defect**, worth a full 20 points: `review_written` misses a markdown table by one
+character. Fix, then supersede and re-run cell 15.
+
+### The walk phase Started **2026-08-15 20:5x**. Nine runs prepared with `suite/walk.py` — 297 chunk
 files, 17.1 MB — and **eight agents reading them line by line**, per `docs/walk-prompt.md`. Findings
 land in `docs/audits/cycle-2-walk.md`, one `## <run_id>` per run.
 
