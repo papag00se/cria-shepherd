@@ -26,6 +26,7 @@ Started **2026-08-15 23:10** on the six-fix code state.
 | 4 | shipping-rates-rb | nemotron-elastic | 0% | **−40** | 25 | 65 | exited on its own. Every failing check is a `require` LoadError, and `country_zone_mapping` shows the model reaching straight into the tree — `third-party requires: ['vendor/countries/countries']`. 7 `blocked_external`, 4 rumination aborts, no runaway |
 | 5 | cart-billing-go | gemma4 | **100%** | **+20** | 6 | 38 | all five green in six minutes. The seeded `TestSubtotal` deletion that cost this cell 20 points last cycle did not happen — `suite_green_plus_regression_test` passes, the rounding is right at 48.58, `discounts.json` works with and without the file, the stderr line carries all three fields, and a real decimal module is imported by non-test source |
 | 6 | cart-billing-go | qwen35 | **100%** | 0 | 30 | 225 | all five green, held. **And this is the operator's ruling working, live** — see below |
+| 7 | cart-billing-go | ternary-bonsai | **100%** | 0 | 16 | 55 | all five green, held, in 55 calls. One gate, one done-critic, one satisfaction confirm — the completion machinery closed it in a single exchange, the shape cell 18 of cycle 2 showed and cell 14 did not |
 
 ### THE OPERATOR'S RULING, VALIDATED ON CELL 6
 

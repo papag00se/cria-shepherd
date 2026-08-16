@@ -64,3 +64,5 @@
 [01:32:12] (6/24) cart-billing-go x qwen35 — start
 [02:02:39] (6/24) cart-billing-go x qwen35 — exit 0
 [02:02:39] (7/24) cart-billing-go x ternary-bonsai — start
+[02:19:26] (7/24) cart-billing-go x ternary-bonsai — exit 0
+[02:19:26] (8/24) cart-billing-go x nemotron-elastic — start
