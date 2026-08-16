@@ -1890,9 +1890,24 @@ class LoopStore:
             return bool(shape and shape.get("done"))
 
     def observe_shape(self, key: str, fp: str, n_messages: int) -> bool:
-        """Record this session's conversation-root fingerprint; return True while a rewrite is
-        PENDING — the root CHANGED under a stable session key (the harness REPLACED the history:
-        a compaction, structurally — no phrase-matching). Turns merely appended keep the root.
+        """Record this session's conversation SHAPE; return True while a rewrite is PENDING — the
+        harness REPLACED the history under a stable session key. Structural, no phrase-matching.
+
+        TWO signals, because harnesses rewrite two different ways and cria only watched for one:
+
+        * the ROOT CHANGED — the summary became the first user message.
+        * the HISTORY SHRANK — the harness kept the user messages (the original task among them) and
+          dropped the assistant/tool work behind them. Codex does this, and it is why the root test
+          alone was dead: `loop.history_rewritten` had fired ZERO times over 256 recorded sessions
+          while the harness compacted 139 times in the same window, and all 256 persisted `pending`
+          flags were still False. The four mechanisms gated on this — the continuation plan and the
+          three probe re-issues — had never run, so a gate result lost to a compaction was simply
+          gone. `n_messages` was already being STORED here and never compared.
+
+        Turns that merely append can only grow the history, so a shrink cannot be an append. Measured
+        across 141 real sessions: inbound length dropped 108 times, and every one of the 108 followed
+        a harness compaction — no false positives. 56 of the 60 compacting sessions show it (the
+        other 4 ended on the compaction).
 
         The signal is STICKY: a detected rewrite stays pending until ``clear_rewrite`` — so a
         turn that couldn't act on it (planner failed, non-task decline) doesn't consume it; the
@@ -1901,7 +1916,8 @@ class LoopStore:
             return False
         with self._lock:
             prev = self._shapes.get(key)
-            changed = prev is not None and prev.get("fp") != fp
+            shrank = prev is not None and n_messages < int(prev.get("n") or 0)
+            changed = prev is not None and (prev.get("fp") != fp or shrank)
             pending = changed or bool(prev and prev.get("pending"))
             first_sight = prev is None
             self._shapes.pop(key, None)  # re-put refreshes recency
@@ -1909,7 +1925,7 @@ class LoopStore:
                                  "done": bool(prev and prev.get("done"))}  # done bit survives re-puts
             while len(self._shapes) > _MAX_SHAPES:
                 self._shapes.pop(next(iter(self._shapes)))
-            if first_sight or changed:  # persist only on root changes, not every turn
+            if first_sight or changed:  # persist only on shape changes, not every turn
                 self._save_locked()
         return pending
 
@@ -2092,9 +2108,11 @@ class Loop:
                       live=self._store.get(session_key) is not None, n_tools=len(body.get("tools") or []))
             return None
         # HARNESS-COMPACTION detection, structural (no phrase-matching): the session key (a header /
-        # Codex's prompt_cache_key) is stable across a compaction, but compaction REPLACES the
-        # conversation root — the first real user message becomes the harness's summary. So a
-        # changed root under a stable key = the history was rewritten. Normal turns only append.
+        # Codex's prompt_cache_key) is stable across a compaction, but the conversation SHAPE is not
+        # — either the root is replaced by the harness's summary, or the history simply gets shorter
+        # (Codex keeps every user message, the original task included, and drops the work behind
+        # them). Normal turns only append, so either is a rewrite. See observe_shape: the root test
+        # alone had never once fired, because the shape Codex produces is the second one.
         # ONLY content-independent (`sid:`) keys can detect this: the `task:` fallback key derives
         # from the root, so its shapes/briefings are skipped entirely (see _stable_session — a
         # briefing under a task-text hash would leak into unrelated same-prompt conversations).
@@ -2152,16 +2170,20 @@ class Loop:
                 classified_task = classification is not None and classification.engagement == "task"
                 if rewritten and ((was_task and pure_handoff) or classified_task):
                     # Post-compaction continuation: plan the REMAINING work from the harness's summary
-                    # (the new conversation root) via the rewrite frame — never as a fresh task, and
-                    # never stacking cria's own briefing on top of the harness summary (two summaries
-                    # drowned the planner → the placeholder plan).
-                    plan = self._ctx.planner.plan_for(messages, rlog, rewrite_summary=root_text)
+                    # via the rewrite frame — never as a fresh task, and never stacking cria's own
+                    # briefing on top of the harness summary (two summaries drowned the planner →
+                    # the placeholder plan). The summary is NOT always the root: on a harness that
+                    # keeps the user messages, the root is still the original task and handing that
+                    # over as "the summary" would ask the planner to re-plan the whole job from
+                    # scratch, which is the one thing a continuation exists to avoid.
+                    summary_text = _rewrite_summary_text(messages, root_text)
+                    plan = self._ctx.planner.plan_for(messages, rlog, rewrite_summary=summary_text)
                     if plan is None:
                         return None  # rewrite stays PENDING (sticky) — the next turn can still continue
                     # The coder's protected prior-work context: cria's own briefing when we have one
                     # (compact, focused); else the harness summary TAIL, clipped — summaries put the
                     # current state / remaining work at the END, so the head is the droppable part.
-                    sess = PlanSession(plan=plan, prior_work=briefing or root_text)
+                    sess = PlanSession(plan=plan, prior_work=briefing or summary_text)
                     self._store.put(session_key, sess)
                     self._store.clear_rewrite(session_key)  # acted on it
                     rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
@@ -4085,9 +4107,11 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     """``(text, fingerprint)`` of the conversation's ROOT — the first user message that isn't a
     harness env-context block (the SAME message the ``task:`` fallback ``session_key`` hashes,
     deliberately). This is the structural identity of a conversation: appending turns never
-    changes it, but a harness compaction REPLACES it (the summary becomes the root). A changed
-    fingerprint under a stable ``sid:`` session key is therefore the compaction signal — content-
-    based, no phrase-matching, harness-agnostic. ``task:``-keyed sessions never detect rewrites
+    changes it. SOME harnesses replace it on a compaction (the summary becomes the root), which a
+    changed fingerprint under a stable ``sid:`` key detects. Codex does NOT: it keeps every user
+    message, this one included, and drops the assistant/tool work — so the fingerprint alone can
+    never see a Codex compaction and ``observe_shape`` watches the history LENGTH as well.
+    ``task:``-keyed sessions never detect rewrites
     (``_stable_session`` gates it): their key derives from this very root, so a rewritten root
     mints a new key and simply looks like a new session (recorded in docs/port-fidelity-audit.md)."""
     for m in messages:
@@ -4095,6 +4119,21 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
             text = _content_text(m.get("content"))
             return text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
     return "", ""
+
+
+def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
+    """The harness's compaction summary, whichever way the harness rewrote the history.
+
+    Two shapes, both real. A harness that REPLACES the conversation root leaves the summary AS the
+    root, and ``root_text`` is it. A harness that keeps every user message and drops the work behind
+    them (Codex) leaves the original task at the root and the summary as a later user turn — already
+    re-anchored by :func:`reframe_compaction`, so it carries ``CONTINUATION_MARKER`` and is found
+    structurally, with no phrase-matching here. Falls back to the root, which is what the second
+    shape's caller used to pass unconditionally."""
+    for m in reversed(messages):
+        if m.get("role") == "user" and CONTINUATION_MARKER in _content_text(m.get("content")):
+            return _content_text(m.get("content"))
+    return root_text
 
 
 def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,

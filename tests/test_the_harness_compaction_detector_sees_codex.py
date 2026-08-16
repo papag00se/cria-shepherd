@@ -1,0 +1,156 @@
+"""cria's harness-compaction detector had never fired. Not rarely — zero times, ever.
+
+MEASURED, before anything was changed:
+
+    loop.history_rewritten          0 events, across every log cria has kept
+    route.compaction              139 events, same window
+    persisted shapes              256, all sid:-keyed, all with a stored fingerprint
+    of those, pending=True          0
+    loop.probe_reissued             0 events
+
+Four mechanisms are gated on that one boolean — the post-compaction continuation plan and three
+probe re-issues — so a gate result destroyed by a compaction was simply gone, and cria carried on
+as though the check had declined to answer.
+
+WHY. The detector's premise: "compaction REPLACES the conversation root — the first real user
+message becomes the harness's summary". That is one way to rewrite a history. It is not Codex's.
+Codex keeps EVERY user message, the original task among them, and drops the assistant and tool items
+behind them. The root fingerprint is therefore identical before and after, and the test could not
+fire no matter how many times the harness compacted.
+
+WHAT IT DOES DO is get shorter, and `observe_shape` was already being handed `n_messages` and
+storing it without ever comparing it. Measured across 141 real sessions: inbound length dropped 108
+times, and every single one of the 108 followed a `route.compaction` — no false positives at any
+threshold. 56 of the 60 compacting sessions show a drop (the other 4 ended on the compaction). The
+drops are not subtle: 144 → 4, 172 → 4, 169 → 4.
+
+Both signals are kept. A harness that replaces the root is still detected by the root; a harness that
+keeps it is now detected by the length. Turns that merely append can only grow a history, so neither
+test can misread ordinary work. #18: the fix is a second structural signal, not a Codex special case.
+#11b: the detector could not observe the thing it was asked about and answered "no" for months.
+
+The continuation planner is corrected to match. It was handed `root_text` as "the harness's summary",
+which is true only under the replaced-root shape; under Codex's, the root is the original task, and
+telling the planner to continue from the task means re-planning the whole job — the one thing a
+continuation exists to prevent. `_rewrite_summary_text` picks the re-anchored continuation turn when
+there is one and falls back to the root, which is the old behaviour exactly.
+"""
+
+import unittest
+
+from cria.loop import CONTINUATION_MARKER, LoopStore, _rewrite_summary_text
+
+
+class TheCodexShapeIsDetectedTests(unittest.TestCase):
+    """THE REGRESSION. Same root, shorter history — the shape 139 real compactions produced."""
+
+    def test_a_shorter_history_under_the_same_root_is_a_rewrite(self):
+        s = LoopStore()
+        self.assertFalse(s.observe_shape("sid:k", "fp1", 3))
+        self.assertFalse(s.observe_shape("sid:k", "fp1", 144))   # ordinary work, appending
+        self.assertTrue(s.observe_shape("sid:k", "fp1", 4))      # 144 → 4, root unchanged
+
+    def test_the_real_measured_lengths(self):
+        """The three largest real drops, replayed as they arrived."""
+        for before, after in ((144, 4), (172, 4), (169, 4)):
+            with self.subTest(drop=f"{before}->{after}"):
+                s = LoopStore()
+                s.observe_shape("sid:k", "root", 3)
+                s.observe_shape("sid:k", "root", before)
+                self.assertTrue(s.observe_shape("sid:k", "root", after))
+
+    def test_it_is_sticky_like_the_root_signal(self):
+        s = LoopStore()
+        s.observe_shape("sid:k", "fp1", 90)
+        self.assertTrue(s.observe_shape("sid:k", "fp1", 4))
+        self.assertTrue(s.observe_shape("sid:k", "fp1", 6))   # not consumed by a turn that didn't act
+        s.clear_rewrite("sid:k")
+        self.assertFalse(s.observe_shape("sid:k", "fp1", 8))
+
+
+class WhatMustNotBecomeARewriteTests(unittest.TestCase):
+    """A false positive here re-issues a probe and re-anchors the coder's turn for no reason."""
+
+    def test_growing_is_never_a_rewrite(self):
+        s = LoopStore()
+        s.observe_shape("sid:k", "fp1", 3)
+        for n in (5, 9, 30, 144, 145):
+            with self.subTest(n=n):
+                self.assertFalse(s.observe_shape("sid:k", "fp1", n))
+
+    def test_the_same_length_twice_is_not_a_rewrite(self):
+        s = LoopStore()
+        s.observe_shape("sid:k", "fp1", 12)
+        self.assertFalse(s.observe_shape("sid:k", "fp1", 12))
+
+    def test_first_sight_is_not_a_rewrite_however_short(self):
+        self.assertFalse(LoopStore().observe_shape("sid:k", "fp1", 1))
+
+    def test_no_root_at_all_still_never_flags(self):
+        self.assertFalse(LoopStore().observe_shape("sid:k", "", 1))
+
+    def test_the_root_signal_is_untouched(self):
+        """The original test, restated: a replaced root is still a rewrite on its own."""
+        s = LoopStore()
+        s.observe_shape("sid:k", "fp1", 3)
+        self.assertTrue(s.observe_shape("sid:k", "fp2", 500))   # root replaced, history GREW
+
+
+class ThePlannerGetsTheSummaryNotTheTaskTests(unittest.TestCase):
+    def root(self):
+        return "Make these four changes to the orders service: 1. Add …"
+
+    def messages(self, with_continuation: bool):
+        msgs = [{"role": "user", "content": self.root()},
+                {"role": "assistant", "content": "ok"}]
+        if with_continuation:
+            msgs.append({"role": "user",
+                         "content": f"{CONTINUATION_MARKER} Earlier in THIS session you added the "
+                                    "GET /orders/{id} route in orders/api.py; the DELETE route is "
+                                    "still missing."})
+        return msgs
+
+    def test_the_reanchored_turn_is_the_summary(self):
+        out = _rewrite_summary_text(self.messages(True), self.root())
+        self.assertIn("DELETE route is still missing", out)
+        self.assertNotIn("Make these four changes", out)
+
+    def test_the_replaced_root_shape_still_gets_the_root(self):
+        """A harness that puts the summary AT the root: nothing carries the marker, and the root is
+        the summary. Falls back to exactly what the caller used to pass unconditionally."""
+        self.assertEqual(_rewrite_summary_text(self.messages(False), self.root()), self.root())
+
+    def test_the_newest_one_wins(self):
+        msgs = self.messages(True)
+        msgs.append({"role": "user", "content": f"{CONTINUATION_MARKER} second compaction, later"})
+        self.assertIn("second compaction", _rewrite_summary_text(msgs, self.root()))
+
+    def test_an_assistant_turn_carrying_the_marker_is_not_the_summary(self):
+        """cria's own notes are echoed back in assistant turns; only a USER turn is the harness
+        handing the conversation over."""
+        msgs = [{"role": "user", "content": self.root()},
+                {"role": "assistant", "content": f"{CONTINUATION_MARKER} not the harness"}]
+        self.assertEqual(_rewrite_summary_text(msgs, self.root()), self.root())
+
+
+class ItIsWiredIntoTheDriverTests(unittest.TestCase):
+    def test_the_planner_call_uses_the_picker(self):
+        import inspect
+
+        from cria import loop
+        src = inspect.getsource(loop.Loop._drive_locked)
+        self.assertIn("_rewrite_summary_text(messages, root_text)", src)
+        self.assertNotIn("rewrite_summary=root_text", src)
+
+    def test_the_prior_work_uses_it_too(self):
+        """The coder's protected context and the planner's frame must be the same text — handing
+        the planner the summary and the coder the task is how the two disagree."""
+        import inspect
+
+        from cria import loop
+        src = inspect.getsource(loop.Loop._drive_locked)
+        self.assertIn("prior_work=briefing or summary_text", src)
+
+
+if __name__ == "__main__":
+    unittest.main()
