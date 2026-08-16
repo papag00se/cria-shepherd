@@ -158,9 +158,47 @@ would have reverted a previous fix. The operator caught it. Checking
 finding was already logged with a better fix than mine, and that its disclosure half had already
 landed. **Not independently checked**: cell 7's 1,812 elided characters.
 
-**Verdict**: **MODIFY FIRST — as now written.** The original "stop clipping" version is **DO NOT
-LAND**: it reverts `project_useless_prompting_sweep`. The rewritten version is additive (one more
-slot filled from an owner that already exists) and touches no bound.
+**SECOND CORRECTION — I over-corrected, and the cited source says so.** The operator asked where
+"over-applying never-truncate to composed prompts is itself a documented footgun" is actually
+documented. Following the citation: `docs/audits/2026-07-20-useless-prompting-anomaly-audit.md`
+**is not in the repo**. It and three other dated audits `principles.md` cites were removed by
+`8f52a11 chore(docs): stop tracking the dated audit reports`. Recovered from git
+(`git show 810eabe:…`), its cross-cutting root reads:
+
+> cria has a deliberate, correct stance — **never truncate content the model asked to READ** … That
+> stance is right for the *coder's own reads*. But it has been **over-applied to prompts cria
+> COMPOSES for a judge/steer** — where the floor bounds the total but never **de-dupes** or
+> **stubs**, so redundant + growing content re-crowds every reasoner call. Two concrete failure
+> modes fall out of it: a byte-equality dedup that silently fails, and the whole session
+> re-serialized on every steer fire. Composing a judge prompt is *not* the coder's read — bounding
+> it there breaks no rule.
+
+The documented footgun is **failing to DE-DUPE or STUB**, so a composed prompt bloats. The licence
+is to dedup and stub. It is not a licence to head/tail clip the one block the steer is about — and
+the same audit says so explicitly, four lines from the end:
+
+> **Direction:** bound only *re-included READ payloads* … **keep genuine command/test output full.**
+> Brushes never-truncate — keep the cap as the safety valve; treat as judgment, not fix-on-sight.
+
+A gate result **is** genuine command/test output. So the clip measured here is being applied to
+precisely the category its own governing audit says to keep full. My original instinct was not the
+doctrine violation I then talked myself into — the operator was right that "cut to 200 chars" is not
+*by itself* a violation, and I was wrong to conclude from that the clip was therefore fine.
+
+**The rewritten fix stands anyway, and is still the better one**, because it makes the question moot:
+filling the slot from the authoritative gate object means there is no transcript re-render to bound.
+Rule 12 settles it without anyone having to adjudicate rule 5.
+
+**Verdict**: **MODIFY FIRST — as now written.** The blanket "never bound a composed steer prompt"
+version remains **DO NOT LAND** — that would revert `project_useless_prompting_sweep`, whose whole
+finding is that composed prompts were going un-deduped and un-stubbed. The rewritten version is
+additive (one more slot filled from an owner that already exists) and touches no bound.
+
+**Docs defect found on the way, worth its own line.** `docs/principles.md` cites four dated audit
+files, and **all four are absent from the working tree** — removed deliberately by `8f52a11`, but the
+citations were left pointing at them. The canonical doctrine document currently sends a reader to
+four dead paths. Not fixed here: re-adding the files would revert a deliberate untracking decision,
+so the right repair is to change the citations to name the commit that holds them. Operator's call.
 
 **Recoverable**: cell 4 and cell 7 both lost their remaining turns to steers written from this.
 
