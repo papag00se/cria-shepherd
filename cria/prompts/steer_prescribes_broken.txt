@@ -1,0 +1,17 @@
+The repo's own checks are reporting these problems right now:
+
+{{FINDINGS}}
+
+A supervisor has written this directive for the engineer:
+
+{{DIRECTIVE}}
+
+These names appear in both: {{SYMBOLS}}
+
+Answer with ONE word.
+
+PRESCRIBES — if the directive tells the engineer to USE, keep, or write one of those names, when the checks are reporting that name as the problem.
+
+QUOTES — if the directive only refers to that name to describe what is wrong, or tells the engineer to remove or replace it.
+
+Output only PRESCRIBES or QUOTES.

@@ -6986,6 +6986,64 @@ _BLAME_WORDS = re.compile(
     r"returns? 404 for (?:every|all)|consistently returns? 404|impossible given the api)\b")
 
 
+# Identifier-shaped tokens: dotted or underscored names of 4+ characters. Language-agnostic on
+# purpose — it is "the same token appears in both places", not a per-language symbol grammar (#20).
+_IDENTLIKE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}[?!]?")
+
+
+def _shared_symbols(directive: str, findings: str) -> list[str]:
+    """Identifier-shaped tokens present in BOTH texts, longest first.
+
+    Dotted and namespaced names are compared whole AND by part, because a compiler names the member
+    (`cannot find symbol: getTotalAmount`) while a directive names the call (`cart.getTotalAmount()`)
+    — the same symbol, spelled two ways. Longest-first so the reported hit is the specific name
+    rather than an incidental filename that happens to appear in both."""
+    def toks(t: str) -> set:
+        out = set()
+        for run in re.findall(r"[A-Za-z_][A-Za-z0-9_.:?!]*", t or ""):
+            out.add(run.strip(".:"))
+            out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
+        return {x for x in out if len(x) > 3}
+    return sorted(toks(directive) & toks(findings), key=len, reverse=True)
+
+
+def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask) -> str:
+    """The symbol a directive tells the coder to USE while the checks name it as the problem — else "".
+
+    THE STRIP CANNOT CATCH THIS, and its own contract is why. `_strip_invented_code` asks "did the
+    author READ this or invent it?", and answers from what cria observed — which includes tool
+    results. A compiler error is a tool result. So on any "replace X with Y" steer the BROKEN symbol
+    X is the best-attested string in the prompt and survives, while the correct replacement Y was
+    never observed and is stripped. The strip inverts the fix.
+
+    Delivered to a coder on 2026-08-16: "replace `decimal.NewFromInt64` with [code removed]`)`" —
+    that symbol appears 7 times in the same prompt, all of them inside `undefined: …` errors. Two
+    more steers the same run said to USE `decimal.NewFromFloat64` while the same prompt carried
+    `undefined: decimal.NewFromFloat64` twenty-three times.
+
+    DETERMINISTIC GATHER, REASONED JUDGMENT (#8). Code finds the concrete discrepancy — a token
+    present in BOTH the red finding-set and the directive — and one focused question decides whether
+    the directive is PRESCRIBING it or merely quoting the failure. Without a reasoner, or on an
+    unreadable answer, the directive stands: this may only move steers from delivered to refused
+    when a model says so, never on a pattern alone.
+
+    Returns the symbol, or "". The caller refuses the steer outright (#3's safe null) rather than
+    rewording it — cria has no better directive to offer, and a wrong one costs more than silence."""
+    if not directive or not findings or ask is None:
+        return ""
+    shared = _shared_symbols(directive, findings)
+    if not shared:
+        return ""
+    ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
+                                         findings=findings, symbols=", ".join(shared[:8]))) or "").strip()
+    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+    if head != "PRESCRIBES":
+        return ""
+    hit = next((t for t in shared if t in ans), shared[0])   # longest-first from _shared_symbols
+    rlog.emit("loop.steer_prescribes_broken", level="warn", symbol=hit, head=_clip(directive, 120))
+    return hit
+
+
 def _blames_a_service_that_answered(directive: str, sess, messages: list, rlog, ask) -> bool:
     """True when the directive concludes the SERVICE is broken while cria's own ledger holds a 2xx
     for that host.
@@ -7138,6 +7196,10 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None
+    if sess is not None and _prescribes_what_the_checks_reject(
+            directive, (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
+            (lambda sysm: ask(sysm, "")) if ask else None):
+        return None      # the checks say this symbol is the problem — silence beats endorsing it
     ghost = _symbol_not_in_the_file(directive, workspace_root)
     if ghost:
         # cria READ the file; the steer names something that is not in it. Refused, not reworded —
