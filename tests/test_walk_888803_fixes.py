@@ -304,10 +304,6 @@ class ThePromptsExistTests(unittest.TestCase):
         self.assertTrue(prompts.load("rumination_guard_degenerate").strip())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
     """Two exact facts about a drafted step, both walked as run-killers on
     ada-handles_nemotron-elastic_codex_pon_1785360304: a path the coder cannot use, and a step that
@@ -944,3 +940,7 @@ class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
 
         from cria import probegate
         self.assertIn("__cria_test_ec=$__cria_ec", inspect.getsource(probegate.plan_gate))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -727,10 +727,6 @@ class GatherEvidenceTests(unittest.TestCase):
         self.assertIsNone(_extract_cwd([{"role": "user", "content": "no cwd here"}]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GemmaLeakRecoveryTests(unittest.TestCase):
     """The planner recovers leaked tool-call dialects (codex-local: 'quirky reasoners gather
     too') and never poison-caches a gather overrun (observed live: gemma4's forced-plan leaked
@@ -1387,3 +1383,7 @@ class NoiseDropCoverageTests(unittest.TestCase):
                        clock=lambda: _FIXED).plan_for(_msgs("resolver with tests"), rlog)
         self.assertEqual(len(plan.items), 2)
         self.assertTrue(any(k == "plan.noise_dropped" for k, _ in rlog.events))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -174,10 +174,6 @@ class TheSuiteWritesItPerModelTests(unittest.TestCase):
             sampling.MODEL_SAMPLING.pop("_toml_bool_probe", None)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheThirdReasoningConventionTests(unittest.TestCase):
     """Some models toggle reasoning with a SENTENCE, not a parameter.
 
@@ -379,3 +375,7 @@ class StrictRoleAlternationTests(unittest.TestCase):
             for role, knobs in roles.items():
                 want = model == "nemotron-nano"
                 self.assertEqual(knobs.get("merge_consecutive_turns", False), want, f"{model}/{role}")
+
+
+if __name__ == "__main__":
+    unittest.main()

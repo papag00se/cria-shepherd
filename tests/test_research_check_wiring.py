@@ -89,10 +89,6 @@ class TheCheckFiresOnTheLivePathTests(unittest.TestCase):
         self.assertIn("loop.research_check", kinds)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheCriticGetsTheReadingFactTests(unittest.TestCase):
     """The check reports; the CRITIC acts. It is the only thing here that reads the workspace, and it
     was refusing research steps forever because nothing told it reading had succeeded — run
@@ -190,3 +186,7 @@ class EvidenceDecidesWhenToLookTests(unittest.TestCase):
              patch.object(research, "step_reading_verdict", return_value=research.NOT_DONE) as v2:
             lp._research_check(sess, "k", {"messages": []}, 0, 2, rlog)
         self.assertEqual(v2.call_count, 1, "the clock must still fire when nothing was ever read")
+
+
+if __name__ == "__main__":
+    unittest.main()

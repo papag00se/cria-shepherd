@@ -94,10 +94,6 @@ class HeartbeatIntegrationTests(unittest.TestCase):
         self.assertIn(b"hi", out)  # and the real content still arrived (re-chunked by the massager)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HeartbeatPayloadTests(unittest.TestCase):
     """A client whose idle timer counts EVENTS ignores SSE comments (observed: the Codex extension
     dropped a Responses stream mid-compaction — "idle timeout waiting for SSE" — while ": cria"
@@ -157,3 +153,7 @@ class BeatTickTests(unittest.TestCase):
         from cria.statusline import still_working_line
         self.assertIn("(coder - 1m35s) ⋯ working", still_working_line("coder-s4", 95))
         self.assertIn("(compactor - 3m20s) ⋯ compacting history", still_working_line("self-compact", 200))
+
+
+if __name__ == "__main__":
+    unittest.main()

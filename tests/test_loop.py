@@ -4637,10 +4637,6 @@ class SingleItemModeTests(unittest.TestCase):
         self.assertTrue(_session_from_dict(d).synthetic)             # a resumed session stays single-item
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GaveUpVsFinishedTests(unittest.TestCase):
     """Two of today's fixes exist ONLY to leave a record, and an emit with no test can regress into
     exactly the silence it was added to remove. These assert the events themselves.
@@ -6373,3 +6369,7 @@ class CriaDoesNotNarrateItsOwnAbortAsAnAnswerTests(unittest.TestCase):
         comp = self.aborted()
         comp.pop("cria_rumination")
         self.assertIsNone(_steer_from_reasoning(comp, "ON_TRACK", lambda s: "do X", self._R()))
+
+
+if __name__ == "__main__":
+    unittest.main()

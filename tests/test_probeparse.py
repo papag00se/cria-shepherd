@@ -547,10 +547,6 @@ class TestLocalRunner(unittest.TestCase):
         self.assertIsNone(r.exit_code)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ErrorClassFilterTests(unittest.TestCase):
     """Operator filter (2026-07-11): probes gate on ERROR-CLASS issues only — style,
     notes, warnings, and advisory findings never block a step."""
@@ -812,3 +808,7 @@ class F811ShadowDiscriminatorTests(unittest.TestCase):
         out = "x.py:148:1: redefinition of unused 'resolve_handle' from line 27\n"
         r = probeparse.parse_output("python3 -m pyflakes x.py", "", 1, out, "")
         self.assertEqual(r.findings, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

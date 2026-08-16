@@ -77,10 +77,6 @@ class UnknownStaysSafeTests(unittest.TestCase):
         self.assertIsNone(self.v("a.py", b"\xff\xfe\x00"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheValidatorSourceMustSurviveTemplatingTests(unittest.TestCase):
     """_VALIDATE_FN is prepended to the write/edit heredocs, which are .format()ed with the path and
     content. A literal brace in this source reads as a format placeholder and takes the whole write
@@ -96,3 +92,7 @@ class TheValidatorSourceMustSurviveTemplatingTests(unittest.TestCase):
         cmd = writeproxy._write_command("lib/shipping/rates.rb", "def x\n  1\nend\n")
         self.assertIn("def _v(", cmd)
         self.assertIn("_EXT_CMD", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()

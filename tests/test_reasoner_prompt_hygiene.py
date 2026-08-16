@@ -149,10 +149,6 @@ class TheSteerAuthorUsesBothTests(unittest.TestCase):
         self.assertIn("_mark_own_notes(", src)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
     """A directive budgeted at ONE action pointed at the caller that failed, and nothing required it
     to account for the other place the value was set.
@@ -206,3 +202,7 @@ class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
     def test_the_positive_veto_sentinel_is_untouched(self):
         self.assertIn("ON_TRACK", self.TEXT)
         self.assertNotIn("NOT_STUCK", self.TEXT)
+
+
+if __name__ == "__main__":
+    unittest.main()

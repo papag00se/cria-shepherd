@@ -240,10 +240,6 @@ class TomlFloorTests(DiscoveryCase):
         self.assertIn("package.json", r.stdout)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestConventionTableTests(unittest.TestCase):
     """One table entry owns what cria RUNS, what it SEARCHES by, and what it TELLS the coder, so the
     three cannot disagree. Deriving the convention from the file extension (f"test_*.{ext}") reads true
@@ -391,3 +387,7 @@ class GoTestCacheTests(unittest.TestCase):
             self.assertTrue(tests, "no go test probe was produced")
             for c in tests:
                 self.assertIn("-count=1", c.command, f"{c.command} can replay a cached pass")
+
+
+if __name__ == "__main__":
+    unittest.main()

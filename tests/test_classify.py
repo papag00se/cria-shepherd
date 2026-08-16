@@ -120,10 +120,6 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(p.calls, 1, "the classifier model is called once per task, not per turn")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TitleAuxTests(unittest.TestCase):
     def test_title_request_is_detected(self):
         from cria.classify import is_title_request
@@ -172,3 +168,7 @@ class JudgeBudgetTests(unittest.TestCase):
         from cria.classify import JUDGE_MAX_TOKENS
         from cria.planner import ASK_MAX_TOKENS
         self.assertEqual(ASK_MAX_TOKENS, JUDGE_MAX_TOKENS)
+
+
+if __name__ == "__main__":
+    unittest.main()

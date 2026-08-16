@@ -99,10 +99,6 @@ class AVerdictThatContradictsItselfIsNotAVerdictTests(unittest.TestCase):
         self.assertEqual(r.verdict, execcheck.INCONCLUSIVE)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ABuildToolsRunTargetIsAProgramTests(unittest.TestCase):
     """The rule said the command "must name a file from the list". In cargo, maven, npm and rake
     projects the thing that runs is a TARGET, not a path — and `_NOT_A_PROGRAM` had already deleted
@@ -122,3 +118,7 @@ class ABuildToolsRunTargetIsAProgramTests(unittest.TestCase):
         """The original defect: cria listed its own spilled openapi.json and the probe named it."""
         _, user = execcheck.intent_prompt("t", files="  src/main.rs (900 B)")
         self.assertIn("never a data file as though it were a program", user)
+
+
+if __name__ == "__main__":
+    unittest.main()

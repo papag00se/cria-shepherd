@@ -94,10 +94,6 @@ class OneOwnerTests(unittest.TestCase):
         self.assertEqual(r.stdout, refusal)   # marked ONCE — mark is idempotent
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MissingRequiredArgIsNotAnEmptyOneTests(unittest.TestCase):
     """`new_string` is a REQUIRED argument. `args.get("new_string") or ""` turned its ABSENCE — the
     shape a truncated tool call has — into "delete this text". cria applied that deletion, saw the
@@ -137,3 +133,7 @@ class MissingRequiredArgIsNotAnEmptyOneTests(unittest.TestCase):
     def test_a_normal_edit_is_untouched(self):
         cmd = self._lower({"path": "x.py", "old_string": "a", "new_string": "b"})
         self.assertNotIn("missing its `new_string`", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -652,10 +652,6 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(_repair_double_escaped("a\nb"), "a\nb")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ValidateBeforeLowerTests(unittest.TestCase):
     """A syntactically-broken write/edit never reaches disk — but ONLY as a regression guard: it
     refuses to break a file that currently parses, and NEVER blocks a model from fixing a broken one."""
@@ -954,9 +950,6 @@ class CriaHomeGuardTests(unittest.TestCase):
         self.assertIn("os.replace", cmd)
         self.assertNotIn("off-limits", cmd)
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
@@ -1276,3 +1269,7 @@ class FusedContentRefusalTests(unittest.TestCase):
     def test_an_empty_or_plain_file_is_untouched(self):
         self.assertNotIn("fused", self._lower({"path": "a.txt", "content": "hello world\n"}))
         self.assertNotIn("fused", self._lower({"path": "b.txt", "content": ""}))
+
+
+if __name__ == "__main__":
+    unittest.main()

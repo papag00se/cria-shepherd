@@ -61,10 +61,6 @@ class ARunnerIsNotBlamedForCriasCommandTests(unittest.TestCase):
         self.assertNotIn("cria", self.TEXT.lower())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheCapabilityRosterNamesNoLanguageTests(unittest.TestCase):
     """The shell-tool clause carried a fixed exemplar list ending "python, pytest …", appended to
     every reasoner, steer-author and satisfaction-judge prompt in every language.
@@ -119,3 +115,7 @@ class PromptExemplarsNameNoLanguageTests(unittest.TestCase):
         t = prompts.load("selfcompact_summary")
         self.assertIn("durable ledger above already carries", t)
         self.assertIn("Where no such ledger is present", t)
+
+
+if __name__ == "__main__":
+    unittest.main()

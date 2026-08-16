@@ -617,10 +617,6 @@ class TruncationDisclosureTests(unittest.TestCase):
         self.assertIn("fetch limit", out)          # a miss may be a cut, not an absence
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GateTests(unittest.TestCase):
     """The exact-repeat gate refuses a repeat ONLY while its result is still visible (set_visible);
     once compaction elides it, the model may re-read — the footgun fix. Plus the stop-guessing nudge."""
@@ -1308,3 +1304,7 @@ class TheOptionalMarkerCannotBecomeAKeyTests(unittest.TestCase):
         out = wf.render_jsonc(wf._schema_json_shape(
             {"properties": {"content-type": {"type": "string"}}}, {}, 30))
         self.assertIn('"content-type"?: string;', out)
+
+
+if __name__ == "__main__":
+    unittest.main()

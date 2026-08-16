@@ -122,10 +122,6 @@ class _Rlog:
         pass
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WebFetchUserAgentTests(unittest.TestCase):
     """Invariant: the planner's web_fetch actually ISSUES a request with a defined browser
     User-Agent. Regression guard for the `_USER_AGENT` NameError (undefined symbol) that made
@@ -551,3 +547,7 @@ class SearchNoStructureNoteTests(unittest.TestCase):
     def test_search_goes_quiet_once_any_spec_was_read(self):
         r = self._search(facts={"https://api.x/openapi.json": (200, "/handles/{handle}", "fields")})
         self.assertNotIn("POINTERS", r.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

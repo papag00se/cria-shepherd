@@ -179,10 +179,6 @@ class ToResponsesSseTests(unittest.TestCase):
         self.assertEqual([o for o in out if o.get("type") == "message"], [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ArgSanitizeTests(unittest.TestCase):
     def test_raw_newline_arguments_made_valid(self):
         bad = '{"content": "import requests\nx = 1"}'  # raw newline → invalid JSON
@@ -283,3 +279,7 @@ class ReasoningForwardingTests(unittest.TestCase):
     def test_reasoning_transcript_not_folded_when_flag_absent(self):
         text = self._reasoning_message_text()  # neither flag passed → no fold
         self.assertIsNone(text)  # no message item, no folded reasoning
+
+
+if __name__ == "__main__":
+    unittest.main()

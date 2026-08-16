@@ -401,10 +401,6 @@ class CodexBackendTests(unittest.TestCase):
         self.assertIn("claude", str(cm.exception).lower())   # points at the working alternative
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RoleCapVsMeasuredFloorTests(unittest.TestCase):
     """A role's `max_tokens` is applied AFTER the call site builds its body, so one TOML line
     (`[roles.reasoner] max_tokens = 4096`) silently overwrote every internal budget at once — the
@@ -446,3 +442,7 @@ class RoleCapVsMeasuredFloorTests(unittest.TestCase):
         body = {"max_tokens": 32000, "messages": []}
         self._role(4096).apply(body)          # not internal: the operator's cap is the point
         self.assertEqual(body["max_tokens"], 4096)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -132,10 +132,6 @@ class BoundLogTpsTests(unittest.TestCase):
         self.assertEqual(rlog.model_calls, 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LogRotatesAtUtcMidnightTests(unittest.TestCase):
     """The jsonl path is built ONCE at construction from that moment's UTC day, and the handle is
     never reopened — so a cria that outlives midnight keeps appending to the old file. Observed
@@ -167,3 +163,7 @@ class LogRotatesAtUtcMidnightTests(unittest.TestCase):
                 for line in (pathlib.Path(d) / name).read_text().splitlines():
                     self.assertEqual(json.loads(line)["iso"][:10].replace("-", ""), day,
                                      f"{name} contains an event from another day")
+
+
+if __name__ == "__main__":
+    unittest.main()

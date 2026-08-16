@@ -160,10 +160,6 @@ class BashRoundtripTests(unittest.TestCase):
         self.assertIn("x.py", nudge)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LintTierTests(unittest.TestCase):
     def test_zero_config_linters_are_congruent(self):
         # Linting is a tier, not a Python special case: each language's zero-config
@@ -841,3 +837,7 @@ class TheNoteStatesCriasCoverageNotAVerdictTests(unittest.TestCase):
         note = prompts.load("no_tests_found").lower()
         self.assertNotIn("not done yet", note)
         self.assertNotIn("if the task", note)
+
+
+if __name__ == "__main__":
+    unittest.main()

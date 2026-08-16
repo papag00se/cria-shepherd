@@ -62,10 +62,6 @@ class StripTests(unittest.TestCase):
         self.assertEqual(n, 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LiveRateTests(unittest.TestCase):
     """tok/s on the in-between tick — ONLY for the streamed call (the coder). Internal judge and
     compactor calls are non-streamed: nothing arrives until they finish, so no rate is invented."""
@@ -160,3 +156,7 @@ class DurableSessionClockTests(unittest.TestCase):
         # "(coder) ⋯ working" + clock → "(coder - 9m07s) ⋯ working", never "(9m07s) (coder) …".
         line = statusline.with_total(f"{MARKER}(coder) ⋯ working", 547.0)
         self.assertEqual(line, f"{MARKER}(coder - 9m07s) ⋯ working")
+
+
+if __name__ == "__main__":
+    unittest.main()

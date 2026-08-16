@@ -183,10 +183,6 @@ class ParseIntentTests(unittest.TestCase):
         self.assertEqual(execcheck.parse_intent("no idea"), {})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestFilesAreNotProgramsTests(unittest.TestCase):
     """A test file carrying `if __name__ == "__main__": unittest.main()` is not the deliverable.
 
@@ -216,3 +212,7 @@ class TestFilesAreNotProgramsTests(unittest.TestCase):
                                    "success": "prints an address"})
         self.assertEqual(r.verdict, execcheck.INCONCLUSIVE)
         self.assertIn("entry point", r.why)
+
+
+if __name__ == "__main__":
+    unittest.main()

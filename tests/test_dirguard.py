@@ -173,10 +173,6 @@ class TranslateOutboundEnforcementTests(unittest.TestCase):
         self.assertNotIn("outside the working directory", self._lowered_cmd(comp))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GlobalInstallTests(unittest.TestCase):
     """An install writes OUTSIDE the workspace while naming no external path, so the path scan
     cannot see it. Measured 2026-08-01: a run's `pip install -e .` left an editable-install .pth in
@@ -291,3 +287,7 @@ class CaseTypoNoteTests(unittest.TestCase):
         r = dirguard.path_refusal("/etc/passwd", True, "none", None)
         self.assertNotIn("BY A TYPO", r or "")
         self.assertNotIn("{{CASENOTE}}", r or "")
+
+
+if __name__ == "__main__":
+    unittest.main()

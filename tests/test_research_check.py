@@ -169,10 +169,6 @@ class TheCadenceTests(unittest.TestCase):
         self.assertEqual(research.RESEARCH_CHECK_EVERY, 10)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WhichQuestionCriaAsksTests(unittest.TestCase):
     """cria settles what it can settle. A domain in the task's own words is a FACT — that the task
     names an external source — and asking a small model to re-decide it got the answer fabliq gave
@@ -392,3 +388,7 @@ class TheExitMustActuallyBeReachableTests(unittest.TestCase):
         web = [s for s in research.sources_read(merged, compacted) if s[0].startswith("http")]
         self.assertEqual(len(web), 1)
         self.assertIn("resolved_addresses", web[0][2])
+
+
+if __name__ == "__main__":
+    unittest.main()

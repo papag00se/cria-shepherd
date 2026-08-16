@@ -298,10 +298,6 @@ class TestFits(unittest.TestCase):
         self.assertEqual(json.dumps(tools), tsnap)  # tools untouched
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ProtectedOverflowTests(unittest.TestCase):
     """Lever 5: when the PROTECTED span alone is over budget (last user message near the top of
     a long agentic conversation), drop its oldest turns rather than send a known-doomed request
@@ -481,3 +477,7 @@ class NoteCostsLessThanItReplacesTests(unittest.TestCase):
                 + [{"role": "assistant", "content": "a" * 900} for _ in range(8)])
         out, _ = contextfloor._drop_protected_overflow(msgs, msg_budget=100)   # unreachable
         self.assertIn(anchor, out)
+
+
+if __name__ == "__main__":
+    unittest.main()

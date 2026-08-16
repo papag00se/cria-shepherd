@@ -3104,8 +3104,9 @@ class Loop:
         #
         # What it is FOR survives intact: saying, in the log, whether the reading a step asked for has
         # actually happened — which is the fact nobody had when run 1785804243 spent 114 calls on an
-        # unreachable research step. Handing that fact to the critic as EVIDENCE, so the one authority
-        # that checks the workspace can act on it, is the next change and needs its own measurement.
+        # unreachable research step. That fact now reaches the critic as EVIDENCE too (`_verify`'s
+        # `sources_read=`), so the one authority that checks the workspace can act on it; this
+        # comment used to call that "the next change", which it has not been for some time.
         if verdict == research.DONE:
             rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
                       turns=sess.coder_turns, step_text=item.text[:160])

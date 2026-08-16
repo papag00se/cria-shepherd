@@ -134,10 +134,6 @@ class PlanOffHandbackTests(unittest.TestCase):
         self.assertTrue(sess.plan_off)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReadingCheckClearsPlanOffStepTests(unittest.TestCase):
     """The reading check may COMPLETE the plan-off reading step (and only that).
 
@@ -188,3 +184,7 @@ class ReadingCheckClearsPlanOffStepTests(unittest.TestCase):
         self.assertFalse(sess.plan.items[0].done)          # 1785812224 regression guard: report only
         self.assertIsNone(out)
         self.assertIn("loop.research_satisfied", rlog.kinds())
+
+
+if __name__ == "__main__":
+    unittest.main()

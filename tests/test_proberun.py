@@ -590,10 +590,6 @@ class TestComposedRoundtrip(unittest.TestCase):
         self.assertIn("elided", proc.stdout)              # the middle-elision was disclosed
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GateSkippedCountTests(unittest.TestCase):
     """A SUITE CAN PASS WHILE SKIPPING THE CHECKS THAT MATTER (run 0728-m11): the coder's live tests
     skipTest() on the exact 404 that proves the resolver broken, and "3 passed, 2 skipped" read as
@@ -652,3 +648,7 @@ class GateSkippedCountTests(unittest.TestCase):
     def test_none_report_is_zero(self):
         from cria.proberun import gate_skipped_count
         self.assertEqual(gate_skipped_count(None), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

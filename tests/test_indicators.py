@@ -113,10 +113,6 @@ class BufferedTests(unittest.TestCase):
             self.assertEqual((out["choices"][0]["message"].get("content") or "").strip(), "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ToggleTests(unittest.TestCase):
     def test_route_false_omits_the_route_line(self):
         shown = _assemble(list(wrap_stream(iter(_model_stream(["a", "b", "c"])), _indic(route=False))))
@@ -133,3 +129,7 @@ class ToggleTests(unittest.TestCase):
         comp = {"choices": [{"message": {"content": f"{MARKER}running the repo's checks\nreal answer"}}]}
         strip_note_lines(comp)
         self.assertEqual(comp["choices"][0]["message"]["content"], "real answer")
+
+
+if __name__ == "__main__":
+    unittest.main()

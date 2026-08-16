@@ -178,10 +178,6 @@ class SelfCompactTests(unittest.TestCase):
         self.assertFalse(any(CONTINUATION_MARKER in selfcompact._text(x) for x in fed))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PinnedTaskTests(unittest.TestCase):
     """The conversation-root task is re-emitted verbatim as a ⟦ctx:task⟧ north-star header on every
     compacted view — so it can't erode into the summary across rounds. Without it a plan-off session
@@ -500,3 +496,7 @@ class EmptyRollupHeaderTests(unittest.TestCase):
         self.assertEqual(state.summary, "Built the resolver.")
         self.assertTrue(any((m.get("content") or "").startswith(selfcompact.SUMMARY_MARKER)
                             for m in out))
+
+
+if __name__ == "__main__":
+    unittest.main()

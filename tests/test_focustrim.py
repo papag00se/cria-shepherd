@@ -86,10 +86,6 @@ class FocusTrimTests(unittest.TestCase):
         self.assertEqual(len(msgs), before)                  # original untouched
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _fail_action(cid, cmd):
     # A SOFT dead-end lookup (file-not-found, no hard non-zero-exit line). These are the noise the
     # squash collapses. A HARD failure (non-zero exit carrying a traceback) is exempt — see
@@ -261,3 +257,7 @@ class IsFailureExitCodeTests(unittest.TestCase):
     def test_soft_signature_without_a_success_marker_is_a_failure(self):
         from cria.focustrim import _is_failure
         self.assertTrue(_is_failure("bash: frobnicate: command not found"))
+
+
+if __name__ == "__main__":
+    unittest.main()

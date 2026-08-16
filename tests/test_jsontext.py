@@ -60,10 +60,6 @@ class JsonTextTests(unittest.TestCase):
         self.assertEqual(strip_think("<think>x</think>answer").strip(), "answer")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DuplicateKeyTests(unittest.TestCase):
     """`json.loads` keeps the LAST value when a key repeats, which for model output is usually the
     wrong one: a small model emits its real answer first and a degenerate echo after. Measured (run
@@ -87,3 +83,7 @@ class DuplicateKeyTests(unittest.TestCase):
     def test_tool_arguments_get_it_too(self):
         from cria.toolargs import parse_args
         self.assertEqual(parse_args('{"path":"real.py","path":""}')["path"], "real.py")
+
+
+if __name__ == "__main__":
+    unittest.main()

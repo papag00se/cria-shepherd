@@ -179,10 +179,6 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(out, REAL_DICTATION)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ACutReplyIsNotADirectiveTests(unittest.TestCase):
     """The tool-inspecting steer branch took `_completion_text(comp)` with no truncation check, while
     its toolless sibling `summarize()` has had one since the truncation guard landed and
@@ -298,3 +294,7 @@ class TheTriggerIsNotSpelledInPythonTests(unittest.TestCase):
         for line in ("import os", "assert x == 1", "class Cart:"):
             with self.subTest(line=line):
                 self.assertTrue(self.fires(line))
+
+
+if __name__ == "__main__":
+    unittest.main()

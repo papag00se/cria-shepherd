@@ -310,10 +310,6 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertNotIn("\\n", m["evidence"])   # not left as a literal backslash-n
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WebFetchFindDescriptionTests(unittest.TestCase):
     """`find=` accepts several terms at once (`a|b`). The description said find="<keyword>", singular,
     so a model that wanted three fields either issued three round-trips or — measured, run
@@ -370,3 +366,7 @@ class NoDevTaskLeakTests(unittest.TestCase):
         self.assertIn("must not carry it out", ask)
         self.assertIn("a real call, not a description of one", ask)
         self.assertIn("numbered list", ask)
+
+
+if __name__ == "__main__":
+    unittest.main()

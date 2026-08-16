@@ -745,10 +745,6 @@ class LoopConstructionGateTests(unittest.TestCase):
         self.assertIsNone(srv.loop)                        # no coder → a smart proxy
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ResponsesStatusTickerTests(unittest.TestCase):
     """The LIVE status item: opened before any model work, ⟦cria⟧ phase lines streamed as
     output_text deltas while the pipeline grinds, closed into the completed response's output.
@@ -994,3 +990,7 @@ class FailSilentHoleTests(unittest.TestCase):
         # …and the scanner actually sees real call sites (not a vacuous pass)
         src = "".join(p.read_text() for p in prompts._DIR.parent.glob("*.py"))
         self.assertGreater(len(re.findall(r"prompts\.(?:load|render|load_map)\(", src)), 50)
+
+
+if __name__ == "__main__":
+    unittest.main()

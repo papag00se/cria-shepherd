@@ -509,10 +509,6 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(json.loads(tc["function"]["arguments"])["path"], "h.py")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PortFidelityTests(unittest.TestCase):
     """Fidelity fixes vs Codex Local, from the 2026-07 port audit."""
 
@@ -761,3 +757,7 @@ class DialectPayloadSalvageTests(unittest.TestCase):
         comp = {"choices": [{"message": {"role": "assistant", "content": "a plain summary"}}]}
         self.assertEqual(coerce_text_answer(comp, None)["choices"][0]["message"]["content"],
                          "a plain summary")
+
+
+if __name__ == "__main__":
+    unittest.main()

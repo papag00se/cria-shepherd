@@ -90,10 +90,6 @@ class ARakefileIsAProjectTests(unittest.TestCase):
         self.assertTrue(any(c.command[:2] == ["ruby", "-c"] for c in probes))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ABareRubyProjectStillRunsItsTestsTests(unittest.TestCase):
     """The TEST FLOOR existed for exactly one language.
 
@@ -134,3 +130,7 @@ class ABareRubyProjectStillRunsItsTestsTests(unittest.TestCase):
         (ws / "lib.rb").write_text("module X\nend\n")
         cmds = [" ".join(c.command) for c in proberun.select_completion_probes(ws)]
         self.assertFalse([c for c in cmds if c.startswith("ruby -Ilib")])
+
+
+if __name__ == "__main__":
+    unittest.main()
