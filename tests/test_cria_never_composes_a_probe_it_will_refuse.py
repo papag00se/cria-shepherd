@@ -75,26 +75,31 @@ class TheComposedProbeStillDisclosesItsOwnElisionTests(unittest.TestCase):
         self.assertIn("tail -c", cmd)
 
 
-class TheRefusalNoLongerRecommendsHidingTheAnswerTests(unittest.TestCase):
-    def setUp(self):
-        self.text = prompts.load_map("oversize_refusal")["exec"]
+class TheSurvivingRefusalKeepsTheLessonTests(unittest.TestCase):
+    """The `exec` fragment this class used to read is deleted — its renderer went with the exec-output
+    bound on 2026-08-14, leaving a model-facing string nothing rendered. `list` is the live member of
+    the same family and carries the same rule, so the lesson is pinned where it can still fire.
 
-    def test_head_is_gone(self):
-        """A runner prints its verdict LAST, so `| head -50` hides exactly what was wanted."""
+    THE LESSON: a runner prints its verdict LAST, so `| head -50` hides exactly what was wanted, and a
+    pipe replaces the program's exit status with the filter's — in the same sentence that tells the
+    coder the status is accurate (#5b). Name a route that keeps the whole answer and the real status."""
+
+    def setUp(self):
+        self.text = prompts.load_map("oversize_refusal")["list"]
+
+    def test_head_is_never_recommended(self):
         self.assertNotIn("head -50", self.text)
 
-    def test_the_file_route_leads(self):
-        """The only route that keeps the whole output AND the real exit status."""
-        self.assertLess(self.text.index("out.txt"), self.text.index("| grep"))
+    def test_the_dead_fragments_are_gone_not_merely_unused(self):
+        self.assertNotIn("exec", prompts.load_map("oversize_refusal"))
+        self.assertNotIn("exec_spilled", prompts.load_map("oversize_refusal"))
 
-    def test_the_exit_status_claim_is_qualified(self):
-        """It said the exit status is accurate while recommending a pipe that replaces it (5b)."""
-        self.assertIn("reports the LAST command's status", self.text)
-
-    def test_it_still_names_real_routes(self):
-        for route in ("grep", "wc -l"):
-            with self.subTest(route=route):
-                self.assertIn(route, self.text)
+    def test_every_surviving_fragment_has_a_renderer(self):
+        """A model-facing string nothing renders is coverage that does not exist."""
+        import glob
+        src = "\n".join(open(f).read() for f in glob.glob("cria/*.py"))
+        for key in prompts.load_map("oversize_refusal"):
+            self.assertIn(f'"oversize_refusal")["{key}"]', src, f"{key} has no renderer")
 
 
 if __name__ == "__main__":

@@ -91,7 +91,12 @@ def _warn_config(cfg: Config, has_reasoner: bool, has_coder: bool, log) -> None:
         missing = [r for r, ok in (("reasoner", has_reasoner), ("coder", has_coder)) if not ok]
         log.emit("config.warn", level="warn", issue="planner_inert",
                  detail=f"[planner] enabled but missing role(s): {', '.join(missing)} — the plan loop will not run")
-    if cfg.planner.enabled and not brave.api_key():
+    # NOT GATED ON THE PLANNER. web_search reaches the coder whether the planner is on or off, and
+    # the planner is off on every real run — so the one warning that exists to make a missing key
+    # visible was itself silent in exactly the configuration everything uses. That is the failure
+    # this function's own docstring names: "a misconfiguration is visible instead of silently
+    # degrading — the class that hid the Brave-key bug".
+    if not brave.api_key():
         log.emit("config.warn", level="warn", issue="web_search_disabled",
                  detail=f"web_search needs {brave.API_KEY_ENV} but it's empty in the process — "
                         "search disabled (is env_file set and loaded?)")

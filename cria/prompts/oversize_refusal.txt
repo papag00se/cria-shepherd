@@ -14,9 +14,13 @@
 # hide the answer. It also replaces the program's exit status with the filter's, in the same
 # sentence that tells the coder the exit status is accurate (5b). The file route is named first
 # because it is the only one that keeps the whole output AND the real status.
-
-exec = [{{BYTES}} bytes over {{LINES}} lines — too much to return, so nothing is shown. Nothing was truncated: the command ran and its output was discarded, not cut. Ask it a smaller question and run it again: send it to a file and search that (`> out.txt 2>&1` then `grep -n <what you are looking for> out.txt`), match it directly (`| grep <what you are looking for>`), or count instead of listing (`| wc -l`). Exit status is above and is accurate — but note that a `|` pipeline reports the LAST command's status, not your program's, so the file route is the one that keeps it.]
-
-exec_spilled = [{{BYTES}} bytes over {{LINES}} lines — too much to return whole, so the complete output was saved to {{TARGET}}, a path relative to the project directory you are working in. Nothing was truncated and nothing was dropped: every byte the command printed is in that file. Search it for what you need (`grep -n <what you are looking for> {{TARGET}}`), or read a line range from it. Exit status is above and is accurate.]
+#
+# THE `exec` AND `exec_spilled` ROUTES ARE GONE. They belonged to the exec-output bound, which was
+# added 2026-08-12 and deleted 2026-08-14 when the spill path took over — the log dates it exactly
+# (`writeproxy.exec_output_bounded`: 2,098 firings on 08-13/14, zero after). Both fragments then had
+# no renderer, only a test, and a model-facing string nothing renders is coverage that does not
+# exist (#1: the safe direction is REMOVE). The lesson they carried is preserved here and in `list`,
+# which is the live fragment of the same family: name a route that keeps the whole answer AND the
+# real exit status FIRST, and never `| head`.
 
 list = [{{ENTRIES}} entries — too many to list, so nothing is shown. Narrow it: list a subdirectory instead, or match what you are after (`ls {{PATH}} | grep <name>`), or count first (`ls -1A {{PATH}} | wc -l`).]
