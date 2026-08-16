@@ -373,7 +373,15 @@ def _runnable(command: str) -> tuple[bool, str]:
     if not parts:
         return False, "the stated command is empty"
     head = parts[0]
-    if head not in _RUNNERS and not head.startswith("./"):
+    # _PROJECT_RUNNERS TOO. Two sets answered "does cria recognise this launcher" and disagreed:
+    # `corroborate` accepts `rake test`, `make run`, `mix test`, `gradle test` and `bundle exec …`
+    # as a project's real entry point — the manifest declares them — and then this refused to RUN
+    # them, so the deliverable was never observed. The refusal ("'rake' is not a recognized program
+    # runner", 8 in the captures) names something the coder cannot change: its project's own runner.
+    # These are no more arbitrary than `npm run`, which was already allowed and executes whatever
+    # package.json says; what bounds this check is that `corroborate` requires the project to have
+    # DECLARED the command, not that cria keeps a shorter list than its own sibling. #23: one owner.
+    if head not in _RUNNERS and head not in _PROJECT_RUNNERS and not head.startswith("./"):
         return False, f"{head!r} is not a recognized program runner"
     return True, ""
 
