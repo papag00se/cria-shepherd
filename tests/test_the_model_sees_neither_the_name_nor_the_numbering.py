@@ -53,6 +53,66 @@ def _shipped(path: pathlib.Path) -> str:
     return body
 
 
+class TheNameMustNotRIDEINACOMMANDEitherTests(unittest.TestCase):
+    """Prompt files were covered; COMPOSED COMMANDS were not, and that is where it actually leaked.
+
+    `_COMPILEALL_SKIP_RE` carried `\\.cria` in its skip list, and the coder reads the gate's command
+    line: 2,050 captured coder prompts contained it. It was also dead — cria writes only inside its
+    own directory and never into the workspace (#7), so no tree this floor walks can hold one.
+
+    #17's own words: internal tokens can be copied into executable commands, so the rule has to hold
+    anywhere cria composes content the model may read OR RUN, not only in the prompt files."""
+
+    NAME = re.compile(r"\bcria\b", re.I)
+
+    def _project(self, tmp):
+        (tmp / "app.py").write_text("print(1)\n")
+        (tmp / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+        (tmp / "index.js").write_text("console.log(1)\n")
+        (tmp / "package.json").write_text('{"name": "x"}\n')
+        return tmp
+
+    def test_no_floor_command_names_it(self):
+        import pathlib as _pl
+        import tempfile
+
+        from cria import probediscovery
+        with tempfile.TemporaryDirectory() as d:
+            root = self._project(_pl.Path(d))
+            cands = probediscovery.syntax_floor_candidates(root)
+            self.assertTrue(cands, "the fixture should produce at least one floor probe")
+            for c in cands:
+                for arg in c.command:
+                    with self.subTest(arg=arg[:60]):
+                        self.assertIsNone(self.NAME.search(str(arg)))
+
+    def test_no_discovered_command_names_it(self):
+        import pathlib as _pl
+        import tempfile
+
+        from cria import probediscovery
+        with tempfile.TemporaryDirectory() as d:
+            root = self._project(_pl.Path(d))
+            for c in probediscovery.discover(root):
+                for arg in c.command:
+                    with self.subTest(arg=str(arg)[:60]):
+                        self.assertIsNone(self.NAME.search(str(arg)))
+
+    def test_the_named_gap_steer_does_not_name_it(self):
+        """It appends cria's own unresolved findings to a steer that would otherwise name nothing.
+        It said "What cria's own checks currently report" — inline, in code, both rules broken at
+        once (#17 and #22: model-facing strings live in prompt files)."""
+        from cria import loop
+        out = loop._named_gap("app.py:3: undefined name 'foo'")
+        self.assertIn("undefined name", out)
+        self.assertIsNone(self.NAME.search(out))
+
+    def test_an_empty_finding_stays_silent(self):
+        from cria import loop
+        self.assertEqual(loop._named_gap(""), "")
+        self.assertEqual(loop._named_gap("   "), "")
+
+
 class TheModelNeverSeesTheNameTests(unittest.TestCase):
     def test_every_prompt_file_not_just_a_snapshot_of_them(self):
         files = sorted(PROMPT_DIR.glob("*.txt"))

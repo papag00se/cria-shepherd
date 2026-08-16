@@ -8313,7 +8313,8 @@ def _named_gap(findings: str) -> str:
     at all, and it appends rather than replaces — the generic instruction still ships, with something
     actionable attached. Empty when cria holds nothing, which keeps silence the honest answer."""
     f = (findings or "").strip()
-    return ("\n\nWhat cria's own checks currently report, unresolved:\n" + f) if f else ""
+    # In a prompt file (#22) and in cria's model-facing voice (#17: never the literal token).
+    return ("\n" + prompts.render("named_gap", findings=f)) if f else ""
 
 
 def _mark_own_notes(session: str) -> str:

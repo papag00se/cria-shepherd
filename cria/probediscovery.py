@@ -860,7 +860,13 @@ def build_glue(p: ProjectDir, out: list[ProbeCandidate]) -> None:
 # clip: any repo a coder actually works in gets full coverage.
 MAX_FLOOR_FILES_PER_LANG = 100_000
 # The same skip list the linter floor used, as a compileall -x regex.
-_COMPILEALL_SKIP_RE = r"(^|/)(\.git|\.cria|__pycache__|venv|\.venv|node_modules|dist|build|lib|site-packages)(/|$)"
+#
+# NO `.cria` HERE. The coder READS this command — it appeared in 2,050 captured coder prompts, and it
+# is the only place cria's own name has ever reached the model (#17: internal tokens can be copied
+# into executable commands, so they must not be composed into content the model reads or runs). It
+# was also dead: cria writes only inside its own directory and never into the workspace (#7), so a
+# `.cria` directory cannot be in a tree this floor walks.
+_COMPILEALL_SKIP_RE = r"(^|/)(\.git|__pycache__|venv|\.venv|node_modules|dist|build|lib|site-packages)(/|$)"
 
 # Config-file syntax floor (NOT in the Rust — a cria congruence add): a broken pyproject.toml /
 # Cargo.toml / *.toml has no compiler to catch it, so the model rewrites it blind. Parse each with
