@@ -44,7 +44,40 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 13 | feed-pipeline-java | gemma4 | 0% | 0 | 16 | 35 | flat at zero, and **one typo is the whole cell**: `mvn compile` fails on a single error, `cannot find symbol: class CSVRecordRecord` at `Importer.java:96` — the model wrote the word twice. Nothing else is wrong with the build. All five checks fail behind it. **Not cria's**: `CSVRecordRecord` appears in **10 request bodies**, `cannot find symbol` in 9, `BUILD FAILURE` in 8 — the model was told plainly and repeatedly. Killed at the 15-minute floor with 29 coder calls, three of which cria refused as malformed (`write_missing_arg` ×2, `edit_missing_arg` ×1) — 10% of the budget, on a cell whose budget was the binding constraint |
 | 14 | feed-pipeline-java | qwen35 | **100%** | **+60** | 76 | 492 | **the first 100% ever scored on `feed-pipeline-java`**, the campaign's worst column. All five: messy feed handled with skipped rows reported, **70.3× against a 4.0× bar with the totals matching** (29.9× and mismatched totals last cycle), 4 worker threads with one distinct result across 8 runs, `csv_library` importing the quoted-comma row at 25.00, and **`review_written` at 828 words with 13 located findings** — a check missed 4 of 4 last cycle. And it was **5/5 at the 30-minute milestone and ran for 45 more minutes**; see below |
 | 15 | feed-pipeline-java | ternary-bonsai | **80%** | **+80** | 70 | 82 | biggest single gain of the cycle, from a cell that **never compiled** last cycle. The build works, 33.4× against a 4.0× bar with matching totals, 4 worker threads, quoted-comma row imported. `review_written` is scored 0 and **the model earned it** — this is a verifier defect, proven below, and the row is a re-run candidate for the fix phase |
-| 16 | feed-pipeline-java | nemotron-elastic | *running* | | | | |
+| 16 | feed-pipeline-java | nemotron-elastic | 0% | 0 | 18 | 22 | flat at zero, but **it compiles now** — last cycle `mvn compile` failed and stayed failed; this time its importer runs the large feed and produces matching totals. It just optimised nothing (1.0× against a 4.0× bar), spawned no threads, wrote no REVIEW.md and declared no CSV dependency. Killed at the 15-minute floor after **22 calls**, and the reason it got so few is below |
+| 17 | handles-cli-node | gemma4 | *running* | | | | |
+
+### CAMPAIGN INTEGRITY — a slow box and a slow model are indistinguishable in the record
+
+Cell 16 was killed at a wall-clock floor having made 22 calls. The reason it made so few is that
+**the model ran at a third of its own speed**, and nothing on disk can say why.
+
+Measured from `upstream.done` on that session:
+
+| | |
+|---|---|
+| `tok_per_s` on the long calls | **34–52** |
+| the same model's average elsewhere this cycle | **108–126** |
+| upstream time inside a 17.5-minute wall | **20.4 minutes across 43 calls** |
+| context growth over the run | 7,812 → 27,473 tokens, well inside the 49,152 window |
+
+And the slow calls are **prefill-dominated**, not generation-bound: 183.6 s total for 507 tokens at
+35.9 tok/s is roughly 14 s of generation behind ~170 s of prompt processing. A 27 K-token prompt
+taking most of three minutes to ingest.
+
+**No cause is claimed, because none can be established from what is recorded.** The box's RTX 3080 is
+shared — `project_18084_gpu_shared_blender` says so and says to check the GPU before blaming code —
+and GPU state is not captured per call, or per cell, or at all. Checked live just now: 51%
+utilisation, 7.9 of 10.2 GB, with cell 17 running.
+
+**Why this matters beyond one cell.** Milestone floors kill on wall-clock. A run that is slow because
+something else owns the GPU is floored exactly like a run that is slow because the model is lost, and
+the row records `milestone-miss-15min` for both. Two cells this cycle were floored at 15 minutes;
+this one had 22 calls to work with.
+
+**Cheapest fix in the campaign, and it is in `suite/`, not `cria/`:** sample the GPU once per
+milestone and put it on the row. Then a floored cell can be read rather than guessed at, and the
+question "was the box busy" stops needing a time machine. Recorded for the fix phase.
 
 ### VERIFIER DEFECT — `review_written` misses a markdown table by one character
 
