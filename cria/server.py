@@ -419,7 +419,8 @@ class CriaServer(ThreadingHTTPServer):
         # A role is "configured" by the PRESENCE of its [roles.<name>] table, so every gate below keys
         # on membership in `roles`.
         self.router = (
-            Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds)
+            Router(cfg.routing, upstream, timeout=cfg.upstream.timeout_seconds,
+                   context_window=cfg.upstream.context_window)
             if (roles or cfg.routing.failover)
             else None
         )

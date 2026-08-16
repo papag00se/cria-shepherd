@@ -472,8 +472,11 @@ class Upstream:
         """Non-streaming: return the full upstream response body (bytes).
 
         Retries the SAME endpoint ONCE on a transient TIMEOUT (a slow-prefill / connection-reset on
-        the shared GPU that would otherwise be a dead turn) via the failover executor — a single
-        local endpoint has no chain to walk, so anything else re-raises. Buffered, so a retry is safe."""
+        the shared GPU that would otherwise be a dead turn), using the failover module's POLICY
+        (`classify_failure` + `decide_action`) with the loop written out here — `failover.run` is the
+        generic executor for a multi-route chain and this has exactly one route, so walking is never
+        the answer and what it would cost is the error string in the retry log. Buffered, so a retry
+        is safe; a stream cannot be."""
         # Force stream=false (the Responses adapter buffers from a stream=true request;
         # sending that upstream would return unparseable SSE) + merge adjacent assistants.
         attempt = 0

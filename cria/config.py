@@ -55,6 +55,13 @@ class UpstreamConfig:
 
     base_url: str = "http://127.0.0.1:18084"
     timeout_seconds: int = 600
+    # Pin the model's context window instead of discovering it from the server's /props.
+    # 0 = discover (the normal case, and the right one: cria learns the real n_ctx and keeps
+    # learning it from what the server accepts). Set this only when /props cannot be read on this
+    # box — an operator-tunable deployment fact, which is what a config key is for. Upstream has
+    # always taken the value and its docstring has always said "context_window in the toml"; there
+    # was no key, so the authoritative-window path was unreachable outside tests.
+    context_window: int = 0
 
 
 @dataclass(frozen=True)
@@ -560,6 +567,7 @@ def _defaults(d: dict) -> UpstreamConfig:
     return UpstreamConfig(
         base_url=str(d.get("base_url", "http://127.0.0.1:18084")).rstrip("/"),
         timeout_seconds=int(d.get("timeout_seconds", 600)),
+        context_window=int(d.get("context_window", 0) or 0),
     )
 
 

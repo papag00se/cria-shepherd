@@ -41,14 +41,18 @@ class Router:
         local_provider: Upstream,
         *,
         timeout: int = 600,
+        context_window: int = 0,
         provider_factory=None,
         claude_factory=None,
     ) -> None:
         self._cfg = cfg
         self._local = local_provider  # the shared [defaults] endpoint
         self._timeout = timeout
+        # A pinned window applies to every HTTP backend that inherits [defaults] — same server.
+        self._context_window = context_window
         self._provider_factory = provider_factory or (
-            lambda base_url, key: Upstream(base_url, timeout, api_key=key)
+            lambda base_url, key: Upstream(base_url, timeout, api_key=key,
+                                           context_window=context_window or None)
         )
         self._claude_factory = claude_factory or (
             lambda b: ClaudeCliProvider(b.binary, b.cwd, timeout)

@@ -169,7 +169,7 @@ class SteerAuthorReadsItsOwnThinkingTests(unittest.TestCase):
         rlog = _Rlog()
         steer = loop.author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                                   {"messages": [{"role": "user", "content": "task"}]}, rlog,
-                                  condition="thrash", reasoning_window=["thinking"])
+                                  condition="thrash")
         return steer, chat.bodies, rlog
 
     def test_the_directive_behind_a_bare_ON_TRACK_is_recovered(self):

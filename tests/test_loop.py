@@ -3652,7 +3652,7 @@ class AuthorSteerInspectsTests(unittest.TestCase):
         gs = types.SimpleNamespace(gate_stall=3, recent_writes=["api.json"], spin_path="")
         steer = author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                              {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
-                             condition="thrash", reasoning_window=["thinking"])
+                             condition="thrash")
         return steer, bodies
 
     def test_author_reads_a_file_then_steers_grounded_in_what_it_read(self):
@@ -3777,8 +3777,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         gs, ws = self._gs(), tempfile.mkdtemp()
         for cond in ("repetition", "wheel_spin", "thrash"):   # "flail" removed with its steer
             out = author_steer(self._chat("read the real file and run the failing test"), None, ws, gs,
-                               {"messages": []}, _Rlog(), condition=cond, outcome=GateOutcome(ran=False),
-                               reasoning_window=["keep guessing at the attr"])
+                               {"messages": []}, _Rlog(), condition=cond, outcome=GateOutcome(ran=False))
             self.assertIn("read the real file", out, cond)
 
     def test_unchanged_check_findings_suppress_a_SECOND_diagnosis(self):
@@ -6133,7 +6132,7 @@ class AuthorForcedAnswerVoiceTests(unittest.TestCase):
         gs = types.SimpleNamespace(gate_stall=3, recent_writes=["a.py"], spin_path="")
         author_steer(chat, Role(name="reasoner", backend="local"), d, gs,
                      {"messages": [{"role": "user", "content": "task"}]}, _Rlog(),
-                     condition="thrash", reasoning_window=["thinking"])
+                     condition="thrash")
         forced = [m for b in bodies for m in b["messages"]
                   if m.get("role") == "user" and "Answer NOW" in str(m.get("content"))]
         self.assertTrue(forced)

@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     upstream = Upstream(
         cfg.upstream.base_url,
         cfg.upstream.timeout_seconds,
+        context_window=cfg.upstream.context_window or None,
         capture_dir=cfg.logging.capture_dir_path if cfg.logging.capture_calls else None,
         capture_rendered=cfg.logging.capture_rendered,
     )

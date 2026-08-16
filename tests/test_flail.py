@@ -58,8 +58,20 @@ class TheWordListIsGoneTests(unittest.TestCase):
         self.assertFalse(hasattr(loop.Loop, "_flail_steer_if_circling"))
 
     def test_the_reasoning_window_is_gone_too(self):
-        """Nothing else ever read it; keeping a field written and never read is dead weight."""
+        """Nothing else ever read it; keeping a field written and never read is dead weight.
+
+        The removal left a tail: `author_steer` kept a `reasoning_window=` parameter and a five-line
+        prompt section fed by it, so every real steer carried the header, the authority-list entry
+        telling the author how to weigh it, and the words "(not captured for this trigger)". No
+        production caller had passed one since the producer was deleted."""
         self.assertNotIn("recent_reasoning", inspect.getsource(loop))
+        # CODE only — the comment above author_steer quotes the removed parameter on purpose, to
+        # record what it was and why it went.
+        code = [ln for ln in inspect.getsource(loop).splitlines()
+                if not ln.lstrip().startswith("#")]
+        self.assertFalse([ln for ln in code if "reasoning_window" in ln])
+        from cria import prompts
+        self.assertNotIn("{{REASONING}}", prompts.load("steer_diagnose_user"))
 
     def test_the_trigger_has_no_prompt_line_left(self):
         """A condition with no trigger would render an empty steer preamble."""

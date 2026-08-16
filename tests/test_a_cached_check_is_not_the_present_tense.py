@@ -137,7 +137,7 @@ class TheAuthorIsToldHowOldTheBlockIsTests(unittest.TestCase):
         """The 1-5 ranking is load-bearing; only the caveat on #1 moved."""
         body = prompts.load("steer_diagnose_user")
         for line in ("2. THE FILES ON DISK", "3. THE CODING SESSION",
-                     "4. THE CODER'S OWN WORDS AND THINKING"):
+                     "4. Any line marked as an earlier note from this system"):
             with self.subTest(line=line):
                 self.assertIn(line, body)
 

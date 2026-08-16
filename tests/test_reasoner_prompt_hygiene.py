@@ -119,15 +119,20 @@ class ThePromptRanksItsSourcesTests(unittest.TestCase):
     def test_it_states_an_order_of_authority(self):
         self.assertIn("NOT equally reliable", self.TEXT)
 
-    def test_the_coders_thinking_is_marked_as_belief(self):
-        self.assertIn("what the coder BELIEVES, not what is true", self.TEXT)
-        self.assertIn("unverified", self.TEXT)
+    def test_the_coders_words_are_ranked_below_ground_truth(self):
+        """The private-thinking SECTION is gone — its only producer was deleted with the flail
+        detector, so it rendered "(not captured for this trigger)" on every real steer, under a
+        header and an authority-list entry telling the author how to weigh it. What remains is the
+        ranking that matters: the coder's own words never outrank the checks or the disk."""
+        self.assertIn("THE CODING SESSION", self.TEXT)
+        self.assertNotIn("{{REASONING}}", self.TEXT)
+        self.assertNotIn("RECENT PRIVATE THINKING", self.TEXT)
 
     def test_its_own_earlier_notes_are_ranked_last_and_barred(self):
         self.assertIn("never evidence", self.TEXT)
 
     def test_every_placeholder_survives(self):
-        for k in ("{{TRIGGER}}", "{{SESSION}}", "{{DISK}}", "{{TRUTH}}", "{{REASONING}}"):
+        for k in ("{{TRIGGER}}", "{{SESSION}}", "{{DISK}}", "{{TRUTH}}"):
             with self.subTest(k=k):
                 self.assertIn(k, self.TEXT)
 

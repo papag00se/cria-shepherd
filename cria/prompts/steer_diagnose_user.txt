@@ -9,9 +9,7 @@ another is the single most expensive error made in this seat. In order of author
      as it WAS, and the coder's own later run of the same check outranks them.
   2. THE FILES ON DISK — read them yourself before quoting them.
   3. THE CODING SESSION — what was actually done and what actually came back.
-  4. THE CODER'S OWN WORDS AND THINKING — what it BELIEVES. Frequently wrong; that is usually why
-     it is stuck. Never repeat a claim from here as fact. If it conflicts with 1-3, 1-3 win.
-  5. Any line marked as an earlier note from this system — that is a PREVIOUS answer from this same
+  4. Any line marked as an earlier note from this system — that is a PREVIOUS answer from this same
      seat, possibly your own and possibly wrong. It is never evidence. Do not cite it back.
 
 THE CODING SESSION SO FAR (the task, and every tool call the coder made with its result):
@@ -22,11 +20,5 @@ THE FILES IT HAS BEEN CHANGING (on disk right now — name, size, and line count
 
 GROUND TRUTH FROM THE REPO'S CHECKS{{CHECKS_AGE}}:
 {{TRUTH}}
-
-THE CODER'S RECENT PRIVATE THINKING — this is what the coder BELIEVES, not what is true. It is the
-reasoning of a model that is currently stuck, so treat every factual claim in it as unverified. If
-it asserts something about an API, a file, or a command, check that against the sections above
-before acting on it (oldest first, most recent last; present only when the trigger was its thinking):
-{{REASONING}}
 
 Reply with a short unstick directive spoken to the coder — grounded ONLY in what you see above — or EXACTLY the one word `ON_TRACK` if (and only if) the coder is clearly making progress and needs no help. If it is looping or stuck, write the directive.

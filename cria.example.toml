@@ -52,6 +52,10 @@ bias = "task"                      # unsure classifier → task | simple | quest
 [defaults]
 base_url = "http://127.0.0.1:18084"   # shared by http backends that omit their own
 timeout_seconds = 7200                # one timeout for all backends
+# context_window = 49152              # pin n_ctx instead of discovering it from the server's /props.
+                                      # Leave unset (or 0) to discover — that is the normal path and
+                                      # self-corrects from what the server actually accepts. Set it
+                                      # only on a box where /props cannot be read.
 
 # --- Backends: WHERE a model runs. transport = "http" (server) | "cli" (subprocess) ---
 [backends.local]

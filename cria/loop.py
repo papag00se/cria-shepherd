@@ -6458,9 +6458,17 @@ def _coder_tools_summary(tools, *, params: bool = True) -> str:
     return "\n".join(lines) or "  (none advertised this turn)"
 
 
+# NO REASONING WINDOW. `author_steer` took a `reasoning_window=` and rendered it into a five-line
+# prompt section — "THE CODER'S RECENT PRIVATE THINKING" — plus its own entry in the authority list
+# the author is told to weigh. No production caller ever passed one: its only producer was
+# `_record_reasoning`, deleted with the flail detector, whose removal note already says "the window
+# it kept goes with it: nothing else ever read them". What shipped on every real steer was the
+# section header, the instructions for reading it, and the words "(not captured for this trigger)".
+# A prompt that teaches a weak model to weigh evidence that is never there is the useless-prompting
+# class; removing the leftover is the completion of that decision, not a reversal of it.
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
                  condition: str, outcome=None, truth_text: str = "", step_text: str = "",
-                 reasoning_window=None) -> str | None:
+                 ) -> str | None:
     """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
     FULL grounded picture — the real session (scrubbed of cria's own plumbing AND the harness's own agent
     prompt), the churned files' real ON-DISK bytes and the repo's check output — and let it diagnose why the coder is stuck and give ONE
@@ -6609,7 +6617,6 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # pointer (measured on the maple walk: every steer/judge prompt carried the ~2.4KB block 2×+).
     session, _n_deduped = dedup.elide_text(session, dedup.ledger_units(fetch_truth),
                                            prompts.load("ledger_dedup_note"))
-    reasoning = "\n\n--- turn ---\n".join(reasoning_window) if reasoning_window else ""
     trigger = _STEER_TRIGGER[condition](gs, step_text)
     # THE AGE OF THE FINDINGS, in the author's own evidence block. cria already computes exactly
     # this for the CODER-facing repeat prompt ("they last ran X, and <file> has been written since")
@@ -6622,8 +6629,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
                           checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
-                                                   files=", ".join(written[:6])) if written else ""),
-                          reasoning=(reasoning or "(not captured for this trigger)"))
+                                                   files=", ".join(written[:6])) if written else ""))
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
