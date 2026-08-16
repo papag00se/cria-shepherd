@@ -57,9 +57,45 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
         self.assertNotIn("w1", writeproxy._failed_edit_ids(msgs))
 
     def test_a_failed_edit_is_recognised(self):
-        msgs = [{"role": "tool", "tool_call_id": "e1",
-                 "content": "your old_string is not an exact match"}]
+        """Built by the REAL composer, not hand-typed. The old fixture was a bare sentence with no
+        `⟦ctx:edit⟧` marker — a body the production path cannot emit — so the test certified the
+        substring scan rather than the mechanism, which is how the scan survived being the rule."""
+        from cria import editrecovery
+        for mode, extra in (("no_anchor", {}),
+                            ("anchor_noline", {"anchor": "func Total() int {"}),
+                            ("multi", {"n": 3}),
+                            ("identical", {}),
+                            ("phantom", {"anchor": "x := 1"})):
+            with self.subTest(mode=mode):
+                body = editrecovery.compose({"mode": mode, "path": "cart.go", **extra}, 0)
+                msgs = [{"role": "tool", "tool_call_id": "e1", "content": body}]
+                self.assertIn("e1", writeproxy._failed_edit_ids(msgs))
+
+    def test_a_denied_call_counts_too(self):
+        """cria's OWN refusal of a call that never ran — a different marker, same fact: the payload
+        is not on disk. Preserved from the old rule, which is why it is pinned here."""
+        from cria import denial
+        body = denial.DENIED_MARKER + " the path is outside the workspace"
+        self.assertTrue(denial.is_denied(body), "fixture no longer looks like a denial")
+        msgs = [{"role": "tool", "tool_call_id": "e1", "content": body}]
         self.assertIn("e1", writeproxy._failed_edit_ids(msgs))
+
+    def test_reading_a_file_that_mentions_the_argument_is_not_a_failure(self):
+        """`old_string` is an ordinary token. A source file documenting the edit tool used to
+        collapse the coder's own successful payloads for saying the word."""
+        msgs = [{"role": "tool", "tool_call_id": "r1",
+                 "content": "def edit(path, old_string, new_string):\n    ...  # not an exact match"}]
+        self.assertNotIn("r1", writeproxy._failed_edit_ids(msgs))
+
+    def test_no_dead_attribute_probe_remains(self):
+        """`hasattr(editrecovery, "is_edit_failure")` guarded a name that has never existed, so the
+        fallback WAS the rule — a mitigation for a problem that isn't there (#4)."""
+        import inspect
+        from cria import editrecovery
+        self.assertFalse(hasattr(editrecovery, "is_edit_failure"))
+        code = [ln for ln in inspect.getsource(writeproxy._failed_edit_ids).splitlines()
+                if not ln.strip().startswith(("#", '"""')) and "is_edit_failure" not in ln.strip('" ')]
+        self.assertFalse([ln for ln in code if "hasattr(" in ln])
 
 
 if __name__ == "__main__":

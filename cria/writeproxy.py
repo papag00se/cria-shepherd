@@ -1266,7 +1266,20 @@ _REJECTED_PAYLOAD_CHARS = 400
 
 
 def _failed_edit_ids(messages: list[dict]) -> set[str]:
-    """tool_call_ids whose write/edit result came back as a failure — the payload never hit disk."""
+    """tool_call_ids whose write/edit result came back as a failure — the payload never hit disk.
+
+    Keyed on cria's OWN marker. Every edit-failure directive is composed by `editrecovery.compose`
+    and every one of them is prefixed with `EDIT_MARK` (see `_tag`), so the marker is the
+    authoritative record of "cria refused this edit" — #12, from the event rather than from prose.
+
+    It used to ask `hasattr(editrecovery, "is_edit_failure")` and fall back to a substring scan for
+    `old_string` when the attribute was missing. It has always been missing: no such function has
+    ever existed in that module, so the fallback WAS the rule, and a `hasattr` guarding a name that
+    never existed is a mitigation for a problem that isn't there (#4). The scan is also wrong in
+    principle — `old_string` is an ordinary token that appears in any source file that documents the
+    edit tool, so reading such a file would collapse the coder's own successful payloads. It happens
+    not to have cost anything yet: over every captured session the two rules agree on all 9,248
+    matches, zero disagreements. Ground truth is available, so use it rather than the coincidence."""
     ids: set[str] = set()
     for m in messages:
         if m.get("role") != "tool":
@@ -1274,8 +1287,8 @@ def _failed_edit_ids(messages: list[dict]) -> set[str]:
         body = _debinarized(str(m.get("content") or ""))
         if any(ln.strip() == _WROTE for ln in body.splitlines()):
             continue                                   # a success — its content IS on disk
-        if editrecovery.is_edit_failure(body) if hasattr(editrecovery, "is_edit_failure") else (
-                "old_string" in body or "not an exact match" in body or denial.is_denied(body)):
+        # …or the HARNESS refused the call outright, which is a failure cria did not author.
+        if editrecovery.EDIT_MARK in body or denial.is_denied(body):
             if m.get("tool_call_id"):
                 ids.add(m["tool_call_id"])
     return ids
