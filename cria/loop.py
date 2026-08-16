@@ -1603,7 +1603,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # The ACTION comes back separately so a caller building a plan step can use the fix alone —
         # the old single string (framing + reason essay + fix) became a whole step verbatim
         # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
-        return satisfied, _verdict_nudge(obj, satisfied, routes), _fix_text(obj)
+        return satisfied, _verdict_nudge(obj, satisfied, routes, evidence=user,
+                                         workspace_root=workspace_root, rlog=rlog), _fix_text(obj)
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -1618,7 +1619,9 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
-    return False, _verdict_nudge(retry, False, routes), str(retry.get("proposed_fix") or "").strip()
+    return False, _verdict_nudge(retry, False, routes, evidence=user,
+                                 workspace_root=workspace_root, rlog=rlog), \
+        str(retry.get("proposed_fix") or "").strip()
 
 
 def satisfaction_done_note(reason: str, exec_marker: str = "") -> str:
@@ -3446,7 +3449,8 @@ class Loop:
                     if not confirmed:
                         done = False
                         obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
-            reason = _verdict_nudge(obj, done, routes)
+            reason = _verdict_nudge(obj, done, routes, evidence=user,
+                                    workspace_root=workspace_root, rlog=rlog)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -3464,7 +3468,8 @@ class Loop:
             reason = prompts.load("unverified_step") + _named_gap(red_findings)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
-        reason = _verdict_nudge(retry, False, routes)   # a reasoning-off NOT-done is trustworthy
+        reason = _verdict_nudge(retry, False, routes, evidence=user,   # reasoning-off NOT-done: trustworthy
+                                workspace_root=workspace_root, rlog=rlog)
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
@@ -8390,23 +8395,38 @@ def _label_spill_entries(disk: str) -> str:
                      for line in disk.splitlines())
 
 
-def _verdict_nudge(obj: dict, done: bool, routes: str = "") -> str:
+def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
+                   evidence: str = "", workspace_root: str | None = None, rlog=None) -> str:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
-    when ``done``. Either field may be absent/empty; the fix is appended on its own line when present."""
+    when ``done``. Either field may be absent/empty; the fix is appended on its own line when present.
+
+    THE SAME BAR AS A STEER, because it is the same kind of thing. A proposed fix is authored text
+    the coder acts on, and it used to face exactly one guard — the route check below — while an
+    authored steer faces the whole of :func:`_grounded_steer_or_none`: role-play, argument blobs,
+    ungrounded URLs, phantom filesystem paths, phantom response fields. Measured over the captures:
+    134 proposed fixes reached the coder across 41 sessions, and replaying them through the steer
+    guards with no evidence at all drops 10 for naming a URL — among them
+    ``https://github.com/guyp/decimal``, a repository that does not exist, and several docs.rs pages
+    the judge invented the shape of. The evidence the judge itself was shown is passed in, so a URL
+    it legitimately READ is still allowed through; the check is against what cria composed, exactly.
+
+    ``ask`` is deliberately not threaded: the reasoner-backed arms of that function stay off here, so
+    this costs no model call. Only the deterministic guards run. The REASON always survives — the step
+    really was not done; only the invented move is dropped."""
     reason = str(obj.get("reason", "")).strip()
     fix = str(obj.get("proposed_fix", "")).strip()
     if done or not fix:
         return reason
-    # A proposed fix is authored text the coder ACTS ON, so it is held to the same bar as a steer
-    # (c17ffd8): cria does not hand over a concrete external detail the evidence never showed. A
-    # `METHOD /path` route is unambiguous — nothing writes "POST /x" about a file it is creating —
+    # A `METHOD /path` route is unambiguous — nothing writes "POST /x" about a file it is creating —
     # and a judge learns that spelling from cria's OWN shape ledger. Measured (run 0727-153326): the
     # critic proposed `POST /handles/resolve`, a route in no spec, 12 times; the coder grepped for
-    # that literal string across 322 calls on one step. The REASON always survives — the step really
-    # was not done; only the invented move is dropped.
+    # that literal string across 322 calls on one step.
     if routes and urlgrounding.ungrounded_routes(fix, routes):
+        return reason
+    if rlog is not None and _grounded_steer_or_none(fix, evidence, rlog,
+                                                    workspace_root=workspace_root) is None:
         return reason
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
 
