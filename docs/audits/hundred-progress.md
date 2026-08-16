@@ -36,6 +36,7 @@ SSE frames carrying a delta. One frame per token, so counting frames is a faithf
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
+| 8 | cart-billing-go | nemotron-elastic | 20% | **+20** | 31 | 107 | off zero again, and the whole build hangs on **one invented method**: `./cart.go:58:27: undefined: decimal.NewFromFloat64`. The real name is `decimal.NewFromFloat`. Eight rumination aborts, seven of them degenerate, no runaway. `decimal_money_library` passes for the second cycle running |
 | 7 | cart-billing-go | ternary-bonsai | 20% | **−80** | 31 | 61 | floored at thirty minutes, no runaway (longest 87.4 s). It swapped the money type in and never finished the conversion: `cart_test.go:18:12: cannot convert 9.72 (untyped float constant) to type struct{value *big.Int…}` and `in call to taxed.Round — have (number, number), want (int32)`. Only `decimal_money_library` survives, because declaring and importing the module is exactly what it half-did |
 | 6 | cart-billing-go | qwen35 | 60% | −40 | 20 | 158 | **it renamed the package.** The passing test line reads `ok billing` where the seed is `cartsvc`, and the verifier's probe then reports `package cartsvc is not in std` — so `rounding_fixed_everywhere` fails on an import, not on arithmetic. `logging` carried nothing on stderr. Same shape as cycle 1's Java cell that dropped `package pipeline;`: one declaration changed, and every check that loads the package dies behind it |
 | 5 | cart-billing-go | gemma4 | 80% | −20 | 13 | 66 | four of five, and the loss is **a deleted seeded test** again — `TestUnknownCode`. Everything else green: rounding at 48.58, `discounts.json` with and without the file, the stderr line, a real decimal module in non-test source |
@@ -113,6 +114,23 @@ has already finished.
 **Therefore the cycle runs on.** Stopping now would buy nothing — the affected cells are behind us —
 and would cost the one-code-state property for the twenty ahead. The Ruby column gets re-run after
 the fix phase, which is the same treatment any superseded row gets.
+
+### Go column, cycle 3: 80 / 60 / 20 / 20 = **45%** (cycle 2: 70%)
+
+Down, and not one of the four losses is cria's. Read together they are all the same shape:
+
+| cell | what the model did | what it cost |
+|---|---|---|
+| gemma4 | deleted a seeded test | 1 check |
+| qwen35 | renamed the package `cartsvc` → `billing` | 2 checks, on imports not arithmetic |
+| ternary-bonsai | swapped the money type in, never finished the conversion | 4 checks |
+| nemotron-elastic | called `decimal.NewFromFloat64`, which does not exist | 4 checks |
+
+**A structural edit left half-done, and the checks cannot reach the work behind it.** No runaways, no
+cria injections in the chain, and in every case a good deal of correct code sits behind a broken
+boundary. That is a different failure class from the ones this campaign has been chasing — cria
+feeding the model something false, or eating its clock — and those are getting rarer as the fixes
+land. This is what is underneath.
 
 ### RE-MEASURED — seeded-test tampering, and it is NOT my fixes
 
