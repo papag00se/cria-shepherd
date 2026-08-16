@@ -751,6 +751,30 @@ def runner_tally(text: str) -> str:
     return ""
 
 
+def gate_passing_tests(report: ProbeReport) -> int:
+    """Tool-reported PASSING-test count across this report's Test-kind probes, or -1 when no runner
+    printed a tally it recognises.
+
+    Sibling of :func:`gate_ran_tests` and :func:`gate_skipped_count`, and read from the same place:
+    the runner's own summary line, via ``runner_tally``, which normalizes twelve runners
+    to ``Nf/Np``. -1 rather than 0 for "no tally", so a caller can tell "the runner said nothing"
+    from "the runner said zero" — the distinction the completion gate's whole vacuous-green family
+    turns on.
+    """
+    if report is None:
+        return -1
+    kinds = proberun._kind_by_command(report)
+    total, seen = 0, False
+    for r in report.results:
+        if kinds.get(r.command) is not probediscovery.ProbeKind.Test or r.timed_out:
+            continue
+        m = re.match(r"(\d+)f/(\d+)p$", runner_tally(r.summary or "") or "")
+        if m:
+            total += int(m.group(2))
+            seen = True
+    return total if seen else -1
+
+
 def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     """One sentence when the test suite passes with the network taken away — else "".
 

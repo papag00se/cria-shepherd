@@ -290,6 +290,10 @@ class PlanSession(GuardState):
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # The highest PASSING test count any green gate has reported this session. Regression-only (#2):
+    # it exists so cria can state, as a fact from the runner's own tally (#12), that the suite used
+    # to pass more tests than it does now. See `passing_test_regression`.
+    tests_passed_high: int = 0
     # Every DISTINCT gate finding-set this step has produced, oldest first. `last_gate_flag` answers
     # "same as last time" and an ALTERNATION defeats it by construction — the findings genuinely
     # change every turn. Base-rated 2026-08-01 across 61 captured runs: 19 of them (31%) return to a
@@ -2765,6 +2769,10 @@ class Loop:
             sess.gate_fresh = True       # fresh ground truth — the completion backstop is satisfied
             sess.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
             sess.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
+            if (lost := passing_test_regression(sess, outcome.report)):
+                sess.nudge_reason = sess.nudge_reason or lost
+                rlog.emit("loop.tests_regressed", level="warning", step=idx,
+                          high=sess.tests_passed_high)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
         # A RED gate is GROUND TRUTH about the REPOSITORY — it is not, by itself, a verdict on THIS
@@ -5173,6 +5181,10 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
         gs.last_gate_red = False  # ran and clean → GREEN (the satisfaction judge may now run)
         gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
         gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
+        if (lost := passing_test_regression(gs, outcome.report)):
+            rlog.emit("loop.tests_regressed", level="warning", high=gs.tests_passed_high)
+            track_gate_progress(gs, "")
+            return prompts.render("periodic_gate", truth=lost)
         track_gate_progress(gs, "")             # GREEN → reset the streak/stall
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
@@ -5560,6 +5572,37 @@ def _checks_already_visible(body: dict, checks: str) -> bool:
         if isinstance(c, str) and needle and needle in c:
             return True
     return False
+
+
+def passing_test_regression(sess, report) -> str:
+    """A note when the suite reports FEWER passing tests than it did earlier this session, else "".
+
+    Two of cycle 3's twenty-four lost checks are one shape: the coder meant to APPEND a test, wrote
+    the edit as a replace, and a seeded test went out with the old text. Nothing in the loop asked
+    whether a turn destroyed working code — the gate runs vet/build/test and all three stay green
+    with a test deleted. In cart-billing-go x gemma4 the satisfaction judge's evidence held the test
+    present, the test passing, the full untruncated edit that overwrote it, and the next run with it
+    gone, and it answered `satisfied: true`.
+
+    REGRESSION-ONLY (#2). It cannot fire on a first attempt, a new suite or a still-broken one: it
+    needs a green tally that was higher earlier. Deletion is the dangerous shape and this is the one
+    signal that sees it.
+
+    FROM THE RUNNER'S OWN TALLY (#12) — `probegate.gate_passing_tests` reads twelve runners' summary
+    lines, so this is language-agnostic by construction (#20) rather than by a list of test-file
+    conventions. -1 means no runner printed a tally cria recognises, which is silence, not zero.
+
+    IT STATES THE FACT, IT DOES NOT ACCUSE (#2's corollary, #5b). A count can legitimately drop when
+    two tests are merged into one, so cria reports what the runner reported and leaves the judgement
+    to the coder — which is also what makes it safe to speak on a GREEN gate at all (#3)."""
+    passed = probegate.gate_passing_tests(report)
+    if passed < 0:
+        return ""                       # no tally → no signal, and no guess
+    high = getattr(sess, "tests_passed_high", 0)
+    if passed >= high:
+        sess.tests_passed_high = passed
+        return ""
+    return prompts.render("tests_regressed", was=str(high), now=str(passed))
 
 
 def _gate_notes(sess) -> str:

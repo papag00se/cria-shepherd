@@ -1,0 +1,1 @@
+The test runner reported {{WAS}} passing tests earlier in this session and reports {{NOW}} now. Tests that were passing are no longer being run. If that was deliberate — two tests merged into one, a test moved — carry on. If a test disappeared as a side effect of an edit (an append written as a replace is the usual way), restore it before continuing.
