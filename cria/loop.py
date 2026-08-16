@@ -3,7 +3,13 @@ hands the coder ONE item at a time (framed as if it were the whole task), lets t
 harness run the coder's tools, and when the coder says "done" checks with the
 reasoner before marking the item complete and moving on.
 
-Owns no executors: cria never touches the workspace. The plan file is created and
+Owns no executors for anything the MODEL does: every model-facing tool is lowered to the
+harness's shell. cria does run things on its own side — the repo's tests, the syntax floor,
+the linters, the exec-check, read-only gathers — and it deletes the litter its own probes
+leave, with the workspace as cwd. The older wording here was "cria never touches the
+workspace", which stopped being true and is the cautionary example principle 23 records: a
+boundary that has stopped being true is worse than a wide one, because audits measure against
+it. The plan file is created and
 updated by emitting a `shell` tool call the HARNESS runs. A shell tool is REQUIRED —
 it's the primitive the loop needs for its plan file, its ground-truth probe, AND the
 coder's file writes (the writeproxy lowers write_file → a shell command). A request
@@ -5767,8 +5773,14 @@ _STEER_TRIGGER = {
 
 
 # cria's own web_fetch render header — `HTTP 200 OK · https://…` — and the endpoints outline it adds
-# for a spec. The ` · <url>` shape appears ONLY in a real rendered result, never in the coder's prose,
-# so matching it cleanly separates the ground-truth outcome from a hallucinated "the fetch 400'd".
+# for a spec.
+#
+# THE SHAPE IS NOT WHAT SEPARATES THEM; THE ROLE IS. This comment used to claim the ` · <url>` form
+# "appears ONLY in a real rendered result, never in the coder's prose", and the reader below refutes
+# it in detail: the coder READS that header in its own context and can parrot it, and one did —
+# "I tried again and got HTTP 400 · <url>" overwrote a real HTTP 200 and filed the URL under "THESE
+# URLS DID NOT WORK". What makes the ledger trustworthy is that :func:`_extract_fetches` reads TOOL
+# RESULTS ONLY. The pattern is a renderer, not a provenance test.
 _FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
 # Greedy to the LAST `]` ON THE LINE, not the first: a GraphQL discovery entry names a list type
 # as `[Handle]`, and stopping at the first bracket cut every route after it out of the ledger.
@@ -5843,8 +5855,10 @@ _fetch_facts = groundtruth.fetch_facts
 
 def _extract_fetches(messages: list[dict]) -> dict:
     """url -> (status, routes, shapes) for every web_fetch result in ``messages`` (last occurrence
-    wins), read from the REAL rendered tool headers. The ` · <url>` shape is cria's render, absent
-    from coder prose."""
+    wins), read from the REAL rendered tool headers — TOOL RESULTS ONLY, which is what makes this a
+    ledger of what happened rather than of what the coder said happened. The ` · <url>` shape is
+    cria's render, but the coder reads it in its own context and can parrot it, so the shape alone
+    proves nothing; see the note at `_FETCH_STATUS_RE` and the one on the role filter below."""
     latest: dict[str, tuple[str, str, str]] = {}
     for m in messages:
         # TOOL RESULTS ONLY. This used to read every role, and the docstring's premise — "the ` · <url>`

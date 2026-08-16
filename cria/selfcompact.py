@@ -219,26 +219,21 @@ _ENVELOPE = re.compile(r"(?im)^\s*(?:Chunk ID|Wall time|Original token count|Out
 _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 
 
-# A BOUND MAY BE KEPT; A SILENT ONE MAY NOT.
-# DEBT against #5, which now reads "cria never truncates" for every reader — the coder's, a judge's,
-# a steer author's alike — with exactly two exceptions, de-duplication and a model-made summary. This
-# head+tail bound is neither, and cycle 3 measured what it costs: a gate result clipped to 200
-# characters a side lost the failing test's NAME and the steer then named a different test. The
-# replacement is to stub what is already on disk (dedup) and summarise the rest. Until it lands, the
-# bound must still not do the two things that made it worse: take the WRONG END, or say nothing.
+# THE BOUND IS GONE — this block is history, not an instruction.
+# It used to keep 200 characters of head and 200 of tail per transcript line, under the old #5,
+# whose carve-out read as a blanket licence to bound any prompt cria composes. #5 now reads "cria
+# never truncates" for every reader, with de-duplication and a model-made summary as the only
+# exceptions, and nothing here clips anything. `_bounded` and the elision marker are deleted; a
+# regression test (tests/test_the_transcript_is_never_clipped.py) forbids their return.
 #
-# Wrong end: a test runner prints its banner first and its verdict last, so the first 400 characters
-# of a run are seed and dots. One run rendered 140 of 140 pytest results to its judges as pure
-# banner. Another rendered three different commands — `… -q 2>&1`, `… > /tmp/importer_output.txt
-# 2>&1`, `… > data/output.txt 2>&1` — to one identical 164-character line, and the steer said "You've
-# run `time mvn exec:java` three times with identical behavior".
-#
-# Silent: with no marker the reader takes the fragment for the whole. A judge shown
-# "-> result: … Parallel workers are disabled - turning *" ordered the coder to change that line; the
-# real switch was a field called WORKERS_ENABLED and the verifier reported "0 thread(s)".
-#
-# Same budget, split head and tail, and say what was dropped — exactly the shape
-# proberun.compose_probe_command already uses on probe output, and for the same reason.
+# Kept because the two failures it records are the reasons the bound was wrong, and both are easy to
+# reintroduce. WRONG END: a test runner prints its banner first and its verdict last, so the first
+# 400 characters of a run are seed and dots — one run rendered 140 of 140 pytest results to its
+# judges as pure banner, and three different commands collapsed to one identical 164-character line,
+# after which the steer said "You've run `time mvn exec:java` three times with identical behavior".
+# SILENT: with no marker the reader takes the fragment for the whole — a judge shown
+# "-> result: … Parallel workers are disabled - turning *" ordered the coder to change that line,
+# when the real switch was a field called WORKERS_ENABLED and the verifier reported "0 thread(s)".
 
 
 def _defanged_line(m: dict) -> str:
