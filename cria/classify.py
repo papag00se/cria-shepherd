@@ -97,6 +97,30 @@ class Classifier:
     def _call(self, task: str, rlog) -> Classification:
         if not task.strip():
             return self._fallback("no user text to classify", rlog)
+        obj = self._ask(task, rlog, reasoning_off=False)
+        if obj is None:
+            # A REASONING MODEL CAN SPEND THE WHOLE BUDGET THINKING AND EMIT NOTHING. Measured over
+            # five days: 14 of 119 classifier calls came back `finish_reason=length` with empty
+            # content — 229,376 tokens for zero verdicts — and one session did it six times with
+            # byte-identical prompts, each falling through to the bias. `summarize` has owned the
+            # reasoning-off retry for exactly this failure since the truncation audit; this call
+            # site never used it. One retry, thinking forced off, then the bias as before (#9: the
+            # purposeful call is cheap next to spending the budget again on the same question).
+            obj = self._ask(task, rlog, reasoning_off=True)
+            if obj is not None:
+                rlog.emit("route.classify_recovered_noreason", level="info")
+        if obj is None:
+            return self._fallback("unparseable classifier output", rlog)
+        engagement = _one_of(obj.get("engagement"), _ENGAGEMENTS, self._bias)
+        task_type = _one_of(obj.get("task_type"), _TASK_TYPES, _default_task_type(engagement))
+        reason = str(obj.get("reason", ""))[:200]
+        rlog.decide("engagement", engagement, reason or "classified", task_type=task_type)
+        with self._lock:
+            self._consec_fail = 0  # a clean classify resolves the streak
+        return Classification(engagement, task_type, reason)
+
+    def _ask(self, task: str, rlog, *, reasoning_off: bool) -> dict | None:
+        """One classifier call — the parsed verdict object, or None when nothing usable came back."""
         body = {
             "stream": False,
             "temperature": 0,  # default; the role's config (cria.toml) overrides below
@@ -111,30 +135,29 @@ class Classifier:
                 {"role": "user", "content": task},
             ],
         }
-        if self._role is not None:
-            self._role.apply(body, internal=True, rlog=rlog)
+        role = self._role
+        if reasoning_off and role is not None:
+            role = replace(role, reasoning="off")
+        if role is not None:
+            role.apply(body, internal=True, rlog=rlog)
+        elif reasoning_off:
+            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         try:
-            rlog.phase = "classifier"
+            rlog.phase = "classifier" + ("-noreason" if reasoning_off else "")
             raw = self._provider.chat(body, rlog)
         except Exception as e:  # upstream unreachable, timeout, etc.
             rlog.emit("route.classify_error", level="warn", error=str(e))
-            return self._fallback("classifier call failed", rlog)
+            rlog.emit("route.classify_error", level="warn", error=str(e))
+            return None
 
         text = completion_text(raw)
-        if self._role is not None:
-            text = self._role.clean_content(text)  # drop leaked reasoning when reasoning is off
+        if role is not None:
+            text = role.clean_content(text)  # drop leaked reasoning when reasoning is off
         obj = extract_json_object(text)
         if not obj:
-            rlog.emit("route.classify_unparsed", level="warn")
-            return self._fallback("unparseable classifier output", rlog)
-
-        engagement = _one_of(obj.get("engagement"), _ENGAGEMENTS, self._bias)
-        task_type = _one_of(obj.get("task_type"), _TASK_TYPES, _default_task_type(engagement))
-        reason = str(obj.get("reason", ""))[:200]
-        rlog.decide("engagement", engagement, reason or "classified", task_type=task_type)
-        with self._lock:
-            self._consec_fail = 0  # a clean classify resolves the streak
-        return Classification(engagement, task_type, reason)
+            rlog.emit("route.classify_unparsed", level="warn", reasoning_off=reasoning_off)
+            return None
+        return obj
 
     def _fallback(self, why: str, rlog=None) -> Classification:
         eng = self._bias  # bias toward engaging — under-engaging a task is the costly error
