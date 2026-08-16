@@ -1269,6 +1269,37 @@ def undiscoverable_tests(root: Path) -> list[str]:
     return out
 
 
+def tests_with_no_command(root: Path) -> list[str]:
+    """Test files a runner WOULD discover, in a project whose gate composed no test command — a FACT
+    about cria's own check, one sentence per language, [] when there is nothing to say.
+
+    :func:`undiscoverable_tests` answers a different question: "do these files match the language's
+    naming convention". When they DO, it correctly says nothing — and that silence was the whole
+    problem, because matching a convention is not the same as a runner having been selected to apply
+    it. A `package.json` with no `scripts.test` and no jest/vitest config yields ZERO test probes
+    while `lookup.test.js` sits right there; ranked discovery reads declared scripts and config-gated
+    tools, and this project declares neither. The gate then reported "the checks that ran reported no
+    error-class problems" with no qualifier — the vacuous green the qualifier exists to prevent,
+    reached from the other side.
+
+    NO RUNNER IS INVENTED HERE. `node --test` is deliberately absent from the floor table because it
+    cannot run jest/vitest/mocha suites and would falsely FAIL them; guessing a runner is the
+    false-red class. What cria can say without guessing is what it found and what it did not compose,
+    and #11b requires exactly that — a mechanism that could not reach the thing it was asked about
+    must say so rather than answer "nothing found"."""
+    root = Path(root)
+    out: list[str] = []
+    for conv in TEST_CONVENTIONS:
+        paths = _language_files(root, conv)
+        if not paths:
+            continue
+        discoverable, _stranded = _audit_tests(root, paths, conv)
+        if discoverable:
+            out.append(f"Test files for {conv.runner} are present ({conv.label}), but no command to "
+                       f"run them was found in this project — nothing here has run them.")
+    return out
+
+
 def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
     """The guaranteed TEST floor for the config-free case: a runner is added when the tree has that
     language's test files but no manifest to trigger ecosystem discovery. Without it a bare "script +

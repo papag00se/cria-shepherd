@@ -106,6 +106,12 @@ def plan_gate(workspace: str) -> GatePlan:
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
+        # …and the other half of the same question. `undiscoverable_tests` reports test files a
+        # runner will NOT see; this reports test files a runner WOULD see in a project where no test
+        # command was composed at all. Both end in the same clean-branch qualifier, because the coder
+        # needs the same thing from either: to know that a green gate ran no tests.
+        if not any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
+            plan.untested += probediscovery.tests_with_no_command(workspace)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
     # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
