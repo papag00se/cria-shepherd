@@ -23,6 +23,38 @@ Started **2026-08-15 23:10** on the six-fix code state.
 
 | 2 | shipping-rates-rb | qwen35 | 40% | 0 | 29 | 204 | **the 259 KB death is gone** — cycle 2 killed this cell with six HTTP 400s; this run finished normally, 204 calls, no oversize body, longest call 137.8 s. The vendor-fold fix did its job. But three checks now die on a LoadError, and that is the install fix's own doing — see below |
 | 3 | shipping-rates-rb | ternary-bonsai | 0% | **−20** | 16 | 48 | killed at the 15-minute floor. **The install fight is much shorter** — 3 `blocked_external` against cycle 2's 10, and the model got the gem (`third-party requires: ['countries']`) instead of spending half its budget failing to. It ran out of clock on the work instead: README still names one zone, it wrote no tests of its own, and `country_zone_mapping` dies on the same bare-`ruby` LoadError as cells 1 and 2. Worth noting `express_zone` reads **"prices 14.99 24.99 (want 14.99 24.99)"** and still fails — it is a compound check and the other half, "model wrote its own tests", is False |
+| 4 | shipping-rates-rb | nemotron-elastic | 0% | **−40** | 25 | 65 | exited on its own. Every failing check is a `require` LoadError, and `country_zone_mapping` shows the model reaching straight into the tree — `third-party requires: ['vendor/countries/countries']`. 7 `blocked_external`, 4 rumination aborts, no runaway |
+
+### REGRESSION — MINE. The install fix cost the Ruby column 15 points
+
+Ruby is complete and it moved the wrong way:
+
+| | cell 1 | cell 2 | cell 3 | cell 4 | mean |
+|---|---:|---:|---:|---:|---:|
+| cycle 2 | 80% | 40% | 20% | 40% | **45%** |
+| cycle 3 | 80% | 40% | 0% | 0% | **30%** |
+
+**The cause is the fix I landed yesterday**, and the chain is the one recorded two entries above.
+Before it, `_local_install_advice` named `bundle`, which does not exist here; the advice failed with
+`command not found` and the models fell through to `gem install`, which puts the gem **on the default
+load path**. That is how cycle 1's Ruby 100% runs happened. After it, the advice names `bundle3.2`,
+the models follow it, and `--path vendor/bundle` puts the gem where bare `ruby -Ilib` cannot see it.
+
+Every failing check across cells 2, 3 and 4 is a `require` LoadError. Cell 4's model gave up on
+`require "countries"` entirely and reached into the tree by hand:
+`third-party requires: ['vendor/countries/countries']`.
+
+**So the fix was right about the false fact and wrong about the remedy.** cria was naming a command
+that could not run; it now names one that runs and leaves the dependency unloadable. Both are #5b
+failures — the second is just quieter, because the command succeeds.
+
+**What it does NOT touch:** the `gem` routes are the only ones that changed behaviour, so cells 5–24
+(Go, Python, Java, Node, Rust) cannot meet this. The damage is done and contained to a column that
+has already finished.
+
+**Therefore the cycle runs on.** Stopping now would buy nothing — the affected cells are behind us —
+and would cost the one-code-state property for the twenty ahead. The Ruby column gets re-run after
+the fix phase, which is the same treatment any superseded row gets.
 
 ### TIER 1 (c3) — my install fix works, and the route it unlocked is the wrong one
 
