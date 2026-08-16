@@ -364,3 +364,158 @@ At call 0004 the search supervisor recommended `toml2`, reasoning that *"toml2 i
 for Rust TOML parsing"*. It does not exist. Because `on_target` was **true**, the recommendation never
 reached the coder. **Refuted as a cause in this run** — and it is the same hallucinated-recommendation
 path that DID fire on `cart-billing-go × nemotron`, where `on_target` was false.
+
+---
+
+## shipping-rates-rb_qwen35_codex_poff_1786811660
+
+*Agent read chunks 01–07 raw, then folded the 31-file corpus to 504,837 bytes by dropping only lines
+byte-identical to lines already read inside a replayed `PROMPT Δ` region, and read that end to end. It
+said so.*
+
+### 1. The run-killer, MEASURED — and the fix at A is sufficient on its own
+
+The last coder call asked to read the spilled doc. cria refused it (9,645 B against the 9,000 bound)
+**and appended a complete file census to the refusal** — 1,949 entries, 1,942 of them under
+`vendor/bundle`.
+
+| the body that 400'd six times | chars | est. tokens |
+|---|---:|---:|
+| as sent | 263,205 | 65,801 |
+| `vendor/bundle` lines only | 168,559 | **42,140 — 64%** |
+| **body without them** | 94,646 | **23,661** |
+
+Budget is ≈45,056. **Without the tree cria told the coder to create, the body fits with room to
+spare.** So the floor's inability to shrink a single message is real but secondary; the sufficient fix
+is upstream.
+
+A → B → C, all cria's: **A** the install denial ordered the gem into the project directory → **B** the
+workspace gained ~1,950 dependency files → **C** `workspace_inventory` walks them all, and
+`_self_compact` calls it **three times in one compaction**.
+
+**Do not add `vendor` to `BUILD_ARTIFACT_DIRS`** (deliberate — real source in some projects) and **do
+not cap the listing** (operator's call — a bounded list weakens "not listed = does not exist"). Fix at
+A/B: cria *wrote the install instruction*, so it knows the exact directory it created. Record that
+prescribed target on the session and fold that one tree to a line. A `vendor/` a human committed is
+still listed.
+
+### 2. `find="in_eu\?"` answered "no match" about a document containing `in_eu?` — VERIFIED by replay
+
+The agent replayed cria's own matcher against the preserved spill file:
+```
+_find_hits(doc, None, r'in_eu\?') -> False
+_find_hits(doc, None, 'in_eu?')   -> True
+```
+`_find_hits` is a literal substring test. `find_in` re-reads a miss two ways — alternation split and
+HTTP-verb strip — neither covering a regex-escaped term. **cria primes the spelling itself**: the spill
+message says *"Grep the file for what you need"* and the tool description shows `grep -n "<keyword>"`.
+The model wrote the query the way cria told it to and was told the document does not contain the one
+method it needed. Same class as the `holder_address|total_handles` incident the module's own comment
+records. **cria fault: yes.**
+
+### 3. "It is YAML." about an HTML page — VERIFIED by replay
+
+`_doc_format` returns YAML when any line in the first 200 chars matches `^[A-Za-z_][\w.-]*:(\s|$)`.
+The page begins `RubyDoc.info:`. **cria fault: yes** — needs a second signal, or silence (#3).
+
+### 4. cria laundered the coder's own wrong belief into ground-truth voice
+
+Call 0085, the **coder's** reasoning: *"the countries gem uses `Countries` (plural) not `Country`"*.
+Call 0087, cria's reasoner, in cria's voice: *"The error messages show Countries (plural module) not
+Country (singular)"*. Its own system prompt says *"THE CODER'S OWN WORDS AND THINKING — what it
+BELIEVES. Frequently wrong… Never repeat a claim from here as fact."* The real cause was in cria's own
+`⟦ctx:checks⟧` block verbatim: `NameError: uninitialized constant Shipping::Country`.
+
+Call 0088, the coder: **"The steer message is right - I need to read the fetched documentation file"**
+→ the 9,000-byte gate → the 169 KB census → six 400s → run over. **cria fault: yes.**
+
+### 5. Two owners for the checks preamble — one has the carve-out, one does not
+
+The anti-test-editing preamble fired ~30× from an **inline f-string at `probegate.py:547-550`**
+(a rule-22 violation on its own) with no carve-out. Its sibling
+`cria/prompts/block_nudge_preamble.txt:1` carries *"A test YOU wrote earlier in this session is
+yours."* The model found the right answer at 0035 and reversed at 0036. **cria fault: yes.**
+
+### Fixes landed this cycle, as measured on this run
+
+| fix | verdict |
+|---|---|
+| spill files always `.txt` | **behaving** — both spills `.txt`, and `spill_path_redirect` caught an absolute path |
+| `-lic` login shell | **works, and exposed a new false fact** — it is how `bundle3.2` was found, and the sentence built on it names `bundle` |
+| shared gate budget | **behaving** — 5 gates, 5 results, no exhaustion |
+| harness-truncation observer | **silent, not exercised** |
+
+---
+
+## feed-pipeline-java_qwen35 (chunks 001–076)
+
+*Agent read chunks 053–076 itself and delegated 001–052 to readers, cross-checking quotes where the
+ranges touch. It said so.*
+
+### 1. The work was complete at CALL 0141 — established from tool output, not the score
+
+All five deliverables demonstrated inside one call: REVIEW.md on disk at 6,800 B, the messy feed
+reporting `invalid_price: 1 / invalid_quantity: 2`, three byte-identical 40,000-row runs,
+`mvn compile -q` exit 0, and opencsv 5.12.0 in the pom. **The run continued for ~380 more calls.**
+
+### 2. THE OWN-GOAL — a false clause in a steer, and the model gutted working code
+
+Call 0212, delivered verbatim:
+
+> `⟦ctx:steer⟧ [REDIRECT] … The task requires 4× faster execution … but **no code changes have been
+> made to address performance**. Read the full Importer.java source file … implement concrete
+> optimizations`
+
+False, and **cria's own prompt proves it** — the same prompt shows `WORKERS_ENABLED = true`,
+`ConcurrentHashMap`, `AtomicInteger`, `Executors.newFixedThreadPool`, `LinkedHashSet` replacing the
+O(n²) `List.contains`, and OpenCSV replacing `line.split(",")`.
+
+The model adopted the steer's voice in the next turn and then, at 0217/0218, **replaced header-keyed
+column lookup with hardcoded positions**:
+
+```java
+colIndex.put("sku", 0); colIndex.put("quantity", 2); colIndex.put("unit_price", 3);
+String sku = values.length > 0 ? values[0] : null;
+```
+
+`colIndex` became dead code; the header is read and discarded. That directly attacks the task's
+"missing columns" requirement. Measured runtime never moved — 1.147 s → 1.925 s → 1.147 s — because it
+was JVM startup all along. **cria fault: yes.** This is the single most expensive byte-string in the
+cycle.
+
+### 3. The same false steer, one cycle earlier in the run — call 0182
+
+> `The coder is stuck in a loop … without addressing the core task requirements: achieving 4× speedup,
+> fixing the threading bug, or ensuring REVIEW.md is complete`
+
+All three were satisfied and visible **inside the reasoner's own prompt**. The reasoner's private
+thinking also slips out of the judge seat — *"I need to profile the current implementation… I should
+read the current Importer.java"* — the exact fence failure principle 8 documents. The model resisted
+this one; the damage landed on the next.
+
+### 4. "a specific line could not be parsed" — printed beneath the parsed line, 5+ times
+
+Found at calls 0018, 0045, 0056 and 0170 in this run, and independently at call 0020 of
+`feed-pipeline-java × gemma4`. The `⟦ctx:checks⟧` block shows
+`Importer.java:[216,28] cannot find symbol / symbol: variable knownSkus`; the steer beneath it says no
+line could be parsed and quotes the trailing `[Help 1]` URL instead.
+
+**And `probeparse.split_diag` was already fixed for exactly this** — `_MAVEN_LOC` normalises
+`file:[line,col]`, and its comment records the incident: *"cria then told the steer author 'a specific
+line could not be parsed from the output' while the located errors sat in the same turn… Seen in every
+Java cell of cycle 1; that column scored 0 / 40 / 0 / 0."*
+
+So the parser is fixed and **the steer path still selects `ground_truth_failed.txt`**. The checks block
+parses the line; the steer-selection path concludes there is none. Two paths, one signal, still
+disagreeing. **cria fault: yes** — and this is the cheapest high-value fix on the list.
+
+### 5. What the assists were worth over calls 0159–0223
+
+| mechanism | calls | earned |
+|---|---:|---:|
+| the gate | 10 | **1** — nine repeated "no error-class problems" the coder's own `mvn compile` had just printed |
+| the reasoner/steer | 3 | **0** — two asserted unfinished work that was finished, one of those caused the regression |
+| completion machinery | ~12 | reached `satisfied: true` at 0201 and the run still did not stop |
+
+Two mechanisms worked and are worth protecting: the repetition guard (accurate counts, model changed
+action) and `⟦ctx:denied⟧` on the 40,001-line `feed.csv`.
