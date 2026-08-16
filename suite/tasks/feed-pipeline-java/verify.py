@@ -212,8 +212,20 @@ def main() -> None:
     # `Importer.java:31` and the bare words "line 31", and missed "Lines 31-33 of Importer.java" —
     # a correctly located finding scored as unlocated because of how the reviewer punctuated it.
     # Same class as b623d90: assert the property the task names, nothing adjacent.
+    #
+    # THE WINDOW WAS FOUR AND A MARKDOWN TABLE NEEDS FIVE. Cycle 2, feed-pipeline-java x
+    # ternary-bonsai wrote 729 words of findings in a `| File | Line(s) | Before | After |` table:
+    #     | `src/main/java/pipeline/Importer.java` | ~45–50 | `knownSkus()` used ArrayList.contains |
+    # Between `.java` and the number sit a backtick, a space, a pipe, a space and a tilde — five
+    # non-word characters against a window of four. It scored 0 located findings and lost the check;
+    # at five it finds 13. A table is the most natural way to write "the file and the line", and
+    # nothing in the task forbids it. Widened to 24, which spans a table cell without reaching the
+    # next row: a cell's own text sits between the two, so a wider window cannot pair a filename
+    # with some other row's number. Checked against every REVIEW.md on disk — exactly one row moves
+    # (this one, 0 -> 13); nemotron's 419-word review has no located findings under either window
+    # and stays correctly at 0.
     located = re.findall(
-        r"[\w/]+\.java\W{0,4}\d+"          # Importer.java:31 · `Importer.java` (31) · .java, 31
+        r"[\w/]+\.java\W{0,24}\d+"         # Importer.java:31 · `Importer.java` (31) · | ~45–50 |
         r"|[\w/]+\.java\W{0,12}?lines?\W{0,4}\d+"   # Importer.java, on line 31
         r"|lines?\W{0,4}\d+(?:\s*[-–]\s*\d+)?",     # line 31 · Lines 31-33
         rtext, re.I)
