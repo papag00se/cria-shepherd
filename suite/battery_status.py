@@ -213,6 +213,24 @@ def _overall_delta(rs: list[dict], arm: str, model: str, cells: list[dict | None
     return " (0)" if abs(d) < 0.5 else f" ({d:+.0f})"
 
 
+def cycle_start(rs: list[dict], arm: str) -> float:
+    """When the run currently in the grid began.
+
+    `cycle_run.py` walks the matrix task-major from the top, so the newest run of the FIRST cell —
+    `TASKS[0]` x `MODELS[0]` — is the moment this pass started. Everything scored at or after it is
+    fresh; everything before it is a row carried over from an earlier pass, which is most of the grid
+    for most of a cycle. A restart re-runs that first cell, so the boundary moves with it, which is
+    the behaviour you want: after a restart the earlier cells of the abandoned pass ARE stale again.
+
+    Returns 0.0 when the first cell has never run, so nothing is marked fresh rather than everything.
+    """
+    first = [r for r in rs
+             if r.get("model") == MODELS[0] and r.get("task") == TASKS[0]
+             and f" {arm} " in f" {str(r.get('note', ''))} " and not r.get("superseded")
+             and r.get("started")]
+    return float(first[-1]["started"]) if first else 0.0
+
+
 def _arm_grid(rs: list[dict], arm: str) -> list[str]:
     """One row per model, one column per language. The shape the operator reads first."""
     langs = [language(t) for t in TASKS]
@@ -230,17 +248,26 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         overall = _overall_pct(have) or 0.0
         ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
                        m, cells, have))
+    started_at = cycle_start(rs, arm)
     for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
         # …WITH THE MOVEMENT SINCE THE PREVIOUS RUN OF THIS CELL, in percentage points, matching the
         # unit the cell is already written in.
+        #
+        # BOLD MEANS FRESH. A cycle takes hours and the grid is read throughout it, so at any moment
+        # some cells are from the run in progress and the rest are carried from the last one. Without
+        # the distinction a stale cell and a re-measured one look identical, and the report gets read
+        # as if the whole grid moved. The TOTAL is never bold: it mixes fresh and carried cells by
+        # construction, so emphasis there would claim a freshness it does not have.
         def _with_delta(c, tk):
             if not c:
                 return "·"
-            return score_of(c) + delta_of(c, prior_cell(rs, arm, m, tk, c))
+            text = score_of(c) + delta_of(c, prior_cell(rs, arm, m, tk, c))
+            fresh = started_at and float(c.get("started") or 0) >= started_at
+            return f"**{text}**" if fresh else text
         got = " | ".join(_with_delta(c, tk) for c, tk in zip(cells, TASKS))
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
-        out.append(f"| {_badge(overall)} {m} | {got} | **{overall:.0f}%**"
+        out.append(f"| {_badge(overall)} {m} | {got} | {overall:.0f}%"
                    f"{_overall_delta(rs, arm, m, cells)} | {rate} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     if len(out) == 2:
@@ -283,7 +310,9 @@ def report(rs: list[dict], now: float | None = None) -> str:
     out += ["", "## Assisted — assists ON", ""]
     out += _arm_grid(rs, "CRIA")
     out += ["",
-            "Every number carries its movement since that cell's previous run, in percentage points.",
+            "**Bold marks a cell measured in the run currently in progress**; everything else is",
+            "carried over from the previous pass. Every number carries its movement since that",
+            "cell's previous run, in percentage points.",
             "The **total** is checks passed over checks attempted across the row — a six-check task",
             "weighs more than a three-check one — and its delta is computed only over cells that have",
             "both a current and a previous run, so a part-finished cycle compares like with like."]

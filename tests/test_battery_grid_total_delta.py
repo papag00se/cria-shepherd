@@ -1,5 +1,9 @@
 """The grid's `total` column carries its movement, and computes it on comparable cells.
 
+The total is NOT bold. Bold in this grid means "measured in the run currently in progress", and the
+total mixes fresh cells with carried-over ones by construction, so emphasis there would claim a
+freshness it does not have. See tests/test_battery_grid_marks_fresh_cells.py.
+
 The per-language cells have always shown `(+40)` / `(-60)`; the total showed a bare `78%`, so the
 one number the operator reads first was the one number with nothing to read it against. Asked for
 during cycle 2's run phase, with the Ruby/Go/Python columns re-run and Java/Node/Rust still holding
@@ -28,14 +32,14 @@ class TotalColumnCarriesItsDelta(unittest.TestCase):
         rs = [row("gemma4", "shipping-rates-rb", 2.0),
               row("gemma4", "shipping-rates-rb", 4.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
-        self.assertIn("**80%** (+40)", line)
+        self.assertIn("80% (+40)", line)
 
     def test_no_prior_run_means_no_delta(self):
         """A first-ever run has nothing to move against, and says nothing rather than `(0)`."""
         rs = [row("gemma4", "shipping-rates-rb", 4.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
-        self.assertIn("**80%**", line)
-        self.assertNotIn("**80%** (", line)
+        self.assertIn("80%", line)
+        self.assertNotIn("80% (", line)
 
     def test_delta_ignores_cells_that_have_not_re_run(self):
         """THE REGRESSION THIS FILE EXISTS FOR.
@@ -51,20 +55,20 @@ class TotalColumnCarriesItsDelta(unittest.TestCase):
               row("qwen35", "feed-pipeline-java", 0.0),
               row("qwen35", "shipping-rates-rb", 5.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "qwen35" in l)
-        self.assertIn("**50%** (+80)", line)   # headline over both cells, delta over the pair only
+        self.assertIn("50% (+80)", line)   # headline over both cells, delta over the pair only
 
     def test_flat_cell_reads_zero_not_blank(self):
         """A repeated run that did not move says `(0)` — silence would read as "never compared"."""
         rs = [row("gemma4", "cart-billing-go", 5.0), row("gemma4", "cart-billing-go", 5.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
-        self.assertIn("**100%** (0)", line)
+        self.assertIn("100% (0)", line)
 
     def test_headline_still_weighs_by_checks_not_by_cell(self):
         """The total was checks-passed over checks-attempted before this change and still is: a
         4/4 task and a 0/8 task average to 33%, never to 50%."""
         rs = [row("gemma4", "orders-api-py", 4.0, 4.0), row("gemma4", "rust-toml-cli", 0.0, 8.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
-        self.assertIn("**33%**", line)
+        self.assertIn("33%", line)
 
 
 if __name__ == "__main__":
