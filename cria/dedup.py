@@ -113,6 +113,54 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
     return (out, total) if total else (msgs, 0)
 
 
+def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, ...]" = (),
+                           min_chars: int = MIN_UNIT_CHARS) -> tuple[list[dict], int]:
+    """Keep ONE copy of each byte-identical ``user``/``tool`` payload — the NEWEST — and point the
+    earlier ones at it. Rule 5's first exception, applied to whole messages.
+
+    MEASURED, over 6,614 captured coder prompts: 885 of them (13%) carried a block of 200 characters
+    or more repeated VERBATIM inside a single prompt, 2.2 MB of duplicate bytes in total. The largest
+    groups were cria's own refusal (352 prompts carrying the identical ⟦ctx:denied⟧ twice), the same
+    source file read twice, cria's own edit-failure directive, and one fetched page delivered twice.
+    Existing dedup covers the FETCH LEDGER only, so none of those were reachable by it.
+
+    NEWEST WINS, for the reason `stub_old_write_args` and `clean_gate_results` already give: the last
+    copy is the one that describes the world now, and an older copy of a file the coder has since
+    rewritten is the exact shape that made a model describe two versions of one file as "current".
+    Byte-identical here, so nothing is lost either way — but the rule must be the same rule.
+
+    NEVER an ``assistant`` turn (the model's own words are never rewritten), never a ``system``
+    message (cria's frame), and never a message carrying one of ``protect`` — an anchor block is the
+    designated single copy of its content and must not be folded into a pointer at a later duplicate.
+
+    Aggregate-lossless: n pointers plus one full copy, so the coder can still SEE it happened n+1
+    times, which is itself signal when the repeat is a refusal it kept re-earning."""
+    if not msgs:
+        return msgs, 0
+    keep: dict[str, int] = {}
+    for i, m in enumerate(msgs):
+        c = m.get("content")
+        if (m.get("role") in ("user", "tool") and isinstance(c, str)
+                and len(c.strip()) >= min_chars
+                and not any(mark in c for mark in protect)):
+            keep[c.strip()] = i          # last write wins → the newest copy is the keeper
+    if len(keep) == len([1 for m in msgs
+                         if isinstance(m.get("content"), str)
+                         and m.get("role") in ("user", "tool")
+                         and len(m["content"].strip()) >= min_chars
+                         and not any(mark in m["content"] for mark in protect)]):
+        return msgs, 0                   # every candidate was unique — same list, no copy
+    out, folded = [], 0
+    for i, m in enumerate(msgs):
+        c = m.get("content")
+        if (isinstance(c, str) and keep.get(c.strip(), i) != i):
+            out.append({**m, "content": note})
+            folded += 1
+            continue
+        out.append(m)
+    return (out, folded) if folded else (msgs, 0)
+
+
 # ── Per-run noise ────────────────────────────────────────────────────────────────────────────────
 # Two payloads that differ ONLY here are the same payload. Everything in this table was MEASURED as
 # the sole difference between near-identical payloads across captured sessions — nothing is here on

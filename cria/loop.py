@@ -6178,6 +6178,13 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
                                                        marker=selfcompact.FACTS_MARKER, ledger=ledger)}
 
 
+# An anchor block is the DESIGNATED single copy of its content: folding it into a pointer at a later
+# duplicate would move the content out of the protected head. Mirrors selfcompact._ANCHOR_MARKERS
+# (a test asserts sync) plus the denial marker, whose repetition IS the signal.
+_ANCHOR_MARKERS_FOR_DEDUP = (selfcompact.FACTS_MARKER, selfcompact.TASK_MARKER,
+                             selfcompact.SUMMARY_MARKER, BRIEFING_OPEN, CONTINUATION_MARKER)
+
+
 def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
     """ONE copy of the fetch ledger per outbound view. The ⟦ctx:facts⟧ anchor just injected is the
     owner; byte-identical copies elsewhere — the compaction summary's fetch-facts appendix (baked
@@ -6191,6 +6198,13 @@ def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
                                        skip_prefix=selfcompact.FACTS_MARKER)
     if n and rlog is not None:
         rlog.emit("context.ledger_dedup", excised=n)
+    # …and the same rule for whole messages the harness repeated verbatim, which the ledger units
+    # cannot reach: a file read twice, cria's own refusal re-earned, one page delivered twice.
+    # Measured at 13% of coder prompts and 2.2 MB. See dedup.fold_repeated_messages.
+    out, folded = dedup.fold_repeated_messages(
+        out, prompts.load("repeated_message_note").strip(), protect=_ANCHOR_MARKERS_FOR_DEDUP)
+    if folded and rlog is not None:
+        rlog.emit("context.repeat_dedup", folded=folded)
     return out
 
 
