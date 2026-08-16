@@ -7785,9 +7785,13 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     truth = guard_ground_truth(outcome)
     canned = prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=truth) if truth \
         else prompts.render("spin_no_truth", spin_path=gs.spin_path)
-    steer = canned if author is CANNED else (author("wheel_spin", gs, outcome, body, rlog) or canned)
-    rlog.emit("loop.spin_probe_result", step=step, spoke=True)
-    return steer
+    authored = "" if author is CANNED else (author("wheel_spin", gs, outcome, body, rlog) or "")
+    # `spoke=True` was a LITERAL, so the log said `spoke` on 121 of 121 occasions and could not have
+    # said anything else — a tautology wearing a measurement's clothes (#12). What actually varies is
+    # who wrote the steer and whether it carries any ground truth, so record THAT: `authored` false
+    # with `grounded` false is cria talking with nothing to say, and now it is countable.
+    rlog.emit("loop.spin_probe_result", step=step, authored=bool(authored), grounded=bool(truth))
+    return authored or canned
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:

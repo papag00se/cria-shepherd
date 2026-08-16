@@ -201,6 +201,51 @@ class _Rlog:
         return [k for k, _ in self.events]
 
 
+class TheWheelSpinMetricIsAMeasurementTests(unittest.TestCase):
+    """`spoke=True` was a literal, so the log said `spoke` on 121 of 121 occasions and could not
+    have said anything else. What varies is who wrote the steer and whether it carries any ground
+    truth — cria talking with nothing to say is now countable (#12)."""
+
+    def _gs(self):
+        gs = GuardState()
+        gs.gate_plan = object()
+        gs.probe_call_id = "c1"
+        gs.spin_path = "handler.py"
+        gs.spin_probe = True
+        return gs
+
+    def _run(self, gs, *, truth, authored):
+        got = outcome()
+        real_read, real_truth = loop.read_gate, loop.guard_ground_truth
+        loop.read_gate = lambda plan, probe, rlog: got
+        loop.guard_ground_truth = lambda o: truth
+        rlog = _Rlog()
+        try:
+            author = loop.CANNED if authored is None else (lambda *a, **k: authored)
+            steer = loop.guard_probe_steer(gs, {"messages": []}, rlog, author=author, step=1)
+        finally:
+            loop.read_gate, loop.guard_ground_truth = real_read, real_truth
+        return steer, next(kw for k, kw in rlog.events if k == "loop.spin_probe_result")
+
+    def test_a_reasoned_steer_is_recorded_as_authored(self):
+        steer, ev = self._run(self._gs(), truth="cart.go:3 boom", authored="Read cart.go first.")
+        self.assertEqual(steer, "Read cart.go first.")
+        self.assertTrue(ev["authored"])
+        self.assertTrue(ev["grounded"])
+
+    def test_a_declining_reasoner_falls_to_the_canned_floor_and_says_so(self):
+        steer, ev = self._run(self._gs(), truth="cart.go:3 boom", authored="")
+        self.assertIn("cart.go:3 boom", steer)      # the FACT still ships
+        self.assertFalse(ev["authored"])
+        self.assertTrue(ev["grounded"])
+
+    def test_no_reasoner_and_no_ground_truth_is_the_countable_worst_case(self):
+        steer, ev = self._run(self._gs(), truth="", authored=None)
+        self.assertTrue(steer)                      # never None — that misroutes into the done gate
+        self.assertFalse(ev["authored"])
+        self.assertFalse(ev["grounded"])
+
+
 class ThePeriodicCheckInKeepsItsOneDifferenceTests(unittest.TestCase):
     """A periodic check-in is a real gate run — so it records the reading — but the coder has NOT
     claimed done, and letting its clean result set `gate_fresh` would pre-satisfy the completion
