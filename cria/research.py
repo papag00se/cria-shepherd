@@ -314,6 +314,25 @@ def step_defect(text: str, task: str, instruction: str = "") -> str | None:
     own prompt, and `tests/test_step_echo_defect.py` pins the sync so a prompt rename breaks loudly."""
     if len(text) > STEP_MAX_CHARS:
         return "it is far longer than one step"
+    if len(text.split()) == 1:
+        # ONLY A PLACE, NOTHING TO LEARN THERE. The prompt asks for "one sentence naming that source
+        # AND what task-specific names, structures, or behavior must be learned from it"; this
+        # refuses the half that answers only WHERE. ternary-bonsai/go answered the bare string
+        # `go.mod`, which every other arm passes — it is not a build verb, not third person, not
+        # over-long, and the task's own words contain `go.mod`, so the location arm exempts it. It
+        # became "Do ONLY this step (1 of 2), then stop: go.mod" in 43 of 43 coder prompts; the
+        # coder read that file 17 times, rewrote it 5 times, never once opened `cart_test.go`, and
+        # the cell scored 1 of 5 on a workspace that was three edits from 4 of 5.
+        #
+        # NOT "it named a file in the workspace" — that would revert this module's own decision that
+        # research is reading, whatever the source (see `sources_read`: counting web fetches alone
+        # made the check permanently NOT_DONE for every task whose reading is local). A workspace
+        # file is a legitimate source. A bare noun is not a step.
+        #
+        # Deliberately the crudest test of "is this a sentence at all": one token, no whitespace.
+        # A shape, not a threshold — nothing here to tune and no exception list to grow (#8).
+        return ("it names only a place to look and nothing to learn there — a step must say what "
+                "names, structures or behavior have to come out of the source")
     lowered, task_l = text.lower(), (task or "").lower()
     if re.search(r"(?i)\bthe coder\b", text) and "the coder" not in task_l:
         # Silenced when the TASK's own words carry the phrase — the same exemption the location and

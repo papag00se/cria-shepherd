@@ -2880,8 +2880,21 @@ class Loop:
         # OBSERVE-ONLY (operator, 2026-08-05: "I'm not too comfortable with #16"). It ASKS and it
         # RECORDS; it does not advance. The reasoning is the same one that governs the dictated-code
         # guard beside it: this is new authority over when a plan MOVES, its documented predecessor
-        # turned a 1.0 into a 0.0, and it has never executed live — both runs on this code state were
-        # plan-off, where this path does not exist. A guard earns power on evidence, not on argument.
+        # turned a 1.0 into a 0.0. A guard earns power on evidence, not on argument.
+        #
+        # STALE PREMISE, CORRECTED 2026-08-16 — this used to add "it has never executed live: both
+        # runs on this code state were plan-off, where this path does not exist". Route-unify made
+        # plan-off a synthetic one-item plan, so the path DOES exist there and has now executed.
+        # cart-billing-go x ternary-bonsai, 14:23:19, three and a half minutes in:
+        #   loop.periodic_step_check  step=1 done=true  reason="the go.mod file ... contains the
+        #                                                       required content"
+        #   loop.periodic_step_satisfied  observe_only=true  step_text="go.mod"
+        # The critic was RIGHT and could not act, so the run spent 26 more minutes on a five-line
+        # file and scored 1 of 5 on a workspace three edits from 4 of 5. That is one case, on the
+        # plan-off path rather than the planner-ON runs the flip condition below asks for, and the
+        # operator's discomfort was with the authority itself — so it is recorded here, not acted on.
+        # The step that caused it is refused upstream now (research.step_defect's bare-location arm),
+        # which removes this instance without granting the guard any new power.
         #
         # WHAT FLIPS IT: `loop.periodic_step_check done=true` events across real planner-ON runs,
         # each read against what the workspace actually held at that turn. If the critic is right
