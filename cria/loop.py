@@ -6417,6 +6417,21 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         # five ON_TRACK verdicts over an untouched workspace (rule 5b, in cria's own prompt).
         disk = _label_spill_entries(workspace_inventory(workspace_root))  # same label on BOTH branches
     truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
+    # THE AUTHORITATIVE FINDING-SET, ADDED WHEN THE COMPUTED TRUTH CARRIES NONE. `last_gate_flag` is
+    # the gate's own finding-set — the object `_gate_notes` already builds the CODER's checks block
+    # from, and the one `judge_satisfaction` already receives as `gate_findings=` at three call
+    # sites. The steer author was the only seat reading a re-render of the transcript instead, and
+    # on shipping-rates-rb x nemotron-elastic that re-render came back as "a specific line could not
+    # be parsed" plus two exit codes. Writing from that, the author named
+    # `test_domestic_light_parcel` with numbers from a stale failure and told the coder to set the
+    # constant the LIVE failing test asserts is 12.0 to 0.0 — while the gate's own output, nineteen
+    # lines above it in the same prompt, named `test_oversize_surcharge_still_applies_to_free_
+    # shipping`. Derive the signal from the authoritative event, never a re-render of it (#12).
+    # ADDITIVE (#2): it only ever tells the author MORE, and stays silent when the flag is already
+    # represented or empty (#3).
+    flag = (getattr(gs, "last_gate_flag", "") or "").strip()
+    if flag and flag not in truth:
+        truth = "\n\n".join(t for t in (truth, flag) if t)
     # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
     # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
     # Pass gs so DURABLE facts (a spec fetched long ago, now floored out) still reach the steer.
