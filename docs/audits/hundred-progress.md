@@ -13,9 +13,31 @@ rewrites itself after every cell.
 **Phase: FIX.** All eight walk agents reported. Findings in `docs/audits/cycle-2-walk.md`; the ranked
 list is below and folded into `docs/audits/context-footgun-backlog.md`.
 
-## Cycle 3 — RUN in flight
+## Cycle 3 — RUN in flight (restarted 04:48)
 
-Started **2026-08-15 23:10** on the six-fix code state.
+**Restarted three times, and the third restart is the one that counts.** The run below begins
+2026-08-16 04:48 on the eight-fix code state, with the service verified up first.
+
+- **23:10** — started on the six-fix state. Stopped at cell 9 after a 720 s / 44,058-token call took
+  a cell that had scored 100% in both previous cycles to 0%.
+- **03:12** — restarted with the window-exhaustion guard. Stopped at cell 1: the guard counted
+  characters cria had accumulated and the tokens were arriving in a shape the reader does not
+  collect, so it missed the very call it was built for.
+- **03:59** — restarted with the guard counting frames. **This run was invalid**: the service restart
+  and the run launch were chained into one backgrounded command and raced, so cell 1 ran 03:59–04:45
+  on the *pre-fix* code while the service came up at 04:46. My error, and the reason two more
+  runaways (669 s and 649 s) went untouched — nothing was wrong with the guard, it was not running.
+- **04:48** — restarted sequentially and verified: run stopped, repo at `93e84b8`, the guard line
+  confirmed present in the **importable module** rather than just the file, service restarted and
+  confirmed active, run started twelve seconds later.
+
+*Measured while diagnosing, rather than assumed: a 120-token request to the live server returns 121
+SSE frames carrying a delta. One frame per token, so counting frames is a faithful token proxy here.*
+
+| # | task | model | score | Δ | min | calls | what happened |
+|---:|---|---|---:|---:|---:|---:|---|
+| 1 | shipping-rates-rb | gemma4 | 60% | −20 | 8 | 57 | **no runaway at all** — longest call 47.2 s against 669–720 s on every previous attempt, and the whole cell finished in 8.2 minutes instead of 43. The window guard is live and did **not** fire, so this run simply had nothing for it to catch; it remains unexercised. `hidden_contract` passes again (twice running now), so the bundler load-path wound is not universal. The two losses: a **deleted seeded test** (`test_negative_weight_rejected`), and `country_zone_mapping` mapping almost everything to `international` |
+
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|

@@ -68,3 +68,14 @@
 [02:19:26] (8/24) cart-billing-go x nemotron-elastic — start
 [02:50:40] (8/24) cart-billing-go x nemotron-elastic — exit 0
 [02:50:40] (9/24) orders-api-py x gemma4 — start
+[03:07:00] (9/24) orders-api-py x gemma4 — exit 0
+[03:07:00] (10/24) orders-api-py x qwen35 — start
+[03:12:43] (1/24) shipping-rates-rb x gemma4 — start
+[03:56:06] (1/24) shipping-rates-rb x gemma4 — exit 0
+[03:56:06] (2/24) shipping-rates-rb x qwen35 — start
+[03:59:37] (1/24) shipping-rates-rb x gemma4 — start
+[04:45:52] (1/24) shipping-rates-rb x gemma4 — exit 0
+[04:45:52] (2/24) shipping-rates-rb x qwen35 — start
+[04:48:00] (1/24) shipping-rates-rb x gemma4 — start
+[04:56:32] (1/24) shipping-rates-rb x gemma4 — exit 0
+[04:56:32] (2/24) shipping-rates-rb x qwen35 — start
