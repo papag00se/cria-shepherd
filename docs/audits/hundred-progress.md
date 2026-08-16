@@ -19,9 +19,43 @@ Started **2026-08-15 23:10** on the six-fix code state.
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
-| 1 | shipping-rates-rb | gemma4 | 0% | **−80** | 16 | 14 | one call ate the cell — see below |
+| 1 | shipping-rates-rb | gemma4 | **80%** | 0 | 29 | 94 | **`country_zone_mapping` passes for the first time on this model** — `third-party requires: ['bundler/setup', 'countries/global']` and real zones, where cycle 2 said "none". The install-remedy fix worked: told to run `bundle3.2`, the model installed the gem and used it. The one loss is `hidden_contract`, and it is the same fix's shadow — the model's `rates.rb` now opens `require "bundler/setup"`, and the hidden test runs bare `ruby`, so it dies on a LoadError. `gem_bundler` buys the dependency check and costs the bare-ruby one; `gem_direct`'s text is the route that warns about exactly this |
 
-### TIER 1 (c3) — a single call generates ~43,000 tokens and burns twelve minutes
+### TIER 1 (c3) — the dead stream, and the half of it the fix does NOT cover
+
+**Landed mid-cycle and the run restarted from cell 1**, so cycle 3 is still one code state. The fix
+aborts a stream that has run many frames having accumulated **nothing readable** — the exact shape of
+the first occurrence: `content: null`, no reasoning, no tool-call fragment, `finish_reason: length`,
+`total_tokens` equal to n_ctx.
+
+**It did not fire on the re-run, and the re-run hit the same thing.** Call 0009: 736.9 s, 44,549
+tokens, `content` empty, `tool_calls` empty, `finish_reason: length`, 4,603 + 44,549 = **49,152 =
+n_ctx exactly**. Same outcome, and the guard stayed silent — so `streamed_chars` was not zero.
+
+**The reading that follows:** this is not "nothing arrived". Tool-call argument fragments *did*
+arrive — a `write_file` whose arguments ran for twelve minutes and never closed — so cria counted
+them as readable, and the final assembly then discarded an unterminated call. Two shapes wearing one
+result:
+
+| shape | what streams | covered by the new guard |
+|---|---|---|
+| nothing arrives at all | no deltas cria reads | **yes** |
+| arguments arrive and never terminate | tool-call fragments, unclosed | **no** |
+
+**What is NOT the fix.** A size cap on the arguments is precisely the footgun principle 6 forbids and
+the reason the rumination watcher excludes arguments in the first place; a legitimate large
+`write_file` is indistinguishable from this one until it ends.
+
+**What might be, and needs the next fix phase rather than another mid-cycle edit:** cria holds
+`n_ctx` and the prompt's token count, so it knows the exact point past which a generation *can no
+longer be returned* — at that point `guard_truncation` will discard it whatever happens next. Aborting
+there destroys nothing that was going to survive, and it converts a silent twelve-minute loss into a
+labelled one the coder can be told about. That is deterministic ground truth, not a heuristic. It
+does not save the twelve minutes; it saves the next twelve.
+
+Recorded, not built. One code state per cycle, and this cycle has already been restarted once.
+
+### The original finding — a single call generates ~43,000 tokens and burns twelve minutes
 
 **Not caused by this cycle's fixes, and checked before saying so.** Cycle 2's run of the *same cell*
 hit the identical runaway — 754.9 s for 43,616 tokens — and still scored 80%, because it landed with
