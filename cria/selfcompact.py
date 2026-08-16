@@ -199,10 +199,13 @@ _ENVELOPE = re.compile(r"(?im)^\s*(?:Chunk ID|Wall time|Original token count|Out
 _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 
 
-# A BOUND MAY BE KEPT; A SILENT ONE MAY NOT. Bounding a prompt cria composes for its own judge or
-# steer author breaks no rule — over-applying never-truncate to composed prompts is itself a
-# documented footgun (#5's counter-nuance, the useless-prompting sweep). What broke was the two
-# things a bound must not do: take the WRONG END, and say nothing about it.
+# A BOUND MAY BE KEPT; A SILENT ONE MAY NOT.
+# DEBT against #5, which now reads "cria never truncates" for every reader — the coder's, a judge's,
+# a steer author's alike — with exactly two exceptions, de-duplication and a model-made summary. This
+# head+tail bound is neither, and cycle 3 measured what it costs: a gate result clipped to 200
+# characters a side lost the failing test's NAME and the steer then named a different test. The
+# replacement is to stub what is already on disk (dedup) and summarise the rest. Until it lands, the
+# bound must still not do the two things that made it worse: take the WRONG END, or say nothing.
 #
 # Wrong end: a test runner prints its banner first and its verdict last, so the first 400 characters
 # of a run are seed and dots. One run rendered 140 of 140 pytest results to its judges as pure

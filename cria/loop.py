@@ -1283,8 +1283,11 @@ def leaked_judge_tool(text: str) -> str:
     return name if name and name not in _JUDGE_TOOLS else ""
 
 
-# How much of a recovered judge verdict's reasoning is carried forward as the reason. A BOUND on a
-# prompt cria composes, which principle 5's counter-nuance allows — but it must never land mid-word.
+# How much of a recovered judge verdict's reasoning is carried forward as the reason.
+# DEBT against #5, which now reads "cria never truncates" for EVERY reader, not just the coder. The
+# two allowed exceptions are de-duplication and a model-made summary; a char bound is neither. The
+# replacement here is to ask for the short reason rather than clip the long one. Until then it must
+# at least never land mid-word.
 REASON_BUDGET_CHARS = 300
 # Above this a "sentence" is not one — it is unpunctuated text that re.split could not divide, and
 # letting it ride whole is how a judge's entire private essay became the coder's directive. Cut it on
@@ -1722,9 +1725,11 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
 
-# The critic/re-derivation evidence budget, in characters. This is a prompt cria COMPOSES for a judge,
-# not something the coder reads — and principle #5's counter-nuance is explicit that bounding a composed
-# prompt breaks no rule, while over-applying never-truncate to one is itself a documented footgun.
+# The critic/re-derivation evidence budget, in characters.
+# DEBT against #5 ("cria never truncates", every reader). The incident below is the argument for the
+# RIGHT fix rather than this one: the log grew 34KB → 106KB → 223KB across re-nudges on ONE step,
+# which is the same content repeated — de-duplication, the first allowed exception, removes it
+# losslessly. A char bound removes whatever happens to be last.
 # Observed live (run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB across
 # re-nudges on ONE step; at 223KB the critic call needed a floor REFIT, then errored outright, so the
 # verdict came back "unverified (no parseable verdict)" — which fails CLOSED and re-nudges, which grows
@@ -6589,8 +6594,9 @@ _STEER_REASONING_STUCK = re.compile(
     r"should not (?:output|say|emit|use)|must not (?:output|say|emit)|"
     r"not ON_TRACK|instead of ON_TRACK|looping|we must write|need to give a directive)\b")
 
-# How much of the author's thinking the recovery question carries. Bounding a prompt cria COMPOSES is
-# what principle 5's counter-nuance allows — the coder never reads this — and the traces run to 9,000+
+# How much of the author's thinking the recovery question carries.
+# DEBT against #5 ("cria never truncates", every reader) — the allowed exception here is a model-made
+# summary of the trace, not a clip of it. The traces run to 9,000+
 # characters. The TAIL, not the head: a reasoner's conclusion, and the directive it settled on, is
 # what it writes LAST ("Thus we will output: Stop re-running web_fetch …", call 0255).
 STEER_REASONING_BUDGET_CHARS = 4000

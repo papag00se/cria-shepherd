@@ -40,26 +40,19 @@ A refused step falls back to NONE, which is the existing safe direction (no step
 
 ---
 
-## 2. The steer author is shown a re-rendered copy of the gate result instead of the gate object cria already holds
+## 2. The steer author is shown a clipped re-render of the gate result
 
-**CORRECTION — my first framing of this was wrong on doctrine, and there was already a logged entry for it that I did not check.** I wrote that the defect was that tool results are "cut to 200 characters from each end". That is not a violation. Principle 5's counter-nuance is explicit:
+**A** — two defects, one line, `cria/selfcompact.py:261`:
 
-> Never-truncate governs the *coder's reads*, NOT a prompt cria *composes* for a judge or steer. Bounding a composed prompt breaks no rule — **over-applying never-truncate to composed prompts is itself a documented footgun.**
+```python
+return f"{head}: {_bounded(' '.join(body.split()), 400)}" if body else head
+```
 
-The steer author's prompt is composed by cria. Bounding it is allowed, and un-bounding it would revert `project_useless_prompting_sweep` — a bad-fix condition the walk process names outright. `docs/audits/context-footgun-backlog.md` §7 already logs this exact finding (18 occurrences, 5 languages, 3 models, "Fix belongs at: A-earliest") and states the rule correctly: *"Rule 5's counter-nuance permits bounding a composed prompt only when the bound is DISCLOSED."*
+`' '.join(body.split())` **flattens every newline**; `_bounded(..., 400)` keeps **200 characters of head and 200 of tail**. That serialised transcript is what the steer author reasons from (`loop.py:6313`) and what the reasoner gets as evidence (`loop.py:7450`).
 
-**And the disclosure half has since landed.** My own reproduction shows the marker: `[749 chars elided; head+tail kept — re-read the source for the middle]`. So the part of §7 that made this a 5b false fact is fixed. What remains is a different rule.
+**Doctrine, restated by the operator 2026-08-16 and now the rule.** *cria never truncates — it does not matter whether the reader is the coder, a judge or a steer author. Two exceptions: de-duplication, and a model-made summary or selection.* A head+tail char bound is neither, so this is simply a violation of #5. (An earlier version of this entry argued the opposite from the old counter-nuance, which read as a blanket licence to bound any composed prompt. That reading is retired; the simpler rule is what the doc now carries.)
 
-**A** — **principle 12**, not 5. The steer author's view of the checks is *re-rendered from the transcript* when cria is holding the authoritative object. `sess.last_gate_flag` is the gate's own finding-set; `_gate_notes` (`loop.py:5559`, `:5578`) already builds the **coder's** checks block from it, and `judge_satisfaction` already receives it as `gate_findings=` at three call sites (`loop.py:2308`, `:3545`, `:3810`). The steer author is the one seat that does not get it — it gets `selfcompact.serialize(...)` of the message history (`loop.py:6313`), i.e. a bounded re-render of a tool message rather than the event.
-
-> Rule 12: *Derive counts and signals from the structured event — never by re-counting a finalized response or matching an English needle in prose.*
-
-Two things follow from re-rendering, and both were measured:
-
-1. **cria's own preamble is charged to the ground truth's budget.** The gate result the author reads begins with cria's 307-character `⟦ctx:checks⟧` explanation, so the entire 200-char head half is spent on cria's words and none on the checker's.
-2. **The bound is applied to the wrong unit.** A per-transcript-line bound is right for background turns and wrong for the one turn the steer is *about*.
-
-**Before** — I ran cell 4's *real* 1,157-character gate result through `selfcompact._defanged_line` myself. What the steer author sees:
+**Before** — cell 4's *real* 1,157-character gate result, run through `_defanged_line`:
 
 ```
 → result: ⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the
@@ -69,46 +62,30 @@ middle]...tes.rb:23]: Expected: 12.0 Actual: 0.0 7 runs, 7 assertions, 1 failure
 skips rake aborted! Command failed with status (1) …
 ```
 
-`"test_oversize_surcharge" in line` → **False**. The failing test's name is gone and the path is cut mid-word to `tes.rb:23]`. The author is asked which test failed while holding text that no longer says — and it answered `test_domestic_light_parcel`, then prescribed setting to `0.0` the constant the real failing test asserts is `12.0`.
+`"test_oversize_surcharge" in line` → **False**. The failing test's name is gone and the path is cut mid-word to `tes.rb:23]`. The author was asked which test failed while holding text that no longer said — and it answered `test_domestic_light_parcel`, then prescribed setting to `0.0` the constant the real failing test asserts is `12.0`.
 
-**After** — hand the author the same object the coder's block and the judge already get, exactly as §7 proposed ("build the author's check block from the same last-gate object the coder's checks block uses, staleness sentence included"):
+Note where the 200-character head went: entirely into cria's own 307-character `⟦ctx:checks⟧` preamble. Not one character of ground truth survived in the head half.
+
+Same line, same run, two more losses: cell 7's version numbers were in the elided middle, so cria invented `v1.32.0`; cell 8's newline collapse made the reasoner read `cart.go` as one line and conclude *"That's invalid syntax"*, ordering a fix for a problem that did not exist.
+
+**After** — take the exception the rule actually allows, and stop re-rendering what cria already holds:
 
 ```python
-    # Rule 12: the checks slot is filled from the authoritative gate object, never re-rendered from
-    # the transcript. `_gate_notes` already builds the coder's block from `last_gate_flag`, and
-    # judge_satisfaction already takes it as gate_findings= at three sites; the steer author was the
-    # one seat left reading a bounded re-render. Cycle 3 cell 4: the 200-char head went entirely to
-    # cria's own 307-char ⟦ctx:checks⟧ preamble, the failing test's NAME landed in the elided middle,
-    # and the steer named a different test and prescribed a change that would red the real one.
-    # The transcript bound STAYS as it is — this is a composed prompt and bounding it is #5's own
-    # carve-out; what changes is which object the checks slot is built from.
-    gate_block = _gate_notes(gs)          # the same last-gate object, staleness sentence included
+    # #5: cria never truncates, for any reader. The two exceptions are de-duplication and a
+    # model-made summary — a head+tail char bound is neither.
+    #  * the checks slot is filled from the AUTHORITATIVE gate object, not re-rendered from the
+    #    transcript. `_gate_notes` already builds the coder's block from `sess.last_gate_flag`, and
+    #    judge_satisfaction already takes it as gate_findings= at three call sites; the steer author
+    #    was the one seat left reading a bounded copy.
+    #  * a superseded payload is STUBBED to its on-disk reference (dedup), not clipped.
+    #  * what is genuinely too large gets a model-made summary, labelled as one.
+    #  * newlines are kept: a compiler and a test runner are line-oriented.
+    gate_block = _gate_notes(gs)
 ```
 
-The 400-char transcript bound is left exactly where it is. Nothing about never-truncate changes.
+**Did I confirm the agents?** **Yes on the mechanism, twice corrected on the doctrine.** Three agents reported a 400-char and a head/tail clip; I pulled cell 4's real gate output and ran it through the function myself, finding the detail they missed — cria's own preamble eats the head. I then argued myself out of the finding using the old counter-nuance, and back into it on the operator's correction. The measurement never moved; only my reading of the rule did. **Not independently checked**: cell 7's 1,812 elided characters.
 
-**Still open from §7, and not proposed here**: "never clip the turn that carries the task" and "budget `edit_file`'s two strings separately". Both are real; neither was measured in this run, so neither is ranked here — see §7 for their own evidence.
-
-**Separately — the newline collapse is a different defect and stands on its own.** `' '.join(body.split())` at `selfcompact.py:261` flattens a compiler's or a test runner's line-oriented output into one line *before* bounding. That is not a truncation question — a reasoner read `cart.go` as a single line and concluded *"That's invalid syntax"*, ordering a fix for a problem that did not exist. Keeping newlines for a check result costs no budget.
-
-**Did I confirm the agents?** **Yes on the mechanism, and the operator corrected my reading of it.** Three agents reported a 400-char and a head/tail clip; I pulled cell 4's real gate output and ran it through the function myself, and found the detail they missed — cria's own preamble eats the head. But I then framed the clip itself as the violation, which inverts principle 5's counter-nuance and would have reverted a previous fix. The operator caught it. Checking `context-footgun-backlog.md` §7 — which I should have done before proposing anything — showed the finding was already logged with a better fix than mine, and that its disclosure half had already landed. **Not independently checked**: cell 7's 1,812 elided characters.
-
-**SECOND CORRECTION — I over-corrected, and the cited source says so.** The operator asked where "over-applying never-truncate to composed prompts is itself a documented footgun" is actually documented. Following the citation: `docs/audits/2026-07-20-useless-prompting-anomaly-audit.md` **is not in the repo**. It and three other dated audits `principles.md` cites were removed by `8f52a11 chore(docs): stop tracking the dated audit reports`. Recovered from git (`git show 810eabe:…`), its cross-cutting root reads:
-
-> cria has a deliberate, correct stance — **never truncate content the model asked to READ** … That stance is right for the *coder's own reads*. But it has been **over-applied to prompts cria COMPOSES for a judge/steer** — where the floor bounds the total but never **de-dupes** or **stubs**, so redundant + growing content re-crowds every reasoner call. Two concrete failure modes fall out of it: a byte-equality dedup that silently fails, and the whole session re-serialized on every steer fire. Composing a judge prompt is *not* the coder's read — bounding it there breaks no rule.
-
-The documented footgun is **failing to DE-DUPE or STUB**, so a composed prompt bloats. The licence is to dedup and stub. It is not a licence to head/tail clip the one block the steer is about — and the same audit says so explicitly, four lines from the end:
-
-> **Direction:** bound only *re-included READ payloads* … **keep genuine command/test output full.**
-> Brushes never-truncate — keep the cap as the safety valve; treat as judgment, not fix-on-sight.
-
-A gate result **is** genuine command/test output. So the clip measured here is being applied to precisely the category its own governing audit says to keep full. My original instinct was not the doctrine violation I then talked myself into — the operator was right that "cut to 200 chars" is not *by itself* a violation, and I was wrong to conclude from that the clip was therefore fine.
-
-**The rewritten fix stands anyway, and is still the better one**, because it makes the question moot: filling the slot from the authoritative gate object means there is no transcript re-render to bound. Rule 12 settles it without anyone having to adjudicate rule 5.
-
-**Verdict**: **MODIFY FIRST — as now written.** The blanket "never bound a composed steer prompt" version remains **DO NOT LAND** — that would revert `project_useless_prompting_sweep`, whose whole finding is that composed prompts were going un-deduped and un-stubbed. The rewritten version is additive (one more slot filled from an owner that already exists) and touches no bound.
-
-**Docs defect found on the way, worth its own line.** `docs/principles.md` cites four dated audit files, and **all four are absent from the working tree** — removed deliberately by `8f52a11`, but the citations were left pointing at them. The canonical doctrine document currently sends a reader to four dead paths. Not fixed here: re-adding the files would revert a deliberate untracking decision, so the right repair is to change the citations to name the commit that holds them. Operator's call.
+**Verdict**: **SAFE TO LAND** under the simplified #5. Filling the slot from the authoritative object is additive (one more slot fed from an owner that already exists) and removes a bound rather than adding one.
 
 **Recoverable**: cell 4 and cell 7 both lost their remaining turns to steers written from this.
 
@@ -489,7 +466,7 @@ The fix is a cadence and a gate that can reach a stuck cell — the two purposes
 | # | Fix | Reaches A? | Confirmed by me? | Vetting |
 |---|---|---|---|---|
 | 1 | research step must not name a workspace file as the external source | yes | **partly** — I proved the 4-name score myself and overturned the 1-name headline; the DONE-at-0006 chain is theirs | unvetted |
-| 2 | fill the steer author's checks slot from the authoritative gate object (rule 12), not a re-render; keep newlines for check output | yes | **mechanism yes — but I framed it wrong and the operator corrected me**; the backlog already had the better fix | MODIFY FIRST (original version: DO NOT LAND) |
+| 2 | fill the steer author's checks slot from the authoritative gate object, stub what is on disk, keep newlines — the 400-char head+tail bound is simply a #5 violation under the simplified rule | yes | **mechanism yes; doctrine corrected twice by the operator** | **SAFE** |
 | 3 | evidence-fence "what remains to be done"; relabel the judge's header | yes | **yes for cell 2 + the wiring**; cells 6 and 8 are theirs (two agents, independent) | MODIFY FIRST |
 | 4 | rename `__cria_*`; move the matcher; widen the guard test | yes | **yes, all of it** — counted it, found the copied wrapper, pulled the false exit code | MODIFY FIRST |
 | 5 | dirguard must judge the shape before the tokens | yes | **defect yes, consequence no** — I have the command and the refusal; the belief-chain is theirs | unvetted |

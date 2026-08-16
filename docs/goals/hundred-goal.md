@@ -85,7 +85,7 @@ Take the tiers in order. Every item goes through the same six questions.
    **Do not skip to what to change.** "A leads to B" means look at A, not force B.
 2. **Is that reason still true?** A guard built for a real incident may be obsolete, or may be the only thing preventing that incident's return.
 3. **State the A → B → C chain** in plain words, and fix at A. If you cannot, say why, then give the fix at B.
-4. **Check it against `docs/principles.md` by number.** Additive is not sufficient on its own (#2's corollary). Bounding a prompt cria composed is not truncation (#5's counter-nuance). A rule you are tuning against real sentences should have been a question (#9's corollary).
+4. **Check it against `docs/principles.md` by number.** Additive is not sufficient on its own (#2's corollary). cria never truncates, for any reader — only de-dup and model-made summary are allowed (#5). A rule you are tuning against real sentences should have been a question (#9's corollary).
 5. **Check it is not reverting a previous intent.** Read the surrounding code, its docstring, its test docstring, and the git history of the lines you are about to change. If it undoes a deliberate earlier decision, **surface it and stop on that item.**
 6. **Measure prevalence before building anything that fires on a pattern** (#15), in the real captures under `~/.cria/calls`. Below the bar → record it, do not build it.
 

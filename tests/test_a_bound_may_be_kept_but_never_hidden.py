@@ -1,7 +1,8 @@
 """cria bounded its own judges' evidence from the wrong end, and said nothing about the cut.
 
-Bounding a prompt cria COMPOSES is allowed and deliberate — over-applying never-truncate to composed
-prompts is itself a documented footgun (#5's counter-nuance, the useless-prompting sweep). None of
+These bounds are DEBT against #5, which now reads "cria never truncates" for every reader, with only
+de-duplication and a model-made summary allowed. They still exist, so the invariants below still
+guard them: a bound that survives must never be silent and must never take the wrong end. None of
 that is reverted here: the budgets are unchanged at 400 and 160 characters. What changes is which
 half survives and whether the reader is told.
 

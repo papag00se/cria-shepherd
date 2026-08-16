@@ -27,20 +27,18 @@ A band-aid papering over wrong behaviour is forbidden. A deterministic fallback 
 
 ## B. Never destroy information the model relies on
 
-### 5. Truncation is a footgun — never truncate model-read content
-Any blind clip of the model's INPUT is a lie it cannot detect. cria never truncates what the **coder** reads; all window-fitting goes to the one lossless-first place, the context floor.
-**Counter-nuance, and it has LIMITS — the part that keeps getting lost.** Never-truncate governs the *coder's reads*, not a prompt cria *composes* for a judge or steer. But the documented footgun was **failing to DE-DUPE or STUB**, not failing to clip: the licence is *dedup and stub*, under four limits:
-1. **Bound only re-included READ payloads; keep genuine command/test output FULL** — a compiler message or gate result is the evidence the seat exists to judge, not background.
-2. **A cut must be DISCLOSED.** Undisclosed, it is a 5b false fact: the seat reads the clip as the whole.
-3. **cria's own words are never charged to the evidence's budget.** A 307-char preamble ate the entire 200-char head of a gate result, taking the failing test's NAME with it; the steer then named a different test.
-4. **When cria HOLDS the authoritative object, fill the slot from it** (#12). Re-rendering a structured object you already have is the defect; the bound is only a symptom.
+### 5. cria never truncates
+A blind byte/char/line clip is a lie the reader cannot detect, and it does not matter whose prompt it is — the coder's, a judge's, a steer author's. All window-fitting goes to the one lossless-first place, the context floor.
+**Two exceptions.**
+- **De-duplication.** The same content twice is redundancy, not information: say it once, or point at where it already sits.
+- **A model-made summary or selection.** Something read the whole thing and chose. Label the result a summary so nobody mistakes it for the source.
 
-Without these limits it reads as "bounding is always fine", and it *will* be cited to close a real finding. Read the source before citing the rule (#23b).
+Anything else that shortens what a model will read is truncation however it is spelled — a head+tail bound, a per-line cap, a 400-char clip. A gate result clipped to 200 characters a side lost the failing test's NAME to cria's own preamble, and the steer then named a different test.
 
 ### 5b. cria never states a FALSE FACT about the world
 Everything cria says in its own voice — a tool's answer, a refusal, a pointer, a ledger — must be true of the world *now*, and cria must be able to say what makes it true. A claim built on a remembered flag, a partial matcher, or a bound cria imposed on itself is about **cria**, not the world; when they can differ, ask the world.
 **The tell.** A sentence in the imperative or indicative — "it was saved to X", "no match", "you already fetched this" — with no live check behind it.
-**Counter-nuance.** Saying less is always allowed; a cap or selection is fine when DISCLOSED. Forbidden is an assertion the world would contradict.
+**Counter-nuance.** Saying less is always allowed, and a selection is fine when disclosed (#5). Forbidden is an assertion the world would contradict.
 **Corollary — a refusal the model cannot ACT on is a false fact about its own environment.** A stray `/bin/bash` in a malformed call got `go mod download` refused ten times with advice there was no way to follow, and the coder concluded its toolchain was sandboxed off. **Judge the SHAPE before the tokens**, and name something the coder can change.
 **Corollary — provenance is part of the fact.** Never label a model's own words as ground truth: a tool-less summary invented a file the task never mentions, reached the completion judge under a `(ground truth)` header, and the coder built it despite noticing.
 
