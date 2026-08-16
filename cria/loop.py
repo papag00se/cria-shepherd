@@ -2302,7 +2302,7 @@ class Loop:
         if exec_marker:
             ev += "\n\n" + exec_marker
         satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                               rlog, coder_tools=_coder_tools_summary(body.get("tools")),
+                                               rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
                                                workspace_root=sess.workspace_root or "",
                                                routes=known_routes(body.get("messages", []), sess),
                                                gate_findings=getattr(sess, "last_gate_flag", "") or "")
@@ -3539,7 +3539,7 @@ class Loop:
             evidence += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-            coder_tools=_coder_tools_summary(body.get("tools")),
+            coder_tools=_coder_tools_summary(body.get("tools"), params=False),
             workspace_root=sess.workspace_root or "",
             routes=known_routes(body.get("messages", []), sess),
             gate_findings=getattr(sess, "last_gate_flag", "") or "")
@@ -3804,7 +3804,7 @@ class Loop:
             ev += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-            coder_tools=_coder_tools_summary(body.get("tools")),
+            coder_tools=_coder_tools_summary(body.get("tools"), params=False),
             workspace_root=sess.workspace_root or "",
             routes=known_routes(body.get("messages", []), sess),
             gate_findings=getattr(sess, "last_gate_flag", "") or "")
@@ -6179,7 +6179,7 @@ _URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9.\-]+(?:/[^\s'\"),]*)?")
 _SHELL_TOOLNAMES = SHELL_TOOL_NAMES | {"container.exec"}
 
 
-def _coder_tools_summary(tools) -> str:
+def _coder_tools_summary(tools, *, params: bool = True) -> str:
     """One line per tool the CODER has (name + its params) — so a reasoner authoring a steer grounds any
     action it suggests in what the coder can ACTUALLY do. Observed: the coder wavered on whether it could
     grep, with exec_command right there; a reasoner that can't see the coder's tools can't say 'run
@@ -6199,7 +6199,7 @@ def _coder_tools_summary(tools) -> str:
         name = fn.get("name")
         if not name:
             continue
-        params = list(((fn.get("parameters") or {}).get("properties") or {}).keys())
+        param_names = list(((fn.get("parameters") or {}).get("properties") or {}).keys())
         # NAMES AND PROSE, NOT A SIGNATURE. This rendered `write_file(path, content)` — a complete
         # template for opening a call — directly beside a transcript that selfcompact defangs for
         # exactly that reason: measured over 717 reasoner calls, a prompt showing 30-59 tool-call
@@ -6209,11 +6209,23 @@ def _coder_tools_summary(tools) -> str:
         # in what the coder can actually do is why this block exists; the callable syntax goes.
         # EVERY LINE USES THE SAME ` — ` SEPARATOR, because _tool_names reads the names back OUT of
         # this block for the harness-leak check, and it keys on what follows the name.
+        #
+        # AND A JUDGE GETS THE NAMES WITHOUT THE PARAMETERS (`params=False`). Removing the callable
+        # syntax above was the right half of this fix and it left the other half standing: measured
+        # on feed-pipeline-java × qwen35, cycle 2, 28 of 82 satisfaction-family calls ended with no
+        # content, no tool call and a literal `<tool_call>` block written as prose in the reasoning —
+        # and the parameters in those invented calls are `justification`, `login`,
+        # `max_output_tokens`, `shell`, copied straight out of this line. cria handed the judge the
+        # vocabulary and then read its silence as an undecidable verdict, which fail-closed turns
+        # into "not done"; twelve of those landed on a workspace already scoring 5 of 5.
+        # The STEER AUTHOR keeps the parameters, because grounding a suggested action in what the
+        # coder can actually do is the reason this block exists and that reason is real for a caller
+        # that suggests actions. A judge rules on completeness and suggests nothing.
         notes = []
         if name in _SHELL_TOOLNAMES:
             notes.append("runs ANY shell command (grep, cat, sed, ls, find …)")
-        if params:
-            notes.append("takes " + ", ".join(params))
+        if params and param_names:
+            notes.append("takes " + ", ".join(param_names))
         sig = f"{name} — {'; '.join(notes)}" if notes else name
         lines.append("  - " + sig)
     return "\n".join(lines) or "  (none advertised this turn)"
