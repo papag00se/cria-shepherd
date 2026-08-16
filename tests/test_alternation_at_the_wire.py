@@ -89,9 +89,18 @@ class TheHintIsCarriedNotTheTransformTests(unittest.TestCase):
         self.assertNotIn(massage.MERGE_TURNS_KEY, body)
 
     def test_the_wire_consumes_and_strips_the_hint(self):
+        """Asserts the OUTCOME, not the line that produces it.
+
+        This used to pin the literal source `out.pop(massage.MERGE_TURNS_KEY, None)`, which made a
+        strictly better implementation fail: the wire now strips every cria-internal key from
+        `bodykeys.ALL` in one loop, so the hint is removed by the list rather than by name. Pinning
+        an instance where the rule is about a class is how a guard passes while the rule ships
+        broken — see tests/test_no_internal_key_reaches_the_wire.py."""
+        from cria import bodykeys
         src = inspect.getsource(upstream.Upstream._prep)
-        self.assertIn("massage.merge_for_alternation", src)
-        self.assertIn(f'out.pop(massage.MERGE_TURNS_KEY, None)', src)
+        self.assertIn("massage.merge_for_alternation", src)   # the transform is still AT the wire
+        self.assertIn(massage.MERGE_TURNS_KEY, bodykeys.ALL)  # and the hint is in the stripped set
+        self.assertIn("bodykeys.ALL", src)
 
     def test_the_merge_is_the_last_message_transform(self):
         """If a transform is ever added after it, the bug comes straight back."""

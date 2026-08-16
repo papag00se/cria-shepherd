@@ -254,8 +254,13 @@ class Upstream:
             if body.get(massage.MERGE_TURNS_KEY):
                 msgs = massage.merge_for_alternation(msgs)
             out["messages"] = msgs
-        out.pop(bodykeys.OUTPUT_RESERVE, None)  # cria-internal reserve hint — never goes on the wire
-        out.pop(massage.MERGE_TURNS_KEY, None)  # ditto — the alternation hint is cria's, not the API's
+        # EVERY cria-internal key, from the ONE list, at the ONE place (#24). This was two hand-written
+        # pops while `bodykeys.ALL` — whose own docstring promises "the wire strips this set wholesale,
+        # so adding a key here is all it takes to keep it off the API" — had no reader anywhere in the
+        # package. The promise was inert: a sixth key added to that tuple would have shipped. The
+        # completion-side keys pop harmlessly here, which is what makes the list safe to trust.
+        for _k in bodykeys.ALL:
+            out.pop(_k, None)
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call
