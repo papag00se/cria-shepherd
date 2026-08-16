@@ -303,6 +303,47 @@ def _quoted_spans(command: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _is_param_value_quote(command: str, content_start: int) -> bool:
+    """Does the quote whose CONTENT starts at ``content_start`` open a ``key=`` assignment?
+
+    `shell="/bin/bash"` is a PARAMETER VALUE, not a path the command opens — the difference from
+    `cat "/etc/x"` is the `=` in front of the quote, and it is the whole difference. Measured: 9
+    distinct commands, 229 occurrences, where a weak model wrote a tool SIGNATURE as a shell command
+    (`exec_command cmd="go mod tidy", justification="…", shell="/bin/bash"`) and cria refused it for
+    the interpreter named in the last parameter. That refusal names nothing the coder can change —
+    the command was never a shell command — which is exactly what #5b forbids: validate that a
+    command is well-formed before judging it, and never turn a partial match into a world fact."""
+    q = content_start - 1                      # the quote character itself
+    i = q - 1
+    while i >= 0 and command[i] == " ":        # `key = "…"` is the same assignment
+        i -= 1
+    return i >= 0 and command[i] == "="
+
+
+def _after_unresolved_expansion(command: str, start: int) -> bool:
+    """Is this rooted token the TAIL of a shell expansion cria cannot resolve?
+
+    `ls $(go env GOPATH)/pkg/github.com/…` contains no path the coder wrote: the leading component
+    comes from a command cria never ran, so whether the result is inside the workspace is unknown —
+    and #11b is explicit that a mechanism which cannot observe the thing it is judging must abstain
+    rather than answer. It answered: 11 distinct commands, 263 occurrences, all refused for a suffix.
+    Together with the parameter-value case that is 492 of 1,242 captured refusals, 40%."""
+    i = start - 1
+    if i < 0 or command[i] not in ")}":
+        return False
+    close, opener = command[i], "(" if command[i] == ")" else "{"
+    depth = 0
+    while i >= 0:
+        if command[i] == close:
+            depth += 1
+        elif command[i] == opener:
+            depth -= 1
+            if depth == 0:
+                return i > 0 and command[i - 1] == "$"
+        i -= 1
+    return False
+
+
 def normalize_level(value: str | None) -> str:
     v = (value or "none").strip().lower()
     return v if v in LEVELS else "none"
@@ -452,7 +493,10 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
         # search term, not a file). A quoted path that opens the quote for a FILE command (`cat "/etc/x"`)
         # is still checked. Files for grep/sed are bare path args, which the scan still catches.
         inside = next((s for s, e in spans if s <= m.start() < e), None)
-        if inside is not None and (m.start() != inside or search_cmd):
+        if inside is not None and (m.start() != inside or search_cmd
+                                   or _is_param_value_quote(command, inside)):
+            continue
+        if _after_unresolved_expansion(command, m.start()):
             continue
         if not is_external(tok, workspace) or _exempt(tok):
             continue
