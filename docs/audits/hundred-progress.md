@@ -43,7 +43,61 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 12 | orders-api-py | nemotron-elastic | **75%** | **+25** | 61 | 134 | three of four, and the closest this model has come. Held 3/4 at every milestone — 15, 30, 45, 60 — and ran out the full hour rather than being floored early, which is new. The route, the migration and the injection fix all pass. **One stray file costs the fourth**: the model wrote a scratch `test_init.py` at the repo root at call 0117 doing `import db` (the module is `orders.db`), and pytest aborts the whole suite on the collection error before running a single test. **Not cria's** — cria put `1 error during collection` and `ERROR test_init` into **15 consecutive prompts** from call 0121 to the kill, and the model had fourteen calls and 17 rumination aborts in that window and never deleted the file |
 | 13 | feed-pipeline-java | gemma4 | 0% | 0 | 16 | 35 | flat at zero, and **one typo is the whole cell**: `mvn compile` fails on a single error, `cannot find symbol: class CSVRecordRecord` at `Importer.java:96` — the model wrote the word twice. Nothing else is wrong with the build. All five checks fail behind it. **Not cria's**: `CSVRecordRecord` appears in **10 request bodies**, `cannot find symbol` in 9, `BUILD FAILURE` in 8 — the model was told plainly and repeatedly. Killed at the 15-minute floor with 29 coder calls, three of which cria refused as malformed (`write_missing_arg` ×2, `edit_missing_arg` ×1) — 10% of the budget, on a cell whose budget was the binding constraint |
 | 14 | feed-pipeline-java | qwen35 | **100%** | **+60** | 76 | 492 | **the first 100% ever scored on `feed-pipeline-java`**, the campaign's worst column. All five: messy feed handled with skipped rows reported, **70.3× against a 4.0× bar with the totals matching** (29.9× and mismatched totals last cycle), 4 worker threads with one distinct result across 8 runs, `csv_library` importing the quoted-comma row at 25.00, and **`review_written` at 828 words with 13 located findings** — a check missed 4 of 4 last cycle. And it was **5/5 at the 30-minute milestone and ran for 45 more minutes**; see below |
-| 15 | feed-pipeline-java | ternary-bonsai | *running* | | | | |
+| 15 | feed-pipeline-java | ternary-bonsai | **80%** | **+80** | 70 | 82 | biggest single gain of the cycle, from a cell that **never compiled** last cycle. The build works, 33.4× against a 4.0× bar with matching totals, 4 worker threads, quoted-comma row imported. `review_written` is scored 0 and **the model earned it** — this is a verifier defect, proven below, and the row is a re-run candidate for the fix phase |
+| 16 | feed-pipeline-java | nemotron-elastic | *running* | | | | |
+
+### VERIFIER DEFECT — `review_written` misses a markdown table by one character
+
+Not cria's, and it cost a real check. `feed-pipeline-java`'s fourth deliverable asks for a review
+naming a file and a line for every issue. Cell 15 wrote one — 729 words, findings in a proper
+`| File | Line(s) | Before | After |` table:
+
+```
+| `src/main/java/pipeline/Importer.java` | ~45–50 | `knownSkus()` used `ArrayList.contains()` … |
+| `src/main/java/pipeline/Importer.java` | ~30–45 | Shared mutable state: `static Map…` … |
+```
+
+Scored **0 located findings**.
+
+`verify.py:215` looks for the file and the line near each other:
+
+```python
+r"[\w/]+\.java\W{0,4}\d+"        # Importer.java:31 · `Importer.java` (31) · .java, 31
+```
+
+In a table cell the gap between `.java` and the line number is `` ` | ~`` — **five** non-word
+characters. The pattern allows four. Measured directly:
+
+| `\W{0,N}` | located findings |
+|---|---:|
+| 4 (shipped) | **0** |
+| 5 | **13** |
+| 8 | 13 |
+
+Off by one, and the review has thirteen properly located findings behind it.
+
+**Scope, checked rather than assumed** — every `REVIEW.md` on disk, under the shipped pattern and a
+widened one:
+
+| run | words | now | widened |
+|---|---:|---:|---:|
+| gemma4 (c1) | 267 | 3 | 3 |
+| nemotron-elastic (c1) | 419 | 0 | **0** — genuinely unlocated, correctly scored |
+| qwen35 (c1) | 1162 | 21 | 21 |
+| qwen35 (c2, cell 14) | 828 | 13 | 13 |
+| **ternary-bonsai (c2, cell 15)** | 729 | **0** | **13** |
+
+**Exactly one row is misjudged.** Cell 15 is 80% and should be 100%.
+
+**This is not making the task easier to pass.** The property the task names — a file and a line for
+every issue — is satisfied. The matcher fails on a *presentation format the task never forbade*, and
+the verifier's own comment at `verify.py:213` names this exact failure class: *"a correctly located
+finding scored as unlocated because of how the reviewer punctuated it… assert the property the task
+names, nothing adjacent."* It is also the shape the operator has flagged twice — a matcher keyed to
+one way of writing something is inert on every other way.
+
+**Not fixed now, deliberately.** A verifier change invalidates every row scored against it. It lands
+in the fix phase; cell 15's row is then marked `superseded` and re-run.
 
 ### RANK 1 — the completion judge is not judging. It is going silent, and silence means "not done"
 

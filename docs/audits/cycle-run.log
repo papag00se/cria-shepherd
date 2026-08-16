@@ -27,3 +27,5 @@
 [15:20:09] (14/24) feed-pipeline-java x qwen35 — start
 [16:36:42] (14/24) feed-pipeline-java x qwen35 — exit 0
 [16:36:42] (15/24) feed-pipeline-java x ternary-bonsai — start
+[17:47:07] (15/24) feed-pipeline-java x ternary-bonsai — exit 0
+[17:47:07] (16/24) feed-pipeline-java x nemotron-elastic — start
