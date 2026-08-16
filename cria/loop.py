@@ -7811,9 +7811,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"])
         return coder
     attempt = 0
+    _last_write_path_seen = False   # did any pass of this turn actually carry a mid-write cut?
     conv = list(body.get("messages") or [])
     while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
         path = _truncated_write_path(coder)
+        _last_write_path_seen = _last_write_path_seen or path is not None
         out_tok = _output_tokens(coder)
         # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
         # stripped before the model, so the coder was told nothing at all: its write silently never
@@ -7850,11 +7852,19 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # response hit the output limit" on exhaustion — cria contradicting itself about one event.
         # Measured (run 0727-145921): 17 truncations, ALL self-cuts. It matters: told it hit a limit,
         # a model shrinks its content, and a generation that ended early is not fixed by being shorter.
+        # …AND SAY WHICH THING IT WAS, TOO. Both wordings above assert a WRITE. When
+        # `_truncated_write_path` found none, the loop breaks out at `path is None` — cria's own
+        # finding that this was not a write — and then fell into the write wording regardless.
+        # Measured over five days: all 17 truncations had `path is None`, so 17 of 17 told the model
+        # its last write was refused and that it stopped "partway through writing the file" (#5b).
+        was_write = _truncated_write_path(coder) is not None or _last_write_path_seen
         _add_note(coder, ("output stopped early mid-write — partial write refused (retry in smaller pieces)"
-                          if selfcut else
-                          "output hit the token limit — partial write refused (retry in smaller pieces)"))
+                          if was_write and selfcut else
+                          "output hit the token limit — partial write refused (retry in smaller pieces)"
+                          if was_write else
+                          "output ended before the call was complete — partial call refused"))
         _refusal_turn(body, prompts.load_map("call_refused")[
-            "selfcut_write" if selfcut else "truncated_write"])
+            ("selfcut_write" if selfcut else "truncated_write") if was_write else "truncated_call"])
     elif attempt:  # recovered after steering to incremental writes
         _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
     return coder
