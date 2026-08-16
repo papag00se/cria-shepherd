@@ -106,6 +106,32 @@ MIN_DEGENERATE_REPEATS = 3
 DEAD_STREAM_CHUNKS = 400
 
 
+# A generation that has consumed the whole window it was ever going to get. Not a cap and not a
+# latency bound — a statement about what can still be RETURNED.
+#
+# Measured three times in cycle 3 alone, all identical (cell 1, its re-run, and cell 9 which had
+# scored 100% in both previous cycles):
+#     completion_tokens 44,058 · prompt_tokens 5,094 · total_tokens 49,152 = n_ctx EXACTLY
+#     finish_reason "length" · content empty · tool_calls empty · 720 seconds
+# The tokens go into `write_file` ARGUMENTS that never terminate, so nothing assembles and
+# `guard_truncation` discards the turn. Twelve minutes, nothing kept.
+#
+# WHY THE OTHER FOUR BACKSTOPS MISS IT, each for a correct reason:
+#   - the rumination watcher excludes tool-call arguments ON PURPOSE, because a real large write
+#     looks the same until it ends;
+#   - the degenerate-tail backstop needs a periodic tail and this text is not periodic;
+#   - DEAD_STREAM_CHUNKS needs NOTHING readable to have arrived, and argument fragments did arrive;
+#   - `timeout_seconds` is 7200 on this box, deliberately, because a slow CPU model can take minutes.
+#
+# What is left is arithmetic cria already holds: the window, and the tokens the prompt used. Past
+# `window - prompt`, the server will stop with finish_reason=length and the result is discarded
+# whatever happens next — so aborting there destroys nothing that was going to survive. It buys back
+# only the tail of the generation; the reason to do it is that the turn ends LABELLED, with a notice
+# the coder can act on, instead of a silent discard that only shows up as a gap in the timings.
+WINDOW_EXHAUSTED_FRACTION = 0.92
+
+
+
 
 def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
     """True when the last ``window`` characters of ``text`` are a single repeated character — a stuck

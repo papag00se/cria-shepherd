@@ -7543,6 +7543,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
         # or to stop repeating a passage, would name a behaviour that did not happen (5b).
         conv = conv + [{"role": "user", "content": (
+            prompts.load("rumination_guard_window") if v.get("window_exhausted") else
             prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
             prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),

@@ -1,0 +1,3 @@
+[OUTPUT GUARD] Your last turn used up the whole of the space it had to answer in, so it was stopped. Nothing it produced could have been kept — an answer that runs past the end of the space is discarded, not truncated and saved.
+
+That almost always means one write was too big for a single turn. Write the file in pieces: the first part now with `write_file`, then the rest with follow-up edits. If you were rewriting a whole file to change a few lines, edit those lines instead.

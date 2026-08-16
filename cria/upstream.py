@@ -488,6 +488,17 @@ class Upstream:
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
         chunks_seen = 0     # SSE frames carrying a choices delta
         streamed_chars = 0  # of those, how many characters cria could actually read
+        # The room this generation has: the model's window minus what the prompt already spent.
+        #
+        # ONLY WHEN THE WINDOW WAS ACTUALLY DISCOVERED. `_resolve_window` returns a deliberately
+        # conservative FALLBACK when /props cannot be read, and computing room from a guess would
+        # abort real generations on a model whose true window is six times larger — the "cap output"
+        # footgun principle 6 exists to forbid, arrived at by arithmetic instead of by a constant.
+        # A test caught exactly that: a legitimate 31,735-character reasoning block tripped it
+        # against the 8,192 fallback. Unknown window → this guard is simply off, which is the same
+        # safe direction every other unknown takes here.
+        _win = self._resolve_window(rlog) or 0
+        window_room = max(0, _win - sent_estimate) if (_win and self._window_final) else 0
         saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
@@ -554,6 +565,18 @@ class Upstream:
                 # stopped only by n_ctx. It is not a cap: a real write_file accumulates from its
                 # first delta and never reaches this, which is exactly why the rumination watcher can
                 # afford to skip arguments.
+                # WINDOW EXHAUSTED. The generation has used effectively all the room it will ever
+                # get, so the server is about to stop it with finish_reason=length and the result is
+                # discarded. Aborting here keeps nothing from surviving that would have; what it buys
+                # is a LABELLED turn with a notice the coder can act on. See
+                # rumination.WINDOW_EXHAUSTED_FRACTION for the three cycle-3 measurements.
+                if aborted is None and window_room > 0 and \
+                        streamed_chars // 4 >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
+                    aborted = {"window_exhausted": True, "room": window_room,
+                               "generated": streamed_chars // 4}
+                    rlog.emit("rumination.abort", level="warning", window_exhausted=True,
+                              room=window_room, generated=streamed_chars // 4)
+                    break
                 if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
                     aborted = {"dead_stream": True, "chunks": chunks_seen}
                     rlog.emit("rumination.abort", level="warning", dead_stream=True,

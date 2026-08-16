@@ -271,7 +271,12 @@ class ChatWatchedTests(unittest.TestCase):
             b"data: [DONE]\n",
         ]
         with tempfile.TemporaryDirectory() as tmp:
-            up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
+            # The window must FIT the fixture. This said 8192 while streaming ~7,900 tokens of
+            # reasoning, which no real model with an 8,192-token window could do — and once the
+            # window-exhaustion guard landed (2026-08-16) that inconsistency aborted the turn and
+            # this test failed for a reason that had nothing to do with what it asserts. The point
+            # here is capture fidelity, not window arithmetic.
+            up = Upstream("http://x", context_window=65536, capture_dir=tmp, capture_rendered=False)
             rlog = _Rlog()
             with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
                 up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog, watch=det.check)
