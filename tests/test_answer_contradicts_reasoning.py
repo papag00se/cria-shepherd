@@ -251,15 +251,24 @@ class RecoveryPromptTests(unittest.TestCase):
         self.assertIn("no tools", p)
         self.assertIn("must appear in the thinking below", p)
 
-    def test_the_thinking_is_bounded_from_the_END_where_the_conclusion_lives(self):
-        long = "x " * 4000 + "Thus we will output: read the file and run the failing test."
-        out = loop._reasoning_tail(long, loop.STEER_REASONING_BUDGET_CHARS)
-        self.assertLessEqual(len(out), loop.STEER_REASONING_BUDGET_CHARS + 1)
-        self.assertIn("Thus we will output", out)      # the tail survives, not the head
-        self.assertTrue(out.startswith("…"))            # and the cut is DISCLOSED
-        short = "Short enough to ride whole."
-        self.assertEqual(loop._reasoning_tail(short, loop.STEER_REASONING_BUDGET_CHARS), short)
+    def test_the_whole_thinking_reaches_the_recovering_model(self):
+        """It used to carry the last 4,000 characters, on the theory that a conclusion is what a
+        model writes LAST. That is cria judging relevance for the model, and #5 leaves no room:
+        never truncated, for any reader. The reader here IS a model — it selects for itself."""
+        head = "First I considered whether the endpoint returns the holder at all. "
+        long = (head + "x " * 4000 + "It is looping, so we must write a directive. "
+                "Thus we will output: read the file and run the failing test.")
+        sent = {}
 
+        def ask(prompt):
+            sent["prompt"] = prompt
+            return "read the file and run the failing test"
+
+        comp = {"choices": [{"message": {"content": "ON_TRACK", "reasoning_content": long}}]}
+        loop._steer_from_reasoning(comp, "ON_TRACK", ask, _Rlog())
+        self.assertIn(head.strip(), sent["prompt"])          # the HEAD survives too
+        self.assertIn("Thus we will output", sent["prompt"])  # and so does the tail
+        self.assertNotIn("…", sent["prompt"])
 
 if __name__ == "__main__":
     unittest.main()

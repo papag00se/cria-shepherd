@@ -1,0 +1,3 @@
+[the action log below is a CONDENSED record, not the verbatim log — it was too long to carry whole. Distinct actions, paths, errors and counts are preserved; repetition and long output bodies are not. Inspect the files directly if a detail matters.]
+
+{{SUMMARY}}

@@ -180,3 +180,61 @@ def volatile_key(content) -> str:
     for pat, repl in _VOLATILE:
         content = pat.sub(repl, content)
     return content.strip()
+
+
+# One line where an identical earlier action block sat. Model-facing (#22), so the text lives in
+# prompts/; this is only the key.
+REPEAT_NOTE_KEY = "work_log_repeat"
+
+
+def fold_repeated_actions(log: str, note: str) -> tuple[str, int]:
+    """The work log with byte-identical repeated ACTION BLOCKS folded to one copy plus ``note``.
+
+    An action block is a ``$ call`` line and the ``  -> result`` lines under it — the unit
+    :func:`cria.loop._work_log` emits. Two blocks that are byte-identical carry one fact between
+    them, so the second and later copies are redundancy, not information: this is de-duplication,
+    the first of #5's two exceptions, and the aggregate content is unchanged.
+
+    THIS REPLACED A TAIL CLIP. `_bound_evidence` used to keep the last 24,000 characters of the log
+    and discard the head, on the old counter-nuance that a prompt cria composes may be bounded. The
+    incident that justified the budget is itself the argument for folding instead: one step's log
+    grew 34KB -> 106KB -> 223KB across re-nudges, which is the SAME actions re-rendered. Folding
+    removes exactly that and keeps every distinct action; the clip removed whichever ones happened
+    to be oldest, including the write that started the trouble.
+
+    Order is preserved and the FIRST copy of a block always survives whole. Returns
+    ``(text, folded_count)``; identity when there is nothing to fold.
+    """
+    if not log:
+        return log, 0
+    blocks, cur = [], []
+    for line in log.split("\n"):
+        if line.startswith("$ ") and cur:
+            blocks.append(cur)
+            cur = [line]
+        else:
+            cur.append(line)
+    if cur:
+        blocks.append(cur)
+
+    out, seen, folded = [], set(), 0
+    pending = None                       # (note_index, times) for a RUN of identical blocks
+    for b in blocks:
+        body = "\n".join(b)
+        # A block below the floor is too small to be worth a pointer, and short results ("-> exit 0")
+        # legitimately recur under DIFFERENT calls — the `$` line is part of the key, so identical
+        # here means the same call returning the same thing, but the floor keeps the noise down.
+        if len(body) < MIN_UNIT_CHARS or body not in seen:
+            seen.add(body)
+            out.append(body)
+            pending = None
+            continue
+        folded += 1
+        if pending is not None:          # a RUN: one note carrying the count, not N notes
+            i, times = pending
+            pending = (i, times + 1)
+            out[i] = note.replace("{{N}}", str(times + 1))
+            continue
+        out.append(note.replace("{{N}}", "1"))
+        pending = (len(out) - 1, 1)
+    return ("\n".join(out), folded) if folded else (log, 0)

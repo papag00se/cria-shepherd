@@ -199,10 +199,11 @@ class PhantomToolTests(unittest.TestCase):
         self.assertIn("loop.judge_phantom_tool", inspect.getsource(loop._satisfaction_verdict))
 
 
-class NeverCutMidWordTests(unittest.TestCase):
-    """The reason is the diagnosis the coder is handed and must act on. It was built from whole
-    sentences and then hard-sliced at 300 characters, so a long verdict arrived amputated —
-    an instruction that stops mid-sentence is one the coder finishes by guessing."""
+class TheReasonIsNeverCutTests(unittest.TestCase):
+    """The reason is the diagnosis the coder is handed and must act on, so it is content a model
+    reads and #5 applies: it is never clipped. A long one is restated in a line BY THE JUDGE, and if
+    that is unavailable it rides whole. The old behaviour built whole sentences up to 300 characters
+    and hard-sliced at 600, which handed the coder an instruction that stopped mid-thought."""
 
     LONG = ("The task is not done. " + " ".join(
         f"Observation number {i} concerns the resolver and its handling of the holder field."
@@ -218,21 +219,40 @@ class NeverCutMidWordTests(unittest.TestCase):
         words = {w.strip(".!?…,") for w in self.LONG.split()}
         self.assertIn(out["reason"].split()[-1].strip(".!?…,"), words)
 
-    def test_it_is_still_bounded(self):
-        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", _reads(self.LONG))
-        self.assertLessEqual(len(out["reason"]), loop.REASON_HARD_CEILING)
-        self.assertLess(len(out["reason"]), len(self.LONG))
+    def test_a_long_reason_is_restated_by_the_judge_not_sliced(self):
+        """The only allowed way to shorten it: the judge says it again, shorter."""
+        asked = {}
+
+        def ask(prompt):
+            if "Restate it in ONE line" in prompt:
+                asked["prompt"] = prompt
+                return "The resolver does not extract the holder field."
+            return "NOT_DONE: " + self.LONG.split(". ")[0] + "."
+
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", ask)
+        self.assertEqual(out["reason"], "The resolver does not extract the holder field.")
+        self.assertIn("Observation number 11", asked["prompt"])   # it saw the WHOLE reason
+
+    def test_without_the_restatement_the_long_reason_rides_WHOLE(self):
+        def ask(prompt):
+            if "Restate it in ONE line" in prompt:
+                return ""                                     # the judge could not condense it
+            return "NOT_DONE: " + self.LONG.split(". ")[0] + "."
+
+        out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", ask)
+        self.assertIn("Observation number 11", out["reason"])
 
     def test_a_single_long_sentence_rides_WHOLE_rather_than_amputated(self):
-        one = "The task is not done because " + "the resolver mishandles the holder field " * 12
-        out = loop.verdict_from_reasoning(one.strip() + ".", "satisfied", _Rlog(), "x", _reads(one.strip() + "."))
+        one = ("The task is not done because " + "the resolver mishandles the holder field " * 12).strip() + "."
+        out = loop.verdict_from_reasoning(one, "satisfied", _Rlog(), "x", _reads(one))
         self.assertTrue(out["reason"].endswith("."))
-        self.assertGreater(len(out["reason"]), loop.REASON_BUDGET_CHARS)
+        self.assertIn("the resolver mishandles the holder field", out["reason"])
 
-    def test_text_with_no_punctuation_at_all_cuts_on_a_word_and_says_so(self):
+    def test_text_with_no_punctuation_at_all_is_not_cut(self):
         run_on = "the task is not done " + "and the resolver still returns the wrong holder " * 20
         out = loop.verdict_from_reasoning(run_on, "satisfied", _Rlog(), "x", _reads(run_on))
-        self.assertTrue(out["reason"].endswith("…"))          # the cut is DISCLOSED
+        self.assertNotIn("…", out["reason"])
+        self.assertIn(run_on.strip(), out["reason"])
         self.assertNotIn("  ", out["reason"])
         self.assertTrue(all(w in run_on.split() for w in out["reason"].rstrip("…").split()))
 

@@ -219,27 +219,26 @@ _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 #
 # Same budget, split head and tail, and say what was dropped — exactly the shape
 # proberun.compose_probe_command already uses on probe output, and for the same reason.
-_ELIDED_FMT = "...[{n} chars elided; head+tail kept — re-read the source for the middle]..."
-
-
-def _bounded(text: str, limit: int) -> str:
-    """``text`` within ``limit``, keeping BOTH ends and disclosing the cut."""
-    if len(text) <= limit:
-        return text
-    half = limit // 2
-    return text[:half] + _ELIDED_FMT.format(n=len(text) - 2 * half) + text[-half:]
 
 
 def _defanged_line(m: dict, whole: bool = False) -> str:
     """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax.
 
-    ``whole`` keeps the text uncut. It is set for the ROOT TASK MESSAGE only, because that message is
-    the one thing every other line is judged against and cria holds no second copy of it. Clipped at
-    400 characters it cost two runs outright: ternary-bonsai/go read a task ending "Stop using
-    `float64` for mon" and ordered "Delete `go.mod`'s `require github.com/shopspring/decimal` line
-    and remove its import from cart.go NOW", when the task said to ADD a third-party decimal module
-    and not to write a custom type. The exemption is bounded in practice — the longest task prompt in
-    the battery is 1,061 characters — so it does not reopen the composed-prompt bound (#5)."""
+    NOTHING HERE IS CLIPPED (#5: cria never truncates, and it does not matter that the reader is a
+    judge or a steer author rather than the coder). This module used to keep 200 characters of head
+    and 200 of tail per line, and it cost three cells of cycle 3 in three different ways: a gate
+    result lost the failing test's NAME to cria's own 307-character preamble and the steer named a
+    different test; a search result lost every version number and cria invented `v1.32.0`; and the
+    flattening below made a reasoner read `cart.go` as one line and call it invalid syntax. Earlier
+    still, a task ending "Stop using `float64` for mon" produced an order to DELETE the decimal
+    module the task asked for.
+
+    The two allowed exceptions are applied upstream and above, not here: superseded write payloads
+    are already STUBBED to their on-disk reference by :func:`stub_old_write_args` (de-duplication),
+    and window fit belongs to the context floor, which is lossless-first by construction.
+
+    ``whole`` now only marks the ROOT TASK MESSAGE, which is still rendered without the role prefix
+    every other line carries."""
     role = m.get("role")
     text = _text(m).strip()
     calls = m.get("tool_calls") or []
@@ -252,8 +251,8 @@ def _defanged_line(m: dict, whole: bool = False) -> str:
                 d = jsontext.loads(args) if isinstance(args, str) else (args or {})
             except (ValueError, TypeError, AttributeError):
                 d = {}
-            detail = "; ".join(f"{k}={_bounded(str(v), 160)}" for k, v in d.items()) \
-                if isinstance(d, dict) else _bounded(str(args), 160)
+            detail = "; ".join(f"{k}={v}" for k, v in d.items()) \
+                if isinstance(d, dict) else str(args)
             bits.append(f"the coder called {fn.get('name', '?')} — {detail}" if detail
                         else f"the coder called {fn.get('name', '?')}")
         return " / ".join(bits)
@@ -261,13 +260,13 @@ def _defanged_line(m: dict, whole: bool = False) -> str:
         exit_m = _EXIT.search(text)
         body = _ENVELOPE.sub("", text).strip()
         head = f"→ exit {exit_m.group(1)}" if exit_m else "→ result"
-        return f"{head}: {_bounded(' '.join(body.split()), 400)}" if body else head
+        return f"{head}: {body}" if body else head
     if not text:
         return ""
     who = {"user": "the task/context said", "assistant": "the coder said",
            "system": "the frame said"}.get(role, f"{role} said")
     flat = " ".join(text.split())
-    return f"{who}: {flat if whole else _bounded(flat, 400)}"
+    return f"{who}: {flat}"
 
 
 def compaction_request(messages: list[dict], files_list: str = "") -> str:

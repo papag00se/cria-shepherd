@@ -3178,25 +3178,34 @@ class VerifyEvidenceTests(unittest.TestCase):
         call_line = next(ln for ln in ev.splitlines() if ln.startswith("$ read_file"))
         self.assertIn("DID NOT RUN", call_line)
 
-    def test_evidence_is_bounded_for_the_JUDGE_with_the_elision_disclosed(self):
+    def test_the_doom_loops_REPETITION_is_folded_not_clipped(self):
         # THE DOOM LOOP (live run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB
-        # across re-nudges on ONE step. At 223KB the critic call needed a context-floor REFIT and then
-        # errored outright, so the verdict came back "unverified (no parseable verdict)" — which fails
-        # CLOSED and re-nudges, which grows the evidence again. The judge could no longer answer at all.
-        # This is a prompt cria COMPOSES for a judge, and principle #5's counter-nuance says bounding
-        # one breaks no rule (over-applying never-truncate to a composed prompt is its own footgun).
-        from cria.loop import _bound_evidence, EVIDENCE_BUDGET_CHARS
-        log = "\n".join(f"$ shell {{\"command\": \"echo action {i}\"}}" for i in range(6000))
-        self.assertGreater(len(log), EVIDENCE_BUDGET_CHARS * 3)
-        out = _bound_evidence(log)
-        self.assertLessEqual(len(out), EVIDENCE_BUDGET_CHARS + 300)   # bounded...
-        self.assertIn("elided", out)                                   # ...and DISCLOSED, not silent
-        self.assertIn("action 5999", out)                              # the most recent action survives
-        self.assertNotIn("action 0\"", out)                            # the oldest is what went
-        self.assertFalse(out.splitlines()[1].startswith('command'))    # resumes on an action boundary
+        # across re-nudges on ONE step, until the critic call errored and the verdict came back
+        # "unverified" — which fails CLOSED and re-nudges, which grows it again. The old fix kept the
+        # last 24,000 characters. That was a clip, and #5 now reads "cria never truncates" for every
+        # reader. What actually grew was the SAME actions re-rendered, so de-duplication — the first
+        # of the rule's two exceptions — removes exactly the growth and keeps every distinct action.
+        from cria.loop import _dedup_evidence
+        block = ("$ shell {\"command\": \"pytest -q tests/test_rates.py --maxfail=1 -x\"}\n"
+                 "  -> " + ("F" * 250) + "\n  -> 1 failed, 7 passed")
+        log = "\n".join([block] * 60)
+        out = _dedup_evidence(log)
+        self.assertLess(len(out), len(log) // 4)                       # the repetition is gone...
+        self.assertIn("pytest -q tests/test_rates.py", out)            # ...the action is not
+        self.assertIn("1 failed, 7 passed", out)
+        self.assertIn("repeat 59× more", out)                          # and the fold is DISCLOSED
 
-    def test_evidence_under_budget_is_untouched(self):
-        from cria.loop import _bound_evidence
+    def test_distinct_actions_all_survive_however_many(self):
+        """The old bound dropped the OLDEST distinct actions — on a stuck step, the write that
+        started the trouble. Nothing distinct may be dropped now."""
+        from cria.loop import _dedup_evidence
+        log = "\n".join(f"$ shell {{\"command\": \"echo action {i}\"}}" for i in range(6000))
+        out = _dedup_evidence(log)
+        self.assertIn("action 0\"", out)
+        self.assertIn("action 5999", out)
+
+    def test_evidence_with_nothing_to_fold_is_untouched(self):
+        from cria.loop import _dedup_evidence as _bound_evidence
         log = "$ write_file {\"path\": \"a.py\"}\n  -> wrote a.py"
         self.assertEqual(_bound_evidence(log), log)
 
@@ -5931,17 +5940,40 @@ class ComposedPromptBoundsTests(unittest.TestCase):
     """Tier-1 fixes from the file-bloated-prompts sweep: two-message composed prompts must bound
     their own slots — the floor cannot drop turns a two-message call does not have."""
 
-    def test_satisfaction_evidence_is_bounded_and_disclosed(self):
-        # The e4564da bound covered only the step critic; this sibling grew a measured 73.7KB slot
-        # (0183-satisfaction, run 0729T224807) via the same fail-closed -> re-nudge -> grow loop.
-        from cria.loop import EVIDENCE_BUDGET_CHARS, _satisfaction_evidence
+    def test_an_oversized_slot_is_SUMMARISED_by_the_model_never_clipped(self):
+        # The e4564da bound kept 24,000 characters of this slot and dropped the rest. #5 now allows
+        # only two ways to make a composed prompt smaller: de-duplication, and a MODEL-MADE summary.
+        # A single 80KB tool result is not repetition, so this is the summary path — and the floor
+        # cannot save it either, because its lever is dropping whole turns and this call has two.
+        from cria.config import Role
+        from cria.loop import _satisfaction_evidence, EVIDENCE_SUMMARY_TRIGGER_CHARS
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
+                 "function": {"name": "exec_command",
+                              "arguments": json.dumps({"command": "grep x api.json"})}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "X" * 80000}]
+        seen = {}
+
+        def chat(body, rlog=None):
+            seen["user"] = body["messages"][-1]["content"]
+            return json.dumps({"choices": [{"message": {
+                "content": "grep x api.json -> 80,000 X characters"}}]}).encode()
+
+        ev = _satisfaction_evidence(msgs, rlog=_Rlog(), chat_fn=chat,
+                                    role=Role(name="reasoner", backend="local"))
+        self.assertIn("CONDENSED record", ev)                    # labelled as a summary, not the log
+        self.assertIn("80,000 X characters", ev)                 # the model's words are what rides
+        self.assertGreater(len(seen["user"]), EVIDENCE_SUMMARY_TRIGGER_CHARS)   # it saw the whole log
+
+    def test_without_a_reasoner_the_oversized_slot_rides_WHOLE(self):
+        """No summariser is not a licence to clip: carrying too much is recoverable, a silent
+        slice is not (#5, #13)."""
+        from cria.loop import _satisfaction_evidence
         msgs = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
                  "function": {"name": "exec_command",
                               "arguments": json.dumps({"command": "grep x api.json"})}}]},
                 {"role": "tool", "tool_call_id": "c1", "content": "X" * 80000}]
         ev = _satisfaction_evidence(msgs)
-        self.assertLess(len(ev), EVIDENCE_BUDGET_CHARS + 2000)
-        self.assertIn("elided", ev)                              # the cut is DISCLOSED
+        self.assertIn("X" * 80000, ev)
 
     def test_toolless_retry_system_discloses_withdrawn_tools(self):
         # The reasoning-off retry withholds verifytools while satisfaction.txt still opens with

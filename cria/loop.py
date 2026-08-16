@@ -1283,41 +1283,25 @@ def leaked_judge_tool(text: str) -> str:
     return name if name and name not in _JUDGE_TOOLS else ""
 
 
-# How much of a recovered judge verdict's reasoning is carried forward as the reason.
-# DEBT against #5, which now reads "cria never truncates" for EVERY reader, not just the coder. The
-# two allowed exceptions are de-duplication and a model-made summary; a char bound is neither. The
-# replacement here is to ask for the short reason rather than clip the long one. Until then it must
-# at least never land mid-word.
-REASON_BUDGET_CHARS = 300
-# Above this a "sentence" is not one — it is unpunctuated text that re.split could not divide, and
-# letting it ride whole is how a judge's entire private essay became the coder's directive. Cut it on
-# a word instead. Twice the budget so a genuinely long single sentence still arrives intact.
-REASON_HARD_CEILING = 2 * REASON_BUDGET_CHARS
+# Past this a recovered reason is an ESSAY, not a directive — and the coder ACTS on it, so it is
+# content a model reads. #5 leaves one way to shorten it: the judge restates its own reason in a
+# line. `reason[:300]` once cut a judge's thinking mid-word and handed the fragment on as the
+# diagnosis; whole-sentences-up-to-a-budget was the same defect with a tidier seam. If the ask is
+# unavailable or empty the long reason rides WHOLE — too much is recoverable, a silent slice is not.
+REASON_ONE_LINE_CHARS = 600
 
 
-def _first_sentences(sentences: list[str], budget: int) -> str:
-    """Whole sentences from the front, stopping before the budget is exceeded. The FIRST sentence is
-    always taken whole however long it is — a complete thought that overruns beats a cut one."""
-    picked: list[str] = []
-    for sn in sentences:
-        sn = sn.strip()
-        if not sn:
-            continue
-        if picked and len(" ".join(picked)) + 1 + len(sn) > budget:
-            break
-        picked.append(sn)
-    return " ".join(picked).strip()
-
-
-def _cut_on_a_word(text: str, budget: int) -> str:
-    """Last resort for text with no sentence punctuation at all: cut on whitespace, never mid-word,
-    and DISCLOSE the cut with an ellipsis so a reader knows the thought is unfinished."""
-    text = text.strip()
-    if len(text) <= budget:
-        return text
-    head = text[:budget]
-    sp = head.rfind(" ")
-    return (head[:sp] if sp > budget // 2 else head).rstrip() + "…"
+def _reason_in_one_line(reason: str, ask, rlog, phase: str) -> str:
+    """A long recovered reason restated by the JUDGE in one line, or the reason unchanged. Failure in
+    any direction returns the input untouched."""
+    if len(reason) <= REASON_ONE_LINE_CHARS or ask is None:
+        return reason
+    short = strip_think(ask(prompts.render("verdict_reason_one_line", reason=reason)) or "").strip()
+    if not short or len(short) >= len(reason):
+        return reason
+    rlog.emit("loop.reason_condensed", level="info", phase=phase,
+              chars_before=len(reason), chars_after=len(short))
+    return short
 
 
 def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | None:
@@ -1472,7 +1456,7 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None
         #
         # A fallback that fires precisely when the recovery succeeded is the band-aid (#4), so it is
         # deleted rather than tuned.
-        reason = _cut_on_a_word(recovered, REASON_HARD_CEILING) if recovered else ""
+        reason = recovered
         if not reason:
             return None                      # nothing about the ruling to carry — fail closed (#13)
         rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase, anchor_missed=True,
@@ -1482,8 +1466,7 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None
     # thinking mid-word and handed the fragment onward as the diagnosis the coder must act on — an
     # instruction that stops mid-sentence is one the coder completes by guessing. The budget bounds
     # how MANY sentences, so a single long sentence rides whole rather than being amputated.
-    reason = _cut_on_a_word(_first_sentences(sentences[start:], REASON_BUDGET_CHARS) or text,
-                            REASON_HARD_CEILING)
+    reason = _reason_in_one_line(" ".join(sentences[start:]).strip() or text, ask, rlog, phase)
     rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase,
               matched=_clip(recovered, 60), reason=_clip(reason, 120))
     return {flag: False, "reason": reason, "proposed_fix": ""}
@@ -1725,34 +1708,50 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
 
-# The critic/re-derivation evidence budget, in characters.
-# DEBT against #5 ("cria never truncates", every reader). The incident below is the argument for the
-# RIGHT fix rather than this one: the log grew 34KB → 106KB → 223KB across re-nudges on ONE step,
-# which is the same content repeated — de-duplication, the first allowed exception, removes it
-# losslessly. A char bound removes whatever happens to be last.
-# Observed live (run 0726-203600, stuck on step 5): the work log grew 34KB → 106KB → 223KB across
-# re-nudges on ONE step; at 223KB the critic call needed a floor REFIT, then errored outright, so the
-# verdict came back "unverified (no parseable verdict)" — which fails CLOSED and re-nudges, which grows
-# the evidence again. A doom loop where the judge can no longer answer at all.
-EVIDENCE_BUDGET_CHARS = 24000
+# Past this, a COMPOSED two-message prompt cannot be made to fit by the context floor: the floor's
+# lever is dropping whole oldest turns, and a two-message call has none to drop. This is where #5's
+# second exception applies — a MODEL-MADE summary, labelled as one — because the alternative that
+# used to sit here was a character clip, and the one after that is a judge call that errors out and
+# fails closed into the same re-nudge loop the clip was built for.
+EVIDENCE_SUMMARY_TRIGGER_CHARS = 48000
 
 
-def _bound_evidence(log: str) -> str:
-    """The work log bounded to the MOST RECENT actions, with the elision DISCLOSED.
-
-    Recency is what a step verdict turns on ("did the coder do this step?"), so the tail is the part
-    worth keeping; the durable fetch facts are appended separately and are never dropped by this. The
-    head is replaced by a labelled marker rather than silently cut — a judge that is told it is seeing
-    a window can weigh it, one that isn't will treat a partial log as the whole history."""
-    if len(log) <= EVIDENCE_BUDGET_CHARS:
+def _summarised_evidence(log: str, chat_fn, role, rlog) -> str:
+    """`log` condensed by the MODEL, labelled as a summary — never a clip. Returns the log unchanged
+    when there is no reasoner or the summary comes back empty: carrying too much is recoverable, and
+    a silent slice is not (#5, #13)."""
+    ready = chat_fn is not None and role is not None and rlog is not None
+    text = summarize(chat_fn, role, prompts.load("evidence_summary"), log, rlog,
+                     phase="compactor") if ready else ""
+    if not text.strip():
         return log
-    tail = log[-EVIDENCE_BUDGET_CHARS:]
-    nl = tail.find("\n")            # start at a clean action boundary, never mid-line
-    if 0 <= nl < 400:
-        tail = tail[nl + 1:]
-    dropped = len(log) - len(tail)
-    return (f"[{dropped:,} characters of EARLIER actions elided to keep this readable — the most recent "
-            f"actions follow in full; the durable fetch facts below are complete and unaffected]\n" + tail)
+    if rlog is not None:
+        rlog.emit("evidence.summarised", level="info",
+                  chars_before=len(log), chars_after=len(text))
+    return prompts.render("evidence_summary_note", summary=text.strip())
+
+
+def _dedup_evidence(log: str, rlog=None, chat_fn=None, role=None) -> str:
+    """The work log with byte-identical repeated ACTION BLOCKS folded to one copy plus a pointer.
+
+    THIS REPLACED A TAIL CLIP (`_bound_evidence`, 24,000 characters, head discarded). #5 now reads
+    "cria never truncates" for every reader — a judge's and a steer author's prompt included — with
+    de-duplication and a model-made summary as the only exceptions. The incident that justified the
+    old budget is the argument for folding rather than clipping: live on run 0726-203600, stuck on
+    step 5, the log grew 34KB -> 106KB -> 223KB across re-nudges on ONE step, which is the same
+    actions re-rendered. Folding removes exactly that redundancy and keeps every DISTINCT action; the
+    clip removed whichever happened to be oldest, which on a stuck step is the write that started it.
+
+    What is left after folding is fitted by the context floor, which is the one lossless-first place
+    (#5) — and `_work_log`'s own docstring already said so: "a per-site clip here would just be a
+    dumber, undetectable slice of what the model reads"."""
+    out, folded = dedup.fold_repeated_actions(log, prompts.load(dedup.REPEAT_NOTE_KEY).strip())
+    if folded and rlog is not None:
+        rlog.emit("evidence.repeats_folded", level="info", folded=folded,
+                  chars_before=len(log), chars_after=len(out))
+    if len(out) > EVIDENCE_SUMMARY_TRIGGER_CHARS:
+        out = _summarised_evidence(out, chat_fn, role, rlog)
+    return out
 
 
 class LoopStore:
@@ -2294,6 +2293,7 @@ class Loop:
         # (Parity with _replan_tail, which already judges against sess.plan.task.)
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
@@ -3199,6 +3199,13 @@ class Loop:
 
     # ------------------------------------------------------------------ helpers
 
+    def _reasoner(self):
+        """``(chat_fn, role)`` for this Loop, or ``(None, None)``. The evidence builders take the
+        reasoner so an oversized log can be SUMMARISED rather than clipped (#5's second exception);
+        without one they carry the log whole, which is the same safe answer."""
+        ctx = getattr(self, "_ctx", None)
+        return (getattr(ctx, "reasoner_chat", None), getattr(ctx, "reasoner_role", None))
+
     def _grounded_evidence(self, sess: PlanSession, body: dict, rlog=None) -> str:
         """The critic's / re-derivation's ground truth: the coder's recent tool actions (the work log)
         PLUS the DURABLE fetched-page facts (url→status→endpoints) cria accumulated PLUS what actually
@@ -3212,8 +3219,9 @@ class Loop:
         held files (run 0728-m1). Additive: every section only ever tells the critic MORE about the real
         state; none claims work that wasn't done."""
         messages = body.get("messages", [])
-        log = _bound_evidence(_work_log(messages, rlog=rlog,
-                                        gate_plan=getattr(sess, "gate_plan", None)))
+        log = _dedup_evidence(_work_log(messages, rlog=rlog,
+                                        gate_plan=getattr(sess, "gate_plan", None)),
+                              rlog=rlog, chat_fn=self._reasoner()[0], role=self._reasoner()[1])
         facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
         inventory = workspace_inventory(sess.workspace_root)
         return "\n\n".join(part for part in (log, facts, inventory) if part)
@@ -3527,6 +3535,7 @@ class Loop:
         task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
                 else _history_root(body.get("messages", []))[0])
         evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                            gate_plan=getattr(sess, "gate_plan", None))
         evidence += _gate_notes(sess)
         # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
@@ -3790,6 +3799,7 @@ class Loop:
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
@@ -4112,7 +4122,8 @@ def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
             or proberun.PROBE_EXIT_SENTINEL in text)
 
 
-def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None) -> str:
+def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
+                           chat_fn=None, role=None) -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -4124,8 +4135,8 @@ def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None) -> s
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _bound_evidence(_work_log(messages, keep_checks=True, rlog=rlog,
-                                    gate_plan=gate_plan))
+    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan),
+                          rlog=rlog, chat_fn=chat_fn, role=role)
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
@@ -6595,22 +6606,10 @@ _STEER_REASONING_STUCK = re.compile(
     r"not ON_TRACK|instead of ON_TRACK|looping|we must write|need to give a directive)\b")
 
 # How much of the author's thinking the recovery question carries.
-# DEBT against #5 ("cria never truncates", every reader) — the allowed exception here is a model-made
-# summary of the trace, not a clip of it. The traces run to 9,000+
-# characters. The TAIL, not the head: a reasoner's conclusion, and the directive it settled on, is
-# what it writes LAST ("Thus we will output: Stop re-running web_fetch …", call 0255).
-STEER_REASONING_BUDGET_CHARS = 4000
-
-
-def _reasoning_tail(text: str, budget: int) -> str:
-    """The last ``budget`` characters of a reasoning trace, started at a sentence boundary when one is
-    near the cut, and DISCLOSED with a leading ellipsis so the reader knows it opens mid-thought."""
-    text = (text or "").strip()
-    if len(text) <= budget:
-        return text
-    tail = text[-budget:]
-    m = re.search(r"(?<=[.!?])\s+", tail)
-    return "…" + (tail[m.end():] if m and m.end() < budget // 2 else tail).lstrip()
+# The recovery question carries the author's thinking WHOLE. It used to carry the last 4,000
+# characters, on the reasoning that a conclusion is what a model writes LAST — which is cria judging
+# relevance on the model's behalf, and #5 leaves no room for it. The reader here IS a model: it does
+# its own selecting, and the context floor fits the call.
 
 
 def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
@@ -6645,7 +6644,7 @@ def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
     rlog.emit("loop.steer_answer_contradicted", level="info", answer=_clip(answer, 60))
     recovered = strip_think(ask(prompts.render(
         "steer_reasoning_recover",
-        reasoning=_reasoning_tail(reasoning, STEER_REASONING_BUDGET_CHARS))) or "").strip()
+        reasoning=reasoning)) or "").strip()
     directive = _steer_or_none(recovered)
     if directive:
         rlog.emit("loop.steer_from_reasoning", level="info", head=_clip(directive, 140))
