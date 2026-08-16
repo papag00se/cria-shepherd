@@ -27,3 +27,5 @@ spill_note = — reference material saved into the read-only scratch directory f
 # briefing that DENIES a file cria can see; nothing answered invention. So the writer is shown the
 # list, and the completeness clause below is what makes it decisive.
 briefing_header = FILES ON DISK RIGHT NOW (gathered from the filesystem just now, newest first). This is the only description of the workspace you have — the transcript's file mentions may be stale:
+
+install_prefix = \n  {{PREFIX}}/ — {{COUNT}} files installed here by a package manager on this session's own instruction; not your source, and not listed one by one.

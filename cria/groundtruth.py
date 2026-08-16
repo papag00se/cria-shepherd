@@ -215,6 +215,45 @@ BUILD_ARTIFACT_DIRS = frozenset({
 
 _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 
+# THE DESTINATIONS CRIA'S OWN INSTALL REFUSAL PRESCRIBES. Relative paths, never basenames — this is
+# the distinction that lets it exist at all. `vendor` is deliberately OUTSIDE BUILD_ARTIFACT_DIRS
+# (see the comment above it: real source in some projects, and the cost of being wrong is hiding a
+# deliverable), and that judgement is untouched here. `vendor/bundle` is different in kind: it is
+# bundler's install prefix, it is not source in any ecosystem, and cria KNOWS it is there because
+# cria's own refusal told the coder to create it (`prompts/install_remedy.txt`, the gem_bundler
+# route). A tree cria prescribed is not the coder's work.
+#
+# Measured, cycle 2, shipping-rates-rb × qwen35. The refusal ordered the gem into the project; the
+# workspace gained ~1,950 dependency files; `_self_compact` calls this walker three times in one
+# compaction; the body went out at 263,205 chars of which 168,559 — 64% — were `vendor/bundle`
+# lines. n_ctx 49,152 against an estimate of 65,801: the server refused it six times and the run
+# died with two checks still red. Without those lines the same body estimates 23,661 tokens and fits
+# with room to spare, so this is sufficient on its own.
+#
+# FOLDED, NOT DROPPED. The listing's contract is that it is complete, so "not listed = does not
+# exist" always holds (the docstring calls that the one clause that makes it decisive, and it is the
+# operator's call). One summary line keeps the clause true — the directory is still reported, with
+# its file count — while costing tokens proportional to nothing.
+INSTALL_PREFIXES = frozenset({"vendor/bundle"})
+
+
+def _fold_install_prefixes(entries):
+    """Split a walked listing into (kept, folded) — folded being one line per install prefix.
+
+    See INSTALL_PREFIXES for why this exists and why it is keyed on a relative PATH rather than a
+    directory name. Returns the survivors plus a `(newest_mtime, prefix, count)` per prefix that
+    actually had files, so the fold sorts into the listing by recency like everything else."""
+    kept, buckets = [], {}
+    for mtime, rel, size in entries:
+        norm = rel.replace(os.sep, "/")
+        prefix = next((p for p in INSTALL_PREFIXES if norm.startswith(p + "/")), None)
+        if prefix is None:
+            kept.append((mtime, rel, size))
+            continue
+        seen_mtime, count = buckets.get(prefix, (0.0, 0))
+        buckets[prefix] = (max(seen_mtime, mtime), count + 1)
+    return kept, [(m, p, c) for p, (m, c) in sorted(buckets.items())]
+
 
 def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
@@ -238,27 +277,30 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
             except OSError:
                 continue  # vanished mid-walk (the coder is live) — a missing entry, never a crash
             entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
-    if not entries:
+    entries, folded = _fold_install_prefixes(entries)
+    if not entries and not folded:
         # "at judging time" is the CRITIC's wording. The planner is not judging anything, and it read
         # that phrase on every run once the inventory was shared with it.
         return prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
     entries.sort(key=lambda e: (-e[0], e[1]))
+    fold_lines = [prompts.fill(labels["install_prefix"], prefix=p, count=c)
+                  for _, p, c in folded]
     if flavor == "coder":
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
         # in read_file range; the compacted view carries the LIST, not the bytes).
         lines = [labels["coder_header"]]
-        lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+        lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
         lines.append(labels["coder_note"])
         return "\n".join(lines)
     if flavor == "briefing":
         # The rolling/harness compaction writer. Same complete listing, wording that says why it is
         # here: the transcript's file mentions may be stale, this is not. See the header's own note.
         lines = [labels["briefing_header"]]
-        lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+        lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
         lines.append(labels["complete"])
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
-    lines += [f"  {rel} ({size} B)" for _, rel, size in entries]
+    lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
     lines.append(labels["complete"])
     return "\n".join(lines)
 
