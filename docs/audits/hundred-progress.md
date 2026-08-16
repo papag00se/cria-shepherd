@@ -36,6 +36,7 @@ SSE frames carrying a delta. One frame per token, so counting frames is a faithf
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
+| 5 | cart-billing-go | gemma4 | 80% | −20 | 13 | 66 | four of five, and the loss is **a deleted seeded test** again — `TestUnknownCode`. Everything else green: rounding at 48.58, `discounts.json` with and without the file, the stderr line, a real decimal module in non-test source |
 | 4 | shipping-rates-rb | nemotron-elastic | 0% | −40 | 16 | 59 | floored at fifteen minutes, no runaway (longest 65.5 s), two degenerate aborts. Nothing landed: README names one zone, no own tests, no third-party require at all |
 | 3 | shipping-rates-rb | ternary-bonsai | **80%** | **+60** | 76 | 62 | biggest gain of the cycle. Four of five: the repo's tests intact, `hidden_contract` green, the express zone with its own tests, the full 8/8 rate table. Only `country_zone_mapping` fails, and for a reason of the model's own — it reached for `active_support` instead of the countries gem and the require chain dies. **Useful evidence the window guard is not over-firing**: three calls at 272 s, 265 s and 260 s were left alone, which is right — on a ~40 tok/s model those are ~11,000 tokens, nowhere near the window |
 | 2 | shipping-rates-rb | qwen35 | 0% | −40 | 16 | 134 | floored at fifteen minutes despite 134 calls and no runaway (longest 104.9 s), so the clock went on work, not on a stuck stream. Two things bit: a **seeded test was MODIFIED** — `test_unknown_zone_rejected`, the contract changed rather than satisfied — and `hidden_contract` is back on the bundler LoadError. `readme_rate_table` still names one zone |
@@ -110,6 +111,38 @@ has already finished.
 **Therefore the cycle runs on.** Stopping now would buy nothing — the affected cells are behind us —
 and would cost the one-code-state property for the twenty ahead. The Ruby column gets re-run after
 the fix phase, which is the same treatment any superseded row gets.
+
+### RE-MEASURED — seeded-test tampering, and it is NOT my fixes
+
+Three of the first five cells this cycle tampered with a seeded test — two deletions and one
+**modification** (`test_unknown_zone_rejected`, "the contract was changed, not the code", a shape the
+earlier count never saw). Against a 4% historical rate that is roughly 1-in-800 by chance, so it
+demanded an explanation before anything else was read.
+
+**Checked first, because the reflex is self-suspicion — and it is not the new assists.**
+`loop.satisfaction_gap_named` fired **zero times in all five cells**, so the operator's ruling cannot
+be the cause. Gate results fired in every cell including both that did *not* tamper, so the widened
+gate text does not separate them either.
+
+**What does separate them is the model.** Per-model, tampering rows over scored rows:
+
+| model | history | cycle 3 |
+|---|---|---|
+| **gemma4** | **10/74 = 14%** | 2/2 |
+| qwen35 | 2/52 = 4% | 1/1 |
+| ternary-bonsai | 2/61 = 3% | 0/1 |
+| nemotron-elastic | 2/56 = 4% | 0/1 |
+| every other model ever run (9 of them) | **0 of 157** | — |
+
+gemma4 is a 14% tamperer and always has been; this cycle simply drew it twice in five cells. The
+cluster is the schedule, not a regression.
+
+**What it does change is the earlier decision.** I measured this at 1.9% and declined to build a
+guard, on the grounds that the bar to ADD is high. The right denominator was never "all rows" — nine
+models have never done it once. On the model that does, it is 14%, and it has now cost checks in
+three different tasks and two languages. That is worth re-ranking next cycle, with the guard shaped
+as regression-only: a write that removes or weakens a test that currently PASSES is the exact
+"never delete correct content" case #2 sanctions.
 
 ### Ruby column, cycle 3 (valid run): 60 / 0 / 80 / 0 = **35%**
 

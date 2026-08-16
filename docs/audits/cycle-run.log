@@ -85,3 +85,5 @@
 [06:28:59] (4/24) shipping-rates-rb x nemotron-elastic — start
 [06:45:12] (4/24) shipping-rates-rb x nemotron-elastic — exit 0
 [06:45:12] (5/24) cart-billing-go x gemma4 — start
+[06:58:59] (5/24) cart-billing-go x gemma4 — exit 0
+[06:58:59] (6/24) cart-billing-go x qwen35 — start
