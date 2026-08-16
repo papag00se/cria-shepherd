@@ -499,3 +499,83 @@ Recorded because a walk that only forwards its agents is not an audit.
 **Three are clean to land now** (7, 12, 13). **Four must be landed as an added condition rather than a reworded sentence** (3, 4, 9, 10) — the repo settled that remedy twice already. **One is withdrawn as first written** (11). The rest need vetting first.
 
 **Two items are one root each behind several findings**, which is where the leverage is: #2 explains three separate losses, and #3 explains three more.
+
+---
+
+# Work order for the eleven open fixes
+
+Ranked by measured failure caused × how unambiguously `docs/principles.md` decides the fix. A rule that decides the answer outright makes a fix cheap; one that needs a product call or a prevalence measurement first makes it expensive however small the diff.
+
+| # | fix | failure it caused | rule that decides it | why cheap / expensive |
+|---|---|---|---|---|
+| 1 | **Judge header calls a model summary "ground truth"** (half of ranked #3) | cells 2, 6, 8 — 2 proven points in cell 6, the seeded-test edit in cell 2, 9 wasted calls in cell 8 | **5b provenance**: "tool output is ground truth, model summaries are claims, never label both the same way" | A header reword. Nothing pins it. Zero risk, largest cell count. |
+| 2 | **Research step accepts a workspace file as the "external source"** | cell 8 — 4 points, reproduced 1/5 → 5/5; cell 7's whole 30 minutes | **11b**: a mechanism whose reach does not cover the claim must abstain | One more arm on a checker that already has five, refusing into the existing safe null. The test is a filesystem question, so #8 keeps it in deterministic code. Biggest single loss. |
+| 3 | **Fence "what remains to be done"** (other half of ranked #3) | same three cells as row 1 | **5b** + **2** (cria never authors work) | Prompt text only, but a test pins the literal and a previous trim was reverted — fence, never delete. |
+| 4 | **Plan-off root task evictable by the floor** | cell 3 — the last 9 of 55 coder calls had no task; cells 2 and 6 lightly | **5** — the floor is the one lossless-first place | The protection already exists and already lists the marker; nothing tags the plan-off root. Additive, one owner, no new mechanism. |
+| 5 | **`__cria_*` in every gate command** | all cells; produced "Process exited with code 0" over a failed build in cell 8 | **17** — flat, and it names executable content explicitly | A rename, so mechanically trivial — but wide: a litter regex depends on the names being disjoint, seven test files hard-code them, and `probediscovery` leaks `.cria` separately. |
+| 6 | **dirguard judges tokens before shape** | cell 8 — 10 refusals, then 27 calls on the wrong theory | **5b**: "Refusals must name something the coder can actually change. Validate that a command is well-formed before judging it." | The doctrine now states this outright, so the *what* is settled. Expensive because it touches the guard that once stopped a workspace wipe, and **15** wants prevalence before a new check. |
+| 7 | **Ruby dependency note can't tell "not installed" from "unreachable"** | cells 1, 2, 3 | **5b** — it asserts an install that never happened | Add a disk condition and a second prompt key; the pinned sentence is untouched. |
+| 8 | **Steer's checks slot re-rendered instead of read from the gate object** | cells 4 and 7 lost their remaining turns — but the clipping half is already fixed, so most of the harm is gone | **5** ("use the authoritative object directly") + **12** | Small and clean; urgency dropped because the steer author now sees the whole result either way. |
+| 9 | **API-routes language on non-API pages** | cells 1–4, diffuse; contributed to cell 1's invented method name | **5b** + **20** (never key a prompt to one task's vocabulary) | Condition it the way its sibling was conditioned. Two tests pin the wording. |
+| 10 | **Killed loop replayed into its own retry** | cell 8, one call — prompt 1,590 → 10,642 bytes, 42 copies | **1** — the safe direction is REMOVE | Stop quoting the killed output. Trivial diff, small payoff. |
+| 11 | **Repetition steer calls three different commands "the SAME action"** | cell 1, one steer; the reasoner repeated the false claim | **5b** | Withdrawn as first written — the count was never the defect. Needs re-scoping and its own vetting pass. |
+
+**Not ranked: the gap-naming cadence (ranked #14).** It caused no failure, because it never ran. It is an unrealised benefit, and it needs a product call on cadence plus a prevalence measurement (**15**) before anything lands — the anti-noise objection the three bounds answered re-opens the moment the cadence changes.
+
+---
+
+# What actually failed the cells — the causal pass
+
+The work order above was built from the walk, which recorded where defects *appeared*. This section replaces it. Every one of the 24 lost checks was re-traced against a strict standard — **CAUSED** requires showing the model receive the defect and act on it, with the check turning on that; misleading the model or burning turns is **CONTRIBUTED**. Counterfactuals were run against the archived workspaces wherever a single change could be tested.
+
+## The 24 lost checks
+
+| cell | lost | what actually failed it | cria's role |
+|---|---:|---|---|
+| 1 rb/gemma4 | 2 | append written as a replace (seeded test); invented the gem's API while the real name sat twice in the same prompt | none on the path |
+| 2 rb/qwen35 | 5 | **3 to cria** — installed under bundler on cria's advice, unreachable to a bare `ruby`; 2 to the model (own wrong assertions, README never written) | **#7 CAUSED ×3** |
+| 3 rb/bonsai | 1 | `Shipping.zone_for` was never written — documented in the README, never implemented | none on the path |
+| 4 rb/nemo | 5 | deliverables never written; the model chose the gem hunt itself 30 seconds in | none on the path |
+| 5 go/gemma4 | 1 | append written as a replace, unprompted; no cria marker in the surrounding prompts | none on the path |
+| 6 go/qwen35 | 2 | **both to cria** — the compaction summary invented a `main.go` requirement, the judge cited it as fact, the coder built it, the module got renamed | **#3 CAUSED ×2** |
+| 7 go/bonsai | 4 | **all to cria** — a bare `go.mod` became "Do ONLY this step", rode 43 of 43 prompts, and the model never reopened `cart_test.go` | **#1 CAUSED ×4** |
+| 8 go/nemo | 4 | four invented decimal names written in one shot at call 0013, before cria said anything, never revisited in 94 calls | none caused |
+
+**9 of 24 lost checks are cria's. 15 are the model's.**
+
+## Every defect, scored on checks caused
+
+| defect | checks CAUSED | verdict |
+|---|---:|---|
+| #1 research step accepts a workspace file | **4** | cell 7. `step_defect("go.mod")` returns None because `.mod` is not a location token. Receipt-and-reaction at 0018, right after it had written a complete `cart.go`: *"I see — you want me to focus only on Step 1 (go.mod) right now."* |
+| #7 `gem_bundler` omits reachability | **3** | cell 2. 0/5 → 3/5 from one line. **Already fixed (`caa6e71`).** |
+| #3 compaction summary invents work, filed as ground truth | **2** | cell 6. `main.go` appears nowhere in the session before the compactor invents it. Also stated two false facts in cells 2 and 8 that cost turns. |
+| #2 steer author's clipped/re-rendered evidence | 0 | fired in cells 4, 7, 8. Cell 4: coder ignored it and reasoned correctly. Cell 7: coder obeyed, then self-corrected 4 calls later. Real, and it has never cost a check. |
+| #4 `__cria_*` leak / false exit 0 | 0 | refuted in three cells independently. All four model-authored copies wrapped commands that print their errors. |
+| #5 dirguard refuses on stray tokens | 0 | cell 8 only. Editing and building never stopped working; it changed what turns were spent on. |
+| #6 context floor evicts the task | 0 | cell 3 is the strongest case and refutes it: at 0051, *with* the task present, the model quoted it and chose the gem hunt anyway. |
+| #8 killed loop replayed into its retry | 0 | one call, one cell. |
+| #9 ruby dependency note | 0 | cell 1: fires eight calls *after* the API was already wrong; its advice appears in zero responses. |
+| #10 API-routes wording | 0 | refuted twice. Cell 3, verbatim: *"noted it didn't have endpoint definitions (which is expected - it's documentation)"* — then extracted the right method from that page. |
+| #11 repetition steer's false count | 0 | cell 1: miscounted, the reasoner built on it, and the directive it produced was correct and moved the work forward. |
+| #14 gap-naming cadence | 0 | never ran. |
+
+## Findings that outrank most of the list and were not on it
+
+- **Prefix-cache churn.** Cell 3 spent **58.5 of 75.7 wall minutes on time-to-first-token** at a healthy 35 tok/s. Consecutive prompts share ~18% of 92,000 characters; the divergence starts exactly at `⟦ctx:compacted⟧`, which cria rebuilds every turn and places *ahead of* the task and all live history. ~19K tokens re-prefilled per call on a context that had stopped growing. On a suite where milestone floors kill runs, wall clock **is** score.
+- **A confirmed step has no exit.** Cell 7: cria's critic confirmed step 1 done at minute 3.5, and `loop.periodic_step_satisfied` carries `observe_only: true` — the path is deliberately built not to advance. The junk step therefore had no exit, and the run spent 26 more minutes on a five-line file. This is what turned #1 from a bad step into a lost cell.
+- **Nothing asks whether a turn destroyed working code.** Two checks (cells 1 and 5) are the same shape: an append written as a replace that dropped a seeded test. The gate runs vet/build/test, all of which pass with a test deleted, and in cell 5 the satisfaction judge's evidence held the test present, the test passing, the full edit that overwrote it, and the next run with it gone — and answered `satisfied: true`.
+- **cria discarded a true fact it had computed** (cell 5): it stat'ed `discounts.json`, found it genuinely absent, dropped the result, and handed the coder the true report labelled *"one reader's opinion of your work, not a verified fact"*. Two false completion claims followed. Cost turns, no check.
+- **`edit_file` documents no way to append** — only replace and delete — while the system prompt discourages `write_file` for small changes. That is the tool contract behind both seeded-test losses, though neither model showed signs of wrestling with the choice.
+- **Verifier gap** (cell 7): `discounts_from_file` passes on a workspace that never opens `discounts.json`.
+
+## Revised order
+
+1. **#1** — 4 checks, and its amplifier (the observe-only confirmed step) is the reason it cost a whole cell rather than a few turns. Fix both together.
+2. **Prefix-cache ordering** — no checks attributed, but ~45 minutes of one cell, and wall clock is score under the floors.
+3. **#3** — 2 checks, plus false facts in two other cells.
+4. **The destroyed-work question** — 2 checks across two cells, and the evidence was already in the judge's hands both times.
+5. Everything else on the original list has **caused nothing measurable**, and several are refuted outright. They are hygiene or latent-risk items and should be argued on those terms, not on recovered points.
+
+`#7` is done. The rest of the original ranking was built on where defects appeared rather than what they cost, and it was wrong in both directions: it put a zero-cost leak fifth and buried the only fix worth four checks.
+
