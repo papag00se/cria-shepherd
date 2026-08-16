@@ -369,15 +369,47 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
     return out, reduced
 
 
+# The harness's environment/instructions preamble — a user-role turn that is NOT the task. Mirrors
+# selfcompact.is_env_context; contextfloor imports nothing (see _PROTECT_MARKERS above) and a test
+# asserts the two stay in sync.
+_ENV_PREAMBLE = ("<environment_context>", "<user_instructions>")
+
+
+def _is_env_preamble(m: dict) -> bool:
+    t = _msg_text(m)
+    return any(tok in t for tok in _ENV_PREAMBLE)
+
+
 def _protected_mask(messages: list[dict]) -> list[bool]:
-    """True where a message must NOT be dropped: every system message, and the active
-    turn — the last user message through the end of the list."""
+    """True where a message must NOT be dropped: every system message, the active turn — the last
+    user message through the end of the list — and THE FIRST REAL USER TURN, which is the task.
+
+    THE TASK USED TO BE DROPPABLE, and it was dropped. The active span is "the last user message
+    onward", so the task is covered only while nothing follows it — and cria itself injects user-role
+    turns after it: the reasoned steer and focus-trim's two notes. The moment one lands, the task
+    becomes the OLDEST droppable turn and the floor deletes it first. Measured across one day's real
+    sessions: 53 of 1,475 coder prompts shipped with no task in them, in 8 of 22 sessions; 15 traced
+    to cria's own steer and 12 to focus-trim's notes. In one, the model's only standing instruction
+    was the steer: it reasoned "use float64 instead of decimal" and edited the test to undo the
+    decimal work the task had asked for.
+
+    ⟦ctx:task⟧ is already in _PROTECT_MARKERS, but self-compaction only emits it once it fires, and
+    the floor starts dropping at a far lower budget than self-compaction triggers at — so on the
+    plan-off path the raw task carries no marker for most of a session. This protects it structurally
+    instead, with no marker and nothing added to what the model reads.
+
+    The harness's `<environment_context>` preamble is a user turn and is NOT the task, so it is
+    skipped; that is the same distinction selfcompact.is_env_context draws."""
     n = len(messages)
-    last_user = -1
+    last_user, first_task = -1, -1
     for i, m in enumerate(messages):
         if m.get("role") == "user":
             last_user = i
+            if first_task < 0 and not _is_env_preamble(m):
+                first_task = i
     prot = [False] * n
+    if first_task >= 0:
+        prot[first_task] = True
     for i, m in enumerate(messages):
         if m.get("role") in ("system", "developer"):
             prot[i] = True
