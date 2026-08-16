@@ -44,43 +44,56 @@ first cell; **nothing under `cria/` changes until the run phase ends.**
 | 13 | feed-pipeline-java | gemma4 | 0% | 0 | 16 | 35 | flat at zero, and **one typo is the whole cell**: `mvn compile` fails on a single error, `cannot find symbol: class CSVRecordRecord` at `Importer.java:96` — the model wrote the word twice. Nothing else is wrong with the build. All five checks fail behind it. **Not cria's**: `CSVRecordRecord` appears in **10 request bodies**, `cannot find symbol` in 9, `BUILD FAILURE` in 8 — the model was told plainly and repeatedly. Killed at the 15-minute floor with 29 coder calls, three of which cria refused as malformed (`write_missing_arg` ×2, `edit_missing_arg` ×1) — 10% of the budget, on a cell whose budget was the binding constraint |
 | 14 | feed-pipeline-java | qwen35 | **100%** | **+60** | 76 | 492 | **the first 100% ever scored on `feed-pipeline-java`**, the campaign's worst column. All five: messy feed handled with skipped rows reported, **70.3× against a 4.0× bar with the totals matching** (29.9× and mismatched totals last cycle), 4 worker threads with one distinct result across 8 runs, `csv_library` importing the quoted-comma row at 25.00, and **`review_written` at 828 words with 13 located findings** — a check missed 4 of 4 last cycle. And it was **5/5 at the 30-minute milestone and ran for 45 more minutes**; see below |
 | 15 | feed-pipeline-java | ternary-bonsai | **80%** | **+80** | 70 | 82 | biggest single gain of the cycle, from a cell that **never compiled** last cycle. The build works, 33.4× against a 4.0× bar with matching totals, 4 worker threads, quoted-comma row imported. `review_written` is scored 0 and **the model earned it** — this is a verifier defect, proven below, and the row is a re-run candidate for the fix phase |
-| 16 | feed-pipeline-java | nemotron-elastic | 0% | 0 | 18 | 22 | flat at zero, but **it compiles now** — last cycle `mvn compile` failed and stayed failed; this time its importer runs the large feed and produces matching totals. It just optimised nothing (1.0× against a 4.0× bar), spawned no threads, wrote no REVIEW.md and declared no CSV dependency. Killed at the 15-minute floor after **22 calls**, and the reason it got so few is below |
+| 16 | feed-pipeline-java | nemotron-elastic | 0% | 0 | 18 | 22 | flat at zero, but **it compiles now** — last cycle `mvn compile` failed and stayed failed; this time its importer runs the large feed and produces matching totals. It just optimised nothing (1.0× against a 4.0× bar), spawned no threads, wrote no REVIEW.md and declared no CSV dependency. Killed at the 15-minute floor after **22 calls**. It ran at its normal 116–128 tok/s; what ate the budget was six-to-twelve-thousand-token replies plus four rumination aborts, 16.4 of 17.5 minutes inside the model. See the correction below |
 | 17 | handles-cli-node | gemma4 | 75% | 0 | 16 | 36 | three of four, held. The CLI prints address, holder and count, `--json` and `--help` both work, a bad handle exits non-zero, `request` is gone from both `package.json` and the source, and the Dockerfile is right. **Same single loss as last cycle**: `tests_incl_live` — its tests pass with the network blocked, so they are mocked. Not a cria fault and not an impossible check: two of the four models passed it last cycle. This model chose to mock, twice running |
 | 18 | handles-cli-node | qwen35 | **100%** | 0 | 6 | 59 | all four green in six minutes, live test included — `npm test` passes with the network and fails without, which is exactly the property the check asks for. Held from last cycle. **And the completion machinery worked**: one `task_complete`, one `done_critic`, one gate, session over. The same subsystem that burned 45 minutes and 118 calls on cell 14 closed this one in a single exchange — so the defect there is not "the judge is slow", it is the silent-turn path |
 | 19 | handles-cli-node | ternary-bonsai | **100%** | 0 | 36 | 66 | all four green, live test included, held from last cycle. Climbed the whole way — 2/4 at fifteen minutes, 3/4 at thirty, 4/4 at the end — which is the shape a milestone floor is meant to allow and did |
 | 20 | handles-cli-node | nemotron-elastic | *running* | | | | |
 
-### CAMPAIGN INTEGRITY — a slow box and a slow model are indistinguishable in the record
+### CORRECTED — cell 16 was not slow. I read the wrong session.
 
-Cell 16 was killed at a wall-clock floor having made 22 calls. The reason it made so few is that
-**the model ran at a third of its own speed**, and nothing on disk can say why.
+**What was published here first, and is wrong:** that cell 16 ran at 34–52 tok/s against its model's
+108–126 average, prefill-dominated, and that a busy GPU might explain it.
 
-Measured from `upstream.done` on that session:
+**The error.** I selected the session by matching the prefix `01a007c` in the log. Cell 16's session
+is `01a00809-e68a-7eb1-bdcb-85cda527521c`. The prefix matched
+`01a007c9-4389-7632-8085-8a020ad7f51e`, which is **cell 15, ternary-bonsai** — and 34–52 tok/s is
+simply that model's ordinary speed (its row says `avg_tok_s` 40.6). I reported one model's normal
+throughput as another model's slowdown. Rule 23b, at the level of picking the file: a prefix is not
+an identifier, and the row carries the exact `capture_dir`.
+
+**What cell 16 actually did**, from its own session:
 
 | | |
 |---|---|
-| `tok_per_s` on the long calls | **34–52** |
-| the same model's average elsewhere this cycle | **108–126** |
-| upstream time inside a 17.5-minute wall | **20.4 minutes across 43 calls** |
-| context growth over the run | 7,812 → 27,473 tokens, well inside the 49,152 window |
+| `tok_per_s` across its 23 calls | **116–128** — normal, no slowdown at all |
+| upstream time inside a 17.5-minute wall | **16.4 minutes — 94% of the cell** |
+| context growth | 9,441 → 14,332 tokens, small and never a factor |
 
-And the slow calls are **prefill-dominated**, not generation-bound: 183.6 s total for 507 tokens at
-35.9 tok/s is roughly 14 s of generation behind ~170 s of prompt processing. A 27 K-token prompt
-taking most of three minutes to ingest.
+The time went into **enormous single generations**, not prefill and not the box:
 
-**No cause is claimed, because none can be established from what is recorded.** The box's RTX 3080 is
-shared — `project_18084_gpu_shared_blender` says so and says to check the GPU before blaming code —
-and GPU state is not captured per call, or per cell, or at all. Checked live just now: 51%
-utilisation, 7.9 of 10.2 GB, with cell 17 running.
+```
+00:50:14   6,498 tokens   55.1s
+00:51:11   6,570 tokens   55.4s
+00:57:31  12,636 tokens  109.1s
+00:59:56   9,448 tokens   80.9s
+01:04:03  12,214 tokens  104.8s
+```
 
-**Why this matters beyond one cell.** Milestone floors kill on wall-clock. A run that is slow because
-something else owns the GPU is floored exactly like a run that is slow because the model is lost, and
-the row records `milestone-miss-15min` for both. Two cells this cycle were floored at 15 minutes;
-this one had 22 calls to work with.
+plus **four aborted calls** — `tokens=None`, totals of 48.6 s, 121.5 s, 126.0 s and 125.8 s — which
+are the run's four `rumination.abort` events. Roughly **seven minutes of a 17.5-minute budget spent
+inside runaway generations before the guard cut them**, on a model fast enough to have done the work.
 
-**Cheapest fix in the campaign, and it is in `suite/`, not `cria/`:** sample the GPU once per
-milestone and put it on the row. Then a floored cell can be read rather than guessed at, and the
-question "was the box busy" stops needing a time machine. Recorded for the fix phase.
+**The finding that survives, restated honestly.** The rumination guard is catching real runaways —
+four of them, correctly — but it is catching them one to two minutes in, and on a cell whose whole
+budget is fifteen minutes that is the difference between 22 calls and a working build. That is worth
+ranking on its own evidence, and it has nothing to do with the GPU.
+
+**What does NOT survive.** No slowdown was observed and none should be inferred. GPU state is still
+recorded nowhere, and sampling it per milestone is still cheap and still worth doing — the operator
+started a 3080-hungry app mid-cycle on 08-15 and nothing in the record would have shown it. But that
+is a **precaution against a hazard**, not a diagnosis of anything measured, and it must not be
+justified by this cell.
 
 ### VERIFIER DEFECT — `review_written` misses a markdown table by one character
 
