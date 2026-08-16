@@ -36,6 +36,7 @@ SSE frames carrying a delta. One frame per token, so counting frames is a faithf
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
+| 2 | shipping-rates-rb | qwen35 | 0% | −40 | 16 | 134 | floored at fifteen minutes despite 134 calls and no runaway (longest 104.9 s), so the clock went on work, not on a stuck stream. Two things bit: a **seeded test was MODIFIED** — `test_unknown_zone_rejected`, the contract changed rather than satisfied — and `hidden_contract` is back on the bundler LoadError. `readme_rate_table` still names one zone |
 | 1 | shipping-rates-rb | gemma4 | 60% | −20 | 8 | 57 | **no runaway at all** — longest call 47.2 s against 669–720 s on every previous attempt, and the whole cell finished in 8.2 minutes instead of 43. The window guard is live and did **not** fire, so this run simply had nothing for it to catch; it remains unexercised. `hidden_contract` passes again (twice running now), so the bundler load-path wound is not universal. The two losses: a **deleted seeded test** (`test_negative_weight_rejected`), and `country_zone_mapping` mapping almost everything to `international` |
 
 
