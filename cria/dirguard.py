@@ -214,7 +214,18 @@ def _tool_present(name: str) -> bool:
     # This is not guessing a name: the directory is READ and a real file is found, or the answer stays
     # False (#5b). The same shape as the two commits that already fixed this function twice — a
     # sentence asserting something about this machine that cria never asked the machine.
-    return _versioned_variant(name) is not None
+    return _resolved_tool(name) is not None
+
+
+def _resolved_tool(name: str) -> str | None:
+    """The name the coder must actually TYPE for this tool, or None when it is not on their PATH.
+
+    The plain name when it exists, otherwise the versioned executable that does. `_tool_present` is
+    this question reduced to a bool, and keeping the answer is what stops cria selecting a route on
+    the strength of `bundle3.2` and then telling the coder to run `bundle` (#5b)."""
+    if toolpath.which(name) is not None:
+        return name
+    return _versioned_variant(name)
 
 
 def _versioned_variant(name: str) -> str | None:
@@ -241,14 +252,25 @@ def _local_install_advice(command: str) -> str:
     An empty string is a real answer, and now for two reasons. apt, dnf, brew and pacman install to
     the machine and have no project-local form. And an ecosystem whose tools are not installed has
     no route cria can honestly offer either — better to state only what is forbidden than to send
-    the coder after a command that cannot run (#3, #5b)."""
+    the coder after a command that cannot run (#3, #5b).
+
+    THE ROUTE NAMES THE BINARY THAT WAS ACTUALLY FOUND. `_tool_present` answers a bool, so the route
+    used to be selected on the strength of `bundle3.2` and then printed with the literal `bundle` —
+    which does not exist on this box. Measured on shipping-rates-rb × ternary-bonsai, cycle 2: ten
+    refusals, all naming `bundle install --path vendor/bundle`, calls 0037–0057 spent on installs
+    that could not succeed, 80% → 20%. The coder never tried `bundle3.2` because nothing named it.
+    That is the same #5b failure the header of `install_remedy.txt` already records as fixed twice:
+    the DISCOVERY was repaired and the SENTENCE was left behind. Now the discovered name is filled
+    into the route's `{{TOOL}}` token, so the two can no longer disagree."""
     routes = prompts.load_map("install_remedy")
     for pat, options in _INSTALL_REMEDY:
         if not pat.search(command):
             continue
         for key, needs in options:
-            if all(_tool_present(t) for t in needs) and routes.get(key):
-                return " " + routes[key]
+            found = {t: _resolved_tool(t) for t in needs}
+            if all(found.values()) and routes.get(key):
+                return " " + prompts.fill(routes[key],
+                                          **{t.upper(): n for t, n in found.items()})
         return ""      # the ecosystem is refused, and nothing here can carry out the alternative
     return ""
 

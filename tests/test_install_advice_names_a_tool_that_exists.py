@@ -26,8 +26,13 @@ from cria import dirguard, prompts
 
 
 def _with_tools(*present):
-    """Pin PATH lookups so these assertions do not depend on what this machine happens to have."""
-    return mock.patch.object(dirguard, "_tool_present", lambda t: t in present)
+    """Pin PATH lookups so these assertions do not depend on what this machine happens to have.
+
+    Patches `_resolved_tool`, which is now the single owner of both halves of the question — is the
+    tool there, and what is it called. `_tool_present` is a bool view of it and patching that alone
+    would leave the NAME coming from the real machine, which is the exact split that let cria select
+    the bundler route on `bundle3.2` and then print `bundle` (cycle 2, −60 points)."""
+    return mock.patch.object(dirguard, "_resolved_tool", lambda t: t if t in present else None)
 
 
 class ARouteIsOnlyOfferedIfItsToolExistsTests(unittest.TestCase):

@@ -26,19 +26,24 @@ def remedy(cmd):
 
 
 class TheRemedyMatchesTheManagerTests(unittest.TestCase):
-    # Asserted on the ecosystem's OWN TOOL, not on one command line. The ruby entry used to require
-    # "bundle install --path", and `bundle` is not installed on the box the battery runs on — cria
-    # was prescribing a command that could not run, and two runs followed it into "command not
-    # found". A route is now chosen by what is actually on PATH, so the durable expectation is that
-    # ruby is answered with ruby's tool, whichever route that turns out to be.
-    # See tests/test_install_advice_names_a_tool_that_exists.py.
+    # Asserted on the ecosystem's OWN DESTINATION, never on a binary name. The ruby entry required
+    # "bundle install --path" and `bundle` is not installed on the box the battery runs on — cria
+    # prescribed a command that could not run and two runs followed it into "command not found".
+    # The route is chosen by what is on PATH, and since 2026-08-15 the discovered name is written
+    # into the sentence too, so on this box the ruby answer reads `bundle3.2 install --path`.
+    #
+    # THAT IS WHY NO EXPECTATION HERE MAY CONTAIN A BINARY NAME. Pinning one re-creates the bug at
+    # the test level: the assertion passes only on a machine whose binaries happen to be unversioned,
+    # and it fails the moment cria tells the truth about a distro that versions them. Each case names
+    # the place the install must LAND, which is the property the remedy actually promises.
+    # See tests/test_install_remedy_names_the_real_binary.py.
     CASES = {
         "pip install requests": (".venv",),
-        "gem install countries": ("bundle install --path", "gem install --install-dir"),
-        "cargo install ripgrep": ("cargo add",),
-        "go install example.com/x@v1": ("go get",),
+        "gem install countries": ("--path vendor/bundle", "--install-dir vendor/bundle"),
+        "cargo install ripgrep": ("Cargo.toml",),
+        "go install example.com/x@v1": ("go.mod",),
         "npm install -g eslint": ("node_modules",),
-        "composer global require x": ("composer require",),
+        "composer global require x": ("this project's own `vendor/`",),
     }
 
     def test_each_ecosystem_is_answered_in_its_own_terms(self):
