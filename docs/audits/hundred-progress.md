@@ -21,6 +21,48 @@ Started **2026-08-15 23:10** on the six-fix code state.
 |---:|---|---|---:|---:|---:|---:|---|
 | 1 | shipping-rates-rb | gemma4 | **80%** | 0 | 29 | 94 | **`country_zone_mapping` passes for the first time on this model** — `third-party requires: ['bundler/setup', 'countries/global']` and real zones, where cycle 2 said "none". The install-remedy fix worked: told to run `bundle3.2`, the model installed the gem and used it. The one loss is `hidden_contract`, and it is the same fix's shadow — the model's `rates.rb` now opens `require "bundler/setup"`, and the hidden test runs bare `ruby`, so it dies on a LoadError. `gem_bundler` buys the dependency check and costs the bare-ruby one; `gem_direct`'s text is the route that warns about exactly this |
 
+| 2 | shipping-rates-rb | qwen35 | 40% | 0 | 29 | 204 | **the 259 KB death is gone** — cycle 2 killed this cell with six HTTP 400s; this run finished normally, 204 calls, no oversize body, longest call 137.8 s. The vendor-fold fix did its job. But three checks now die on a LoadError, and that is the install fix's own doing — see below |
+
+### TIER 1 (c3) — my install fix works, and the route it unlocked is the wrong one
+
+The `bundle3.2` fix is doing exactly what it was built to do, and that is how it exposed the real
+defect underneath. Measured on cell 2, where cria emitted this advice **77 times**:
+
+```
+run `bundle3.2 install --path vendor/bundle`
+```
+
+The model followed it. The gem landed in `vendor/bundle`. Then, from the archived workspace:
+
+```
+$ ruby -Ilib -e 'require "shipping/rates"'
+  lib/shipping/eu_check.rb:4: cannot load such file -- countries (LoadError)
+$ ruby -e 'require "countries"'
+  cannot load such file -- countries (LoadError)
+```
+
+`--path vendor/bundle` installs into a private prefix that is on **no** load path unless the code
+says `require "bundler/setup"` or the command runs under `bundle exec`. The verifier runs bare
+`ruby -Ilib`. Three of five checks die there.
+
+Cell 1 lost only one check because that model happened to add `require "bundler/setup"` itself — and
+that is precisely why its `hidden_contract` failed, since the hidden test also runs bare `ruby`. Two
+cells, two different amounts of the same wound.
+
+**Before the fix, cria's advice simply failed** (`bundle: command not found`) and the models fell
+through to `gem install`, which puts the gem on the default load path — which is how cycle 1's Ruby
+100% runs happened. So the fix turned a route that did not run into a route that runs and leaves the
+dependency unloadable.
+
+**The general defect, stated without reference to this task:** an install route must leave the
+dependency loadable by the way the project actually runs. `gem_direct`'s text already says this —
+*"then make it loadable by putting that directory on the load path"*. `gem_bundler`'s says nothing:
+it names a private prefix and omits the one thing that makes that prefix reachable. That omission is
+true of bundler `--path` in every project, not just this one.
+
+**Fix phase, not now** — one code state per cycle, and cells 3 and 4 will meet the same thing, which
+is worth having on the record rather than patched away mid-run.
+
 ### TIER 1 (c3) — the dead stream, and the half of it the fix does NOT cover
 
 **Landed mid-cycle and the run restarted from cell 1**, so cycle 3 is still one code state. The fix
