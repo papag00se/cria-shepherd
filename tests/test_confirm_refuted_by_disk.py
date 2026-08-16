@@ -54,37 +54,37 @@ class VetoRefutedByDiskTests(unittest.TestCase):
     def test_refuted_ruling_overturns(self):
         ws, spec = self._ws()
         ask = _Ask("REFUTED")
-        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=ask), spec)
+        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=ask)[0], spec)
         self.assertEqual(len(ask.prompts), 1)
         self.assertIn("EXISTS on disk", ask.prompts[0])   # the gathered facts reached the ruler
 
     def test_stands_ruling_keeps_the_veto(self):
         ws, spec = self._ws()
         ask = _Ask("STANDS")
-        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=ask), "")
+        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=ask)[0], "")
 
     def test_unreadable_ruling_keeps_the_veto(self):
         ws, spec = self._ws()
         for garbage in ("", "maybe?", "10296752880400"):
             self.assertEqual(
-                _veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=_Ask(garbage)), "")
+                _veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=_Ask(garbage))[0], "")
 
     def test_no_existing_named_file_asks_nothing(self):
         # The disk holds no disproof → no call is spent and the veto stands unquestioned.
         ws, _ = self._ws()
         ask = _Ask("REFUTED")
-        self.assertEqual(_veto_refuted_by_disk("README.md does not exist on disk", ws, ask=ask), "")
+        self.assertEqual(_veto_refuted_by_disk("README.md does not exist on disk", ws, ask=ask)[0], "")
         self.assertEqual(ask.prompts, [])
 
     def test_no_missing_assertion_asks_nothing(self):
         ws, spec = self._ws()
         ask = _Ask("REFUTED")
-        self.assertEqual(_veto_refuted_by_disk(f"{spec} asserts the wrong holder value", ws, ask=ask), "")
+        self.assertEqual(_veto_refuted_by_disk(f"{spec} asserts the wrong holder value", ws, ask=ask)[0], "")
         self.assertEqual(ask.prompts, [])
 
     def test_no_reasoner_keeps_the_veto(self):
         ws, spec = self._ws()
-        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=None), "")
+        self.assertEqual(_veto_refuted_by_disk(f"Missing swagger.json file at {spec}", ws, ask=None)[0], "")
 
     def test_facts_carry_both_states(self):
         # The ruler sees exactly what the disk holds — the existing file AND the absent one.

@@ -615,7 +615,7 @@ class AnEmptinessClaimIsRefutableByDiskTests(unittest.TestCase):
             seen["prompt"] = prompt
             return "REFUTED"
 
-        out = loop._veto_refuted_by_disk(self.WHY, d, ask=ask)
+        out = loop._veto_refuted_by_disk(self.WHY, d, ask=ask)[0]
         self.assertEqual(out, "resolve_handle.py")
         self.assertIn("EXISTS on disk", seen["prompt"])
         self.assertIn("code lines", seen["prompt"])   # the fact an emptiness claim turns on

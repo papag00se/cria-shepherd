@@ -1,0 +1,3 @@
+The filesystem was checked just now and agrees with the report above:
+{{FACTS}}
+That part is a verified fact about the workspace as it stands, not one reader's opinion.

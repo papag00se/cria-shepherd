@@ -1014,8 +1014,12 @@ _VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such
 _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
 
 
-def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> str:
-    """The file a NOT-consistent veto wrongly claims is MISSING — else "".
+def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> tuple[str, str]:
+    """``(refuted_path, disk_facts)`` for a NOT-consistent veto — ``("", "")`` when nothing applies.
+
+    ``refuted_path`` is the file the veto wrongly claims is MISSING, or "" when the veto stands.
+    ``disk_facts`` is what the filesystem actually says about every path the veto named, returned in
+    BOTH directions: a veto the disk corroborates is a verified fact, not one reader's opinion.
 
     Walked on ada-handles_nemotron-elastic_codex_pon_1785834747 call 0054: the confirm checker
     ruled {"consistent": false, "why": "Missing swagger.json file at /tmp/…/tmp/read-only/
@@ -1035,7 +1039,7 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
     REFUTED against those facts. Every failure direction keeps the veto: no reasoner, no named
     file that exists, an unreadable answer — all STANDS. Only a clear REFUTED overturns."""
     if not why or not workspace_root or ask is None or not _VETO_MISSING.search(why):
-        return ""
+        return "", ""
     facts, first_existing = [], ""
     for m in _VETO_PATH.finditer(why):
         tok = m.group(1)
@@ -1060,10 +1064,18 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
         if exists and not first_existing:
             first_existing = tok
     if not first_existing:
-        return ""   # nothing the disk could refute with — the veto stands unquestioned
+        # THE DISK AGREED, AND cria USED TO THROW THAT AWAY. Only the REFUTED direction had a return
+        # path; when the filesystem corroborated the veto, these facts — freshly stat'ed, exact —
+        # were computed and dropped, and the report reached the coder under done_incomplete's
+        # "one reader's opinion of your work, not a verified fact". In cart-billing-go x gemma4 the
+        # veto said `discounts.json` was missing, cria confirmed it was missing, discarded that, and
+        # the coder declared done twice claiming it had created a file its own `list_dir` showed
+        # absent. A verified fact must not be labelled an opinion (#5b), and telling the coder MORE
+        # about the real state is the additive direction (#2).
+        return "", "\n".join(facts)
     ans = strip_think(ask(prompts.render("confirm_veto_disk", why=why, facts="\n".join(facts))) or "")
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-    return first_existing if head == "REFUTED" else ""
+    return (first_existing if head == "REFUTED" else ""), "\n".join(facts)
 
 
 def _restates_the_verdict(why: str, reason: str) -> bool:
@@ -1202,11 +1214,17 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
                                            phase="confirm-disk", temperature=0.0) or "") \
             if reasoner_role is not None else None
-        refuted = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
+        refuted, disk_facts = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
         if refuted:
             rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
                       path=refuted, head=_clip(why or "", 120))
             return True, ""
+        if disk_facts:
+            # The disk CORROBORATED the veto — carry that with it, so a report cria has just
+            # verified does not reach the coder labelled one reader's opinion (#5b, #2).
+            rlog.emit("loop.confirm_confirmed_by_disk", level="info", phase=phase,
+                      head=_clip(why or "", 120))
+            return verdict, why + "\n\n" + prompts.render("veto_disk_confirms", facts=disk_facts)
     return verdict, why
 
 
