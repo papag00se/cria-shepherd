@@ -36,9 +36,30 @@ LOG = SUITE.parent / "docs" / "audits" / "cycle-run.log"
 
 
 def cells() -> list[tuple[str, str]]:
-    """Task-major, model-minor. A whole language finishes before the next one starts, so a cycle
-    interrupted halfway still says something complete about the languages it reached."""
-    return [(t, m) for t in TASKS for m in MODELS]
+    """MODEL-major, task-minor: one model is loaded, then taken through every language.
+
+    This was task-major until 2026-08-16, on the reasoning that a whole language finishing meant a
+    half cycle still said something complete about the languages it reached. Operator's call, and
+    the grid is the argument: it is model-ROWS by language-COLUMNS, and the operator reads it by
+    model. Task-major fills columns, so eight cells in you have two complete languages and four
+    models each a third measured — no row you can read. Model-major fills a row at a time, which is
+    the unit the report is actually read in.
+
+    The swap cost, timed directly rather than inferred: two real `swap_model` calls on this box took
+    10.6 s (into gemma4's 12B) and 70.2 s (into ternary-bonsai's 27B), mean 40.4 s. Twenty-four loads
+    is ~16 minutes a cycle; four is under three. It is not the headline — 13 minutes off eleven hours
+    — but it is free.
+
+    AND IT DOES NOT COME OUT OF A CELL'S CLOCK, which is worth writing down because it is the first
+    thing to suspect: `run.py` calls `swap_model` at line 336 and sets `t0` well after it, past
+    `configure_cria` and the workspace seed, and `swap_model` blocks on `wait_health`. So a 70-second
+    model load is charged to the driver, never to the model's fifteen-minute milestone floor.
+
+    The part that is not measured in minutes: every swap is a window where cria's endpoint is down or
+    still loading, and a leftover harness session from the previous cell POSTs into it. Every 503 and
+    every `connection refused` in the campaign's logs sits in one of those windows (cycle 2's walk,
+    the 12x503 entry). Four of those windows instead of twenty-four is worth having on its own."""
+    return [(t, m) for m in MODELS for t in TASKS]
 
 
 def note(line: str) -> None:
