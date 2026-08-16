@@ -97,6 +97,8 @@ A class defined after `unittest.main()` does not run when the file is executed d
 - **Three tests with "no assertions".** All three are "must not raise" smoke tests, where an exception IS the failure.
 - **`test_research_check_wiring.py` certifying a retired rule.** It does not. `_research_check` still never calls `_advance`, and the test is the regression guard pinning that. What was stale was a COMMENT in `loop.py` calling the reading-fact-to-critic wiring "the next change" — it landed some time ago. Corrected.
 - **The "checks passed" wording with no gate.** Already fixed by `_check_state_words` before this sweep ran; the finding predates it.
+- **The periodic check-in restating check output 140 bytes above it (claimed 37/78).** Does not reproduce. Of 131 captured coder prompts carrying the periodic-gate steer, **0** have its findings anywhere above it — checked twice, once on the first `file:line` in the block and once on the block's first 120 characters.
+- **Superseded-write stamps and the mis-worded truncation refusal.** Both fixed earlier the same day; replay confirms it. Seven double-stamped prompts exist in the captures and every one predates `fd00f35`; no prompt carries the mis-worded refusal. The truncation guard now records which wording it sent, so the next measurement reads one field instead of re-deriving it from captures.
 - **The steer author's unchanged-findings guard.** Already fixed by routing `checks_now` through `last_gate_flag`; the finding predates it.
 
 ## Still open
