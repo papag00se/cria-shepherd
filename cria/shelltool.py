@@ -3,14 +3,43 @@ has, and cria's agnostic target for file writes and its own file ops."""
 
 from __future__ import annotations
 
+# The names cria has MET. Kept because they are cheap and certain, not because the set is the rule —
+# the rule is `is_shell_tool_name` below.
 SHELL_TOOL_NAMES = {"shell", "bash", "exec_command", "local_shell", "run_terminal_cmd", "shell_command"}
+
+# THE FAMILY, by shape (#18: match tools by family, not literal name). A closed list of six names is
+# a literal-name rule wearing the word "family": Gemini CLI advertises `run_shell_command` and Cline
+# `execute_command`, and on both of those cria answered "this harness has no shell" — which declines
+# the plan loop, leaves the writeproxy with no lowering target, AND makes `focus_tools` DELETE the
+# tool from the menu, because a tool in none of its three sets is dropped. The shell is the one
+# primitive cria assumes every harness has; recognising it must not depend on having met it before.
+#
+# A word, not a substring soup: each token has to appear as a whole word once the name is split on
+# `_`, `-` and `.`, or as the prefix of one (`exec` in `execute_command`). Checked against every tool
+# name in the captures — read_file, list_dir, write_file, edit_file, view_image, web_search,
+# web_fetch, update_plan, write_stdin, task_complete, verdict — none of which match.
+_SHELL_NAME_TOKENS = ("shell", "bash", "exec", "terminal")
+_NAME_SPLIT = ("_", "-", ".", " ")
+
+
+def is_shell_tool_name(name) -> bool:
+    """Is this the harness's shell/exec primitive, judged by its name's shape?"""
+    n = (name or "").lower()
+    if not n:
+        return False
+    if n in SHELL_TOOL_NAMES:
+        return True
+    parts = [n]
+    for sep in _NAME_SPLIT:
+        parts = [p for chunk in parts for p in chunk.split(sep)]
+    return any(part.startswith(tok) for part in parts for tok in _SHELL_NAME_TOKENS)
 
 
 def find_shell_tool(tools) -> dict | None:
     """The first shell-like tool the harness advertised, as ``{name, schema}``."""
     for t in tools or []:
         fn = t.get("function", t) if isinstance(t, dict) else {}
-        if fn.get("name") in SHELL_TOOL_NAMES:
+        if is_shell_tool_name(fn.get("name")):
             return {"name": fn["name"], "schema": fn.get("parameters") or {}}
     return None
 

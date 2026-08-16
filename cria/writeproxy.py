@@ -34,7 +34,7 @@ from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import dirguard
 from .config import CRIA_HOME
-from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, shell_args
+from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
 
 # A tool-protocol tag line, any dialect seen in captures: XML-ish (</tool_call>, <function=...>,
@@ -221,7 +221,7 @@ def needs_translation(tools) -> dict | None:
         name = fn.get("name")
         if name in _WRITE_NAMES:
             return None
-        if name in SHELL_TOOL_NAMES and shell is None:
+        if is_shell_tool_name(name) and shell is None:
             shell = {"name": name, "schema": fn.get("parameters") or {}}
     return shell
 
@@ -917,7 +917,7 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         if not target:
             return None
         return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace)
-    if name in SHELL_TOOL_NAMES:  # the harness's raw shell → heuristic path/verb scan
+    if is_shell_tool_name(name):  # the harness's raw shell → heuristic path/verb scan
         command = _command_of(fn.get("arguments"))
         # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
         # model-authored command that merely mentions either literal used to inherit cria's trust and
@@ -964,7 +964,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # The same rescue for RAW commands (grep/cp/sed on the spill file), which previously got
             # only the dirguard refusal — the file-tool half succeeding while the command half was
             # blocked on the same path string taught the model a false sandbox rule.
-            if name in SHELL_TOOL_NAMES and (_c0 := _command_of(fn.get("arguments"))) \
+            if is_shell_tool_name(name) and (_c0 := _command_of(fn.get("arguments"))) \
                     and _respill_command(_c0) != _c0:
                 _d = _parse(fn.get("arguments"))
                 for _f in (*_CMD_FIELDS, "script"):
@@ -982,7 +982,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
             # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
-            if name in SHELL_TOOL_NAMES and _has_tc_debris(fn.get("arguments")):
+            if is_shell_tool_name(name) and _has_tc_debris(fn.get("arguments")):
                 cmd = _refusal_command(prompts.load('malformed_call_refusal'))
                 if rlog is not None:
                     rlog.emit("writeproxy.blocked_malformed_call", tool=name)
@@ -1383,7 +1383,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             for tc in m["tool_calls"]:
                 fn = tc.get("function") or {}
                 name = fn.get("name")
-                if name in SHELL_TOOL_NAMES:
+                if is_shell_tool_name(name):
                     orig = _read_sentinel(_command_of(fn.get("arguments")))
                     if orig is None:
                         own_cmds[tc.get("id")] = _command_of(fn.get("arguments"))

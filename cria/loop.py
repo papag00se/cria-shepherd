@@ -54,7 +54,8 @@ from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
                       surviving_noise_drops)
 from .searchloop import first_domain_in, normalize_search
-from .shelltool import _CMD_FIELDS, SHELL_TOOL_NAMES, find_shell_tool, shell_args, with_time_budget
+from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
+                        with_time_budget)
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
@@ -4996,7 +4997,7 @@ def _write_path(fn: dict) -> str | None:
     name = fn.get("name")
     if _is_write_tool(name):
         return _path_of_args(fn.get("arguments") or "", patch_ok=name == "apply_patch")
-    if name in SHELL_TOOL_NAMES:
+    if is_shell_tool_name(name):
         return _shell_write_target(fn.get("arguments") or "")
     return None
 
@@ -6378,11 +6379,10 @@ _REJECTION_CODES = frozenset({"401", "403", "407", "429"})
 _URL_IN_TEXT = re.compile(r"https?://[A-Za-z0-9.\-]+(?:/[^\s'\"),]*)?")
 
 
-# Derived from the ONE canonical shell-tool family (shelltool.SHELL_TOOL_NAMES) so it can't drift — a
-# hand-kept second copy had already lost `shell_command` and would leave a `shell_command` harness
-# unflagged to the steer reasoner (match-by-family, principle #18). `container.exec` is added for the
-# summary's broader "does the coder have ANY shell?" question (it's not a write-lowering target).
-_SHELL_TOOLNAMES = SHELL_TOOL_NAMES | {"container.exec"}
+# The ONE canonical family test (shelltool.is_shell_tool_name) so it can't drift — a hand-kept second
+# copy had already lost `shell_command` and would leave a `shell_command` harness unflagged to the
+# steer reasoner (match-by-family, principle #18). `container.exec` needs no special case now: the
+# family test splits on `.` and reads `exec` as a shell token.
 
 
 def _coder_tools_summary(tools, *, params: bool = True) -> str:
@@ -6428,7 +6428,7 @@ def _coder_tools_summary(tools, *, params: bool = True) -> str:
         # coder can actually do is the reason this block exists and that reason is real for a caller
         # that suggests actions. A judge rules on completeness and suggests nothing.
         notes = []
-        if name in _SHELL_TOOLNAMES:
+        if is_shell_tool_name(name):
             notes.append("runs ANY shell command (grep, cat, sed, ls, find …)")
         if params and param_names:
             notes.append("takes " + ", ".join(param_names))

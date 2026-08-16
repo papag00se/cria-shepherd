@@ -17,7 +17,7 @@ Two curation moves, both on the OUTBOUND request to the model:
 from __future__ import annotations
 
 from . import prompts
-from .shelltool import SHELL_TOOL_NAMES, find_shell_tool
+from .shelltool import find_shell_tool, is_shell_tool_name
 from .writeproxy import _EDIT_NAMES, _LIST_NAMES, _READ_NAMES, _WRITE_NAMES
 
 # The file-op tool FAMILIES cria recognizes (write/edit/read/list, incl. aliases like create_file /
@@ -27,7 +27,9 @@ _FILE_OP_NAMES = _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES | _LIST_NAMES
 
 # The curated coder menu — the coding essentials a small local model actually needs
 # (ports codex-local LIGHT_CODER_TOOL_NAMES + its synthetic read/write/edit tools). The
-# shell/exec tool is matched by FAMILY (SHELL_TOOL_NAMES) so this stays harness-agnostic.
+# shell/exec tool is matched by FAMILY (shelltool.is_shell_tool_name) so this stays
+# harness-agnostic — a name cria has never met (Gemini's run_shell_command, Cline's
+# execute_command) must not be dropped from the menu for being unfamiliar.
 # Everything NOT here is dropped: goal management (create_goal/get_goal/update_goal), MCP
 # discovery (list_mcp_resources/…), ask-the-user (request_user_input), connector/app tools,
 # and Codex's deferred-tool search (tool_search/tool_suggest).
@@ -63,7 +65,7 @@ def _tool_name(t) -> str | None:
 def _order_key(name) -> tuple:
     """Sort key for the focused menu: purpose-built tools first (in _FOCUS_ORDER), the shell/exec
     family LAST, everything else stable in the middle."""
-    if name in SHELL_TOOL_NAMES:
+    if is_shell_tool_name(name):
         return (2, 0)                                 # shell/exec — last resort, listed last
     if name in _FOCUS_ORDER:
         return (0, _FOCUS_ORDER.index(name))          # cria's tools first, in preferred order
@@ -86,7 +88,7 @@ def focus_tools(body: dict, rlog=None) -> None:
     kept, dropped = [], []
     for t in tools:
         nm = _tool_name(t)
-        if nm in FOCUS_TOOL_NAMES or nm in SHELL_TOOL_NAMES or nm in _FILE_OP_NAMES:
+        if nm in FOCUS_TOOL_NAMES or is_shell_tool_name(nm) or nm in _FILE_OP_NAMES:
             kept.append(t)
         else:
             dropped.append(nm)
