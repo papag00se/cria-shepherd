@@ -56,3 +56,5 @@
 [00:14:02] (2/24) shipping-rates-rb x qwen35 — start
 [00:43:45] (2/24) shipping-rates-rb x qwen35 — exit 0
 [00:43:45] (3/24) shipping-rates-rb x ternary-bonsai — start
+[00:59:57] (3/24) shipping-rates-rb x ternary-bonsai — exit 0
+[00:59:57] (4/24) shipping-rates-rb x nemotron-elastic — start
