@@ -493,14 +493,19 @@ def gate_skipped_count(report: ProbeReport) -> int:
     the exact 404 that proves the resolver broken; "3 passed, 2 skipped" read as green and the run
     ended done with a resolver that 404s. Parsed from the runner's own summary line ("N skipped" —
     pytest/jest/vitest all emit it), never from prose; runners without that phrase report 0 (the
-    same Python-first bound as the test floor, and an under-count only ever means silence)."""
+    same Python-first bound as the test floor, and an under-count only ever means silence).
+
+    READ FROM `ProbeResult.skipped`, taken at parse time. This used to re-scan ``r.summary``, which on
+    a GREEN run — the only kind this is asked about — is the fixed string "no problems reported". It
+    therefore returned 0 for every run cria has ever made, and the judge was told no tests skipped
+    whatever the runner said."""
     if report is None:
         return 0
     kinds = _kind_by_command(report)
     total = 0
     for r in report.results:
         if kinds.get(r.command) is probediscovery.ProbeKind.Test and not r.timed_out:
-            total += sum(int(n) for n in _SKIPPED_RE.findall(r.summary or ""))
+            total += r.skipped
     return total
 
 

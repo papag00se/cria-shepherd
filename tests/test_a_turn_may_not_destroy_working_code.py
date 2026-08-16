@@ -21,17 +21,24 @@ fact rather than accusing (#5b), because merging two tests into one legitimately
 import unittest
 
 from cria import loop, prompts
-from cria.probeparse import ProbeResult
+from cria import probeparse
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 from cria.proberun import ProbeReport
 
 
-def report(summary):
-    cand = ProbeCandidate(kind=ProbeKind.Test, command=["go", "test", "./..."], working_dir="/tmp",
+def report(raw, command="python3 -m pytest -q", family="pytest"):
+    """A report built through the REAL parser, not by hand.
+
+    THE TEST THAT SHIPPED WITH THIS CHECK BUILT `summary=` DIRECTLY, and that is why the check was
+    dead on arrival: `parse_output` replaces a GREEN run's output with the fixed string "no problems
+    reported" and keeps no raw text, so every value the old test fed in was one the parser can never
+    produce. The tally is taken at parse time now, and every fixture here goes through it.
+    """
+    cand = ProbeCandidate(kind=ProbeKind.Test, command=command.split(), working_dir="/tmp",
                           confidence=90, expected_value=80, cost=ProbeCost.Cheap, mutates_code=False,
                           may_hang=False, may_need_services=False, reason="t")
-    return ProbeReport(project_type=["go"], selected=[cand],
-                       results=[ProbeResult(command="go test ./...", exit_code=0, summary=summary)])
+    return ProbeReport(project_type=[family], selected=[cand],
+                       results=[probeparse.parse_output(command, family, 0, raw, "")])
 
 
 class Sess:
@@ -68,16 +75,35 @@ class ItFiresOnlyOnARegressionTests(unittest.TestCase):
         self.assertEqual(loop.passing_test_regression(s, None), "")
 
 
-class ItSpeaksAcrossLanguagesTests(unittest.TestCase):
-    def test_pytest_go_and_minitest_all_count(self):
-        for before, after in (("8 passed in 0.04s", "7 passed in 0.04s"),
-                              ("ok  \tcartsvc\t0.001s\n--- PASS: TestA\n--- PASS: TestB",
-                               "ok  \tcartsvc\t0.001s\n--- PASS: TestA"),
-                              ("8 runs, 8 assertions, 0 failures, 0 errors",
-                               "7 runs, 7 assertions, 0 failures, 0 errors")):
-            s = Sess()
-            self.assertEqual(loop.passing_test_regression(s, report(before)), "", before)
-            self.assertTrue(loop.passing_test_regression(s, report(after)), after)
+class ItSpeaksForTheRUNNERS_THAT_PRINT_A_TALLY_Tests(unittest.TestCase):
+    """Coverage is exactly the runners whose own summary line cria can read — no more.
+
+    THE HONEST BOUND, and the first version of this class got it wrong. It asserted a Go arm by
+    feeding `go test -v` output, which the gate never produces: `probediscovery` composes
+    `go test -count=1 ./...` deliberately (see the `-count=1` note there), plain `go test` prints one
+    `ok <pkg>` line per PACKAGE rather than per test, and `runner_tally` returns "" for it by design.
+    So this detector does not cover Go today — which is worth knowing, because the incident that
+    motivated it (cart-billing-go losing TestUnknownCode) is a Go one. Recorded as a gap rather than
+    papered over with a fixture the gate cannot generate."""
+
+    def test_pytest(self):
+        s = Sess()
+        self.assertEqual(loop.passing_test_regression(s, report("8 passed in 0.04s")), "")
+        self.assertTrue(loop.passing_test_regression(s, report("7 passed in 0.04s")))
+
+    def test_minitest(self):
+        s = Sess()
+        before = "8 runs, 8 assertions, 0 failures, 0 errors"
+        after = "7 runs, 7 assertions, 0 failures, 0 errors"
+        self.assertEqual(loop.passing_test_regression(s, report(before, "rake test", "ruby")), "")
+        self.assertTrue(loop.passing_test_regression(s, report(after, "rake test", "ruby")))
+
+    def test_plain_go_test_is_NOT_covered_and_stays_silent(self):
+        """It must be silent rather than wrong: no tally is silence, never zero."""
+        s = Sess()
+        for raw in ("ok  \tcartsvc\t0.001s\n", "ok  \tcartsvc\t0.001s\n"):
+            self.assertEqual(loop.passing_test_regression(s, report(raw, "go test -count=1 ./...", "go")), "")
+        self.assertEqual(s.tests_passed_high, 0)
 
 
 class TheNoteStatesTheFactTests(unittest.TestCase):

@@ -615,9 +615,28 @@ class GateSkippedCountTests(unittest.TestCase):
         rep.selected = [cand]
         return rep
 
+    def _parsed(self, raw):
+        """A report built through the REAL parser.
+
+        THIS TEST USED TO HAND-BUILD `summary`, and that is how the defect survived: `parse_output`
+        replaces a GREEN run's output with the fixed string "no problems reported" and keeps no raw
+        text, so `gate_skipped_count` — which is only ever asked about GREEN gates — re-scanned a
+        string that can never contain "N skipped" and returned 0 for every run cria has ever made.
+        The count is taken at parse time now, and this fixture goes through it."""
+        from cria import probeparse
+        return ProbeReport([], [synth(["pytest", "-q"], ProbeKind.Test)],
+                           [probeparse.parse_output("pytest -q", "pytest", 0, raw, "")])
+
     def test_the_m11_summary_reports_two_skipped(self):
         from cria.proberun import gate_skipped_count
-        self.assertEqual(gate_skipped_count(self._report("3 passed, 2 skipped in 0.24s")), 2)
+        self.assertEqual(gate_skipped_count(self._parsed("3 passed, 2 skipped in 0.24s")), 2)
+
+    def test_a_green_run_is_where_this_is_ASKED_and_it_works_there(self):
+        """The regression guard. Green is the only state this is consulted in."""
+        from cria.proberun import gate_skipped_count
+        rep = self._parsed("3 passed, 2 skipped in 0.24s")
+        self.assertEqual(rep.results[0].summary, "no problems reported")   # nothing to re-scan
+        self.assertEqual(gate_skipped_count(rep), 2)                        # counted anyway
 
     def test_a_clean_run_reports_zero(self):
         from cria.proberun import gate_skipped_count

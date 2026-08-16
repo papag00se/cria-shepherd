@@ -83,6 +83,171 @@ class Finding:
     message: str = ""
 
 
+# ---------------------------------------------------------------------------
+# Runner tallies — moved here from probegate 2026-08-16, because the tally has to be read
+# at PARSE time. `parse_output` replaces a green run's stdout with the fixed string
+# "no problems reported" and keeps no raw text, so every later reader of a GREEN result had
+# nothing to count: the deleted-test detector and the skipped-test disclosure to the
+# satisfaction judge were both permanently dead. Parse once, where the output is in hand (#12).
+# ---------------------------------------------------------------------------
+# EVERY RUNNER'S OWN TALLY LINE, one row each. The passed count is a COVERAGE signal — a test that
+# skips rather than fails leaves the exit code at 0 and drops out of it — so a runner cria cannot
+# count is a runner whose green is unverified. Three were covered (pytest, unittest, cargo) and the
+# rest of the ecosystem was not: a Go, Java, JS, Ruby, Elixir, PHP or .NET suite could step aside
+# entirely and `_offline_fact` would fall through to the uncounted wording, while
+# `_checks_superseded_by_coder_run` would never recognise a coder's own green run.
+#
+# A ROW IS DATA, NOT CODE: (name, pattern, how to read the groups, whether to sum every match).
+# Summing is for runners that print one line PER package or binary (cargo, go, .NET per-project);
+# first-match is for runners that print one summary. Ordered most-specific first — the guard is that
+# every pattern is anchored on that runner's own distinctive words, so two cannot claim one line.
+_SKIPPED_RE = re.compile(r"(\d+) skipped")   # the runner's own skip count
+_TALLY_FAILED_PASSED = "fp"     # groups are (failed, passed)
+_TALLY_PASSED_FAILED = "pf"     # groups are (passed, failed)
+_TALLY_TOTAL_FAILED = "tf"      # groups are (total, failed) — passed is total - failed
+
+_TALLIES = (
+    # pytest · `2 failed, 7 passed in 0.05s`  (the leading `=` is its banner)
+    ("pytest", re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    # cargo · one `test result:` line per test binary
+    ("cargo", re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed"), _TALLY_PASSED_FAILED, True),
+    # jest / vitest · `Tests:       1 failed, 11 passed, 12 total`
+    ("jest", re.compile(r"(?im)^\s*Tests:\s+(?:(\d+) failed,\s+)?(?:\d+ skipped,\s+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`
+    ("junit", re.compile(r"(?im)^\s*Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"), _TALLY_TOTAL_FAILED, True),
+    # gradle · `12 tests completed, 1 failed`
+    ("gradle", re.compile(r"(?im)^\s*(\d+) tests? completed(?:,\s*(\d+) failed)?"), _TALLY_TOTAL_FAILED, False),
+    # go test -v · one `--- PASS:` / `--- FAIL:` per test (counted below, not by a group pair)
+    # rspec · `12 examples, 1 failure, 2 pending`
+    ("rspec", re.compile(r"(?im)^\s*(\d+) examples?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    # ExUnit · `12 tests, 1 failure` (also `doctests`)
+    ("exunit", re.compile(r"(?im)^\s*(?:\d+ doctests?,\s*)?(\d+) tests?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    # phpunit · `Tests: 12, Assertions: 30, Failures: 1`
+    ("phpunit", re.compile(r"(?im)^\s*Tests:\s*(\d+),\s*Assertions:\s*\d+(?:,\s*Failures:\s*(\d+))?"), _TALLY_TOTAL_FAILED, False),
+    # dotnet test · `Failed:     1, Passed:    12, Skipped:     0`
+    ("dotnet", re.compile(r"(?im)^.*?Failed:\s*(\d+),\s*Passed:\s*(\d+)"), _TALLY_FAILED_PASSED, True),
+    # mocha · `11 passing` / `1 failing`, on separate lines
+    ("mocha", re.compile(r"(?im)^\s*(\d+) passing\b"), None, False),
+    # minitest · `9 runs, 9 assertions, 0 failures, 0 errors, 0 skips`
+    ("minitest", re.compile(r"(?im)^\s*(\d+) runs?,\s*\d+ assertions?,\s*(\d+) failures?"),
+     _TALLY_TOTAL_FAILED, False),
+    # node --test (TAP) · `# pass 13` / `# fail 0`, on separate lines
+    ("node", re.compile(r"(?im)^\s*#\s*pass\s+(\d+)\b"), None, False),
+)
+
+# node's built-in runner prints TAP: the counts are on separate `# pass` / `# fail` lines, the same
+# split shape mocha has. Without a row here a green node suite was invisible to runner_tally, so
+# _offline_fact fell to its weaker sentence and cria could not say the tests had actually run —
+# measured on the six-language battery, where node is one of the two languages whose passing suites
+# cria could never count.
+_NODE_FAIL = re.compile(r"(?im)^\s*#\s*fail\s+(\d+)\b")
+
+# go test -v prints no summary count — the per-test lines ARE the tally.
+_GO_PASS = re.compile(r"(?m)^\s*--- PASS: ")
+_GO_FAIL = re.compile(r"(?m)^\s*--- FAIL: ")
+# Plain `go test` prints one verdict PER PACKAGE and no per-test count, so it is deliberately NOT
+# a tally: a package whose only live test calls t.Skip() still prints `ok`, and returning a package
+# count here would let _offline_fact claim "nothing in them reaches the real service" on evidence
+# that cannot support it. No count → the weaker sentence, which claims only what the exit code
+# established. Same rule for every runner: a number cria cannot read as TESTS is not a tally.
+_MOCHA_FAILING = re.compile(r"(?im)^\s*(\d+) failing\b")
+_UNITTEST_TALLY = re.compile(r"(?im)^Ran (\d+) tests?")
+
+# For the rows whose reading is None: their pass count and their fail count are printed on separate
+# lines, so the row's own pattern reads the passes and this one reads the failures. Keyed by row
+# name so a second split-shape runner cannot silently borrow the first one's failure pattern.
+_SPLIT_FAIL_PATTERNS = {"mocha": _MOCHA_FAILING, "node": _NODE_FAIL}
+
+
+def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
+    """(failed, passed) from one match's groups, by the row's reading — None when unreadable."""
+    g = [int(x) if x else 0 for x in groups]
+    try:
+        if kind == _TALLY_FAILED_PASSED:
+            return g[0], g[1]
+        if kind == _TALLY_PASSED_FAILED:
+            return g[1], g[0]
+        if kind == _TALLY_TOTAL_FAILED:
+            bad = sum(g[1:])                      # failures + errors, where the runner reports both
+            return bad, max(g[0] - bad, 0)
+    except IndexError:
+        return None
+    return None
+
+
+# Runners that CANNOT report a pass without building the project first. A green tally from one of
+# these is proof the code compiles, so it settles a compile-class finding as well as a test-class
+# one — `cargo test` never prints "test result: ok" over an unresolved import, and `go test` never
+# prints "ok <pkg>" over an undefined symbol.
+#
+# This is a property of the RUNNER, which cria reads off the output it is holding, not a property of
+# the finding's wording. The alternative was a phrase list over the finding text, which is how the
+# supersede came to cover pytest and minitest and miss every compiled language: three of the six
+# battery families, and exactly the ones where a stale error is most expensive.
+#
+# The interpreted runners are absent on purpose and the distinction is load-bearing: a green pytest
+# says nothing about a pyflakes finding, because an unused import fails the linter and runs fine.
+COMPILES_FIRST = frozenset({"cargo", "junit", "gradle", "dotnet", "go"})
+
+
+def runner_and_tally(text: str) -> tuple[str, str]:
+    """``(runner name, Nf/Np)`` — the runner whose summary line matched, and its tally.
+
+    :func:`runner_tally` is this without the name; both read the same rows, so a runner added to
+    ``_TALLIES`` is known to every caller at once."""
+    body = text or ""
+    for _name, pat, kind, summed in _TALLIES:
+        if not pat.findall(body):
+            continue
+        t = runner_tally(body)
+        return (_name, t) if t else ("", "")
+    if _GO_PASS.findall(body) or _GO_FAIL.findall(body):
+        return "go", runner_tally(body)
+    if _UNITTEST_TALLY.search(body):
+        return "unittest", runner_tally(body)
+    return "", ""
+
+
+def runner_tally(text: str) -> str:
+    """A runner's own pass/fail line, normalized to `Nf/Np` — "" when it printed none.
+
+    The PASSED count is the coverage signal, not decoration: a test that skips rather than fails
+    leaves the exit code at 0 and drops out of this count. That is the only thing standing between
+    "the suite is self-contained" and "one test quietly stepped aside" (see _offline_fact).
+
+    Every runner in _TALLIES, plus the two that need counting rather than reading: `go test -v`,
+    which prints no summary but one line per test, and unittest, whose "Ran N tests" says nothing
+    about outcome and keeps its own `Nran/OK` shape so the two callers can tell a counted result
+    from an outcome-only one. Plain `go test` counts PACKAGES, not tests, and returns "" — see the
+    note at _GO_PASS."""
+    body = text or ""
+    for _name, pat, kind, summed in _TALLIES:
+        matches = pat.findall(body)
+        if not matches:
+            continue
+        if kind is None:            # a runner whose pass and fail counts are on SEPARATE lines
+            passed = sum(int(x) for x in matches)
+            companion = _SPLIT_FAIL_PATTERNS.get(_name)
+            failed = sum(int(x) for x in companion.findall(body)) if companion else 0
+            return f"{failed}f/{passed}p"
+        rows = [_tally_counts(kind, m if isinstance(m, tuple) else (m,)) for m in matches]
+        rows = [r for r in rows if r is not None]
+        if not rows:
+            continue
+        if summed:
+            return f"{sum(f for f, _ in rows)}f/{sum(p for _, p in rows)}p"
+        return f"{rows[0][0]}f/{rows[0][1]}p"
+    # Go: `-v` gives one line per test; plain `go test` gives one verdict per package.
+    go_pass, go_fail = len(_GO_PASS.findall(body)), len(_GO_FAIL.findall(body))
+    if go_pass or go_fail:
+        return f"{go_fail}f/{go_pass}p"
+    m = _UNITTEST_TALLY.search(body)
+    if m:
+        ok = "OK" if re.search(r"(?m)^OK\b", body) else "FAIL"
+        return f"{m.group(1)}ran/{ok}"
+    return ""
+
+
 @dataclass(eq=False)  # upstream derives Debug+Clone but NOT Eq — keep it non-comparable
 class ProbeResult:
     """What one probe command produced, rendered model-ready."""
@@ -90,6 +255,11 @@ class ProbeResult:
     exit_code: Optional[int] = None    # None = unavailable (timeout / signal / wait error)
     summary: str = ""
     findings: list[Finding] = field(default_factory=list)
+    # TAKEN AT PARSE TIME, from the runner's own output, because nothing downstream can recover it:
+    # a GREEN run's `summary` is the fixed string "no problems reported" and the raw text is dropped.
+    # `tally` is `Nf/Np` ("" when no runner printed one); `skipped` is the runner's own skip count.
+    tally: str = ""
+    skipped: int = 0
     timed_out: bool = False            # the command RAN and did NOT finish (timeout) — distinct from a
     #                                    launch failure (exit_code is None for BOTH, but a timeout is a
     #                                    positive did-not-verify signal → the completion gate fails CLOSED)
@@ -861,8 +1031,13 @@ def parse_output(command: str, family: str, exit_code: Optional[int],
     findings = _error_class_only(findings, read_source_line)
     dedup(findings)
     summary = summarize(findings, exit_code, combined)
-    return ProbeResult(command=command, exit_code=exit_code,
-                       summary=summary, findings=findings)
+    # THE TALLY IS TAKEN HERE OR NOWHERE. `summarize` returns the fixed string "no problems reported"
+    # for a green run and `combined` is not retained, so a reader that only sees the ProbeResult has
+    # no way back to "4 passed, 1 skipped". Both consumers only ever look at GREEN gates, so both
+    # were reading a string that can never contain a tally.
+    return ProbeResult(command=command, exit_code=exit_code, summary=summary, findings=findings,
+                       tally=runner_tally(combined),
+                       skipped=sum(int(n) for n in _SKIPPED_RE.findall(combined)))
 
 
 # ---------------------------------------------------------------------------
