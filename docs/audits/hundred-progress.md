@@ -36,6 +36,7 @@ SSE frames carrying a delta. One frame per token, so counting frames is a faithf
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
+| 4 | shipping-rates-rb | nemotron-elastic | 0% | −40 | 16 | 59 | floored at fifteen minutes, no runaway (longest 65.5 s), two degenerate aborts. Nothing landed: README names one zone, no own tests, no third-party require at all |
 | 3 | shipping-rates-rb | ternary-bonsai | **80%** | **+60** | 76 | 62 | biggest gain of the cycle. Four of five: the repo's tests intact, `hidden_contract` green, the express zone with its own tests, the full 8/8 rate table. Only `country_zone_mapping` fails, and for a reason of the model's own — it reached for `active_support` instead of the countries gem and the require chain dies. **Useful evidence the window guard is not over-firing**: three calls at 272 s, 265 s and 260 s were left alone, which is right — on a ~40 tok/s model those are ~11,000 tokens, nowhere near the window |
 | 2 | shipping-rates-rb | qwen35 | 0% | −40 | 16 | 134 | floored at fifteen minutes despite 134 calls and no runaway (longest 104.9 s), so the clock went on work, not on a stuck stream. Two things bit: a **seeded test was MODIFIED** — `test_unknown_zone_rejected`, the contract changed rather than satisfied — and `hidden_contract` is back on the bundler LoadError. `readme_rate_table` still names one zone |
 | 1 | shipping-rates-rb | gemma4 | 60% | −20 | 8 | 57 | **no runaway at all** — longest call 47.2 s against 669–720 s on every previous attempt, and the whole cell finished in 8.2 minutes instead of 43. The window guard is live and did **not** fire, so this run simply had nothing for it to catch; it remains unexercised. `hidden_contract` passes again (twice running now), so the bundler load-path wound is not universal. The two losses: a **deleted seeded test** (`test_negative_weight_rejected`), and `country_zone_mapping` mapping almost everything to `international` |
@@ -109,6 +110,29 @@ has already finished.
 **Therefore the cycle runs on.** Stopping now would buy nothing — the affected cells are behind us —
 and would cost the one-code-state property for the twenty ahead. The Ruby column gets re-run after
 the fix phase, which is the same treatment any superseded row gets.
+
+### Ruby column, cycle 3 (valid run): 60 / 0 / 80 / 0 = **35%**
+
+Against cycle 2's 45% and the invalid run's 30%. And the per-cell numbers are the finding, not the
+mean — **this task's four cells have now spanned 100 points on identical prompts**:
+
+| cell | c1 | c2 | c3-a (invalid) | c3 |
+|---|---:|---:|---:|---:|
+| gemma4 | 20% | 80% | 0/80% | 60% |
+| qwen35 | 100% | 40% | 40% | 0% |
+| ternary-bonsai | 80% | 20% | 0% | **80%** |
+| nemotron-elastic | 0% | 40% | 0% | 0% |
+
+No cria change explains a swing that size in both directions at once. What the cells have in common
+is the **fifteen-minute floor**: every 0% here was floored, and every score above 40% came from a run
+that cleared it and got the rest of its hour. A model that stumbles in the first fifteen minutes is
+scored on a fifteen-minute run; one that does not is scored on a seventy-five-minute one. That is a
+measurement property, not a model property, and it is the strongest candidate for why this column
+will not settle.
+
+`hidden_contract` passed in 2 of 4 cells here, so the bundler load-path wound is real but
+intermittent — it depends on whether the model writes `require "bundler/setup"`, which is exactly the
+thing `gem_bundler`'s text omits to tell it.
 
 ### TIER 1 (c3) — my install fix works, and the route it unlocked is the wrong one
 
