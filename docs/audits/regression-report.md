@@ -6,7 +6,11 @@ Baseline: every model below passed 4/4 on the ladder before today's changes (pla
 
 ## Run stats
 
-Regenerate any time with `python3 suite/regression_stats.py` (`--write` refreshes this section in place). The model-performance grid covers each model's last 3 STANDING runs — voided/superseded rows are cria evidence, not model form — ranked by completion rate, then shortest time, then least assists. Per-run: steers = directives/redirects cria injected; gates = check runs it triggered.
+Regenerate any time with `python3 suite/regression_stats.py` (`--write` refreshes this
+section in place). The model-performance grid covers each model's last 3 STANDING runs —
+voided/superseded rows are cria evidence, not model form — ranked by completion rate, then
+shortest time, then least assists. Per-run: steers = directives/redirects cria injected;
+gates = check runs it triggered.
 
 ### Model performance (each model's last 3 STANDING runs — voided/superseded excluded)
 
