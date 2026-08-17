@@ -303,7 +303,24 @@ The flush fix (#31) was necessary and is not sufficient. The three install attem
 
 **So this is not a matcher-tuning problem.** The loop is not "the same action three times in twelve calls"; it is twenty different attempts at one goal. The signal that IS present is cria's own: it refused 9 of 48 calls in that run and 6 of 45 in the sibling, and it knows it refused them. Counting refusals needs no similarity judgement at all.
 
-Recorded rather than built: that is a new trigger, and #1 says the bar for adding one is high. It is the operator's call.
+**BUILT AND REPLAYED (operator's call, 2026-08-17).** Same threshold, same window, same redirect — this only makes the existing mechanism reachable by a second route, keyed on a fact cria owns outright rather than on a similarity judgement (#8).
+
+Replayed over the real forwarded call sequences with their real tool results, with the trigger off and on:
+
+| cell | before | after | |
+|---|---|---|---|
+| shipping-rates-rb × ternary-bonsai | never | **calls 31, 43** | new |
+| shipping-rates-rb × gemma4 | never | **calls 19, 31** | new |
+| shipping-rates-rb × nemotron-elastic | call 20 | calls 20, **32** | new |
+| shipping-rates-rb × qwen35 | call 14 | call 14 | unchanged |
+| cart-billing-go × ternary-bonsai | call 46 | call 46 | unchanged |
+| orders-api-py × qwen35 | never | never | unchanged |
+| handles-cli-node × ternary-bonsai | never | never | unchanged |
+| rust-toml-cli × qwen35 | never | never | unchanged |
+
+**Five new redirects, every one of them on the Ruby column — the worst column in the grid — and none on a healthy cell.** Every pre-existing fire is preserved exactly.
+
+One bound was needed and is measured: the refusal trigger reads the message history, which a fire cannot flush the way the signature trigger flushes `recent_actions`, so unbounded it re-fired on every subsequent call — **14 redirects over 48 calls instead of two**. `blocked_fired_seq` holds it to one per window, which is the "one intervention consumes the evidence" rule the fire site already states in its own words.
 
 ## SELF-AUDIT AGAINST `docs/principles.md`
 

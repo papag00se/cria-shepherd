@@ -65,35 +65,74 @@ def history(pairs):
 
 
 class TheRefusedCallDoesNotResetTests(unittest.TestCase):
-    def test_the_install_loop_no_longer_erases_itself(self):
-        """THE CELL, in miniature. The real run made six refused install attempts across 25 calls,
-        writing a Gemfile and mkdir-ing vendor directories between them — which is what an install
-        loop does — and each of those flushed the window.
+    def test_the_install_loop_now_reaches_the_redirect(self):
+        """THE CELL, in miniature — and this now asserts the REDIRECT, not just the flush.
 
-        What is asserted is the flush, because that is what was fixed. Whether the redirect then
-        FIRES depends on `_actions_match` deciding those attempts are the same action, and on the
-        real run's attempts (`gem install`, `--user-dir`, `gem install bundler`, `bundle install`,
-        a hand-rolled `curl`) it would not — that is a second, unmeasured half, recorded in the
-        ledger rather than guessed at here."""
+        Two things had to be true. The loop's own housekeeping (writing a Gemfile, mkdir-ing vendor
+        directories, re-writing identical bytes) must stop flushing the window; that is the fix this
+        file was written for. And the trigger has to be able to SEE the loop, which the similarity
+        rule cannot: replayed over the real 48-call sequence, its three in-window attempts score
+        Jaccard 0.636 against a 0.7 bar, and cleaning the `tail -5`/`tail -10` noise lifts them to a
+        match and still yields two, not three. The loop is twenty different attempts at ONE goal.
+
+        What sees it is cria's own refusal count — a fact cria owns, needing no similarity judgement.
+        Replayed over the real captures afterwards: the four Ruby cells gain five redirects between
+        them, and the four healthy cells gain none."""
         gs = loop.GuardState()
         rlog = _Rlog()
         msgs = []
         GEMFILE = 'source "https://rubygems.org"\ngem "eu_countries"\n'
         seq = [(call("1", "exec_command", "gem install eu_countries 2>&1 | tail -5"), DENIAL),
                (write("2", "Gemfile", GEMFILE), "Wrote Gemfile"),      # real progress — must reset
-               (call("3", "exec_command", "gem install eu_countries 2>&1 | tail -10"), DENIAL),
+               (call("3", "exec_command", "gem install eu_countries --user-dir ~/.gems"), DENIAL),
                (call("4", "exec_command", "mkdir -p vendor/bundle && gem install eu_countries"),
                 DENIAL),                                              # used to flush: `mkdir`
                (write("5", "Gemfile", GEMFILE), "Wrote Gemfile"),      # used to flush: identical bytes
-               (call("6", "exec_command", "gem install eu_countries 2>&1 | tail -5"), DENIAL)]
+               (call("6", "exec_command", "curl -sL https://rubygems.org/downloads/x.gem"), DENIAL)]
         for tc, result in seq:
             loop.guard_track_repetition(gs, completion(tc), rlog, messages=msgs)
             msgs += [{"role": "assistant", "tool_calls": [tc]},
                      {"role": "tool", "tool_call_id": tc["id"], "content": result}]
-        installs = [e for e in gs.recent_actions if e[1][0] == "act"]
-        self.assertEqual(len(installs), 3,
-                         "the install attempts were flushed out of the window by the loop's own "
-                         "housekeeping")   # 1 is flushed by call 2, which is real progress; 3/4/6 stay
+        self.assertTrue(gs.redirect_due or gs.redirect_probe,
+                        "six calls, four of them refused by cria, and no redirect")
+
+    def test_the_attempts_are_NOT_alike_enough_for_the_similarity_rule(self):
+        """The premise, pinned: if these matched each other the old trigger would have covered it and
+        none of this would be needed."""
+        import itertools
+        sigs = [loop._action_signature("exec_command", json.dumps({"command": c})) for c in (
+            "gem install eu_countries 2>&1 | tail -5",
+            "which bundler 2>&1; gem install bundler 2>&1 | tail -5",
+            "gem install eu_countries 2>&1 | tail -10")]
+        pairs = [loop._actions_match(a, b) for a, b in itertools.combinations(sigs, 2)]
+        self.assertLess(sum(pairs), 2, "these are alike enough; the similarity rule would suffice")
+
+    def test_one_intervention_consumes_the_evidence(self):
+        """The refusal trigger reads the message history, which a fire cannot flush the way the
+        signature trigger flushes `recent_actions` — so unbounded it re-fires on every call until the
+        refusals age out. Replayed on the real cell: 14 redirects over 48 calls instead of two."""
+        gs = loop.GuardState()
+        rlog = _Rlog()
+        # Deliberately DISSIMILAR commands, so only the refusal trigger can fire — a self-similar
+        # sequence trips the signature rule too and would measure the wrong bound.
+        cmds = ["gem install eu_countries --user-dir ~/.gems",
+                "which bundler 2>&1; gem install bundler | tail -5",
+                "mkdir -p vendor/bundle && bundle install --path vendor",
+                "curl -sL https://rubygems.org/downloads/x.gem -o x.gem",
+                "tar xzf x.gem && ruby -Ilib -e 'require \"countries\"'",
+                "gem sources --add https://rubygems.org/",
+                "sudo apt-get install ruby-countries",
+                "pip download countries", "npm i -g countries", "brew install countries"]
+        msgs, fires = [], 0
+        for i, c in enumerate(cmds):
+            tc = call(f"c{i}", "exec_command", c)
+            loop.guard_track_repetition(gs, completion(tc), rlog, messages=msgs)
+            if gs.redirect_due or gs.redirect_probe:
+                fires += 1
+                gs.redirect_due = gs.redirect_probe = False
+            msgs += [{"role": "assistant", "tool_calls": [tc]},
+                     {"role": "tool", "tool_call_id": tc["id"], "content": DENIAL}]
+        self.assertLessEqual(fires, 2, f"fired {fires} times over ten calls")
 
     def test_the_first_real_write_still_resets(self):
         """The protected case, in the same sequence: the Gemfile did not exist and now does."""

@@ -192,6 +192,11 @@ class GuardState:
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
     recent_actions: list = None  # rolling window of (seq, nature-signature) per forwarded call
     action_seq: int = 0  # forwarded-call counter — ages recent_actions entries out of the window
+    # WHEN THE REFUSAL TRIGGER LAST FIRED. Its evidence lives in the message history, which a
+    # fire cannot flush the way the signature trigger flushes `recent_actions` — so without
+    # this it re-fires on every call until the refusals age out. Replayed on cycle 4 cell 13:
+    # 14 redirects over 48 calls instead of one. One intervention consumes the evidence.
+    blocked_fired_seq: int = -10_000
     repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
@@ -5260,6 +5265,33 @@ def _rewrites_the_same_bytes(sig: tuple, last_write: dict) -> bool:
     return sig[0] == "write" and bool(sig[1]) and last_write.get(sig[1]) == sig[2]
 
 
+def _refusals_in_window(messages: list[dict] | None) -> int:
+    """How many of the last REPEAT_WINDOW forwarded calls cria itself refused.
+
+    A fact cria owns outright — it is what stopped them — so no similarity judgement is needed and
+    none is made. See the fire site for the replay that showed why the similarity rule cannot cover
+    this shape."""
+    seen = 0
+    for m in reversed(messages or []):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        seen += 1
+        if seen > REPEAT_WINDOW:
+            break
+    tail, n = [], 0
+    for m in messages or []:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            tail.append(m)
+    tail = tail[-REPEAT_WINDOW:]
+    ids = {tc.get("id") for m in tail for tc in (m.get("tool_calls") or [])}
+    by_id = {m.get("tool_call_id"): _content_text(m.get("content"))
+             for m in (messages or []) if m.get("role") == "tool"}
+    for cid in ids:
+        if cid is not None and denial.is_denied(by_id.get(cid) or ""):
+            n += 1
+    return n
+
+
 def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
                            messages: list[dict] | None = None) -> None:
     """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
@@ -5275,6 +5307,7 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
         gs.recent_actions = []
     denied = _denied_signatures(messages)
     last_write = _last_write_by_path(messages)
+    blocked = _refusals_in_window(messages)
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             if (gs.redirect_due or gs.redirect_probe
@@ -5307,9 +5340,25 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
                 gs.recent_actions.append((gs.action_seq, sig))
                 continue
             gs.recent_actions.append((gs.action_seq, sig))
-            if (matches + 1 >= REPEAT_FINGERPRINT_N
-                    and not gs.redirect_due and not gs.redirect_probe
-                    and not gs.spin_probe_due and not gs.spin_probe):
+            # …OR CRIA HAS SIMPLY BLOCKED IT, OVER AND OVER. The rule above asks whether the last
+            # three actions were the SAME action; an install loop is not that. Replayed over cycle 4
+            # cell 13's real 48 forwarded calls with their real tool results, the signature rule
+            # fires ZERO times against nine refusals — the three attempts inside one window score
+            # Jaccard 0.636 against a 0.7 bar, and cleaning the `tail -5` / `tail -10` noise lifts
+            # them to a match and still yields two, not three. The loop is twenty different attempts
+            # at ONE goal, which no similarity threshold can see.
+            #
+            # What cria has that needs no similarity judgement is its OWN refusals. It blocked 9 of
+            # 48 calls in that run and 6 of 45 in the sibling, and it knows it blocked them (#8: the
+            # deterministic half gathers a fact cria owns). Same threshold, same window, same
+            # redirect — this only makes the existing mechanism REACHABLE by a second route.
+            blocked_fires = (blocked >= REPEAT_FINGERPRINT_N
+                             and gs.action_seq - gs.blocked_fired_seq >= REPEAT_WINDOW)
+            if (matches + 1 >= REPEAT_FINGERPRINT_N or blocked_fires) \
+                    and not gs.redirect_due and not gs.redirect_probe \
+                    and not gs.spin_probe_due and not gs.spin_probe:
+                if blocked_fires:
+                    gs.blocked_fired_seq = gs.action_seq
                 gs.redirect_due = True
                 # flush BOTH windows: one intervention consumes the evidence — the writes
                 # that fired this redirect must not ALSO count toward a wheel-spin right
