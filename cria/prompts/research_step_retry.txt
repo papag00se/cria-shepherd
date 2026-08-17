@@ -13,7 +13,9 @@ That sentence cannot be the step: {{DEFECT}}.
 
 The step you are writing sends the coder to READ, before any code exists. It produces nothing — no
 script, no tests, no files. It names the source and says WHAT must be learned from it for this task,
-in one sentence. Do not name a URL path, a file name, or an endpoint the task itself did not name.
+in one sentence. Do not INVENT a URL path, a file name, or an endpoint — name only what the task
+or the context above already names. Files listed in the context were read from disk and are real;
+naming one of those is not inventing it.
 Do not tell the coder to write, create, add, implement, build, or generate anything — that all comes
 after the reading, in later steps that are not yours to write.
 

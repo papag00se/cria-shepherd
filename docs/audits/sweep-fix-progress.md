@@ -172,6 +172,21 @@ Cycle 4 cell 16, `feed-pipeline-java × ternary-bonsai`. `plan.untested` is fill
 
 **Fixed**: two wordings, keyed on whether a test probe was actually composed. When one was, the lead says only what still holds — *"A test command did run, but the clean result above does not establish that this project's tests pass"* — and the finding beside it says why in each case (files a runner cannot see, or no test files at all). The qualifier's whole purpose, stopping a vacuous green from reading as "the tests pass", is unchanged.
 
+### 33. The step author was shown the workspace and then forbidden to name any of it
+Cycle 4 cell 16, `feed-pipeline-java × ternary-bonsai`. The research-step prompt printed `src/main/java/pipeline/Importer.java (4543 B)` in its context block and then instructed: *"Do not name a URL path, a file name, or an endpoint the task itself did not name."* The model noticed the contradiction in its own reasoning and complied anyway; **eight of the run's 39 calls went on guessing a path cria had already printed**, before the first file was read.
+
+The rule exists to stop the author INVENTING a filename, and that is worth keeping. A file cria read off disk is not invented. **Fixed**: name only what the task or the context already names — and files listed in the context were read from disk and are real.
+
+## Surfaced, NOT built — the coder's own view of the workspace
+
+Same cell, the other half. `⟦ctx:files⟧` is rendered only inside `_compact`, so the coder never sees a workspace listing until a compaction fires — call 0024 in that run, after the guessing was over. Every other actor gets it: the step author, the steer author, the step critic and the exec-intent judge all receive `workspace_inventory`.
+
+**For**: not knowing what exists is the most common way a weak model burns calls, and the fact is deterministic ground truth cria already gathers. The cost is ~20 short lines, under 1% of the window, regenerated from disk each turn so it can never go stale.
+
+**Against**: it is a permanent addition to *every* coder turn across all 24 cells, and the opposite failure — a model that reads the list instead of reading the files — is exactly the shape doctrine #1 warns about. It cannot be measured until the next cycle, and an assist that fires on a clean signal is pure downside.
+
+Recorded rather than taken: this is a design call about what the coder is routinely shown, not a defect with a right answer.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
