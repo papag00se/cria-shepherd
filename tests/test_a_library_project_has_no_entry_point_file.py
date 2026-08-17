@@ -76,6 +76,41 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
         self.assertTrue("plain `ruby`" in text or "without bundler" in text,
                         "the route never says a bare ruby cannot see it")
 
+    def test_it_names_the_one_line_that_makes_it_reachable(self):
+        """STATING THE CONSTRAINT IS NOT ANSWERING IT. The route said the install is reachable only
+        under bundler and then offered "or make the library loadable without bundler" — a restatement
+        of the problem. Cycle 4 cell 1, gemma4 on shipping-rates-rb: the gem installed correctly into
+        `vendor/bundle`, the library opened `require "iso3166"`, and FOUR of five checks died on one
+        `kernel_require.rb:86` LoadError because every verifier probe runs bare `ruby -Ilib`. The
+        model diagnosed it in its own words — "it installed everything into vendor/bundle, but
+        because I am running with ruby -Ilib -Itest, it's not looking in the bundle path" — and had
+        nowhere to go. 20%, down 40.
+
+        `require "bundler/setup"` is the answer, and it was verified by running it rather than
+        recalled: a `--path vendor/bundle` install plus that one first line passes all three shapes
+        the verifier uses — `ruby -Ilib -e`, `ruby -Ilib -I. <test>.rb`, and the repo-suite
+        `ruby -Ilib -Itest -e`. It is a fact about bundler, named without naming any gem (#20)."""
+        text = self.route("gem_bundler")
+        self.assertIn('require "bundler/setup"', text)
+        self.assertIn("FIRST line", text)
+
+    def test_the_direct_route_answers_it_in_code_too(self):
+        """GEM_HOME is an environment variable, and the tests that judge the deliverable are launched
+        without it. The route led with the env var and mentioned `$LOAD_PATH.unshift` as an
+        afterthought; the afterthought is the only half that survives a runner you do not control."""
+        text = self.route("gem_direct")
+        self.assertIn("$LOAD_PATH.unshift", text)
+        self.assertLess(text.index("$LOAD_PATH.unshift"), text.index("GEM_HOME"),
+                        "the in-code fix must lead; the env var only covers self-launched commands")
+
+    def test_neither_route_names_a_gem(self):
+        """#20: a remedy keyed to one task's library is inert on every other."""
+        for key in ("gem_bundler", "gem_direct"):
+            with self.subTest(route=key):
+                low = self.route(key).lower()
+                for gem in ("countries", "iso3166", "money", "activesupport"):
+                    self.assertNotIn(gem, low)
+
     def test_it_names_the_binary_through_the_token_never_literally(self):
         """The token resolves to whatever this box actually has (`bundle3.2` here). A literal
         `bundle exec` would recreate the incident tests/test_install_remedy_names_the_real_binary.py

@@ -54,11 +54,16 @@ class ARouteIsOnlyOfferedIfItsToolExistsTests(unittest.TestCase):
 
     def test_the_ruby_fallback_says_how_to_make_the_gem_LOADABLE(self):
         """Installing to vendor/bundle without putting it on the load path is the failure that took
-        three passing checks down with it."""
+        three passing checks down with it — and then four more on cycle 4 cell 1.
+
+        The route must answer it IN CODE. `GEM_HOME` covers only commands the model launches itself;
+        the tests that judge the deliverable are run without that environment."""
         with _with_tools("gem"):
             advice = dirguard._local_install_advice("gem install countries")
         self.assertIn("load path", advice)
+        self.assertIn("$LOAD_PATH.unshift", advice)
         self.assertIn("GEM_HOME", advice)
+        self.assertLess(advice.index("$LOAD_PATH.unshift"), advice.index("GEM_HOME"))
 
     def test_every_ecosystem_behaves_the_same_way(self):
         cases = [("pip install requests", "python3", "venv"),

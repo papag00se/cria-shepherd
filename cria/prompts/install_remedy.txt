@@ -21,9 +21,9 @@ pip_venv = First check whether you need it at all: the package may already be im
 
 npm_local = Drop the global flag: `{{NPM}} install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
 
-gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. That install is reachable only under bundler — anything started as plain `ruby` still fails to require it, including tests or scripts you did not write. Run it with `{{BUNDLE}} exec`, or make the library loadable without bundler.
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. That install is reachable only under bundler — anything started as plain `ruby` still fails to require it, including tests and scripts you did not write, and those are what will be run against your code. Make it loadable anyway: put `require "bundler/setup"` as the FIRST line of your library file, above every other require. It reads the `Gemfile` in the working directory and puts the bundled gems on the load path, so a plain `ruby -Ilib ...` finds them with no `{{BUNDLE}} exec` prefix.
 
-gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable by putting that directory on the load path — `ruby -Ilib -e "..."` needs `GEM_HOME=vendor/bundle` set, or `$LOAD_PATH.unshift` the gem's `lib` directory from your code.
+gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable FROM YOUR CODE — `$LOAD_PATH.unshift` the gem's `lib` directory at the top of your library file, so it is on the load path for anything that requires it. Setting `GEM_HOME=vendor/bundle` only covers commands you launch yourself; tests and scripts you did not write are run without it, and those are what will be run against your code.
 
 cargo_add = A crate your code uses is a dependency, not a global binary: `{{CARGO}} add <crate>` puts it in `Cargo.toml` and cargo fetches it into this project.
 
