@@ -36,7 +36,7 @@ Cells land here as they finish.
 
 | after cell | sha | change |
 |---:|---|---|
-| 1 | `6e1a4d1` | **Ruby install routes now ANSWER reachability.** `gem_bundler` said the install is reachable only under bundler and offered "or make the library loadable without bundler" — a restatement, not a way out. It now names `require "bundler/setup"` as the first line of the library, verified by running all three shapes the verifier uses. `gem_direct` led with `GEM_HOME`, which covers only self-launched commands; `$LOAD_PATH.unshift` leads now. Affects cells 7, 13, 19 |
+| 1 | `9eeee96` | **Ruby install routes now ANSWER reachability.** `gem_bundler` said the install is reachable only under bundler and offered "or make the library loadable without bundler" — a restatement, not a way out. It now names `require "bundler/setup"` as the first line of the library, verified by running all three shapes the verifier uses. `gem_direct` led with `GEM_HOME`, which covers only self-launched commands; `$LOAD_PATH.unshift` leads now. Affects cells 7, 13, 19 |
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
