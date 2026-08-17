@@ -51,6 +51,9 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from cria import verifytools  # noqa: E402 — cria's own read-only judge tools, one owner
+
 SUITE = Path(__file__).resolve().parent
 ROOT = SUITE.parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -66,6 +69,11 @@ SKIP_DIRS = {".git", "target", "node_modules", "vendor", "__pycache__", ".venv",
 
 
 SYSTEM = SUITE / "prompts" / "usefulness_judge.txt"
+
+# The stop-looking line, in THIS judge's schema. See the call site.
+ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: '
+              '{"usefulness": <0-100>, "reason": "<two sentences>", '
+              '"deductions": [{"points": <n>, "for": "<what cost it>"}]}')
 
 
 def _tree(ws: Path, limit: int = 400) -> str:
@@ -162,18 +170,96 @@ def evidence(row: dict) -> tuple[str, str]:
     return text, hashlib.sha1(stamp.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def ask(system: str, user: str, base_url: str, model: str, timeout: int = 900) -> str:
-    body = json.dumps({"model": model, "temperature": 0.0, "stream": False, "max_tokens": 2048,
-                       "messages": [{"role": "system", "content": system},
-                                    {"role": "user", "content": user}]}).encode()
-    req = urllib.request.Request(base_url.rstrip("/") + "/v1/chat/completions", data=body,
+def loaded_model(base_url: str, timeout: int = 20) -> str:
+    """WHICH MODEL IS ACTUALLY GRADING. The endpoint serves whatever is loaded, and this campaign
+    swaps models between cells — so a judge pointed at it grades cycle 4 cell 1 with gemma4 and cell
+    8 with qwen35 and records "cria" for both. Two cells scored by two different graders are not
+    comparable, and a number whose author is unknown is not evidence (#12). Asked, never assumed."""
+    try:
+        req = urllib.request.Request(base_url.rstrip("/") + "/v1/models", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            ids = [m.get("id") for m in (json.loads(r.read()).get("data") or []) if m.get("id")]
+        return ids[0] if ids else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _answer_text(m: dict) -> str:
+    """The model's answer, wherever it put it. A weak grader spends its budget thinking and returns
+    empty content, or answers with a tool call — both observed on the first tooled run. Reading only
+    `content` scored those as "no verdict" when the verdict was there."""
+    txt = (m.get("content") or "").strip()
+    if txt:
+        return txt
+    for tc in (m.get("tool_calls") or []):
+        args = ((tc.get("function") or {}).get("arguments") or "").strip()
+        if args:
+            return args
+    return (m.get("reasoning_content") or m.get("reasoning") or "").strip()
+
+
+def _post(messages: list, base_url: str, model: str, tools: list | None, timeout: int) -> dict:
+    body = {"model": model, "temperature": 0.0, "stream": False, "max_tokens": 2048,
+            "messages": messages}
+    if tools:
+        body["tools"] = tools
+    req = urllib.request.Request(base_url.rstrip("/") + "/v1/chat/completions",
+                                 data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     key = os.environ.get("USEFULNESS_API_KEY")
     if key:
         req.add_header("Authorization", f"Bearer {key}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.loads(r.read())
-    return ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        return ((json.loads(r.read()).get("choices") or [{}])[0].get("message") or {})
+
+
+def ask(system: str, user: str, base_url: str, model: str, *, workspace: Path | None = None,
+        timeout: int = 900) -> str:
+    """The judge's turn — WITH READ-ONLY TOOLS when there is a workspace to inspect.
+
+    It was a single toolless completion at first, judging from an evidence summary this file
+    assembled: the file tree with sizes, and the verifier's own detail lines. That is the exact
+    design `cria/verifytools.py` exists because it failed — its docstring records a toolless critic
+    passing a "write README.md" step with no README on disk while its own reasoning reached for the
+    call it could not make ("no test file exists in the repo yet (list_dir would show this)").
+    A judge that cannot open a file cannot tell a real README from one containing the word "build",
+    and curating what it may see is itself a way to decide the verdict.
+
+    So it holds the SAME two tools the step critic holds, from the same module — `list_dir` and
+    `read_file`, read-only, resolved inside the archived workspace, never truncated. Execution is
+    cria's, deterministic and stdlib-only; the model's role stays judgement.
+
+    Bounded by `VERIFY_MAX_ROUNDS` the same way, and a model that keeps looking is told to answer.
+    Tool results go back as PROTOCOL — structured `tool_calls` plus `role: tool` — never as prose."""
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    if workspace is None or not workspace.is_dir():
+        return _answer_text(_post(msgs, base_url, model, None, timeout))
+
+    tools = verifytools.VERIFY_TOOLS
+    for round_no in range(verifytools.VERIFY_MAX_ROUNDS):
+        last = round_no == verifytools.VERIFY_MAX_ROUNDS - 1
+        m = _post(msgs, base_url, model, None if last else tools, timeout)
+        calls = m.get("tool_calls") or []
+        if not calls:
+            return _answer_text(m)
+        msgs.append({"role": "assistant", "content": m.get("content"), "tool_calls": calls})
+        for tc in calls:
+            fn = tc.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            out = verifytools.execute(fn.get("name") or "", args, str(workspace))
+            msgs.append({"role": "tool", "tool_call_id": tc.get("id"),
+                         "content": out[:verifytools.VERIFY_MAX_CHARS]})
+        if last:
+            break
+    # NOT `verifytools.ANSWER_NOW` — that names cria's STEP-CRITIC schema
+    # ({"done", "reason", "proposed_fix"}), and handing it to this judge pushes it to answer in the
+    # wrong shape at the exact moment it is being told to stop looking. Caught on the first tooled
+    # run: rust-toml-cli inspected its six rounds and then produced no usable verdict.
+    msgs.append({"role": "user", "content": ANSWER_NOW})
+    return _answer_text(_post(msgs, base_url, model, None, timeout))
 
 
 def parse(text: str) -> dict | None:
@@ -200,16 +286,18 @@ def parse(text: str) -> dict | None:
             "deductions": d.get("deductions") or []}
 
 
-def score_row(row: dict, base_url: str, model: str, *, refresh: bool = False) -> dict | None:
+def score_row(row: dict, base_url: str, model: str, *, refresh: bool = False,
+              grader: str = "") -> dict | None:
     ev, digest = evidence(row)
     CACHE.mkdir(parents=True, exist_ok=True)
     cached = CACHE / f"{row['run_id']}.{digest}.json"
     if cached.exists() and not refresh:
         return json.loads(cached.read_text())
-    verdict = parse(ask(SYSTEM.read_text(), ev, base_url, model))
+    ws = Path(row.get("archive") or "") / "workspace"
+    verdict = parse(ask(SYSTEM.read_text(), ev, base_url, model, workspace=ws))
     if verdict is None:
         return None
-    verdict.update({"model": model, "evidence_digest": digest})
+    verdict.update({"model": grader or model, "evidence_digest": digest})
     cached.write_text(json.dumps(verdict, indent=1))
     return verdict
 
@@ -223,8 +311,18 @@ def main() -> int:
     ap.add_argument("--since", type=float, default=0.0, help="rows started at/after this epoch")
     ap.add_argument("--arm", help="only rows whose note carries this arm (BASE / CRIA)")
     ap.add_argument("--refresh", action="store_true", help="ignore the cache")
+    ap.add_argument("--require-model", help="refuse to score unless the endpoint is serving this "
+                                            "model — two cells graded by two models are not "
+                                            "comparable, and an unscored cell is honest")
     ap.add_argument("--dry-run", action="store_true", help="print the evidence and stop")
     args = ap.parse_args()
+
+    grader = loaded_model(args.base_url)
+    if args.require_model and grader != args.require_model:
+        print(f"endpoint is serving {grader!r}, not {args.require_model!r} — refusing to score",
+              file=sys.stderr)
+        return 2
+    print(f"grader: {grader or '(unidentified)'}\n")
 
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
     want = [r for r in rows
@@ -242,7 +340,7 @@ def main() -> int:
 
     scored = {}
     for r in want:
-        v = score_row(r, args.base_url, args.model, refresh=args.refresh)
+        v = score_row(r, args.base_url, args.model, refresh=args.refresh, grader=grader)
         if v is None:
             print(f"  {r['run_id']}: judge produced no usable verdict — left unscored")
             continue
