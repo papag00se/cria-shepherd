@@ -44,6 +44,15 @@ Cells land here as they finish. **Two numbers**: `strict` is the all-or-nothing 
 | 8 | cart-billing-go | qwen35 | 5/5 | **100%** | Everything, verified by execution |
 |  | | | **51%** | **65%** | |
 
+### The baseline cannot be judged, and it is invalid anyway
+
+Checked before re-scoring it, and the answer is worse than "not yet done":
+
+- **Its evidence is gone.** All 24 baseline cells ran 2026-08-10. Archiving landed 2026-07-29, so the workspaces should be there — the oldest surviving archive is **2026-08-12**, and the baseline captures are gone too. Something removed everything older than the 12th, against the goal's own rule that run evidence is never deleted. With no workspace there is nothing to inspect, no re-probe, and no counterfactual: judging those cells would mean guessing where the strict score understates, which is the exact thing the judge was built to stop.
+- **Its verifiers have since changed, ten times.** `git log --since=2026-08-10 -- suite/tasks/*/verify.py` lists changes to cart-billing-go, feed-pipeline-java, feed-pipeline-py, handles-cli-node, orders-api-py, shipping-rates-py and shipping-rates-rb — including two that removed contaminants and three that stopped a check failing over capitalisation or punctuation. The goal already says a verifier change invalidates every row scored against it.
+
+So the baseline is stale on two counts, and neither is fixable by re-scoring. **It has to be re-run** — 24 cells with assists off, judged as they land like any other cell. Until then every BASE number carries `ˢ`, every BASE↔CRIA Δ is blank, and the grid says so rather than implying a comparison it cannot make.
+
 **Strict says 51%. Useful says 65%.** The gap is one cell: rust-toml-cli, 0 strict and 95 useful, where the work was finished and correct and one directory too deep. Every other cell moves by less than 15 points, which is the check that the new number is not simply generosity.
 
 
