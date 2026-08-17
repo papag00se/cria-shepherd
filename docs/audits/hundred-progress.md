@@ -22,6 +22,8 @@ With the baseline re-run at 18 of 24, twenty cells now have both arms judged on 
 
 **Where the assists genuinely earn their place**, and this is why the answer is not "turn them off": `cart-billing-go × qwen35` +40, `orders-api-py × gemma4` +25, `orders-api-py × qwen35` +25, `feed-pipeline-java × qwen35` +25, `handles-cli-node × qwen35` +25, `rust-toml-cli × gemma4` +20.
 
+**One caveat on the nemotron column, and it runs the comparison the other way.** The BASE arm is assists-off — its captures carry only `classifier` and `proxy` phases, no coder loop, no steers — so it also has no lost-call nudge. nemotron-elastic emits `str_replace_editor`, which no menu advertises, inside its reasoning channel; unassisted, the harness sees an assistant turn with no tool call and ends the session. `shipping-rates-rb × nemotron-elastic` BASE died that way in **20 seconds, 6 calls, zero files written**, while the same cell under cria got 62 calls out of the same model. So nemotron's BASE numbers are floored by a transport incompatibility rather than by capability, and its four deltas flatter cria. They are excluded from the 270.
+
 **Every one of the five destructions now has landed fixes** — see [`sweep-fix-progress.md`](sweep-fix-progress.md) items 21–40. Whether they hold is cycle 5's question, and it is the only question that matters.
 
 ---
