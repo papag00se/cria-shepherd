@@ -603,8 +603,22 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # told which tests that covered. Walked on cycle 4 cell 7, shipping-rates-rb x qwen35: the
         # model reverted its own test edit once, citing the task, and two calls later rewrote a
         # SEEDED assertion from 15.99 to 32.99 — a test its own `rake test` had reported as passing.
+        # …AND SAY WHEN THEY PREDATE THE CODER'S OWN EDIT. The newest gate result is re-shown at
+        # every prompt build until a new one exists, so after an edit lands the coder keeps reading a
+        # verdict about the file it just changed. Walked on cycle 4 cell 19 (`shipping-rates-rb x
+        # nemotron-elastic`): the gate ran at 07:27:41, the correct `>=` fix landed at 07:28:57, and
+        # calls 0048-0062 all carried the pre-edit failure. The model reasoned against it twice —
+        # "we changed to >=, but maybe the code we edited was not the same as the one running… The
+        # only explanation is that the condition is not being evaluated correctly" — then reverted
+        # its own correct fix, and on the last action of the run reverted it further. `changed_paths`
+        # already knows which files moved; it was only being used to unquote the annotation.
+        stale = ""
+        if changed_paths:
+            stale = prompts.render("checks_are_stale",
+                                   files=", ".join(f"`{p}`" for p in sorted(changed_paths)))
         return prompts.render("checks_error_class",
                               seeded_test_rule=prompts.load("seeded_test_rule").strip(),
+                              stale=stale.rstrip("\n"),
                               findings="\n".join(findings))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
