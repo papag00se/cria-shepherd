@@ -2,11 +2,11 @@
 
 **This file is the status.** Not a chat message, not a memory, not an intention. The goal it serves is `docs/goals/hundred-goal.md`. The score grid it summarises is `docs/audits/battery-report.md`, which rewrites itself after every cell.
 
-**Target: 24 of 24 cells at 100%.** Currently 9 — mean 53.8%.
+**Target: 24 of 24 cells at 100%.** Cycle 4's CRIA arm is complete and judged: **7 of 24 at 100%**, mean useful **54%**, mean strict **49%**.
 
 ---
 
-## Cycle 4 — RUN in flight
+## Cycle 4 — RUN and JUDGE complete, WALK in flight
 
 **Phase: RUN.** Started 2026-08-16 16:5x on the post-sweep code state, `8be9ea8`. Twenty-four cells, **model-major** for the first time — one model loaded, then taken through all six languages, so the grid fills a readable ROW at a time instead of a column.
 
@@ -42,7 +42,23 @@ Cells land here as they finish. **Two numbers**: `strict` is the all-or-nothing 
 | 6 | rust-toml-cli | gemma4 | 0/4 | **95%** | A complete, correct, working CLI — in `toml-cli/` instead of the working directory |
 | 7 | shipping-rates-rb | qwen35 | 1/5 | **15%** | Zone mapping genuinely right — and a **seeded assertion rewritten** from 15.99 to 32.99 |
 | 8 | cart-billing-go | qwen35 | 5/5 | **100%** | Everything, verified by execution |
-|  | | | **51%** | **65%** | |
+| 9 | orders-api-py | qwen35 | 4/4 | **100%** | Everything, verified by execution |
+| 10 | feed-pipeline-java | qwen35 | 4/5 | **85%** | **18.7× faster** against a 4× bar with identical totals, 4 worker threads deterministic over 8 runs, the quoted-comma row imported, a 917-word review with 29 located findings. Missing: skipped-row **counts** — and it HAD them at the fifteen-minute floor. See the orienter finding |
+| 11 | handles-cli-node | qwen35 | 4/4 | **100%** | Everything, verified by execution — including tests that pass with the network and fail without it |
+| 12 | rust-toml-cli | qwen35 | 4/4 | **100%** | Everything, verified by execution, at the working directory root |
+| 13 | shipping-rates-rb | ternary-bonsai | 1/5 | **10%** | The seeded suite still green and almost nothing added. **All 31 minutes went into failing to install a gem** — `gem install`, `--user-dir`, `gem install bundler`, `bundle install`, finally curling the `.gem` by hand |
+| 14 | cart-billing-go | ternary-bonsai | 1/5 | **15%** | The decimal library genuinely done — the deliverable this model historically misses. Everything else behind `axed :=` on line 90 for `taxed`. **Fixing that one character still scores 1/5**: the discounts decoder does not unmarshal |
+| 15 | orders-api-py | ternary-bonsai | 3/4 | **75%** | Route, schema and injection all verified. A real HTTP fixture that binds a free port and polls — and every test body then failed |
+| 16 | feed-pipeline-java | ternary-bonsai | 0/5 | **5%** | opencsv declared, then `import com.opencsv.errors` — a package that does not exist. Killed at the fifteen-minute floor after 39 calls |
+| 17 | handles-cli-node | ternary-bonsai | 4/4 | **100%** | Everything, verified by execution |
+| 18 | rust-toml-cli | ternary-bonsai | 0/4 | **5%** | `error[E0282] type annotations needed` at `main.rs:31` — `toml::from_str` with nothing to deserialise into. A Cargo.toml and a main.rs, and that is all |
+| 19 | shipping-rates-rb | nemotron-elastic | 0/5 | **5%** | Gemfile right, require name right, **and no install ever completed** — no Gemfile.lock, no vendor/, no .bundle/. Killed at the floor after 62 calls |
+| 20 | cart-billing-go | nemotron-elastic | 1/5 | **15%** | The decimal library done; everything else behind `taxed.CEILING`, which `decimal.Decimal` does not have |
+| 21 | orders-api-py | nemotron-elastic | 3/4 | **70%** | Route, schema and injection verified. Its own suite fails on `assert 22.5 < 0.01` — the tests share a database and accumulate across cases |
+| 22 | feed-pipeline-java | nemotron-elastic | 0/5 | **5%** | A `<dependency>` block appended **outside** `<dependencies>` — Maven cannot read the project at all, so javac never runs. Killed at the floor after 26 calls |
+| 23 | handles-cli-node | nemotron-elastic | 3/4 | **75%** | CLI, dependency removal and Dockerfile all verified. Two properly-named tests in `__tests__/` that `package.json` never declares a way to run |
+| 24 | rust-toml-cli | nemotron-elastic | 0/4 | **5%** | `invalid type: map, expected a sequence` at `Cargo.toml:8` — cargo never compiles anything. Killed at the floor after 62 calls |
+|  | | | **49%** | **54%** | **7 of 24 at 100%** |
 
 ### The baseline cannot be judged, and it is invalid anyway
 

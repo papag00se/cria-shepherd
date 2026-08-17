@@ -105,6 +105,17 @@ Cell 6, `rust-toml-cli × gemma4`: a complete, correct, working CLI judged **95%
 
 **Fixed** by reading `probediscovery.inventory`, which already owns "where are this workspace's projects" (bounded depth, vendor trees skipped) and is what the gate composes its probes from — so the two halves of cria stop disagreeing about where the project is (#23). Not a Rust special case: Maven, Gradle, Go with a `cmd/` dir and every monorepo nest the manifest as a matter of course. What cria will EXECUTE is untouched — still `_runnable` plus `_SHELL_META`.
 
+### 23. cria told a coder, four times, to paste a version number it had made up
+From the cycle-4 walk, cell 20 (`cart-billing-go × nemotron-elastic`, 1/5 strict, 15% useful) — and it is the single most expensive false fact found so far, because it cost the whole cell.
+
+The checks said, verbatim: `cart.go:8: missing go.sum entry for module providing package github.com/shopspring/decimal (imported by cartsvc); to add:` / `go get cartsvc`. The steer author answered with a Go pseudo-version it invented — **`v0.0.0-20240817123456-001`**, whose timestamp is the day the run happened — and made it the instruction: *"replace it with the exact line `require github.com/shopspring/decimal v0.0.0-20240817123456-001` … Do this now with the edit_file tool."* It then diagnosed its own defect and committed it again in the same directive: *"Stop editing go.mod with invalid version strings … run `go get github.com/shopspring/decimal@v0.0.0-20240817123456`"*.
+
+The coder obeyed, wrote pseudo-version after pseudo-version, and reached the wall with nothing that compiles. The real fix was one grounded word — `go get github.com/shopspring/decimal` — sitting in the error message cria had already read.
+
+**Fixed**: `_invented_version` joins the grounding family (`ungrounded_urls`, phantom path / field / symbol, false line citation) inside the one gate every steer path funnels through. A version is not a judgement the author is entitled to make — it is a fact about a registry it cannot see — so a version-shaped token that appears **nowhere in the evidence cria gathered** refuses the steer whole. Matched by shape, not ecosystem: three-or-more dotted numbers, a `v`-prefixed number, or a version after `@`, which is semver, Go pseudo-versions, gem, wheel and Maven alike.
+
+**Blast radius, measured**: of the **71 distinct steers cria delivered across cycle 4's 24 runs, 2 contain a version-shaped token at all**. What it blocks is the FIRST fabrication; once the coder pastes it, the version is genuinely on disk and a later steer quoting it passes, correctly. Cell 20's cascade was four steers and needed only the first stopped.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.

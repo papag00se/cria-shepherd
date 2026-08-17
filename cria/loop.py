@@ -7404,6 +7404,13 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         rlog.emit("loop.steer_phantom_symbol", level="warn", symbol=ghost,
                   head=_clip(directive, 120))
         return None
+    made_up = _invented_version(directive, evidence)
+    if made_up:
+        # The author cannot know a version it was not told; the one it invents is pasted into a
+        # manifest and poisons every build after it. See _invented_version for the run this cost.
+        rlog.emit("loop.steer_invented_version", level="warn", version=made_up,
+                  head=_clip(directive, 120))
+        return None
     cite = _false_line_citation(directive, evidence)
     if cite:
         # Same enforcement, next claim class: the author cited a LINE past the file's real length —
@@ -7509,6 +7516,67 @@ def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str |
             continue
         if symbol not in body:
             return f"{symbol} in {rel}"
+    return None
+
+
+# A VERSION IS A FACT ABOUT THE WORLD, AND THE AUTHOR CANNOT KNOW ONE IT WAS NOT TOLD.
+#
+# Shape, not ecosystem (a rule keyed to Go's pseudo-versions is inert on npm and Maven): three or
+# more dot-separated numbers, or a `v`-prefixed number, or a version after `@` — which covers semver,
+# Go pseudo-versions, gem and wheel versions, Maven coordinates and `pkg@1.2.3` alike. Two-component
+# numbers are NOT versions here: `48.58` is a cart total and `3.11` is a language line, and neither
+# is something an author invents to be pasted into a manifest.
+_VERSION_SHAPED = re.compile(
+    r"(?<![\w.-])(?:v\d+(?:\.\d+)+[\w.+-]*|\d+\.\d+\.\d+[\w.+-]*|@\s*v?\d+(?:\.\d+)+[\w.+-]*)")
+
+
+def _invented_version(directive: str, evidence: str) -> str | None:
+    """A version string in the steer that appears NOWHERE in the evidence cria gathered — or None.
+
+    The measured incident, cycle 4 cell 20 (`cart-billing-go x nemotron-elastic`, 15% useful). The
+    checks said, verbatim:
+
+        cart.go:8: missing go.sum entry for module providing package
+        github.com/shopspring/decimal (imported by cartsvc); to add:
+                go get cartsvc
+
+    The author answered with a version it made up — `v0.0.0-20240817123456-001`, a plausible Go
+    pseudo-version whose timestamp is the day the run happened — and told the coder four separate
+    times to write that literal into `go.mod`:
+
+        "replace it with the exact line `require github.com/shopspring/decimal
+         v0.0.0-20240817123456-001`. … Do this now with the edit_file tool."
+
+    It then diagnosed its own defect and repeated it in the same breath: *"Stop editing go.mod with
+    invalid version strings … run `go get github.com/shopspring/decimal@v0.0.0-20240817123456`"*. The
+    coder obeyed, wrote pseudo-version after pseudo-version, and reached the wall with nothing that
+    compiles. The real fix was one grounded word — `go get github.com/shopspring/decimal` — and it
+    was sitting in the error message cria had already read.
+
+    This is #5b at its most concrete: a version is not a judgement the author is entitled to make, it
+    is a fact about a registry it cannot see. Grounded means the exact token appears in the evidence —
+    quoting a version the checks, the disk or the transcript reported is always allowed, which is the
+    only way an author should ever have one.
+
+    Refused whole, not stripped: the version IS the instruction in every case measured, so a directive
+    with it removed says "edit go.mod to add the required line" and helps nobody. Silence is the safe
+    direction (#1).
+
+    WHAT IT BLOCKS IS THE FIRST ONE, and that is the one that matters. Once the coder has pasted the
+    invented version into `go.mod`, it is genuinely on disk and cria's evidence genuinely contains it,
+    so a later steer repeating it passes — correctly, by this rule's own terms. The cascade in cell 20
+    had four steers and needed only the first to be stopped.
+
+    BLAST RADIUS, measured over cycle 4: of **71 distinct steers cria delivered across the 24 runs,
+    2 contain a version-shaped token at all**. This rule cannot silence much, which is what makes it
+    safe to fail closed."""
+    if not directive:
+        return None
+    ev = evidence or ""
+    for m in _VERSION_SHAPED.finditer(directive):
+        tok = m.group(0).lstrip("@").strip()
+        if tok and tok not in ev:
+            return tok
     return None
 
 
