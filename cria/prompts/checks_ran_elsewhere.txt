@@ -1,0 +1,1 @@
+None of these checks could run in the working directory you were given — every one of them had to be run inside `{{WHERE}}`, because that is where this project's manifest is. Anything run at the working directory itself, by anyone who is not looking inside that folder, will not find the project at all.

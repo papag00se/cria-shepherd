@@ -71,6 +71,9 @@ class GatePlan:
     # Test-naming conventions cria searched by and found nothing for (probediscovery.undiscoverable_tests).
     # Computed with the selection, so the clean-gate render reads a fact instead of re-walking the tree.
     untested: list = field(default_factory=list)
+    # The subdirectory every real probe had to be run in, when NONE of them could run at the
+    # workspace root — "" in the ordinary case. See :func:`_checks_ran_elsewhere`.
+    ran_in: str = ""
     # cria-facing observations about the PLAN itself (not about the repo) — currently only the
     # shared-budget floor. Never shown to the model; it is a note for the log and the operator.
     notes: list = field(default_factory=list)
@@ -89,6 +92,40 @@ class GateOutcome:
 
 def _marker(section_id: str) -> str:
     return f"{SECTION_PREFIX}{section_id}{SECTION_SUFFIX}"
+
+
+def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
+    """The ONE subdirectory every real check had to run in, or "" — a fact straight off the plan.
+
+    Cycle 4 cell 6, rust-toml-cli x gemma4, a from-scratch task: the model ran `cargo new toml-cli`
+    and built a complete, working Rust project inside `toml-cli/`. cria's own gate cd'd into that
+    folder for four of its five probes, they all passed, the gate went GREEN, the completion critic
+    approved and the session exited normally. The verifier runs `cargo` at the working directory and
+    found no `Cargo.toml`: **0 of 4**, on a cell that had scored 4/4 for three cycles running.
+
+    cria was holding the fact the whole time — `working_dir=toml-cli` on every probe it composed —
+    and never said it. This is not a judgement about layout (a monorepo puts manifests in
+    subdirectories on purpose and is right to); it is the plan read back. It fires only when NO real
+    check could run at the root, which is the case where the directory the harness handed the model
+    contains no buildable project at all.
+
+    The syntax floor is excluded: it walks files and always runs at the root, so counting it would
+    make this permanently silent."""
+    if not (workspace or "").strip():
+        return ""            # `abspath("")` is the CWD, which would report cria's own directory
+    root = os.path.abspath(workspace)
+    dirs = set()
+    for c in candidates:
+        if c.kind is probediscovery.ProbeKind.SyntaxCheck:
+            continue                       # walks the tree from the root by construction
+        d = os.path.abspath(str(getattr(c, "working_dir", "") or root))
+        dirs.add(os.path.relpath(d, root))
+    if not dirs or "." in dirs or len(dirs) != 1:
+        return ""                          # something ran at the root, or they disagree → say nothing
+    where = dirs.pop()
+    # A path that climbs OUT of the workspace is not a subdirectory of it, and naming it would point
+    # the coder somewhere it is not working.
+    return "" if where.startswith("..") or os.path.isabs(where) else where
 
 
 def plan_gate(workspace: str) -> GatePlan:
@@ -112,6 +149,7 @@ def plan_gate(workspace: str) -> GatePlan:
         # needs the same thing from either: to know that a green gate ran no tests.
         if not any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
             plan.untested += probediscovery.tests_with_no_command(workspace)
+        plan.ran_in = _checks_ran_elsewhere(workspace, plan.candidates)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
     # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
@@ -589,6 +627,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
     if untested:
         clean += " " + prompts.render("no_tests_found", findings=" ".join(untested))
+    # WHERE the checks had to run, when none of them could run where the coder is working. A green
+    # gate over a project the working directory does not contain is the most expensive green there
+    # is — see _checks_ran_elsewhere for the cell it cost.
+    if getattr(plan, "ran_in", ""):
+        clean += " " + prompts.render("checks_ran_elsewhere", where=plan.ran_in)
     # A suite that passes with the network blocked never touched the API it claims to test. FACT,
     # not verdict (principle 8) — plenty of tasks have no network in them, and which it is here is
     # the judge's call. Only on the CLEAN branch: with real findings the coder already has work.
