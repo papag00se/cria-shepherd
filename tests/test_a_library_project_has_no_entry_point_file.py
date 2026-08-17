@@ -71,10 +71,36 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
         return prompts.load_map("install_remedy")[key]
 
     def test_it_says_the_install_is_only_reachable_under_bundler(self):
+        """The CONSTRAINT must still be stated — that is what makes the remedy make sense. It used
+        to be checked by looking for the word "exec", back when the remedy was `bundle exec`; the
+        remedy is now a load-path line and the route recommends no exec at all, so the assertion is
+        on the fact rather than on the old wording."""
         text = self.route("gem_bundler").lower()
-        self.assertIn("exec", text)
+        self.assertIn("reachable only under bundler", text)
         self.assertTrue("plain `ruby`" in text or "without bundler" in text,
                         "the route never says a bare ruby cannot see it")
+
+    def test_it_names_the_route_that_MEASURED_five_of_five(self):
+        """`bundler/setup` is not the answer; `$LOAD_PATH.unshift ... __dir__` is, and the baseline
+        arm proved it. qwen35 with assists OFF scored **5/5** on shipping-rates-rb — including
+        `hidden_contract`, the check that runs a test file cria never sees — with exactly this at the
+        top of its library:
+
+            require "rubygems"
+            $LOAD_PATH.unshift File.expand_path("../../vendor/bundle/gems/countries-8.1.0/lib", __dir__)
+            $LOAD_PATH.unshift File.expand_path("../../vendor/bundle/gems/unaccent-0.4.0/lib", __dir__)
+
+        Note the second line: it unshifted the TRANSITIVE dependency too. Against that, the
+        counterfactual on cycle 4 cell 1 — the same task with `require "bundler/setup"` and a
+        corrected require name — scored 2/5 and `hidden_contract` still failed. `__dir__` resolves
+        from the file, so it survives a runner started anywhere; `bundler/setup` needs the process to
+        start where the Gemfile is."""
+        text = self.route("gem_bundler")
+        self.assertIn("$LOAD_PATH.unshift", text)
+        self.assertIn("__dir__", text)
+        self.assertIn("INCLUDING the ones it pulled in", text)   # the transitive dep
+        self.assertLess(text.index("$LOAD_PATH.unshift"), text.index("bundler/setup"),
+                        "the route that measured 5/5 must lead")
 
     def test_it_names_the_one_line_that_makes_it_reachable(self):
         """STATING THE CONSTRAINT IS NOT ANSWERING IT. The route said the install is reachable only
@@ -91,8 +117,8 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
         the verifier uses — `ruby -Ilib -e`, `ruby -Ilib -I. <test>.rb`, and the repo-suite
         `ruby -Ilib -Itest -e`. It is a fact about bundler, named without naming any gem (#20)."""
         text = self.route("gem_bundler")
-        self.assertIn('require "bundler/setup"', text)
-        self.assertIn("FIRST line", text)
+        self.assertIn("before the gem require", text)
+        self.assertIn("does not matter who launches it or from where", text)
 
     def test_the_direct_route_answers_it_in_code_too(self):
         """GEM_HOME is an environment variable, and the tests that judge the deliverable are launched
@@ -113,11 +139,14 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
 
     def test_it_names_the_binary_through_the_token_never_literally(self):
         """The token resolves to whatever this box actually has (`bundle3.2` here). A literal
-        `bundle exec` would recreate the incident tests/test_install_remedy_names_the_real_binary.py
-        exists for."""
+        `bundle` command would recreate the incident
+        tests/test_install_remedy_names_the_real_binary.py exists for. The route now recommends no
+        `exec` at all — the remedy is a load-path line — so what is guarded is that every bundler
+        COMMAND it does name goes through the token."""
         raw = self.route("gem_bundler")
-        self.assertIn("{{BUNDLE}} exec", raw)
+        self.assertIn("{{BUNDLE}} install", raw)
         self.assertNotIn("`bundle exec", raw)
+        self.assertNotIn("`bundle install", raw)
 
     def test_the_sibling_route_is_unchanged(self):
         self.assertIn("GEM_HOME", self.route("gem_direct"))
