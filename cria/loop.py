@@ -7143,6 +7143,28 @@ _BLAME_WORDS = re.compile(
 _IDENTLIKE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}[?!]?")
 
 
+# A NAME, not a word. The shared-token scan fed the prescribes judge any identifier-shaped run of
+# four or more letters, which on a failing build means the vocabulary of failure itself: `error`,
+# `compile`, `declared`, `failures`, `annotations`, `orders`, `python3`. Asking "is the directive
+# PRESCRIBING `declared`?" is not a question with an answer, and a weak judge answering it wrongly
+# refuses the steer.
+#
+# MEASURED over every fire the guard has ever had — 18 of them, in the cycle-4 walk. At most two
+# were correct. It killed "Replace `axed` on line 90 with `taxed`" over the shared word `declared`,
+# and "correcting the [bin] section in Cargo.toml" — the exact fixes two cells needed and did not
+# get. It also killed "replace `from http.client import HTTPServer` with `from http.server import
+# HTTPServer`" and "Edit the line `from .db import db` to `import orders.db as db`".
+#
+# An API symbol is QUALIFIED or COMPOUND in every language cria meets: it carries a dot, a `::`, an
+# underscore, or an internal capital. `decimal.Decimal`, `orders.db`, `NewFromFloat64`,
+# `setSkipInitialNewline`, `Cargo.toml` all qualify; the words above do not. Shape, not a stoplist
+# (#20) — a list of English words to exclude would be a rule needing an exception list, which is the
+# tell that it should have been a question.
+def _looks_like_a_symbol(tok: str) -> bool:
+    return ("." in tok or ":" in tok or "_" in tok
+            or bool(re.search(r"[a-z][A-Z]", tok)))
+
+
 def _shared_symbols(directive: str, findings: str) -> list[str]:
     """Identifier-shaped tokens present in BOTH texts, longest first.
 
@@ -7155,7 +7177,7 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
         for run in re.findall(r"[A-Za-z_][A-Za-z0-9_.:?!]*", t or ""):
             out.add(run.strip(".:"))
             out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
-        return {x for x in out if len(x) > 3}
+        return {x for x in out if len(x) > 3 and _looks_like_a_symbol(x)}
     return sorted(toks(directive) & toks(findings), key=len, reverse=True)
 
 
