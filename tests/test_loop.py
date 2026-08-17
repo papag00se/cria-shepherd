@@ -4491,9 +4491,18 @@ class SingleItemMethodTests(unittest.TestCase):
 
     # ---- _reasoned_reanchor ------------------------------------------------------------------
     def test_reasoned_reanchor_authors_else_canned(self):
+        import cria.loop as loopmod
         from cria import prompts
         from cria.config import Role
-        body = {"messages": [{"role": "user", "content": "SUMMARY: resolver built, tests remain"}]}
+        # A REAL post-compaction turn: `reframe_compaction` tags the harness's compaction message
+        # with CONTINUATION_MARKER before drive sees it, whichever shape the harness rewrites in.
+        # The old fixture was a bare user turn, which is what the ORIGINAL TASK looks like — and
+        # feeding the task to a prompt that says "state what has already been built" is the defect
+        # this test now guards (cycle 4 cell 10: three fired, four invented "remaining" items, all
+        # already done, and a 5/5 cell finished 4/5).
+        body = {"messages": [{"role": "user", "content": "Build a resolver."},
+                             {"role": "user", "content": loopmod.CONTINUATION_MARKER
+                              + " SUMMARY: resolver built, tests remain"}]}
         role = Role(name="reasoner", backend="local")
         self.assertIn("X is done", _single_loop(_Scripted([_done()]),
             reasoner_chat=self._reasoner_chat("X is done; finish Y"), reasoner_role=role)._reasoned_reanchor(body, _Rlog()))
@@ -4503,6 +4512,12 @@ class SingleItemMethodTests(unittest.TestCase):
             reasoner_role=role)._reasoned_reanchor(body, _Rlog()), prompts.load("reanchor"))   # empty → canned
         self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("x"),
             reasoner_role=role)._reasoned_reanchor({"messages": []}, _Rlog()), prompts.load("reanchor"))  # no summary → canned
+        # …and the case that cost the cell: a conversation with a TASK but no compaction summary.
+        # The orienter must not be asked to say what was built from a list of requirements.
+        self.assertEqual(_single_loop(_Scripted([_done()]), reasoner_chat=self._reasoner_chat("X is done"),
+            reasoner_role=role)._reasoned_reanchor(
+                {"messages": [{"role": "user", "content": "Build a resolver and add tests."}]}, _Rlog()),
+            prompts.load("reanchor"))
 
     # ---- _done_critic_reason (NO once-bound: re-runs on every green 'done' until satisfied) -------
     def test_done_critic_returns_concrete_reason_and_re_runs(self):

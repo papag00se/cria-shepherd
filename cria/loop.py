@@ -3987,7 +3987,29 @@ class Loop:
         remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
         reasoner or it yields nothing — a compacted coder is never left without re-orientation."""
         canned = prompts.load("reanchor")
-        summary = _history_root(body.get("messages", []))[0]
+        # THE SUMMARY, NOT THE TASK. This read `_history_root`, which returns the first user message
+        # that is not env context — and under a harness that keeps its user messages (Codex does)
+        # that is the ORIGINAL TASK, never the compaction summary. So the reasoner was handed a list
+        # of REQUIREMENTS under a prompt saying "the working history was just compacted into the
+        # summary you are given… state what has already been built", and it answered the only way
+        # that question can be answered from a task: by inventing accomplishments.
+        #
+        # Walked on cycle 4 cell 10, feed-pipeline-java x qwen35, where it fired three times. The
+        # reasoner said so itself — "Since the summary is not provided… I am in a bind", "If I output
+        # a message claiming I know what was built, I am hallucinating" — and cria injected the guess
+        # as a four-item "Remains to Fix" list whose every item was already done and passing. The
+        # coder went back into working code and broke `messy_feed_handled`; the cell had been 5/5 at
+        # the fifteen-minute mark and finished 4/5.
+        #
+        # The re-anchored turn IS the summary, whichever shape the harness rewrites in: a harness that
+        # REPLACES the root has its compaction message rewritten in place by `reframe_compaction`, and
+        # one that KEEPS the root has it appended — either way the marker is on it. No marked turn
+        # means no summary reached this turn, so there is nothing to describe and the canned reanchor
+        # says the true thing without claiming to know (#11b).
+        msgs = body.get("messages", [])
+        summary = next((_content_text(m.get("content")) for m in reversed(msgs)
+                        if m.get("role") == "user"
+                        and CONTINUATION_MARKER in _content_text(m.get("content"))), "")
         if self._ctx.reasoner_role is None or not summary.strip():
             return canned
         text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
