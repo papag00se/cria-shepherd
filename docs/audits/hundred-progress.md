@@ -30,7 +30,22 @@
 | 9 | 2.1 MB of duplicate payload folded out of coder prompts (882 of 6,614) | ~522K tokens back |
 | 10 | a judge's proposed fix clears the steer bar; the done note claims only what ran | invented URLs and false verification claims |
 
-Cells land here as they finish.
+Cells land here as they finish. **Two numbers**: `strict` is the all-or-nothing verifier, kept as the anchor; `useful` is the judged answer to "how much of what they asked for did they actually get?" — the campaign's real question. See [the JUDGE phase](../goals/hundred-goal.md) and the rubric in `suite/prompts/usefulness_judge.txt`.
+
+| # | task | model | strict | useful | what the person actually got |
+|---:|---|---|---:|---:|---|
+| 1 | shipping-rates-rb | gemma4 | 1/5 | **25%** | Full README rate table, the gem correctly declared and installed, and zone logic that is right — but the library does not load: `require "iso3166"` names no installed file |
+| 2 | cart-billing-go | gemma4 | 5/5 | **100%** | Everything, verified by execution |
+| 3 | orders-api-py | gemma4 | 4/4 | **100%** | Everything, verified by execution |
+| 4 | feed-pipeline-java | gemma4 | 0/5 | **10%** | One of five attempted; commons-csv added correctly, then fabricated API — does not compile |
+| 5 | handles-cli-node | gemma4 | 3/4 | **75%** | A working CLI, dependency removed, valid Dockerfile; no discoverable tests (`node --test` collected 0) |
+| 6 | rust-toml-cli | gemma4 | 0/4 | **95%** | A complete, correct, working CLI — in `toml-cli/` instead of the working directory |
+| 7 | shipping-rates-rb | qwen35 | 1/5 | **15%** | Zone mapping genuinely right — and a **seeded assertion rewritten** from 15.99 to 32.99 |
+| 8 | cart-billing-go | qwen35 | 5/5 | **100%** | Everything, verified by execution |
+|  | | | **51%** | **65%** | |
+
+**Strict says 51%. Useful says 65%.** The gap is one cell: rust-toml-cli, 0 strict and 95 useful, where the work was finished and correct and one directory too deep. Every other cell moves by less than 15 points, which is the check that the new number is not simply generosity.
+
 
 **gemma4 — row complete: 1/5, 5/5, 4/4, 0/5, 3/4, 0/4 → 13 of 27 checks, 48%.** Two clean 100%s, and three of the four losses are cria's: a Ruby install route that stated the problem instead of answering it, a green gate over a project in a subdirectory, and a 12-minute runaway the only bound could not catch sooner. All three fixed during the row.
 
