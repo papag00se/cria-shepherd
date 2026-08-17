@@ -52,11 +52,36 @@ Generation SPEED is identical in both arms (58.1 vs 57.6 tok/s; 72.9 vs 76.6; 41
 
 **Three different mechanisms, and they are not the same cell to cell.**
 
-### 1. The context tax — `shipping-rates-rb`, both models
+### 1. RETRACTED — there is no "context tax". I had the mechanism backwards
 
-The sharpest single measurement in the campaign. Unassisted, gemma4 took **104 turns of 212 tokens each and finished in 9.8 minutes**. Under cria it got **66 turns of 1,000 tokens each** — a third fewer chances to act, each one nearly five times longer — and **26.8 minutes of pure generation**, more than the entire unassisted run, before the floor killed it at 30.8. qwen35 is the same shape at 2.9×.
+**What I first wrote here was wrong and is left in the git history rather than quietly amended.** I claimed cria drowns the model in injected context, on the strength of tokens-per-turn rising from 212 to 1,000. That is a mean over a distribution I had not looked at, and I made a claim about model behaviour from a token count without reading a single one of those turns — exactly what #23b forbids.
 
-The injections are not free: the model reads them, reasons over them, and answers longer. cria's own 17 calls added a further 26,000 tokens on top.
+Reading them refutes it twice:
+
+- **cria's prompts are SMALLER than the baseline's.** Median prompt on `shipping-rates-rb × gemma4`: **17,050 tokens unassisted, 13,629 under cria**. On qwen35: 19,302 vs 15,698. The context floor and the trimming do their job; there is no drowning.
+- **The median coder turn is small in both arms** — 37 tokens unassisted, 147 under cria. The 1,000-token "average" is one outlier dragging a mean.
+
+### 1b. WHAT IS ACTUALLY THERE — one dead call, 12.6 minutes, nothing produced, every guard silent
+
+Call 0070 of that run:
+
+```
+usage:   completion_tokens 43,442   prompt_tokens 5,710   total 49,152   (= n_ctx exactly)
+timings: predicted_ms 755,470                                            (= 12 min 35 s)
+message: {"role": "assistant", "content": null}
+```
+
+No content, no reasoning, no tool call. **12.6 minutes of a 30.8-minute budget spent generating nothing**, and `upstream.done` records `aborted: False` — **zero rumination, dead-stream or window-exhaustion events in the entire session.**
+
+`rumination.py`'s own docstring already describes this event, from cycle 3, **on this same cell and model**: *"the whole cell in one call: 42,744 tokens, 11.7 minutes, and the assembled message is empty… 6,408 + 42,744 = 49,152 is n_ctx exactly."* One cycle later the arithmetic is 5,710 + 43,442 = 49,152. **The backstop written for it did not fire.**
+
+Why it did not fire is NOT established. What is ruled out: cria's own token estimate was accurate (`est_total 5523` against a real 5,710), so `window_room` was ≈43,600 and the window guard was not gated off by a bad estimate. The live lead is `chunks_seen` — the guard counts SSE frames carrying a choices delta, and `from_usage: True` with a null message is consistent with the frames never arriving in the shape the counter recognises, leaving `chunks_seen` near zero while the server generated 43,442 tokens. That is a candidate, not a finding, and it is the next thing to settle.
+
+### 1c. qwen35 is a different shape again, and also unexplained
+
+Same task, other model: reasoning characters go **46,067 → 259,478 (5.6×)** while content stays flat (12,711 → 13,826). No single dead call; the largest generation is 5,663 tokens. So this model thinks five times as much under cria and produces the same amount of work.
+
+Whether cria's injections provoke that deliberation, or whether it is the model thrashing on the install loop the walk already found, is **not established**. The two are not distinguishable from token counts, and settling it means reading those turns.
 
 ### 2. One discarded generation — `feed-pipeline-java × gemma4`
 
@@ -76,7 +101,7 @@ Twenty coder turns, of which the walk found **twenty were pinned to "visit crate
 
 ### What this means for the fixes
 
-The mis-steering has been fixed case by case (ledger items 21–44). **The context tax has not been touched**, and on the Ruby column it is the whole story: no false fact, no killed steer, just a model given a third fewer turns at five times the length until the clock ran out. That is the next thing to measure — what each injection costs in tokens against what it is worth — and it is a different kind of work from fixing a wrong sentence.
+The mis-steering has been fixed case by case (ledger items 21–44). **The Ruby column's biggest single loss has not been touched, and is now a sharper target than the retracted "tax":** a 12.6-minute dead generation that produced nothing while every runaway guard stayed silent — the second recorded occurrence on the same cell and model. Settling why `chunks_seen` did not climb is the next piece of work, and it is worth more than anything else on this list: it is 40% of that cell's wall clock, and the guard that should own it already exists.
 
 ---
 
