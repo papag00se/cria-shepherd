@@ -6,6 +6,26 @@
 
 ---
 
+## THE CENTRAL FACT — cria is currently costing 270 points
+
+With the baseline re-run at 18 of 24, twenty cells now have both arms judged on the same forgiving measure. Summed across those twenty, **the assists cost 270 points net**. That is the campaign, stated plainly: cria's problem is not that it fails to help weak models, it is what it does to models that were already succeeding.
+
+**Five cells scored 100% unassisted and were destroyed:**
+
+| cell | unassisted | under cria | what did it |
+|---|---:|---:|---|
+| rust-toml-cli × ternary-bonsai | 100% | 5% | a reading step that a docs page can never close, then "no line could be parsed" printed beside the parsed line, then the one correct steer killed by the prescribes guard, then an orienter that renamed the project |
+| feed-pipeline-java × gemma4 | 100% | 10% | the model wrote a **verified 4/5 answer** and the stuck-output detector could not see the repeat that followed it, so the whole turn was discarded twelve minutes later |
+| shipping-rates-rb × qwen35 | 100% | 15% | the seeded-test rule shipped without the clause saying which tests it governs |
+| cart-billing-go × ternary-bonsai | 100% | 15% | the repeat-fold told it its writes could not change anything, it moved to shell heredocs, and a swallowed tab made `taxed` into `axed` |
+| shipping-rates-rb × gemma4 | 80% | 25% | the install route named `bundler/setup` instead of the `$LOAD_PATH` form the baseline proves scores 5/5 |
+
+**Where the assists genuinely earn their place**, and this is why the answer is not "turn them off": `cart-billing-go × qwen35` +40, `orders-api-py × gemma4` +25, `orders-api-py × qwen35` +25, `feed-pipeline-java × qwen35` +25, `handles-cli-node × qwen35` +25, `rust-toml-cli × gemma4` +20.
+
+**Every one of the five destructions now has landed fixes** — see [`sweep-fix-progress.md`](sweep-fix-progress.md) items 21–40. Whether they hold is cycle 5's question, and it is the only question that matters.
+
+---
+
 ## Cycle 4 — RUN and JUDGE complete, WALK in flight
 
 **Phase: RUN.** Started 2026-08-16 16:5x on the post-sweep code state, `8be9ea8`. Twenty-four cells, **model-major** for the first time — one model loaded, then taken through all six languages, so the grid fills a readable ROW at a time instead of a column.
