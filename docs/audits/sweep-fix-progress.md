@@ -177,6 +177,9 @@ Cycle 4 cell 16, `feed-pipeline-java × ternary-bonsai`. The research-step promp
 
 The rule exists to stop the author INVENTING a filename, and that is worth keeping. A file cria read off disk is not invented. **Fixed**: name only what the task or the context already names — and files listed in the context were read from disk and are real.
 
+### 41. Every turn of a Rust task was told the API's routes were still undefined
+Cycle 4 cell 24. The fetch ledger's no-structure line ended *"nothing read so far DEFINES the API's routes"*, which presumes the task involves an HTTP API. The coder fetched `docs.rs/toml` — a crate documentation page, in a task with no API anywhere in it — and that sentence rode **every turn from call 0004 to 0058**. **Fixed**: the narrow fact (this page yielded no endpoint definitions) is true and stays; the claim about what is still missing is now stated as the condition it always was — *"If this task needs a machine-readable API definition, nothing read so far provides one."* The swagger-shell case the note was built for reads the same.
+
 ## Surfaced, NOT built — the reading step a documentation page can never close
 
 Cycle 4 cell 18, `rust-toml-cli × ternary-bonsai`, 5% useful. `research.grounded_sources` counts a fetch as a source only when the ledger holds parsed ROUTES or response FIELDS, and every marker that fills those needs a doc that parsed as a spec-shaped object. Library documentation does not — docs.rs, rubydoc, godoc, javadoc and pkg.go.dev are HTML prose — so on any "read the library's documentation" step the ledger stays empty and `step_reading_verdict` short-circuits to `NOT_DONE` **with no model call**. The step cannot be closed however completely the page answers the task.
@@ -184,6 +187,14 @@ Cycle 4 cell 18, `rust-toml-cli × ternary-bonsai`, 5% useful. `research.grounde
 The coder fetched `docs.rs/toml` at call 0007 and got 7,925 characters carrying the whole API it needed — `pub enum Value`, `Table`, `from_str`, `to_string`. cria recorded it as *"HTTP 200 (this page answered, but no endpoint definitions were found in it)"*, and the step pin — *"Do ONLY this step (1 of 2): Visit crates.io to identify a suitable TOML parser crate"* — was then recited on **20 of the run's 21 coder calls**. Nine were re-fetches of pages already fetched. Zero bytes reached the workspace after call 0010.
 
 **The design, written down and not landed.** The discriminator is a DECLARATION, the same shape the routes marker uses one kind of page over: a landing page declares no symbols, a documentation page declares many — so the guarantee `grounded_sources` exists for (run 1785804243's five HTTP 200s that defined nothing) is preserved. An extractor was written and it works on Rust and Python doc pages while staying silent on landing pages and prose. It was **removed rather than left unwired**: making it count requires a fifth ledger slot threaded through `groundtruth.fetch_facts`, `_merge_fetches`, `grounded_sources` and `_sources_block`, and a new block in every fetch result — a change to what every coder is routinely shown, which needs its own measured pass rather than a tail-end landing.
+
+## Surfaced, NOT built — eliding a read that a later edit superseded
+
+Cycle 4 cell 4. After two edits landed, the only rendering of `Importer.java` in the model's window was the pre-edit copy from an earlier `read_file`, and nothing marked it superseded; the model's `old_string` at calls 0019 and 0020 is a verbatim copy of that stale text, including the body it had already replaced. cria has the mirror already — `write_stub_superseded` stubs a write payload a later write replaced — and the read side has no equivalent.
+
+**Against, and it is cria's own measurement.** The docstring directly above that code records what happened the last time cria replaced source with cria's own claim in this view: on `orders-api-py × ternary-bonsai` the route's 2,579 characters became `[elided … this exact content is on disk]`, and the briefing then reconstructed the route's behaviour from the task text and the tests — asserting an `orders` array and a `total_value` it returned neither of, in 37 later prompts. Across cycle 1, 20 briefings assert behaviour of the coder's own work and 9 do it falsely. Eliding a read is the same move on the other side.
+
+Recorded rather than taken: the walk that raised it labelled it a candidate and asked for a measurement first, and cria's own ledger already holds the counter-example.
 
 ## Surfaced, NOT built — the coder's own view of the workspace
 

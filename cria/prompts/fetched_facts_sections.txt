@@ -52,7 +52,14 @@ bad_value_bare = — this route exists, so the path is right and what you put in
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
 fields = fields each endpoint returns (use these EXACT names and nesting; do not guess):
-no_structure =  (this page answered, but no endpoint definitions were found in it — that status is a fact about the REQUEST, not about what the API returns; whatever the page returned is in the transcript, but nothing read so far DEFINES the API's routes)
+# CONDITIONAL ON THE TASK NEEDING ONE. The tail used to read "nothing read so far DEFINES the API's
+# routes", which presumes the task involves an HTTP API at all. Walked on cycle 4 cell 24
+# (`rust-toml-cli x nemotron-elastic`): the coder fetched docs.rs/toml — a crate documentation page in
+# a task with no API anywhere in it — and this line rode EVERY turn from call 0004 to 0058, telling
+# the model on each one that the API's routes were still undefined. There are no routes to define.
+# The narrow fact (this page yielded no endpoint definitions) is true and stays; the claim about what
+# the task still needs is now stated as the condition it always was.
+no_structure =  (this page answered, but no endpoint definitions were found in it — that status is a fact about the REQUEST, not about what the page contains; whatever it returned is in the transcript. If this task needs a machine-readable API definition, nothing read so far provides one.)
 # Same case, but a DIFFERENT fetch this session DID yield routes — so "the defining source is still
 # unread" would be false. Say only the narrow true thing about this one URL. A plain data response
 # has no OpenAPI structure and that is not a defect in it; the old wording claimed no field names

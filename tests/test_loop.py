@@ -4710,7 +4710,9 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
         self.assertIn("HTTP 200", out)
         self.assertRegex(out, r"no endpoint definitions|no endpoints|no routes")
-        self.assertIn("DEFINES", out)      # nothing read so far defines the routes — true here
+        # …and that nothing read so far provides one — true here, and now stated as the condition it
+        # always was rather than as an assertion that this task has an API at all.
+        self.assertIn("nothing read so far provides one", out)
 
     def test_an_entry_WITH_facts_is_not_given_the_note(self):
         from cria.loop import _format_fetches
@@ -4733,14 +4735,25 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
             "https://api.handle.me/handles/goose": ("HTTP 200", "", ""),
         })
         self.assertNotIn("no field names could be read", out)
-        self.assertNotIn("nothing read so far DEFINES", out)   # a spec WAS read this session
+        self.assertNotIn("nothing read so far provides one", out)   # a spec WAS read this session
         self.assertIn("its body is in the transcript above", out)
 
     def test_the_unread_claim_survives_when_NOTHING_has_yielded_routes(self):
-        # The swagger-shell case this note was built for is untouched.
+        # The swagger-shell case this note was built for is untouched — but stated as the CONDITION
+        # it always was. The tail used to read "nothing read so far DEFINES the API's routes", which
+        # presumes the task involves an HTTP API; on cycle 4 cell 24 (`rust-toml-cli x
+        # nemotron-elastic`) that sentence rode every turn from call 0004 to 0058 over a crate
+        # documentation page in a task with no API in it at all.
         from cria.loop import _format_fetches
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
-        self.assertIn("nothing read so far DEFINES", out)
+        self.assertIn("If this task needs a machine-readable API definition", out)
+        self.assertIn("nothing read so far provides one", out)
+
+    def test_it_no_longer_asserts_the_task_has_an_api(self):
+        from cria.loop import _format_fetches
+        out = _format_fetches({"https://docs.rs/toml": ("HTTP 200", "", "")})
+        self.assertNotIn("DEFINES the API's routes", out)
+        self.assertIn("no endpoint definitions were found in it", out)   # the narrow fact stays
 
     def test_a_failed_fetch_keeps_its_own_wording(self):
         from cria.loop import _format_fetches
