@@ -6,25 +6,33 @@
 
 ---
 
-## THE CENTRAL FACT — cria is currently costing 270 points
+## THE CENTRAL FACT — the assists rescue the weakest model and destroy the best results
 
-With the baseline re-run at 18 of 24, twenty cells now have both arms judged on the same forgiving measure. Summed across those twenty, **the assists cost 270 points net**. That is the campaign, stated plainly: cria's problem is not that it fails to help weak models, it is what it does to models that were already succeeding.
+The baseline re-run finished 2026-08-17 12:57. **All 24 cells now have both arms judged on the same forgiving measure**, so the comparison is complete for the first time.
+
+| | unassisted | under cria |
+|---|---:|---:|
+| mean usefulness | **60%** | **54%** |
+| cells at 100% | 6 | 7 |
+
+**Net across all 24 cells: −155 points.** But the average hides the shape completely, and the shape is the whole finding:
+
+- **The six `nemotron-elastic` cells: +115.** This model cannot function unassisted — it emits `str_replace_editor`, which no menu advertises, inside its reasoning channel, so the harness sees an assistant turn with no tool call and ends the session. Four of its six baseline runs died `crashed-early` in under a minute against untouched seed workspaces. Under cria the same model reached 197, 147, 123 and 113 calls. `handles-cli-node` goes 0% → 75%.
+- **The other eighteen cells: −270.** This is where cria's cost lives, and it is concentrated at the top.
 
 **Five cells scored 100% unassisted and were destroyed:**
 
 | cell | unassisted | under cria | what did it |
 |---|---:|---:|---|
-| rust-toml-cli × ternary-bonsai | 100% | 5% | a reading step that a docs page can never close, then "no line could be parsed" printed beside the parsed line, then the one correct steer killed by the prescribes guard, then an orienter that renamed the project |
+| rust-toml-cli × ternary-bonsai | 100% | 5% | a reading step a docs page can never close, then "no line could be parsed" printed beside the parsed line, then the one correct steer killed by the prescribes guard, then an orienter that renamed the project |
 | feed-pipeline-java × gemma4 | 100% | 10% | the model wrote a **verified 4/5 answer** and the stuck-output detector could not see the repeat that followed it, so the whole turn was discarded twelve minutes later |
 | shipping-rates-rb × qwen35 | 100% | 15% | the seeded-test rule shipped without the clause saying which tests it governs |
 | cart-billing-go × ternary-bonsai | 100% | 15% | the repeat-fold told it its writes could not change anything, it moved to shell heredocs, and a swallowed tab made `taxed` into `axed` |
 | shipping-rates-rb × gemma4 | 80% | 25% | the install route named `bundler/setup` instead of the `$LOAD_PATH` form the baseline proves scores 5/5 |
 
-**Where the assists genuinely earn their place**, and this is why the answer is not "turn them off": `cart-billing-go × qwen35` +40, `orders-api-py × gemma4` +25, `orders-api-py × qwen35` +25, `feed-pipeline-java × qwen35` +25, `handles-cli-node × qwen35` +25, `rust-toml-cli × gemma4` +20.
+**And six where the assists genuinely earn their place:** `handles-cli-node × nemotron-elastic` +75, `cart-billing-go × qwen35` +40, and +25 each on `orders-api-py × gemma4`, `orders-api-py × qwen35`, `orders-api-py × nemotron-elastic`, `feed-pipeline-java × qwen35`, `handles-cli-node × qwen35`.
 
-**One caveat on the nemotron column, and it runs the comparison the other way.** The BASE arm is assists-off — its captures carry only `classifier` and `proxy` phases, no coder loop, no steers — so it also has no lost-call nudge. nemotron-elastic emits `str_replace_editor`, which no menu advertises, inside its reasoning channel; unassisted, the harness sees an assistant turn with no tool call and ends the session. `shipping-rates-rb × nemotron-elastic` BASE died that way in **20 seconds, 6 calls, zero files written**, while the same cell under cria got 62 calls out of the same model. So nemotron's BASE numbers are floored by a transport incompatibility rather than by capability, and its four deltas flatter cria. They are excluded from the 270.
-
-**Every one of the five destructions now has landed fixes** — see [`sweep-fix-progress.md`](sweep-fix-progress.md) items 21–40. Whether they hold is cycle 5's question, and it is the only question that matters.
+So the answer is not "turn the assists off". It is that a mechanism which saves a model that cannot hold a tool protocol is currently also overriding a model that had already finished the job. **Every one of the five destructions now has landed fixes** — see [`sweep-fix-progress.md`](sweep-fix-progress.md) items 21–44, four of them replayed against the original captured bytes. Whether they hold is cycle 5's question, and it is the only question that matters.
 
 ---
 
