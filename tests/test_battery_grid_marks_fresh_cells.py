@@ -39,14 +39,15 @@ class BoldMeansMeasuredThisRun(unittest.TestCase):
     def test_a_cell_from_this_run_is_bold(self):
         """FAILS BEFORE: nothing in the grid distinguished fresh from carried."""
         rs = [row(M0, T0, 4.0, 1000)]          # the first cell IS the boundary
-        self.assertIn("**80%**", self._grid(rs)[0])
+        # `ˢ` marks a cell still scored strictly; this test is about BOLD, which means FRESH.
+        self.assertIn("**80%ˢ**", self._grid(rs)[0])
 
     def test_a_cell_carried_from_the_previous_pass_is_not(self):
         rs = [row(M0, T1, 5.0, 500),           # ran before this pass began
               row(M0, T0, 4.0, 1000)]          # this pass's first cell
         line = self._grid(rs)[0]
-        self.assertIn("**80%**", line)         # the fresh one
-        self.assertIn("| 100% |", line)        # the carried one, plain
+        self.assertIn("**80%ˢ**", line)        # the fresh one
+        self.assertIn("| 100%ˢ |", line)        # the carried one, plain
 
     def test_the_total_is_never_bold(self):
         """It mixes fresh and carried cells, so emphasis would claim a freshness it does not have."""
@@ -62,7 +63,7 @@ class BoldMeansMeasuredThisRun(unittest.TestCase):
               row(M0, T0, 4.0, 2000)]          # restart: the boundary is now 2000
         line = self._grid(rs)[0]
         self.assertIn("**80%", line)           # the re-run first cell is fresh
-        self.assertIn("| 100% |", line)        # the 1100 cell is behind the new boundary
+        self.assertIn("| 100%ˢ |", line)        # the 1100 cell is behind the new boundary
 
     def test_nothing_is_marked_when_the_first_cell_has_never_run(self):
         """Fail toward marking NOTHING fresh rather than everything."""

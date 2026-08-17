@@ -348,11 +348,18 @@ def report(rs: list[dict], now: float | None = None) -> str:
     out += ["", "## Assisted — assists ON", ""]
     out += _arm_grid(rs, "CRIA")
     out += ["",
+            "**A trailing `ˢ` means the cell is still scored STRICTLY** — all-or-nothing per",
+            "deliverable, the old question (\"was this perfect?\"). An unmarked number is the judged",
+            "answer to the question the campaign is actually asking: how much of what they asked for",
+            "did the person actually get. The two are not comparable, so a Δ between them is left",
+            "blank rather than computed. The JUDGE phase is in `docs/goals/hundred-goal.md` and the",
+            "rubric in `suite/prompts/usefulness_judge.txt`.",
+            "",
             "**Bold marks a cell measured in the run currently in progress**; everything else is",
             "carried over from the previous pass. Every number carries its movement since that",
             "cell's previous run, in percentage points.",
-            "The **total** is checks passed over checks attempted across the row — a six-check task",
-            "weighs more than a three-check one — and its delta is computed only over cells that have",
+            "The **total** is one vote per judged cell, and checks-passed over checks-attempted",
+            "across any cells still scored strictly; its delta is computed only over cells that have",
             "both a current and a previous run, so a part-finished cycle compares like with like."]
 
     pairs = [(t, m, cell(rs, "BASE", m, t), cell(rs, "CRIA", m, t)) for t in TASKS for m in MODELS]
@@ -365,9 +372,13 @@ def report(rs: list[dict], now: float | None = None) -> str:
                 "| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |",
                 "|---|---|---|---|---|---|---|---|"]
         for t, m, b, c in pairs:
-            d = (pct(c) or 0) - (pct(b) or 0)
+            # THROUGH THE ONE OWNER. This table subtracted `pct` itself and so bypassed the
+            # cross-measure guard in `delta_of`: `shipping-rates-rb ruby qwen35` read
+            # `80%ˢ | 15% | -65`, which is a strict baseline minus a judged assisted cell — a number
+            # that is not movement in anything. Blank until both sides are the same measure.
+            d = delta_of(c, b).strip().strip("()")
             out.append(f"| {t} | {language(t)} | {m} | {score_of(b).strip()} | "
-                       f"{score_of(c).strip()} | {f'**{d:+.0f}**' if round(d) else '0'} | "
+                       f"{score_of(c).strip()} | {f'**{d}**' if d not in ('', '0') else (d or '—')} | "
                        f"{_n(b,'calls')}→{_n(c,'calls')} | "
                        f"{_n(b,'wall_seconds')}→{_n(c,'wall_seconds')} |")
 
