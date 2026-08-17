@@ -7340,8 +7340,19 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
             out.add(run.strip(".:"))
             out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
         return {x for x in out if len(x) > 3 and _looks_like_a_symbol(x)}
-    shared = toks(directive) & toks(findings) - _positional_only(findings)
+    shared = toks(directive) & toks(findings) - _positional_only(findings) - _REPORTED_NOT_REJECTED
+    shared = {t for t in shared if not _NAMES_A_FAILURE.fullmatch(t)}
     return sorted(shared, key=len, reverse=True)
+
+
+# AN EXCEPTION CLASS IS WHAT A CHECKER REPORTS, NEVER WHAT IT REJECTS. `LoadError`, `AttributeError`,
+# `CsvValidationException` — a directive naming one is quoting the failure, which is the case this
+# guard exists to distinguish and kept getting backwards. Two of the guard's eighteen historical
+# fires are exactly this, and both killed a correct directive.
+_NAMES_A_FAILURE = re.compile(r"\w*(?:Error|Exception|Failure|Warning)$")
+# Placeholder for names that are never symbols in any language cria drives. Kept as a set so the two
+# rules above read as one filter.
+_REPORTED_NOT_REJECTED: frozenset = frozenset()
 
 
 # WHERE the checker is pointing, as opposed to WHAT it is rejecting.
@@ -7375,7 +7386,12 @@ def _positional_only(findings: str) -> set:
         for m in pat.finditer(findings or ""):
             tok = m.group(1).strip("`'\"")
             positional.add(tok)
-            positional.update(p for p in re.split(r"[/\\]", tok) if p)
+            # …AND EVERY FRAGMENT OF IT. `_shared_symbols` tokenizes on `[A-Za-z_][\w.:?!]*`, which
+            # breaks a temp-directory name at its hyphens — so the reported "symbol" from
+            # `--> /tmp/suite-orders-api-py_nemotron-elastic_codex_poff_1786953798-qw6tyybl/…` was
+            # `elastic_codex_poff_1786953798`, a slice of the workspace path cria itself chose. One
+            # of the guard's eighteen historical fires is that token.
+            positional.update(p for p in re.split(r"[/\\.\-]", tok) if p)
     out = set()
     for tok in positional:
         elsewhere = [ln for ln in (findings or "").splitlines()

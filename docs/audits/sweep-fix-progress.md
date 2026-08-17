@@ -252,6 +252,16 @@ Cycle 4 cell 19, `shipping-rates-rb × nemotron-elastic`. The gate ran at 07:27:
 
 `changed_paths` already knew which files had moved; it was only being used to unquote the "flagged line on disk" annotation. **Fixed**: when the newest result predates a landed write, the block says so and names the file — *"These checks ran BEFORE your edit to `rates.rb` and have not been re-run since… re-run them before concluding your edit did not work."* Absent on a fresh result, so it is silent in the normal case.
 
+### 42. The prescribes guard, measured over every fire it has ever had
+The cycle-4 walks put a number on it: **18 fires, at most 2 correct.** A guard that is wrong 16 times in 18, whose failure mode is killing the one directive that names the fix, is a deletion candidate — but it exists for a real measured harm (*"replace `decimal.NewFromInt64` with …"* delivered while that symbol appeared 7 times inside `undefined:` errors). So it was narrowed against its own history instead.
+
+Replaying all 18 reported tokens through HEAD: the shape filter (#20's `_looks_like_a_symbol`) rejects **11** outright — `countries`, `error`, `failures`, `compile`, `declared`, `annotations`, `shopspring`, `orders`, `python3` and friends are ordinary English words. Today's positional filter (#36) drops `Cargo.toml`. That left six, and five of those six are still false fires, in two clean patterns:
+
+- **An exception class is what a checker REPORTS, never what it rejects.** `LoadError`, `AttributeError` — a directive naming one is quoting the failure, which is the exact distinction this guard exists to draw and kept getting backwards.
+- **A workspace path fragment is not a symbol.** The reported token `elastic_codex_poff_1786953798` is a slice of the temp directory *cria itself chose*; `_shared_symbols` tokenizes on `[A-Za-z_][\w.:?!]*`, which breaks the path at its hyphens, and `_positional_only` was only splitting on separators.
+
+**Both closed.** Of the 18 historical fires, **11 are now impossible by shape and a further 2 by these two rules**, and the remaining survivors are the dotted symbols the guard was actually built for.
+
 ## REPLAYED AGAINST THE REAL BYTES
 
 Every fix above has a test, but a test is a fixture. These four were re-run against the actual captured streams from the cells they were written for (#10 — verify by doing).
