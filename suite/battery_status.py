@@ -105,6 +105,13 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     counts, so one check is 20 points on a five-check task and 25 on a four-check one."""
     if not now or not before:
         return ""
+    # NEVER ACROSS MEASURES. A judged cell and a strict one are answers to different questions, and
+    # subtracting them produces a number that is not movement in anything. Caught on the first
+    # judged grid: rust-toml-cli read `95% (-5)`, comparing this cycle's usefulness against last
+    # cycle's strict score, which invites exactly the wrong reading — the cell went from 0 to 95.
+    # No delta is the honest output until the other side has been judged too.
+    if judged(now) != judged(before):
+        return ""
     a, b = pct(now), pct(before)
     if a is None or b is None:
         return ""
@@ -137,22 +144,43 @@ def sha() -> str:
         return "?"
 
 
-def pct(r: dict | None) -> float | None:
-    """A task's result as a PERCENTAGE of its own checks.
+def judged(r: dict | None) -> bool:
+    """Has this cell been judged on USEFULNESS, or is its number still the strict verifier's?"""
+    return bool(r) and r.get("usefulness") is not None
 
-    Fractions forced every task to carry exactly four checks, which meant splitting work that was
-    really three deliverables or merging work that was really six. A percentage frees a task to
-    carry as many checks as its work honestly needs; the constraint that remains is the one that
-    was actually meant — every check WITHIN a task should cost roughly the same effort."""
+
+def pct(r: dict | None) -> float | None:
+    """A cell's number for the grid: the USEFULNESS judgement where there is one, else the strict
+    percentage of its own checks.
+
+    THE QUESTION THE GRID ANSWERS CHANGED (operator, 2026-08-16). Strict scoring answers "was this
+    perfect?" and the campaign is asking "can a cria model be useful in getting real work done" —
+    rust-toml-cli x gemma4 delivered a complete, correct, working CLI one directory too deep and the
+    strict grid printed 0%. A grid whose headline number is that far from what a person would say
+    they received is not reporting the thing it is for.
+
+    An unjudged cell keeps the strict number and is MARKED as such (see :func:`score_of`), because a
+    grid that silently mixes two measures is worse than one that shows only the old one. The strict
+    score is never overwritten; it stays on the row as the anchor.
+
+    (The old note here explained why a percentage rather than a fraction: a task may carry as many
+    checks as its work honestly needs, so long as every check within a task costs about the same.
+    That still governs the strict number.)"""
     if not r:
         return None
+    if judged(r):
+        return float(r["usefulness"])
     mx = float(r.get("max_score") or 0)
     return 100.0 * float(r.get("score") or 0) / mx if mx else None
 
 
 def score_of(r: dict | None) -> str:
+    """The cell, with a `ˢ` on any number that is still the STRICT one. Half a grid judged and half
+    not is the confound to avoid; marking it is cheaper than waiting, and it shows the backlog."""
     v = pct(r)
-    return "—" if v is None else f"{v:.0f}%"
+    if v is None:
+        return "—"
+    return f"{v:.0f}%" if judged(r) else f"{v:.0f}%ˢ"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -189,8 +217,18 @@ def _avg(rows: list[dict], key: str, scale: float = 1.0) -> str:
 
 
 def _overall_pct(cs: list[dict]) -> float | None:
-    """Checks passed over checks attempted, across a set of cells. The same weighting the headline
-    uses, factored out so the total and its delta cannot compute it two different ways (#12)."""
+    """A set of cells as one number, factored out so the total and its delta cannot compute it two
+    different ways (#12).
+
+    Two weightings, because there are two measures. Strict cells are checks-passed over
+    checks-attempted, so a task carrying six checks weighs more than one carrying three — that is
+    the point of letting check counts differ. A JUDGED cell is a 0-100 verdict on the whole cell, so
+    those get one vote each."""
+    if any(judged(c) for c in cs):
+        # A usefulness judgement is about the WHOLE cell, not about a count of checks, so cells get
+        # one vote each. Mixed sets average what each cell reports — marked per cell by score_of.
+        vals = [v for v in (pct(c) for c in cs) if v is not None]
+        return sum(vals) / len(vals) if vals else None
     total = sum(float(c.get("max_score") or 0) for c in cs)
     return 100.0 * sum(float(c.get("score") or 0) for c in cs) / total if total else None
 
