@@ -252,6 +252,18 @@ Cycle 4 cell 19, `shipping-rates-rb × nemotron-elastic`. The gate ran at 07:27:
 
 `changed_paths` already knew which files had moved; it was only being used to unquote the "flagged line on disk" annotation. **Fixed**: when the newest result predates a landed write, the block says so and names the file — *"These checks ran BEFORE your edit to `rates.rb` and have not been re-run since… re-run them before concluding your edit did not work."* Absent on a fresh result, so it is silent in the normal case.
 
+## REPLAYED AGAINST THE REAL BYTES
+
+Every fix above has a test, but a test is a fixture. These four were re-run against the actual captured streams from the cells they were written for (#10 — verify by doing).
+
+| fix | replayed against | result |
+|---|---|---|
+| the wide degenerate check (#24) | cell 4's real 156,898-character generation, streamed back in 256-char frames through a rolling 32 KB tail on the live 2,048-char stride | **fires at 26,624 chars — 17% of the stream.** The old cheap check never fires on it at all. 17% of 721 seconds is about **two minutes instead of twelve** |
+| …and it must not cut the answer | the same stream | the correct `new_string` completes at char **6,535**; the abort lands at 26,624, a margin of **20,089 characters**. The 4-of-5 answer is fully generated before the guard stops the turn |
+| file-only rustc spans (#34) | cell 24's real `can't find bin \`dotkey-toml\` at path …/src/main.rs` + bare `--> …/Cargo.toml` | one finding parsed where zero were before, and `summarize` renders it with the message naming the missing file — so the "no specific line could be parsed" branch is unreachable for it |
+| the invented-version guard (#23) | cell 20's real evidence block and all three of its real directives, verbatim | **all three refused.** The grounded answer — *"Run go get github.com/shopspring/decimal, then go mod tidy, then go test"* — is still delivered |
+| the fused-tail trim (#38) | cell 22's real pom shape | cut back to the real file, and what is left parses as XML |
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
