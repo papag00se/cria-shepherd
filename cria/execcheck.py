@@ -390,25 +390,19 @@ def corroborate(claim: str, readme: list[str], entries: list[str],
     return True, ""
 
 
-# "Run the tests", in every launcher's spelling plus the bare runners. Matched on the SUBCOMMAND or
-# the program name, never on a filename — `python3 test_helper.py` is a program someone may legitimately
-# have delivered.
-_TEST_SUBCOMMANDS = frozenset({"test", "tests", "spec", "check"})
-_TEST_RUNNERS = frozenset({"pytest", "py.test", "jest", "vitest", "mocha", "ava", "tap", "uvu",
-                           "rspec", "minitest", "phpunit", "tox", "nox", "gotestsum"})
+# THIS QUESTION HAS AN OWNER. The first cut of this built a second table of test runners here —
+# pytest, jest, mocha, rspec, tox — next to `probeclassify`, which already classifies every one of
+# them and is what `proberun` composes the real test probe from. Two tables answering "is this a test
+# command" is the duplicate-implementation shape cria keeps finding in other people's code; checked
+# against the classifier, it answers all eleven launcher spellings TEST and all five real programs
+# UNKNOWN, including `python3 test_helper.py`, which is the false positive a hand-written list would
+# have to remember (#23, one owner).
 
 
 def _is_a_test_command(parts: list[str]) -> bool:
     """Does this command run the project's test suite? See `_runnable` for the run it cost."""
-    if not parts:
-        return False
-    head = parts[0].rsplit("/", 1)[-1]
-    if head in _TEST_RUNNERS:
-        return True
-    # `python3 -m pytest`, `node --test`, `go test ./...`, `npm test`, `mvn test`, `cargo test`.
-    rest = [p for p in parts[1:] if not p.startswith("-")] + [p.lstrip("-") for p in parts[1:]
-                                                              if p.startswith("--")]
-    return any(tok in _TEST_SUBCOMMANDS or tok.rsplit("/", 1)[-1] in _TEST_RUNNERS for tok in rest[:2])
+    from . import probeclassify
+    return probeclassify.classify_command(" ".join(parts)).kind is probeclassify.ProbeKind.TEST
 
 
 def _runnable(command: str) -> tuple[bool, str]:

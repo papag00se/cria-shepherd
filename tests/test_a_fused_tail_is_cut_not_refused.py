@@ -71,10 +71,11 @@ class TheJunkIsCutTests(unittest.TestCase):
         self.assertEqual(writeproxy.trim_fused_tail(POM_REAL + "</function>\n</tool_call>\n"),
                          POM_REAL)
 
-    def test_the_cut_is_reported_and_the_clean_file_is_what_gets_written(self):
-        """Both halves in one drive: the trim is not silent, and the bytes that reach the heredoc are
-        the file without its junk."""
-        import base64
+    def test_the_cut_happens_at_the_boundary_for_every_tool(self):
+        """THE PLACEMENT, and it is the point. The first cut of this lived in the writeproxy's
+        `write_file` branch, which left `edit_file` — whose `old_string` AND `new_string` carried the
+        same tail in that same run, at call 0022 — still receiving the junk. `massage.apply` runs on
+        every completion before anything translates it, so one rule there covers every tool."""
         import json
         seen = []
 
@@ -82,18 +83,35 @@ class TheJunkIsCutTests(unittest.TestCase):
             def emit(self, name, **k):
                 seen.append((name, k))
 
+        from cria import massage
+        comp = {"choices": [{"message": {"tool_calls": [{
+            "id": "1", "type": "function",
+            "function": {"name": "edit_file", "arguments": json.dumps(
+                {"path": "pom.xml",
+                 "old_string": "</project>\n" + FUSED_TAIL,
+                 "new_string": "</dependencies></project>\n" + FUSED_TAIL})}}]}}]}
+        out = massage.strip_debris_from_args(comp, _R())
+        args = json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual(args["old_string"], "</project>\n")
+        self.assertEqual(args["new_string"], "</dependencies></project>\n")
+        self.assertEqual(args["path"], "pom.xml")
+        self.assertIn("massage.fused_tail_trimmed", [n for n, _ in seen])
+
+    def test_write_file_content_is_cut_by_the_same_one_rule(self):
+        import json
+        from cria import massage
         comp = {"choices": [{"message": {"tool_calls": [{
             "id": "1", "type": "function",
             "function": {"name": "write_file", "arguments": json.dumps(
-                {"path": "pom.xml", "content": POM_REAL.rstrip("\n") + "\n" + FUSED_TAIL})}}]}}]}
-        shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
-        out = writeproxy.translate_outbound(comp, shell, _R(), injected={"write_file"})
-        self.assertIn("writeproxy.write_fused_tail_trimmed", [n for n, _ in seen])
-        cmd = json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-        cmd = cmd.get("cmd") or cmd.get("command")
-        cmd = cmd[-1] if isinstance(cmd, list) else cmd
-        blob = cmd.split("raw=base64.b64decode('")[1].split("')")[0]
-        self.assertEqual(base64.b64decode(blob).decode(), POM_REAL)
+                {"path": "pom.xml",
+                 "content": POM_REAL.rstrip("\n") + "\n" + FUSED_TAIL})}}]}}]}
+        args = json.loads(massage.strip_debris_from_args(comp)["choices"][0]["message"]
+                          ["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual(args["content"], POM_REAL)
+
+    def test_the_writeproxy_keeps_no_second_copy_of_the_rule(self):
+        import inspect
+        self.assertNotIn("trim_fused_tail", inspect.getsource(writeproxy.translate_outbound))
 
 
 class RealFilesAreUntouchedTests(unittest.TestCase):

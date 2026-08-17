@@ -280,6 +280,24 @@ The model's tests share one repo-relative `orders.db` that nothing deletes, so e
 
 **Still open — the network-off leg.** `proberun.py:781-790` documents this exact failure from a previous cycle and its fix was half of one: the second run is now suppressed when the online run FAILED (where the comparison is impossible), which is precisely when the double-run was harmless, and still permitted when it PASSED, which is when the side effects break the next check. The remedy is to run the offline leg against a copy of the workspace rather than in it — a strengthening of the existing mitigation, not a revert — and it touches the composed gate script, so it gets its own pass.
 
+## SELF-AUDIT AGAINST `docs/principles.md`
+
+Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.
+
+| what | rule | what was done |
+|---|---|---|
+| **A second table of test runners** (`pytest`, `jest`, `mocha`, `rspec`, `tox` …) written inside `execcheck` to answer "is this a test command" | **#23** one owner; the duplicate-implementation shape | Deleted. `probeclassify.classify_command` already answers it and is what `proberun` composes the real test probe from — checked against it: all eleven launcher spellings TEST, all five real programs UNKNOWN, including `python3 test_helper.py`, which is the false positive a hand-written list has to remember |
+| **`_VERSION_REJECTED`**, an English phrase list (`invalid version`, `unknown revision`, `no matching version` …) deciding whether a version was attested only by its own rejection | **#8** "if a lexical rule needs exception lists, semantic judgment has leaked into deterministic code"; **#20** inert on any registry that words its refusal differently | Removed. Re-replayed cell 20's real evidence and all three real directives afterwards: still refused, grounded answer still delivered. It bought nothing that was measured |
+| **`_REPORTED_NOT_REJECTED = frozenset()`** — an empty set subtracted from a result, left as a "placeholder" | dead code | Deleted |
+| **`from .proberun import _dependency_line`** inside a function in `writeproxy` — a private name reaching across a module boundary, hidden in a local import | **#23** architectural boundaries | Made public (`proberun.dependency_line`) and hoisted to the module's import block; no cycle |
+| **The fused-tail trim placed in the writeproxy's `write_file` branch** | **#23**, **#24** an invariant about what cria hands on belongs where arguments are normalised | Moved to `massage.strip_debris_from_args`, which runs on every completion before anything translates it. **The old placement left `edit_file` still receiving the junk — and `edit_file`'s `old_string` and `new_string` carried the same tail in the same run, at call 0022.** The fix was incomplete where it was |
+
+**What remains, named rather than defended:**
+
+- `_NAMES_A_FAILURE` (`…Error|Exception|Failure|Warning$`) is a naming-convention match, the same class as `TEST_CONVENTIONS`' `*_test.go`. Defensible, and the weakest thing left in the batch.
+- `probeparse._INSTALL_EVIDENCE` is a per-ecosystem table, but of facts that genuinely differ per ecosystem, and it returns `None` — never a guess — for the three it cannot settle (#11b).
+- `trim_fused_tail` modifies what the model asked to write. It is bounded to `massage._LEAK_DEBRIS` — tokens already documented there as never appearing in legitimate prose — cuts only a trailing run, and may only cut AT a protocol tag, so a file whose real lines merely mention one is untouched. It is not silent: `massage.fused_tail_trimmed` names the tool and the arguments cut. It is the closest thing here to a mitigation for a defect in a template parser outside this repo, and it is recorded as such.
+
 ## REPLAYED AGAINST THE REAL BYTES
 
 Every fix above has a test, but a test is a fixture. These four were re-run against the actual captured streams from the cells they were written for (#10 — verify by doing).

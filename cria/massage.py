@@ -23,6 +23,7 @@ from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
 from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
 from .writeproxy import _decode_backslash_escapes, _read_command as _wp_read_command
+from .writeproxy import trim_fused_tail
 
 # Aliases a model reaches for that really mean "run a shell command".
 # Command names a model may emit as a TOOL name (instead of calling the shell tool) —
@@ -134,9 +135,55 @@ def _recover_fused_call(raw: str) -> dict | None:
     return None
 
 
+def strip_debris_from_args(completion: dict, rlog=None) -> dict:
+    """Cut a fused call's protocol debris off the END of every string tool ARGUMENT.
+
+    `_bounded_xml_params` already does this for calls cria itself parses out of text. It cannot run
+    on a call the SERVER parsed — `recover_leaked_tool_calls` skips those by design
+    (``if msg.get("tool_calls"): continue``) — and that is the channel a weak model's fused call
+    arrives on when the template parser accepts it.
+
+    Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful). The model omitted
+    `</parameter>` and opened a second call in the same turn, so every argument it sent carried the
+    tail `</function>` / `</tool_call>` / `<tool_call>` / `<function=write_file>` / `<parameter=path>`
+    / the next call's path. cria refused the resulting `pom.xml` eight times as malformed XML at
+    "line 34, column 1" — exactly where the junk began — and the coder, which cannot re-read its own
+    rejected payload, re-derived the identical file by hand and was refused again.
+
+    AT THE BOUNDARY, ONCE, FOR EVERY TOOL. The first cut of this lived in the writeproxy's
+    `write_file` branch, which left `edit_file` — whose `old_string` AND `new_string` carried the same
+    tail in that same run — still receiving the junk. An invariant about the arguments cria hands on
+    belongs where the arguments are normalised, not in one consumer (#23, #24).
+
+    These sentinels are `_LEAK_DEBRIS`, already documented there as tokens that NEVER appear in
+    legitimate prose. Only a trailing run is cut and the cut may only land ON a tag, so a file whose
+    real lines merely MENTION one is untouched — see writeproxy.trim_fused_tail."""
+    for choice in completion.get("choices", []):
+        for tc in (choice.get("message") or {}).get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            raw = fn.get("arguments")
+            if not isinstance(raw, str):
+                continue
+            try:
+                args = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(args, dict):
+                continue
+            cut = {k: trim_fused_tail(v) for k, v in args.items() if isinstance(v, str)}
+            changed = {k: v for k, v in cut.items() if v != args[k]}
+            if changed:
+                fn["arguments"] = json.dumps({**args, **cut})
+                if rlog is not None:
+                    rlog.emit("massage.fused_tail_trimmed", level="warn",
+                              tool=str(fn.get("name") or ""), args=",".join(sorted(changed)))
+    return completion
+
+
 def apply(completion: dict, tools=None, rlog=None) -> dict:
     """Run all output massages, in order."""
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
+    completion = strip_debris_from_args(completion, rlog)  # fused-call tail off EVERY string arg
     completion = normalize_tool_names(completion, tools, rlog)  # EditFile/edit-file → edit_file (case/sep)
     completion = repair_tool_args(completion, rlog)  # fenced / raw-newline args → clean JSON
     completion = normalize_tool_calls(completion, tools, rlog)  # ls/read_file/exec → shell shape

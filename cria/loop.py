@@ -7361,7 +7361,7 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
             out.add(run.strip(".:"))
             out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
         return {x for x in out if len(x) > 3 and _looks_like_a_symbol(x)}
-    shared = toks(directive) & toks(findings) - _positional_only(findings) - _REPORTED_NOT_REJECTED
+    shared = toks(directive) & toks(findings) - _positional_only(findings)
     shared = {t for t in shared if not _NAMES_A_FAILURE.fullmatch(t)}
     return sorted(shared, key=len, reverse=True)
 
@@ -7371,9 +7371,6 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
 # guard exists to distinguish and kept getting backwards. Two of the guard's eighteen historical
 # fires are exactly this, and both killed a correct directive.
 _NAMES_A_FAILURE = re.compile(r"\w*(?:Error|Exception|Failure|Warning)$")
-# Placeholder for names that are never symbols in any language cria drives. Kept as a set so the two
-# rules above read as one filter.
-_REPORTED_NOT_REJECTED: frozenset = frozenset()
 
 
 # WHERE the checker is pointing, as opposed to WHAT it is rejecting.
@@ -7748,16 +7745,6 @@ def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str |
 _VERSION_SHAPED = re.compile(
     r"(?<![\w.-])(?:v\d+(?:\.\d+)+[\w.+-]*|\d+\.\d+\.\d+[\w.+-]*|@\s*v?\d+(?:\.\d+)+[\w.+-]*)")
 
-# APPEARING IN AN ERROR THAT REJECTED YOU IS NOT ATTESTATION. Narrow on purpose: this is the registry
-# saying THIS VERSION STRING IS NOT A THING, which is the opposite of `missing go.sum entry for x
-# v1.4.0` — there the version is right and merely unrecorded, and a steer naming it is correct. The
-# distinction is the whole reason this is a phrase list and not "any line with the word error".
-_VERSION_REJECTED = re.compile(
-    r"(?i)invalid version|unknown revision|no matching version|not a valid version|"
-    r"could ?n[o']?t find (?:a )?version|no versions? of .* match|version solving failed|"
-    r"unable to (?:find|resolve) .*version|no such version")
-
-
 def _invented_version(directive: str, evidence: str) -> str | None:
     """A version string in the steer that appears NOWHERE in the evidence cria gathered — or None.
 
@@ -7790,13 +7777,16 @@ def _invented_version(directive: str, evidence: str) -> str | None:
     with it removed says "edit go.mod to add the required line" and helps nobody. Silence is the safe
     direction (#1).
 
-    AND THE REPEATS, when the evidence attests the version ONLY by rejecting it. By call 0086 the
-    coder had written the fabrication into `go.mod`, so the token really was in the evidence — four
-    times, every one inside `invalid version: unknown revision 001`. cria read its own record of the
-    registry refusing the string and prescribed the string anyway, twice, and the coder obeyed both
-    times. That is what `_VERSION_REJECTED` answers, and it is deliberately a short phrase list
-    rather than "a line with the word error": `missing go.sum entry for x v1.4.0` is an error line
-    naming a version that is perfectly real, and a steer quoting it is right.
+    WHAT IT BLOCKS IS THE FIRST ONE, and that is the one that matters. Once the coder has pasted the
+    invented version into `go.mod` it is genuinely on disk, cria's evidence genuinely contains it,
+    and a later steer repeating it passes — correctly, by this rule's own terms. Cell 20's cascade
+    was four steers and needed only the first stopped.
+
+    A second rule was written for those repeats and then REMOVED: it asked whether the token's only
+    appearances were inside a phrase like `invalid version` or `unknown revision`, which is an
+    English exception list doing semantic work in deterministic code (#8) and inert on any registry
+    that words its refusal differently (#20). It bought nothing the replay against cell 20's real
+    evidence did not already get from the rule above.
 
     BLAST RADIUS, measured over cycle 4: of **71 distinct steers cria delivered across the 24 runs,
     2 contain a version-shaped token at all**. This rule cannot silence much, which is what makes it
@@ -7808,16 +7798,7 @@ def _invented_version(directive: str, evidence: str) -> str | None:
         tok = m.group(0).lstrip("@").strip()
         if not tok:
             continue
-        lines = [ln for ln in ev.splitlines() if tok in ln]
-        if not lines:
-            return tok
-        # ATTESTED ONLY BY ITS OWN REJECTION. Walked on the same cell: by call 0086 the coder had
-        # already written the fabricated version to go.mod, so it WAS in the evidence — four times,
-        # every one of them inside `invalid version: unknown revision 001`. cria read its own record
-        # of the registry refusing the string and prescribed the string, twice, and the coder obeyed
-        # both times. A literal whose only appearance anywhere is inside the error that rejected it
-        # is not something cria may hand back as an order.
-        if all(_VERSION_REJECTED.search(ln) for ln in lines):
+        if tok not in ev:
             return tok
     return None
 

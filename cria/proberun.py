@@ -581,7 +581,7 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report)
 
 
-def _dependency_line(eco: str, workspace_root: str) -> str:
+def dependency_line(eco: str, workspace_root: str) -> str:
     """The load-path line, or the not-installed-at-all line when cria can see that is the truth.
 
     The `<eco>_none` wording is used ONLY when `install_landed` returns a definite False — an
@@ -623,7 +623,7 @@ def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
         eco, name = hit
         if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
             return ""
-        return "\n" + prompts.fill(_dependency_line(eco, workspace_root), name=name)
+        return "\n" + prompts.fill(dependency_line(eco, workspace_root), name=name)
     return ""
 
 

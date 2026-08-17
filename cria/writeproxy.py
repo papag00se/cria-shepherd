@@ -32,6 +32,7 @@ from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _q
 from . import brave, denial, editrecovery, prompts, webfetch
 from . import content_reduce as content_reduce_mod
 from . import probeparse
+from . import proberun
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
@@ -1135,16 +1136,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.write_fused_content", tool=name,
                                       path=str(path))
                     else:
-                        # …and the same debris stuck to the END of a REAL file, which the
-                        # all-or-nothing test above correctly declines to call debris. Cut rather
-                        # than refused: the file itself is fine and cria knows exactly where the junk
-                        # starts. See trim_fused_tail for the cell this cost.
-                        text = _repair_double_escaped(str(body))
-                        trimmed = trim_fused_tail(text)
-                        if trimmed != text and rlog is not None:
-                            rlog.emit("writeproxy.write_fused_tail_trimmed", tool=name,
-                                      path=str(path), cut=len(text) - len(trimmed))
-                        cmd = _write_command(str(path), trimmed)
+                        # NO SECOND TRIM HERE. The fused-call tail is cut once, for every tool's
+                        # every string argument, at `massage.strip_debris_from_args` — which runs on
+                        # this completion before it ever reaches translation. A copy of the rule in
+                        # this one branch is what left `edit_file` still receiving the junk (#23).
+                        cmd = _write_command(str(path), _repair_double_escaped(str(body)))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if not path or args.get("old_string") is None:
@@ -1553,8 +1549,7 @@ def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None
     eco, name = probeparse.dependency_missing(last["content"])
     if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
         return
-    from .proberun import _dependency_line
-    note = prompts.fill(_dependency_line(eco, workspace_root or ""), name=name)
+    note = prompts.fill(proberun.dependency_line(eco, workspace_root or ""), name=name)
     if note in last["content"]:
         return
     last["content"] = last["content"] + "\n\n" + note

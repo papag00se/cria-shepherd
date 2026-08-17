@@ -31,7 +31,7 @@ import tempfile
 import unittest
 
 from cria import prompts, probeparse
-from cria.proberun import _dependency_line
+from cria.proberun import dependency_line
 
 
 class _Project:
@@ -54,7 +54,7 @@ class _Project:
 
 
 def line(eco, root, name="countries"):
-    return prompts.fill(_dependency_line(eco, root), name=name)
+    return prompts.fill(dependency_line(eco, root), name=name)
 
 
 class TheWorldIsAskedBeforeItIsDescribedTests(unittest.TestCase):
