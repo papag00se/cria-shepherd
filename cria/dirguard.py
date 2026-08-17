@@ -197,6 +197,22 @@ _INSTALL_REMEDY = (
 )
 
 
+def installs_outside_workspace(command: str) -> bool:
+    """This command installs a package somewhere that is NOT the project directory.
+
+    The same two patterns `install_refusal` weighs, minus the permission level — because the question
+    here is not "may this run" but "does this change the workspace", and the answer to that does not
+    depend on what the operator allowed. A global install writes into a shared environment; a local
+    one (`--path vendor/bundle`, a venv, `npm install` with no `-g`) really does populate the project
+    and is not this.
+
+    Read by the repetition tracker: `mkdir -p vendor/bundle && gem install eu_countries` carries a
+    mutator word, so the word scan called it progress on new ground and FLUSHED the loop it was in
+    the middle of. See loop._is_progress."""
+    return bool(command and _GLOBAL_INSTALL.search(command)
+                and not _LOCAL_INSTALL_SCOPE.search(command))
+
+
 def _tool_present(name: str) -> bool:
     """Is this tool on PATH right now? The one question that separates a real route from a guess.
 
@@ -269,9 +285,44 @@ def _local_install_advice(command: str) -> str:
         for key, needs in options:
             found = {t: _resolved_tool(t) for t in needs}
             if all(found.values()) and routes.get(key):
-                return " " + prompts.fill(routes[key],
-                                          **{t.upper(): n for t, n in found.items()})
+                return (_already_here(command, found, routes)
+                        + " " + prompts.fill(routes[key],
+                                             **{t.upper(): n for t, n in found.items()}))
         return ""      # the ecosystem is refused, and nothing here can carry out the alternative
+    return ""
+
+
+def _already_here(command: str, found: dict, routes: dict) -> str:
+    """"You do not need to install that — it is already here, under this name." — or "".
+
+    The circular answer, walked on cycle 4 cell 13 (`shipping-rates-rb x ternary-bonsai`, 10% useful,
+    and 34 of its 54 calls spent trying to obtain a gem). The coder ran
+
+        which bundler 2>&1; gem install bundler 2>&1 | tail -5
+
+    and cria refused it with the `gem_bundler` route — *"add the gem to a `Gemfile` and run
+    `bundle3.2 install --path vendor/bundle`"* — which answers "install bundler" with "run bundler".
+    cria had ALREADY resolved the binary: that is where the string `bundle3.2` in its own sentence
+    came from. And because the refusal takes the whole command line, the `which bundler` that would
+    have told the coder the truth never executed. Two calls later: *"The bundler install is
+    restricted. Let me try to manually extract the gem file I downloaded earlier"*. It never learned
+    bundler was installed.
+
+    Only fires when the thing being installed IS a tool the chosen route names, so it cannot speak
+    about an ordinary package (#3). The fact goes FIRST, because the route below it is the part the
+    coder already read past six times."""
+    line = routes.get("already_present", "")
+    if not line:
+        return ""
+    for tool, resolved in found.items():
+        # The refused command names this very tool as its package — `gem install bundler` for the
+        # route that runs `bundle3.2`. Matched on the tool's stem so `bundler`/`bundle` are one word.
+        stem = tool.rstrip("0123456789.")
+        m = re.search(rf"install\s+(?:--?\S+\s+)*({re.escape(stem)}\w*)\b", command, re.I)
+        if m:
+            # The coder's OWN word for it — it typed `bundler`, and a message that answers with
+            # `bundle` reads as being about something else.
+            return " " + prompts.fill(line, PACKAGE=m.group(1), TOOL=str(resolved))
     return ""
 
 

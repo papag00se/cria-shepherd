@@ -32,3 +32,11 @@ go_get = A module your code imports is a dependency, not a global binary: `{{GO}
 composer_local = Drop `global`: `{{COMPOSER}} require <pkg>` installs into this project's own `vendor/`.
 
 maven_dep = A library your code imports is a dependency, not an install: add it to the `<dependencies>` block in `pom.xml` and let the build fetch it.
+
+# THE FACT BEFORE THE ROUTE. cria resolves the binary to build the route's sentence, so when the
+# coder tries to INSTALL that same tool cria already knows the answer. Walked on cycle 4 cell 13:
+# `which bundler; gem install bundler` was refused with "run bundle3.2 install", which answers
+# "install bundler" with "run bundler" — and the refusal swallowed the `which` that would have
+# settled it. The coder never learned bundler was installed and spent the rest of the run on
+# transport.
+already_present = {{PACKAGE}} is already installed on this machine — the executable is named `{{TOOL}}`, so type that instead of `{{PACKAGE}}`. You do not need to install it.

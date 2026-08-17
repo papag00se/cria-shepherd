@@ -2310,7 +2310,8 @@ class Loop:
         coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
         if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
-            guard_track_repetition(sess, coder, rlog, step=step)
+            guard_track_repetition(sess, coder, rlog, step=step,
+                                   messages=body.get("messages"))
             guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
         return coder
 
@@ -5170,7 +5171,78 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
     }
 
 
-def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> None:
+def _denied_signatures(messages: list[dict] | None) -> list[tuple]:
+    """Signatures of the calls cria itself REFUSED, newest last.
+
+    A refused call changed nothing — cria knows, because cria is what stopped it. `_is_progress`
+    reads the command TEXT and answers "this writes a Gemfile / makes a directory / installs a gem",
+    which is true of the words and false of the outcome, and every such answer FLUSHES the repetition
+    window. Walked on cycle 4 cell 13 (`shipping-rates-rb x ternary-bonsai`, 10% useful): the walk
+    replayed the run's real 53-call sequence through this guard and it fires **zero times** — six
+    identical refused `gem install` attempts across 25 calls, and each `write_file Gemfile` and
+    `mkdir -p vendor/bundle` between them reset the hunt. Writing a Gemfile and making vendor
+    directories is exactly what an install loop does between attempts, so the loop kept erasing the
+    evidence of itself. Call 0051 rewrote the Gemfile with bytes identical to call 0033 and still
+    counted as progress on new ground.
+
+    The protected case is untouched: a real edit→test→edit→test cycle resets, because those writes
+    really do change bytes and cria never refused them."""
+    out: list[tuple] = []
+    by_id: dict[str, str] = {m.get("tool_call_id"): _content_text(m.get("content"))
+                             for m in (messages or []) if m.get("role") == "tool"}
+    for m in messages or []:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            body = by_id.get(tc.get("id"))
+            if body and denial.is_denied(body):
+                fn = tc.get("function") or {}
+                args = fn.get("arguments") or ""
+                out.append(_action_signature(fn.get("name") or "?",
+                                             args if isinstance(args, str) else json.dumps(args)))
+    return out
+
+
+def _last_write_by_path(messages: list[dict] | None) -> dict:
+    """path -> content hash of the LAST write to it this session.
+
+    The most recent write is the only one that can answer "is this already what is on disk". An
+    earlier-but-superseded copy cannot: write A, edit it, write A's original bytes back IS a change,
+    and comparing against every historical write would call it a no-op."""
+    out: dict = {}
+    for m in messages or []:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "")
+            if not _is_write_tool(name):
+                continue
+            args = fn.get("arguments") or ""
+            sig = _action_signature(name, args if isinstance(args, str) else json.dumps(args))
+            if sig[0] == "write" and sig[1]:
+                out[sig[1]] = sig[2]
+    return out
+
+
+def _rewrites_the_same_bytes(sig: tuple, last_write: dict) -> bool:
+    """This write puts back exactly what the last write to that path already put there.
+
+    `_is_progress` answers "does this action CHANGE the workspace" and says yes to every write. It is
+    right about the words and wrong here: re-writing identical bytes changes nothing, and a change on
+    new ground FLUSHES the repetition window. Walked on cycle 4 cell 13
+    (`shipping-rates-rb x ternary-bonsai`): call 0051 re-wrote `Gemfile` with bytes identical to call
+    0033 and counted as progress on new ground, flushing an install loop that had been running for
+    eighteen calls. The window's own age trim is why the earlier copy could not catch it — entries
+    expire after REPEAT_WINDOW forwarded calls, and 0033 to 0051 is eighteen.
+
+    Only the LAST write to the path is compared, so a write→edit→write-the-original cycle is still
+    the change it really is."""
+    return sig[0] == "write" and bool(sig[1]) and last_write.get(sig[1]) == sig[2]
+
+
+def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
+                           messages: list[dict] | None = None) -> None:
     """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
     (exact fingerprints were tried on the codex-local side and missed one-flag jitter).
     REPEAT_FINGERPRINT_N nature-matches within the last REPEAT_WINDOW calls trips the
@@ -5182,6 +5254,8 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> N
     Operates on GuardState so the plan loop and the plan-off path run ONE implementation."""
     if gs.recent_actions is None:
         gs.recent_actions = []
+    denied = _denied_signatures(messages)
+    last_write = _last_write_by_path(messages)
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             if (gs.redirect_due or gs.redirect_probe
@@ -5202,7 +5276,11 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None) -> N
             cutoff = gs.action_seq - REPEAT_WINDOW
             gs.recent_actions = [e for e in gs.recent_actions if e[0] > cutoff]
             matches = sum(1 for e in gs.recent_actions if _actions_match(sig, e[1]))
-            if not matches and _is_progress(sig, args):
+            # …AND IT ACTUALLY HAPPENED. A call cria refused wrote nothing, whatever its words say,
+            # and a write whose bytes are already what is on disk changed nothing either.
+            refused = any(_actions_match(sig, d) for d in denied)
+            if not matches and _is_progress(sig, args) and not refused \
+                    and not _rewrites_the_same_bytes(sig, last_write):
                 # a real move — reset the hunt for ACTIONS, but keep (in-window) write
                 # signatures: the per-file rule ("same file, same content, 3× in the
                 # window") must survive interleaved progress on OTHER files
@@ -8489,6 +8567,17 @@ def _is_progress(sig: tuple, raw: str = "") -> bool:
     if sig[0] == "write":
         return True
     text = _command_text(raw)
+    # AN INSTALL INTO A SHARED ENVIRONMENT IS NOT WORKSPACE PROGRESS, whatever mutator words ride
+    # along on the line. Walked on cycle 4 cell 13 (`shipping-rates-rb x ternary-bonsai`, 10% useful,
+    # 34 of 54 calls spent trying to obtain a gem): `mkdir -p vendor/bundle && gem install
+    # eu_countries` read as a change on new ground and flushed a repetition window that had been
+    # filling for eighteen calls. The walk replayed the run's real 53-call sequence through this
+    # guard with the live constants — it fires ZERO times. A local install (`--path vendor/bundle`, a
+    # venv, `npm install` with no `-g`) really does populate the project, and dirguard's own two
+    # patterns are what tell them apart.
+    from . import dirguard as _dg
+    if text and _dg.installs_outside_workspace(text):
+        return False
     if text is None:  # undecodable fragment — escape-tolerant raw scan
         blob = raw if isinstance(raw, str) else ""
         words = frozenset(normalize_search(blob))

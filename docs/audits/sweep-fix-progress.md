@@ -150,6 +150,23 @@ Cycle 4 cell 18. `_injected_fence_texts` read one slot — `fetched_pages[url][2
 
 That was the run's **only** tool-call-less coder turn — its one chance to be judged and advanced — and it was spent on `read_file` to check cria's claim. **Fixed**: the haystack is now every tool result in the conversation (pages fetched, files read, command output). If a fenced block already appears verbatim in what the coder was handed, it is a quote whatever kind of page it came from (#20). The comparison is unchanged; it was being handed an empty haystack.
 
+### 30. cria answered "install bundler" with "run bundler", and swallowed the probe that would have settled it
+Cycle 4 cell 13, `shipping-rates-rb × ternary-bonsai` — 10% useful, **34 of 54 calls spent trying to obtain a gem**. The coder ran `which bundler 2>&1; gem install bundler 2>&1 | tail -5`. cria refused the whole line with the bundler route — *"add the gem to a `Gemfile` and run `bundle3.2 install --path vendor/bundle`"* — which answers "install bundler" with "run bundler". cria had **already resolved the binary**: that is where the string `bundle3.2` in its own sentence came from. And because the refusal takes the whole command line, the `which bundler` that would have told the coder the truth never executed. Two calls later: *"The bundler install is restricted. Let me try to manually extract the gem file I downloaded earlier"*. It never learned bundler was installed, and never typed `bundle3.2` once in 54 calls.
+
+**Fixed**: when the package being installed IS a tool the chosen route names, the fact goes first — *"bundler is already installed on this machine — the executable is named `bundle3.2`, so type that instead of `bundler`."* Only fires in that case, so it cannot speak about an ordinary package (#3), and it uses the coder's own word for it.
+
+### 31. An install loop kept flushing the evidence of itself
+Same cell. `_is_progress` reads the command TEXT — writing a `Gemfile`, `mkdir -p vendor/bundle` both carry mutator words — and progress on new ground FLUSHES the repetition window. Writing a Gemfile and making vendor directories is exactly what an install loop does between attempts. Call 0051 re-wrote the Gemfile with bytes **identical** to call 0033 and still counted as new ground (the window's age trim is why the earlier copy could not catch it — entries expire after 12 forwarded calls, and 0033 to 0051 is eighteen). The walk replayed the run's real 53-call sequence through `guard_track_repetition` with the live constants: **it fires zero times.**
+
+**Fixed**, three ways, all of them "did this actually change the workspace" rather than "do the words say so":
+- an install into a **shared** environment is not workspace progress (`dirguard.installs_outside_workspace` — a local install into `vendor/bundle` or a venv genuinely populates the project and is untouched);
+- a call cria itself **refused** wrote nothing, and cria is what refused it, so this is a fact cria holds rather than a judgement (#8);
+- a write whose bytes are already what the **last** write to that path put there changed nothing (only the last, so write→edit→write-the-original is still the change it really is).
+
+The protected case is untouched: a healthy edit→test→edit→test cycle resets exactly as before.
+
+**Residual, measured and NOT fixed**: whether the redirect then FIRES depends on `_actions_match` calling those attempts the same action, and on this run's real sequence (`gem install`, `--user-dir`, `gem install bundler`, `bundle install`, a hand-rolled `curl`) it would not. Loosening that matcher is a separate change with its own false-positive profile and needs its own measurement.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
