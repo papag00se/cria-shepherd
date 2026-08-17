@@ -3,6 +3,7 @@
 contract with a fixture, error behavior on a missing key, and `cargo test`. Cargo needs network
 for the first crate fetch and real compile time — generous timeouts."""
 
+import re
 import json
 import subprocess
 import sys
@@ -27,13 +28,32 @@ def run(cmd, cwd, timeout=600):
         return -2, "", f"VERIFIER-EXEC-ERROR: {e}"
 
 
+# cargo prints the diagnostic FIRST and its "for more information" trailer LAST, so a tail slice is
+# the one part that cannot say what broke. `err[-150:]` gave every failed Rust cell the same detail —
+# "For more information about this error, try `rustc --explain E0282`. error: could not compile
+# `toml-get` due to 1 previous error" — naming the error CODE and not the error. Same defect the Java
+# verifier had, found the same way: by having to re-run the build by hand to answer "why did it fail".
+_RUSTC_ERR = re.compile(r"^error(?:\[E\d+\])?:.*$|^\s*-->\s+\S+:\d+:\d+.*$", re.M)
+
+
+def _rustc_errors(log: str, limit: int = 4) -> str:
+    """The compiler's own diagnostics with their file:line, or a tail slice if it produced none."""
+    hits = [m.group(0).strip() for m in _RUSTC_ERR.finditer(log or "")]
+    hits = [h for h in hits if "could not compile" not in h]
+    if hits:
+        more = f" (+{len(hits) - limit} more)" if len(hits) > limit else ""
+        return " | ".join(hits[:limit]) + more
+    return (log or "").strip()[-150:]
+
+
 def main(ws: Path) -> dict:
     r = {"task": "rust-toml-cli", "score": 0.0, "max_score": 4.0, "success": False, "parts": {}}
     (ws / "vfixture.toml").write_text(FIXTURE)
 
     # 1) Builds at all (separate point: a compiling Rust project is real work for a small model).
     code, _, err = run(["cargo", "build", "--quiet"], ws)
-    r["parts"]["builds"] = {"ok": code == 0, "detail": err.strip()[-150:] if code != 0 else "clean build"}
+    r["parts"]["builds"] = {"ok": code == 0,
+                            "detail": "clean build" if code == 0 else _rustc_errors(err)}
 
     # 2) Pinned lookup contract: nested int, string, deep table.
     ok_n = 0
