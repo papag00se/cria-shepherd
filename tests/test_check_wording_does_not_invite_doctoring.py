@@ -14,7 +14,7 @@
 """
 import unittest
 
-from cria import probegate, prompts
+from cria import prompts, probegate, prompts
 
 CHECK_TEXTS = ("block_nudge_preamble", "steer_checks_repeat")
 
@@ -34,7 +34,12 @@ class SmallestChangeTests(unittest.TestCase):
         import inspect
         src = inspect.getsource(probegate)
         self.assertNotIn("smallest change that clears it:", src)
-        self.assertIn("changing the test so it stops asking is not a fix", src)
+        # RENDERED, not the source. This clause moved out of probegate.py into
+        # prompts/checks_error_class.txt with the seeded-test rule as one owner — the inline copy was
+        # the one that shipped (3,254 prompts) and the one an update had missed.
+        out = prompts.render("checks_error_class", findings="x.py:1: boom")
+        self.assertIn("changing the test so it stops asking is not a fix", out)
+        self.assertIn("already in the repository", out)   # …and now it says WHICH tests
 
 
 class FailedFetchNoteTests(unittest.TestCase):

@@ -386,8 +386,12 @@ class GuardsThatCouldOnlyFailOneWayTests(unittest.TestCase):
         a test, resting on a claim cria cannot verify. It is now scoped to an EXTERNAL system, the
         evidence must be a command run this session with its output quoted, and the test's own
         failure message is explicitly disqualified."""
+        # RENDERED, both carriers. The clause has one owner now (prompts/seeded_test_rule.txt) and
+        # the carriers hold a token — reading the FILE reads the hole where the rule goes. That
+        # sharing exists because this exact update reached two of the rule's three copies and missed
+        # the third, which was the one that shipped.
         for key in ("block_nudge_preamble", "steer_checks_repeat"):
-            t = prompts.load(key)
+            t = prompts.render(key, findings="<findings>", since="")
             self.assertIn("not a fix", t)                       # the prohibition stands
             self.assertIn("EXTERNAL system", t)                 # scoped to the case that motivated it
             self.assertIn("Quote the command you ran", t)       # evidence, not self-certification

@@ -6561,6 +6561,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             rlog.emit("loop.steer_checks_reattached", level="info", condition=condition,
                       since=since, head=_clip(checks_now, 100))
             return prompts.render("steer_checks_repeat", findings=checks_now,
+                                  seeded_test_rule=prompts.load("seeded_test_rule").strip(),
                                   since=_checks_ran_before(since))
         rlog.emit("loop.steer_same_checks", level="info", condition=condition,
                   head=_clip(checks_now, 100))

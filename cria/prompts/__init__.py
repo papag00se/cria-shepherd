@@ -16,6 +16,7 @@ here takes effect on the next request with no restart.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _DIR = Path(__file__).parent
@@ -37,8 +38,27 @@ def load(name: str) -> str:
 
 
 def render(name: str, **tokens: object) -> str:
-    """``load(name)`` then ``fill`` its ``{{TOKEN}}``s from the keyword args."""
-    return fill(load(name), **tokens)
+    """``load(name)`` then ``fill`` its ``{{TOKEN}}``s from the keyword args.
+
+    A LEFTOVER TOKEN THAT NAMES A PROMPT FILE IS AN INCLUDE. A rule the model must be told in more
+    than one place should have ONE owner, and the way to share it is a fragment file — but a token
+    every caller has to remember to pass is a token some caller will forget, and what reaches the
+    model then is the literal `{{SEEDED_TEST_RULE}}`. That is not hypothetical: the seeded-test rule
+    was typed into three carriers, an update reached two of them, and the copy that ships in 3,254
+    captured prompts spent a whole cycle telling coders "changing the test is not a fix" without the
+    sentence that says which tests it governs.
+
+    So a `{{FOO}}` the caller did not fill is looked up as the prompt file `foo`, and left exactly as
+    it was when there is no such file (an unfilled token still fails `no placeholder reaches the
+    model`, which is the guard that caught this)."""
+    out = fill(load(name), **tokens)
+    for tok in set(re.findall(r"\{\{([A-Z][A-Z0-9_]*)\}\}", out)):
+        try:
+            frag = load(tok.lower()).strip()
+        except (FileNotFoundError, OSError):
+            continue
+        out = out.replace("{{" + tok + "}}", frag)
+    return out
 
 
 def load_map(name: str) -> dict[str, str]:

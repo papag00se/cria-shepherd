@@ -1,0 +1,2 @@
+⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the checker's OWN message and the line it flagged; resolve what each one names with the smallest change that makes it actually work. If a test failed, fix what the test caught — changing the test so it stops asking is not a fix. {{SEEDED_TEST_RULE}}
+{{FINDINGS}}

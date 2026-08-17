@@ -591,10 +591,21 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # greater than 0` — a true signal that the deliverable was wrong — and the coder rewrote its
         # own assertion to `assertEqual(result["total_handles"], 0)`. The test then certified the bug
         # and the run shipped green. The phrase landed twice in that one run.
-        return ("⟦ctx:checks⟧ the repo's own checks report these error-class problems — each is the "
-                "checker's OWN message and the line it flagged; resolve what each one names with the "
-                "smallest change that makes it actually work. If a test failed, fix what the test "
-                "caught — changing the test so it stops asking is not a fix:\n" + "\n".join(findings))
+        # ONE OWNER FOR THE SEEDED-TEST RULE, and this is the copy that was missed. The "changing
+        # the test so it stops asking is not a fix" clause lived in THREE places — two prompt files
+        # and this inline literal. Commit 57c8520 added the carve-out that tells the coder WHICH
+        # tests the rule governs ("the tests that were already in the repository when you started…
+        # a test YOU wrote earlier in this session is yours") to the two prompt files and could not
+        # add it here, because a string in code is not where anyone looks for a prompt (#22).
+        #
+        # This is the copy that ships. It is in 3,254 captured coder prompts — far more than either
+        # sibling. So for a whole cycle the coder was told "changing the test is not a fix" and never
+        # told which tests that covered. Walked on cycle 4 cell 7, shipping-rates-rb x qwen35: the
+        # model reverted its own test edit once, citing the task, and two calls later rewrote a
+        # SEEDED assertion from 15.99 to 32.99 — a test its own `rake test` had reported as passing.
+        return prompts.render("checks_error_class",
+                              seeded_test_rule=prompts.load("seeded_test_rule").strip(),
+                              findings="\n".join(findings))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")

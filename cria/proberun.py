@@ -85,7 +85,9 @@ CHILD_POLL_INTERVAL_S = 0.040
 # (loaded once at import; a cria restart re-tunes). The preamble ends with a newline `load` strips,
 # so it's re-added here; the Rust source's `\` line-continuation collapses to a single space (one
 # space between "exact" and "problems"), preserved in prompts/block_nudge_preamble.txt.
-BLOCK_NUDGE_PREAMBLE = prompts.load("block_nudge_preamble") + "\n"
+BLOCK_NUDGE_PREAMBLE = prompts.render(
+    "block_nudge_preamble",
+    seeded_test_rule=prompts.load("seeded_test_rule").strip()) + "\n"
 _DIGEST = prompts.load_map("probe_digest")
 DIGEST_FLOOR_FMT = _DIGEST["floor_fmt"]  # single-brace {x}, filled by .format()
 DIGEST_FLOOR_CLEAN = _DIGEST["floor_clean"]

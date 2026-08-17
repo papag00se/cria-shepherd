@@ -41,23 +41,36 @@ SCOPE = ("This governs the tests that were already in the repository when you st
          "yours: if its own setup or fixture is wrong, correct the test.")
 
 
+def _rendered(name: str) -> str:
+    """The prompt AS THE MODEL RECEIVES IT.
+
+    The seeded-test clause used to be typed into each carrier. It lived in THREE places — these two
+    prompt files and an inline literal in `probegate.py` — and commit 57c8520 added the scope
+    sentence to the two files and could not add it to the third, because a string in code is not
+    where anyone looks for a prompt. That third copy is the one that ships: 3,254 captured coder
+    prompts carry it. It has one owner now (`seeded_test_rule.txt`), so a test that reads the FILE
+    is reading the hole where the rule goes."""
+    return prompts.render(name, seeded_test_rule=prompts.load("seeded_test_rule").strip(),
+                          findings="<findings>", since="")
+
+
 class EveryCarrierOfTheRuleNamesItsScopeTests(unittest.TestCase):
     def test_both_prompts_carry_the_rule(self):
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                self.assertRegex(prompts.load(name), r"stops asking is not a fix",
+                self.assertRegex(_rendered(name), r"stops asking is not a fix",
                                  "the rule itself must not be deleted")
 
     def test_both_prompts_carry_the_same_scope_sentence(self):
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                self.assertIn(SCOPE, prompts.load(name))
+                self.assertIn(SCOPE, _rendered(name))
 
     def test_the_scope_comes_immediately_after_the_rule(self):
         """A qualifier three paragraphs later is a qualifier a weak model reads too late."""
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                body = prompts.load(name)
+                body = _rendered(name)
                 rule_end = body.index("stops asking is not a fix")
                 self.assertLess(body.index(SCOPE) - rule_end, 60,
                                 "the scope must follow the rule, not trail it")
@@ -67,14 +80,14 @@ class EveryCarrierOfTheRuleNamesItsScopeTests(unittest.TestCase):
         coder talked itself out of the only correct repair three times. Untouched."""
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                body = prompts.load(name)
+                body = _rendered(name)
                 self.assertIn("EXTERNAL system", body)
                 self.assertIn("never qualifies", body)
 
     def test_it_still_forbids_weakening_a_repository_test(self):
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                self.assertRegex(prompts.load(name),
+                self.assertRegex(_rendered(name),
                                  r"(?:Weakening or deleting an assertion|stops asking is not a fix)")
 
 
@@ -83,7 +96,7 @@ class TheScopeIsStatedNotNumberedTests(unittest.TestCase):
         """"this session" is something the model can locate. "call 41" is cria's private numbering."""
         for name in CARRIERS:
             with self.subTest(prompt=name):
-                body = prompts.load(name)
+                body = _rendered(name)
                 self.assertIn("this session", body)
                 self.assertNotRegex(body, r"\b(?:call|turn)\s+\d+")
 

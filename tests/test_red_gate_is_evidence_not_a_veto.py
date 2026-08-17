@@ -24,7 +24,7 @@ import os
 import tempfile
 import unittest
 
-from cria import loop as loopmod, prompts, proberun
+from cria import proberun, loop as loopmod, prompts, proberun
 from cria.loop import Loop
 from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
 
@@ -107,7 +107,7 @@ class RedGateReachesTheCriticTests(unittest.TestCase):
         # as a task briefing to a weak judge and it starts fixing instead of ruling (principle 8).
         reasoner = _Reasoner(done=False)
         _run_to_red_gate(reasoner)
-        self.assertNotIn(prompts.load("block_nudge_preamble"), reasoner.critic_prompt())
+        self.assertNotIn(proberun.BLOCK_NUDGE_PREAMBLE.strip(), reasoner.critic_prompt())
 
 
 class NotDoneKeepsTheOldContractTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class NotDoneKeepsTheOldContractTests(unittest.TestCase):
         _loop, coder, _rlog, out = _run_to_red_gate(reasoner)
         self.assertTrue(out["choices"][0]["message"].get("tool_calls"))   # re-driven, not advanced
         self.assertIn("tests/test_x.py", coder.last_user())               # the CHECKER's words
-        self.assertIn(prompts.load("block_nudge_preamble"), coder.last_user())
+        self.assertIn(proberun.BLOCK_NUDGE_PREAMBLE.strip(), coder.last_user())
 
     def test_it_still_logs_probe_failed(self):
         reasoner = _Reasoner(done=False)
