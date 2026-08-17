@@ -23,10 +23,19 @@ class TheHintCarriesTheLineNumberTests(unittest.TestCase):
     def test_it_names_the_line_that_differs(self):
         self.assertIn("LINE 22", self._rendered())
 
-    def test_it_says_what_a_missing_line_means(self):
-        """The other half: a line the model remembers that is NOT in the window is not in the file.
-        Without that, an omission reads as an abbreviation."""
-        self.assertIn("not shown here is not in the file", self._rendered())
+    def test_it_says_what_the_divergence_index_actually_proves(self):
+        """This used to end "a line you remember that is not shown here is not in the file" — a claim
+        about the WHOLE file inferred from a six-line window, and false whenever old_string is longer
+        than the window. Walked on cycle 4 cell 4 (`feed-pipeline-java x gemma4`): the model's
+        old_string was ~110 lines, its first forty matched the file exactly — that is what "first
+        differs at LINE 41" means — and its opening line sat at line 21 of the file, remembered, not
+        shown, and present. Told the opposite, it re-sent the byte-identical edit and the run ended.
+
+        What the divergence index really proves is a prefix match, and saying that is both true and
+        more useful: it tells the coder which part of its copy to keep."""
+        r = self._rendered()
+        self.assertIn("BEFORE line 22 matched the file exactly", r)
+        self.assertNotIn("not shown here is not in the file", r)
 
     def test_it_still_hands_over_the_text_to_copy(self):
         r = self._rendered()

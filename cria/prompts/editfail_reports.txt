@@ -7,7 +7,7 @@ would_break = your edit would break {{PATH}} — {{ERR}}. Fix new_string so the 
 multi = old_string matches {{N}} places in {{PATH}} — add surrounding lines so it is unique, then edit again.
 escalate = you have failed to edit this file {{PRIOR}} times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n{{CUR}}\n---
 escalate_unread = you have failed to edit this file {{PRIOR}} times — you cannot pin its exact current text. STOP editing it. The file is too large to quote here: read {{PATH}} in full first, then produce the corrected FULL file in a single write_file call.
-anchor = your old_string is not an exact match. Your copy first differs from the file at LINE {{LINE}}. Here is the file's real text around it:\n---\n{{ANCHOR}}\n---\nUse THESE lines verbatim in old_string — line {{LINE}} is where your copy is wrong, and a line you remember that is not shown here is not in the file.
+anchor = your old_string is not an exact match. Your copy first differs from the file at LINE {{LINE}}. Here is the file's real text around it:\n---\n{{ANCHOR}}\n---\nUse THESE lines verbatim in old_string. Everything in your copy BEFORE line {{LINE}} matched the file exactly — it is from line {{LINE}} on that it does not, so replace that part with the text above and keep the rest.
 # The SAME situation with no line number computed. It used to render the `anchor` body with "?"
 # substituted, producing "your copy first differs from the file at LINE ?" and "line ? is where your
 # copy is wrong". Measured, nemotron-elastic/java 0031 — the coder read it and answered "But we need

@@ -2605,7 +2605,8 @@ class Loop:
         # verification-only work, so the cria adaptation counts ANY tool activity this step.)
         # BEFORE reading this as a completion claim: a turn that pasted a whole file did not finish
         # the step, it failed to emit the call. See unexecuted_write().
-        if (unexecuted_write(_completion_text(coder), _injected_fence_texts(sess))
+        if (unexecuted_write(_completion_text(coder),
+                             _injected_fence_texts(sess, body.get("messages", [])))
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
@@ -3918,7 +3919,8 @@ class Loop:
         tags from ``framed``)."""
         # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
         # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
-        if (unexecuted_write(_completion_text(comp), _injected_fence_texts(sess))
+        if (unexecuted_write(_completion_text(comp),
+                             _injected_fence_texts(sess, body.get("messages", [])))
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
@@ -4877,15 +4879,40 @@ UNEXECUTED_WRITE_LINES = 12
 MAX_UNEXECUTED_NUDGES = 2   # bounded: after this the turn falls through to the completion gate
 
 
-def _injected_fence_texts(sess) -> list[str]:
-    """Every response-shape block cria has injected this session — the strings a coder's fenced
-    "file" might merely be quoting back. Read from the same ledger the anchor renders from, so the
-    two cannot drift. Deterministic gather; the comparison happens in unexecuted_write()."""
+def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]:
+    """Everything the coder was SHOWN this session — the strings a coder's fenced "file" might merely
+    be quoting back. Deterministic gather; the comparison happens in unexecuted_write().
+
+    IT USED TO READ ONE SLOT: `fetched_pages[url][2]`, the parsed response SHAPES. That slot is filled
+    by a REST-spec reader, so it is empty for every page that is not an API spec — and the exemption
+    it feeds was then inert exactly when the coder had read documentation. Walked on cycle 4 cell 18
+    (`rust-toml-cli x ternary-bonsai`): the coder fetched docs.rs/toml, 7,925 characters of the crate's
+    real API, and cria's own `⟦ctx:facts⟧` recorded `HTTP 200 (this page answered, but no endpoint
+    definitions were found in it)` — routes empty, shapes empty. The coder's next turn summarised what
+    it had learned, quoting fifteen lines of `pub enum Value { … }` from that page, and cria answered
+
+        your last message contained the file's contents as text, but no write tool call was made, so
+        nothing reached the disk — send that same content again as a write tool call
+
+    which was false on both halves: the fence was not a file, and cria's own tool results two calls
+    earlier said `Wrote .../Cargo.toml` and `Wrote .../src/main.rs`. That turn was the run's ONLY
+    tool-call-less coder turn — its one chance to be judged and advanced — and it was spent on
+    `read_file` to check cria's claim.
+
+    So the haystack is now every tool result in the conversation: the pages fetched, the files read,
+    the command output. If a fenced block already appears verbatim in what the coder was handed, it is
+    a quote whatever kind of page it came from (#20). The comparison is unchanged — whitespace-
+    normalized containment with an 80-character floor — it was being handed an empty haystack."""
     out: list[str] = []
     for entry in (getattr(sess, "fetched_pages", None) or {}).values():
         shapes = (tuple(entry) + ("", "", ""))[2]
         if str(shapes).strip():
             out.append(str(shapes))
+    for m in messages or []:
+        if m.get("role") == "tool":
+            body = _content_text(m.get("content"))
+            if body.strip():
+                out.append(body)
     return out
 
 
