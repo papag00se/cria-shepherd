@@ -53,6 +53,14 @@ Checked before re-scoring it, and the answer is worse than "not yet done":
 
 So the baseline is stale on two counts, and neither is fixable by re-scoring. **It has to be re-run** — 24 cells with assists off, judged as they land like any other cell. Until then every BASE number carries `ˢ`, every BASE↔CRIA Δ is blank, and the grid says so rather than implying a comparison it cannot make.
 
+**Scheduled: after this cycle's CRIA arm finishes** (operator, 2026-08-16). The assisted arm is the one that answers the question; the baseline only sizes the gain. The command is the same driver with the arm flipped, and it restores the flag afterwards so an interrupted run cannot leave the live config in the baseline arm:
+
+```
+python3 suite/cycle_run.py --arm BASE
+```
+
+Judge each baseline cell as it lands, the same way — `usefulness.py pending` is arm-agnostic and will list them.
+
 **Strict says 51%. Useful says 65%.** The gap is one cell: rust-toml-cli, 0 strict and 95 useful, where the work was finished and correct and one directory too deep. Every other cell moves by less than 15 points, which is the check that the new number is not simply generosity.
 
 
