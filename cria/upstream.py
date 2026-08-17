@@ -55,6 +55,34 @@ class UpstreamError(Exception):
     """The upstream model server could not be reached or errored."""
 
 
+def _abort_header(aborted: dict) -> str:
+    """One line naming the backstop that stopped this stream, with the numbers THAT backstop holds.
+
+    See the call site for the incident. Nothing here reads a counter another guard sets: a field a
+    guard did not write is absent, not None-rendered."""
+    if aborted.get("window_exhausted"):
+        return (f"⟦WINDOW-EXHAUSTED ABORT⟧ the generation used {aborted.get('frames')} of the "
+                f"{aborted.get('room')} tokens of room this turn had — past that the server stops it "
+                f"and the whole result is discarded, so it was stopped here and labelled instead")
+    if aborted.get("dead_stream"):
+        return (f"⟦DEAD-STREAM ABORT⟧ {aborted.get('chunks')} frames arrived carrying nothing "
+                f"readable — no content, no reasoning, no tool-call fragment")
+    if aborted.get("degenerate"):
+        return (f"⟦DEGENERATE-RUN ABORT⟧ the last {aborted.get('chars')} characters were one "
+                f"repeated unit — a stuck stream")
+    return (f"⟦RUMINATION GUARD FIRED⟧ {aborted.get('hits')} second-guessing markers · "
+            f"~{aborted.get('reasoning_tokens')} reasoning tokens · aborted mid-stream and "
+            f"re-prompted to refocus")
+
+
+def _abort_footer(aborted: dict) -> str:
+    which = ("the window-exhausted backstop" if aborted.get("window_exhausted") else
+             "the dead-stream backstop" if aborted.get("dead_stream") else
+             "the degenerate-run backstop" if aborted.get("degenerate") else
+             "the rumination guard")
+    return f"⟦— reasoning stream ABORTED HERE by {which} —⟧\n"
+
+
 class Upstream:
     """An OpenAI-compatible chat endpoint. With no ``api_key`` this is the local
     llama.cpp; with one it is an OpenAI-compatible *cloud* provider (Bearer auth) —
@@ -801,10 +829,16 @@ class Upstream:
         # reasoning stays pure (the full block, no header) so it's still greppable/diffable as-is.
         bar = "─" * 72
         if aborted:
-            body = (f"⟦RUMINATION GUARD FIRED⟧ {aborted.get('hits')} second-guessing markers"
-                    f" · ~{aborted.get('reasoning_tokens')} reasoning tokens · aborted mid-stream"
-                    f" and re-prompted to refocus\n{bar}\n{text}\n\n"
-                    f"⟦— reasoning stream ABORTED HERE by the rumination guard —⟧\n")
+            # SAY WHICH GUARD, AND ONLY ITS OWN NUMBERS. Four different backstops abort a stream and
+            # this header described all four as the RUMINATION guard, rendering that guard's two
+            # counters — which only IT sets. Measured on cycle 4 cell 4 (feed-pipeline-java ×
+            # gemma4): a WINDOW-EXHAUSTED abort was filed as
+            #   "⟦RUMINATION GUARD FIRED⟧ None second-guessing markers · ~None reasoning tokens"
+            # A guard must not invent the numbers it fired on (#12), and "None second-guessing
+            # markers" is a false fact about why the stream stopped (#5b) — the same defect this
+            # file's degenerate-tail branch already records having fixed once, left standing on the
+            # three siblings. Each guard now names itself and prints what it actually counted.
+            body = _abort_header(aborted) + f"\n{bar}\n{text}\n\n" + _abort_footer(aborted)
         elif ending:
             # An UNFINISHED block, labelled as one at both ends. A partial trace read as a complete
             # one is the same lie as a truncated file (#5b) — and the label is the whole reason this
