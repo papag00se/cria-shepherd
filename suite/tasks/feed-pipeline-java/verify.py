@@ -95,8 +95,23 @@ _JAVAC_LINE = re.compile(r"^.*?\.java:\[\d+,\d+\].*$|^\s+symbol:\s+.*$|^\s+locat
 def _javac_errors(log: str, limit: int = 6) -> str:
     """The compiler's own located errors, or a tail slice when it produced none (a plugin failure,
     a missing dependency resolution) — never Maven's "for more information" trailer alone."""
-    hits = [re.sub(r"\x1b\[[0-9;]*m", "", m.group(0)).strip() for m in _JAVAC_LINE.finditer(log)]
+    def _clean(t: str) -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", t).strip()
+
+    hits = [_clean(m.group(0)) for m in _JAVAC_LINE.finditer(log)]
     hits = [h for h in hits if h and "For more information" not in h and "[Help" not in h]
+    if not hits:
+        # NOT EVERY MAVEN FAILURE REACHES JAVAC. A malformed pom.xml fails in project BUILDING, so
+        # there are no `.java:[line,col]` diagnostics at all and the javac slice above finds nothing.
+        # The first cut fell back to the tail — which is the Help trailer again, the exact thing this
+        # function exists to stop printing. Cell 22 landed on it: the real error was "Malformed POM
+        # ... Unrecognised tag: 'dependency' ... line 17, column 13", one line above the boilerplate.
+        # Maven's own [ERROR] lines carry it; the trailer and the empty ones do not.
+        hits = [_clean(ln)[len("[ERROR] "):] if _clean(ln).startswith("[ERROR] ") else _clean(ln)
+                for ln in (log or "").splitlines() if "[ERROR]" in ln]
+        hits = [h for h in hits
+                if h and "[Help" not in h and "For more information" not in h
+                and not h.startswith("[ERROR]")]
     if hits:
         more = f" (+{len(hits) - limit} more)" if len(hits) > limit else ""
         return " | ".join(hits[:limit]) + more
