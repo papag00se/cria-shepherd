@@ -36,6 +36,50 @@ So the answer is not "turn the assists off". It is that a mechanism which saves 
 
 ---
 
+## HOW cria GOT IN THE WAY — the eight cells that went down, both arms measured
+
+Every destroyed cell has the same terminal: **the baseline finished on its own (`exited`); the cria run was killed by a milestone floor.** The floor did not cause the loss, but it is what converts "slower" into "zero".
+
+| cell | BASE | CRIA | coder turns | tokens per turn | generation time |
+|---|---|---|---|---|---|
+| shipping-rates-rb × gemma4 | 4/5 in **9.8 min** | 1/5, killed at 30.8 | 104 → **66** | 212 → **1,000** | 6.4 → **26.8 min** |
+| shipping-rates-rb × qwen35 | 5/5 in **8.8 min** | 1/5, killed at 30.8 | 102 → 76 | 189 → **557** | — |
+| feed-pipeline-java × gemma4 | 5/5 in **3.5 min** | 0/5, killed at 16.3 | 19 → 16 | 518 → 763 | 2.9 → 3.7 min |
+| cart-billing-go × ternary-bonsai | 5/5 in 19.5 min | 1/5, killed at 30.8 | 55 → 47 | 423 → **298** | 9.5 → 8.6 min |
+| rust-toml-cli × ternary-bonsai | 4/4 | 0/4, killed at 15.9 | 20 → 20 | 289 → 231 | 2.5 → 5.5 min |
+
+Generation SPEED is identical in both arms (58.1 vs 57.6 tok/s; 72.9 vs 76.6; 41.5 vs 41.7). cria does not slow the model down. What it changes is how much the model generates, how many chances it gets, and what it is told.
+
+**Three different mechanisms, and they are not the same cell to cell.**
+
+### 1. The context tax — `shipping-rates-rb`, both models
+
+The sharpest single measurement in the campaign. Unassisted, gemma4 took **104 turns of 212 tokens each and finished in 9.8 minutes**. Under cria it got **66 turns of 1,000 tokens each** — a third fewer chances to act, each one nearly five times longer — and **26.8 minutes of pure generation**, more than the entire unassisted run, before the floor killed it at 30.8. qwen35 is the same shape at 2.9×.
+
+The injections are not free: the model reads them, reasons over them, and answers longer. cria's own 17 calls added a further 26,000 tokens on top.
+
+### 2. One discarded generation — `feed-pipeline-java × gemma4`
+
+**gemma4 solved this perfectly, unassisted, in 3 minutes 30 seconds.** Twenty turns, 0.6 minutes of anything that was not the model thinking.
+
+Under cria the token count is nearly identical (10,140 → 10,702) — so this is *not* the context tax. It is one call: 721 seconds, 74% of the cell's wall clock, in a single generation whose repeating unit the stuck-output detector could not see, discarded whole twelve minutes later. The walk extracted what was inside it and scored it against the task's own verifier: **4 of 5**.
+
+### 3. Pure mis-steering — `cart-billing-go × ternary-bonsai`
+
+Here the tax runs the *other* way: **fewer** tokens per turn (423 → 298) and fewer total. cria did not drown this model in context. It told it something false — that repeating a write returns the same result — and the model concluded its file tools were caching, moved every later write into `python3` heredocs where cria's syntax floor cannot see them, and a swallowed tab turned `taxed` into `axed`.
+
+What it did cost was clock outside generation: **10.1 → 22.2 minutes of non-generation time** — gate runs, reasoner calls, judges — on a cell the model had already finished in 19.5 minutes.
+
+### 4. Never allowed to start — `rust-toml-cli × ternary-bonsai`
+
+Twenty coder turns, of which the walk found **twenty were pinned to "visit crates.io to identify a suitable TOML parser crate"** — a reading step cria could not mark complete, because the check for "did this page define anything" is REST-route-shaped and a crate documentation page has no routes. It wrote two files after call 0010 and nothing after. *(Caveat: this cell's BASE wall of 50.7 min is inflated — the service restarted 10 times during it while fixes were landing. The other four cells above had zero restarts.)*
+
+### What this means for the fixes
+
+The mis-steering has been fixed case by case (ledger items 21–44). **The context tax has not been touched**, and on the Ruby column it is the whole story: no false fact, no killed steer, just a model given a third fewer turns at five times the length until the clock ran out. That is the next thing to measure — what each injection costs in tokens against what it is worth — and it is a different kind of work from fixing a wrong sentence.
+
+---
+
 ## Cycle 4 — RUN and JUDGE complete, WALK in flight
 
 **Phase: RUN.** Started 2026-08-16 16:5x on the post-sweep code state, `8be9ea8`. Twenty-four cells, **model-major** for the first time — one model loaded, then taken through all six languages, so the grid fills a readable ROW at a time instead of a column.
