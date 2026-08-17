@@ -116,6 +116,32 @@ The coder obeyed, wrote pseudo-version after pseudo-version, and reached the wal
 
 **Blast radius, measured**: of the **71 distinct steers cria delivered across cycle 4's 24 runs, 2 contain a version-shaped token at all**. What it blocks is the FIRST fabrication; once the coder pastes it, the version is genuinely on disk and a later steer quoting it passes, correctly. Cell 20's cascade was four steers and needed only the first stopped.
 
+### 24. The model wrote a 4-of-5 answer, then repeated one block 22 times, and cria threw all of it away
+The most expensive single finding of the campaign. Cycle 4 cell 4, `feed-pipeline-java × gemma4`, shipped **0/5**.
+
+Inside the first 8% of one generation the model composed a complete, correct commons-csv rewrite. The walk extracted it from the capture and ran the task's own verifier against it: **4 of 5** — 34.3× speedup, 4 worker threads, 8 runs giving 1 distinct result, clean `mvn compile`, only `REVIEW.md` missing. It then emitted the same 6,664-character `old_string` block twenty-two more times.
+
+`degenerate_tail` reads a 2,048-character window and needs three whole repeats inside it, so the largest unit it can see is **682 characters**. This stream is not periodic inside any 2,048-character window, so the check correctly returned False for all 40,389 frames and the only guard left was window exhaustion — which fired **721 seconds later, 74% of the cell's wall clock**, and discarded the entire generation.
+
+**Fixed** with a strided wide check. Two things make it work where simply widening the window would not: it is **anchored at the end** (the last 512 characters are a probe, its previous occurrence gives the candidate period, which is then verified across three whole repeats — `_smallest_period` asks whether the WHOLE string is periodic, and the real answer still sitting in the window is exactly what makes that say no), and it is **strided** (KMP over 32 KB on each of 40,000 frames is not affordable; once per 2,048 new characters is ~76 evaluations). The cheap per-chunk check is untouched. It fires at ~33 KB of stream instead of 157 KB — about two minutes instead of twelve. Same three-whole-repeats rule; the module's docstring records the last time this bound was raised, from 8 characters to 682.
+
+**And the notice stopped guessing.** `rumination_guard_window.txt` said *"That almost always means one write was too big for a single turn"* — false here: the aborted call was `edit_file`, its payload an ordinary 6.3 KB, and it had already finished. The model's next ten calls switched from one whole-file write to six piecemeal edits rebuilt from memory, and that is where the fabricated `setSkipInitialNewline` / `getHeader()` / `newNode()` came from. A notice that cannot know which call overran must not say (#5b) — the same rule as `anchor_noline` beside it.
+
+### 25. The repeat-fold told the coder its writes could not have changed anything
+Cycle 4 cell 14, `cart-billing-go × ternary-bonsai` — and it rewrites that cell's story. `focustrim` folds repeated identical calls under a note saying the call *"has told you everything it can — repeating it will return that same result"*, which is true of a reader and false of a writer. It landed on a repeated `write_file` and then on a `sed -i`, and the coder drew the only conclusion the note supports:
+
+> *"the write_file tool seems to be caching the old content. Let me try a different approach"* / *"the sed command is not working because the file content seems to be cached or something"*
+
+From that turn on it wrote its Go source through `python3 <<'PYEOF'` heredocs — the writes cria's syntax floor never sees. A `\t` swallowed inside the Python string turned `taxed` into `axed`, and bash backtick substitution ate the struct tags. **The cell's famous typo is an artifact of a write cria drove it to**, not something the model typed.
+
+**Fixed**: `shelltool.writes_something` is the one owner of "could this call have changed the workspace" — by shape, not by a list of coreutils — and `focustrim` exempts anything it says yes to, the same way it already exempts cria's own gate probes. Generous on purpose: saying "this might have changed something" costs one un-folded pair of messages; saying it about a writer cost the cell.
+
+### 26. The identical-edit message named the wrong argument
+Same cell. `⟦ctx:edit⟧` said *"old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text. Read the file, then make one targeted edit."* The second half is false: `old_string` matched the file exactly, and only `new_string` failed to differ. The coder obeyed the wrong half four times over — read the file, resubmit the identical pair, read, resubmit — and its own `grep -n` came back with the exact bytes it had been pinning all along. **Fixed** in `editfail_reports.txt`: say that `old_string` matched and `new_string` is what has to change.
+
+### 27. The periodic critic was told no checks had run while cria held four red ones
+Cycle 4 cell 18, `rust-toml-cli × ternary-bonsai`. `_periodic_step_check` composes no gate of its own and said so by handing the critic `probe_digest_none` — two lines asserting *"SYNTAX FLOOR: did not run"* and *"PROBES: none ran"*. Two calls earlier cria had handed a reasoner four red cargo failures under *"GROUND TRUTH FROM THE REPO'S CHECKS"* (`src/main.rs:31: type annotations needed`, from clippy, check and test alike). Two judges, two calls apart, opposite ground truth — whichever is wrong, cria said it (#5b). **Fixed**: composing no gate is not the same fact as no gate having run, so when the session holds a reading it is passed through the `probe_red` slot and the "none ran" digest is omitted.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.

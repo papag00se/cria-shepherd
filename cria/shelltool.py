@@ -3,6 +3,8 @@ has, and cria's agnostic target for file writes and its own file ops."""
 
 from __future__ import annotations
 
+import re
+
 # The names cria has MET. Kept because they are cheap and certain, not because the set is the rule —
 # the rule is `is_shell_tool_name` below.
 SHELL_TOOL_NAMES = {"shell", "bash", "exec_command", "local_shell", "run_terminal_cmd", "shell_command"}
@@ -88,3 +90,63 @@ def with_time_budget(tool: dict, args: dict, ms: int = GATE_TIME_BUDGET_MS) -> d
         if f in props:
             return {**args, f: ms}
     return args
+
+
+# ---------------------------------------------------------------------------
+# Does this command CHANGE something, or only report?
+
+# By shape, not by a list of coreutils (#18/#20): a redirect, an in-place edit flag, a copy/move/
+# create/remove verb, or a scripting one-liner opening a file for writing. Deliberately generous —
+# every consumer so far asks "may I tell the model this call cannot have changed anything", and the
+# honest answer to a maybe is no.
+_SHELL_WRITE = re.compile(
+    r"""(?x)
+    (?<![0-9&])>>?\s*[^\s&|;]                 # > file / >> file, but not 2>&1 or >&2
+  | \b(?:sed|perl|ruby)\b[^|;&]*\s-i\b        # in-place edit
+  | \btee\b
+  | \b(?:mv|cp|install|ln|touch|mkdir|rmdir|rm|unlink|truncate|dd|chmod|chown)\b
+  | \b(?:patch|git\s+(?:apply|checkout|restore|stash|reset|clean|mv|rm))\b
+  | \bopen\s*\([^)]*['"][wax]                 # python/ruby open(path, 'w')
+  | \b(?:writeFileSync|writeFile|appendFileSync)\s*\(
+  | \bFile\.(?:write|open)\b
+  | \bprintf\b[^|;&]*>                        # printf ... > file
+    """)
+
+# Tools whose whole purpose is to change the workspace. Matched by name-part like the shell family,
+# so an unfamiliar harness's `create_file` / `str_replace_editor` / `apply_patch` is still a write.
+_WRITE_TOOL_PARTS = ("write", "edit", "create", "patch", "replace", "insert", "append", "delete",
+                     "remove", "rename", "move", "mkdir")
+
+
+def is_write_tool_name(name: str | None) -> bool:
+    """The tool's NAME says it changes something. Same part-prefix rule as `is_shell_tool_name`."""
+    for part in re.split(r"[_\-. ]+", (name or "").lower()):
+        if any(part.startswith(p) for p in _WRITE_TOOL_PARTS):
+            return True
+    return False
+
+
+def writes_something(name: str | None, command: str | None = None) -> bool:
+    """Could this tool call have CHANGED the workspace?
+
+    The question cria kept answering wrong. `focustrim` folds repeated identical calls and tells the
+    coder *"it has told you everything it can — repeating it will return that same result"*, which is
+    true of a reader and false of a writer. Walked on cycle 4 cell 14
+    (`cart-billing-go × ternary-bonsai`, 15% useful): the note landed on a repeated `write_file` and
+    then on a `sed -i`, and the coder drew the only conclusion the note supports —
+
+        "the write_file tool seems to be caching the old content. Let me try a different approach"
+        "the sed command is not working because the file content seems to be cached or something"
+
+    — and from that turn on wrote its Go source through `python3 <<'PYEOF'` heredocs instead. Those
+    are the writes cria's syntax floor never sees: a `\\t` swallowed inside the Python string turned
+    `taxed` into `axed`, and bash backtick substitution ate the struct tags. The cell's famous typo is
+    an artifact of a write the coder was driven to, not something it typed.
+
+    Generous on purpose. Saying "this might have changed something" costs one un-folded pair of
+    messages; saying it about a writer costs the run."""
+    if is_write_tool_name(name):
+        return True
+    if not is_shell_tool_name(name):
+        return False
+    return bool(command and _SHELL_WRITE.search(command))

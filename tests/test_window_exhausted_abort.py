@@ -59,10 +59,15 @@ class _Rlog:
 
 
 def _sse(frames: int, *, shape: str = "args"):
-    """`frames` SSE frames of NON-repeating content, so only the window guard can fire."""
+    """`frames` SSE frames of NON-repeating content, so only the window guard can fire.
+
+    The fragment used to be `word{i % 997}`, which is not non-repeating at all — it is a 997-fragment
+    cycle, and once the wide degenerate check could see a repeating unit larger than 682 characters it
+    fired here at three cycles, correctly. A stream that really does say the same ~10 KB three times
+    over is the thing that check exists for; this fixture's premise is that it does not."""
     lines = []
     for i in range(frames):
-        frag = f" word{i % 997} "
+        frag = f" word{i} "
         delta = ({"tool_calls": [{"index": 0, "function": {"arguments": frag}}]}
                  if shape == "args" else {"content": frag})
         lines.append(b"data: " + json.dumps({"choices": [{"delta": delta}]}).encode() + b"\n")
@@ -233,10 +238,16 @@ class TheFractionIsNotACapTests(unittest.TestCase):
 
 class TheCoderIsToldSomethingActionableTests(unittest.TestCase):
     def test_a_fourth_notice_exists(self):
+        """It used to pin "write the file in pieces", which is the sentence that had to go: the
+        notice was asserting WHICH call overran when cria had the tool name and it was an `edit_file`
+        whose payload had already finished (cycle 4 cell 4). What it must still do is be its own
+        notice with its own actionable step — see test_the_guard_selects_it_before_the_others and
+        tests/test_a_whole_file_repeating_is_seen.py."""
         from cria import prompts
         t = prompts.load("rumination_guard_window")
-        self.assertIn("write the file in pieces", t.lower())
+        self.assertIn("single tool call", t.lower())
         self.assertNotIn("second-guessing", t)
+        self.assertNotIn("almost always means", t)
 
     def test_the_guard_selects_it_before_the_others(self):
         import inspect

@@ -2995,13 +2995,28 @@ class Loop:
         if item is None or item.done:
             return None
         msgs = body.get("messages", [])
+        # DO NOT TELL THE JUDGE NO CHECKS RAN WHEN THEY DID. This path composes no gate of its own,
+        # and it used to say so by handing the critic `probe_digest_none` — two lines that assert
+        # "SYNTAX FLOOR: did not run" and "PROBES: none ran". Walked on cycle 4 cell 18
+        # (`rust-toml-cli x ternary-bonsai`): two calls earlier cria had handed a reasoner four red
+        # cargo failures under "GROUND TRUTH FROM THE REPO'S CHECKS" — `src/main.rs:31: type
+        # annotations needed`, from clippy, check and test alike — and this judge was told, in the
+        # same session, that the repo's checks did not exist. Two judges, two calls apart, opposite
+        # ground truth; whichever one is wrong, cria said it (#5b).
+        #
+        # Composing no gate is not the same fact as no gate having run. When the session holds a
+        # reading, pass the reading: `last_gate_flag` is the finding-set every gate reader persists,
+        # and the `probe_red` slot is what carries it into the critic's prompt.
+        findings = (getattr(sess, "last_gate_flag", "") or "").strip()
         ok, reason = self._verify(
-            item.text, prompts.load("periodic_step_claim"), prompts.load("probe_digest_none"),
+            item.text, prompts.load("periodic_step_claim"),
+            prompts.load("probe_digest_none") if not sess.last_gate_ran else "",
             self._grounded_evidence(sess, body, rlog), rlog, idx=idx, total=total, key=key,
             coder_tools=_coder_tools_summary(body.get("tools")),
             routes=known_routes(msgs, sess),
             sources_read=research.sources_read(_extract_fetches(msgs), msgs),
             workspace_root=sess.workspace_root or "",
+            red_findings=findings if sess.last_gate_red else "",
             gate_red=bool(sess.last_gate_red))
         # SAY WHAT IT DID, always — the lesson _research_check records: a guard that is silent when it
         # declines cannot be told apart from one that never ran.
@@ -7529,6 +7544,15 @@ def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str |
 _VERSION_SHAPED = re.compile(
     r"(?<![\w.-])(?:v\d+(?:\.\d+)+[\w.+-]*|\d+\.\d+\.\d+[\w.+-]*|@\s*v?\d+(?:\.\d+)+[\w.+-]*)")
 
+# APPEARING IN AN ERROR THAT REJECTED YOU IS NOT ATTESTATION. Narrow on purpose: this is the registry
+# saying THIS VERSION STRING IS NOT A THING, which is the opposite of `missing go.sum entry for x
+# v1.4.0` — there the version is right and merely unrecorded, and a steer naming it is correct. The
+# distinction is the whole reason this is a phrase list and not "any line with the word error".
+_VERSION_REJECTED = re.compile(
+    r"(?i)invalid version|unknown revision|no matching version|not a valid version|"
+    r"could ?n[o']?t find (?:a )?version|no versions? of .* match|version solving failed|"
+    r"unable to (?:find|resolve) .*version|no such version")
+
 
 def _invented_version(directive: str, evidence: str) -> str | None:
     """A version string in the steer that appears NOWHERE in the evidence cria gathered — or None.
@@ -7562,10 +7586,13 @@ def _invented_version(directive: str, evidence: str) -> str | None:
     with it removed says "edit go.mod to add the required line" and helps nobody. Silence is the safe
     direction (#1).
 
-    WHAT IT BLOCKS IS THE FIRST ONE, and that is the one that matters. Once the coder has pasted the
-    invented version into `go.mod`, it is genuinely on disk and cria's evidence genuinely contains it,
-    so a later steer repeating it passes — correctly, by this rule's own terms. The cascade in cell 20
-    had four steers and needed only the first to be stopped.
+    AND THE REPEATS, when the evidence attests the version ONLY by rejecting it. By call 0086 the
+    coder had written the fabrication into `go.mod`, so the token really was in the evidence — four
+    times, every one inside `invalid version: unknown revision 001`. cria read its own record of the
+    registry refusing the string and prescribed the string anyway, twice, and the coder obeyed both
+    times. That is what `_VERSION_REJECTED` answers, and it is deliberately a short phrase list
+    rather than "a line with the word error": `missing go.sum entry for x v1.4.0` is an error line
+    naming a version that is perfectly real, and a steer quoting it is right.
 
     BLAST RADIUS, measured over cycle 4: of **71 distinct steers cria delivered across the 24 runs,
     2 contain a version-shaped token at all**. This rule cannot silence much, which is what makes it
@@ -7575,7 +7602,18 @@ def _invented_version(directive: str, evidence: str) -> str | None:
     ev = evidence or ""
     for m in _VERSION_SHAPED.finditer(directive):
         tok = m.group(0).lstrip("@").strip()
-        if tok and tok not in ev:
+        if not tok:
+            continue
+        lines = [ln for ln in ev.splitlines() if tok in ln]
+        if not lines:
+            return tok
+        # ATTESTED ONLY BY ITS OWN REJECTION. Walked on the same cell: by call 0086 the coder had
+        # already written the fabricated version to go.mod, so it WAS in the evidence — four times,
+        # every one of them inside `invalid version: unknown revision 001`. cria read its own record
+        # of the registry refusing the string and prescribed the string, twice, and the coder obeyed
+        # both times. A literal whose only appearance anywhere is inside the error that rejected it
+        # is not something cria may hand back as an order.
+        if all(_VERSION_REJECTED.search(ln) for ln in lines):
             return tok
     return None
 

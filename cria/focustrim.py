@@ -160,6 +160,28 @@ def _call_is_gate(tc: dict) -> bool:
     return _GATE_MARKER in args
 
 
+def _call_mutates(tc: dict) -> bool:
+    """The tool call could have CHANGED the workspace — so cria may not tell the coder that
+    repeating it is pointless. Delegates to `shelltool.writes_something`, the one owner of that
+    question (#23); see its docstring for the run this cost."""
+    from . import shelltool
+    fn = tc.get("function") or {}
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {}
+    cmd = ""
+    if isinstance(args, dict):
+        for k in ("command", "cmd", "script", "input"):
+            v = args.get(k)
+            if v:
+                cmd = v if isinstance(v, str) else json.dumps(v)
+                break
+    return shelltool.writes_something(str(fn.get("name") or ""), cmd)
+
+
 def _is_gate_probe(tc: dict, result: dict) -> bool:
     """cria's own ground-truth gate probe (its command/result carries the ___CRIA_GATE_ markers).
     Exempt from the failure-squash: it is the ground truth, not a dead end to remove."""
@@ -204,7 +226,18 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
                 # Never fold cria's OWN gate probe into a dup group — two identical gate scripts
                 # would collapse and drop an earlier probe+result pair cria depends on (same class
                 # as the failure-squash exemption).
-                if cid is not None and not _call_is_gate(tc):
+                #
+                # AND NEVER FOLD A CALL THAT CHANGED SOMETHING. The note this fold emits says the
+                # call "has told you everything it can — repeating it will return that same result",
+                # which is a statement about a READER. Walked on cycle 4 cell 14
+                # (`cart-billing-go x ternary-bonsai`, 15% useful): it landed on a repeated
+                # `write_file` and then on a `sed -i`, and the coder concluded the only thing the
+                # note supports — "the write_file tool seems to be caching the old content", "the
+                # sed command is not working because the file content seems to be cached" — and
+                # moved every later write into `python3 <<'PYEOF'` heredocs, where cria's syntax
+                # floor cannot see them. A swallowed `\t` made `taxed` into `axed` and bash ate the
+                # struct tags. The cell's famous typo is an artifact of a write cria drove it to.
+                if cid is not None and not _call_is_gate(tc) and not _call_mutates(tc):
                     name, norm = _fingerprint(tc)
                     occ.setdefault((name, norm, _result_key(result_by_id.get(cid, ""))), []).append(cid)
     drop_ids = {cid for cids in occ.values() if len(cids) > 1 for cid in cids[:-1]}

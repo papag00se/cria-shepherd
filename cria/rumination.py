@@ -155,6 +155,67 @@ def degenerate_tail(text: str, window: int = DEGENERATE_RUN_CHARS) -> bool:
     return _smallest_period(tail) <= len(tail) // MIN_DEGENERATE_REPEATS
 
 
+# THE SAME RULE, WIDE ENOUGH TO SEE A WHOLE FILE REPEATING.
+#
+# `DEGENERATE_RUN_CHARS // MIN_DEGENERATE_REPEATS` bounds the visible unit at 682 characters, and the
+# most expensive single call in the campaign repeated a unit of **6,664**. Cycle 4 cell 4,
+# `feed-pipeline-java x gemma4`: the model composed a complete, correct commons-csv rewrite — 169
+# lines, verified afterwards at **4 of 5 on the task's own verifier**, 34.3x speedup, 4 threads, clean
+# `mvn compile` — inside the first 8% of one generation, and then emitted the same 6,664-character
+# `old_string` block twenty-two more times. Inside any 2,048-character window that text is not
+# periodic, so `degenerate_tail` correctly returned False for all 40,389 frames and the stream ran
+# 721 seconds — 74% of the cell's wall clock — until the window-exhaustion backstop stopped it. The
+# whole generation was discarded and the cell scored 0.
+#
+# The first repeat completes at ~13 KB and the third at ~26 KB, so this fires at roughly two minutes
+# instead of twelve. It is the same three-whole-repeats rule the module already argues for, one order
+# of magnitude up — the docstring above records the last time this bound was raised, from 8
+# characters to 682, after a 260-character period was measured.
+#
+# STRIDED, because it is not free. KMP over 32 KB per streamed chunk, 40,000 times, is not
+# affordable; once per 2,048 new characters is ~76 evaluations for that stream. The cheap 2,048-char
+# check still runs on every chunk and is untouched — a fast unit is caught fast.
+WIDE_RUN_CHARS = 32768
+WIDE_EVAL_STRIDE = 2048
+
+# GROWS WITH THE STREAM instead of waiting for a full 32 KB. `degenerate_tail` refuses to answer
+# until it has a whole window, which for a 6,664-character unit means 32 KB of text — but three whole
+# repeats of that unit is only 20 KB, and the point of this check is to fire as soon as three repeats
+# exist. So the window is whatever has arrived, capped at 32 KB, floored here. The floor still gives
+# a strictly wider reach than the cheap check: 8,192 // 3 = 2,730 characters against 682.
+WIDE_MIN_CHARS = 8192
+
+# The probe that finds the period. Long enough that its earlier occurrence is the real repeat rather
+# than an ordinary coincidence of source text (a 512-character span recurring verbatim is not chance),
+# short enough to stay well inside one unit.
+WIDE_PROBE_CHARS = 512
+
+
+def degenerate_wide(text: str) -> bool:
+    """True when the generated tail is three or more whole repeats of one block, for a block up to
+    ~10.9 KB — a whole file being re-emitted, which the cheap 682-character check cannot see.
+
+    Meant to be called on a stride rather than per chunk; see WIDE_RUN_CHARS for the run this exists
+    for and why it is not free."""
+    if len(text) < WIDE_MIN_CHARS:
+        return False
+    tail = text[-WIDE_RUN_CHARS:]
+    # ANCHORED AT THE END, not over the whole window. `_smallest_period` answers "is this WHOLE
+    # string periodic", so any non-repeating prefix still sitting in the window — the real answer the
+    # model wrote before it locked up, which is exactly what is there — makes it say no. Instead:
+    # take the last WIDE_PROBE_CHARS as a probe, find where that same text last appeared before it,
+    # and the distance is the candidate period. Then verify it really repeats.
+    probe = tail[-WIDE_PROBE_CHARS:]
+    prev = tail.rfind(probe, 0, len(tail) - WIDE_PROBE_CHARS)
+    if prev < 0:
+        return False
+    period = len(tail) - WIDE_PROBE_CHARS - prev
+    if period < 1 or period * MIN_DEGENERATE_REPEATS > len(tail):
+        return False
+    run = tail[-period * MIN_DEGENERATE_REPEATS:]
+    return all(run[i] == run[i - period] for i in range(period, len(run)))
+
+
 def _smallest_period(s: str) -> int:
     """The shortest string whose repetition builds ``s`` — allowing a PARTIAL final block. Returns
     ``len(s)`` when ``s`` is not periodic at all.

@@ -573,6 +573,8 @@ class Upstream:
         stream_error: str | None = None
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
+        wide_tail = ""      # the same tail, 32 KB of it, for the strided wide-unit check
+        wide_evaled = 0     # chars of wide_tail seen at the last wide evaluation
         chunks_seen = 0     # SSE frames carrying a choices delta
         streamed_chars = 0  # of those, how many characters cria could actually read
         # The room this generation has: the model's window minus what the prompt already spent.
@@ -642,6 +644,7 @@ class Upstream:
                                  *(((tc.get("function") or {}).get("arguments")) for tc in (tcs or []))):
                         if frag:
                             gen_tail = (gen_tail + frag)[-rumination.DEGENERATE_RUN_CHARS:]
+                            wide_tail = (wide_tail + frag)[-rumination.WIDE_RUN_CHARS:]
                             streamed_chars += len(frag)   # anything cria could actually read
                             rlog.live_chars += len(frag)  # the ticker's live tok/s numerator
                     if choice.get("finish_reason"):
@@ -680,6 +683,17 @@ class Upstream:
                     rlog.emit("rumination.abort", level="warning", dead_stream=True,
                               chunks=chunks_seen)
                     break
+                # THE WIDE UNIT, on a stride. The cheap check above cannot see a repeating block
+                # larger than 682 characters; cell 4's was 6,664 — a whole Java file re-emitted —
+                # and the correct answer it had already finished was discarded twelve minutes later
+                # by the window backstop. See rumination.WIDE_RUN_CHARS.
+                if aborted is None and len(wide_tail) - wide_evaled >= rumination.WIDE_EVAL_STRIDE:
+                    wide_evaled = len(wide_tail)
+                    if rumination.degenerate_wide(wide_tail):
+                        aborted = {"degenerate": True, "chars": len(wide_tail)}
+                        rlog.emit("rumination.abort", level="warning", degenerate=True,
+                                  chars=len(wide_tail), wide=True)
+                        break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
                     # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
                     # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,

@@ -15,5 +15,12 @@ anchor = your old_string is not an exact match. Your copy first differs from the
 # never located. A message that cannot name a line must not print one (5b): this one says what is
 # true — there is no exact match, here is the real text — and claims nothing else.
 anchor_noline = your old_string is not an exact match. Here is the file's real text where it should be:\n---\n{{ANCHOR}}\n---\nUse THESE lines verbatim in old_string. A line you remember that is not shown here is not in the file.
-identical = old_string and new_string are identical — this edit changes nothing, and you cannot pin the exact current text. Read the file, then make one targeted edit.
+# WHAT IS ACTUALLY WRONG IS new_string. This used to add "and you cannot pin the exact current text.
+# Read the file, then make one targeted edit" — which says old_string is the broken argument, when
+# old_string matched the file perfectly and only new_string failed to differ. Walked on cycle 4 cell
+# 14 (`cart-billing-go x ternary-bonsai`): the coder obeyed the wrong half four times over — read
+# the file, resubmit the identical pair, read the file, resubmit — and its own `grep -n` came back
+# with the exact bytes it had been pinning all along. A message that names the wrong argument sends
+# the coder to fix what is not broken (5b).
+identical = old_string and new_string are identical, so this edit asks to replace text with itself and changes nothing. old_string matched the file — it is new_string that has to differ. Send it again with the correction actually applied to new_string.
 no_anchor = your old_string is not in the file (likely a stale copy). Read the file to get its exact current text, then make one targeted edit.
