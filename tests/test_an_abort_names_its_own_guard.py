@@ -80,5 +80,30 @@ class TheHeaderSaysWhyStoppingWasFreeTests(unittest.TestCase):
         self.assertIn("room", h)
 
 
+class TheLogEventNamesItTooTests(unittest.TestCase):
+    """The capture header was fixed first; the LOG event had the identical defect one seat over, and
+    the log is what gets read when someone asks why a call stopped. Found live mid-cycle-4 answering
+    exactly that question: a 194-second degenerate abort logged `hits: None, reasoning_tokens: None`."""
+
+    def test_the_emit_selects_the_guards_own_counters(self):
+        import inspect
+
+        from cria import loop
+        src = inspect.getsource(loop.guard_rumination)
+        i = src.index('rlog.emit("loop.rumination"')
+        self.assertIn("guard=which", src[i:i + 220])
+        # the rumination counters must no longer be passed unconditionally
+        self.assertNotIn('hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens")', src)
+
+    def test_every_guard_has_a_counter_set(self):
+        import inspect
+
+        from cria import loop
+        src = inspect.getsource(loop.guard_rumination)
+        for g in ("degenerate", "window_exhausted", "dead_stream", "rumination"):
+            with self.subTest(guard=g):
+                self.assertIn(f'"{g}"', src)
+
+
 if __name__ == "__main__":
     unittest.main()

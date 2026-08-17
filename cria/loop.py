@@ -7873,8 +7873,18 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
         v = coder.get(bodykeys.RUMINATION) or {}
         attempt += 1
-        rlog.emit("loop.rumination", step=step, attempt=attempt,
-                  hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens"))
+        # WHICH GUARD, AND ONLY ITS OWN NUMBERS — the same rule the capture header now follows, at
+        # the seat that is actually read when someone asks why a call stopped. Four backstops abort a
+        # turn and this reported the RUMINATION watcher's two counters for all of them, so a
+        # degenerate-run abort logged `hits: None, reasoning_tokens: None`. Seen live mid-cycle-4
+        # while answering exactly that question about a 194-second call.
+        which = ("degenerate" if v.get("degenerate") else
+                 "window_exhausted" if v.get("window_exhausted") else
+                 "dead_stream" if v.get("dead_stream") else "rumination")
+        counts = {"degenerate": ("chars",), "window_exhausted": ("room", "frames"),
+                  "dead_stream": ("chunks",), "rumination": ("hits", "reasoning_tokens")}[which]
+        rlog.emit("loop.rumination", step=step, attempt=attempt, guard=which,
+                  **{k: v.get(k) for k in counts})
         # TWO detectors abort a turn, and they are not the same failure — so they do not get the same
         # notice. The phrase watcher fires on second-guessing ("actually", "wait") and its notice says
         # stop re-examining. The degenerate-tail backstop (upstream.py) fires on a stream that has
