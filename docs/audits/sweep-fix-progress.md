@@ -280,6 +280,31 @@ The model's tests share one repo-relative `orders.db` that nothing deletes, so e
 
 **Still open — the network-off leg.** `proberun.py:781-790` documents this exact failure from a previous cycle and its fix was half of one: the second run is now suppressed when the online run FAILED (where the comparison is impossible), which is precisely when the double-run was harmless, and still permitted when it PASSED, which is when the side effects break the next check. The remedy is to run the offline leg against a copy of the workspace rather than in it — a strengthening of the existing mitigation, not a revert — and it touches the composed gate script, so it gets its own pass.
 
+### 45. Twelve and a half minutes of nothing, and all four guards silent — because all four count arrivals
+`shipping-rates-rb × gemma4` call 0070, the **second** occurrence on the same cell and model, one cycle after `DEAD_STREAM_CHUNKS` was written for the first. 43,442 tokens, `predicted_ms 755,470`, `message.content: null`, `aborted: False`, and not one `rumination.abort` in the session.
+
+**Two explanations ruled out from the record**: not the buffered re-ask (no `upstream.stream_error`, and the timings say `source: "cria-measured"`, which only a streamed call gets); not a bad token estimate gating the window guard (cria estimated 5,523 sent against a real 5,710, so `window_room` was ≈43,600).
+
+**What was left is provable from the ABSENCE of the events.** `tok_per_s` is 43442/755.47 = 57.5 exactly, so `t_first` never got set and fell back to `t0` — no frame ever carried content or reasoning, so `streamed_chars` was 0. The window guard not firing puts `chunks_seen` under 40,139; the dead-stream guard not firing, at `streamed_chars == 0`, puts it under 400. **cria received fewer than 400 readable frames while the server generated 43,442 tokens.**
+
+The common root: every abort condition in the stream loop thresholds on what ARRIVES — frames for the window and dead-stream guards, characters for both degenerate checks. A server that goes quiet while generating is below all four for the whole call.
+
+**Fixed** with the one signal a quiet server cannot suppress: `DEAD_STREAM_SECONDS`, time to the first readable byte. Generous — prompt processing on a large context is the only honest reason for a long quiet head, and the measured runs reach their first token in seconds — and three minutes still returns nine and a half of the twelve. **Also fixed**: `upstream.done` now records `frames` and `read_chars` on every call, which nothing did, which is why the count above had to be deduced rather than read (#12).
+
+### 46. MEASURED — the repetition redirect is the wrong instrument for an install loop
+The residual recorded under #31, now settled by replaying both Ruby cells' **real forwarded call sequences with their real tool results** through `guard_track_repetition` at HEAD:
+
+| cell | real calls | of which cria refused | redirect fires |
+|---|---:|---:|---:|
+| shipping-rates-rb × ternary-bonsai | 48 | 9 | **0** |
+| shipping-rates-rb × nemotron-elastic | 45 | 6 | 1 |
+
+The flush fix (#31) was necessary and is not sufficient. The three install attempts inside one window are `gem install eu_countries --user-dir ~/.rubygems 2>&1 | tail -5`, `which bundler; gem install bundler 2>&1 | tail -5`, and `gem install eu_countries 2>&1 | tail -10` — Jaccard 0.636 against a 0.7 bar, four words of jitter against a bar of two. Making `tail -5`/`tail -10` boilerplate lifts the first pair to 0.778 and they match — **and it still would not fire**, because that only yields two matches in the window, not three.
+
+**So this is not a matcher-tuning problem.** The loop is not "the same action three times in twelve calls"; it is twenty different attempts at one goal. The signal that IS present is cria's own: it refused 9 of 48 calls in that run and 6 of 45 in the sibling, and it knows it refused them. Counting refusals needs no similarity judgement at all.
+
+Recorded rather than built: that is a new trigger, and #1 says the bar for adding one is high. It is the operator's call.
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.

@@ -683,6 +683,18 @@ class Upstream:
                     rlog.emit("rumination.abort", level="warning", dead_stream=True,
                               chunks=chunks_seen)
                     break
+                # …AND THE SAME DEATH WITH TOO FEW CHUNKS TO COUNT. The condition above needs 400
+                # frames; the measured call delivered fewer than that in twelve and a half minutes
+                # while the server generated 43,442 tokens. Every other guard here thresholds on
+                # arrivals too, so all four stayed silent for the whole call. The clock is the one
+                # signal a quiet server cannot suppress. See rumination.DEAD_STREAM_SECONDS.
+                if aborted is None and streamed_chars == 0 and \
+                        time.monotonic() - t0 >= rumination.DEAD_STREAM_SECONDS:
+                    elapsed = round(time.monotonic() - t0, 1)
+                    aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed}
+                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
+                              chunks=chunks_seen, seconds=elapsed)
+                    break
                 # THE WIDE UNIT, on a stride. The cheap check above cannot see a repeating block
                 # larger than 682 characters; cell 4's was 6,664 — a whole Java file re-emitted —
                 # and the correct answer it had already finished was discarded twelve minutes later
@@ -755,8 +767,12 @@ class Upstream:
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
         callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
         self._calibrate(body.get("model"), usage, sent_estimate, rlog)
+        # FRAMES AND READABLE CHARS, ALWAYS. Diagnosing why a guard declined needs the numbers it
+        # declined on, and nothing recorded them: the 12-minute dead call above could only be pinned
+        # down by DEDUCING the frame count from which guards did NOT fire (#12).
         rlog.emit("upstream.done", total_ms=round((t_end - t0) * 1000, 1), tokens=tokens,
-                  tok_per_s=tok_s, from_usage=bool(usage), aborted=bool(aborted))
+                  tok_per_s=tok_s, from_usage=bool(usage), aborted=bool(aborted),
+                  frames=chunks_seen, read_chars=streamed_chars)
         return json.dumps(completion).encode("utf-8")
 
 

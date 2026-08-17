@@ -80,6 +80,27 @@ DEGENERATE_RUN_CHARS = 2048
 MIN_DEGENERATE_REPEATS = 3
 
 
+# …AND THE SAME DEATH WITH NO CHUNKS TO COUNT. Every abort condition in the stream loop thresholds
+# on what ARRIVES — frames for the window guard and the dead-stream guard, characters for the two
+# degenerate checks. A server that generates for minutes while sending cria almost nothing is below
+# all four thresholds for the whole call, and no guard can fire.
+#
+# Measured twice, on the same cell and model, one cycle apart — `shipping-rates-rb x gemma4`. Cycle 4
+# call 0070: `completion_tokens 43,442`, `predicted_ms 755,470` (12 min 35 s), `message.content:
+# null`, `aborted: False`, and not one rumination/dead-stream/window event in the whole session. The
+# frame count is provable from the ABSENCE of those events: the window guard not firing puts
+# chunks_seen under 40,139, and the dead-stream guard not firing with streamed_chars == 0 puts it
+# under 400. So cria received fewer than 400 readable frames in twelve and a half minutes, on a run
+# whose entire budget was thirty.
+#
+# THE CLOCK IS THE ONE THING THAT CANNOT GO QUIET. A call that has produced nothing cria can read
+# after this long is a dead turn whatever the server is doing internally. Generous on purpose: this
+# is time to the FIRST readable byte, and prompt processing on a large context is the only honest
+# reason for a long one — the measured runs reach their first token in seconds. Three minutes still
+# returns nine and a half of the twelve to the model.
+DEAD_STREAM_SECONDS = 180.0
+
+
 # A DEAD STREAM: chunks keep arriving and NOTHING cria can read is in them. Not a runaway of bad
 # output — an absence of output, for as long as the server will keep going.
 #
