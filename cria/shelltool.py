@@ -99,13 +99,22 @@ def with_time_budget(tool: dict, args: dict, ms: int = GATE_TIME_BUDGET_MS) -> d
 # create/remove verb, or a scripting one-liner opening a file for writing. Deliberately generous —
 # every consumer so far asks "may I tell the model this call cannot have changed anything", and the
 # honest answer to a maybe is no.
+# A VERB ONLY COUNTS IN COMMAND POSITION. Reading the word anywhere in the line is the same defect
+# the walks kept finding in cria's own matchers: `grep -n "install" README.md`, `grep -rn touch src/`,
+# `go doc cp` and `echo "do not rm anything"` are all read-only, and all four matched a bare `\b(mv|
+# cp|install|…)\b`. Anchored to the start of the line or to what follows `;`, `&&`, `||`, `|` or `(`,
+# none of them do — and every real invocation still does, because that is where a command goes.
+_CMD_POS = r"(?:^|[;&|(\n]|&&|\|\|)\s*(?:sudo\s+|env\s+\S+=\S+\s+)*"
 _SHELL_WRITE = re.compile(
-    r"""(?x)
+    r"""(?xm)
     (?<![0-9&])>>?\s*[^\s&|;]                 # > file / >> file, but not 2>&1 or >&2
   | \b(?:sed|perl|ruby)\b[^|;&]*\s-i\b        # in-place edit
-  | \btee\b
-  | \b(?:mv|cp|install|ln|touch|mkdir|rmdir|rm|unlink|truncate|dd|chmod|chown)\b
-  | \b(?:patch|git\s+(?:apply|checkout|restore|stash|reset|clean|mv|rm))\b
+  | """ + _CMD_POS + r"""(?:tee|mv|cp|install|ln|touch|mkdir|rmdir|rm|unlink|truncate|dd|chmod|chown|patch)\b
+  | """ + _CMD_POS + r"""git\s+(?:apply|checkout|restore|stash|reset|clean|mv|rm)\b
+    # A package manager's SUBCOMMAND, by shape rather than by a list of managers: `gem install`,
+    # `npm add`, `pip uninstall`, `cargo add`, `apt remove`, `go get`. Every one of them changes
+    # state — a global install writes outside the project, a local one populates it.
+  | """ + _CMD_POS + r"""\S+\s+(?:install|uninstall|add|remove|update|upgrade|get)\b
   | \bopen\s*\([^)]*['"][wax]                 # python/ruby open(path, 'w')
   | \b(?:writeFileSync|writeFile|appendFileSync)\s*\(
   | \bFile\.(?:write|open)\b
@@ -149,4 +158,24 @@ def writes_something(name: str | None, command: str | None = None) -> bool:
         return True
     if not is_shell_tool_name(name):
         return False
-    return bool(command and _SHELL_WRITE.search(command))
+    return bool(command and _SHELL_WRITE.search(_without_quoted(command)))
+
+
+def _without_quoted(command: str) -> str:
+    """The command with quoted spans blanked out, so a verb inside a STRING is not a verb.
+
+    `grep -n "install" README.md` and `echo "do not rm anything"` read as writes otherwise — the same
+    "a match is not a meaning" defect (#23b) the walks kept finding in cria's other matchers. Blanked
+    rather than removed, so every offset in the line still lines up."""
+    out, quote = [], ""
+    for ch in command or "":
+        if quote:
+            out.append(" " if ch != quote else ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+        else:
+            out.append(ch)
+    return "".join(out)

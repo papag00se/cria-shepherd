@@ -174,6 +174,44 @@ class TheHealthyCycleStillResetsTests(unittest.TestCase):
         self.assertEqual(loop._denied_signatures(msgs), [])
 
 
+class TheWriteDetectorReadsPOSITIONNotOccurrenceTests(unittest.TestCase):
+    """A match is not a meaning (#23b) — the defect the walks kept finding in cria's other matchers,
+    caught in the one written to fix them. A bare `\b(mv|cp|install|rm|touch)\b` read those words
+    anywhere in the line, so four read-only commands classified as writes."""
+
+    READS = ('grep -n "install" README.md', "grep -rn touch src/", "go doc cp",
+             'echo "do not rm anything"', 'grep -c "rm -rf" script.sh',
+             "cat notes.txt | grep move", "ls -la", "go build ./... 2>&1", "python3 -m pytest -q")
+    WRITES = ("gem install countries", "npm add left-pad", "pip uninstall x", "cargo add toml",
+              "go get ./...", "rm -rf build", "cp a b", "sed -i s/a/b/ f.go", "echo hi > f.txt",
+              "tee out.txt", "mkdir -p vendor/bundle && gem install x",
+              "git checkout abc -- F.java", "sudo mkdir /opt/x",
+              "bundle3.2 install --path vendor/bundle")
+
+    def test_a_verb_that_is_not_in_command_position(self):
+        from cria import shelltool
+        for cmd in self.READS:
+            with self.subTest(command=cmd):
+                self.assertFalse(shelltool.writes_something("exec_command", cmd), cmd)
+
+    def test_every_real_write_still_matches(self):
+        from cria import shelltool
+        for cmd in self.WRITES:
+            with self.subTest(command=cmd):
+                self.assertTrue(shelltool.writes_something("exec_command", cmd), cmd)
+
+    def test_a_verb_inside_a_string_is_not_a_verb(self):
+        from cria import shelltool
+        self.assertEqual(shelltool._without_quoted('echo "rm -rf /" x'), 'echo "        " x')
+
+    def test_blanking_keeps_the_line_length(self):
+        """Blanked rather than removed, so every offset still lines up."""
+        from cria import shelltool
+        for cmd in self.READS + self.WRITES:
+            with self.subTest(command=cmd):
+                self.assertEqual(len(shelltool._without_quoted(cmd)), len(cmd))
+
+
 class ItIsCriaSOwnFactNotAJudgementTests(unittest.TestCase):
     def test_the_denial_is_recognised_by_its_owner(self):
         """#23: `denial.is_denied` is what decides this everywhere else too."""
