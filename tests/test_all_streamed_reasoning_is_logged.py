@@ -172,7 +172,13 @@ class TheAbortMarkerIsUnchangedTests(unittest.TestCase):
             up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]},
                             Rlog(), watch=det.check)
         body = files(tmp)[0].read_text()
-        self.assertIn("RUMINATION GUARD FIRED", body)
+        # THE GUARD THAT ACTUALLY FIRED. This fixture repeats one sentence, so the DEGENERATE-RUN
+        # backstop reaches it before the rumination watcher's marker gate does — and the header used
+        # to name the rumination guard regardless, rendering its counters as `None`. The assertion
+        # tracked the misattribution rather than the behaviour.
+        self.assertIn("DEGENERATE-RUN ABORT", body)
+        self.assertIn("ABORTED HERE by the degenerate-run backstop", body)
+        self.assertNotIn("None", body.splitlines()[0])   # no other guard's counters
         self.assertNotIn("INCOMPLETE REASONING", body)   # the abort has its own, more specific label
 
 

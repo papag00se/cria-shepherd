@@ -296,8 +296,12 @@ class ChatWatchedTests(unittest.TestCase):
             with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
                 up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog(), watch=det.check)
             saved = list(Path(tmp).rglob("*.reasoning.txt"))[0].read_text()
-            self.assertIn("RUMINATION GUARD FIRED", saved)          # marked at the top
-            self.assertIn("ABORTED HERE by the rumination guard", saved)  # and where it was cut
+            # A repeated sentence trips the DEGENERATE-RUN backstop first, and the header names the
+            # guard that fired rather than always naming the rumination one (which would print its
+            # counters as `None` — a guard inventing numbers it did not count).
+            self.assertIn("DEGENERATE-RUN ABORT", saved)            # marked at the top
+            self.assertIn("ABORTED HERE by the degenerate-run backstop", saved)  # and where it was cut
+            self.assertNotIn("None", saved.splitlines()[0])
             self.assertIn("let me reconsider", saved)               # the full reasoning is still there
 
     def test_rumination_abort_cuts_stream_early(self):
