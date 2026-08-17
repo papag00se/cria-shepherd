@@ -210,6 +210,15 @@ Same cell 24, and the other half of #21. Handed the task instead of a summary, `
 
 #21 fixes what the orienter is SHOWN. This adds the clause it lacked about what it may SAY: never name a project, crate, file, module or command the summary does not already name, and never tell the coder to start over.
 
+### 38. The same pom.xml refused eight times, at a line the coder could not see
+Cycle 4 cell 22, `feed-pipeline-java × nemotron-elastic`, 5% useful. The model omitted `</parameter>` and opened a second call in the same turn, so every `pom.xml` it sent ended `</project>` / `</function>` / `</tool_call>` / `<tool_call>` / `<function=write_file>` / `<parameter=path>` / `src/main/java/pipeline/Importer.java`. cria refused it — correctly, that is not well-formed XML — with *"does not parse — not well-formed (invalid token): line 34, column 1"*.
+
+Line 34 was `</function>`. **The coder cannot re-read its own rejected payload** (cria elides it as `[1107 characters — this edit was REJECTED…]`), so a line number into an invisible document points at nothing. Across eight refusals its reasoning never once mentions line 34; at call 0016 it re-derived the identical file by hand and was refused again. It escaped only by switching to `edit_file`, which put a `<dependency>` block outside `<dependencies>` and left the project unreadable by Maven for the rest of the run.
+
+**Fixed twice over, and they are not alternatives.** *Cut the junk*: `_protocol_debris` answers the all-or-nothing case and correctly declines when a genuine file merely has tags appended — that is the expensive case, and cria already holds the knowledge (`massage._LEAK_DEBRIS` lists these sentinels; `_bounded_xml_params` cuts them from arguments cria itself parses; the gap was a SERVER-parsed call, which `recover_leaked_tool_calls` skips by design). *Show the line*: when the validator does refuse, quote the line its coordinate names — what the sibling EDIT path has done for months.
+
+Only a trailing run is cut, and the cut may only land ON a protocol tag: a bare single-token line is scanned past but never becomes the cut, because a bare token both trails the tags (the next call's `path` value) and precedes them in ordinary markup (`</project>`, `}`), where cutting at it would eat the file.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.

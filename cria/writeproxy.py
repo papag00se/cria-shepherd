@@ -58,6 +58,57 @@ def _protocol_debris(content: str) -> bool:
     return all(len(ln.split()) == 1 for ln in lines if ln not in tags)
 
 
+def trim_fused_tail(content: str) -> str:
+    """Real file content with a fused call's debris stuck to its END, cut back to the real content.
+
+    `_protocol_debris` answers the all-or-nothing case — content that is NOTHING but protocol tags —
+    and correctly says no when a genuine file has the tags appended to it. That is the expensive
+    case. Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful): the model
+    omitted `</parameter>` and opened a second call in the same turn, so every `pom.xml` it sent
+    ended
+
+        </project>
+        </function>
+        </tool_call>
+        <tool_call>
+        <function=write_file>
+        <parameter=path>
+        src/main/java/pipeline/Importer.java
+
+    cria refused it eight times as malformed XML at "line 34, column 1" — which is exactly where the
+    junk began — and the model, unable to re-read its own rejected payload, re-derived the identical
+    file by hand and was refused again. It escaped only by switching to `edit_file`, which then put a
+    `<dependency>` block outside `<dependencies>` and left the project unreadable by Maven.
+
+    cria already knows these sentinels: `massage._LEAK_DEBRIS` lists them as tokens that NEVER appear
+    in legitimate prose, and `massage._bounded_xml_params` cuts them out of arguments cria itself
+    parses. This is the same knowledge applied where a SERVER-parsed tool call delivered them instead.
+
+    ONLY A TAIL, and only one made entirely of tags and bare tokens: a file whose real lines merely
+    MENTION a tag (a leak-detector's own source, say) has multi-word lines all the way down and is
+    returned untouched, which is the same distinction `_protocol_debris` already draws."""
+    lines = (content or "").splitlines()
+    cut = len(lines)
+    saw_tag = False
+    for i in range(len(lines) - 1, -1, -1):
+        ln = lines[i]
+        if not ln.strip():
+            continue
+        if _PROTOCOL_TAG_LINE.match(ln):
+            saw_tag, cut = True, i     # the cut may only ever land ON a tag
+            continue
+        # A bare single token is SCANNED PAST but never becomes the cut. Both ends of the debris need
+        # this and for opposite reasons: it trails the tags (the next call's `path` VALUE, met first
+        # going backwards), and it also precedes them in ordinary markup (`</project>`, `}`), where
+        # cutting at it would eat the file. Only a tag marks where the junk starts.
+        if len(ln.split()) == 1:
+            continue
+        break
+    if not saw_tag or cut == 0:
+        return content          # nothing to cut, or the whole thing is debris (that is _protocol_debris)
+    return "\n".join(lines[:cut]).rstrip("\n") + "\n"
+
+
 _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
 _READ_NAMES = {"read_file"}
@@ -380,6 +431,32 @@ def _v(path, raw):
     except Exception as _e:
         return str(_e)
     return None
+
+
+def _at(raw, msg):
+    # SHOW THE LINE THE COORDINATE POINTS AT. The refusal used to carry only the parser's message —
+    # "not well-formed (invalid token): line 34, column 1" — into content the coder cannot re-read
+    # (cria elides a rejected payload). A line number into an invisible document points at nothing.
+    #
+    # Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful): eight refusals
+    # of pom.xml, every one at line 34, and line 34 of the content the model sent was `</function>`
+    # — a tool-call terminator that had been swallowed into the file body. Across all eight the
+    # model's reasoning never once mentions line 34; at call 0016 it re-derived the identical pom by
+    # hand and was refused again. The sibling EDIT path has done this right for months: it quotes the
+    # file's real text around the divergence.
+    try:
+        text = raw.decode() if isinstance(raw, bytes) else raw
+        import re as _re
+        m = _re.search(r'line\s+(\d+)', msg or '')
+        if not m:
+            return ''
+        n = int(m.group(1))
+        lines = text.splitlines()
+        if not (1 <= n <= len(lines)):
+            return ''
+        return ' Line %d of the content you sent is: %s' % (n, lines[n - 1].strip()[:200])
+    except Exception:
+        return ''
 '''
 
 # Byte-exact atomic write (python heredoc — content rides in the source on stdin, no arg-size limit /
@@ -390,7 +467,7 @@ p=pathlib.Path(base64.b64decode('{path}').decode())
 raw=base64.b64decode('{content}')
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
-    sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after))
+    sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after)+_at(raw,_after))
 if p.is_dir():
     sys.exit(base64.b64decode('{isdir}').decode().replace('%%NAME%%',str(p)))
 _bp=next((a for a in p.parents if a.exists()), None)
@@ -1058,7 +1135,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.write_fused_content", tool=name,
                                       path=str(path))
                     else:
-                        cmd = _write_command(str(path), _repair_double_escaped(str(body)))
+                        # …and the same debris stuck to the END of a REAL file, which the
+                        # all-or-nothing test above correctly declines to call debris. Cut rather
+                        # than refused: the file itself is fine and cria knows exactly where the junk
+                        # starts. See trim_fused_tail for the cell this cost.
+                        text = _repair_double_escaped(str(body))
+                        trimmed = trim_fused_tail(text)
+                        if trimmed != text and rlog is not None:
+                            rlog.emit("writeproxy.write_fused_tail_trimmed", tool=name,
+                                      path=str(path), cut=len(text) - len(trimmed))
+                        cmd = _write_command(str(path), trimmed)
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if not path or args.get("old_string") is None:

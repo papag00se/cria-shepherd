@@ -1255,20 +1255,26 @@ class FusedContentRefusalTests(unittest.TestCase):
             injected={"write_file"})
         return out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
 
+    # THE REFUSAL, not the word. These matched the bare substring "fused" anywhere in the lowered
+    # command — which is the whole validator script, comments and all — so an unrelated comment
+    # containing "refused" failed them. What they mean is "the fused-content refusal was/was not
+    # emitted", and the refusal is a known string.
+    REFUSAL = "two tool calls were fused into one turn"
+
     def test_the_observed_soup_is_refused_with_the_true_cause(self):
         cmd = self._lower({"path": "tests", "content": self.OBSERVED})
-        self.assertIn("fused", cmd)
+        self.assertIn(self.REFUSAL, cmd)
         self.assertIn(f"exit {writeproxy.REFUSED_EXIT_CODE}", cmd)
 
     def test_real_content_mentioning_a_tag_is_untouched(self):
         code = ('MARKS = ("</tool_call>", "<function=")\n'
                 "def has_leak(text):\n    return any(m in text for m in MARKS)\n")
         cmd = self._lower({"path": "leakcheck.py", "content": code})
-        self.assertNotIn("fused", cmd)
+        self.assertNotIn(self.REFUSAL, cmd)
 
     def test_an_empty_or_plain_file_is_untouched(self):
-        self.assertNotIn("fused", self._lower({"path": "a.txt", "content": "hello world\n"}))
-        self.assertNotIn("fused", self._lower({"path": "b.txt", "content": ""}))
+        self.assertNotIn(self.REFUSAL, self._lower({"path": "a.txt", "content": "hello world\n"}))
+        self.assertNotIn(self.REFUSAL, self._lower({"path": "b.txt", "content": ""}))
 
 
 if __name__ == "__main__":
