@@ -1176,6 +1176,23 @@ def _carries_test_code(path: str, conv: TestConvention) -> bool:
         return False
 
 
+# A filename that SAYS test, in any language's spelling — `test` or `spec` as a whole leading or
+# trailing word. This is a NAME rule, deliberately, and it is used for ONE thing: deciding that a file
+# which matches no convention glob is nevertheless stranded test code. The consequence of a hit is a
+# sentence telling the coder the file will not run; the consequence of a MISS is cria announcing "no
+# tests were found" over a file called `test_lookup.js`, which is what happened on cycle 4 cell 5.
+#
+# Tight on purpose — a separator must follow the leading word or precede the trailing one — so
+# `testing.js`, `tests.js`, `protest.rb` and `specification.py` are not swept in. `_carries_test_code`
+# stays the primary signal; this only widens what counts as evidence when a marker cannot see it (a
+# hand-rolled runner using `execSync`, a bare assert loop — real test code that matches no framework).
+_TESTY_NAME = re.compile(r"^(?:test|spec)[._-]|[._-](?:test|spec)$", re.I)
+
+
+def _name_says_test(stem: str) -> bool:
+    return bool(_TESTY_NAME.search(stem))
+
+
 def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bool, list[str]]:
     """``(discoverable, stranded)`` — whether this language's runner will find ANY test, and the files
     that hold test code it will NOT find.
@@ -1201,7 +1218,7 @@ def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bo
             continue
         if named:
             discoverable = True
-        elif _carries_test_code(p, conv):
+        elif _carries_test_code(p, conv) or _name_says_test(rel.stem):
             stranded.append(str(rel))
     return discoverable, sorted(stranded)
 

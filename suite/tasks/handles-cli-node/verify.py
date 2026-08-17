@@ -146,6 +146,16 @@ def main() -> None:
         code, out = run(cmd, ws)
         if code == -3 or code != 0:
             continue
+        # A RUNNER THAT COLLECTED NOTHING EXITS 0, BOTH WAYS. `node --test` on a project whose test
+        # file matches none of its globs prints "# tests 0" and returns 0 with and without the
+        # network, and the blocked-run comparison below then described it as "mocked, not live" —
+        # a false account of a project that has no discoverable tests at all. Same score either way
+        # (nothing here proves a live call), but the detail is what a walk reads to find the cause,
+        # and this one sent the reader hunting mocks that do not exist. Measured on cycle 4 cell 5:
+        # `test_lookup.js` in the root, zero collected, reported as mocked.
+        if re.search(r"^#\s*tests\s+0\s*$", out, re.M) or re.search(r"\b0 total\b", out):
+            live_detail = f"{' '.join(cmd)}: ran but collected 0 tests — nothing here is a test"
+            continue
         b_code, _ = run(cmd, ws, blocked=True)
         if b_code != 0:
             live_ok, live_detail = True, f"{' '.join(cmd)}: passes with network, fails without"
