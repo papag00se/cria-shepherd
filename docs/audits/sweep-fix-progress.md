@@ -295,6 +295,15 @@ The model's tests share one repo-relative `orders.db` that nothing deletes, so e
 
 **Fixed, one of the three.** The test suite is not the delivered program, and `proberun` already runs it (#23) — so `exec-intent` declines a command that runs the tests, by shape, in every launcher's spelling. That is a deliberate exception to the invariant in `test_the_runner_cria_accepts_is_the_runner_cria_runs.py`, and it is a different thing from the defect that file was written about: there cria refused a command naming something the coder could not change; here the command is perfectly runnable and cria declines because it owns the job. For a project with no program to run, abstaining is the honest answer (#11b).
 
+**ATTEMPTED, MEASURED, AND ABANDONED — do not re-try the copy.** The obvious fix is to run the offline leg against a copy of the workspace instead of in it, at a reused path inside cria's own directory so nothing accumulates and nothing needs deleting (the sandbox hard-rejects `rm` in composed shell). It was built and driven, and the test suite alone produced **7.0 GB of copied trees** before it was killed.
+
+Two things broke it, and the second is the one that matters:
+
+- **`cp -a` is not cheap where it is used.** A gate runs on every completion check; copying the workspace each time is minutes and gigabytes on any project with a `target/`, `node_modules/` or a vendored tree.
+- **The mirror is keyed on `working_dir`, and `working_dir` is not always the workspace.** Where a caller passes a bare temp directory, `cp -a <dir>/. mirror/` copies **the whole of `/tmp`** — 14,262 directories in one leaked mirror. A composed command that can copy an arbitrary tree is a footgun regardless of how careful the intended path is.
+
+**The design that survives this is the opposite one: run the offline leg FIRST and stop.** A suite that passes with the network gone has proven both facts in ONE execution — it passes, and it is self-contained. Only a suite that FAILS offline needs the online run, to tell "needs the network" from "is broken". That removes an execution from the common case rather than duplicating a tree, needs no copy, no temp path and no cleanup, and it inverts the current guard rather than adding to it. It is a real restructure of the composed script, so it gets its own pass with a live gate run behind it.
+
 **Still open — the network-off leg.** `proberun.py:781-790` documents this exact failure from a previous cycle and its fix was half of one: the second run is now suppressed when the online run FAILED (where the comparison is impossible), which is precisely when the double-run was harmless, and still permitted when it PASSED, which is when the side effects break the next check. The remedy is to run the offline leg against a copy of the workspace rather than in it — a strengthening of the existing mitigation, not a revert — and it touches the composed gate script, so it gets its own pass.
 
 ### 45. Twelve and a half minutes of nothing, and all four guards silent — because all four count arrivals
