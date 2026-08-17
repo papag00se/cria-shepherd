@@ -187,6 +187,29 @@ Same cell, the other half. `⟦ctx:files⟧` is rendered only inside `_compact`,
 
 Recorded rather than taken: this is a design call about what the coder is routinely shown, not a defect with a right answer.
 
+### 34. cria said no line could be parsed, in the same prompt that printed the parsed line
+Cycle 4 cell 24, `rust-toml-cli × nemotron-elastic`, 5% useful — and the highest-cost item in that run. The crate needed one file, `src/main.rs`, from call 0028 to the end, and cargo said so on every check:
+
+```
+error: can't find bin `dotkey-toml` at path `…/src/main.rs`
+ --> …/Cargo.toml
+```
+
+`parse_rustc` reads the `-->` span through `split_loc`, which wants `file:line:col` — and cargo's manifest and target-resolution errors never print one. The finding was dropped **message and all**, `completion_block_nudge` came back empty, and `gate_error_text` fell through to *"a specific line could not be parsed from the output… run that exact check yourself"*, delivered six times, while `⟦ctx:checks⟧` printed the line naming the missing file in the same prompt. loop.py's own rule for this is written above `gate_error_text`: NEVER SAY "no line could be parsed" WHEN A LINE WAS PARSED. The coder ran the gate seven times and re-read `Cargo.toml` five times and never created the file.
+
+**Fixed**: a file with no line is still a location. `Finding.line` is already Optional and `summarize` already renders a file-only span; this was the one place that refused to make one.
+
+### 35. The lost-call nudge existed on one path, and the whole plan-off column ran without it
+Cycle 4 cell 19, `shipping-rates-rb × nemotron-elastic`. At call 0025 the model emitted a complete `str_replace_editor` call in its reasoning channel; `massage.reasoning_call_off_menu` recorded it by name, `LOST_CALL_KEY` was set as designed — and `loop.lost_call_offmenu` never emitted, because the nudge branch lives only in the multi-step half of `drive`. 0.257s later cria read the empty turn as a completion claim and spent a gate and a judge on a workspace where nothing had happened. That is verbatim the failure the 2026-08-11 commit says it fixed. **Fixed** in `_drive_single_item`'s gate: every `codex_poff` cell in the matrix was running without it.
+
+### 36. The prescribes guard refused the one right answer, because the checks named the file
+Same cell 24. At call 0051 the reasoner finally produced the correct directive — *"…then create `src/main.rs` that reads a TOML file from the command line…"* — and the PRESCRIBES judge killed it on a shared-token list of `Cargo.toml, main.rs`. Both are **where the checker is pointing**, not what it is rejecting: on a `can't find X at path Y` error the correct fix is precisely to write `Y`. The coder got a generic redirect instead and never created the file. **Fixed**: a token whose every occurrence in the findings is positional — a `-->` span, a `file:line:` prefix, or the object of "can't find / no such file / not found" — is not a symbol the checks reject. One appearance in a real rejection keeps it, so the measured `decimal.NewFromInt64` case is untouched.
+
+### 37. The orienter could rename the work
+Same cell 24, and the other half of #21. Handed the task instead of a summary, `_reasoned_reanchor` answered *"Start a new binary Cargo project named `toml-dotted-key`"* — a name the task never used, over a crate already on disk called `dotkey-toml`. The coder obeyed and rewrote `Cargo.toml` without its `[package]` header and with `[bin]` for `[[bin]]`, undoing two fixes it had earned 35 calls earlier. cria contradicted itself inside one prompt: the continuation block beside the steer said *"Do NOT recreate files or restart work that is already done"* and listed the real files.
+
+#21 fixes what the orienter is SHOWN. This adds the clause it lacked about what it may SAY: never name a project, crate, file, module or command the summary does not already name, and never tell the coder to start over.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
@@ -195,6 +218,7 @@ Recorded rather than taken: this is a design call about what the coder is routin
 - **The "checks passed" wording with no gate.** Already fixed by `_check_state_words` before this sweep ran; the finding predates it.
 - **The periodic check-in restating check output 140 bytes above it (claimed 37/78).** Does not reproduce. Of 131 captured coder prompts carrying the periodic-gate steer, **0** have its findings anywhere above it — checked twice, once on the first `file:line` in the block and once on the block's first 120 characters.
 - **Superseded-write stamps and the mis-worded truncation refusal.** Both fixed earlier the same day; replay confirms it. Seven double-stamped prompts exist in the captures and every one predates `fd00f35`; no prompt carries the mis-worded refusal. The truncation guard now records which wording it sent, so the next measurement reads one field instead of re-deriving it from captures.
+- **"Make the prescribes guard fail CLOSED."** Proposed by the cell-19 walk after a wrong directive shipped when the guard ruminated out and returned no verdict. **Refuted by the cell-24 walk's own measurement in the same batch**: over every fire this guard has had, at most two of eighteen were correct. Failing closed would kill more right directives than wrong ones, and the guard's documented contract already says it may only move a steer from delivered to refused when a model actually says so. The real remedy for the same incident is #36, which stops the guard being asked the wrong question in the first place.
 - **The steer author's unchanged-findings guard.** Already fixed by routing `checks_now` through `last_gate_flag`; the finding predates it.
 
 ## Still open

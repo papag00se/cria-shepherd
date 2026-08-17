@@ -403,6 +403,33 @@ def parse_rustc(s: str) -> list[Finding]:
                 out.append(Finding(file, line, col,
                                    last_msg if last_msg is not None else DEFAULT_RUSTC_MESSAGE))
                 last_msg = None
+            elif loc:
+                # A FILE WITH NO LINE IS STILL A LOCATION. `split_loc` wants `file:line:col`, and
+                # cargo's manifest and target-resolution errors never print one — they point at the
+                # whole file:
+                #
+                #     error: can't find bin `dotkey-toml` at path `…/src/main.rs`
+                #      --> …/Cargo.toml
+                #
+                # so the finding was dropped MESSAGE AND ALL. Downstream, `completion_block_nudge`
+                # came back empty and `gate_error_text` fell through to its "no specific line could
+                # be parsed" branch — while ⟦ctx:checks⟧, which reads the raw section from a
+                # different reader, printed the very line naming the missing file in the same prompt.
+                # loop.py's own rule for this is written above `gate_error_text`: NEVER SAY "no line
+                # could be parsed" WHEN A LINE WAS PARSED.
+                #
+                # Walked on cycle 4 cell 24 (`rust-toml-cli x nemotron-elastic`, 5% useful). The
+                # crate needed one file — `src/main.rs` — from call 0028 to the end. cargo said so on
+                # every check. The steer channel said "a specific line could not be parsed… run that
+                # exact check yourself" six times, and the coder ran the gate seven times and re-read
+                # `Cargo.toml` five times without ever creating the file.
+                #
+                # `Finding.line` is Optional and `summarize` already renders a file-only span
+                # (`elif f.file != "": loc = f.file`) — this was the one place that refused to make
+                # one.
+                out.append(Finding(loc, None, None,
+                                   last_msg if last_msg is not None else DEFAULT_RUSTC_MESSAGE))
+                last_msg = None
     return out
 
 

@@ -3918,6 +3918,25 @@ class Loop:
         acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
         checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
         tags from ``framed``)."""
+        # A CALL CRIA COULD NOT FORWARD MUST NOT LEAVE THE MODEL IN SILENCE — and this path never
+        # said so. The nudge landed on the multi-step branch only, so the whole plan-off column of
+        # the matrix ran without it. Walked on cycle 4 cell 19 (`shipping-rates-rb x
+        # nemotron-elastic`): at call 0025 the model emitted a complete `str_replace_editor` call in
+        # its reasoning channel, `massage.reasoning_call_off_menu` recorded it by name, and 0.257s
+        # later cria read the empty turn as a completion claim and spent a gate and a judge on a
+        # workspace where nothing had happened. That is verbatim the failure the fix was written for.
+        lost = comp.pop(massage.LOST_CALL_KEY, None)
+        if lost and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES:
+            sess.unexecuted_nudges += 1
+            rlog.emit("loop.lost_call_offmenu", plan_off=True, tried=lost.get("tried"),
+                      attempt=sess.unexecuted_nudges)
+            conv = framed["messages"] + [{"role": "user", "content": denial.mark(prompts.render(
+                "lost_call_offmenu",
+                tried=", ".join(f"`{n}`" for n in lost.get("tried") or ["a tool"]),
+                menu=", ".join(lost.get("menu") or []) or "(none)"))}]
+            comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)
+            if _has_tool_calls(comp):
+                return comp   # it re-issued the call with a tool that exists
         # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
         # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
         if (unexecuted_write(_completion_text(comp),
@@ -7321,7 +7340,50 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
             out.add(run.strip(".:"))
             out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
         return {x for x in out if len(x) > 3 and _looks_like_a_symbol(x)}
-    return sorted(toks(directive) & toks(findings), key=len, reverse=True)
+    shared = toks(directive) & toks(findings) - _positional_only(findings)
+    return sorted(shared, key=len, reverse=True)
+
+
+# WHERE the checker is pointing, as opposed to WHAT it is rejecting.
+_POSITIONAL = (
+    re.compile(r"^\s*-->\s*(\S+)", re.M),                          # rustc/cargo's span line
+    re.compile(r"^\s*([\w./\\-]+\.\w{1,5}):\d+", re.M),            # file:line: prefixes
+    re.compile(r"(?i)(?:can'?t find|cannot find|could not find|no such file|not found)"
+               r"[^\n]*?[`'\"]?([\w./\\-]+\.\w{1,5})[`'\"]?", re.M),   # the MISSING thing
+)
+
+
+def _positional_only(findings: str) -> set:
+    """Tokens the findings only ever name as a LOCATION, or as the thing that is missing.
+
+    `_shared_symbols` exists to catch a directive telling the coder to use a symbol the checks are
+    rejecting. A path is the opposite case: when cargo says
+
+        error: can't find bin `dotkey-toml` at path `…/src/main.rs`
+         --> …/Cargo.toml
+
+    the correct directive is *"create `src/main.rs`"*, and both `main.rs` and `Cargo.toml` are shared
+    tokens — so the guard was handed the one right answer of the run and refused it. Walked on cycle
+    4 cell 24 (`rust-toml-cli x nemotron-elastic`): the reasoner produced exactly that directive at
+    call 0051, the judge answered PRESCRIBES at 0052, and the coder got a generic redirect instead
+    and never created the file.
+
+    A path a checker says is MISSING is a path a directive is right to prescribe. Only tokens whose
+    every occurrence is positional are dropped — one appearance in a real rejection keeps it."""
+    positional: set = set()
+    for pat in _POSITIONAL:
+        for m in pat.finditer(findings or ""):
+            tok = m.group(1).strip("`'\"")
+            positional.add(tok)
+            positional.update(p for p in re.split(r"[/\\]", tok) if p)
+    out = set()
+    for tok in positional:
+        elsewhere = [ln for ln in (findings or "").splitlines()
+                     if tok in ln and not any(pat.search(ln) for pat in _POSITIONAL)]
+        if not elsewhere:
+            out.add(tok)
+            out.update(p for p in re.split(r"[.:]+", tok) if p)
+    return out
 
 
 def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask) -> str:

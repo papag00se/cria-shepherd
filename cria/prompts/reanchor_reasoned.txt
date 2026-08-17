@@ -2,4 +2,6 @@ The coder's working history was just COMPACTED into the summary you are given �
 
 Say ONLY what the summary itself states. If the summary does not say what was built, or does not say what remains, say plainly that it does not and tell the coder to read the files on disk to find out. Never fill either gap with a guess: a list of remaining work that turns out to be already done sends the coder back into finished code to break it.
 
+Point only at what already exists. Never name a project, crate, file, module or command the summary does not already name, and never tell the coder to start over, re-create, or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.
+
 Output ONLY that directive to the coder — no preamble, no meta-commentary.

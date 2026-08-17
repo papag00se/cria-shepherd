@@ -107,6 +107,18 @@ class ThePromptForbidsInventingTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.BODY)
 
+    def test_it_may_not_name_a_new_artifact_or_say_start_over(self):
+        """Walked on cycle 4 cell 24 (`rust-toml-cli x nemotron-elastic`). Handed the task instead of
+        a summary, the orienter answered "Start a new binary Cargo project named `toml-dotted-key`" —
+        a name the task never used, over a crate already on disk called `dotkey-toml`. The coder
+        obeyed and rewrote Cargo.toml without its `[package]` header and with `[bin]` for `[[bin]]`,
+        undoing two fixes it had earned 35 calls earlier. cria contradicted itself in the same
+        prompt: the continuation block beside the steer said "Do NOT recreate files or restart work
+        that is already done" and listed the real files."""
+        for phrase in ("never name a project", "never tell the coder to start over"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.BODY.lower())
+
     def test_the_prompt_never_names_the_shim(self):
         import re
         self.assertIsNone(re.search(r"\bcria\b", self.BODY, re.I))
