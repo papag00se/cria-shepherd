@@ -18,3 +18,14 @@ rust = Note: the crate `{{NAME}}` is not available to this build. A crate has to
 go = Note: no module in this project provides `{{NAME}}`. `go get {{NAME}}` records it in go.mod so the import resolves. Fix the dependency; the code that uses it is not what failed here.
 
 java = Note: the build could not resolve `{{NAME}}`. Check the groupId, artifactId and version in pom.xml against what the repository actually publishes — a version that does not exist fails exactly like this. Fix the dependency; the code that uses it is not what failed here.
+
+# …AND THE OPPOSITE FACT, for when cria can see that no install has landed at all. The lines above
+# say how to put an INSTALLED library on the load path, which is right after an install and a false
+# description of the world before one — see probeparse.install_landed for the two cells it cost.
+# Only the three ecosystems whose install evidence lives inside the workspace; the rest resolve from
+# caches cria cannot see and keep the lines above.
+ruby_none = Note: `{{NAME}}` is not installed anywhere — this project has no Gemfile.lock, no vendor/ and no .bundle/, so no install has completed yet. Installing it is the step that still has to succeed; the code that uses it has not been reached.
+
+node_none = Note: `{{NAME}}` is not installed — this project has no node_modules/, so nothing has been installed here yet. Being listed in package.json is not the same as being installed. Installing it is the step that still has to succeed.
+
+python_none = Note: `{{NAME}}` is not installed — there is no virtualenv or site-packages tree in this project, so nothing has been installed here yet. Installing it is the step that still has to succeed; the code that imports it has not been reached.

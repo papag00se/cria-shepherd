@@ -219,6 +219,15 @@ Line 34 was `</function>`. **The coder cannot re-read its own rejected payload**
 
 Only a trailing run is cut, and the cut may only land ON a protocol tag: a bare single-token line is scanned past but never becomes the cut, because a bare token both trails the tags (the next call's `path` value) and precedes them in ordinary markup (`</project>`, `}`), where cutting at it would eat the file.
 
+### 39. cria described an install that had never happened, and ruled out the step that had failed
+Walked twice in cycle 4, independently, on the two worst cells of the worst column — cell 13 (`shipping-rates-rb × ternary-bonsai`, 10%) and cell 19 (`shipping-rates-rb × nemotron-elastic`, 5%). Beside the coder's own `LoadError`:
+
+> Note: `countries` is installed nowhere ruby is looking. A gem installed with --install-dir is not on the load path by default … **Fix the loading; the code that uses it is not what failed here.**
+
+Every `gem install` in that run had been REFUSED and every `bundle install` was `command not found`; the surviving workspace has no `vendor/`, no `.bundle/` and no `Gemfile.lock`. So the sentence describes an install that never happened, and its last clause rules out the one correct next move — the install IS what failed. The model read it and went straight back to `gem install`, the last action of the run.
+
+Recorded in the cycle-3 ledger as *"MODIFY FIRST — add a condition, never soften the sentence"* and not landed then. **Fixed now**: ask the disk before describing it. Only the three ecosystems whose install evidence lives inside the workspace (ruby, node, python); rust/go/java resolve from caches cria cannot see and their notes are about DECLARING a dependency, so they are untouched. An ecosystem cria cannot settle, or a workspace it cannot read, keeps the original sentence — `os.walk` on a missing path yields nothing and raises nothing, which would have produced a confident "nothing is installed" about a workspace cria cannot see.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.

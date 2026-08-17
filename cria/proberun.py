@@ -581,6 +581,18 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report)
 
 
+def _dependency_line(eco: str, workspace_root: str) -> str:
+    """The load-path line, or the not-installed-at-all line when cria can see that is the truth.
+
+    The `<eco>_none` wording is used ONLY when `install_landed` returns a definite False — an
+    ecosystem cria cannot settle, or a workspace it cannot read, keeps the original sentence (#3).
+    See probeparse.install_landed for the two cells the wrong one cost."""
+    words = prompts.load_map("dependency_note")
+    if probeparse.install_landed(eco, workspace_root) is False and f"{eco}_none" in words:
+        return words[f"{eco}_none"]
+    return words[eco]
+
+
 def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
     """One line naming a MISSING DEPENDENCY when a check's own output says that is what failed.
 
@@ -611,7 +623,7 @@ def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
         eco, name = hit
         if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
             return ""
-        return "\n" + prompts.fill(prompts.load_map("dependency_note")[eco], name=name)
+        return "\n" + prompts.fill(_dependency_line(eco, workspace_root), name=name)
     return ""
 
 

@@ -1553,7 +1553,8 @@ def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None
     eco, name = probeparse.dependency_missing(last["content"])
     if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
         return
-    note = prompts.fill(prompts.load_map("dependency_note")[eco], name=name)
+    from .proberun import _dependency_line
+    note = prompts.fill(_dependency_line(eco, workspace_root or ""), name=name)
     if note in last["content"]:
         return
     last["content"] = last["content"] + "\n\n" + note

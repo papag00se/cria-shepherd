@@ -40,6 +40,7 @@ is known; changing :func:`summarize`'s semantics is not the move.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence
@@ -1182,6 +1183,56 @@ _DEPENDENCY_MISSING = (
     # maven: Could not resolve dependencies for project … commons-csv:jar:1.10.0
     ("java", re.compile(r"Could not resolve dependencies[^\n]*?([\w.-]+:[\w.-]+:[\w.:-]+)")),
 )
+
+
+# Evidence on disk that an install into THIS PROJECT has actually happened, per ecosystem. Only the
+# three where the answer lives inside the workspace: rust/go/java resolve from caches outside it, and
+# their notes are about DECLARING a dependency rather than loading an installed one.
+_INSTALL_EVIDENCE = {
+    "ruby": ("Gemfile.lock", "vendor", ".bundle"),
+    "node": ("node_modules",),
+    "python": (".venv", "venv", "site-packages", ".tox"),
+}
+
+
+def install_landed(eco: str, workspace_root: str) -> bool | None:
+    """Has an install into this project actually landed? ``None`` when cria cannot tell.
+
+    The note beside a `cannot load such file` says how to put an installed library on the load path.
+    That is the right advice AFTER an install and a false description of the world before one.
+
+    Walked twice in cycle 4, independently — cell 13 (`shipping-rates-rb x ternary-bonsai`) and cell
+    19 (`shipping-rates-rb x nemotron-elastic`). In cell 19 cria said, at call 0061:
+
+        Note: `countries` is installed nowhere ruby is looking. A gem installed with --install-dir is
+        not on the load path by default … Fix the loading; the code that uses it is not what failed
+        here.
+
+    Every `gem install` that run had been REFUSED and every `bundle install` was `command not found`;
+    the surviving workspace has no `vendor/`, no `.bundle/` and no `Gemfile.lock`. So the sentence
+    describes an install that never happened, and its last clause rules out the one correct next
+    move — the install IS what failed. The model read it and went straight back to `gem install`,
+    which was the last action of the run.
+
+    Recorded as `MODIFY FIRST — add a condition, never soften the sentence` in the cycle-3 ledger and
+    not landed then; two more sightings is enough."""
+    ev = _INSTALL_EVIDENCE.get(eco)
+    # `os.walk` on a path that does not exist yields NOTHING and raises nothing, so without this the
+    # answer to "is anything installed" would be a confident False about a workspace cria cannot see
+    # — the same class of false fact this function exists to stop.
+    if not ev or not workspace_root or not os.path.isdir(workspace_root):
+        return None
+    root = os.path.join(workspace_root, "")
+    try:
+        for dirpath, dirnames, filenames in os.walk(workspace_root):
+            if any(n in ev for n in filenames) or any(n in ev for n in dirnames):
+                return True
+            # Bounded: an install tree lives at the top of a project, not eight levels down.
+            if dirpath[len(root):].count(os.sep) >= 2:
+                dirnames[:] = []
+        return False
+    except OSError:
+        return None
 
 
 def dependency_missing(text: str) -> tuple[str, str] | None:
