@@ -36,6 +36,24 @@ So the answer is not "turn the assists off". It is that a mechanism which saves 
 
 ---
 
+## TARGETED POST-FIX RUN — in flight, started 2026-08-17 16:41
+
+Five cells, chosen where a fix was landed AND the baseline proves the model can do the task. Model-major, so two model loads. Code pinned at `102c25a`; **no service restarts during this run** — the baseline arm was contaminated that way and this comparison must not be.
+
+| cell | cycle 4 | unassisted | the fixes it tests | post-fix |
+|---|---:|---:|---|---:|
+| rust-toml-cli × ternary-bonsai | 5% | **100%** | reading step a docs page can close (#47), file-only rustc spans (#34), prescribes-on-paths (#36), orienter (#21/#37), nudge off a reading step (#48) | — |
+| cart-billing-go × ternary-bonsai | 15% | **100%** | repeat-fold exempts writers (#25), identical-edit names the right argument (#26), prescribes shape filter | — |
+| shipping-rates-rb × ternary-bonsai | 10% | 20% | refusal-count redirect (#46), install-loop flush (#31), "already installed" (#30), dependency note asks the disk (#39) | — |
+| feed-pipeline-java × gemma4 | 10% | **100%** | wide degenerate check (#24), abort notice stops guessing | — |
+| shipping-rates-rb × gemma4 | 25% | 80% | install remedy, dead-stream clock (#45), refusal redirect (#46), dependency note (#39) | — |
+
+**What would count as the fixes working:** four of these five were destroyed from a working state, so the bar is the baseline column, not the cycle-4 column. `shipping-rates-rb × ternary-bonsai` is the one cell whose baseline is also poor — there the question is only whether cria stops making it worse.
+
+**What this cannot tell us:** five cells is not the matrix, and a single run per cell is one sample of a stochastic process. A gain here is evidence the mechanism changed, not proof the campaign moved. The full cycle 5 is what settles that.
+
+---
+
 ## HOW cria GOT IN THE WAY — the eight cells that went down, both arms measured
 
 Every destroyed cell has the same terminal: **the baseline finished on its own (`exited`); the cria run was killed by a milestone floor.** The floor did not cause the loss, but it is what converts "slower" into "zero".
