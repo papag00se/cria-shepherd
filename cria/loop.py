@@ -5595,6 +5595,27 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             if answered_with_tool_call and not reasoning_off:
                 rlog.emit("summarize.tool_call_answer", level="warn", phase=rlog.phase)
                 return ""  # recovered reasoning is a plan, not a summary — force the reasoning-off retry
+            if (applied.get(bodykeys.RUMINATION)
+                    or (applied.get("choices") or [{}])[0].get("finish_reason") == "rumination"):
+                # A STREAM CRIA ITSELF KILLED IS NOT AN ANSWER — the rule `_steer_from_reasoning`
+                # already states one function over, missing from the primitive every summariser
+                # shares. When the guard aborts a summariser mid-reasoning there is no content, so
+                # `coerce_text_answer` recovers `reasoning_content`, and the corpse becomes the
+                # summary.
+                #
+                # Walked on cycle 4 cell 23 (`handles-cli-node x nemotron-elastic`), twice: the
+                # compactor's aborted private narration was handed to the satisfaction judge in the
+                # slot where the coder's ACTION LOG belongs — "We need to continue the process. The
+                # user wants a condensed log of all distinct actions… Then attempts to exec command
+                # node __tests__/lookup.end2end.test.js again, error." forty times over, with not one
+                # real command, exit code or error string from the session in it. The judge then
+                # ruminated too and invented a log of its own, citing a README path that does not
+                # exist, and the coder was handed a report about cria's judge failing.
+                #
+                # Failing the pass fires the reasoning-off retry, which is where a summary belongs
+                # anyway: straight into content, with no reasoning to salvage.
+                rlog.emit("summarize.ruminated", level="warn", phase=rlog.phase)
+                return ""
             if massage.is_truncated(applied) and text:
                 # CUT OFF at the cap with content already emitted. cria checked this nowhere on its
                 # own calls — only the plain proxy path surfaces a truncation indicator — so half an

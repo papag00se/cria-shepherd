@@ -262,6 +262,15 @@ Replaying all 18 reported tokens through HEAD: the shape filter (#20's `_looks_l
 
 **Both closed.** Of the 18 historical fires, **11 are now impossible by shape and a further 2 by these two rules**, and the remaining survivors are the dotted symbols the guard was actually built for.
 
+### 43. A stream cria itself killed became the summary — found independently by two walks
+`summarize` is the primitive every summariser shares: the compactor, the briefing writer, the steer author, the judges. It rejects a truncated pass and a tool-call answer, and had no check for a pass the **rumination guard aborted**. When that happens there is no content, so `coerce_text_answer` recovers `reasoning_content`, and the corpse is returned as the summary.
+
+Cell 23 (`handles-cli-node × nemotron-elastic`) hit it twice, at 0073→0075 and 0089→0091: the compactor's aborted private narration was handed to the satisfaction judge **in the slot where the coder's action log belongs** — *"We need to continue the process. The user wants a condensed log of all distinct actions… Then attempts to exec command node …/lookup.end2end.test.js again, error."* forty times over, with not one real command, exit code or error string from the session in it. The judge ruminated too, invented a log citing a README path that does not exist, and the coder was handed a report about cria's own judge failing.
+
+Cell 11 (`handles-cli-node × qwen35`) found the same defect from the other end: an aborted **orienter's** raw 15 KB thinking trace was injected as the steer, first person and all — *"Decision: I will state that the core resolver module exists, but the CLI wrapper, dependency update, and CI/Testing/Docker are missing"*, when all four already existed and passed. The coder read a "I must write the directive" trace, adopted the reasoner's role, and spent its whole turn emitting a directive instead of working.
+
+**Fixed**: the rule already existed one function over. `_steer_from_reasoning` refuses exactly this, in these words — *"A STREAM CRIA ITSELF KILLED IS NOT AN ANSWER… This ran anyway, and then cria narrated the corpse as a decision."* Failing the pass is not a loss: it fires the reasoning-off retry, which is where a summary belongs anyway — straight into content, with no reasoning to salvage.
+
 ## REPLAYED AGAINST THE REAL BYTES
 
 Every fix above has a test, but a test is a fixture. These four were re-run against the actual captured streams from the cells they were written for (#10 — verify by doing).
