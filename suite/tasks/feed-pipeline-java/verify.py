@@ -82,6 +82,27 @@ def make_big_feed(path: Path):
                         random.randint(1, 40), round(random.uniform(1, 90), 2)])
 
 
+# Maven puts the USEFUL error first and its own boilerplate last, so a tail slice of the log is the
+# one part guaranteed to say nothing. Taking `log[-200:]` gave every failed Java cell the identical
+# detail — "[ERROR] For more information about the errors and possible solutions, please read the
+# following articles: [ERROR] [Help 1] http://cwiki.apache.org/..." — while the real cause sat a
+# hundred lines above. Cost twice in one cycle: cell 4 and cell 16 both reported that URL, and both
+# times the actual reason (a fabricated API, then a missing opencsv package) had to be re-derived by
+# re-running the build by hand. A detail line exists to say why a check failed.
+_JAVAC_LINE = re.compile(r"^.*?\.java:\[\d+,\d+\].*$|^\s+symbol:\s+.*$|^\s+location:\s+.*$", re.M)
+
+
+def _javac_errors(log: str, limit: int = 6) -> str:
+    """The compiler's own located errors, or a tail slice when it produced none (a plugin failure,
+    a missing dependency resolution) — never Maven's "for more information" trailer alone."""
+    hits = [re.sub(r"\x1b\[[0-9;]*m", "", m.group(0)).strip() for m in _JAVAC_LINE.finditer(log)]
+    hits = [h for h in hits if h and "For more information" not in h and "[Help" not in h]
+    if hits:
+        more = f" (+{len(hits) - limit} more)" if len(hits) > limit else ""
+        return " | ".join(hits[:limit]) + more
+    return log.strip()[-200:]
+
+
 def build(root: Path) -> tuple[str | None, str]:
     """Build with Maven and return the FULL runtime classpath — the project's own classes plus
     every resolved dependency.
@@ -95,7 +116,7 @@ def build(root: Path) -> tuple[str | None, str]:
         return None, "no pom.xml"
     code, log = run(["mvn", "-B", "-q", "compile"], root, timeout=420)
     if code != 0:
-        return None, f"mvn compile failed: {log.strip()[-200:]}"
+        return None, f"mvn compile failed: {_javac_errors(log)}"
     cp_file = root / "target" / "_verify_cp.txt"
     code, log = run(["mvn", "-B", "-q", "dependency:build-classpath",
                      f"-Dmdep.outputFile={cp_file}"], root, timeout=420)
