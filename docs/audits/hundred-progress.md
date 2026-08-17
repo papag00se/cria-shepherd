@@ -34,6 +34,7 @@ Cells land here as they finish.
 
 | # | task | model | score | Δ | min | calls | what happened |
 |---:|---|---|---:|---:|---:|---:|---|
+| 1 | shipping-rates-rb | gemma4 | 20% | **−40** | 31 | 83 | **`gem_bundler`'s shadow, and it took four of five checks.** The model installed the gem correctly — `bundle3.2 install --path vendor/bundle` landed `countries-8.1.0` under `vendor/bundle`, and it read the gem's own source. Then its `lib/shipping/rates.rb` opens `require "iso3166"`, which resolves ONLY under `bundle3.2 exec`, and every verifier probe runs bare `ruby -Ilib`. `suite_green_tests_intact`, `hidden_contract`, `express_zone` and `country_zone_mapping` all die on the same `kernel_require.rb:86` LoadError. Only `readme_rate_table` survives (four zones named, 8/8 rate values). **The model diagnosed it itself** and could not escape: *"When I ran `bundle3.2 install --path vendor/bundle`, it installed everything into `vendor/bundle`. But because I am running with `ruby -Ilib -Itest`, it's not looking in the bundle path."* cria rendered BOTH routes — `GEM_HOME` in 26 prompts, the bundler line in 54 — and the model took the one that cannot be loaded bare. Not a new finding: cycle 3 wrote "`gem_bundler` buys the dependency check and costs the bare-ruby one", and it is still open. Also the first-ever live fire of **`loop.history_rewritten`** (1), the detector that had 0 fires against 139 real compactions |
 
 ---
 
