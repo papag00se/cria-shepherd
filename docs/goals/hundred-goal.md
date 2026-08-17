@@ -46,6 +46,28 @@ A leaked user-level package means a model can score points for work it did not d
 
 **Report each cell as it lands**, in chat: score, delta, and the one-line cause of anything that failed. Do not sit on a finished cell.
 
+### Phase 1b — JUDGE, one cell at a time, as they land
+
+The strict verifier answers "was this perfect?". The campaign is trying to answer **"can a cria model be useful in getting real work done?"** — and a complete, correct, working Rust CLI one directory below where it was asked for is a 95, not a zero. Both numbers are kept; the strict one is the anchor, the useful one is the answer.
+
+**The agent judges, with its full toolset.** Not a scripted inference call. A 9B pointed at the busy GPU returned empty completions, answered in the step critic's schema, and silently changed identity between cells — gemma4 graded cell 1 and qwen35 graded cell 8, both recorded as "cria". The grader has to be more reliable than the thing it grades, and it has to be able to copy an archive, move a directory and re-run the verifier to find out whether work that scored 0 actually runs.
+
+```
+python3 suite/usefulness.py pending            # the worklist — every cell with an archive and no verdict
+python3 suite/usefulness.py emit <run_id>      # the rubric + the evidence packet
+… investigate: read the source, run the counterfactual, open the tests …
+echo '{"usefulness": 95, "reason": "…", "deductions": [...]}' \
+  | python3 suite/usefulness.py record <run_id>
+```
+
+**The worklist is the memory, not the agent's.** A cell is judged when `~/.cria/suite/_usefulness/<run_id>.json` exists and unjudged otherwise, so an interrupted run, a compaction or a fresh session recomputes the same list. Never track this in a message.
+
+**The trigger is the cell finishing.** `cycle_run.py` logs `(N/24) <task> x <model> — exit 0` and that line is what wakes the judge. Judging is ASYNC and must never hold up the next cell: the runner does not wait, and a backlog is cleared from `pending` whenever there is a gap.
+
+The rubric is [`suite/prompts/usefulness_judge.txt`](../../suite/prompts/usefulness_judge.txt) and it is fixed BEFORE the evidence is read. Two rules in it do not bend: code that does not build cannot exceed 39, and a supplied test that was deleted or weakened is not progress. Every deduction names the observation that caused it.
+
+**The conflict, stated rather than hidden:** the agent judging these cells is the same one fixing cria. The written-first rubric, the recorded evidence and the untouched strict score are what hold it honest. A usefulness number that departs far from its strict score must say why, in terms of something observed.
+
 A cell that dies with no row is re-run at the end of the cycle before the walk starts. A missing row is not a zero; it is missing evidence.
 
 ## Phase 2 — WALK
@@ -100,7 +122,7 @@ Anything left unfixed stays `open` and gets re-ranked next cycle, with the reaso
 ## Rules that do not bend
 
 - **`docs/audits/hundred-progress.md` is the status.**
-- **One code state per cycle.** No `cria/` edits while a run is in flight.
+- **Fix defects when they surface, mid-run.** Operator's call, 2026-08-16: the goal is 100%, not measurement fidelity. Prompt files reload from disk per call, so a prompt fix is live on the next call; code needs a restart, which the next call picks up. Record what changed and after which cell, so a score can be read against the code it ran on — that is bookkeeping, not a reason to wait. The old rule was one code state per cycle; it cost more than it bought.
 - **Never end a turn on an intention.** Finish with work done or work actually running. Saying what you are about to do and then stopping has cost this project whole nights.
 - **Verify before you assert.** A string that exists is not a cause. State how you checked.
 - **Never edit `suite/tasks/*/prompt.txt`** without the operator. If wording does change, bump `PROMPT_REV` in `suite/battery_run.py` and say what changed and why.
