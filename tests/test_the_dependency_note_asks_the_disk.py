@@ -73,21 +73,34 @@ class TheWorldIsAskedBeforeItIsDescribedTests(unittest.TestCase):
                     self.assertIn(token, line("ruby", root))
 
     def test_after_a_real_install_the_load_path_advice_returns(self):
-        """It is the right advice then, and this is the case it was written for."""
-        for ev in ("Gemfile.lock",), ():
-            with self.subTest(evidence=ev or "vendor/bundle"):
-                with _Project(files=["Gemfile", *ev],
-                              dirs=[] if ev else ["vendor/bundle"]) as root:
-                    self.assertIn("installed with --install-dir", line("ruby", root))
+        """It is the right advice then, and this is the case it was written for. Note what stands for
+        an install: a lock FILE, or a vendor tree with a file actually in it — see
+        test_an_empty_tree_is_not_an_install."""
+        with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
+            self.assertIn("installed with --install-dir", line("ruby", root))
+        with _Project(files=["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]) as root:
+            self.assertIn("installed with --install-dir", line("ruby", root))
+
+    def test_an_empty_tree_is_not_an_install(self):
+        """THE REPLAY. Cell 13's real workspace holds `vendor/bundle/gems/eu_countries/` — ten
+        directories and ZERO files, built by the model's own `mkdir -p` while every real install was
+        refused. Reading the directory NAME answered True, so cria would have looked at a workspace
+        where nothing landed, seen the folder the failed attempts left behind, and gone back to the
+        false sentence this whole file exists to kill. An install writes files; `mkdir -p` writes
+        none. The fixture above had encoded the same mistake."""
+        with _Project(files=["Gemfile"],
+                      dirs=["vendor/bundle/gems/eu_countries", "vendor/bundler/gems"]) as root:
+            self.assertFalse(probeparse.install_landed("ruby", root))
+            self.assertIn("not installed anywhere", line("ruby", root))
 
     def test_node_and_python_too(self):
         with _Project(files=["package.json"]) as root:
             self.assertIn("no node_modules/", line("node", root, name="axios"))
-        with _Project(dirs=["node_modules/axios"]) as root:
+        with _Project(files=["node_modules/axios/index.js"]) as root:
             self.assertIn("Node loads from this project's own node_modules", line("node", root, "axios"))
         with _Project(files=["app.py"]) as root:
             self.assertIn("no virtualenv or site-packages", line("python", root, "requests"))
-        with _Project(dirs=[".venv/lib"]) as root:
+        with _Project(files=[".venv/lib/python3.12/site-packages/requests/__init__.py"]) as root:
             self.assertIn("cannot be imported", line("python", root, "requests"))
 
 
@@ -117,13 +130,13 @@ class WhatIsLeftAloneTests(unittest.TestCase):
 
 class TheSearchIsBoundedTests(unittest.TestCase):
     def test_evidence_at_the_top_of_the_project_is_found(self):
-        with _Project(dirs=["node_modules"]) as root:
+        with _Project(files=["node_modules/left-pad/index.js"]) as root:
             self.assertTrue(probeparse.install_landed("node", root))
 
     def test_it_does_not_walk_the_whole_tree(self):
         """An install tree lives at the top of a project, not eight levels down — and walking a big
         workspace on every failing check is not free."""
-        with _Project(dirs=["a/b/c/d/e/node_modules"]) as root:
+        with _Project(files=["a/b/c/d/e/node_modules/x/index.js"]) as root:
             self.assertFalse(probeparse.install_landed("node", root))
 
 

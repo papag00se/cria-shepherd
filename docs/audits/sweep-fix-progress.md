@@ -322,6 +322,39 @@ Replayed over the real forwarded call sequences with their real tool results, wi
 
 One bound was needed and is measured: the refusal trigger reads the message history, which a fire cannot flush the way the signature trigger flushes `recent_actions`, so unbounded it re-fired on every subsequent call — **14 redirects over 48 calls instead of two**. `blocked_fired_seq` holds it to one per window, which is the "one intervention consumes the evidence" rule the fire site already states in its own words.
 
+## REPLAYED AGAINST THE REAL ARTIFACTS — every fix a capture could reach
+
+Ten of the landed fixes were driven against the actual workspace or the actual captured turn they were written for, rather than against a fixture. **Nine hold. Two did not, and both were only findable this way.**
+
+| # | fix | replayed against | verdict |
+|---:|---|---|---|
+| 22 | manifest in a subdirectory | cell 6's real workspace (`toml-cli/` beside `.git`, `tmp`) | **PASS** — declares `cargo run`, corroborates |
+| 25 | repeat-fold exempts writers | **6,923 of 27,415** real forwarded calls across every capture | **PASS** — none can now be told "repeating it returns the same result" |
+| 30 | "install bundler" answered with "run bundler" | the real command line | **PASS** |
+| 32 | "no test command was composed" | cell 16's Java and cell 12's Rust workspaces | **PASS** — a probe IS composed and the false sentence is gone |
+| 35 | lost-call nudge on plan-off | **911** real turns that emitted a tool call into the reasoning channel | **PASS** |
+| 39 | dependency note asks the disk | cell 13's real Ruby workspace | **FAIL → fixed** (below) |
+| 43 | killed stream is not a summary | 2 real ruminated summariser calls | **PASS** |
+| 44 | exec-intent declines the test suite | the four launcher spellings it chose live | **PASS** |
+| 21 | orienter reads the summary | **4,080** real bodies with a marked summary vs **8,638** with only a task | **PASS** |
+| 29 | self-quote exemption | cell 18's real call 0011 | **FAIL — see below** |
+
+### 39 — FAILED on the real workspace, and the fixture could never have caught it
+
+`install_landed` answered **True** for a project where nothing was installed. Cell 13's workspace holds `vendor/bundle/gems/eu_countries/` — **ten directories and zero files**, built by the model's own `mkdir -p` while every real install was refused. My check read the directory NAME, so cria would have looked at a workspace where nothing landed, seen the folder the failed attempts left behind, and gone straight back to the false sentence this whole item exists to kill.
+
+**Fixed**: an install writes files; `mkdir -p` writes none. Directory evidence must contain a file at some depth. A lock file still counts on its own, because a lock file IS the record of an install. Re-replayed: `install_landed=False`, and the correct wording ships.
+
+### 29 — does NOT fix its case, and loosening it would be worse
+
+The turn is cell 18's call 0011. cria said *"your last message contained the file's contents as text… nothing reached the disk"* about a research summary, and the fix was meant to exempt a fence the coder had merely quoted from a page it was shown. Replayed: **the nudge still fires.**
+
+The coder did not copy. It wrote its own summary — `// Value enum variants:`, `// nested tables` — interleaved with lines lifted from docs.rs. Every distinctive line (`pub enum Value`, `Integer(i64)`, `from_str`) IS in what it was shown; the block as a whole is nowhere verbatim, and the exemption is whitespace-normalised containment.
+
+**Loosening it to line-level matching would be a worse trade, not a better one.** `unexecuted_write` exists for the model that TYPED the file instead of writing it — measured at 0/4 with the finished deliverable sitting in the transcript — and that model has almost always just read the files it is retyping. A "most lines appear in something you read" rule would exempt exactly those turns and silence the nudge where it earns its keep.
+
+The fix as landed is still strictly better than what it replaced (it exempts verbatim quotes of any tool result, not only of cria's own parsed shape blocks). It just does not reach this case. **The grounded alternative is not text similarity at all: cria knows the step in flight, and a READING step produces no files by its own prompt's words — so the nudge has no business firing on one.** Recorded, not built: it gates an existing mechanism on plan state, and that is a design call.
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.

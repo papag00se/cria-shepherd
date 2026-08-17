@@ -1225,14 +1225,35 @@ def install_landed(eco: str, workspace_root: str) -> bool | None:
     root = os.path.join(workspace_root, "")
     try:
         for dirpath, dirnames, filenames in os.walk(workspace_root):
-            if any(n in ev for n in filenames) or any(n in ev for n in dirnames):
-                return True
+            if any(n in ev for n in filenames):
+                return True                       # a lock file IS the record of an install
+            for n in dirnames:
+                if n in ev and _holds_a_file(os.path.join(dirpath, n)):
+                    return True
             # Bounded: an install tree lives at the top of a project, not eight levels down.
             if dirpath[len(root):].count(os.sep) >= 2:
                 dirnames[:] = []
         return False
     except OSError:
         return None
+
+
+def _holds_a_file(path: str) -> bool:
+    """Does this directory contain any file at all, at any depth?
+
+    AN EMPTY TREE IS NOT AN INSTALL. Reading the directory NAME was wrong, and only a replay against
+    the real workspace found it: cycle 4 cell 13's `shipping-rates-rb x ternary-bonsai` has
+    `vendor/bundle/gems/eu_countries/` on disk — **ten directories and zero files**, built by the
+    model's own `mkdir -p` while every actual install was refused. So cria would have looked at a
+    workspace where nothing had been installed, seen the folder the failed attempts left behind, and
+    gone back to saying the gem was installed somewhere ruby could not see it — the exact false fact
+    this whole function exists to stop.
+
+    An install writes files. `mkdir -p` writes none."""
+    for _dirpath, _dirnames, filenames in os.walk(path):
+        if filenames:
+            return True
+    return False
 
 
 def dependency_missing(text: str) -> tuple[str, str] | None:
