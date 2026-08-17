@@ -30,23 +30,69 @@ from cria import execcheck
 class TheDeclaredRunnersAreRunnableTests(unittest.TestCase):
     def test_every_project_runner_is_accepted(self):
         """The invariant, stated as a relation between the two tables rather than a list: anything
-        corroborate will accept as the entry point, _runnable must be willing to execute."""
+        corroborate will accept as the entry point, _runnable must be willing to execute — with ONE
+        deliberate exception, below."""
         for head, subs in execcheck._PROJECT_RUNNERS.items():
-            cmd = f"{head} {subs[0]}" if subs else f"{head} test"
+            non_test = [x for x in subs if x not in ("test", "check")] or [""]
+            cmd = f"{head} {non_test[0]}".strip()
+            if execcheck._is_a_test_command(cmd.split()):
+                continue                     # the exception — see TheTestSuiteIsNotTheProgramTests
             with self.subTest(command=cmd):
                 ok, why = execcheck._runnable(cmd)
                 self.assertTrue(ok, why)
 
     def test_the_five_that_were_refused(self):
-        for cmd in ("rake test", "make run", "mix test", "gradle test", "bundle exec rake test"):
+        """Non-test forms of the five whole languages that were accepted and then refused."""
+        for cmd in ("rake build", "make run", "mix run", "gradle run", "bundle exec ruby app.rb"):
             with self.subTest(command=cmd):
                 self.assertEqual(execcheck._runnable(cmd), (True, ""))
 
     def test_what_already_worked_still_does(self):
-        for cmd in ("cargo run", "go test ./...", "npm test", "python3 app.py",
-                    "java -jar app.jar", "./gradlew test", "./mvnw test"):
+        for cmd in ("cargo run", "python3 app.py", "java -jar app.jar", "./gradlew run",
+                    "node lookup.js goose", "npm start"):
             with self.subTest(command=cmd):
                 self.assertTrue(execcheck._runnable(cmd)[0])
+
+
+class TheTestSuiteIsNotTheProgramTests(unittest.TestCase):
+    """The one deliberate exception to the invariant above, and why it is not the defect this file
+    was written about.
+
+    That defect was cria refusing a command NAMING SOMETHING THE CODER COULD NOT CHANGE — its
+    project's own runner — and coming back with an empty live-execution marker as a result. This is
+    different in kind: the command is perfectly runnable, and cria declines because `proberun`
+    already runs it. Running it here means the suite executes a THIRD time in the live workspace
+    between coder turns, on top of the gate's online run and its network-off comparison.
+
+    Walked on cycle 4 cell 21 (`orders-api-py x nemotron-elastic`, 70% useful — the missing point is
+    exactly this). The model's tests share one repo-relative `orders.db` that nothing deletes, so
+    every extra run appends a row. Its own run reported `assert 22.5 < 0.01`, where `22.5 = abs(30.0
+    - 7.5)` and `30.0` is four rows of `3 x 2.50`: one from the coder's run and three from cria's. It
+    never saw the other three and spent the tail of the run theorising about pytest parameterisation.
+
+    For a project with no program to run — a pure library — abstaining is the honest answer (#11b),
+    not a loss."""
+
+    def test_every_launcher_spelling_of_run_the_tests(self):
+        for cmd in ("python3 -m pytest", "python3 -m pytest -q", "pytest", "npm test",
+                    "go test ./...", "cargo test", "mvn test", "rake test", "node --test",
+                    "npx jest", "bundle exec rspec", "./gradlew test", "./mvnw test"):
+            with self.subTest(command=cmd):
+                ok, why = execcheck._runnable(cmd)
+                self.assertFalse(ok, cmd)
+                self.assertIn("the repo's own checks already do", why)
+
+    def test_a_program_whose_NAME_contains_test_is_not_a_test_command(self):
+        """Matched on the subcommand or the runner, never on a filename — someone may legitimately
+        have delivered `test_helper.py`."""
+        for cmd in ("python3 test_helper.py", "node test-server.js", "./testrunner-app"):
+            with self.subTest(command=cmd):
+                self.assertTrue(execcheck._runnable(cmd)[0], cmd)
+
+    def test_the_refusal_does_not_blame_the_coder(self):
+        """The lesson of this file: a refusal must not name something the coder cannot change."""
+        _, why = execcheck._runnable("npm test")
+        self.assertNotIn("not a recognized program runner", why)
 
 
 class WhatCriaStillWillNotRunTests(unittest.TestCase):

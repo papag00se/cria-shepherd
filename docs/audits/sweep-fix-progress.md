@@ -271,6 +271,15 @@ Cell 11 (`handles-cli-node × qwen35`) found the same defect from the other end:
 
 **Fixed**: the rule already existed one function over. `_steer_from_reasoning` refuses exactly this, in these words — *"A STREAM CRIA ITSELF KILLED IS NOT AN ANSWER… This ran anyway, and then cria narrated the corpse as a decision."* Failing the pass is not a loss: it fires the reasoning-off retry, which is where a summary belongs anyway — straight into content, with no reasoning to salvage.
 
+### 44. cria ran the project's test suite three times per turn, and reported the result as the coder's bug
+Cycle 4 cell 21, `orders-api-py × nemotron-elastic`, 70% useful — and the missing point is exactly this.
+
+The model's tests share one repo-relative `orders.db` that nothing deletes, so every extra run appends a row. Its own run reported `assert 22.5 < 0.01`, where `22.5 = abs(30.0 - 7.5)` and **30.0 is four rows of `3 × 2.50`** — one from the coder's run and three from cria's: the gate's online run, the gate's network-off comparison, and `exec-intent` choosing `python3 -m pytest` as the program to observe. The coder never saw the other three and spent the tail of the run theorising about pytest parameterisation.
+
+**Fixed, one of the three.** The test suite is not the delivered program, and `proberun` already runs it (#23) — so `exec-intent` declines a command that runs the tests, by shape, in every launcher's spelling. That is a deliberate exception to the invariant in `test_the_runner_cria_accepts_is_the_runner_cria_runs.py`, and it is a different thing from the defect that file was written about: there cria refused a command naming something the coder could not change; here the command is perfectly runnable and cria declines because it owns the job. For a project with no program to run, abstaining is the honest answer (#11b).
+
+**Still open — the network-off leg.** `proberun.py:781-790` documents this exact failure from a previous cycle and its fix was half of one: the second run is now suppressed when the online run FAILED (where the comparison is impossible), which is precisely when the double-run was harmless, and still permitted when it PASSED, which is when the side effects break the next check. The remedy is to run the offline leg against a copy of the workspace rather than in it — a strengthening of the existing mitigation, not a revert — and it touches the composed gate script, so it gets its own pass.
+
 ## REPLAYED AGAINST THE REAL BYTES
 
 Every fix above has a test, but a test is a fixture. These four were re-run against the actual captured streams from the cells they were written for (#10 — verify by doing).

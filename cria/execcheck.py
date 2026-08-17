@@ -390,6 +390,27 @@ def corroborate(claim: str, readme: list[str], entries: list[str],
     return True, ""
 
 
+# "Run the tests", in every launcher's spelling plus the bare runners. Matched on the SUBCOMMAND or
+# the program name, never on a filename — `python3 test_helper.py` is a program someone may legitimately
+# have delivered.
+_TEST_SUBCOMMANDS = frozenset({"test", "tests", "spec", "check"})
+_TEST_RUNNERS = frozenset({"pytest", "py.test", "jest", "vitest", "mocha", "ava", "tap", "uvu",
+                           "rspec", "minitest", "phpunit", "tox", "nox", "gotestsum"})
+
+
+def _is_a_test_command(parts: list[str]) -> bool:
+    """Does this command run the project's test suite? See `_runnable` for the run it cost."""
+    if not parts:
+        return False
+    head = parts[0].rsplit("/", 1)[-1]
+    if head in _TEST_RUNNERS:
+        return True
+    # `python3 -m pytest`, `node --test`, `go test ./...`, `npm test`, `mvn test`, `cargo test`.
+    rest = [p for p in parts[1:] if not p.startswith("-")] + [p.lstrip("-") for p in parts[1:]
+                                                              if p.startswith("--")]
+    return any(tok in _TEST_SUBCOMMANDS or tok.rsplit("/", 1)[-1] in _TEST_RUNNERS for tok in rest[:2])
+
+
 def _runnable(command: str) -> tuple[bool, str]:
     if _SHELL_META.search(command):
         return False, "the stated command is a shell pipeline, not a single program"
@@ -400,6 +421,22 @@ def _runnable(command: str) -> tuple[bool, str]:
     if not parts:
         return False, "the stated command is empty"
     head = parts[0]
+    # THE TEST SUITE IS NOT THE DELIVERED PROGRAM, and cria's gate already runs it. This seat exists
+    # to observe the program the task asked for; when it picks the project's test command instead,
+    # the suite is executed a THIRD time in the live workspace between coder turns, on top of the
+    # gate's online run and its network-off comparison.
+    #
+    # Walked on cycle 4 cell 21 (`orders-api-py x nemotron-elastic`, 70% useful — and the missing
+    # point is exactly this). The model's tests share one repo-relative `orders.db` that nothing
+    # deletes, so every extra run appends a row. Its own run reported `assert 22.5 < 0.01`, where
+    # `30.0 = abs(30.0 - 7.5)` is four rows of `3 x 2.50` — one row from the coder's run and three
+    # from cria's. The coder never saw the other three and spent the tail of the run theorising
+    # about pytest parameterisation.
+    #
+    # Refused by SHAPE, so it holds for every ecosystem: a launcher subcommand that means "run the
+    # tests", or a bare test runner. `proberun` composes the real test probe and owns that job (#23).
+    if _is_a_test_command(parts):
+        return False, "that runs the project's tests, which the repo's own checks already do"
     # _PROJECT_RUNNERS TOO. Two sets answered "does cria recognise this launcher" and disagreed:
     # `corroborate` accepts `rake test`, `make run`, `mix test`, `gradle test` and `bundle exec …`
     # as a project's real entry point — the manifest declares them — and then this refused to RUN
