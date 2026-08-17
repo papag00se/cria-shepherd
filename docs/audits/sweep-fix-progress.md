@@ -180,13 +180,30 @@ The rule exists to stop the author INVENTING a filename, and that is worth keepi
 ### 41. Every turn of a Rust task was told the API's routes were still undefined
 Cycle 4 cell 24. The fetch ledger's no-structure line ended *"nothing read so far DEFINES the API's routes"*, which presumes the task involves an HTTP API. The coder fetched `docs.rs/toml` — a crate documentation page, in a task with no API anywhere in it — and that sentence rode **every turn from call 0004 to 0058**. **Fixed**: the narrow fact (this page yielded no endpoint definitions) is true and stays; the claim about what is still missing is now stated as the condition it always was — *"If this task needs a machine-readable API definition, nothing read so far provides one."* The swagger-shell case the note was built for reads the same.
 
-## Surfaced, NOT built — the reading step a documentation page can never close
+### 47. The reading step a documentation page can never close — FIXED, and the old behaviour was #11b inverted
 
-Cycle 4 cell 18, `rust-toml-cli × ternary-bonsai`, 5% useful. `research.grounded_sources` counts a fetch as a source only when the ledger holds parsed ROUTES or response FIELDS, and every marker that fills those needs a doc that parsed as a spec-shaped object. Library documentation does not — docs.rs, rubydoc, godoc, javadoc and pkg.go.dev are HTML prose — so on any "read the library's documentation" step the ledger stays empty and `step_reading_verdict` short-circuits to `NOT_DONE` **with no model call**. The step cannot be closed however completely the page answers the task.
+Promoted out of "surfaced, not built" once the rule was read properly. `step_reading_verdict` short-circuited to `NOT_DONE` **with no model call** whenever `grounded_sources` was empty — and it is empty for every page that is not a REST spec, because every marker that fills `routes`/`shapes` needs one. So a "read the library's documentation" step could never be closed however completely the page answered it.
 
-The coder fetched `docs.rs/toml` at call 0007 and got 7,925 characters carrying the whole API it needed — `pub enum Value`, `Table`, `from_str`, `to_string`. cria recorded it as *"HTTP 200 (this page answered, but no endpoint definitions were found in it)"*, and the step pin — *"Do ONLY this step (1 of 2): Visit crates.io to identify a suitable TOML parser crate"* — was then recited on **20 of the run's 21 coder calls**. Nine were re-fetches of pages already fetched. Zero bytes reached the workspace after call 0010.
+Cycle 4 cell 18, `rust-toml-cli × ternary-bonsai`: `docs.rs/toml` came back with 7,925 characters carrying the whole API the task needed, and the step pin was recited on **20 of the run's 21 coder calls**, nine of them re-fetches of pages already fetched.
 
-**The design, written down and not landed.** The discriminator is a DECLARATION, the same shape the routes marker uses one kind of page over: a landing page declares no symbols, a documentation page declares many — so the guarantee `grounded_sources` exists for (run 1785804243's five HTTP 200s that defined nothing) is preserved. An extractor was written and it works on Rust and Python doc pages while staying silent on landing pages and prose. It was **removed rather than left unwired**: making it count requires a fifth ledger slot threaded through `groundtruth.fetch_facts`, `_merge_fetches`, `grounded_sources` and `_sources_block`, and a new block in every fetch result — a change to what every coder is routinely shown, which needs its own measured pass rather than a tail-end landing.
+**#11b says a mechanism that cannot observe the thing it is asked about must SAY SO, never convert its own blindness into a verdict.** The short-circuit converted "the parsers found no structure" into "the coder read nothing". That is the rule inverted, and it is why this needed no new ledger field, no symbol extractor, and none of the machinery the earlier write-up proposed: the fix is to stop answering a question cria cannot see.
+
+A page that ANSWERED and yielded no structure now goes to the judge, labelled as exactly that (#8 — the deterministic half gathers, the reasoner judges). The guarantee the short-circuit was built for is about an EMPTY ledger — nothing came back, so nothing was read — and that still holds and still costs no call, including when every fetch failed. The incident it was built for survives too: run 1785804243's five HTTP 200s still reach a judge that is told in as many words to treat a home page, a registry landing page or a search-result list as answering nothing.
+
+**Replayed against the real fetch ledgers:**
+
+| cell | ledger | parsed | answered | before | now |
+|---|---:|---:|---:|---|---|
+| rust-toml-cli × ternary-bonsai | 2 | 0 | 2 | NOT_DONE, no call | judged |
+| shipping-rates-rb × ternary-bonsai | 11 | 0 | 8 | NOT_DONE, no call | judged |
+| handles-cli-node × qwen35 | 2 | 1 | 2 | judged on 1 source | judged on both |
+
+### 48. The unexecuted-write nudge fired on a step that produces no files
+The real answer to #29, which the replay showed did not fix its own case. cria said *"your last message contained the file's contents as text… nothing reached the disk"* about cell 18's research summary — a turn that drafted no file, two calls after cria's own results said `Wrote .../Cargo.toml`. It was the run's ONLY tool-call-less coder turn.
+
+Text similarity cannot settle it (the coder summarised rather than copied, and loosening containment to line-level would silence the nudge on exactly the turns it earns its keep). The deterministic fact cria already held is better: **a reading step produces no files, by its own prompt's words** — *"It produces nothing — no script, no tests, no files."* The hand-back has used that same test since 2026-08-04; it just had no name, so no other seat could ask. `_is_reading_step` is now the one owner (#23).
+
+**Replayed on cell 18's real call 0011**: on the reading step the nudge no longer fires; on a work step the identical text still does.
 
 ## Surfaced, NOT built — eliding a read that a later edit superseded
 

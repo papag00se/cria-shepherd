@@ -178,6 +178,17 @@ def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     return out
 
 
+def answered_sources(ledger: dict) -> list[str]:
+    """URLs that came back 2xx, whatever cria could or could not parse out of them.
+
+    `grounded_sources` answers "what did cria PARSE"; this answers "what did the coder READ". They
+    differ exactly where cria's parsers do not reach — and #11b governs that gap: a mechanism that
+    cannot observe the thing it is asked about must say so, never convert its own blindness into a
+    verdict."""
+    return [url for url, entry in (ledger or {}).items()
+            if fetch_succeeded((tuple(entry) + ("", "", ""))[0])]
+
+
 def _sources_block(sources: list[tuple[str, str, str]]) -> str:
     lines = []
     for url, routes, shapes in sources:
@@ -189,7 +200,8 @@ def _sources_block(sources: list[tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
-def step_reading_verdict(ask, task: str, step: str, sources: list[tuple[str, str, str]]) -> str:
+def step_reading_verdict(ask, task: str, step: str, sources: list[tuple[str, str, str]],
+                        ledger_urls: dict | None = None) -> str:
     """``DONE`` / ``NOT_DONE`` / ``NOT_RESEARCH`` for one step against what has really been read.
 
     THREE-VALUED ON PURPOSE, and the third value is what keeps this from being a second completion
@@ -198,16 +210,38 @@ def step_reading_verdict(ask, task: str, step: str, sources: list[tuple[str, str
     question would force such a step into DONE or NOT_DONE and either answer would be cria ruling on
     work it was not asked about. ``NOT_RESEARCH`` is the escape, and it is the common answer.
 
-    NO MODEL CALL when the ledger holds nothing. Not an optimisation — a guarantee: with no parsed
-    routes and no parsed fields there is no evidence any reading happened, so there is nothing for a
-    judge to weigh and no way for a confident wrong answer to clear the step.
+    NO MODEL CALL when NOTHING CAME BACK. That guarantee is about an empty ledger: nothing was
+    fetched, so nothing was read, and there is nothing for a judge to weigh.
+
+    IT WAS NOT ABOUT A PAGE CRIA COULD NOT PARSE, and treating those the same way was #11b inverted —
+    converting cria's own blindness into "not done". Every marker that fills `routes`/`shapes` needs a
+    doc that parsed as a REST spec, so library documentation — docs.rs, rubydoc, godoc, javadoc,
+    pkg.go.dev, all HTML prose — yields nothing, and a "read the library's docs" step could never be
+    closed however completely the page answered it.
+
+    Walked on cycle 4 cell 18 (`rust-toml-cli x ternary-bonsai`, 5% useful): the coder fetched
+    docs.rs/toml and got 7,925 characters carrying the whole API the task needed — `pub enum Value`,
+    `Table`, `from_str`, `to_string`. cria recorded it as "this page answered, but no endpoint
+    definitions were found in it", short-circuited to NOT_DONE with no model call, and the step pin
+    *"Do ONLY this step (1 of 2): Visit crates.io…"* was then recited on **20 of the run's 21 coder
+    calls**, nine of them re-fetches of pages already fetched.
+
+    So a page that ANSWERED but yielded no structure goes to the judge, labelled as exactly that. The
+    guarantee the short-circuit was built for survives: the judge is told plainly that cria parsed
+    nothing from these, so a home page that defined nothing is still a home page that defined nothing
+    (run 1785804243's five HTTP 200s), and judging it is the reasoner's job, not a parser's (#8).
 
     Unreadable answer → ``NOT_DONE``, the direction that leaves the step open."""
-    if not sources:
+    unparsed = [u for u in answered_sources(ledger_urls or {})
+                if u not in {s[0] for s in sources}]
+    if not sources and not unparsed:
         return NOT_DONE
+    block = _sources_block(sources)
+    if unparsed:
+        block = (block + "\n" + prompts.render("research_unparsed",
+                                                urls="\n".join(f"- {u}" for u in unparsed))).strip()
     ans = ask(prompts.load("research_done"),
-              prompts.render("research_done_user", task=task, step=step,
-                             sources=_sources_block(sources)))
+              prompts.render("research_done_user", task=task, step=step, sources=block))
     obj = extract_json_object(strip_think(ans or ""))
     if not isinstance(obj, dict):
         return NOT_DONE

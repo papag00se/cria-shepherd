@@ -1,0 +1,2 @@
+These pages ANSWERED this session, and nothing structured could be parsed out of them — no endpoint list, no response fields. That is a fact about the parsing, NOT about the pages: their full text came back and is in the transcript above. A crate's documentation, a language reference or a README is exactly this shape. Judge them on whether the STEP's question is answered by what came back, and treat a page that merely loaded — a home page, a registry landing page, a search result list — as answering nothing:
+{{URLS}}

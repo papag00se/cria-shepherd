@@ -2611,8 +2611,24 @@ class Loop:
         # verification-only work, so the cria adaptation counts ANY tool activity this step.)
         # BEFORE reading this as a completion claim: a turn that pasted a whole file did not finish
         # the step, it failed to emit the call. See unexecuted_write().
-        if (unexecuted_write(_completion_text(coder),
-                             _injected_fence_texts(sess, body.get("messages", [])))
+        # NOT ON A READING STEP. This nudge exists for the turn that PASTED a file instead of
+        # writing it — and a reading step produces no files, by its own prompt's words. Walked on
+        # cycle 4 cell 18 (`rust-toml-cli x ternary-bonsai`): the coder's research summary quoted
+        # fifteen lines of the crate API it had just fetched, and cria answered "your last message
+        # contained the file's contents as text, but no write tool call was made, so nothing reached
+        # the disk" — over a turn that drafted no file, two calls after cria's own tool results said
+        # `Wrote .../Cargo.toml` and `Wrote .../src/main.rs`. That was the run's ONLY tool-call-less
+        # coder turn, its one chance to be judged and advanced, and it was spent on `read_file` to
+        # check cria's claim.
+        #
+        # The self-quote exemption cannot reach this: the coder did not COPY the page, it wrote its
+        # own summary with its own comments interleaved with lifted lines, so whitespace-normalised
+        # containment can never match — and loosening that to line-level would silence the nudge on
+        # exactly the turns it earns its keep, where a model retypes a file it has just read. The
+        # deterministic fact cria already holds is the better test (#8).
+        if (not _is_reading_step(sess, sess.plan.current())
+                and unexecuted_write(_completion_text(coder),
+                                     _injected_fence_texts(sess, body.get("messages", [])))
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
@@ -3104,9 +3120,12 @@ class Loop:
         # check only ever COMPLETES a step — it never fails one, never steers, never speaks to the
         # coder. Bounded by the evidence itself: the same set of sources is never judged twice, so a
         # step that reads nothing new costs nothing beyond the old cadence.
-        sources = research.sources_read(
-            _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {})), msgs)
-        fingerprint = tuple(sorted(s[0] for s in sources))
+        ledger = _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {}))
+        sources = research.sources_read(ledger, msgs)
+        # A PAGE THAT ANSWERED COUNTS AS EVIDENCE TO RE-ASK ON, even when nothing parsed out of it —
+        # otherwise the fingerprint never moves for a docs-only reading step and the check declines
+        # on cadence forever. See research.step_reading_verdict for the run this cost.
+        fingerprint = tuple(sorted({s[0] for s in sources} | set(research.answered_sources(ledger))))
         evidence_changed = fingerprint != sess.research_evidence
         if not evidence_changed and sess.coder_turns % research.RESEARCH_CHECK_EVERY:
             return None
@@ -3126,7 +3145,7 @@ class Loop:
         verdict = research.step_reading_verdict(
             lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                         sysp, usr, rlog, phase="research-check"),
-            sess.plan.task, item.text, sources)
+            sess.plan.task, item.text, sources, ledger_urls=ledger)
         # SAY WHAT IT DID, always. A guard that is silent when it declines cannot be told apart from
         # one that never ran — and on this check's first live run that is exactly what happened: zero
         # events, and no way to know whether the cadence was never reached or the verdict was NOT_DONE
@@ -3170,7 +3189,7 @@ class Loop:
             # (never the task item), on a DONE that structurally requires grounded sources — and
             # everything that produces files still answers to the gates on the raw-task drive this
             # advance hands back to.
-            if sess.plan_off and item.text != sess.plan.task:
+            if _is_reading_step(sess, item):
                 rlog.emit("loop.reading_step_cleared", step=idx, plan_off=True)
                 return self._advance(sess, key, body, idx, total, rlog)
         return None
@@ -4939,6 +4958,16 @@ def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]
             if body.strip():
                 out.append(body)
     return out
+
+
+def _is_reading_step(sess, item) -> bool:
+    """Is the step in flight the plan-off READING step — the one that produces no files?
+
+    Its own prompt says so in as many words: *"It produces nothing — no script, no tests, no files."*
+    cria has always known this deterministically (the hand-back below has used the same test since
+    2026-08-04); it just had no name, so no other seat could ask."""
+    return bool(getattr(sess, "plan_off", False) and item is not None
+                and item.text != getattr(sess.plan, "task", None))
 
 
 def unexecuted_write(content: str, injected=None) -> bool:
