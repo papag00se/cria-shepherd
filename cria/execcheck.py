@@ -34,6 +34,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import dirguard, probediscovery, prompts, toolpath
 
@@ -154,14 +155,17 @@ def entrypoints(root: str) -> list[str]:
     return sorted(set(found))
 
 
-def manifest_commands(root: str) -> list[str]:
-    """Run commands the project DECLARES in its build manifest — a package.json script, a Rakefile
-    task, a Cargo/Maven target. The same class of artifact as a README command and available in
-    projects that were never asked for a README."""
+_MANIFEST_COMMANDS = (("Cargo.toml", ["cargo run", "cargo test"]),
+                      ("pom.xml", ["mvn test", "mvn compile"]),
+                      ("go.mod", ["go run", "go test"]),
+                      ("Rakefile", ["rake test"]), ("rakefile", ["rake test"]),
+                      ("Gemfile", ["bundle exec"]), ("build.gradle", ["gradle test"]),
+                      ("build.gradle.kts", ["gradle test"]), ("mix.exs", ["mix test"]))
+
+
+def _commands_in_dir(d: str) -> list[str]:
     out: list[str] = []
-    if not root or not os.path.isdir(root):
-        return out
-    pkg = os.path.join(root, "package.json")
+    pkg = os.path.join(d, "package.json")
     if os.path.isfile(pkg):
         try:
             import json as _json
@@ -172,15 +176,38 @@ def manifest_commands(root: str) -> list[str]:
                     out.append(f"npm {k}")
         except (OSError, ValueError):
             pass
-    for name, cmds in (("Cargo.toml", ["cargo run", "cargo test"]),
-                       ("pom.xml", ["mvn test", "mvn compile"]),
-                       ("go.mod", ["go run", "go test"]),
-                       ("Rakefile", ["rake test"]), ("rakefile", ["rake test"]),
-                       ("Gemfile", ["bundle exec"]), ("build.gradle", ["gradle test"]),
-                       ("build.gradle.kts", ["gradle test"]), ("mix.exs", ["mix test"])):
-        if os.path.isfile(os.path.join(root, name)):
+    for name, cmds in _MANIFEST_COMMANDS:
+        if os.path.isfile(os.path.join(d, name)):
             out += cmds
     return out
+
+
+def manifest_commands(root: str) -> list[str]:
+    """Run commands the project DECLARES in its build manifest — a package.json script, a Rakefile
+    task, a Cargo/Maven target. The same class of artifact as a README command and available in
+    projects that were never asked for a README.
+
+    THE MANIFEST IS WHEREVER THE PROJECT IS. This read `root` and nothing else, so a model that ran
+    `cargo new toml-cli` — the normal way to start a Rust project — declared `cargo run` in a file
+    cria refused to look at. Measured on cycle 4 cell 6, `rust-toml-cli x gemma4`: a complete and
+    correct CLI, judged 95% useful, and cria published `no manifest in this workspace declares cargo
+    run` while `toml-cli/Cargo.toml` sat one directory down. That sentence is false (#5b) and it
+    reaches the CODER, which is where the earlier occurrence of this class cost a run.
+
+    `probediscovery.inventory` already owns "where are this workspace's projects" — bounded depth,
+    vendor dirs skipped — and the gate composes its probes from it. Reading the same answer here is
+    what stops the two halves of cria from disagreeing about where the project is (#23)."""
+    out: list[str] = []
+    if not root or not os.path.isdir(root):
+        return out
+    seen: set[str] = set()
+    for pd in probediscovery.inventory(Path(root)):
+        d = str(pd.dir)
+        if d in seen:
+            continue
+        seen.add(d)
+        out += _commands_in_dir(d)
+    return [c for i, c in enumerate(out) if c not in out[:i]]
 
 
 def readme_commands(root: str) -> list[str]:

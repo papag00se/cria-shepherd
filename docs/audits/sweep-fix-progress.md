@@ -98,6 +98,13 @@ Fired three times on `feed-pipeline-java × qwen35`. The reasoner said so in its
 
 **Fixed**: the summary is the turn carrying `CONTINUATION_MARKER`, which `reframe_compaction` stamps in whichever shape the harness rewrites — replaced root or appended turn — so it is found in both and found *nowhere* when no compaction reached this turn. That last case is the one that must not be asked (#11b), and it now takes the canned reanchor, which claims no knowledge of what was built. The prompt additionally forbids filling a gap **inside** a real summary, since a summary that omits what remains puts the reasoner in the same bind on a smaller scale.
 
+### 22. The manifest was only ever looked for at the workspace root
+From the cycle-4 walk. `manifest_commands` read `root` and nothing below it, so a model that starts a Rust project the normal way — `cargo new toml-cli` — put its manifest one directory down and cria concluded the project declares nothing.
+
+Cell 6, `rust-toml-cli × gemma4`: a complete, correct, working CLI judged **95% useful**, and cria's live-execution marker published *"no manifest in this workspace declares cargo run"* with `toml-cli/Cargo.toml` sitting right there. False (#5b), and it reaches the coder — the previous member of this class cost a run outright, the coder answering *"The context says cargo run is not an entry point. Let me check the actual state of the workspace"* after having run it successfully.
+
+**Fixed** by reading `probediscovery.inventory`, which already owns "where are this workspace's projects" (bounded depth, vendor trees skipped) and is what the gate composes its probes from — so the two halves of cria stop disagreeing about where the project is (#23). Not a Rust special case: Maven, Gradle, Go with a `cmd/` dir and every monorepo nest the manifest as a matter of course. What cria will EXECUTE is untouched — still `_runnable` plus `_SHELL_META`.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
