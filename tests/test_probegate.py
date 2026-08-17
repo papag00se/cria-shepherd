@@ -595,7 +595,9 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertIn("no test command was composed", out)
+        # `cargo test` IS composed for a Cargo project, so the lead sentence may not claim none was.
+        self.assertNotIn("no test command was composed", out)
+        self.assertIn("does not establish that this project's tests pass", out)
         self.assertIn("#[test]", out)          # the DECORATION, not a filename
 
     def test_stranded_test_code_is_named_in_the_gate(self):
@@ -613,7 +615,11 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"main.go": "package main\n", "go.mod": "module x\ngo 1.21\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
-        self.assertIn("no test command was composed", out)
+        # `go test ./...` IS composed here, so the lead sentence may not say none was — that claim
+        # went out over a gate script containing `mvn test` on cycle 4 cell 16. What it says instead
+        # is the fact that still holds: the green does not establish the tests pass.
+        self.assertNotIn("no test command was composed", out)
+        self.assertIn("does not establish that this project's tests pass", out)
         self.assertIn("*_test.go", out)
 
     def test_a_venv_full_of_test_files_does_not_mask_a_testless_project(self):

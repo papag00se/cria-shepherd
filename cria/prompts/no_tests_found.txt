@@ -1,1 +1,13 @@
-The checks above cover syntax and lint only — no test command was composed, so nothing here says whether this project's tests pass. {{FINDINGS}}
+# TWO FACTS, NOT ONE SENTENCE FOR BOTH. `plan.untested` is filled by two different questions —
+# "these test files exist where no runner can see them" (which fires whether or not a test command
+# was composed) and "test files exist and no command was composed at all" — and both used to render
+# a single lead sentence written for the second: "The checks above cover syntax and lint only — no
+# test command was composed". Walked on cycle 4 cell 16 (`feed-pipeline-java x ternary-bonsai`):
+# cria said exactly that in the same message as a gate script containing `mvn test`, over a run that
+# had also just executed `mvn -q compile`. False in cria's own voice (#5b).
+no_command = The checks above cover syntax and lint only — no test command was composed, so nothing here says whether this project's tests pass. {{FINDINGS}}
+# A test command DID run — so the "no test command was composed" half cannot be said. What is still
+# true, and is the whole reason this qualifier exists, is that the green above does not establish
+# that this project's tests pass. The finding beside it says why in each case: files a runner cannot
+# see, or no test files at all.
+ran_some = A test command did run, but the clean result above does not establish that this project's tests pass. {{FINDINGS}}

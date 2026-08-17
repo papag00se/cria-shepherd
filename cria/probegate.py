@@ -637,7 +637,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     # no Go/PHP/Ruby toolchain to have verified those strings against).
     untested = list(getattr(plan, "untested", None) or []) if plan is not None else []
     if untested:
-        clean += " " + prompts.render("no_tests_found", findings=" ".join(untested))
+        # WHICH SENTENCE IS TRUE depends on whether a test command was composed at all — see
+        # prompts/no_tests_found.txt for the run where the wrong one went out over a gate script
+        # containing `mvn test`.
+        ran_tests = any(c.kind is probediscovery.ProbeKind.Test
+                        for c in (getattr(plan, "candidates", None) or []))
+        words = prompts.load_map("no_tests_found")
+        clean += " " + prompts.fill(words["ran_some" if ran_tests else "no_command"],
+                                    findings=" ".join(untested))
     # WHERE the checks had to run, when none of them could run where the coder is working. A green
     # gate over a project the working directory does not contain is the most expensive green there
     # is — see _checks_ran_elsewhere for the cell it cost.

@@ -167,6 +167,11 @@ The protected case is untouched: a healthy edit→test→edit→test cycle reset
 
 **Residual, measured and NOT fixed**: whether the redirect then FIRES depends on `_actions_match` calling those attempts the same action, and on this run's real sequence (`gem install`, `--user-dir`, `gem install bundler`, `bundle install`, a hand-rolled `curl`) it would not. Loosening that matcher is a separate change with its own false-positive profile and needs its own measurement.
 
+### 32. "no test command was composed", said in the same message as a gate script containing `mvn test`
+Cycle 4 cell 16, `feed-pipeline-java × ternary-bonsai`. `plan.untested` is filled by two different questions — *"these test files exist where no runner can see them"* (which fires whether or not a test command was composed) and *"test files exist and no command was composed at all"* — and both rendered a single lead sentence written for the second: *"The checks above cover syntax and lint only — no test command was composed."* Over a run that had just executed `mvn -q compile` and whose gate carried `mvn test`. False in cria's own voice (#5b), and it also went out on every Go and Rust project, where `go test ./...` and `cargo test` are always composed.
+
+**Fixed**: two wordings, keyed on whether a test probe was actually composed. When one was, the lead says only what still holds — *"A test command did run, but the clean result above does not establish that this project's tests pass"* — and the finding beside it says why in each case (files a runner cannot see, or no test files at all). The qualifier's whole purpose, stopping a vacuous green from reading as "the tests pass", is unchanged.
+
 ## Checked and NOT a defect
 
 - **The spill ledger's empty-path arm.** `already_spilled` returns True when no absolute path was recorded, and that reads like a #5b violation. It is not: the writeproxy records "" only when it has no `workspace_root`, so cria issued the spill and cannot resolve where the harness's cwd put it — the message names `./tmp/read-only/<name>`, which is true from the coder's side. Returning False re-arms the 19-refetch incident (run 0727-104845) for every session with no workspace root. Change written, tests failed, change reverted; the arm is documented now instead.
