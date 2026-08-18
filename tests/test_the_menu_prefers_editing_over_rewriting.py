@@ -84,10 +84,6 @@ class TheMenuStillOnlyNamesWhatExistsTests(unittest.TestCase):
         self.assertIn("Do NOT write files by shelling out", toolmenu.cheatsheet(FULL))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ItDoesNotUndoTheTwoDecisionsAroundItTests(unittest.TestCase):
     """Both were checked against their commits before this landed.
 
@@ -120,3 +116,7 @@ class ItDoesNotUndoTheTwoDecisionsAroundItTests(unittest.TestCase):
         src = inspect.getsource(toolmenu.cheatsheet)
         self.assertIn("20,056 edits", src)
         self.assertIn("nemotron-elastic", src)
+
+
+if __name__ == "__main__":
+    unittest.main()
