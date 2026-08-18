@@ -423,8 +423,27 @@ def _v(path, raw):
                     _fh.write(text)
                 _r = _sp.run(_argv + [_tmp], capture_output=True, text=True, timeout=20)
                 if _r.returncode != 0:
-                    _msg = ((_r.stderr or '') + (_r.stdout or '')).strip().replace(_tmp, path)
-                    return _msg.splitlines()[0][:200] if _msg else 'does not parse'
+                    _msg = ((_r.stderr or '') + (_r.stdout or '')).strip()
+                    # THE TEMP PATH GOES, IT IS NOT REPLACED. This used to substitute the real
+                    # absolute workspace path back in and THEN cut to `splitlines()[0][:200]`.
+                    # `ruby -c` prints the path TWICE on line one, and a suite workspace path is 96
+                    # characters, so 198 of the 200 were path: the coder was refused with the
+                    # message `:36: s` and, unable to see what was wrong, discarded a complete
+                    # five-change implementation it had just written. Measured and reproduced
+                    # byte-exact. The cap was never the size the message needed; the substitution
+                    # inflated the string four and a half times and the cap then cut the half that
+                    # carried the diagnosis.
+                    #
+                    # The coder already knows which file it just tried to write, so the path is the
+                    # one part of this that carries no information. Stripping it leaves the
+                    # coordinate and the text — and the checker's own caret line, which is two
+                    # thirds of what makes a syntax error actionable and which `splitlines()[0]`
+                    # threw away before the cap even ran (#5: per-line caps and character budgets
+                    # are truncation; this is tool output cria itself ran).
+                    _base = _os.path.basename(path)
+                    _msg = _msg.replace(_tmp + ':', _base + ':').replace(_tmp, _base)
+                    _msg = _msg.replace(_base + ': ' + _base + ':', _base + ':')
+                    return _msg if _msg else 'does not parse'
             except Exception:
                 return None
             finally:
@@ -451,14 +470,25 @@ def _at(raw, msg):
     try:
         text = raw.decode() if isinstance(raw, bytes) else raw
         import re as _re
-        m = _re.search(r'line\s+(\d+)', msg or '')
+        # BOTH SHAPES A CHECKER EMITS. This matched `line\s+(\d+)` only — Python's compile() and an
+        # XML parser say "line 34, column 1", which is the run this helper was written for. Ruby
+        # says `rates.rb:36:`, and so do `node --check`, `php -l` and `gofmt -e`. So the assist
+        # abstained SILENTLY on four of the six languages the validator beside it covers, which is
+        # worse than absent: it looks present. A matcher keyed to one tool's phrasing is inert on
+        # every other tool (#20).
+        # `node --check` prints `f.js:3` with NO trailing colon, `gofmt -e` prints `f.go:3:5`, ruby
+        # and php print `f.rb:36:`. Requiring a filename-shaped token before the number keeps a port
+        # or a timestamp in the message from being read as a line.
+        m = (_re.search(r'line\s+(\d+)', msg or '')
+             or _re.search(r'[\w./\-]+\.\w+:(\d+)\b', msg or ''))
         if not m:
             return ''
         n = int(m.group(1))
         lines = text.splitlines()
         if not (1 <= n <= len(lines)):
             return ''
-        return ' Line %d of the content you sent is: %s' % (n, lines[n - 1].strip()[:200])
+        # The line goes whole — a cap here cuts exactly the long line most likely to be the fault.
+        return ' Line %d of the content you sent is: %s' % (n, lines[n - 1].strip())
     except Exception:
         return ''
 '''
