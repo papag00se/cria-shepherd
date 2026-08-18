@@ -119,6 +119,30 @@ cria already refuses a no-op `edit_file` (`if old == new: _fail('identical')`). 
 
 ---
 
+## CHECKED AGAINST THE BASELINE — two of these are not cria-drive defects
+
+The obvious question about any walk finding is why the assists-off arm does not show it. For two of the five, it does. Measured over every capture with a scored row — 24 BASE runs (961 model calls) against 125 CRIA runs (11,505 calls), reported as the share of runs carrying the symptom:
+
+| symptom | BASE | CRIA | which layer |
+|---|---:|---:|---|
+| dead-stream stall (>180 s, no output) | **2 of 961 calls (0.21%)** | 37 of 11,505 (0.32%) | plumbing |
+| write validator's syntax refusal | **1 of 24 runs (4%)** | 11 of 125 (9%) | plumbing |
+| install-remedy note | **3 of 24 runs (13%)** | 22 of 125 (18%) | plumbing |
+| out-of-workspace refusal | **4 of 24 runs (17%)** | 15 of 125 (12%) | plumbing |
+| repetition note | 1 of 24 (4%) | 21 of 125 (17%) | drive |
+| authored steer / redirect | **0 of 24** | 7 of 125 | drive |
+| gate check block | **0 of 24** | 113 of 125 (90%) | drive |
+| `__cria_` sentinel in the prompt | **0 of 24** | 117 of 125 (94%) | drive |
+
+`[engagement] drive = false` makes cria a plain proxy: no planner, no steers, no gates, no critics. It does **not** turn off the plumbing — the synthetic write tools and their validator, the workspace guard and its install remedy, and the upstream stream all run in both arms.
+
+So:
+
+- **Findings 1, 2 and 3 are baseline problems too.** The baseline's longest single call is 525 seconds of nothing — the same stall, with no guard in its path at all, because the dead-stream guard lives on the streaming path only the drive loop uses. Fixing these lifts both arms and explains nothing about any BASE-vs-CRIA gap.
+- **Findings 4 and 5 are drive-only.** Steers, the gate's check blocks and the `__cria_` leak appear in zero baseline runs.
+
+That distinction was missing from the first write-up, which presented all five as "how cria got in the way". Three of them are how cria gets in the way of *both* arms.
+
 ## What the walk says about the recent fixes
 
 - **edit-first cheatsheet** — not testable on the rust run, which started 53 minutes before the commit. On the retest run it worked for `Gemfile` (both changes used `edit_file`) and did not for `rates.rb` (two whole-file rewrites, the second to move a single `require` line).
