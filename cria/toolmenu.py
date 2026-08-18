@@ -113,21 +113,33 @@ def cheatsheet(tools) -> str | None:
     frag = prompts.load_map("cheatsheet")
     lines = []
     # Call the file tools out up front — naming ONLY the write tools actually in the menu (parity).
+    # EDIT FIRST, and the reason is measured. This list is introduced to the model as "the order you
+    # should PREFER them", and it led with `write_file — {"content": "<full file text>"}`. On the
+    # targeted re-run of `rust-toml-cli x ternary-bonsai` the coder used write_file SEVEN times and
+    # edit_file ZERO — rewriting a 6.6 KB main.rs whole, five times, each version 99.1-99.9%
+    # identical to the last, until a regeneration introduced the type error the run died on. The
+    # SAME model on the SAME task with the harness's own menu wrote the file once and made three
+    # ~285-byte edit_file patches: 20 calls, 4 of 4.
+    #
+    # It did what it was told. Changing part of a file that exists is what edit_file is for, and a
+    # whole-file rewrite is the expensive way to change one line — it regenerates every line that was
+    # already right, and each regeneration is a fresh chance to break one.
     write_tools = []
-    if "write_file" in names:
-        write_tools.append("write_file (a new or fully overwritten file)")
     if "edit_file" in names:
-        write_tools.append("edit_file (replace one snippet)")
+        write_tools.append("edit_file (change part of a file that already exists — PREFER this)")
+    if "write_file" in names:
+        write_tools.append("write_file (create a file, or replace one wholesale)")
     if write_tools:
         lines.append(prompts.fill(frag["lead_write"], tools=" or ".join(write_tools)))
-    # Same preferred order as the schema (_FOCUS_ORDER): writing tools first, then reading/
+    # Same preferred order as the schema (_FOCUS_ORDER): file tools first — EDIT before WRITE, see
+    # above — then reading/
     # inspection, then web, with the shell last — so the hint mirrors the menu. apply_patch is
     # intentionally absent (not model-facing). Arg NAMES for read_file/list_dir are read from the
     # resolved schema, so the hint can't disagree with a harness-native tool (path vs dir_path).
-    if "write_file" in names:
-        lines.append(frag["write_file"])
     if "edit_file" in names:
         lines.append(frag["edit_file"])
+    if "write_file" in names:
+        lines.append(frag["write_file"])
     if "read_file" in names:
         lines.append(prompts.fill(frag["read_file"], arg=_path_arg(by_name["read_file"])))
     elif shell is not None:

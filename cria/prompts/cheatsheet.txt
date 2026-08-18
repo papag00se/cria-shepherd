@@ -12,8 +12,8 @@
 # `\n` in a value becomes a real newline.
 header = Tools available this turn, listed in the order you should PREFER them — call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.
 lead_write = CRITICAL — to create or change a file you MUST use {{TOOLS}}. Do NOT write files by shelling out (echo >, cat <<HEREDOC, tee, sed -i): the file tools are more reliable and cannot be truncated mid-write.
-write_file = - write_file — Args: {"path": "<file>", "content": "<full file text>"}
-edit_file = - edit_file — Args: {"path": "<file>", "old_string": "<exact snippet to replace>", "new_string": "<replacement>"}
+write_file = - write_file — for a NEW file, or to replace one wholesale. Rewriting a whole file to change a few lines regenerates every line that was already right. Args: {"path": "<file>", "content": "<full file text>"}
+edit_file = - edit_file — change PART of an existing file; the rest of it stays exactly as it is. Args: {"path": "<file>", "old_string": "<exact snippet to replace>", "new_string": "<replacement>"}
 read_file = - read_file — Args: {"{{ARG}}": "<file>"}, or add "start_line"/"end_line" for a 1-based inclusive range
 list_dir = - list_dir — Args: {"{{ARG}}": "<dir>"}
 view_image = - view_image — attach a local image so you can see it. Args: {"path": "<path/to/image.png>"}.

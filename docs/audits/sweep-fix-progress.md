@@ -348,6 +348,23 @@ Replayed over the real forwarded call sequences with their real tool results, wi
 
 One bound was needed and is measured: the refusal trigger reads the message history, which a fire cannot flush the way the signature trigger flushes `recent_actions`, so unbounded it re-fired on every subsequent call — **14 redirects over 48 calls instead of two**. `blocked_fired_seq` holds it to one per window, which is the "one intervention consumes the evidence" rule the fire site already states in its own words.
 
+### 50. THE A FIX — cria told the coder to prefer whole-file rewrites, and it obeyed
+
+#49 below is the B, and the operator was right to ask why the duplication happened at all.
+
+cria's cheatsheet is introduced to the model as *"Tools available this turn, **listed in the order you should PREFER them**"* — and it led with `write_file — {"content": "<full file text>"}`, `edit_file` beneath it.
+
+| | write_file | edit_file | read_file | exec_command |
+|---|---:|---:|---:|---:|
+| under cria | **7** | **0** | 1 | 4 |
+| unassisted | 2 | 3 | 4 | 8 |
+
+**It did what it was told.** Seven whole-file writes, not one edit, on a cell where the same model with the harness's own menu wrote the file once and made three ~285-byte patches (20 calls, 4 of 4).
+
+**Fixed at A**: `edit_file` now leads the preference order and the lead sentence, each is described by what it is FOR — *"change PART of an existing file"* versus *"for a NEW file, or to replace one wholesale"* — and the cost is stated where the model reads it: *"Rewriting a whole file to change a few lines regenerates every line that was already right."* Which is exactly what happened: `.get(key)` was correct at three rewrites and became `.get(key.to_string())` at the fourth.
+
+The dedup below stays, on its own terms rather than as the answer: a superseded copy is not what is on disk, and #5 allows carrying repeated content once as a pointer. But it treats the bloat; this treats the rewriting.
+
 ### 49. The model was handed six copies of its own file, and wrote a seventh with a new bug
 Found by the targeted post-fix re-run of `rust-toml-cli × ternary-bonsai` — and it is the reason that cell still scored 0 when every mechanism fixed for it behaved correctly.
 
