@@ -39,6 +39,24 @@ Five orthogonal lenses, dispatched in parallel. Every HIGH below was spot-checke
 - **The truncation guard erases the evidence the spiral detectors need.** `_drop_tool_calls` (`loop.py:8481`) strips the call, so `loop.py:2317` skips both `guard_track_repetition` and `guard_track_write_streak` — the corruption loop its own docstring describes never accrues a streak.
 - **Stream-error recovery forfeits every guard.** `upstream.py:747` re-asks buffered on an SSE error, unwatched, bounded only by the 7200s read timeout — and a runaway is a plausible cause of that error.
 
+## Verified after the sweep — what survived and what did not
+
+**LANDED (six).** Tier 1's syntax refusal, the borrowed repeat count, the dependency-note root, and the read-refusal wording; Tier 2's wire silence deadline and the vacuous-green test check. Each was re-verified or reproduced before it was touched.
+
+**REFRAMED — the read refusal.** Filed as "the operator ruled out truncation on every path, so the sentence is false". That did not survive: the ruling governs cria's own paths, and a claim about a downstream cut is a different claim. What makes it false is narrower — the refusal fires at 9,000 bytes and the truncation it cited was measured at ~20,707 tokens, nine times higher. So at the size it actually fires, nobody would have truncated anything. Fixed on that reason.
+
+**NOT BUILT — PHP discovery, and it is wider than PHP.** The claim checks out: `discover()` on a PHP project with source and tests but no `composer.json` returns nothing. But ecosystem detection is manifest-only for *every* language, and the consequence is not confined to PHP:
+
+```
+orders-api-py     (its real seed) ->  NOTHING
+shipping-rates-rb                 ->  rake test, rubocop, rspec
+feed-pipeline-java                ->  mvn compile, mvn test
+```
+
+**`orders-api-py` discovers no probes at all, and it is the highest-scoring Python cell (90–100%).** So cria's gate has never run a test on it. That is a coverage gap, not a false fact — with the vacuous-green fix landed, `gate_ran_tests` now correctly reports that no tests ran, so the judge is told the truth about cria's blindness rather than a fiction.
+
+Not built, deliberately. It is an ADDITION of coverage, rule 1 sets a high bar for those, and rule 15 asks for prevalence first — of the 21 `loop.gate` events in the logs, **zero found no probes**. The cell scores 90–100% without cria's gate, so the cost of the gap is unmeasured. **Trigger to revisit:** a walked run where the gate's silence is what let a wrong answer through, or a Python cell whose score is limited by unverified tests.
+
 ## Tier 3 — bigger, defer until the area is touched
 
 - **The gate's entire evidence is head+tail cut in the shell it generates.** `proberun.py:731` — `head -c N` / `...[middle N bytes elided]...` / `tail -c N`, budget split across probes. This is the seed at full scale: compiler and test output, the ground truth every verdict rests on. Spill it whole and hand back a path, the way an oversized fetch already works.
