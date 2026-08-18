@@ -261,7 +261,7 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
         rel = self.spilled("big.json", writeproxy.READ_INLINE_MAX + 1)
         r = self.run_in_ws(writeproxy._read_command({"path": rel}))
         self.assertEqual(r.returncode, 0)
-        self.assertIn("would be truncated", r.stdout)      # the steer still reaches the model
+        self.assertIn("larger than can be returned", r.stdout)  # the steer still reaches the model
         self.assertTrue(denial.is_denied(r.stdout))        # and cria still knows nothing came back
 
     def test_the_ranged_read_size_guard_exits_zero(self):
@@ -272,7 +272,7 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
         rel = f"{webfetch.SPILL_DIR}/wide.txt"
         r = self.run_in_ws(writeproxy._read_command({"path": rel, "start_line": 1, "end_line": 400}))
         self.assertEqual(r.returncode, 0)
-        self.assertIn("too large to return", r.stdout)
+        self.assertIn("larger than can be returned", r.stdout)
         self.assertTrue(denial.is_denied(r.stdout))
 
     def test_a_call_that_was_BLOCKED_still_exits_non_zero(self):

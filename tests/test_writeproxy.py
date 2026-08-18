@@ -319,7 +319,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("sed -n '2,9p' f.py", ranged)
         self.assertIn("past the end of the file", ranged)   # a past-EOF read isn't a silent empty
         self.assertIn("END{print NR}", ranged)              # accurate line count (awk NR, not wc -l)
-        self.assertIn("too large to return", ranged)        # an over-cap RANGE steers, never truncates
+        self.assertIn("larger than can be returned", ranged)  # an over-cap RANGE steers, never truncates
         self.assertIn(str(READ_INLINE_MAX), ranged)
 
     def test_web_search_spills_results_to_read_only(self):

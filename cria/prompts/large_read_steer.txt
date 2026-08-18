@@ -1,1 +1,1 @@
-{{PATH}} is large — reading it whole would be truncated (you'd get the head and tail with the middle cut, and act on a false view). Read it deliberately instead: grep for what you need (e.g. grep -n "<keyword>" {{PATH}}), or read a specific line range with read_file start_line/end_line.
+{{PATH}} is larger than can be returned in one read, so nothing is shown. Read it deliberately instead: grep for what you need (e.g. grep -n "<keyword>" {{PATH}}), or read a specific line range with read_file start_line/end_line.

@@ -657,10 +657,18 @@ READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 
 def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     """A ranged read (``sed -n 'start,END p'``) with the SAME two guards a whole read needs:
-    * SIZE — if the range's bytes exceed READ_INLINE_MAX the HARNESS truncates the output (cria's
-      'never hand back truncatable content' principle). Observed live: a big range was cut at ~20707
-      tokens and the model then read line '20707' — the truncation count mistaken for a line number.
-      Too big → steer to a narrower range / grep instead of returning a doomed-to-be-truncated blob.
+    * SIZE — a range over READ_INLINE_MAX is not handed back; the coder is told how to ask a
+      smaller question instead. Observed live: a big range was cut at ~20707 tokens and the model
+      then read line '20707' — the truncation count mistaken for a line number.
+
+      WHAT THE REFUSAL SAYS ABOUT ITSELF. It used to say "the HARNESS would truncate it mid-way".
+      READ_INLINE_MAX is 9,000 bytes and the observed cut was ~20,707 tokens — roughly nine times
+      higher — so at the threshold where this actually fires, nothing would have been truncated by
+      anyone. That is an internal limit stated as a fact about the world, which rule 5b names in
+      those words, and it is the same defect `_spill_read_command` was fixed for one function over:
+      "cria says it about its OWN read guard, which is a claim about cria dressed as a claim about
+      the world". The refusal stands — cria genuinely will not return that much in one piece — so it
+      now says THAT, and the routes it offers are unchanged and still true.
     * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
     An in-range, in-size read returns exactly its content."""
     # Through an owner, not a hand-rolled printf — and specifically the SIZE owner, which exits 0.
@@ -787,8 +795,10 @@ def _read_command(args: dict) -> str | None:
         return _ranged_read(q, str(path), f"{start},{end}", start)
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
         return _ranged_read(q, str(path), f"{start},$", start)
-    # Whole read: size-check first; a big file would be truncated by the harness, so hand back a
+    # Whole read: size-check first; a file over the limit is not handed back, so the coder gets a
     # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
+    # The pointer states the refusal, not a prediction about what some other layer would have done
+    # with the bytes — see the SIZE note in `_ranged_read`.
     # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
     # report success.
     steer = _oversize_command(prompts.render("large_read_steer", path=str(path)))
