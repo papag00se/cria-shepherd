@@ -117,7 +117,7 @@ def cheatsheet(tools) -> str | None:
     # should PREFER them", and it led with `write_file — {"content": "<full file text>"}`. On the
     # targeted re-run of `rust-toml-cli x ternary-bonsai` the coder used write_file SEVEN times and
     # edit_file ZERO — rewriting a 6.6 KB main.rs whole, five times, each version 99.1-99.9%
-    # identical to the last, until a regeneration introduced the type error the run died on. The
+    # identical to the last, and not one of the five versions compiles — verified by building them. The
     # SAME model on the SAME task with the harness's own menu wrote the file once and made three
     # ~285-byte edit_file patches: 20 calls, 4 of 4.
     #
