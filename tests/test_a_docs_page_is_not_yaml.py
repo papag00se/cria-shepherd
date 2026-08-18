@@ -72,15 +72,38 @@ class TheMeasuredPageTests(unittest.TestCase):
 
 
 class WhatCriaCanStillSayTests(unittest.TestCase):
-    def test_a_doc_that_parsed_is_json_because_that_is_what_gets_written(self):
-        """`_greppable` pretty-prints every parsed doc as JSON, whatever the source was — so this is
-        a fact about the spilled FILE, which is the thing the sentence describes."""
-        self.assertEqual(webfetch._doc_format('{\n  "a": 1\n}', {"a": 1}), "JSON")
-        self.assertEqual(webfetch._doc_format("- a\n- b\n", ["a", "b"]), "JSON",
-                         "a YAML source still lands in the file as JSON")
+    def test_a_doc_that_landed_as_json_is_json(self):
+        """`_greppable` pretty-prints a parsed doc as JSON whatever the source was, so a YAML source
+        still lands in the file as JSON — and the file is what the sentence describes."""
+        import yaml
+        for src in ("a: 1\n", "- a\n- b\n"):
+            with self.subTest(src=src):
+                g = webfetch._greppable(src, yaml.safe_load(src), "text/yaml")
+                self.assertEqual(webfetch._doc_format(g), "JSON")
 
     def test_raw_json_with_no_parse_is_still_json(self):
         self.assertEqual(webfetch._doc_format('{"a": 1}'), "JSON")
+
+    def test_a_parse_that_could_not_be_serialised_is_NOT_announced_as_json(self):
+        """THE HOLE THE FIRST CUT OF THIS FIX OPENED, one commit wide. It took `parsed is not None`
+        as proof of JSON, on the reasoning that `_greppable` pretty-prints every parsed doc. It does
+        not always: `json.dumps` raises on a `datetime`, PyYAML turns a bare `2026-08-18` into one,
+        and the doc then falls back to its raw YAML text — which cria announced as JSON. A false fact
+        introduced by the fix for a false fact.
+
+        The bytes are the authoritative object and are what is read now (#5b)."""
+        import yaml
+        src = "when: 2026-08-18\nwhat: a release\n"
+        parsed = yaml.safe_load(src)
+        self.assertIsInstance(parsed["when"], __import__("datetime").date)
+        g = webfetch._greppable(src, parsed, "text/yaml")
+        self.assertEqual(g, src, "precondition: it fell back to the raw text")
+        self.assertEqual(webfetch._doc_format(g), "")
+
+    def test_it_takes_no_parse_argument_at_all(self):
+        """A parameter that can disagree with the bytes is a parameter that will."""
+        import inspect
+        self.assertEqual(list(inspect.signature(webfetch._doc_format).parameters), ["content"])
 
     def test_a_body_that_kept_its_tags_is_html(self):
         for head in ("<!doctype html><p>x", "<html><body>", "<?xml version='1.0'?>"):
@@ -90,18 +113,11 @@ class WhatCriaCanStillSayTests(unittest.TestCase):
     def test_the_swagger_incident_still_answers_correctly(self):
         """ada-handles_nemotron-elastic_codex_pon_1785360304: a `.yml` url answered with JSON, and
         the coder grepped `properties:` against a file holding `"properties": {`. Naming the format
-        is what fixed it, and it still does — now from the parse rather than from a sniff."""
-        self.assertEqual(webfetch._doc_format('{\n  "paths": {}\n}', {"paths": {}}), "JSON")
+        is what fixed it, and it still does."""
+        self.assertEqual(webfetch._doc_format('{\n  "paths": {}\n}'), "JSON")
 
 
 class TheCallersPassTheParseTests(unittest.TestCase):
-    def test_both_call_sites_hand_it_the_parse_they_already_hold(self):
-        """Neither caller had to compute anything new — `parsed` was one element away in both."""
-        import inspect
-        src = inspect.getsource(webfetch)
-        self.assertIn("_doc_format(content, parsed)", src)
-        self.assertIn("_doc_format(_greppable(cached[2], cached[3], cached[1]), cached[3])", src)
-
     def test_yaml_is_no_longer_a_possible_answer(self):
         import inspect
         body = inspect.getsource(webfetch._doc_format)

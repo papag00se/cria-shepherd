@@ -7,8 +7,12 @@
 # installed, `require` failing, and twenty minutes spent on the package manager instead of the task.
 # Each line says WHERE the ecosystem looks, because "install it" was never the missing step.
 
-ruby = Note: `{{NAME}}` did not load. A gem installed with --install-dir is not on the load path by default — add its `lib` directory to $LOAD_PATH from your code, or set GEM_HOME to that directory when you run. Fix the loading; the code that uses it is not what failed here.
+ruby = Note: `{{NAME}}` did not load. `require` only sees gems on ruby's load path, and an install that landed somewhere else — a `--install-dir` directory, or a bundle — stays invisible to it until the load path reaches that directory. Fix the loading; the code that uses it is not what failed here.
 
+# THE GENERAL LINE NAMES NO MECHANISM, because it is the line cria uses when it could not tell
+# which one applies. It used to assert `--install-dir` outright, so abstaining still stated an
+# unverified fact — and the two lines below are only reachable when the disk says so.
+#
 # …and the same fact for a project whose gems came from BUNDLER, which cria reads off the disk
 # (probeparse.install_flavour) rather than assuming. The line above names --install-dir, and on
 # `shipping-rates-rb x ternary-bonsai` it was appended to a bundler project's failing `bundle exec
@@ -18,6 +22,8 @@ ruby = Note: `{{NAME}}` did not load. A gem installed with --install-dir is not 
 # That line raises TypeError with GEM_HOME unset and aborted `rake test` until it was backed out.
 # The model's own reasoning had the right answer — "bundler isolates gems and doesn't include
 # system-installed gems like minitest" — and it deferred to cria's note anyway.
+ruby_install_dir = Note: `{{NAME}}` did not load. This project's gems were installed with --install-dir, and a gem installed that way is not on the load path by default — add its `lib` directory to $LOAD_PATH from your code, or set GEM_HOME to that directory when you run. Fix the loading; the code that uses it is not what failed here.
+
 ruby_bundler = Note: `{{NAME}}` did not load. This project's gems are installed with bundler, and a bundler install is only on the load path under bundler — `require "bundler/setup"` at the top of the file that needs it, or run the command under `bundle exec`. If `{{NAME}}` is not in the `Gemfile`, that is the reason: a gem outside the bundle is invisible to it even when it is installed on this machine.
 
 python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). Fix the import path; the code that uses it is not what failed here.

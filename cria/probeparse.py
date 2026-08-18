@@ -1217,13 +1217,29 @@ def install_flavour(eco: str, workspace_root: str) -> str:
 
     Read off disk, never assumed (#8). Suffixes a prompt key: `ruby` + `bundler` selects the
     `ruby_bundler` line when one exists, and falls back to the general line when it does not, so
-    adding an ecosystem here is additive and adding a flavour is one prompt row."""
+    adding an ecosystem here is additive and adding a flavour is one prompt row.
+
+    SAME REACH AS :func:`install_landed`, deliberately. The first cut looked only at the workspace
+    root, while `install_landed` walks two levels — so a project the model built one directory down
+    (the `cargo new toml-cli` shape `probegate._checks_ran_elsewhere` exists for) answered
+    "an install landed" and "I cannot tell which", and the general line's `--install-dir` claim came
+    straight back for a bundler project. Two readers of one tree must not see different trees (#11b).
+    """
     if not workspace_root or not os.path.isdir(workspace_root):
         return ""
-    for flavour, marks in _INSTALL_FLAVOUR.get(eco, ()):
-        for mark in marks:
-            if os.path.exists(os.path.join(workspace_root, mark)):
-                return flavour
+    flavours = _INSTALL_FLAVOUR.get(eco, ())
+    if not flavours:
+        return ""
+    root = os.path.join(workspace_root, "")
+    try:
+        for dirpath, dirnames, _files in os.walk(workspace_root):
+            for flavour, marks in flavours:
+                if any(os.path.exists(os.path.join(dirpath, m)) for m in marks):
+                    return flavour
+            if dirpath[len(root):].count(os.sep) >= 2:   # bounded, like install_landed
+                dirnames[:] = []
+    except OSError:
+        return ""
     return ""
 
 

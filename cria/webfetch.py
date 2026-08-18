@@ -423,7 +423,7 @@ def outline_for_spill_path(path: str) -> str:
     return ""
 
 
-def _doc_format(content: str, parsed: Optional[Any] = None) -> str:
+def _doc_format(content: str) -> str:
     """What the spilled bytes ACTUALLY are — "JSON", "HTML", or "" when cria cannot say.
 
     The spill FILENAME comes from the url (:func:`_spill_name`, stable on purpose so a re-fetch maps
@@ -449,9 +449,17 @@ def _doc_format(content: str, parsed: Optional[Any] = None) -> str:
 
     The `HTML` answer survives for the one case that reaches the file with tags in it — a MINIFIED
     body, which `_greppable` breaks at structural points rather than flattening. An ordinary HTML
-    page is reduced to text long before here, and text is not HTML."""
+    page is reduced to text long before here, and text is not HTML.
+
+    AND IT READS THE BYTES, NOT THE PARSE. The first cut of this took `parsed is not None` as proof
+    of JSON, on the reasoning that `_greppable` pretty-prints every parsed doc. It does not always:
+    `json.dumps` raises on a `datetime`, and PyYAML turns a bare `2026-08-18` into one — so a YAML
+    document with a date scalar falls back to its raw text and was then announced as JSON. Same rule
+    as the one this function exists to serve (#5b): cria holds the authoritative object — the bytes
+    it is about to write — so it reads those. `json.dumps` output always opens with `{` or `[`, which
+    makes the parse redundant as well as unsafe."""
     head = (content or "").lstrip()[:200]
-    if parsed is not None or head.startswith(("{", "[")):
+    if head.startswith(("{", "[")):
         return "JSON"
     if head.lower().startswith(("<!doctype", "<html", "<?xml")):
         return "HTML"
@@ -466,7 +474,7 @@ def format_for_spill_path(path: str) -> str:
         return ""
     for url, cached in _DOC_CACHE.items():
         if os.path.basename(_spill_name(url)) == base:
-            return _doc_format(_greppable(cached[2], cached[3], cached[1]), cached[3])
+            return _doc_format(_greppable(cached[2], cached[3], cached[1]))
     return ""
 
 
@@ -480,7 +488,7 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     status, ct, reduced, parsed, _trunc = cached
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
-    fmt = _doc_format(content, parsed)
+    fmt = _doc_format(content)
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
                      format=(f" It is {fmt}." if fmt else ""),

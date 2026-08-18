@@ -88,6 +88,16 @@ class TheWorldIsAskedBeforeItIsDescribedTests(unittest.TestCase):
         with _Project(files=["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]) as root:
             self.assertIn("installed with --install-dir", line("ruby", root))
 
+    def test_each_mechanism_gets_its_own_remedy_and_the_unknown_case_gets_neither(self):
+        """Three states, three sentences. The GEM_HOME advice is right for an --install-dir tree and
+        wrong for a bundler one, which is the whole incident; and when cria cannot tell, it says the
+        thing that is true of ruby either way and prescribes nothing."""
+        with _Project(files=["Gemfile", "vendor/bundle/gems/x-1.0/lib/x.rb"]) as root:
+            self.assertIn("GEM_HOME", line("ruby", root, name="unaccent"))
+        with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
+            self.assertNotIn("GEM_HOME", line("ruby", root, name="unaccent"))
+        self.assertNotIn("GEM_HOME", line("ruby", ""))
+
     def test_the_bundler_case_does_not_prescribe_GEM_HOME(self):
         """THE MEASURED COST. `shipping-rates-rb x ternary-bonsai`: the --install-dir sentence was
         appended to a BUNDLER project's failing `bundle exec rake test` — no --install-dir install
@@ -115,6 +125,26 @@ class TheWorldIsAskedBeforeItIsDescribedTests(unittest.TestCase):
                     said = line("ruby", root)
                     self.assertNotIn("installed nowhere ruby is looking", said)
                     self.assertIn("did not load", said)
+
+    def test_the_general_line_names_no_mechanism_because_it_is_the_i_cannot_tell_line(self):
+        """ABSTAINING MUST NOT STATE A FACT EITHER. The general line asserted `--install-dir`
+        outright, so the branch cria takes when it CANNOT tell which install happened was still
+        naming one. It now states what is true of ruby in either case and claims nothing about this
+        project."""
+        with _Project(files=["Gemfile", "vendor/lib/x.rb"]) as root:
+            from cria import probeparse
+            said = prompts.fill(prompts.load_map("dependency_note")["ruby"], name="countries")
+            self.assertNotIn("A gem installed with --install-dir is not on the load path", said)
+            self.assertIn("only sees gems on ruby's load path", said)
+
+    def test_the_flavour_reader_sees_the_same_tree_install_landed_sees(self):
+        """A project the model built one directory down — the `cargo new toml-cli` shape. The first
+        cut looked only at the workspace root, so this answered "an install landed" and "I cannot
+        tell which", and the general line's --install-dir claim came straight back (#11b)."""
+        from cria import probeparse
+        with _Project(files=["shipping/Gemfile", "shipping/Gemfile.lock"]) as root:
+            self.assertTrue(probeparse.install_landed("ruby", root))
+            self.assertEqual(probeparse.install_flavour("ruby", root), "bundler")
 
     def test_a_flavour_cria_cannot_read_keeps_the_general_line(self):
         """#3: no evidence, no claim. A ruby project with an install cria can see but no marker
@@ -161,10 +191,12 @@ class WhatIsLeftAloneTests(unittest.TestCase):
                     self.assertIn(phrase, line(eco, root, name="x"))
 
     def test_no_workspace_keeps_the_original(self):
-        self.assertIn("installed with --install-dir", line("ruby", ""))
+        """#3: with no workspace to read, cria keeps the general line — which since 2026-08-18 names
+        no mechanism, because this is exactly the branch where it does not know one."""
+        self.assertIn("only sees gems on ruby's load path", line("ruby", ""))
 
     def test_an_unreadable_workspace_keeps_the_original(self):
-        self.assertIn("installed with --install-dir",
+        self.assertIn("only sees gems on ruby's load path",
                       line("ruby", "/nonexistent-path-for-this-test"))
 
     def test_install_landed_says_it_cannot_tell_rather_than_guessing(self):
