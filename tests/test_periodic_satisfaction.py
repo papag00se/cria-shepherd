@@ -32,15 +32,39 @@ class PathCoverageTests(unittest.TestCase):
 
 
 class DueScheduleTests(unittest.TestCase):
-    def test_fires_at_start_then_every_n(self):
-        due = [n for n in range(1, 161) if loop.satisfaction_check_due(n, 80, 20)]
+    def test_fires_at_start_then_every_n_when_it_keeps_running(self):
+        """The spacing the cadence promises, in the case where nothing blocks it: the check runs, so
+        the stamp moves, so the next one is `every` later."""
+        due, last = [], -1
+        for n in range(1, 161):
+            if loop.satisfaction_check_due(n, 80, 20, last):
+                due.append(n)
+                last = n                      # it RAN
         self.assertEqual(due[:4], [80, 100, 120, 140])
 
+    def test_a_blocked_opportunity_is_retried_on_the_next_drive(self):
+        """THE DEFECT. Under `(drive - start) %% every == 0`, missing drive 100 meant waiting until
+        120. Measured on rust-toml-cli x ternary-bonsai: 54 drives, five opportunities, ONE fired,
+        four eaten by `blocked` — and the whole off-ramp rests on this check."""
+        self.assertTrue(loop.satisfaction_check_due(101, 80, 20, 80))
+        self.assertTrue(loop.satisfaction_check_due(119, 80, 20, 80))
+
+    def test_it_cannot_fire_faster_than_the_interval(self):
+        """The stamp moves only when the check RUNS, so retrying a blocked drive buys no extra calls
+        in the unblocked case."""
+        self.assertFalse(loop.satisfaction_check_due(99, 80, 20, 80))
+        self.assertFalse(loop.satisfaction_check_due(81, 80, 20, 80))
+
+    def test_the_first_one_is_still_keyed_to_start(self):
+        self.assertFalse(loop.satisfaction_check_due(79, 80, 20, -1))
+        self.assertTrue(loop.satisfaction_check_due(80, 80, 20, -1))
+
     def test_zero_disables(self):
-        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 0) for n in range(1, 200)))
+        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 0, -1) for n in range(1, 200)))
+        self.assertFalse(any(loop.satisfaction_check_due(n, 0, 20, -1) for n in range(1, 200)))
 
     def test_never_before_start(self):
-        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 20) for n in range(1, 80)))
+        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 20, -1) for n in range(1, 80)))
 
 
 class GatingTests(unittest.TestCase):
@@ -49,6 +73,7 @@ class GatingTests(unittest.TestCase):
 
     class _Sess:
         drive_count = 80
+        satisfaction_last_drive = -1
         nudge_reason = ""
         done_probe = False
         last_gate_red = False
@@ -87,6 +112,7 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
 
     class _Sess:
         drive_count = 80
+        satisfaction_last_drive = -1
         nudge_reason = ""
         last_gap_named = ""
         steer_source = ""
@@ -150,6 +176,10 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         s = self._Sess()
         self._run(s)
         s.nudge_reason = ""
+        # A SECOND CHECK HAPPENS ON A LATER DRIVE. This used to run both at the same drive_count,
+        # which the absolute modulo allowed and the since-last-ran rule correctly refuses — two
+        # checks on one drive is the duplicate firing the stamp exists to prevent.
+        s.drive_count += 40
         self._run(s, verdict=(False, "REVIEW.md has not been written.", ""))
         self.assertIn("REVIEW.md", s.nudge_reason)
 

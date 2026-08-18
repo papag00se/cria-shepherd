@@ -4317,18 +4317,25 @@ class SatisfactionCheckTests(unittest.TestCase):
     """The periodic 'is the user's task satisfied?' off-ramp for a plan-off session that finished the
     work but can't STOP. Cadence: drive 100, then every 25. Fails CLOSED on an unparseable verdict."""
 
-    def test_cadence_starts_at_100_every_25(self):
-        from cria.loop import satisfaction_check_due
-        self.assertFalse(satisfaction_check_due(99, 100, 25))
-        self.assertTrue(satisfaction_check_due(100, 100, 25))
-        self.assertFalse(satisfaction_check_due(101, 100, 25))
-        self.assertFalse(satisfaction_check_due(124, 100, 25))
-        self.assertTrue(satisfaction_check_due(125, 100, 25))
-        self.assertTrue(satisfaction_check_due(150, 100, 25))
+    def test_cadence_starts_at_start_then_spaces_by_every(self):
+        """The schedule, threaded through the stamp — `last_ran` is the drive the check actually RAN
+        on, so this walks the run/stamp cycle rather than asserting an absolute modulo. The modulo
+        made one drive in `every` an opportunity and threw the rest away when something else was
+        steering: 54 drives, five opportunities, one fired."""
+        from cria.loop import satisfaction_check_due as due
+        self.assertFalse(due(99, 100, 25, -1))                   # before start, never run
+        self.assertTrue(due(100, 100, 25, -1))                   # the first one
+        self.assertFalse(due(101, 100, 25, 100))                 # it ran at 100 — too soon
+        self.assertFalse(due(124, 100, 25, 100))
+        self.assertTrue(due(125, 100, 25, 100))                  # a full interval later
+        self.assertTrue(due(150, 100, 25, 125))
+        # AND THE DEFECT: an opportunity lost to `blocked` is retried, not deferred a whole interval.
+        self.assertTrue(due(126, 100, 25, 100))
+        self.assertTrue(due(149, 100, 25, 100))
         # tunable + disable: a tighter cadence, and 0 turns it off
-        self.assertTrue(satisfaction_check_due(60, 50, 10))
-        self.assertFalse(satisfaction_check_due(1000, 0, 25))    # start=0 disables
-        self.assertFalse(satisfaction_check_due(1000, 100, 0))   # every=0 disables
+        self.assertTrue(due(60, 50, 10, -1))
+        self.assertFalse(due(1000, 0, 25, -1))                   # start=0 disables
+        self.assertFalse(due(1000, 100, 0, -1))                  # every=0 disables
 
     def _chat(self, content):
         def fake(body, rlog):

@@ -231,6 +231,10 @@ class GuardState:
     research_evidence: tuple = ()
     step_checked_turn: int = -1     # the coder_turns tick the periodic STEP check last ran on
     drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
+    # THE DRIVE THE OFF-RAMP CHECK LAST ACTUALLY RAN ON, not the last one it was due on. Stamped
+    # only when the check executes, so a drive where it was skipped is retried at the next
+    # opportunity rather than costing a whole interval. -1 means it has never run.
+    satisfaction_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     last_gate_red: bool = False  # the most recent gate/check-in found real error-class problems (RED). The
     # plan-off satisfaction judge gates on this: while the deterministic checks already say NOT-done, the
@@ -401,10 +405,31 @@ _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this befor
 # spiral at different rates; either set to 0 DISABLES it.
 
 
-def satisfaction_check_due(drive_count: int, start: int, every: int) -> bool:
+def satisfaction_check_due(drive_count: int, start: int, every: int, last_ran: int = -1) -> bool:
+    """Is the off-ramp check due? Measured from when it last RAN, never from an absolute modulo.
+
+    `(drive_count - start) % every == 0` made exactly one drive in `every` an opportunity, and the
+    caller skips the check on any drive where something else is already steering — a pending steer,
+    a harness compaction, an in-flight done-probe, a red gate. Land on a blocked drive and the next
+    chance is a whole interval away.
+
+    Measured on rust-toml-cli x ternary-bonsai, 2026-08-17: 54 drives, cadence 17/8, so five
+    opportunities — 17, 25, 33, 41, 49. **One fired. Four were eaten by `blocked`.** That run carried
+    20 harness compactions and 36 gate runs, so a blocker on any given drive is likely rather than
+    rare, and the check the whole off-ramp rests on ran once in 86 calls.
+
+    Since-last-ran retries on the very NEXT unblocked drive instead. It cannot fire more often than
+    `every` drives, because the stamp moves only when the check actually runs — so this closes the
+    gap without buying a single extra call in the unblocked case.
+
+    This is the same defect the anomaly sweep found in the periodic STEP check, which triggers on an
+    exact modulo against a counter another guard zeroes from outside: 1,147 gate checks against 14
+    step checks in the logs. One shape, two mechanisms."""
     if start <= 0 or every <= 0:  # disabled
         return False
-    return drive_count >= start and (drive_count - start) % every == 0
+    if last_ran < 0:
+        return drive_count >= start          # the first one is still keyed to `start`
+    return drive_count - last_ran >= every
 
 
 # THRASH-ASSIST threshold (plan-off). When the SAME check error has persisted this many gate cycles (the
@@ -3727,9 +3752,22 @@ class Loop:
         history was just rewritten, a done-probe is already in flight, or the gate is red. Gated on
         GREEN either way: cria never proposes ending a task while the repo's own checks fail.
         """
-        if blocked or not satisfaction_check_due(
-                sess.drive_count, self._ctx.satisfaction_check_start, self._ctx.satisfaction_check_every):
+        if blocked:
+            # SAY IT, OR THIS IS UNDIAGNOSABLE. cria recorded nothing when the check did not run, so
+            # "it fired once in 86 calls" could not be told from "it was only due once" without
+            # reconstructing the drive sequence by hand from the captures afterwards (#12). A lost
+            # opportunity is an event, and counting them is how the modulo defect was found.
+            if rlog is not None:
+                rlog.emit("loop.satisfaction_blocked", drive=sess.drive_count,
+                          last_ran=sess.satisfaction_last_drive, plan_off=plan_off)
+            return None            # BEFORE anything else — see test_blocked_short_circuits
+        if not satisfaction_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
+                                      self._ctx.satisfaction_check_every,
+                                      sess.satisfaction_last_drive):
             return None
+        # Stamped BEFORE the work, so a check that runs and returns "not satisfied" still spaces the
+        # next one — the cost this paces is the call, not the verdict.
+        sess.satisfaction_last_drive = sess.drive_count
         task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
                 else _history_root(body.get("messages", []))[0])
         evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
