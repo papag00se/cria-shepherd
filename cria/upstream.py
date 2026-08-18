@@ -390,7 +390,31 @@ class Upstream:
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
             try:
-                return urllib.request.urlopen(req, timeout=self._timeout), sent_estimate, capture_path
+                # THE DEAD-STREAM DEADLINE LIVES AT THE WIRE, FOR STREAMING OPENS.
+                #
+                # `urlopen`'s timeout is a PER-READ socket deadline, not a total one: a stream that
+                # keeps delivering frames may run for hours under it, and one that goes silent
+                # raises. That is exactly the condition `rumination.DEAD_STREAM_SECONDS` describes,
+                # and the socket is the only place it cannot be suppressed.
+                #
+                # It used to be checked inside `for raw in resp:` in `chat_watched`, whose own
+                # comment reads "The clock is the one signal a quiet server cannot suppress" — and a
+                # quiet enough server suppressed it. Walked on shipping-rates-rb x gemma4: TWO
+                # frames in twelve and a half minutes, so the loop body ran twice and the 180s test
+                # could not be evaluated until the second frame landed at 743.4s. That one call was
+                # 78% of the run's wall clock; the coder needed 72 seconds of generation across every
+                # other call in the run. Its unit test drives 300 frames and never exercised this.
+                #
+                # `stream_chat` — the buffered proxy's passthrough, which carries EVERY non-loop
+                # request and therefore the whole assists-off arm — had no dead-stream check at all.
+                # Measured: the baseline's longest single call is 525 seconds of nothing. At the
+                # wire both readers get the deadline without either owning it (#24, #23).
+                #
+                # Buffered POSTs keep the long timeout: their whole generation arrives as one read,
+                # so a short deadline there would cut a working call.
+                read_deadline = rumination.WIRE_SILENCE_SECONDS if stream else self._timeout
+                return (urllib.request.urlopen(req, timeout=max(read_deadline, 1.0)),
+                        sent_estimate, capture_path)
             except urllib.error.URLError as e:
                 refit = self._overflow_refit(e, sent_estimate, body.get("model"), rlog) if attempt == 0 else None
                 if refit is not None:
@@ -726,6 +750,19 @@ class Upstream:
                             rlog.emit("rumination.abort", level="warning",
                                       hits=verdict.get("hits"), reasoning_tokens=verdict.get("reasoning_tokens"))
                             break  # drop the receiver → server stops generating, slot freed
+        except TimeoutError as e:
+            # THE WIRE DEADLINE FIRED (see _open_with_refit). Same fact as the in-loop dead-stream
+            # check, reached by the one route a silent server cannot close, so it must produce the
+            # same OUTCOME: a completion carrying `finish_reason="rumination"` the caller re-prompts
+            # from — not an exception that surfaces as a 502 and hands the harness a blind retry of
+            # the body that just stalled (#13, fail open toward continuing work).
+            elapsed = round(time.monotonic() - t0, 1)
+            aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed, "wire": True}
+            rlog.emit("rumination.abort", level="warning", dead_stream=True, wire=True,
+                      chunks=chunks_seen, seconds=elapsed, error=str(e))
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
+                                 ending=f"the wire went silent for {elapsed}s and the read was cut")
+            saved = True
         except BaseException as e:                       # noqa: BLE001 — re-raised below
             # WHATEVER KILLED THE READ, THE THINKING SURVIVES IT. Saved here rather than only on the
             # clean path, because the turns where the answer is lost are the ones whose reasoning is

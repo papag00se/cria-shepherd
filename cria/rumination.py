@@ -98,6 +98,22 @@ MIN_DEGENERATE_REPEATS = 3
 # is time to the FIRST readable byte, and prompt processing on a large context is the only honest
 # reason for a long one — the measured runs reach their first token in seconds. Three minutes still
 # returns nine and a half of the twelve to the model.
+# THE SAME SILENCE, ENFORCED AT THE SOCKET — the only place a quiet server cannot suppress it.
+# DEAD_STREAM_SECONDS below is checked inside the frame loop, so it can only be evaluated when a
+# frame arrives; a stream delivering two frames in twelve minutes never reaches it (walked
+# shipping-rates-rb x gemma4: it fired at 743.4s against a 180s threshold, 78% of the run), and the
+# buffered proxy's passthrough — every non-loop request, which is the whole assists-off arm — never
+# had the check at all (the baseline's longest single call is 525 seconds of nothing).
+#
+# SIZED FROM THE MEASUREMENT, NOT FROM THE GAP THRESHOLD. `urlopen`'s timeout is a per-READ deadline,
+# and the first read of a stream covers PROMPT PROCESSING, during which a healthy server is silent
+# by design. Measured over 1,313 captured calls with timing blocks: median 0.6s, p99 125s, and a
+# real maximum of 309.4s on a deep-context proxy turn. 180 here would have killed working calls, so
+# this sits above the observed ceiling with headroom. It is not the gap threshold and does not
+# replace it — it is the backstop for the case the gap check cannot see, and it still cuts both
+# walked stalls (743s and 525s) well before they cost a run.
+WIRE_SILENCE_SECONDS = 420.0
+
 DEAD_STREAM_SECONDS = 180.0
 
 
