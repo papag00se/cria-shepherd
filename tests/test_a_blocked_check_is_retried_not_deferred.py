@@ -46,7 +46,7 @@ class ABlockedOpportunityIsRetriedTests(unittest.TestCase):
 
         offered, last = [], -1
         for n in range(1, 55):
-            if loop.satisfaction_check_due(n, 17, 8, last):
+            if loop.periodic_check_due(n, 17, 8, last):
                 offered.append(n)
                 if n == 17:          # only the first one was unblocked
                     last = n
@@ -57,18 +57,18 @@ class ABlockedOpportunityIsRetriedTests(unittest.TestCase):
         """The stamp moves only when the check RUNS, so retrying buys nothing in the unblocked case."""
         ran, last = [], -1
         for n in range(1, 55):
-            if loop.satisfaction_check_due(n, 17, 8, last):
+            if loop.periodic_check_due(n, 17, 8, last):
                 ran.append(n)
                 last = n
         self.assertEqual(ran, [17, 25, 33, 41, 49])
 
     def test_the_first_one_is_keyed_to_start(self):
-        self.assertFalse(loop.satisfaction_check_due(16, 17, 8, -1))
-        self.assertTrue(loop.satisfaction_check_due(17, 17, 8, -1))
+        self.assertFalse(loop.periodic_check_due(16, 17, 8, -1))
+        self.assertTrue(loop.periodic_check_due(17, 17, 8, -1))
 
     def test_zero_still_disables_either_way(self):
-        self.assertFalse(loop.satisfaction_check_due(999, 0, 8, -1))
-        self.assertFalse(loop.satisfaction_check_due(999, 17, 0, -1))
+        self.assertFalse(loop.periodic_check_due(999, 0, 8, -1))
+        self.assertFalse(loop.periodic_check_due(999, 17, 0, -1))
 
 
 class TheStampMovesOnlyWhenItRunsTests(unittest.TestCase):

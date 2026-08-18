@@ -419,11 +419,14 @@ class AStepCannotOutliveTheRunTests(unittest.TestCase):
         self.assertIn("open for many turns", t)
         self.assertNotIn("done", t.split(".")[0])        # it asserts nothing about the outcome
 
-    def test_the_session_carries_its_own_once_per_tick_guard(self):
-        sess = loop.PlanSession.__new__(loop.PlanSession)
-        self.assertEqual(loop.PlanSession.__dataclass_fields__["step_checked_turn"].default, -1)
+    def test_the_session_carries_its_own_stamp_for_when_the_check_last_ran(self):
+        """Was `step_checked_turn`, a TICK on the gate's countdown — which the gate zeroes, so the
+        memo matched forever and the check fired once per session (2026-08-18, 21 events on the box,
+        every one at turn 12). Now a drive stamp on the clock nothing resets; see
+        test_the_step_check_outlives_its_first_fire."""
+        self.assertEqual(loop.PlanSession.__dataclass_fields__["step_checked_drive"].default, -1)
+        self.assertNotIn("step_checked_turn", loop.PlanSession.__dataclass_fields__)
         self.assertIn("research_checked_turn", loop.PlanSession.__dataclass_fields__)
-        del sess
 
 
 class TheToolTestIsGroundedInTheUserAndTheCodeTests(unittest.TestCase):

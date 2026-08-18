@@ -37,7 +37,7 @@ class DueScheduleTests(unittest.TestCase):
         the stamp moves, so the next one is `every` later."""
         due, last = [], -1
         for n in range(1, 161):
-            if loop.satisfaction_check_due(n, 80, 20, last):
+            if loop.periodic_check_due(n, 80, 20, last):
                 due.append(n)
                 last = n                      # it RAN
         self.assertEqual(due[:4], [80, 100, 120, 140])
@@ -46,25 +46,25 @@ class DueScheduleTests(unittest.TestCase):
         """THE DEFECT. Under `(drive - start) %% every == 0`, missing drive 100 meant waiting until
         120. Measured on rust-toml-cli x ternary-bonsai: 54 drives, five opportunities, ONE fired,
         four eaten by `blocked` — and the whole off-ramp rests on this check."""
-        self.assertTrue(loop.satisfaction_check_due(101, 80, 20, 80))
-        self.assertTrue(loop.satisfaction_check_due(119, 80, 20, 80))
+        self.assertTrue(loop.periodic_check_due(101, 80, 20, 80))
+        self.assertTrue(loop.periodic_check_due(119, 80, 20, 80))
 
     def test_it_cannot_fire_faster_than_the_interval(self):
         """The stamp moves only when the check RUNS, so retrying a blocked drive buys no extra calls
         in the unblocked case."""
-        self.assertFalse(loop.satisfaction_check_due(99, 80, 20, 80))
-        self.assertFalse(loop.satisfaction_check_due(81, 80, 20, 80))
+        self.assertFalse(loop.periodic_check_due(99, 80, 20, 80))
+        self.assertFalse(loop.periodic_check_due(81, 80, 20, 80))
 
     def test_the_first_one_is_still_keyed_to_start(self):
-        self.assertFalse(loop.satisfaction_check_due(79, 80, 20, -1))
-        self.assertTrue(loop.satisfaction_check_due(80, 80, 20, -1))
+        self.assertFalse(loop.periodic_check_due(79, 80, 20, -1))
+        self.assertTrue(loop.periodic_check_due(80, 80, 20, -1))
 
     def test_zero_disables(self):
-        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 0, -1) for n in range(1, 200)))
-        self.assertFalse(any(loop.satisfaction_check_due(n, 0, 20, -1) for n in range(1, 200)))
+        self.assertFalse(any(loop.periodic_check_due(n, 80, 0, -1) for n in range(1, 200)))
+        self.assertFalse(any(loop.periodic_check_due(n, 0, 20, -1) for n in range(1, 200)))
 
     def test_never_before_start(self):
-        self.assertFalse(any(loop.satisfaction_check_due(n, 80, 20, -1) for n in range(1, 80)))
+        self.assertFalse(any(loop.periodic_check_due(n, 80, 20, -1) for n in range(1, 80)))
 
 
 class GatingTests(unittest.TestCase):

@@ -227,7 +227,7 @@ def check_satisfaction_due(row, cap, ws):
     driver, so a planner-ON run could sit finished for its whole budget.
     """
     drives = len(list(cap.glob("*coder*.response.json")))
-    due = sum(1 for n in range(1, drives + 1) if loop.satisfaction_check_due(n, 80, 20))
+    due = sum(1 for n in range(1, drives + 1) if loop.periodic_check_due(n, 80, 20))
     ran = len(list(cap.glob("*satisfaction*.response.json")))
     return max(due - ran, 0), f"{due} due, {ran} ran, over {drives} coder turns"
 

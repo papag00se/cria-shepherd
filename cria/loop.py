@@ -229,8 +229,13 @@ class GuardState:
     # instead of waiting out a ten-turn clock, and never judges the same evidence twice — a cadence
     # was gating a fact, and a step satisfied at turn 4 stayed pinned until turn 10.
     research_evidence: tuple = ()
-    step_checked_turn: int = -1     # the coder_turns tick the periodic STEP check last ran on
-    drive_count: int = 0  # total plan-off drives this session — drives the periodic SATISFACTION check
+    # THE DRIVE THE PERIODIC STEP CHECK LAST RAN ON. It used to stamp a `coder_turns` TICK, which the
+    # gate zeroes every 15 turns: 12 was the only multiple of 12 that counter could hold, so the memo
+    # matched forever and the check fired once per SESSION. Same stamp-what-ran shape as
+    # `satisfaction_last_drive`, on the same monotonic clock.
+    step_checked_drive: int = -1
+    drive_count: int = 0  # total drives this session, BOTH drivers — paces the periodic SATISFACTION
+    # and STEP checks. Monotonic: nothing resets it, which is the whole reason both read it.
     # THE DRIVE THE OFF-RAMP CHECK LAST ACTUALLY RAN ON, not the last one it was due on. Stamped
     # only when the check executes, so a drive where it was skipped is retried at the next
     # opportunity rather than costing a whole interval. -1 means it has never run.
@@ -405,8 +410,8 @@ _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this befor
 # spiral at different rates; either set to 0 DISABLES it.
 
 
-def satisfaction_check_due(drive_count: int, start: int, every: int, last_ran: int = -1) -> bool:
-    """Is the off-ramp check due? Measured from when it last RAN, never from an absolute modulo.
+def periodic_check_due(drive_count: int, start: int, every: int, last_ran: int = -1) -> bool:
+    """Is a periodic check due? Measured from when it last RAN, never from an absolute modulo.
 
     `(drive_count - start) % every == 0` made exactly one drive in `every` an opportunity, and the
     caller skips the check on any drive where something else is already steering — a pending steer,
@@ -422,9 +427,17 @@ def satisfaction_check_due(drive_count: int, start: int, every: int, last_ran: i
     `every` drives, because the stamp moves only when the check actually runs — so this closes the
     gap without buying a single extra call in the unblocked case.
 
-    This is the same defect the anomaly sweep found in the periodic STEP check, which triggers on an
-    exact modulo against a counter another guard zeroes from outside: 1,147 gate checks against 14
-    step checks in the logs. One shape, two mechanisms."""
+    THE PERIODIC STEP CHECK HAD THE SAME DEFECT AND NOW SHARES THIS PREDICATE. It triggered on
+    `coder_turns % STEP_CHECK_EVERY` — and `coder_turns` is the GATE's countdown, zeroed by
+    `guard_periodic_gate` every 15 acting turns. 12 is therefore the only multiple of 12 that counter
+    can ever hold, and the once-per-tick memo beside it (`step_checked_turn == coder_turns`) then
+    refused every later arrival at 12 for the life of the session.
+
+    READ OFF THE LOGS, 2026-08-18, 177 sessions: **21 `loop.periodic_step_check` events, every one of
+    them at `turns=12`, at most one per session.** Not one at 24, 36 or 48. The clearest case is
+    01a006c7 — 89 coder calls and 3 completed gate cycles on the step-checked path, and exactly one
+    step check. The method's own comment costed itself at "one judge call per twelve turns"; it was
+    delivering one per session. One shape, two mechanisms, one predicate now."""
     if start <= 0 or every <= 0:  # disabled
         return False
     if last_ran < 0:
@@ -3024,7 +3037,7 @@ class Loop:
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
     def _periodic_step_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
-        """Every STEP_CHECK_EVERY acting turns, ask THE STEP CRITIC whether the open step is done.
+        """Every STEP_CHECK_EVERY drives, ask THE STEP CRITIC whether the open step is done.
 
         A step advances only when the CODER volunteers that it is finished — `_verify` runs on
         `pending_coder_text`, i.e. a turn with no tool call, or `task_complete`. A coder that keeps
@@ -3045,14 +3058,15 @@ class Loop:
         NOTHING changes either way — no advance, no steer, no nudge, no fail counter, no word to the
         coder. The measurement it produces is what decides whether it ever gets to advance a step;
         see the note at the bottom of the method for exactly what flips it."""
-        if sess.coder_turns <= 0 or sess.coder_turns % STEP_CHECK_EVERY:
+        if not periodic_check_due(sess.drive_count, STEP_CHECK_EVERY, STEP_CHECK_EVERY,
+                                  sess.step_checked_drive):
             return None
-        if sess.step_checked_turn == sess.coder_turns:
-            return None   # the driver recurses without advancing coder_turns — once per tick
-        sess.step_checked_turn = sess.coder_turns
         item = sess.plan.current()
         if item is None or item.done:
             return None
+        # Stamped where the check actually RUNS. A drive with no open step is not an opportunity
+        # spent, so it must not move the stamp.
+        sess.step_checked_drive = sess.drive_count
         msgs = body.get("messages", [])
         # DO NOT TELL THE JUDGE NO CHECKS RAN WHEN THEY DID. This path composes no gate of its own,
         # and it used to say so by handing the critic `probe_digest_none` — two lines that assert
@@ -3079,8 +3093,8 @@ class Loop:
             gate_red=bool(sess.last_gate_red))
         # SAY WHAT IT DID, always — the lesson _research_check records: a guard that is silent when it
         # declines cannot be told apart from one that never ran.
-        rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), turns=sess.coder_turns,
-                  reason=_clip(reason or "", 160))
+        rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), drive=sess.drive_count,
+                  turns=sess.coder_turns, reason=_clip(reason or "", 160))
         # OBSERVE-ONLY (operator, 2026-08-05: "I'm not too comfortable with #16"). It ASKS and it
         # RECORDS; it does not advance. The reasoning is the same one that governs the dictated-code
         # guard beside it: this is new authority over when a plan MOVES, its documented predecessor
@@ -3106,8 +3120,8 @@ class Loop:
         # it is wrong even once in a way the confirm brake did not catch, delete the whole method.
         # Until then the cost is one judge call per twelve turns and the risk is zero.
         if ok:
-            rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, turns=sess.coder_turns,
-                      observe_only=True, step_text=item.text[:160])
+            rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
+                      turns=sess.coder_turns, observe_only=True, step_text=item.text[:160])
         return None
 
     def _research_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
@@ -3761,7 +3775,7 @@ class Loop:
                 rlog.emit("loop.satisfaction_blocked", drive=sess.drive_count,
                           last_ran=sess.satisfaction_last_drive, plan_off=plan_off)
             return None            # BEFORE anything else — see test_blocked_short_circuits
-        if not satisfaction_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
+        if not periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
                                       self._ctx.satisfaction_check_every,
                                       sess.satisfaction_last_drive):
             return None
@@ -5598,12 +5612,19 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
     return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
 
 
-# How many acting coder turns a STEP may run before cria asks its own critic whether it is done.
+# How many DRIVES a step may run before cria asks its own critic whether it is done.
 # MEASURED over every captured session (2026-08-05), counting consecutive coder calls between two
 # critic calls: n=806 stretches, median 5, p90 56, max 282 — and 149 stretches of 30+ turns hold
 # 11,831 of the 15,896 coder calls on the box. 74% OF ALL CODER WORK HAPPENS IN A STRETCH WHERE CRIA
 # NEVER ONCE ASKS WHETHER THE STEP IS DONE. 12 sits far above the median, so ordinary work never
 # reaches it, and well below the tail this exists for.
+#
+# COUNTED IN DRIVES SINCE 2026-08-18, not in acting coder turns. The turn counter it used to read is
+# the GATE's countdown and the gate zeroes it every 15, which capped this check at one fire per
+# session; `drive_count` is the clock nothing resets. A drive is the same event or slightly more
+# often than an acting turn (a turn that returns early on a probe or a steer counts as a drive and
+# not as an acting turn), so the cadence stays far above the median of 5 either way. The event now
+# records both numbers so the exact ratio is a reading rather than an argument.
 STEP_CHECK_EVERY = 12
 
 

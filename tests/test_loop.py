@@ -4322,7 +4322,7 @@ class SatisfactionCheckTests(unittest.TestCase):
         on, so this walks the run/stamp cycle rather than asserting an absolute modulo. The modulo
         made one drive in `every` an opportunity and threw the rest away when something else was
         steering: 54 drives, five opportunities, one fired."""
-        from cria.loop import satisfaction_check_due as due
+        from cria.loop import periodic_check_due as due
         self.assertFalse(due(99, 100, 25, -1))                   # before start, never run
         self.assertTrue(due(100, 100, 25, -1))                   # the first one
         self.assertFalse(due(101, 100, 25, 100))                 # it ran at 100 — too soon
