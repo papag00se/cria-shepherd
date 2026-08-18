@@ -32,7 +32,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "suite"))
-from sampling import MODEL_SAMPLING, SATISFACTION_CADENCE, apply, cadence  # noqa: E402
+from sampling import CADENCE_BANDS, MODEL_SAMPLING, apply, cadence, measured_tok_s  # noqa: E402
+
+
+def cadence_for_tok_s(tok_s):
+    for ceiling, band in CADENCE_BANDS:
+        if tok_s < ceiling:
+            return band
+    return CADENCE_BANDS[-1][1]
 
 SKELETON = ('[context]\ntrigger_compaction = 20000\n\n[roles.coder]\nbackend = "local"\n\n'
             '[roles.reasoner]\nbackend = "local"\n\n[roles.classifier]\nbackend = "local"\n\n'
@@ -46,34 +53,48 @@ def swap(model):
     return t.read_text()
 
 
-class TheOperatorsBucketsTests(unittest.TestCase):
-    def test_the_four_buckets(self):
-        for model, want in (("ternary-bonsai", (20, 10)), ("gemma4", (24, 12)),
-                            ("qwen35", (30, 15)), ("nemotron-elastic", (54, 18))):
-            with self.subTest(model=model):
-                self.assertEqual(cadence(model), want)
+class TheOperatorsRuleTests(unittest.TestCase):
+    """Slower tok/s — which tracks the parameters actually scanned per token — gets a LOWER start and
+    interval. A slow model gets fewer drives inside any wall clock, so a cadence counted in drives
+    has to shrink with it or it never arrives."""
 
-    def test_every_qwen_derivative_shares_the_qwen_bucket(self):
-        """qwythos, qwopus and ornith are finetunes of the 9B base — same arch in the headers."""
-        for m in ("qwen35", "qwythos", "qwopus", "ornith"):
-            with self.subTest(model=m):
-                self.assertEqual(cadence(m), (30, 15))
+    ANCHORS = (("ternary-bonsai", 41.7, (20, 10)), ("gemma4", 60.3, (24, 12)),
+               ("qwen35", 78.2, (30, 15)), ("nemotron-elastic", 131.8, (54, 18)))
 
-    def test_every_moe_shares_the_moe_bucket(self):
-        for m in ("mellum2", "nemotron-elastic", "maple-preview"):
-            with self.subTest(model=m):
-                self.assertEqual(cadence(m), (54, 18))
+    def test_the_four_anchors_land_in_their_bands(self):
+        for model, tok_s, want in self.ANCHORS:
+            with self.subTest(model=model, tok_s=tok_s):
+                self.assertEqual(cadence_for_tok_s(tok_s), want)
 
-    def test_no_model_is_left_unmapped(self):
-        """An unmapped model silently keeps the previous model's cadence — the exact failure the
-        sampling table was written to stop."""
-        self.assertEqual(sorted(SATISFACTION_CADENCE), sorted(MODEL_SAMPLING))
+    def test_the_bands_are_monotonic(self):
+        """Faster never gets a lower start than slower — that is the rule, stated as an invariant."""
+        seen = [cadence_for_tok_s(t)[0] for t in (10, 45, 65, 80, 140, 500)]
+        self.assertEqual(seen, sorted(seen))
+
+    def test_it_is_keyed_on_the_measurement_not_a_name_list(self):
+        """A hand-kept family table got this wrong on its first outing — see
+        test_a_slow_MoE_is_filed_by_speed_not_architecture."""
+        import inspect
+        import sampling
+        self.assertIn("avg_tok_s", inspect.getsource(sampling.measured_tok_s))
+
+    def test_a_slow_MoE_is_filed_by_speed_not_architecture(self):
+        """THE CORRECTION. `maple-preview` is a 256-expert MoE and was hand-filed with the other MoEs
+        at 54/18. It measures ~63 tok/s — next door to gemma4's 60.3 — because tq2_0 on a fork kernel
+        is nothing like nemotron-elastic's 131.8. Architecture was the wrong key."""
+        self.assertEqual(cadence_for_tok_s(63.2), (24, 12))
+        self.assertEqual(cadence_for_tok_s(131.8), (54, 18))
+
+    def test_an_unmeasured_model_takes_the_slowest_band(self):
+        """Unmeasured is not "fast". Checking too early costs one reasoner call; checking too late
+        costs a finished session that never stops (#13's safe direction)."""
+        self.assertEqual(cadence("a-model-that-has-never-run"), (20, 10))
 
     def test_every_start_is_reachable_by_a_median_run(self):
         """The whole point: the median run is 70 calls, and 100 was out of reach."""
-        for m, (start, _) in SATISFACTION_CADENCE.items():
-            with self.subTest(model=m):
-                self.assertLess(start, 70)
+        for _, band in CADENCE_BANDS:
+            with self.subTest(band=band):
+                self.assertLess(band[0], 70)
 
 
 class ItLandsOnEverySwapTests(unittest.TestCase):

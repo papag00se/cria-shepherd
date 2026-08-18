@@ -19,6 +19,7 @@ Roles: cria drives `coder` (writes the code), `reasoner` (planner + step/task cr
 goes to the coder and the general value to the reasoner; deterministic roles stay at temp 0.
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -121,46 +122,82 @@ KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
 
 
 # ---------------------------------------------------------------------------
-# Per-model SATISFACTION CADENCE (operator-set, 2026-08-17).
+# SATISFACTION CADENCE, derived from MEASURED THROUGHPUT (operator rule, 2026-08-17).
 #
 # `_periodic_satisfaction` is the off-ramp for "a session that has FINISHED the work but cannot
-# stop". It was gated at `satisfaction_check_start = 100`, then every 25 drives — a cadence tuned for
-# long sessions, and **the median run in results.jsonl is 70 calls**, so 300 of 463 runs could never
-# reach it. On the cell that exposed this it was arithmetically unreachable: 54 calls against a start
-# of 100.
+# stop". It was gated at `satisfaction_check_start = 100`, then every 25 drives — and the median run
+# in results.jsonl is 70 calls, so **300 of 463 runs could never reach it**. On the cell that exposed
+# this the gate was arithmetic: 54 calls against a start of 100, while the run sat on a banked 4/4
+# for twenty-six minutes.
 #
-# Families, not names (#19/#20). The buckets are the operator's; the assignment is read from the
-# repo's own GGUF-header classification in docs/model-settings.md ("`general.architecture` plus
-# `<arch>.expert_count` / `expert_used_count`, never a card or a name"), so a new model joins by what
-# it IS rather than by what it is called.
-SATISFACTION_CADENCE = {
-    # ternary — the operator gives this quant its own bucket, apart from the qwen family it derives
-    # from. ternary-bonsai is Q2_0_g128 ternary, dense, `qwen35` arch.
-    "ternary-bonsai":   (20, 10),
-    # gemma
-    "gemma4":           (24, 12),
-    # qwen derivatives — dense, `general.architecture = qwen35`: the 9B base and the three finetunes
-    # of it (qwythos = empero-ai's, qwopus = Jackrong's, ornith).
-    "qwen35":           (30, 15),
-    "qwythos":          (30, 15),
-    "qwopus":           (30, 15),
-    "ornith":           (30, 15),
-    # MoEs — expert_count > 1 in the headers. mellum2 `mellum` 64(8), nemotron-elastic
-    # `nemotron_h_moe` 128(6), maple-preview 256(8).
-    #
-    # maple-preview is the one genuine ambiguity in the mapping: its quant is tq2_0 TERNARY and its
-    # architecture is MoE, so it could read as either bucket. Filed by ARCHITECTURE, because that is
-    # what the repo's own classification keys on and what the cadence is about (how many drives a
-    # session takes to converge), not by quant. Flagged rather than silently decided.
-    "mellum2":          (54, 18),
-    "nemotron-elastic": (54, 18),
-    "maple-preview":    (54, 18),
-}
+# THE OPERATOR'S RULE: the slower the model's tok/s — which tracks the number of parameters actually
+# scanned per token — the LOWER the start and interval, because the higher-parameter models tend to
+# be DONE in fewer turns. A model that converges in fifty drives must be asked before drive fifty.
+#
+# Measured rather than assumed, and reported honestly: across the nine models with runs, tok/s and
+# median run length correlate **+0.36** — the right direction, but weak, and gemma4 runs against it
+# hardest (mid-speed at 60 tok/s, yet the fewest turns of any model at a median of 34). A second
+# argument points the same way and does not depend on that correlation at all: a slow model gets
+# fewer drives inside any wall clock, so a cadence counted in drives arrives later in real time.
+#
+# The check that actually matters is whether each start is reached by that model's real runs, and
+# every one is — median run vs start: bonsai 52 vs 20, gemma4 34 vs 24, maple 96 vs 24, the qwen
+# family 71-112 vs 30, nemotron 57 vs 54, mellum2 112 vs 54. Nothing is stranded the way the flat
+# 100 stranded 300 of 463 runs.
+#
+# KEYED ON THE MEASUREMENT, NOT ON A LIST OF NAMES. Every run records `avg_tok_s`; the median across
+# a model's runs is the authoritative number (#12) and it maintains itself as models are added,
+# retired or re-quantised. A hand-kept family table got this wrong on its first outing: `maple-preview`
+# is a 256-expert MoE and was filed with the other MoEs at 54/18 — and it measures **63.2 tok/s**,
+# next door to gemma4's 60.3, because tq2_0 on a fork kernel is nothing like nemotron-elastic's 131.8.
+# Architecture was the wrong key; throughput is the thing the rule is actually about.
+#
+# The four anchors are the operator's, with the measured medians they were set against:
+#     ternary-bonsai   41.7 tok/s -> 20 / 10
+#     gemma4           60.3       -> 24 / 12
+#     qwen 9B family   77.5       -> 30 / 15
+#     fast MoEs       131.8+      -> 54 / 18
+# Thresholds sit between them, so each anchor lands in its own band with room either side.
+CADENCE_BANDS = ((50.0, (20, 10)), (70.0, (24, 12)), (105.0, (30, 15)), (float("inf"), (54, 18)))
+
+# A model with no measured runs yet takes the slowest band. Unmeasured is not "fast": the cost of
+# checking too early is one extra reasoner call, and the cost of checking too late is a finished
+# session that never stops (#13's safe direction — fail toward continuing to look).
+CADENCE_UNMEASURED = (20, 10)
+
+RESULTS = Path(__file__).resolve().parent / "results" / "results.jsonl"
 
 
-def cadence(model: str) -> tuple[int, int] | None:
-    """(start, every) for this model's satisfaction off-ramp, or None to leave the config alone."""
-    return SATISFACTION_CADENCE.get(model)
+def measured_tok_s(model: str, results: Path = None) -> float | None:
+    """Median `avg_tok_s` across this model's recorded runs, or None when it has none."""
+    path = results or RESULTS
+    if not path.is_file():
+        return None
+    seen = []
+    for line in path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("model") == model and row.get("avg_tok_s"):
+            seen.append(float(row["avg_tok_s"]))
+    if not seen:
+        return None
+    seen.sort()
+    return seen[len(seen) // 2]
+
+
+def cadence(model: str, results: Path = None) -> tuple[int, int]:
+    """(start, every) for this model's satisfaction off-ramp, from its measured throughput."""
+    tok_s = measured_tok_s(model, results)
+    if tok_s is None:
+        return CADENCE_UNMEASURED
+    for ceiling, band in CADENCE_BANDS:
+        if tok_s < ceiling:
+            return band
+    return CADENCE_BANDS[-1][1]
 
 
 def render(model: str) -> dict:
