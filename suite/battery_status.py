@@ -116,7 +116,35 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     if a is None or b is None:
         return ""
     d = a - b
-    return " (0)" if abs(d) < 0.5 else f" ({d:+.0f})"
+    if abs(d) < 0.5:
+        return " (0)"
+    # A `~` MEANS THE MOVEMENT IS INSIDE THE NOISE. Measured 2026-08-17 across every repeat in
+    # results.jsonl: re-running a cell AT IDENTICAL CODE moves it a median of 25 points, and across
+    # all code states the median within-cell spread is 75 of 100. One check flips between runs of
+    # the same binary, routinely. So a one-check delta is not evidence of anything, and printing a
+    # bare `(+20)` for it states a movement that was never measured (#5b).
+    #
+    # This cost real work before it was written down: five cells were read as "cria broke a 100%
+    # cell", a rust cell as "restored 0 -> 100", and a whole campaign conclusion (60% unassisted vs
+    # 54% under cria) rested on one run per cell against a floor bigger than the difference. The
+    # mechanism findings from the walks survived that; every score comparison did not.
+    #
+    # The floor is the task's own check granularity, which is what actually flips — not a constant.
+    return f" ({'~' if abs(d) <= noise_floor(now, before) else ''}{d:+.0f})"
+
+
+def noise_floor(*rows: dict | None) -> float:
+    """One check's worth of percentage points for this cell — the smallest movement it can make.
+
+    A run either passes a check or does not, so nothing between two adjacent check counts is
+    observable; a delta no larger than one check is exactly the amount that flips on a re-run. Falls
+    back to 20 points (the five-check task, the commonest shape) when no row carries a check count,
+    which keeps the mark on rather than silently claiming precision the row cannot support (#13)."""
+    for r in rows:
+        mx = float((r or {}).get("max_score") or 0)
+        if mx:
+            return 100.0 / mx + 0.5
+    return 20.5
 
 
 def in_flight() -> str | None:
@@ -248,7 +276,15 @@ def _overall_delta(rs: list[dict], arm: str, model: str, cells: list[dict | None
     if now is None or before is None:
         return ""
     d = now - before
-    return " (0)" if abs(d) < 0.5 else f" ({d:+.0f})"
+    if abs(d) < 0.5:
+        return " (0)"
+    # Same `~` rule as a cell (see :func:`delta_of`), against a SMALLER floor: the total pools every
+    # cell that moved, and independent flips partly cancel. `grain/sqrt(n)` is the standard-error
+    # shape of that pooling — one check still flipping in each of six cells lands near 8 points, not
+    # 20 — so the total is allowed to be more sensitive than any cell in it without being allowed to
+    # call a single flipped check a trend.
+    floor = max(noise_floor(*[c for c, _ in pairs]) / (len(pairs) ** 0.5), 0.5)
+    return f" ({'~' if abs(d) <= floor else ''}{d:+.0f})"
 
 
 def cycle_start(rs: list[dict], arm: str) -> float:
@@ -313,6 +349,35 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
     return out
 
 
+def repeat_evidence(rs: list[dict]) -> str:
+    """One sentence stating how far a cell moves when NOTHING changes — computed from the rows, so
+    the claim behind every `~` in this report is checkable and stays current (#12).
+
+    A group is the same cell, same arm, same commit, run more than once. That is the only comparison
+    in which a difference can be attributed to the run rather than to the code."""
+    import collections
+    import statistics
+    groups = collections.defaultdict(list)
+    for r in rs:
+        note, mx = str(r.get("note", "")), float(r.get("max_score") or 0)
+        if not mx:
+            continue
+        tok = [w for w in note.split()
+               if len(w) == 7 and all(ch in "0123456789abcdef" for ch in w)]
+        if not tok:
+            continue
+        arm = "BASE" if " BASE " in f" {note} " else "CRIA"
+        groups[(r.get("task"), r.get("model"), arm, tok[-1])].append(100.0 * r["score"] / mx)
+    spreads = [max(v) - min(v) for v in groups.values() if len(v) > 1]
+    if not spreads:
+        return ""
+    n = len(spreads)
+    return (f"Measured on this data: {n} cell{'' if n == 1 else 's'} "
+            f"{'was' if n == 1 else 'were'} run more than once AT IDENTICAL CODE, and the median "
+            f"spread between those runs is {statistics.median(spreads):.0f} points "
+            f"(largest {max(spreads):.0f}). ")
+
+
 def _stamp(rs: list[dict], now: float | None = None) -> str:
     """`Last updated` — the time this file was WRITTEN, and the newest row it was written FROM.
 
@@ -358,6 +423,14 @@ def report(rs: list[dict], now: float | None = None) -> str:
             "**Bold marks a cell measured in the run currently in progress**; everything else is",
             "carried over from the previous pass. Every number carries its movement since that",
             "cell's previous run, in percentage points.",
+            "",
+            # ONE LINE: a generated markdown paragraph is never hand-edited, and hard wraps in it
+            # only make it a misery for anyone who ever does (operator's standing rule).
+            "**A `~` on a delta means the movement is smaller than one check, and one check flips "
+            "between runs of the SAME code.** " + repeat_evidence(rs) +
+            "So a `~` number is not evidence that anything changed — read it as \"unmoved\". Two "
+            "single runs differing by one check say nothing about the code between them; only a gap "
+            "bigger than that, or the same gap repeated, is a result.",
             "The **total** is one vote per judged cell, and checks-passed over checks-attempted",
             "across any cells still scored strictly; its delta is computed only over cells that have",
             "both a current and a previous run, so a part-finished cycle compares like with like."]
@@ -377,8 +450,11 @@ def report(rs: list[dict], now: float | None = None) -> str:
             # `80%ˢ | 15% | -65`, which is a strict baseline minus a judged assisted cell — a number
             # that is not movement in anything. Blank until both sides are the same measure.
             d = delta_of(c, b).strip().strip("()")
+            # Bold is the operator's eye-catch for "this cell moved". A `~` delta did not move —
+            # it is one check, which flips between runs of the SAME binary — so it must not shout.
+            emph = d if (d in ("", "0") or d.startswith("~")) else f"**{d}**"
             out.append(f"| {t} | {language(t)} | {m} | {score_of(b).strip()} | "
-                       f"{score_of(c).strip()} | {f'**{d}**' if d not in ('', '0') else (d or '—')} | "
+                       f"{score_of(c).strip()} | {emph or '—'} | "
                        f"{_n(b,'calls')}→{_n(c,'calls')} | "
                        f"{_n(b,'wall_seconds')}→{_n(c,'wall_seconds')} |")
 
@@ -422,9 +498,11 @@ def main() -> int:
     for task in TASKS:
         for model in MODELS:
             b, c = cell(rs, "BASE", model, task), cell(rs, "CRIA", model, task)
-            delta = ""
-            if b and c:
-                delta = f"{(pct(c) or 0) - (pct(b) or 0):+.0f}"
+            # THROUGH delta_of, not subtracted here. This line had its own subtraction and so
+            # skipped both guards the one owner carries: the cross-measure block (strict minus
+            # judged is not movement in anything) and the `~` noise mark. Two copies of an
+            # arithmetic is two places for it to be wrong, and this copy was.
+            delta = delta_of(c, b).strip().strip("()")
             print(f"{task:<20}{model:<19}{score_of(b):>7}{score_of(c):>7}{delta:>6}")
             filled += bool(b) + bool(c)
             # ONE entry per cell-pair: the next thing to run for this pair. Counting cells off
@@ -460,11 +538,17 @@ def main() -> int:
             print(f"      'largely unproven' section of docs/goals/battery-goal.md.")
             return 1
 
-    # A CRIA run that LOST to its BASE twin is the campaign's whole point; walk it before running more.
+    # A CRIA run that LOST to its BASE twin is the campaign's whole point; walk it before running
+    # more — BUT ONLY BY MORE THAN THE NOISE FLOOR. A one-check gap between two single runs is not
+    # a loss, and this line used to send the walker after one: it named
+    # `shipping-rates-rb x gemma4` as "CRIA 25% lost to BASE 80%" on a cell whose own fifteen
+    # standing runs range 0-100 with a mean of 47. A day of walking noise is a day not spent on the
+    # cells where the gap is real, so the selector now has to clear the same bar the grid does.
     for task in TASKS:
         for model in MODELS:
             b, c = cell(rs, "BASE", model, task), cell(rs, "CRIA", model, task)
-            if b and c and (pct(c) or 0) < (pct(b) or 0) and not walked(str(c.get("run_id"))):
+            gap = (pct(b) or 0) - (pct(c) or 0) if (b and c) else 0.0
+            if b and c and gap > noise_floor(c, b) and not walked(str(c.get("run_id"))):
                 print(f"\nNEXT: WALK {c.get('run_id')}   "
                       f"(CRIA {score_of(c)} lost to BASE {score_of(b)} — cria made it worse)")
                 print(f"      python3 suite/walk.py {str(c.get('capture_dir','')).split('/')[-1]} "

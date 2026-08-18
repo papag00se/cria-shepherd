@@ -6,6 +6,33 @@
 
 ---
 
+## THE NOISE FLOOR — read this before any other number in this file (2026-08-17)
+
+**A cell's score moves 20 to 50 points when nothing changes at all.** Measured over every repeat in `suite/results/results.jsonl`:
+
+| comparison | groups | median spread | max |
+|---|---:|---:|---:|
+| same cell, same arm, **same commit** | 6 | **25 points** | 50 |
+| same cell, any code state | 47 | **75 points** | 100 |
+
+26 of the 47 cells with three or more runs swing 60 points or more. A check is worth 20–25 points, so **one check flips between two runs of the same binary, routinely.**
+
+`shipping-rates-rb × gemma4` is the clearest case. Its fifteen standing runs read **4, 0, 5, 1, 5, 1, 4, 0, 4, 4, 2, 3, 1, 0, 1** — full marks twice, zero three times, mean 2.3.
+
+**What this retracts.** Every conclusion in this file that came from comparing one run to one run:
+
+- *"unassisted 60% vs cria 54%"* — 6 points across 24 cells at one run per cell, against a floor four times that. **Not established.**
+- *"cria broke five cells that scored 100% unassisted"* — a 100→0 move is inside one cell's ordinary range. **Not established.**
+- *"the targeted run restored rust-toml-cli 0/4 → 4/4"* — the score alone proves nothing; what stands is the **mechanism**, the tool ratio inverting from 7 writes/0 edits to 4 writes/3 edits with compiles going 4→8, matching the unassisted arm exactly.
+- *"shipping-rates-rb × gemma4 regressed"* — this was walked for a day on a one-check gap. **Not established.**
+
+**What survives, and it is most of the work.** Every finding from a walk is mechanical and proven from the transcript in a single run, without reference to a score: a note describing an install that never happened, a killed stream handed to a judge as an action log, a refusal pointing at a path the coder cannot type. Scores rank what to look at next. They were never able to prove a cause, and now they say so.
+
+**What changed in the tooling** (`suite/battery_status.py`): a delta smaller than one check renders as `~+20`, never bold; the total's floor is `grain/√n` because pooled flips partly cancel; the legend states the measurement, recomputed from the rows on every regeneration; and the selector that picks the next cell to walk now has to clear the same bar — it had been sending the walker at the largest single-run gap it could find, which is the most efficient possible way to spend a day inside the noise.
+
+**What the campaign needs next:** repeats. The six cells with a gap larger than the floor are the campaign's entire claim, and each rests on one run per arm.
+
+
 ## THE CENTRAL FACT — the assists rescue the weakest model and destroy the best results
 
 The baseline re-run finished 2026-08-17 12:57. **All 24 cells now have both arms judged on the same forgiving measure**, so the comparison is complete for the first time.
