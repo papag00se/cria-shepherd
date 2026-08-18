@@ -60,8 +60,28 @@ Both run at `1b05cfd`, one code state; `cria.service` was restarted onto it at 2
 
 | cell | last score | this pass |
 |---|---|---|
-| shipping-rates-rb × ternary-bonsai | 0/5 | **running** — 15-min milestone 1/5, floor held |
-| shipping-rates-rb × gemma4 | 1/5 | queued |
+| shipping-rates-rb × ternary-bonsai | 0/5 | **1/5**, `milestone-miss-30min`, 60 calls, 22.3 tok/s, 1846 s |
+| shipping-rates-rb × gemma4 | 1/5 | **running** |
+
+### `shipping-rates-rb × ternary-bonsai` — 1/5, and the score is hiding the run
+
+Read off the surviving workspace, not off the number. The model **installed the gem** — `bundle install --path vendor/bundle`, a lockfile, `.bundle/config` with `BUNDLE_PATH: "vendor/bundle"`, and `countries-8.1.0`, `eu_countries-0.0.2`, `rake-13.4.2`, `unaccent-0.4.0` vendored. It wrote `zone_for` against the gem rather than a hardcoded list, added the `express` zone at 14.99 base / 2.50 per kilo, and wrote the README rate table. That table is the check that scored.
+
+**Four of the five deliverables are written and one line kills all of them.** The gem it chose, `eu_countries-0.0.2`, opens with `require "iso3166"`, and nothing on this box provides `iso3166`; the `countries` gem provides `countries`. Reproduced against a copy of the workspace:
+
+```
+ruby -Ilib -e 'require "shipping/rates"'              -> cannot load such file -- iso3166 (LoadError)
+bundle exec ruby -Ilib -e 'require "shipping/rates"'  -> cannot load such file -- iso3166 (LoadError)
+rake test                                             -> TypeError: no implicit conversion of nil into String
+```
+
+The second failure is separate and also the model's: its Rakefile has `$LOAD_PATH.unshift Dir[ENV["GEM_HOME"], Dir.pwd]...`, and with `GEM_HOME` unset `Dir[nil, ...]` raises before any test runs.
+
+**Neither is cria's, and cria did not dress them up.** Replaying `completion_block_nudge` against this exact workspace and a `rake test` LoadError finding: the dependency note does **not** fire, and the coder is handed the checker's own message verbatim — `lib/shipping/rates.rb:7: ... cannot load such file -- iso3166 (LoadError)`. The false install sentence the previous ruby walk found is not in the path here.
+
+**Two prior fixes confirmed live from this run's own artifacts.** The spill directory on disk is `tmp/reference/` (`845900b` — the `./tmp/read-only` retype problem), and the session recorded **zero** `rumination.abort` events (`34a9162` — the 743-second dead stream).
+
+**One thing the new logging made visible.** `loop.satisfaction_blocked` fired on 25 consecutive drives, 26 through 50, every one with `last_ran=25` — the off-ramp check held shut for the whole tail because the gate was red. That is the designed rule (cria never proposes ending a task while the repo's own checks fail), and before `07f06c1` it would have looked identical to the check simply never being due.
 
 Environment: `preflight.py` READY, `suite/tasks` clean, live service reachable. `/usr/bin/bundle` now exists (`ruby-bundler`), so these two cells are a changed **environment** as well as changed code.
 
