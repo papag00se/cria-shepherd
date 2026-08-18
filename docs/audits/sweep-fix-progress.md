@@ -513,7 +513,9 @@ Recorded because a refuted hypothesis is a place the next pass does not have to 
 
 **Repeated identical notes in context — REAL but small.** 24% of `checks` notes and 28% of `denied` notes in a final prompt are byte-identical repeats. The `denied` ones are tool RESULTS and belong in history — that is the record of what happened, not redundancy. Not built.
 
-**What this says.** Five hypotheses, one small real finding, nothing worth building. The obvious cria-side defects in this corpus are largely closed. The variance that is left is dominated by the run-to-run noise floor and by the ruby column's missing apt package — neither of which is a cria bug.
+**The milestone floor cutting runs off mid-climb — REFUTED, and the table that suggested it was the trap.** Runs killed at 60 minutes average 72% and at 75 minutes average 80%, which reads as "the wall is truncating work that was nearly done". It is not: a run that survives to 60 minutes has by definition banked more, so the mean rises with the kill time by construction. The real question is the TRAJECTORY, and the runner records the score at every interval. **Of 72 milestone kills, 71 were flat or falling at the moment they were killed. One was still rising** (`ada-handles × mellum2`, 0 → 1 at 30 minutes, floor 2). The floor terminates stalled runs, which is what it is for.
+
+**What this says.** Six hypotheses, one small real finding, nothing worth building. The obvious cria-side defects in this corpus are largely closed. The variance that is left is dominated by the run-to-run noise floor and by the ruby column's missing apt package — neither of which is a cria bug.
 
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
