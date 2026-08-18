@@ -79,7 +79,7 @@ And every check in `suite/tasks/shipping-rates-rb/verify.py` runs `subprocess.ru
 
 **The repo already contains the refutation.** The later commit `f2b8b5b`'s own test says `require "bundler/setup"` *"was verified by running it rather than recalled: a `--path vendor/bundle` install plus that one first line passes all three shapes the verifier uses"*. The prompt still calls it the weaker version. Two commits, opposite conclusions, both still asserted. The tie-break is not a preference: `0d2fec4`'s evidence is a **5/5 vs 2/5 comparison across different runs**, and the measured noise floor at identical code is 25 points — more than one check. `f2b8b5b`'s evidence is running it. So is mine.
 
-### 3. cria told the model a RubyDoc page "is YAML", then refused to let it read the page
+### 3. cria told the model a RubyDoc page "is YAML", then refused to let it read the page — **fixed `01c8136`**
 
 Calls 0016–0017 and again 0038. On the fetch:
 
@@ -127,7 +127,7 @@ cria emitted the frame `…/eu_countries-0.0.2/lib/eu_countries.rb:1:in '<top (r
 
 - **A third reader still contradicts the other two.** `gate_error_text` was fixed so `completion_block_nudge` and `failed_unparsed_probes` are surfaced together rather than exclusively. At call 0058 the steer still said *"a specific line could not be parsed from the output"* while the `⟦ctx:checks⟧` block four lines above printed `the flagged line on disk — line 6: $LOAD_PATH.unshift Dir[ENV["GEM_HOME"]…`. The annotation comes from `clean_gate_output`, a reader the earlier fix did not cover.
 - **A disclosed elision inside cria's own ground-truth block.** `proberun.py:807` prints `...[middle 192 bytes elided; head+tail kept so an early failure survives]...` in the middle of a stack trace. Disclosed, but still a per-output cap on model-read content (#5).
-- **`Wall time: 0.0000 seconds`** reported for commands that demonstrably ran, beside neighbours reporting real times.
+- ~~**`Wall time: 0.0000 seconds`** reported for commands that demonstrably ran.~~ **Refuted.** `Wall time:` is part of the HARNESS's exec envelope, not cria's — cria only ever strips it (`dedup.py:192`, `selfcompact.py:217`, `content_reduce.py:37`). Nothing here to fix. `cria fault: none`
 
 ## What the model did on its own
 
