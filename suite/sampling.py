@@ -20,6 +20,9 @@ goes to the coder and the general value to the reasoner; deterministic roles sta
 """
 import argparse
 import json
+import urllib.request
+import struct
+import math
 import re
 import sys
 from pathlib import Path
@@ -122,82 +125,129 @@ KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
 
 
 # ---------------------------------------------------------------------------
-# SATISFACTION CADENCE, derived from MEASURED THROUGHPUT (operator rule, 2026-08-17).
+# SATISFACTION CADENCE, a sliding scale on ACTIVE PARAMETERS (operator rule, 2026-08-17).
 #
 # `_periodic_satisfaction` is the off-ramp for "a session that has FINISHED the work but cannot
 # stop". It was gated at `satisfaction_check_start = 100`, then every 25 drives — and the median run
-# in results.jsonl is 70 calls, so **300 of 463 runs could never reach it**. On the cell that exposed
-# this the gate was arithmetic: 54 calls against a start of 100, while the run sat on a banked 4/4
-# for twenty-six minutes.
+# in results.jsonl is 70 calls, so **300 of 463 runs could never reach it**.
 #
-# THE OPERATOR'S RULE: the slower the model's tok/s — which tracks the number of parameters actually
-# scanned per token — the LOWER the start and interval, because the higher-parameter models tend to
-# be DONE in fewer turns. A model that converges in fifty drives must be asked before drive fifty.
+# THE RULE: the more parameters a model actually scans per token, the LOWER the start and interval,
+# because the higher-parameter models tend to be DONE in fewer turns. A model that converges in
+# fifty drives must be asked before drive fifty.
 #
-# Measured rather than assumed, and reported honestly: across the nine models with runs, tok/s and
-# median run length correlate **+0.36** — the right direction, but weak, and gemma4 runs against it
-# hardest (mid-speed at 60 tok/s, yet the fewest turns of any model at a median of 34). A second
-# argument points the same way and does not depend on that correlation at all: a slow model gets
-# fewer drives inside any wall clock, so a cadence counted in drives arrives later in real time.
+# PINNED TO PARAMETERS, NOT tok/s. Throughput was the first cut and it is hardware-bound — the same
+# model on a different GPU moves bands without changing at all. Active parameters are a property of
+# the model.
 #
-# The check that actually matters is whether each start is reached by that model's real runs, and
-# every one is — median run vs start: bonsai 52 vs 20, gemma4 34 vs 24, maple 96 vs 24, the qwen
-# family 71-112 vs 30, nemotron 57 vs 54, mellum2 112 vs 54. Nothing is stranded the way the flat
-# 100 stranded 300 of 463 runs.
+# ACTIVE, not total, and the difference is the whole point for this fleet: `nemotron-elastic` and
+# `gemma4` are both ~11.9B TOTAL, and one scans a sixth of itself. Total params would file them
+# together; the rule is about what is scanned.
 #
-# KEYED ON THE MEASUREMENT, NOT ON A LIST OF NAMES. Every run records `avg_tok_s`; the median across
-# a model's runs is the authoritative number (#12) and it maintains itself as models are added,
-# retired or re-quantised. A hand-kept family table got this wrong on its first outing: `maple-preview`
-# is a 256-expert MoE and was filed with the other MoEs at 54/18 — and it measures **63.2 tok/s**,
-# next door to gemma4's 60.3, because tq2_0 on a fork kernel is nothing like nemotron-elastic's 131.8.
-# Architecture was the wrong key; throughput is the thing the rule is actually about.
+#     active ~= n_params * (expert_used_count / expert_count)     MoE
+#             = n_params                                          dense (no expert keys)
 #
-# The four anchors are the operator's, with the measured medians they were set against:
-#     ternary-bonsai   41.7 tok/s -> 20 / 10
-#     gemma4           60.3       -> 24 / 12
-#     qwen 9B family   77.5       -> 30 / 15
-#     fast MoEs       131.8+      -> 54 / 18
-# Thresholds sit between them, so each anchor lands in its own band with room either side.
-CADENCE_BANDS = ((50.0, (20, 10)), (70.0, (24, 12)), (105.0, (30, 15)), (float("inf"), (54, 18)))
+# `n_params` comes from the server (`/v1/models` -> `meta.n_params`); the expert counts come from the
+# GGUF header at the `model_path` the server reports — the same source docs/model-settings.md used to
+# classify the fleet, "never a card or a name". Both machine-read, stdlib only, no table to maintain.
+#
+# THE RATIO IS A LOWER BOUND. Attention, embeddings and shared layers are not sharded across experts,
+# so true active params are somewhat higher than the naive product (nemotron computes ~0.6B this way
+# against a card figure of ~2B). That is fine for what this decides: every MoE in the fleet lands
+# under 2B either way and every dense model over 9B, so the ordering the scale needs is unaffected.
+# It is recorded rather than corrected because a correction would be a guess at a shape that varies
+# per architecture.
+#
+# A SLIDING SCALE, one line: every tenfold increase in scanned parameters drops the start by 30.
+#
+#     start = CADENCE_AT_1B - CADENCE_PER_DECADE * log10(active_B)
+#
+# The ceiling is what makes it work at all: the median run in results.jsonl is 70 calls, so a start
+# above that is a check that never happens — which is exactly what the flat 100 was. Everything this
+# produces stays under it. The floor keeps a very large model from being asked on almost every drive.
+CADENCE_AT_1B = 60           # a 1B-active model: long runs, ask late
+CADENCE_PER_DECADE = 30      # 10x the scanned parameters -> 30 fewer drives before asking
+CADENCE_MIN_START, CADENCE_MAX_START = 15, 60
+CADENCE_INTERVAL_DIVISOR = 2  # re-ask twice as often as the wait to the first ask
 
-# A model with no measured runs yet takes the slowest band. Unmeasured is not "fast": the cost of
-# checking too early is one extra reasoner call, and the cost of checking too late is a finished
-# session that never stops (#13's safe direction — fail toward continuing to look).
-CADENCE_UNMEASURED = (20, 10)
+# A model whose parameters cannot be read takes the LOW end. Unknown is not "small": checking too
+# early costs one reasoner call, checking too late costs a finished session that never stops (#13's
+# safe direction — fail toward continuing to look).
+CADENCE_UNKNOWN = (20, 10)
 
-RESULTS = Path(__file__).resolve().parent / "results" / "results.jsonl"
+_GGUF_T = {0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i", 6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}
 
 
-def measured_tok_s(model: str, results: Path = None) -> float | None:
-    """Median `avg_tok_s` across this model's recorded runs, or None when it has none."""
-    path = results or RESULTS
-    if not path.is_file():
+def gguf_experts(path: str) -> tuple[int, int] | None:
+    """(expert_count, expert_used_count) from a GGUF header, or None for a dense model.
+
+    Reads only the KV block at the head of the file — no tensors, no third-party library."""
+    want_all, want_used = None, None
+    try:
+        with open(path, "rb") as fh:
+            magic, _ver, _nt, nkv = struct.unpack("<4sIQQ", fh.read(24))
+            if magic != b"GGUF":
+                return None
+
+            def _s():
+                (n,) = struct.unpack("<Q", fh.read(8))
+                return fh.read(n).decode("utf-8", "replace")
+
+            def _v(t):
+                if t == 8:
+                    return _s()
+                if t == 9:
+                    (et,) = struct.unpack("<I", fh.read(4))
+                    (n,) = struct.unpack("<Q", fh.read(8))
+                    return [_v(et) for _ in range(n)]
+                f = _GGUF_T.get(t)
+                if f is None:
+                    raise ValueError(t)
+                return struct.unpack("<" + f, fh.read(struct.calcsize("<" + f)))[0]
+
+            for _ in range(nkv):
+                k = _s()
+                (t,) = struct.unpack("<I", fh.read(4))
+                v = _v(t)
+                if k.endswith(".expert_count"):
+                    want_all = int(v)
+                elif k.endswith(".expert_used_count"):
+                    want_used = int(v)
+    except (OSError, ValueError, struct.error):
         return None
-    seen = []
-    for line in path.read_text(errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if row.get("model") == model and row.get("avg_tok_s"):
-            seen.append(float(row["avg_tok_s"]))
-    if not seen:
+    if not want_all or not want_used:
         return None
-    seen.sort()
-    return seen[len(seen) // 2]
+    return want_all, want_used
 
 
-def cadence(model: str, results: Path = None) -> tuple[int, int]:
-    """(start, every) for this model's satisfaction off-ramp, from its measured throughput."""
-    tok_s = measured_tok_s(model, results)
-    if tok_s is None:
-        return CADENCE_UNMEASURED
-    for ceiling, band in CADENCE_BANDS:
-        if tok_s < ceiling:
-            return band
-    return CADENCE_BANDS[-1][1]
+def active_params_b(server: str = "http://127.0.0.1:18084") -> float | None:
+    """Billions of parameters the LOADED model scans per token, or None when it cannot be read."""
+    try:
+        with urllib.request.urlopen(f"{server}/v1/models", timeout=5) as r:
+            meta = (json.load(r).get("data") or [{}])[0].get("meta") or {}
+        with urllib.request.urlopen(f"{server}/props", timeout=5) as r:
+            path = json.load(r).get("model_path") or ""
+    except (OSError, ValueError, KeyError):
+        return None
+    total = meta.get("n_params")
+    if not total:
+        return None
+    experts = gguf_experts(path) if path else None
+    ratio = (experts[1] / experts[0]) if experts else 1.0
+    return (float(total) * ratio) / 1e9
+
+
+def cadence_for_active(active_b: float | None) -> tuple[int, int]:
+    """(start, every) for a model that scans `active_b` billion parameters per token."""
+    if not active_b or active_b <= 0:
+        return CADENCE_UNKNOWN
+    start = CADENCE_AT_1B - CADENCE_PER_DECADE * math.log10(active_b)
+    start = int(round(max(CADENCE_MIN_START, min(CADENCE_MAX_START, start))))
+    return start, max(5, round(start / CADENCE_INTERVAL_DIVISOR))
+
+
+def cadence(model: str = "", server: str = "http://127.0.0.1:18084") -> tuple[int, int]:
+    """(start, every) for the model the server currently has loaded."""
+    return cadence_for_active(active_params_b(server))
 
 
 def render(model: str) -> dict:

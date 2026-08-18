@@ -1,29 +1,26 @@
 """The off-ramp for a finished session could not be reached by most runs.
 
-`_periodic_satisfaction` exists for exactly one thing — *"a session that has FINISHED the work but
-cannot stop"* — and it was gated at `satisfaction_check_start = 100`, then every 25 drives. That is a
-cadence for long sessions. **The median run in `results.jsonl` is 70 calls**, so 300 of 463 runs
-could never reach it, and on the cell that exposed this it was arithmetically unreachable: 54 calls
-against a start of 100. The run banked 4/4 at the fifteen-minute milestone and went on for another
-twenty-six minutes with the off-ramp structurally out of play.
+`_periodic_satisfaction` exists for one thing — *"a session that has FINISHED the work but cannot
+stop"* — and was gated at `satisfaction_check_start = 100`, then every 25 drives. **The median run in
+`results.jsonl` is 70 calls, so 300 of 463 runs could never reach it.** On the cell that exposed it
+the gate was arithmetic: 54 calls against a start of 100, while the run sat on a banked 4/4 for
+twenty-six minutes.
 
-Operator-set per model (2026-08-17), because how many drives a session takes to converge is a
-property of the model, not of cria:
+THE RULE (operator, 2026-08-17): the more parameters a model actually scans per token, the LOWER the
+start and interval, because higher-parameter models tend to be done in fewer turns. A model that
+converges in fifty drives must be asked before drive fifty.
 
-    ternary            start 20, every 10
-    gemma              start 24, every 12
-    qwen derivatives   start 30, every 15
-    MoEs               start 54, every 18
+PINNED TO PARAMETERS, NOT tok/s. Throughput was the first cut and it is hardware-bound — the same
+model on a different GPU changes band without changing at all.
 
-FAMILIES, NOT NAMES (#19/#20). The buckets are the operator's; the assignment is read from the repo's
-own GGUF-header classification in `docs/model-settings.md` — *"`general.architecture` plus
-`<arch>.expert_count` / `expert_used_count`, never a card or a name"* — so a model joins a bucket by
-what it IS rather than by what it is called.
+ACTIVE, not total, and that is the whole point for this fleet: `nemotron-elastic` and `gemma4` are
+both ~11.9B TOTAL and one scans a sixth of itself. `n_params` comes from the server; the expert
+counts come from the GGUF header at the `model_path` the server reports — the same source
+`docs/model-settings.md` classifies the fleet from, *"never a card or a name"*.
 
-And it is applied the way per-model SAMPLING already is, for the reason that module records in its
-own docstring: a per-model number that must be set by hand before a run is a number that will be left
-at the previous model's value. That mistake has already been made at scale here — 26 consecutive
-gemma4 runs were sent ternary-bonsai's sampling.
+ONE FORMULA, no notches: `start = 60 - 30·log10(active_B)`, clamped. The ceiling is what makes it
+work — a start above the 70-call median is a check that never happens, which is exactly what the flat
+100 was.
 """
 
 import sys
@@ -32,91 +29,96 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "suite"))
-from sampling import CADENCE_BANDS, MODEL_SAMPLING, apply, cadence, measured_tok_s  # noqa: E402
-
-
-def cadence_for_tok_s(tok_s):
-    for ceiling, band in CADENCE_BANDS:
-        if tok_s < ceiling:
-            return band
-    return CADENCE_BANDS[-1][1]
+from sampling import (CADENCE_MAX_START, CADENCE_UNKNOWN, apply,  # noqa: E402
+                      cadence_for_active, gguf_experts)
 
 SKELETON = ('[context]\ntrigger_compaction = 20000\n\n[roles.coder]\nbackend = "local"\n\n'
             '[roles.reasoner]\nbackend = "local"\n\n[roles.classifier]\nbackend = "local"\n\n'
             '[roles.compactor]\nbackend = "local"\n')
 
 
-def swap(model):
-    t = Path(tempfile.mkdtemp()) / "cria.toml"
-    t.write_text(SKELETON)
-    apply(model, t)
-    return t.read_text()
+class TheScaleSlidesTests(unittest.TestCase):
+    def test_more_scanned_parameters_means_a_lower_start(self):
+        """The rule, as an invariant rather than a table of cases."""
+        starts = [cadence_for_active(b)[0] for b in (1, 2, 4, 9, 12, 20, 27)]
+        self.assertEqual(starts, sorted(starts, reverse=True))
+
+    def test_it_is_continuous_not_notched(self):
+        """Neighbouring sizes must not jump a band — that was the four-notch version."""
+        for a, b in ((8, 9), (9, 10), (11, 12), (12, 13)):
+            with self.subTest(pair=(a, b)):
+                self.assertLessEqual(abs(cadence_for_active(a)[0] - cadence_for_active(b)[0]), 3)
+
+    def test_a_decade_of_scale_is_thirty_drives(self):
+        self.assertEqual(cadence_for_active(1)[0] - cadence_for_active(10)[0], 30)
+
+    def test_the_interval_tracks_the_start(self):
+        for b in (1, 9, 27):
+            with self.subTest(active=b):
+                start, every = cadence_for_active(b)
+                self.assertEqual(every, max(5, round(start / 2)))
 
 
-class TheOperatorsRuleTests(unittest.TestCase):
-    """Slower tok/s — which tracks the parameters actually scanned per token — gets a LOWER start and
-    interval. A slow model gets fewer drives inside any wall clock, so a cadence counted in drives
-    has to shrink with it or it never arrives."""
+class EveryStartIsActuallyReachableTests(unittest.TestCase):
+    """The defect being fixed: a start above the median run is a check that never happens."""
 
-    ANCHORS = (("ternary-bonsai", 41.7, (20, 10)), ("gemma4", 60.3, (24, 12)),
-               ("qwen35", 78.2, (30, 15)), ("nemotron-elastic", 131.8, (54, 18)))
+    MEDIAN_RUN_CALLS = 70
 
-    def test_the_four_anchors_land_in_their_bands(self):
-        for model, tok_s, want in self.ANCHORS:
-            with self.subTest(model=model, tok_s=tok_s):
-                self.assertEqual(cadence_for_tok_s(tok_s), want)
+    def test_nothing_is_stranded_at_any_size(self):
+        for b in (0.1, 0.5, 1, 2, 9, 12, 27, 70, 500):
+            with self.subTest(active=b):
+                self.assertLess(cadence_for_active(b)[0], self.MEDIAN_RUN_CALLS)
 
-    def test_the_bands_are_monotonic(self):
-        """Faster never gets a lower start than slower — that is the rule, stated as an invariant."""
-        seen = [cadence_for_tok_s(t)[0] for t in (10, 45, 65, 80, 140, 500)]
-        self.assertEqual(seen, sorted(seen))
+    def test_the_ceiling_is_below_the_median_run(self):
+        self.assertLess(CADENCE_MAX_START, self.MEDIAN_RUN_CALLS)
 
-    def test_it_is_keyed_on_the_measurement_not_a_name_list(self):
-        """A hand-kept family table got this wrong on its first outing — see
-        test_a_slow_MoE_is_filed_by_speed_not_architecture."""
-        import inspect
-        import sampling
-        self.assertIn("avg_tok_s", inspect.getsource(sampling.measured_tok_s))
+    def test_an_unreadable_model_takes_the_low_end(self):
+        """Unknown is not "small" — fail toward asking sooner (#13's safe direction)."""
+        self.assertEqual(cadence_for_active(None), CADENCE_UNKNOWN)
+        self.assertEqual(cadence_for_active(0), CADENCE_UNKNOWN)
 
-    def test_a_slow_MoE_is_filed_by_speed_not_architecture(self):
-        """THE CORRECTION. `maple-preview` is a 256-expert MoE and was hand-filed with the other MoEs
-        at 54/18. It measures ~63 tok/s — next door to gemma4's 60.3 — because tq2_0 on a fork kernel
-        is nothing like nemotron-elastic's 131.8. Architecture was the wrong key."""
-        self.assertEqual(cadence_for_tok_s(63.2), (24, 12))
-        self.assertEqual(cadence_for_tok_s(131.8), (54, 18))
 
-    def test_an_unmeasured_model_takes_the_slowest_band(self):
-        """Unmeasured is not "fast". Checking too early costs one reasoner call; checking too late
-        costs a finished session that never stops (#13's safe direction)."""
-        self.assertEqual(cadence("a-model-that-has-never-run"), (20, 10))
+class ActiveNotTotalTests(unittest.TestCase):
+    def test_a_sixth_scanned_lands_far_from_the_same_total_dense(self):
+        """nemotron-elastic and gemma4 are both ~11.9B TOTAL. Scanned, they are nothing alike."""
+        dense_12b = cadence_for_active(11.9)[0]
+        moe_12b_a2b = cadence_for_active(11.9 * 6 / 128)[0]
+        self.assertGreater(moe_12b_a2b, dense_12b + 20)
 
-    def test_every_start_is_reachable_by_a_median_run(self):
-        """The whole point: the median run is 70 calls, and 100 was out of reach."""
-        for _, band in CADENCE_BANDS:
-            with self.subTest(band=band):
-                self.assertLess(band[0], 70)
+    def test_a_dense_gguf_reports_no_experts(self):
+        """No expert keys in the header is the dense case — ratio 1.0, active == total."""
+        import struct
+        f = Path(tempfile.mkdtemp()) / "d.gguf"
+        f.write_bytes(struct.pack("<4sIQQ", b"GGUF", 3, 0, 0))
+        self.assertIsNone(gguf_experts(str(f)))
+
+    def test_a_non_gguf_file_is_not_guessed_at(self):
+        f = Path(tempfile.mkdtemp()) / "x.bin"
+        f.write_bytes(b"not a gguf at all")
+        self.assertIsNone(gguf_experts(str(f)))
+
+    def test_a_missing_file_is_not_guessed_at(self):
+        self.assertIsNone(gguf_experts("/nonexistent/model.gguf"))
 
 
 class ItLandsOnEverySwapTests(unittest.TestCase):
-    def test_the_cadence_is_written_into_the_config(self):
-        text = swap("ternary-bonsai")
-        self.assertIn("satisfaction_check_start = 20", text)
-        self.assertIn("satisfaction_check_every = 10", text)
-
-    def test_a_swap_replaces_the_previous_models_numbers(self):
+    def test_other_context_keys_are_untouched(self):
         t = Path(tempfile.mkdtemp()) / "cria.toml"
         t.write_text(SKELETON)
-        apply("ternary-bonsai", t)
-        apply("nemotron-elastic", t)
-        text = t.read_text()
-        self.assertIn("satisfaction_check_start = 54", text)
-        self.assertNotIn("= 20\n", text)
-
-    def test_other_context_keys_are_untouched(self):
-        self.assertIn("trigger_compaction = 20000", swap("gemma4"))
+        apply("gemma4", t)
+        self.assertIn("trigger_compaction = 20000", t.read_text())
 
     def test_the_roles_still_get_their_sampling(self):
-        self.assertIn("temperature", swap("gemma4"))
+        t = Path(tempfile.mkdtemp()) / "cria.toml"
+        t.write_text(SKELETON)
+        apply("gemma4", t)
+        self.assertIn("temperature", t.read_text())
+
+    def test_the_cadence_is_written(self):
+        t = Path(tempfile.mkdtemp()) / "cria.toml"
+        t.write_text(SKELETON)
+        apply("gemma4", t)
+        self.assertIn("satisfaction_check_start", t.read_text())
 
 
 if __name__ == "__main__":
