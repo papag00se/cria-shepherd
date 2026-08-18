@@ -363,6 +363,21 @@ cria's cheatsheet is introduced to the model as *"Tools available this turn, **l
 
 **Fixed at A**: `edit_file` now leads the preference order and the lead sentence, each is described by what it is FOR — *"change PART of an existing file"* versus *"for a NEW file, or to replace one wholesale"* — and the cost is stated where the model reads it: *"Rewriting a whole file to change a few lines regenerates every line that was already right."* Which is exactly what happened: `.get(key)` was correct at three rewrites and became `.get(key.to_string())` at the fourth.
 
+**CHECKED AGAINST THE TWO DECISIONS IT SITS BETWEEN**, because the operator asked whether it undoes an earlier lesson. It does not, and the evidence is now in the code beside the change so the next person to weigh flipping it back has numbers rather than an opinion.
+
+- `87563ae` set this ordering. Its lesson is **file tools first, shell LAST** — the shell-reflex lever — and that is untouched. Which of the two file tools led was incidental to it ("writing tools grouped first").
+- `editrecovery`'s monotonic policy is the one that really bears on this: it escalates to a whole-file rewrite after repeated edit failures because that *"commits to the action a weak model can actually complete, rather than pin an `old_string` it keeps mis-copying"*. Measured over every captured call before changing anything (#15):
+
+| model | edits | failures | rate |
+|---|---:|---:|---:|
+| gemma4 | 272 | 0 | **0%** |
+| qwen35 | 2,132 | 24 | 1% |
+| ternary-bonsai | 153 | 22 | 13% |
+| nemotron-elastic | 135 | 79 | **37%** |
+| **all** | **20,056** | **1,551** | **7.2%** (write_file: 3.9%) |
+
+The escalation's premise holds for **one model of four**, and 93% of edits land. It is a RECOVERY keyed on a file's own failure history, and it is untouched: a model that mis-pins `old_string` three times still gets committed to a grounded whole-file rewrite. What changed is only that cria no longer starts every model, on every file, at the escalated state.
+
 The dedup below stays, on its own terms rather than as the answer: a superseded copy is not what is on disk, and #5 allows carrying repeated content once as a pointer. But it treats the bloat; this treats the rewriting.
 
 ### 49. The model was handed six copies of its own file, and wrote a seventh with a new bug

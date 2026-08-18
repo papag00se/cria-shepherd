@@ -86,3 +86,37 @@ class TheMenuStillOnlyNamesWhatExistsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItDoesNotUndoTheTwoDecisionsAroundItTests(unittest.TestCase):
+    """Both were checked against their commits before this landed.
+
+    `87563ae` set this ordering and its lesson is FILE TOOLS FIRST, SHELL LAST — the shell-reflex
+    lever. Which of the two file tools led was incidental to it ("writing tools grouped first").
+
+    `editrecovery`'s monotonic policy is the one that really bears on this: it escalates to a
+    whole-file rewrite after repeated edit failures because that "commits to the action a weak model
+    can actually complete, rather than pin an old_string it keeps mis-copying". Measured over every
+    captured call before changing anything (#15) — **20,056 successful edits against 1,551
+    failures**: gemma4 0%, qwen35 1%, ternary-bonsai 13%, nemotron-elastic 37%, 7.2% overall against
+    write_file's 3.9%. The escalation's premise holds for one model of four, and it is a RECOVERY
+    keyed on a file's own failure history — untouched here. A model that mis-pins three times still
+    gets committed to a whole-file rewrite. What changed is that cria no longer starts every model,
+    on every file, at the escalated state.
+    """
+
+    def test_the_shell_reflex_lever_is_intact(self):
+        sheet = toolmenu.cheatsheet(FULL)
+        first_file = min(sheet.index("- edit_file"), sheet.index("- write_file"))
+        self.assertLess(first_file, sheet.index("exec_command"))
+
+    def test_the_escalation_to_a_whole_rewrite_still_exists(self):
+        from cria import editrecovery
+        self.assertEqual(editrecovery.ESCALATE_AFTER, 3)
+
+    def test_the_evidence_is_recorded_where_the_change_is(self):
+        """So the next person to weigh flipping it back has the numbers, not just the opinion."""
+        import inspect
+        src = inspect.getsource(toolmenu.cheatsheet)
+        self.assertIn("20,056 edits", src)
+        self.assertIn("nemotron-elastic", src)

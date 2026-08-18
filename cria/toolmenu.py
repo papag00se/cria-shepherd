@@ -124,6 +124,29 @@ def cheatsheet(tools) -> str | None:
     # It did what it was told. Changing part of a file that exists is what edit_file is for, and a
     # whole-file rewrite is the expensive way to change one line — it regenerates every line that was
     # already right, and each regeneration is a fresh chance to break one.
+    #
+    # THIS DOES NOT UNDO THE TWO DECISIONS AROUND IT, and both were checked before it landed.
+    #
+    # `87563ae` set this ordering, and its lesson is FILE TOOLS FIRST, SHELL LAST — the shell-reflex
+    # lever. That is untouched: the file tools still lead and the shell still trails. Which of the two
+    # file tools came first was incidental to it ("writing tools grouped first").
+    #
+    # `editrecovery`'s monotonic policy is the one that really bears on this: it escalates to a
+    # whole-file rewrite after repeated edit failures because that "commits to the action a weak model
+    # can actually complete, rather than pin an old_string it keeps mis-copying". Measured over every
+    # captured call before changing anything (#15) — 20,056 successful edits against 1,551 failures:
+    #
+    #     gemma4              272 edits,   0 failures     0%
+    #     qwen35            2,132 edits,  24 failures     1%
+    #     ternary-bonsai      153 edits,  22 failures    13%
+    #     nemotron-elastic    135 edits,  79 failures    37%
+    #     ALL              20,056 edits, 1,551 failures   7.2%   (write_file fails 3.9%)
+    #
+    # So the escalation's premise holds for ONE model and is false for the others, and 93% of edits
+    # land. The escalation is a RECOVERY, keyed on that file's own failure history, and this change
+    # leaves it exactly where it is: a model that mis-pins `old_string` three times still gets
+    # committed to a grounded whole-file rewrite. What changes is only that cria no longer starts
+    # every model, on every file, at the escalated state.
     write_tools = []
     if "edit_file" in names:
         write_tools.append("edit_file (change part of a file that already exists — PREFER this)")
