@@ -580,6 +580,22 @@ What the run DID cost, and nobody filed: it stopped the operator's systemd servi
 
 *Would it survive measurement?* Count authored steers across the captured runs that name a concrete field, flag, type or library. Below about three, do nothing. I expect it comes in low — the reasoner obeyed this rule in every other steer in these eight cells — so my honest guess is it does not survive and should stay unfixed.
 
+### 32. PHP is the one language with test files and no zero-config runner (c4)
+
+- **Occurrences:** 0 measured · **Languages:** 1 (php) · **Models:** — · **Fix belongs at:** A-earliest
+
+*Chain.* a PHP project with tests but no composer.json or phpunit.xml -> `select_completion_probes` composes no Test probe -> the gate is green having run nothing -> the coder is told the checks pass.
+
+*What happens.* `TEST_CONVENTIONS` gives a zero-config `floor` runner to exactly two languages — Python (`pytest -q`) and Ruby (a minitest require loop) — on the stated reasoning that those are the two where a complete testable project needs no manifest, while Go/Rust/JS/JVM cannot build without one and so always trigger ranked ecosystem discovery. PHP belongs in the first group and is in neither: `*Test.php` files are discoverable by convention, and `phpunit` is on this box, but nothing composes it without `phpunit.xml` or a composer script.
+
+*Worst example.* None. This is a shape read off the table, not an incident — and it is filed here because it was nearly filed as a Tier 2 defect on the strength of a *different* wrong reading (`discover()` returning nothing for `orders-api-py`, when the gate does not call `discover()` and the Python floor composes `pytest -q` on that exact seed).
+
+*Realised cost.* Zero so far. `handles-php` is not one of the 24 matrix cells, so no scored run has been through this path.
+
+*Proposed fix.* One `floor` tuple on the PHP row — the same shape Python and Ruby already carry — the day a PHP cell is in the matrix. Not before: it is an ADDITION, #15 wants prevalence first, and the honest state today is that the gate correctly reports it ran no tests rather than claiming a pass (the vacuous-green fix).
+
+*Would it survive measurement?* Only if a PHP cell enters the matrix and a walked run shows the gate's silence letting a wrong answer through. Until then this is a note, not a task.
+
 ## Fixed
 
 ### 32. cria classifies the harness's summarize handshake, then throws the answer away
