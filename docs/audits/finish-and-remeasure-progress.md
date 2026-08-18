@@ -20,6 +20,8 @@ The reading, across 177 sessions: **21 `loop.periodic_step_check` events, every 
 
 Fixed by giving it the clock nothing resets: `drive_count`, through the same `periodic_check_due` predicate the satisfaction check uses (renamed from `satisfaction_check_due`, whose docstring had already named this as the sibling). The gate keeps its countdown. The event now records both clocks so the drives-to-turns ratio is a reading rather than an argument.
 
+**What it costs, counted rather than argued.** Replayed over the whole corpus (112 sessions that reached this path at all): 16 fires today, 29 after the fix — **13 extra judge calls across every session on the box**. The cadence only bites where a step has run long, which is the case the mechanism exists for; the median session hands back after 6 turns and never reaches 12.
+
 Observe-only either way — what this restores is the **measurement** its own "WHAT FLIPS IT" note requires before it may ever advance a step. One sample per session, all at the same tick, could never accumulate into that decision.
 
 ### 1b — refuted
