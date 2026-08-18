@@ -56,7 +56,24 @@ Measured against the four matrix seeds with a runnable suite (`orders-api-py`, `
 
 ## Step 2 — the two cells
 
-Both run at `1b05cfd`, one code state; `cria.service` was restarted onto it at 23:43 and is **not** restarted between them.
+**CORRECTION — the two cells are NOT at one code state, and the earlier line here saying they were was wrong.** `suite/run.py:135` restarts `cria.service` at the start of every run, to apply the model's sampling and the planner flag. So each cell picks up whatever is on disk when it launches:
+
+| cell | launched | code state |
+|---|---|---|
+| × ternary-bonsai | 23:44 | `1b05cfd` — before today's three fixes |
+| × gemma4 | 00:16 | HEAD — `883de0c` + `8791a49` + `d19bf6c` live |
+
+The plan had been to hold one state across both. The runner's own restart makes that impossible without editing the runner, and it is right to restart. Say it rather than compare across it: any difference between these two cells has a code change in it as well as a model change.
+
+**And it settled 1c's one open risk by reading rather than argument.** The read-only offline leg is composed with a bind mount, and this repo has lost a whole 24-cell arm before to a verb Codex's sandbox disliked. Cell 2's first gate, live, under the real harness:
+
+```
+07:18:39  loop.periodic_gate     {"plan_off": false}
+07:18:39  loop.gate_offline      {"ran": true, "test_green": true}
+07:18:39  loop.periodic_gate_result  {"ran": true, "spoke": false}
+```
+
+The mount was not rejected and the leg came back.
 
 | cell | last score | this pass |
 |---|---|---|
