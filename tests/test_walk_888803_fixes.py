@@ -804,17 +804,28 @@ class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
         self.proberun, self.probediscovery = proberun, probediscovery
 
     def _test_cand(self, argv):
+        """A REAL directory, not bare `/tmp`. The leg now re-binds its working directory read-only
+        inside the namespace, and `/tmp` itself is the one path on this box the kernel refuses to
+        bind (it is not a mount point of its own) — so a candidate rooted there makes the capability
+        probe abstain and the leg print nothing, which is correct behaviour and a useless fixture.
+        Every real workspace is a directory UNDER /tmp and binds fine; verified on
+        /tmp/suite-probe-*, /var/tmp and the repo itself."""
         import pathlib as _pl
         from cria.probediscovery import ProbeCandidate, ProbeCost
+        if not hasattr(self, "_wd"):
+            import tempfile
+            self._wd_tmp = tempfile.TemporaryDirectory(prefix="suite-offline-")
+            self.addCleanup(self._wd_tmp.cleanup)
+            self._wd = self._wd_tmp.name
         return ProbeCandidate(kind=self.probediscovery.ProbeKind.Test, command=argv,
-                              working_dir=_pl.Path("/tmp"), confidence=1, expected_value=1,
+                              working_dir=_pl.Path(self._wd), confidence=1, expected_value=1,
                               cost=ProbeCost.Cheap, mutates_code=False, may_hang=False,
                               may_need_services=False, reason="test")
 
     def test_go_and_cargo_suites_are_re_run_offline_too(self):
         for argv in (["go", "test", "-count=1", "./..."], ["cargo", "test", "--no-fail-fast"]):
             cmd = self.proberun.offline_probe_command(self._test_cand(argv), 60)
-            self.assertIn("unshare -rn", cmd, argv[0])
+            self.assertIn("unshare -rnm", cmd, argv[0])
             self.assertIn(argv[0], cmd)
 
     def test_loopback_comes_back_up_so_a_mock_server_still_passes(self):
@@ -826,7 +837,11 @@ class OfflineBlockIsLanguageAgnosticTests(unittest.TestCase):
     def test_a_box_without_namespaces_prints_nothing_at_all(self):
         cmd = self.proberun.offline_probe_command(
             self._test_cand(["python3", "-m", "pytest", "-q"]), 60)
-        self.assertIn("unshare -rn -- true >/dev/null", cmd)   # guarded, never assumed
+        # guarded, never assumed — and the guard performs the very bind the real run performs, so a
+        # kernel or sandbox that refuses the read-only re-bind skips the leg instead of falling back
+        # to a writable second execution (#4: there is no fallback).
+        self.assertIn("unshare -rnm -- sh -c", cmd)
+        self.assertIn("remount,bind,ro", cmd)
         # …and gated on the ONLINE run having passed: after a red run the comparison this
         # leg exists to make cannot be written, and a second execution in the live
         # workspace is pure side effect. See offline_probe_command.
@@ -918,9 +933,17 @@ class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
     import types as _types
 
     def _cand(self):
+        """working_dir is a real directory: the leg binds it read-only, and `/tmp` itself is the one
+        path this kernel will not bind (see _test_cand above)."""
         from cria import probediscovery
+        if not hasattr(self, "_wd"):
+            import tempfile
+            self._wd_tmp = tempfile.TemporaryDirectory(prefix="suite-offline-")
+            self.addCleanup(self._wd_tmp.cleanup)
+            self._wd = self._wd_tmp.name
         return self._types.SimpleNamespace(
-            kind=probediscovery.ProbeKind.Test, command=["echo", "OFFLINE_RAN"], working_dir="/tmp")
+            kind=probediscovery.ProbeKind.Test, command=["echo", "OFFLINE_RAN"],
+            working_dir=self._wd)
 
     def _run(self, prelude):
         import subprocess

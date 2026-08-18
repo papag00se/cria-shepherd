@@ -823,8 +823,45 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
 # Loopback is brought back UP inside the namespace. A test that stands up its own mock server on
 # 127.0.0.1 must still pass offline — that is precisely the shape this check exists to SEE. Only the
 # outside world is gone. (The sitecustomize version raised on loopback too, a latent false-red.)
-_NETNS_CAPABLE = "unshare -rn -- true"
-_NETNS_ENTER = "unshare -rn -- sh -c"
+# THE SECOND EXECUTION MAY NOT TOUCH THE WORKSPACE. The leg re-runs the coder's own suite in the
+# coder's own directory, and a suite with side effects then has them twice: measured on
+# `orders-api-py x nemotron-elastic`, the model's tests append to one repo-relative `orders.db` that
+# nothing deletes, and the next gate read `assert 22.5 < 0.01` where 30.0 is FOUR rows of 3 x 2.50 —
+# one from the coder's run and three from cria's. The coder never saw the other three and spent the
+# tail of the run theorising about pytest parallelism. `sweep_litter` cannot help: it removes files
+# the probes CREATED, and this is a file that already existed being written to again.
+#
+# ATTEMPTED AND ABANDONED (do not re-try): running the leg against a COPY of the workspace. It
+# produced 7.0 GB of copied trees, because `cp -a` is not cheap and `working_dir` is not always the
+# workspace — one leaked mirror held 14,262 directories of `/tmp`.
+#
+# ALSO REJECTED: running the offline leg FIRST and skipping the online one when it passes. That
+# sounds like a removal and is a FALSE-GREEN generator — this module's own `_offline_fact` records
+# the hole: a live test can SKIP rather than fail when the service is gone, so an offline pass does
+# not imply an online pass, and the authoritative run has to be the unblocked one.
+#
+# What is bounded instead is what the second run CAN DO. The namespace already exists; adding a
+# mount namespace and re-binding the working directory onto itself read-only costs one syscall pair
+# and makes the whole class impossible. Reads are untouched, /tmp is untouched, and a suite that
+# genuinely writes inside its own tree now FAILS offline — which `_offline_fact` reads as "say
+# nothing" (it speaks only when both sides are green). Silence, never a manufactured red.
+#
+# MEASURED against the four real seeds that have a runnable suite (orders-api-py, feed-pipeline-py,
+# cart-billing-go, shipping-rates-rb): every one returns the SAME exit code read-only as writable.
+#
+# The capability probe performs the very same bind, so a kernel or sandbox that refuses it skips the
+# leg entirely and prints nothing. There is no writable fallback: an instrument cria cannot set up
+# is an instrument it does not read (#4, #11b).
+def _netns_readonly(working_dir) -> str:
+    ws = shlex.quote(str(working_dir))
+    return f"mount --bind {ws} {ws} && mount -o remount,bind,ro {ws}"
+
+
+def _netns_capable(working_dir) -> str:
+    return f"unshare -rnm -- sh -c {shlex.quote(_netns_readonly(working_dir))}"
+
+
+_NETNS_ENTER = "unshare -rnm -- sh -c"
 _NETNS_LOOPBACK_UP = "ip link set lo up 2>/dev/null; exec "
 
 
@@ -842,14 +879,23 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
     judge, never a verdict: an offline pass is not a defect on its own, because plenty of tasks have
     no network in them. Whether it matters for THIS task is the judge's call (principle 8).
 
-    LANGUAGE-AGNOSTIC — the block is a kernel namespace (see _NETNS_CAPABLE), so any Test probe
-    qualifies. Where the kernel refuses the namespace (no unprivileged user namespaces, no unshare)
-    the whole leg is skipped and prints NOTHING: an absent section is silence, and silence is the
-    only honest output for a block cria did not actually establish."""
+    LANGUAGE-AGNOSTIC — the block is a kernel namespace (see _netns_capable), so any Test probe
+    qualifies. Where the kernel refuses the namespace (no unprivileged user namespaces, no unshare,
+    no bind mount) the whole leg is skipped and prints NOTHING: an absent section is silence, and
+    silence is the only honest output for a block cria did not actually establish.
+
+    THE WORKSPACE IS READ-ONLY INSIDE IT — see the note above _netns_readonly. cria's extra
+    execution of the coder's suite cannot write into the coder's tree, so it cannot manufacture the
+    failure the next check reports."""
     if c.kind is not probediscovery.ProbeKind.Test or not c.command:
         return ""
     argv = " ".join(shlex.quote(t) for t in c.command)
-    inner = _NETNS_LOOPBACK_UP + argv
+    # RE-ENTER THE DIRECTORY AFTER THE BIND, and this is not decoration. The outer script has
+    # already `cd`-ed here, and a process's cwd is a resolved dentry: mounting over the path does
+    # not move it, so the suite kept writing THROUGH the old cwd to the underlying directory and the
+    # read-only mount changed nothing. Caught by the fixture that appends to a repo-relative file.
+    inner = (f"{_netns_readonly(c.working_dir)} || exit 98; "
+             f"cd {shlex.quote(str(c.working_dir))} || exit 98; " + _NETNS_LOOPBACK_UP + argv)
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
         # ONLY WHEN THE ONLINE RUN PASSED. The leg's single product is the COMPARISON — "these same
@@ -866,7 +912,7 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
         # A removal, and it uses a fact the script already holds (probegate saves the test probe's
         # exit code into __cria_test_ec). Unset means the test probe never ran, which is also a
         # reason not to run it twice.
-        f'if [ "${{__cria_test_ec:-1}}" -eq 0 ] && {_NETNS_CAPABLE} >/dev/null 2>&1; then '
+        f'if [ "${{__cria_test_ec:-1}}" -eq 0 ] && {_netns_capable(c.working_dir)} >/dev/null 2>&1; then '
         f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
         f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __cria_ec=$?; "
         f"printf '%s' \"$__cria_out\" | tail -c 600; "
