@@ -103,3 +103,18 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [sampling] ternary-bonsai: coder={'temperature': 0.2, 'top_p': 0.95, 'top_k': 20, 'repeat_penalty': 1.1}  reasoner={'temperature': 0.6, 'top_p': 0.9, 'top_k': 40, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
 [milestone] 15min  score=0.0/5.0  floor=1  MISS
 [milestone] recheck score=0.0  CONFIRMED MISS
+{
+ "run_id": "shipping-rates-rb_ternary-bonsai_codex_poff_1787018471",
+ "terminal": "milestone-miss-15min",
+ "success": false,
+ "score": 0.0,
+ "wall_seconds": 944.5,
+ "calls": 49,
+ "avg_tok_s": 32.9
+}
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[19:17:06] RETEST shipping-rates-rb x ternary-bonsai — exit 0
+[19:17:06] RETEST shipping-rates-rb x gemma4 — start
+[sampling] gemma4: coder={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  reasoner={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}

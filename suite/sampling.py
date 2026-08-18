@@ -120,6 +120,49 @@ KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
          "collapse_system_prompt", "think_protocol", "merge_consecutive_turns")
 
 
+# ---------------------------------------------------------------------------
+# Per-model SATISFACTION CADENCE (operator-set, 2026-08-17).
+#
+# `_periodic_satisfaction` is the off-ramp for "a session that has FINISHED the work but cannot
+# stop". It was gated at `satisfaction_check_start = 100`, then every 25 drives — a cadence tuned for
+# long sessions, and **the median run in results.jsonl is 70 calls**, so 300 of 463 runs could never
+# reach it. On the cell that exposed this it was arithmetically unreachable: 54 calls against a start
+# of 100.
+#
+# Families, not names (#19/#20). The buckets are the operator's; the assignment is read from the
+# repo's own GGUF-header classification in docs/model-settings.md ("`general.architecture` plus
+# `<arch>.expert_count` / `expert_used_count`, never a card or a name"), so a new model joins by what
+# it IS rather than by what it is called.
+SATISFACTION_CADENCE = {
+    # ternary — the operator gives this quant its own bucket, apart from the qwen family it derives
+    # from. ternary-bonsai is Q2_0_g128 ternary, dense, `qwen35` arch.
+    "ternary-bonsai":   (20, 10),
+    # gemma
+    "gemma4":           (24, 12),
+    # qwen derivatives — dense, `general.architecture = qwen35`: the 9B base and the three finetunes
+    # of it (qwythos = empero-ai's, qwopus = Jackrong's, ornith).
+    "qwen35":           (30, 15),
+    "qwythos":          (30, 15),
+    "qwopus":           (30, 15),
+    "ornith":           (30, 15),
+    # MoEs — expert_count > 1 in the headers. mellum2 `mellum` 64(8), nemotron-elastic
+    # `nemotron_h_moe` 128(6), maple-preview 256(8).
+    #
+    # maple-preview is the one genuine ambiguity in the mapping: its quant is tq2_0 TERNARY and its
+    # architecture is MoE, so it could read as either bucket. Filed by ARCHITECTURE, because that is
+    # what the repo's own classification keys on and what the cadence is about (how many drives a
+    # session takes to converge), not by quant. Flagged rather than silently decided.
+    "mellum2":          (54, 18),
+    "nemotron-elastic": (54, 18),
+    "maple-preview":    (54, 18),
+}
+
+
+def cadence(model: str) -> tuple[int, int] | None:
+    """(start, every) for this model's satisfaction off-ramp, or None to leave the config alone."""
+    return SATISFACTION_CADENCE.get(model)
+
+
 def render(model: str) -> dict:
     if model not in MODEL_SAMPLING:
         raise KeyError(f"no canonical sampling recorded for {model!r}. Add it to "
@@ -161,8 +204,33 @@ def apply(model: str, toml_path: Path = CRIA_TOML) -> dict:
         added = [f"{k} = {_lit(v)}" for k, v in knobs.items()]
         # keep the header first, then the surviving keys, then this model's sampling
         text = text[:i] + "\n".join([kept[0]] + kept[1:] + added).rstrip() + "\n" + text[j:]
+    text = _write_cadence(model, text)
     toml_path.write_text(text)
     return spec
+
+
+def _write_cadence(model: str, text: str) -> str:
+    """Put this model's satisfaction cadence into `[context]`, the same way the roles get sampling.
+
+    Same reason as the sampling this module exists for: a per-model number that must be set by hand
+    before a run is a number that will be left at the previous model's value. A model with no entry
+    leaves the config untouched rather than inheriting a default that was tuned for something else."""
+    pair = cadence(model)
+    if pair is None:
+        return text
+    start, every = pair
+    i = text.find("[context]")
+    if i < 0:                                    # no [context] block — append one
+        return text.rstrip() + (f"\n\n[context]\nsatisfaction_check_start = {start}\n"
+                                f"satisfaction_check_every = {every}\n")
+    j = text.find("\n[", i + 1)
+    j = len(text) if j < 0 else j
+    kept = [ln for ln in text[i:j].splitlines()
+            if ln.split("=", 1)[0].strip() not in ("satisfaction_check_start",
+                                                   "satisfaction_check_every")]
+    block = "\n".join(kept).rstrip() + (f"\nsatisfaction_check_start = {start}\n"
+                                        f"satisfaction_check_every = {every}\n")
+    return text[:i] + block + text[j:]
 
 
 def main() -> None:

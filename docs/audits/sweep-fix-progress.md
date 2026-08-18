@@ -456,6 +456,22 @@ What the judge got instead was `_work_log(keep_checks=True)` — every check res
 
 *(On heavy toolchains: checked, and the light path already exists — for Rust cria composes `cargo check` as a Cheap probe, "fast and read-only", ahead of clippy and the test run. The lost time in that cell was not a slow build; the judge ran nothing at all.)*
 
+### 52. The off-ramp for a finished session was unreachable by most runs
+`_periodic_satisfaction` exists for one thing — *"a session that has FINISHED the work but cannot stop"* — and was gated at `satisfaction_check_start = 100`, then every 25 drives. **The median run in `results.jsonl` is 70 calls**, so **300 of 463 runs could never reach it**. On the cell that exposed it the gate was arithmetic: 54 calls against a start of 100, while the run sat on a banked 4/4 for twenty-six minutes.
+
+**Operator-set per model (2026-08-17)**, because how many drives a session takes to converge is a property of the model:
+
+| bucket | start | every | models |
+|---|---:|---:|---|
+| ternary | 20 | 10 | ternary-bonsai |
+| gemma | 24 | 12 | gemma4 |
+| qwen derivatives | 30 | 15 | qwen35, qwythos, qwopus, ornith |
+| MoEs | 54 | 18 | mellum2, nemotron-elastic, maple-preview |
+
+Families, not names (#19/#20): the buckets are the operator's, the assignment is read from the repo's own GGUF-header classification — *"`general.architecture` plus `<arch>.expert_count` / `expert_used_count`, never a card or a name"*. **One genuine ambiguity, flagged rather than silently decided**: `maple-preview` is tq2_0 TERNARY quant *and* a 256/8 MoE, so it could read as either bucket. Filed by architecture, since that is what the repo's classification keys on and what a convergence cadence is about.
+
+Applied on every model swap, alongside the sampling, for the reason `suite/sampling.py` already records: a per-model number set by hand before a run is one that will be left at the previous model's value — and that mistake has been made here at scale, 26 consecutive gemma4 runs sent ternary-bonsai's sampling.
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.
