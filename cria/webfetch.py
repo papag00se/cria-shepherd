@@ -423,8 +423,8 @@ def outline_for_spill_path(path: str) -> str:
     return ""
 
 
-def _doc_format(content: str) -> str:
-    """What the spilled bytes ACTUALLY are — "JSON", "YAML", "HTML", or "" when it isn't one of those.
+def _doc_format(content: str, parsed: Optional[Any] = None) -> str:
+    """What the spilled bytes ACTUALLY are — "JSON", "HTML", or "" when cria cannot say.
 
     The spill FILENAME comes from the url (:func:`_spill_name`, stable on purpose so a re-fetch maps
     to the same file), so a `.../swagger.yml` url whose server answers with JSON is stored — and
@@ -433,14 +433,28 @@ def _doc_format(content: str) -> str:
     the run on patterns that cannot match a pretty-printed JSON document — `grep -n "paths.*/handles"`
     six times for exit 1, `grep -A 20 "properties:"` (the file has `"properties": {`), and a hand-built
     YAML tree in its reasoning. Renaming the file would break the url→path identity three call sites
-    depend on; saying what it is costs nothing and is the fact the model was missing."""
+    depend on; saying what it is costs nothing and is the fact the model was missing.
+
+    THE YAML ANSWER WAS A GUESS OVER PROSE AND IS GONE. Its test matched any line of the form
+    ``Word:`` — which documentation prose is made of. Walked on shipping-rates-rb x ternary-bonsai: the spilled RubyDoc page for `ISO3166::Country`
+    begins `RubyDoc.info:`, and cria announced "It is YAML." about flattened HTML. That page carries
+    `in_eu?` from the gem that works; the model went to a different gem on the next call.
+
+    IT WAS ALSO UNANSWERABLE, WHICH IS THE REAL POINT. Whatever the source was, a doc that PARSED is
+    written to the spill file by :func:`_greppable` as pretty JSON — so "YAML" was never true of the
+    bytes cria is describing, even for a genuine YAML document. The two answers left are read off
+    what cria established rather than sniffed: `parsed` is the parse that actually happened, and a
+    leading tag is a tag. Everything else is silence (#3), which is what the caller renders when this
+    returns "".
+
+    The `HTML` answer survives for the one case that reaches the file with tags in it — a MINIFIED
+    body, which `_greppable` breaks at structural points rather than flattening. An ordinary HTML
+    page is reduced to text long before here, and text is not HTML."""
     head = (content or "").lstrip()[:200]
-    if head.startswith(("{", "[")):
+    if parsed is not None or head.startswith(("{", "[")):
         return "JSON"
     if head.lower().startswith(("<!doctype", "<html", "<?xml")):
         return "HTML"
-    if re.match(r"^(?:---\s*$|[A-Za-z_][\w.-]*:(?:\s|$))", head, re.M):
-        return "YAML"
     return ""
 
 
@@ -452,7 +466,7 @@ def format_for_spill_path(path: str) -> str:
         return ""
     for url, cached in _DOC_CACHE.items():
         if os.path.basename(_spill_name(url)) == base:
-            return _doc_format(_greppable(cached[2], cached[3], cached[1]))
+            return _doc_format(_greppable(cached[2], cached[3], cached[1]), cached[3])
     return ""
 
 
@@ -466,7 +480,7 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     status, ct, reduced, parsed, _trunc = cached
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
-    fmt = _doc_format(content)
+    fmt = _doc_format(content, parsed)
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
                      format=(f" It is {fmt}." if fmt else ""),
