@@ -394,7 +394,7 @@ The model rewrote a 6.6 KB `main.rs` **whole, five times**, each version 99.1–
 | 0022 | 16,527 | 5 | 26,462 |
 | 0023 | **21,009** | **6** | **33,103** |
 
-**The prompt quadrupled and every token of the growth is the model's own output handed back to it.** It then synthesised a sixth version carrying the type error the run died on: `.get(key)` was correct at three earlier rewrites and became `.get(key.to_string())` at the last. The unassisted run wrote the file ONCE and made three ~285-byte `edit_file` patches — 20 coder calls, 4 of 4.
+**The prompt quadrupled and every token of the growth is the model's own output handed back to it.** It then synthesised a sixth version. **CORRECTED — I first wrote that `.get(key)` was correct at three earlier rewrites and that the last one broke it. That was read off the diff and is false.** Every one of the five versions was compiled afterwards and **not one of them builds**: four fail with `E0277: the trait bound String: Borrow<&str> is not satisfied` at the same line, and the last with `E0308`. The rewriting did not destroy a working state — the same `&str`/`String` typing bug survived all five attempts, and the last rewrite only changed which error the compiler reported first. The unassisted run wrote the file ONCE and made three ~285-byte `edit_file` patches — 20 coder calls, 4 of 4.
 
 Nothing folded them because nothing could: `_collapse_duplicates` needs byte-identical calls and these differ by about 1%. `selfcompact` has exactly the right rule already — `write_stub_superseded`, keyed on PATH and not on content — but it runs over the compacted middle only, and all of these sat in the verbatim tail after it.
 

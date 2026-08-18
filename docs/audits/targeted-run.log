@@ -50,3 +50,19 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [17:30:29] shipping-rates-rb x ternary-bonsai — exit 0
 [17:30:29] feed-pipeline-java x gemma4 — start
 [sampling] gemma4: coder={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  reasoner={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
+[milestone] 15min  score=4.0/5.0  floor=1  ok
+{
+ "run_id": "feed-pipeline-java_gemma4_codex_poff_1787013029",
+ "terminal": "exited",
+ "success": true,
+ "score": 5.0,
+ "wall_seconds": 1053.2,
+ "calls": 37,
+ "avg_tok_s": 59.3
+}
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[17:52:40] feed-pipeline-java x gemma4 — exit 0
+[17:52:40] shipping-rates-rb x gemma4 — start
+[sampling] gemma4: coder={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  reasoner={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
