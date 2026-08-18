@@ -25,3 +25,7 @@ docs/audits/202*.md
 # not something anyone reads out of the repo (operator, 2026-08-13).
 # suite/results/results.jsonl IS tracked: it is the scoreboard, not a log.
 suite/results/*.log
+
+# Suite run workspaces. A run's workspace IS its evidence, and /tmp is swept on this box —
+# one cleaner took a workspace mid-run and the row landed 0/0 with nothing to explain it.
+/runs/

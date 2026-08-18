@@ -40,6 +40,20 @@ RESULTS = SUITE / "results" / "results.jsonl"
 # One stray 403 is a blip; a run peppered with them was throttled. Measured: the affected
 # runs carried dozens, the healthy ones none.
 THROTTLE_PROMPTS = 5
+# NOT /tmp. A run's workspace IS its evidence — the archive, the verifier's input, and every walk
+# that reads what the coder actually built — and this box runs cleaners over /tmp. One did, mid-run:
+# `shipping-rates-rb x ternary-bonsai` 2026-08-17 17:14 lost its workspace between the 15-minute
+# milestone (which scored it) and the archive twelve seconds later, so `cp -r` copied nothing,
+# verify.py ran against a path that no longer existed, and the row landed 0/0 with no verifier error
+# to explain it. The evidence-preservation rule one screen down — "Nothing under ~/.cria/suite is
+# ever auto-cleaned" — was already the intent; the live tree just was not covered by it.
+#
+# NOT under ~/.cria either, and that is not a style choice: `writeproxy._targets_cria_home` REFUSES
+# any absolute write that resolves into cria's own home, so a workspace there would have every write
+# the model makes refused. This is the durable place that is neither.
+RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"   # gitignored; see .gitignore
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
 CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
@@ -271,7 +285,7 @@ def score_snapshot(ws: Path, task_dir: Path) -> tuple[float, float, dict]:
     workspace would put cria's own artifacts in front of the coder's `ls` mid-run (principle 7), so
     a COPY is scored and thrown away.
     """
-    snap = Path(tempfile.mkdtemp(prefix="milestone-snap-", dir="/tmp"))
+    snap = Path(tempfile.mkdtemp(prefix="milestone-snap-", dir=RUNS_DIR))
     try:
         sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
         vr = sh(sys.executable, str(task_dir / "verify.py"), str(snap / "ws"), timeout=600)
@@ -330,7 +344,7 @@ def main() -> None:
     task_dir = SUITE / "tasks" / args.task
     prompt = (task_dir / "prompt.txt").read_text().strip()
     run_id = f"{args.task}_{args.model}_{args.harness}_p{args.planner}_{int(time.time())}"
-    ws = Path(tempfile.mkdtemp(prefix=f"suite-{run_id}-", dir="/tmp"))
+    ws = Path(tempfile.mkdtemp(prefix=f"suite-{run_id}-", dir=RUNS_DIR))
     log_path = SUITE / "results" / f"{run_id}.log"
 
     swap_model(args.model)
@@ -432,6 +446,10 @@ def main() -> None:
     archive = Path.home() / ".cria" / "suite" / run_id
     archive.mkdir(parents=True, exist_ok=True)
     sh("cp", "-r", str(ws), str(archive / "workspace"), timeout=300)
+    # SAY SO WHEN THE EVIDENCE IS GONE. `sh` does not check, so a failed copy was silent and the row
+    # that followed read 0/0 with no verifier_error — indistinguishable from a model that built
+    # nothing. That is a false fact in the record, and the record is what the campaign is scored on.
+    workspace_lost = not ws.is_dir() or not (archive / "workspace").is_dir()
 
     vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws),
             *([str(session_dir)] if session_dir else []), timeout=600)
@@ -440,6 +458,11 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         verdict = {"score": 0, "max_score": 0, "success": False,
                    "verifier_error": (vr.stdout + vr.stderr)[-400:]}
+    if workspace_lost:
+        verdict["verifier_error"] = (
+            f"WORKSPACE GONE before verification ({ws}) — this row is NOT a score. "
+            + str(verdict.get("verifier_error") or ""))[:400]
+        print(f"[archive] WORKSPACE MISSING: {ws} — the row is unscored, not zero", flush=True)
 
     row = {
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,

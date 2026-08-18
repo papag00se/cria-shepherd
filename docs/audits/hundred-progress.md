@@ -46,7 +46,7 @@ Five cells where a fix had landed AND the baseline proves the model can do the t
 | feed-pipeline-java × gemma4 | 5/5 | 0/5 | **5/5** | restored |
 | rust-toml-cli × ternary-bonsai | 4/4 | 0/4 | 0/4 | unchanged |
 | shipping-rates-rb × gemma4 | 4/5 | 1/5 | 0/5 | **worse** |
-| shipping-rates-rb × ternary-bonsai | 1/5 | 1/5 | unscored | the verifier never ran — workspace gone before archiving |
+| shipping-rates-rb × ternary-bonsai | 1/5 | 1/5 | **unscored** | a `/tmp` cleaner took the workspace mid-run — not a result, and not cria's doing |
 
 **Two cells fully restored from a destroyed state. One unchanged. One worse. One unmeasurable.** On `cart-billing-go` every mechanism that had killed it — the repeat-fold telling it its writes were cached, the identical-edit message, the guard that killed the `axed`→`taxed` steer — fired zero times, and it finished green in less wall clock than the unassisted arm.
 
@@ -62,6 +62,14 @@ That is the case for the edit-first menu change (#50), arrived at properly this 
 - *"The gate cadence starved it of ground truth."* A red herring, and confounded: runs that are going well are not killed, so they last longer and collect more gates. The causation runs backwards from what I implied.
 
 **And the baseline evidence for that cell is unusable** — that run took 10 service restarts while fixes were landing, so its captures are split across sessions with a 37-minute gap and reset sequence numbers. I contaminated the record I most needed, which is precisely why this run was pinned.
+
+### The unscored cell was infrastructure, and it is fixed
+
+`shipping-rates-rb × ternary-bonsai` lost its workspace between the 15-minute milestone that scored it and the archive twelve seconds later. The model never ran a destructive command — every shell call it made is a `ruby`, `gem`, `bundle`, `curl` or `mkdir`, and there is no `rm`, `mv` or `rmdir` anywhere in the run. **This box runs cleaners over `/tmp`, and the runner built every workspace there.**
+
+So `cp -r` copied nothing, `verify.py` ran against a path that no longer existed and honestly reported 0/0, and the row landed looking exactly like a model that built nothing. One row of 463 has been lost this way — but the loss is silent, which is the part that matters: a destroyed run and a failed run are indistinguishable in the record the campaign is scored on.
+
+**Fixed three ways.** Workspaces and milestone snapshots now live in `runs/` inside the repo, gitignored — durable, and *not* under `~/.cria`, which would have been the obvious choice and is exactly where `writeproxy._targets_cria_home` refuses every write the model makes. And a lost workspace is now stated as a lost workspace: the row carries `WORKSPACE GONE before verification — this row is NOT a score`, and the runner prints it.
 
 ### What it does and does not establish
 
