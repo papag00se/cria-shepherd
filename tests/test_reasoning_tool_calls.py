@@ -66,10 +66,10 @@ class Rec:
 # ~/.cria/calls/20260802T195958-…/0035-coder-s1.response.json — content null, no tool_calls.
 LFM2_VERBATIM = (
     "I should use the `read_file` tool to read the OpenAPI spec file that was fetched earlier "
-    "(./tmp/read-only/api.handle.me_openapi.json) and extract information about the "
+    "(./tmp/reference/api.handle.me_openapi.json) and extract information about the "
     "`/handles/{handle}` endpoint.\n\nLet me use the `read_file` tool to read the OpenAPI spec "
     "file and extract the necessary information.\n"
-    "<|tool_call_start|>[read_file(path='./tmp/read-only/api.handle.me_openapi.json')]"
+    "<|tool_call_start|>[read_file(path='./tmp/reference/api.handle.me_openapi.json')]"
     "<|tool_call_end|>")
 
 # ~/.cria/calls/20260802T195958-…/0052-coder-s1.response.json — the reply this run produced 35
@@ -123,7 +123,7 @@ class RecoversAnEmittedCall(unittest.TestCase):
         comp = recover_reasoning_tool_calls(_reply(LFM2_VERBATIM), MENU, Rec())
         self.assertEqual(
             _calls(comp),
-            [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+            [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
         self.assertEqual(comp["choices"][0]["finish_reason"], "tool_calls")
 
     def test_xml_function_call_in_reasoning_becomes_a_real_call(self):
@@ -197,7 +197,7 @@ class TheTurnMustAlreadyBeLost(unittest.TestCase):
             comp = recover_reasoning_tool_calls(_reply(LFM2_VERBATIM, content=empty), MENU, Rec())
             self.assertEqual(
                 _calls(comp),
-                [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})], empty)
+                [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})], empty)
 
     def test_content_text_reads_both_shapes(self):
         self.assertEqual(content_text("hi"), "hi")
@@ -292,12 +292,12 @@ class RefusesWhatTheModelDidNotAskFor(unittest.TestCase):
     def test_a_truncated_call_is_refused_not_half_recovered(self):
         """Generation cut off inside the argument string. The gemma-fable parser deliberately
         salvages this shape from `content`; here salvage would mean guessing the rest of a path."""
-        r = "Let me read it.\n<|tool_call_start|>[read_file(path='./tmp/read-only/api.handle"
+        r = "Let me read it.\n<|tool_call_start|>[read_file(path='./tmp/reference/api.handle"
         self.assertEqual(_calls(recover_reasoning_tool_calls(_reply(r), MENU, Rec())), [])
         self.assertEqual(
             _calls(recover_reasoning_tool_calls(
                 _reply(r + ".me_openapi.json')]<|tool_call_end|>"), MENU, Rec())),
-            [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+            [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
 
     def test_a_call_with_no_closing_sentinel_is_refused(self):
         self.assertEqual(_calls(recover_reasoning_tool_calls(
@@ -328,7 +328,7 @@ class RefusesWhatTheModelDidNotAskFor(unittest.TestCase):
                                                                  tools, Rec())), [])
         self.assertEqual(
             _calls(recover_reasoning_tool_calls(_reply(LFM2_VERBATIM), MENU, Rec())),
-            [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+            [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
 
     def test_a_required_argument_that_is_missing_or_NULL_is_refused(self):
         """cria does not fill in a field, and "the key is there" is not "the field is usable".
@@ -401,7 +401,7 @@ class NeverDoublesUpAndNeverOverwrites(unittest.TestCase):
         again would run the same command twice."""
         native = [{"id": "c1", "type": "function",
                    "function": {"name": "read_file",
-                                "arguments": '{"path": "./tmp/read-only/api.handle.me_openapi.json"}'}}]
+                                "arguments": '{"path": "./tmp/reference/api.handle.me_openapi.json"}'}}]
         comp = recover_reasoning_tool_calls(_reply(LFM2_VERBATIM, tool_calls=native), MENU, Rec())
         self.assertEqual(comp["choices"][0]["message"]["tool_calls"], native)
         # control: strip the surfaced call and the SAME reasoning yields exactly one.
@@ -439,14 +439,14 @@ class EveryCallerGetsIt(unittest.TestCase):
     def test_recover_leaked_tool_calls_chains_it(self):
         comp = recover_leaked_tool_calls(_reply(LFM2_VERBATIM), MENU, Rec())
         self.assertEqual(_calls(comp),
-                         [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+                         [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
 
     def test_apply_recovers_it_and_the_rest_of_the_pipeline_still_runs(self):
         """A recovered call is an ordinary call from here on — `apply` runs the name and shape
         normalizers over it exactly as it would over a native one."""
         comp = apply(_reply(LFM2_VERBATIM), MENU, Rec())
         self.assertEqual(_calls(comp),
-                         [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+                         [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
 
     def test_a_leak_in_content_still_wins_over_the_reasoning_channel(self):
         """Content is the channel the model was asked to answer in. When both carry a call, the
@@ -459,7 +459,7 @@ class EveryCallerGetsIt(unittest.TestCase):
         self.assertEqual(_calls(comp), [("list_dir", {"path": "."})])
         # control: with content empty, the reasoning channel is what answers.
         self.assertEqual(_calls(recover_leaked_tool_calls(_reply(LFM2_VERBATIM), MENU, Rec())),
-                         [("read_file", {"path": "./tmp/read-only/api.handle.me_openapi.json"})])
+                         [("read_file", {"path": "./tmp/reference/api.handle.me_openapi.json"})])
 
 
 class TheRepeatGuardSeesTheRecoveredCall(unittest.TestCase):

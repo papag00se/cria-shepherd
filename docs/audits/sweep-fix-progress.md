@@ -476,6 +476,25 @@ The ceiling is what makes it work: a start above the 70-call median is a check t
 
 **Recorded, not corrected:** the expert ratio is a lower bound — attention, embeddings and shared layers are not sharded, so true active params are higher than the naive product (nemotron computes ~0.6B against a card figure of ~2B). It does not change the ordering this decides, every MoE lands under 2B and every dense model over 9B, and a correction would be a guess at a shape that varies per architecture.
 
+### 53. cria refused a search, pointed at the answer, and named it with a hyphen
+`shipping-rates-rb × gemma4`, retest 2026-08-17, **1/5 against 4/5 unassisted**. The task requires a third-party gem, so the coder searched for one. cria's near-duplicate guard refused **eight of its thirteen searches**, and every refusal said where the earlier results were: *"grep -n "<keyword>" ./tmp/read-only/search-….txt"*.
+
+The coder did as it was told and typed `./tmp/read_only/…`. `No such file or directory`. With no results it searched again; cria refused again with the same pointer. **That loop ran for roughly twenty of the run's 148 calls** — and it had already fetched both correct answers, rubygems `countries` at call 26 and `europe.rb` at call 52, and could not read either back.
+
+**The measurement decided the fix.** Over every captured call on this box:
+
+| how the path is written | correct | wrong |
+|---|---:|---:|
+| `read_file` argument | 68 | 0 |
+| `list_dir` argument | 1 | 0 |
+| retyped inside `exec_command` | 50 | **9 (15%)** |
+
+Every one of the nine is `read-only` → `read_only`. cria's generated FILENAMES — longer, mixed punctuation — came back byte-exact every time, so length was never it. The hyphen was, sitting in a name every other path around it writes with an underscore.
+
+**So: not a corrector, not a heuristic.** Those would be assists over a mistake cria caused (#1, #16). cria owns the directory's name and had no reason to put a separator in it. `./tmp/read-only` → **`./tmp/reference`**, which also says what the directory holds. Nothing depended on the name to stop the coder writing there — `writeproxy.is_spill_path` does that.
+
+**And the name is now spelled once (#23).** It had been retyped in an `execcheck` constant, two `loop.py` regexes and the model-facing tool descriptions. Four places to forget on the day somebody renames it — and a prompt pointing at a directory that no longer exists is this same bug wearing a different word. The prompt now carries a `{{SPILL_DIR}}` token filled from the owner, and a test walks every non-docstring string in `cria/` to prove no module spells it twice.
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.

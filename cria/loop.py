@@ -5060,8 +5060,9 @@ def _has_actionable_tools(tools) -> bool:
 
 
 def _completion_tool() -> dict:
-    desc = prompts.load_map("tool_descs").get(
-        TASK_COMPLETE_TOOL, "Call this when the task is fully done and verified. Pass a short summary.")
+    desc = prompts.fill(prompts.load_map("tool_descs").get(
+        TASK_COMPLETE_TOOL, "Call this when the task is fully done and verified. Pass a short summary."),
+                        spill_dir=webfetch.SPILL_DIR)
     return {"type": "function", "function": {
         "name": TASK_COMPLETE_TOOL, "description": desc,
         "parameters": {"type": "object", "required": ["summary"],
@@ -8060,7 +8061,8 @@ _URL_LIKE = re.compile(r"^(https?://\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*)$", re.I)
 # A read (read_file path / cat|grep command) that targets a spilled search-results file, and the search
 # POINTER that names (query, file) — cria controls this filename, so a read of it is unambiguously the
 # model consuming a search's results, which the read-judge then checks for relevance.
-_SEARCH_FILE_RE = re.compile(r"\.?/?tmp/read-only/search-[\w.\-]+\.txt")
+_SPILL_SEG = re.escape(webfetch.SPILL_DIR.lstrip("./").rstrip("/"))   # cria names the dir; nothing else spells it
+_SEARCH_FILE_RE = re.compile(r"\.?/?" + _SPILL_SEG + r"/search-[\w.\-]+\.txt")
 
 
 def _search_key(path: str) -> str:
@@ -8077,7 +8079,8 @@ def _search_key(path: str) -> str:
     model gave up in the same turn. cria withheld a query it was holding, then destroyed the answer
     on the strength of the judge's reply to the question it had mangled."""
     return "/" + (path or "").lstrip("./").lstrip("/")
-_SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?tmp/read-only/search-[\w.\-]+\.txt)')
+_SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?'
+                                + _SPILL_SEG + r'/search-[\w.\-]+\.txt)')
 
 
 def _results_name_the_tasks_host(task: str, results: str) -> str:

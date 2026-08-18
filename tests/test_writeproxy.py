@@ -300,7 +300,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("cp ", cmd)
             self.assertNotIn("base64 -d", cmd)
             self.assertLess(len(cmd), len(body), "lowered spill command must not carry the doc bytes")
-            self.assertIn("./tmp/read-only/", cmd)  # dedicated read-only scratch dir (the target)
+            self.assertIn("./tmp/reference/", cmd)  # dedicated read-only scratch dir (the target)
             self.assertNotIn("chmod 444", cmd)      # NOT FS-read-only: a re-spill must overwrite; dirguard protects
             self.assertNotIn("rm -f", cmd)          # the Codex sandbox rejects `rm -f`
             self.assertIn("grep", cmd)              # pointer message tells the model how to read it
@@ -327,7 +327,7 @@ class WebTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
         cmd = _lowered_cmd(comp)
         self.assertIn("curl -sL", cmd)                    # still the Brave curl
-        self.assertIn("./tmp/read-only/search-", cmd)     # saved to the read-only spill dir
+        self.assertIn("./tmp/reference/search-", cmd)     # saved to the read-only spill dir
         # NO rm -f (the Codex sandbox HARD-rejects it → every web_search failed → model hallucinated an
         # endpoint) and NO chmod 444 (so `>` can overwrite on the next search); the dirguard protects the dir
         self.assertNotIn("rm -f", cmd)
@@ -342,7 +342,7 @@ class WebTests(unittest.TestCase):
     def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
         # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the
         # reasoner) and a whole read is steered to grep (a raw cat of a big file gets truncated).
-        p = "./tmp/read-only/api.handle.me_openapi.json"
+        p = "./tmp/reference/api.handle.me_openapi.json"
         edit = _call("edit_file", {"path": p, "old_string": "a", "new_string": "b"})
         translate_outbound(edit, _CMD_SHELL, injected={"edit_file"})
         self.assertIn("READ-ONLY reference", _lowered_cmd(edit))
@@ -381,7 +381,7 @@ class WebTests(unittest.TestCase):
             self.assertNotIn("<keyword>", cmd)      # a real route list replaces the placeholder
             self.assertNotIn("{{", cmd)             # every token filled — no raw placeholder shipped
             # an UNCACHED spill file invents nothing — the steer still stands on its own (rule 5b)
-            other = _call("read_file", {"path": "./tmp/read-only/some-other-doc.txt"})
+            other = _call("read_file", {"path": "./tmp/reference/some-other-doc.txt"})
             translate_outbound(other, _CMD_SHELL, injected={"read_file"})
             ocmd = _lowered_cmd(other)
             self.assertNotIn("API endpoints", ocmd)
@@ -421,7 +421,7 @@ class WebTests(unittest.TestCase):
         HOSTILE = ("rm -f", "rm -rf", "chmod ", " dd ", "mkfs", " mv ")
         cmds = {
             "web_search": _search_command({"query": "x"}, "KEY"),
-            "web_fetch spill": _spill_command("./tmp/read-only/x.json", "content", "msg"),
+            "web_fetch spill": _spill_command("./tmp/reference/x.json", "content", "msg"),
             "list_dir": _list_command({"path": "some/dir"}),
         }
         for name, cmd in cmds.items():
@@ -430,44 +430,44 @@ class WebTests(unittest.TestCase):
 
     def test_spill_relpath_redirects_only_the_root_absolute_form(self):
         from cria.writeproxy import _spill_relpath
-        self.assertEqual(_spill_relpath("/tmp/read-only/api.json"), "./tmp/read-only/api.json")
-        self.assertEqual(_spill_relpath("/tmp/read-only"), "./tmp/read-only")
-        self.assertIsNone(_spill_relpath("./tmp/read-only/api.json"))       # already relative — fine
-        self.assertIsNone(_spill_relpath("tmp/read-only/api.json"))         # relative — fine
-        self.assertIsNone(_spill_relpath("/home/u/proj/tmp/read-only/x"))   # nested elsewhere — leave alone
+        self.assertEqual(_spill_relpath("/tmp/reference/api.json"), "./tmp/reference/api.json")
+        self.assertEqual(_spill_relpath("/tmp/reference"), "./tmp/reference")
+        self.assertIsNone(_spill_relpath("./tmp/reference/api.json"))       # already relative — fine
+        self.assertIsNone(_spill_relpath("tmp/reference/api.json"))         # relative — fine
+        self.assertIsNone(_spill_relpath("/home/u/proj/tmp/reference/x"))   # nested elsewhere — leave alone
         self.assertIsNone(_spill_relpath("/etc/passwd"))
 
     def test_dropped_dot_slash_spill_read_is_redirected_not_dirguard_blocked(self):
-        # The live footgun: the model reads the fetched spec via '/tmp/read-only/x' (dropped the './'),
+        # The live footgun: the model reads the fetched spec via '/tmp/reference/x' (dropped the './'),
         # the dirguard blocks it as external, and the spec sits unreadable. A RANGED read must be
         # redirected to the real workspace file, NOT refused.
-        ranged = _call("read_file", {"path": "/tmp/read-only/api.handle.me_openapi.json",
+        ranged = _call("read_file", {"path": "/tmp/reference/api.handle.me_openapi.json",
                                      "start_line": 1, "end_line": 100})
         translate_outbound(ranged, _CMD_SHELL, injected={"read_file"},
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         cmd = _lowered_cmd(ranged)
         self.assertNotIn("outside the working directory", cmd)                   # NOT the dirguard refusal
-        self.assertIn("./tmp/read-only/api.handle.me_openapi.json", cmd)         # hits the real file
+        self.assertIn("./tmp/reference/api.handle.me_openapi.json", cmd)         # hits the real file
         self.assertIn("sed -n '1,100p'", cmd)
         # a WHOLE read of the dropped-'./' spill is still steered to grep (with the corrected path)
-        whole = _call("read_file", {"path": "/tmp/read-only/api.handle.me_openapi.json"})
+        whole = _call("read_file", {"path": "/tmp/reference/api.handle.me_openapi.json"})
         translate_outbound(whole, _CMD_SHELL, injected={"read_file"},
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         wcmd = _lowered_cmd(whole)
         self.assertNotIn("outside the working directory", wcmd)
         self.assertIn("grep", wcmd)
-        self.assertIn("./tmp/read-only/api.handle.me_openapi.json", wcmd)
+        self.assertIn("./tmp/reference/api.handle.me_openapi.json", wcmd)
 
     def test_dropped_dot_slash_spill_COMMAND_is_redirected_not_dirguard_blocked(self):
-        # The command-string half of the same footgun: read_file on '/tmp/read-only/x' was silently
+        # The command-string half of the same footgun: read_file on '/tmp/reference/x' was silently
         # redirected while a grep/cp naming the SAME string was dirguard-refused — the model, shown
         # both, learned "the sandbox blocks this file" and burned ~130 calls (run 0729-gemma4 pon2).
-        comp = _call("exec_command", {"command": "grep -n 'holder' /tmp/read-only/api.json"})
+        comp = _call("exec_command", {"command": "grep -n 'holder' /tmp/reference/api.json"})
         translate_outbound(comp, _CMD_SHELL, injected=set(),
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         tc = comp["choices"][0]["message"]["tool_calls"][0]
         args = json.loads(tc["function"]["arguments"])
-        self.assertEqual(args["command"], "grep -n 'holder' ./tmp/read-only/api.json")
+        self.assertEqual(args["command"], "grep -n 'holder' ./tmp/reference/api.json")
         self.assertNotIn("outside the working directory", json.dumps(comp))     # no refusal fired
 
     def test_a_genuinely_external_command_refusal_names_the_real_workspace(self):
@@ -960,7 +960,7 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
     working in a different directory.
 
     MEASURED (run 0727-131647): the coder's VERY FIRST web_fetch was refused with "You already
-    fetched … saved to ./tmp/read-only/api.handle.me_openapi.json". That directory did not exist in
+    fetched … saved to ./tmp/reference/api.handle.me_openapi.json". That directory did not exist in
     its workspace — the file was in the previous run's. The coder then looped: fetch → refused →
     read_file → "large document, grep it" → fetch → refused, never once seeing the spec.
 
@@ -990,7 +990,7 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as ws1, tempfile.TemporaryDirectory() as ws2, \
                 mock.patch.object(webfetch, "fetch", _stub):
             first = self._lower(ws1)
-            self.assertIn("read-only", first)          # run 1 spills the doc into ITS workspace
+            self.assertIn(webfetch.SPILL_DIR, first)   # run 1 spills the doc into ITS workspace
             self._run_the_cp(first, ws1)
             second = self._lower(ws2)                  # run 2: same session key, different workspace
         self.assertNotIn("You already fetched", second,

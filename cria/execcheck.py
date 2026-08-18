@@ -36,7 +36,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import dirguard, probediscovery, prompts, toolpath
+from . import dirguard, probediscovery, prompts, toolpath, webfetch
 
 # How long a delivered program gets to show it works. Long enough for a network round trip, short
 # enough that a server that never returns does not hold the gate open.
@@ -689,9 +689,10 @@ def intent_prompt(task: str, coder_tools: str = "", files: str = "",
 # probediscovery.PRIMARY_MANIFESTS is the ONE owner of "this file makes a directory a project" —
 # reused here rather than copied, so a new ecosystem is added in one place.
 
-# cria's OWN scratch dir for spilled reference material (webfetch.SPILL_DIR). Listing it as the
-# coder's workspace told the probe that cria's 96 KB fetched spec was the deliverable.
-_SPILL_MARK = "tmp/read-only/"
+# cria's OWN scratch dir for spilled reference material. Listing it as the coder's workspace told
+# the probe that cria's 96 KB fetched spec was the deliverable. DERIVED, never spelled again: the
+# directory is cria's to name, and a second copy of the name is a second thing to forget to rename.
+_SPILL_MARK = webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/"
 # Extensions that are DATA, never a program to run. Not exhaustive by design — the point is only to
 # stop the probe being handed a document and told it must name a file from the list.
 #

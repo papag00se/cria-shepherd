@@ -37,7 +37,7 @@ def _dup_history():
     for i in range(3):
         msgs.append({"role": "assistant", "content": "", "tool_calls": [
             {"id": f"c{i}", "type": "function",
-             "function": {"name": "read_file", "arguments": '{"path": "./tmp/read-only/spec.json"}'}}]})
+             "function": {"name": "read_file", "arguments": '{"path": "./tmp/reference/spec.json"}'}}]})
         msgs.append({"role": "tool", "tool_call_id": f"c{i}",
                      "content": "⟦ctx:denied⟧ large reference document ..."})
     return msgs

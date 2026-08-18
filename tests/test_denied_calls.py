@@ -52,7 +52,7 @@ class _Rlog:
 # under it is true.
 SPILLED_REFUSAL = denial.mark(
     "You already fetched web_fetch https://api.handle.me/openapi.json with these exact params. It "
-    "was too large to inline, so it was saved IN FULL to ./tmp/read-only/api.handle.me_openapi.json, "
+    "was too large to inline, so it was saved IN FULL to ./tmp/reference/api.handle.me_openapi.json, "
     "and that file is still there.\n"
     "[API endpoints (33): /, /mcp, /openapi.json, /handles/{handle}, /holders/{address}, /stats]\n"
     "Read it — do NOT re-fetch the whole url.")
@@ -266,10 +266,10 @@ class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
     every one of them a hole."""
 
     NOTE = denial.mark("Those search results were off-target for this task, so they were removed. "
-                       "Re-reading ./tmp/read-only/search-x.txt is denied.")
+                       "Re-reading ./tmp/reference/search-x.txt is denied.")
 
     def test_the_call_keeps_a_result_line_and_gains_the_label(self):
-        log = loop._work_log(_turn("r1", "read_file", '{"path":"./tmp/read-only/search-x.txt"}',
+        log = loop._work_log(_turn("r1", "read_file", '{"path":"./tmp/reference/search-x.txt"}',
                                    self.NOTE))
         lines = log.splitlines()
         self.assertIn(prompts.load("work_log_denied"), lines[0])
@@ -278,7 +278,7 @@ class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
 
     def test_the_denial_note_carries_the_shared_mark_not_a_private_one(self):
         rendered = prompts.render("search_read_denied", marker=denial.DENIED_MARKER,
-                                  steer="", file="./tmp/read-only/search-x.txt")
+                                  steer="", file="./tmp/reference/search-x.txt")
         self.assertTrue(denial.is_denied(rendered))
 
     def test_cria_gate_output_is_STILL_stripped(self):

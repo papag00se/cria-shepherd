@@ -114,9 +114,9 @@ class TheSpillFileIsWrittenEitherWayTests(unittest.TestCase):
     def test_the_full_text_lands_on_disk_even_when_inlined(self):
         """The grep route and the ledger entry are unchanged — only what is SHOWN changed."""
         run(brave(5, desc_len=500))
-        files = os.listdir("./tmp/read-only")
+        files = os.listdir("./tmp/reference")
         self.assertEqual(len(files), 1)
-        body = open(os.path.join("./tmp/read-only", files[0])).read()
+        body = open(os.path.join("./tmp/reference", files[0])).read()
         self.assertIn("x" * 500, body)          # descriptions kept on disk
         self.assertIn("shopspring", body)
 
@@ -139,7 +139,7 @@ class TheOtherOutcomesAreUnchangedTests(unittest.TestCase):
 
     def test_no_spill_file_is_written_for_an_empty_result_set(self):
         run(json.dumps({"web": {"results": []}}))
-        self.assertFalse(os.path.isdir("./tmp/read-only") and os.listdir("./tmp/read-only"))
+        self.assertFalse(os.path.isdir("./tmp/reference") and os.listdir("./tmp/reference"))
 
 
 if __name__ == "__main__":

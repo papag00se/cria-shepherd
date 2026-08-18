@@ -254,7 +254,24 @@ OVERSIZE_CHARS = CONTENT_CAP_TOKENS * 4  # bigger than one page → spill to a f
 # should read-whole (the harness truncates a big cat) or EDIT (observed: it tried identical no-op edits
 # on the spilled spec, poisoning the reasoner with base64). writeproxy refuses mutations here. The dir
 # name is model-facing, so it says what it is (read-only) and never leaks the "cria" marker.
-SPILL_DIR = "./tmp/read-only"
+# ONE WORD, BECAUSE A SEPARATOR IS A COIN FLIP. This was `./tmp/read-only` and the hyphen cost a
+# whole cell. Walked on shipping-rates-rb x gemma4 (2026-08-17): cria refused a near-duplicate
+# web_search and, in the same breath, told the coder where the earlier results were —
+# `grep -n "<keyword>" ./tmp/read-only/search-….txt`. The coder retyped it into a shell string as
+# `./tmp/read_only/…`, got "No such file or directory", found nothing, and searched again; cria
+# refused again with the same pointer. That loop ran for roughly twenty of the run's 148 calls.
+#
+# MEASURED over every captured call on this box: the model spells the path perfectly when it is a
+# TOOL ARGUMENT — read_file 68/68, list_dir 1/1 — and gets it wrong 9 of 59 times (15%) when it has
+# to retype it inside `exec_command`. The filenames, which cria also generates and which are far
+# longer, came back byte-exact every time. It was never the length; it was the hyphen, in a name
+# every other path around it writes with an underscore.
+#
+# So the fix is not a corrector for the typo, it is not spelling the ambiguity in the first place:
+# cria owns this directory's name and had no reason to put a separator in it. The word `reference`
+# also says what the directory holds, which `read-only` did not; nothing ever depended on the name
+# to keep the coder from writing here (`writeproxy.is_spill_path` enforces that).
+SPILL_DIR = "./tmp/reference"
 
 
 def _spill_name(url: str) -> str:

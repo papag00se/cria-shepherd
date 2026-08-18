@@ -1,6 +1,6 @@
 """nemotron-nano 1786243834, calls 0069/0074: the unstick reasoner's prompt listed, under
 "THE FILES IT HAS BEEN CHANGING (on disk right now…)", exactly one file —
-tmp/read-only/api.handle.me_openapi.json — cria's OWN spilled reference copy. The coder had
+tmp/reference/api.handle.me_openapi.json — cria's OWN spilled reference copy. The coder had
 changed NOTHING. File activity where there was none supported the 'making progress' read, and the
 reasoner answered ON_TRACK five times over an untouched workspace.
 
@@ -18,11 +18,11 @@ from cria import loop, prompts, webfetch
 
 # the fallback branch's shape (groundtruth.workspace_inventory)
 INVENTORY = ("WORKSPACE FILES in /tmp/ws (on-disk ground truth at judging time, newest first):\n"
-             "  tmp/read-only/api.handle.me_openapi.json (96221 B)\n"
+             "  tmp/reference/api.handle.me_openapi.json (96221 B)\n"
              "  resolver.py (2582 B)\n"
              "This list is complete — a file not listed here does not exist in the workspace.")
 # the PRIMARY branch's shape (loop._fresh_disk_facts) — different renderer, same file
-FRESH = ("FILE ./tmp/read-only/api.handle.me_openapi.json — 96,221 bytes, 1 line\n"
+FRESH = ("FILE ./tmp/reference/api.handle.me_openapi.json — 96,221 bytes, 1 line\n"
          "FILE resolver.py — 2,582 bytes, 84 lines")
 
 
@@ -34,7 +34,7 @@ class BothBranchesAreLabelledTests(unittest.TestCase):
         self.assertIn("96221 B", spill)
 
     def test_the_fresh_disk_facts_shape_is_labelled(self):
-        """The shape the FIRST cut missed — `FILE ./tmp/read-only/…`, not a stripped prefix."""
+        """The shape the FIRST cut missed — `FILE ./tmp/reference/…`, not a stripped prefix."""
         out = loop._label_spill_entries(FRESH)
         spill = [l for l in out.splitlines() if "read-only" in l][0]
         self.assertIn("not a deliverable", spill)
@@ -58,7 +58,7 @@ class BothBranchesAreLabelledTests(unittest.TestCase):
 
 class TheNoteClaimsOnlyWhatCriaCanSupportTests(unittest.TestCase):
     """cria refuses SYNTHETIC writes into the spill dir but cannot stop a raw
-    `curl -o tmp/read-only/x`. So the note describes the DIRECTORY, which is true by construction,
+    `curl -o tmp/reference/x`. So the note describes the DIRECTORY, which is true by construction,
     and never asserts who wrote a given file — that would be rule 5b pointing the other way."""
 
     def test_it_makes_no_authorship_claim(self):

@@ -69,7 +69,7 @@ class TheBuildFileSurvivesTheFilterTests(unittest.TestCase):
 class WhatTheFilterStillRemovesTests(unittest.TestCase):
     def test_crias_own_spilled_document_is_still_gone(self):
         """The incident the blocklist was built for. A 96 KB fetched spec is not the deliverable."""
-        out = execcheck.runnable_listing(_listing("app.py (10 B)", "tmp/read-only/spec.json (96221 B)"))
+        out = execcheck.runnable_listing(_listing("app.py (10 B)", "tmp/reference/spec.json (96221 B)"))
         self.assertNotIn("spec.json", out)
 
     def test_ordinary_data_and_documents_are_still_gone(self):

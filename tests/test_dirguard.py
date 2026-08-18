@@ -101,11 +101,11 @@ class CommandRefusalTests(unittest.TestCase):
 
     def test_grep_pattern_with_a_slash_is_not_a_path(self):
         # A rooted path INSIDE a quoted grep/sed PATTERN is the SEARCH TERM, not a file — the guard must
-        # not refuse it. Observed live: the coder ran `grep -n "GET /handles" ./tmp/read-only/spec.json`
+        # not refuse it. Observed live: the coder ran `grep -n "GET /handles" ./tmp/reference/spec.json`
         # (exactly what cria's spill outline told it to do) and the guard refused it, citing "/handles" —
         # a path it never touched — trapping the coder on the research step.
-        for cmd in ('grep -n "GET /handles" ./tmp/read-only/api.handle.me_openapi.json',
-                    "grep -n 'GET /handles' ./tmp/read-only/spec.json",
+        for cmd in ('grep -n "GET /handles" ./tmp/reference/api.handle.me_openapi.json',
+                    "grep -n 'GET /handles' ./tmp/reference/spec.json",
                     'grep -rn "/handles/{handle}" .',
                     'sed -n "s#/api/v1/resolve#X#p" ./local.txt'):
             for level in ("none", "read"):

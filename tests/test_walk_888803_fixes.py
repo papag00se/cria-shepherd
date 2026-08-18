@@ -313,18 +313,18 @@ class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
         from cria import planner
         self.planner = planner
         self.d = tempfile.mkdtemp()
-        os.makedirs(os.path.join(self.d, "tmp/read-only"))
-        with open(os.path.join(self.d, "tmp/read-only/spec.yml"), "w") as fh:
+        os.makedirs(os.path.join(self.d, "tmp/reference"))
+        with open(os.path.join(self.d, "tmp/reference/spec.yml"), "w") as fh:
             fh.write("{}")
 
     def test_an_ellipsis_path_is_repointed_at_the_real_file(self):
         step, note = self.planner.repoint_unusable_paths("Read /tmp/.../spec.yml and note the fields", self.d)
-        self.assertEqual(step, "Read tmp/read-only/spec.yml and note the fields")
+        self.assertEqual(step, "Read tmp/reference/spec.yml and note the fields")
         self.assertIn("->", note)
 
     def test_a_path_in_crias_own_gather_dir_is_repointed(self):
         step, _ = self.planner.repoint_unusable_paths("Read /tmp/cria-gather-abc/spec.yml now", self.d)
-        self.assertEqual(step, "Read tmp/read-only/spec.yml now")
+        self.assertEqual(step, "Read tmp/reference/spec.yml now")
 
     def test_an_unresolvable_path_is_removed_not_guessed(self):
         step, note = self.planner.repoint_unusable_paths("Read /etc/nope/missing.yml and do it", self.d)
@@ -332,7 +332,7 @@ class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
         self.assertIn("removed", note)
 
     def test_a_real_in_workspace_path_is_left_alone(self):
-        real = os.path.join(self.d, "tmp/read-only/spec.yml")
+        real = os.path.join(self.d, "tmp/reference/spec.yml")
         step, note = self.planner.repoint_unusable_paths(f"Read {real} and note the fields", self.d)
         self.assertIn(real, step)
         self.assertEqual(note, "")

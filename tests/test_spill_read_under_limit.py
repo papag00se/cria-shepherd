@@ -1,7 +1,7 @@
 """A whole read of a SMALL file in the read-only spill scratch must return the file, not a refusal.
 
 WHAT WAS WRONG. cria spills an oversized fetched document — and every `web_search` result — to
-``./tmp/read-only/``. Any whole ``read_file`` of anything in that directory was then refused, at any
+``./tmp/reference/``. Any whole ``read_file`` of anything in that directory was then refused, at any
 size, with `cria/prompts/spill_read_steer.txt`:
 
     <path> is a large reference document — reading it whole gets truncated, so you would miss the
@@ -116,10 +116,10 @@ class ThroughTranslateOutboundTests(_Workspace):
         self.assertNotIn("xxxx", r.stdout)          # and NOT the document
 
     def test_a_root_absolute_spill_path_ALSO_gets_the_file(self):
-        """The dropped-'./' rewrite runs before the guard chain, so `/tmp/read-only/x` reaches the
+        """The dropped-'./' rewrite runs before the guard chain, so `/tmp/reference/x` reaches the
         same branch. It had better reach the SIZE-GATED one."""
         self.spilled("search-y.txt", 1024, "y")
-        comp = _read_call("/tmp/read-only/search-y.txt")
+        comp = _read_call("/tmp/reference/search-y.txt")
         writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
@@ -186,7 +186,7 @@ class SpillReadCommandTests(_Workspace):
         file that grows past the limit, or a workspace that is not on cria's own disk, and cria then
         hands back the wrong branch. So the test is IN the lowered command, where the filesystem
         answers at the moment of the read — the same place :func:`_read_command` puts it."""
-        cmd = writeproxy._spill_read_command("./tmp/read-only/a.json")
+        cmd = writeproxy._spill_read_command("./tmp/reference/a.json")
         self.assertIn("wc -c", cmd)
         self.assertIn(str(writeproxy.READ_INLINE_MAX), cmd)
 
@@ -209,27 +209,27 @@ class MissingSpilledFileTests(_Workspace):
         that was the second half of this bug: unmarked text reads as content, so the read ledger
         counted the error as the file's bytes. cria now answers in its own voice, through the
         refusal owner, so the same result also carries the denied mark."""
-        r = self._run("./tmp/read-only/nope.txt")
+        r = self._run("./tmp/reference/nope.txt")
         self.assertIn("nope.txt", r.stdout)
         self.assertIn("is not there", r.stdout)
         self.assertTrue(denial.is_denied(r.stdout))
 
     def test_it_is_not_a_silent_empty(self):
-        self.assertNotEqual(self._run("./tmp/read-only/nope.txt").stdout.strip(), "")
+        self.assertNotEqual(self._run("./tmp/reference/nope.txt").stdout.strip(), "")
 
     def test_and_it_does_not_report_success(self):
-        self.assertNotEqual(self._run("./tmp/read-only/nope.txt").returncode, 0)
+        self.assertNotEqual(self._run("./tmp/reference/nope.txt").returncode, 0)
 
     def test_a_missing_file_is_not_described_as_a_refusal(self):
         """cria must not answer for the filesystem: a path that is not there is not a document that
         is too large."""
-        self.assertNotIn("large reference document", self._run("./tmp/read-only/nope.txt").stdout)
+        self.assertNotIn("large reference document", self._run("./tmp/reference/nope.txt").stdout)
 
     def test_the_two_read_paths_AGREE_about_a_missing_file(self):
         """The whole point of copying the sibling's guard: one answer, whichever read the coder
         asked for. A ranged read of a missing path and a whole spill read of it must say the same
         thing rather than one saying nothing."""
-        missing = "./tmp/read-only/nope.txt"
+        missing = "./tmp/reference/nope.txt"
         ranged = self.run_in_ws(writeproxy._read_command({"path": missing, "start_line": 1,
                                                           "end_line": 5}))
         whole = self._run(missing)

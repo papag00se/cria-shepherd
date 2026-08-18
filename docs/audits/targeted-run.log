@@ -119,3 +119,19 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [19:17:06] RETEST shipping-rates-rb x gemma4 — start
 [sampling] gemma4: coder={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  reasoner={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
 [milestone] 15min  score=1.0/5.0  floor=1  ok
+[milestone] 30min  score=1.0/5.0  floor=2  MISS
+[milestone] recheck score=1.0  CONFIRMED MISS
+{
+ "run_id": "shipping-rates-rb_gemma4_codex_poff_1787019426",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1847.6,
+ "calls": 148,
+ "avg_tok_s": 58.1
+}
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[19:48:17] RETEST shipping-rates-rb x gemma4 — exit 0
+[19:48:17] RETEST COMPLETE — 3 cells

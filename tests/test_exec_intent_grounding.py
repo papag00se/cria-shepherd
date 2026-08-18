@@ -43,7 +43,7 @@ class CriasOwnSpillIsNotTheDeliverableTests(unittest.TestCase):
     would be incorrect.") and then named the spec anyway."""
 
     REAL = ("WORKSPACE FILES in /tmp/suite-x (on-disk ground truth at judging time, newest first):\n"
-            "  tmp/read-only/api.handle.me_openapi.json (96221 B)\n"
+            "  tmp/reference/api.handle.me_openapi.json (96221 B)\n"
             "This list is complete — a file not listed here does not exist in the workspace.")
 
     def test_the_spill_artifact_is_not_offered_as_a_program(self):
@@ -58,7 +58,7 @@ class CriasOwnSpillIsNotTheDeliverableTests(unittest.TestCase):
 
     def test_real_programs_survive_the_filter(self):
         listing = ("  resolve_handle.py (4389 B)\n  README.md (1200 B)\n"
-                   "  tmp/read-only/api.handle.me_openapi.json (96221 B)\n  live_test.py (666 B)")
+                   "  tmp/reference/api.handle.me_openapi.json (96221 B)\n  live_test.py (666 B)")
         kept = execcheck.runnable_listing(listing)
         self.assertIn("resolve_handle.py", kept)
         self.assertIn("live_test.py", kept)

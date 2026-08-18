@@ -17,7 +17,7 @@ from cria import selfcompact
 
 DIGEST = ("[API endpoints (33): /, /handles/{handle}, /holders/{address}]\n"
           "[response shape — the fields each endpoint MAY return]\n" + "x" * 400)
-DENIAL = ("⟦ctx:denied⟧ ./tmp/read-only/spec.json is a large reference document — reading it "
+DENIAL = ("⟦ctx:denied⟧ ./tmp/reference/spec.json is a large reference document — reading it "
           "whole gets truncated, so you would miss the middle.\n" + DIGEST +
           "\nRead it deliberately instead: grep the file for what you need.")
 

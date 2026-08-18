@@ -1,6 +1,6 @@
 import unittest
 
-from cria import prompts
+from cria import prompts, webfetch
 
 
 class PromptAgnosticismTests(unittest.TestCase):
@@ -192,17 +192,21 @@ class PromptAgnosticismTests(unittest.TestCase):
     def test_tool_descs_own_web_tool_behavior_without_drift(self):
         # tool_descs.txt is the SINGLE behavior source for cria's synthetic web tools (the cheatsheet now
         # carries only arg shapes). So the behavior it owns must be correct and complete: web_fetch names
-        # the REAL spill dir (./tmp/read-only, not ./tmp/), documents cursor paging (previously only the
+        # the REAL spill dir (./tmp/reference, not ./tmp/), documents cursor paging (previously only the
         # cheatsheet did) and raw; web_search must NOT claim results are always inline (the synthetic Brave
-        # path spills them to ./tmp/read-only).
-        d = prompts.load_map("tool_descs")
+        # path spills them to ./tmp/reference).
+        # FILLED, because the filled text is what reaches the model. The path is a {{SPILL_DIR}}
+        # token owned by webfetch, so a rename can never leave the prompt pointing at a dead path —
+        # which is the failure this whole spill-dir rename exists to end.
+        d = {k: prompts.fill(v, spill_dir=webfetch.SPILL_DIR)
+             for k, v in prompts.load_map("tool_descs").items()}
         wf = d["web_fetch"]
-        self.assertIn("./tmp/read-only/", wf)   # the real spill dir
+        self.assertIn(webfetch.SPILL_DIR + "/", wf)   # the real spill dir, from its one owner
         self.assertNotIn("./tmp/<file>", wf)    # the old shallow path is gone
         self.assertIn("cursor=", wf)            # cursor paging documented here now
         self.assertIn("raw=true", wf)
         ws = d["web_search"].lower()
-        self.assertIn("tmp/read-only", ws)      # results may be saved to a file, not asserted inline-only
+        self.assertIn(webfetch.SPILL_DIR.lstrip("./"), ws)   # saved to a file, not asserted inline-only
 
     def test_coder_cwd_guidance_stands_alone(self):
         # the cwd rule must not depend on Codex's "working-environment line" being present

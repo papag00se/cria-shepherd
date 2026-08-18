@@ -938,7 +938,7 @@ class NoiseStepDropTests(unittest.TestCase):
     def test_reasoner_drops_a_bare_shell_command_step(self):
         prov = _ScriptedProvider([
             _tool_resp("web_search", {"query": "background"}),  # PHASE A: research round
-            _content_resp("1. grep -n 'resolve' ./tmp/read-only/openapi.json\n"
+            _content_resp("1. grep -n 'resolve' ./tmp/reference/openapi.json\n"
                           "2. Write resolver.py that calls the endpoint the spec names\n3. Add unit tests"),
             _content_resp('{"missing": []}'),   # COVERAGE? nothing missing
             _content_resp('1'),        # NOISE? drop the bare grep command
@@ -1094,7 +1094,7 @@ class StepObjectFieldChoiceTests(unittest.TestCase):
     def test_the_outcome_wins_over_the_mechanism(self):
         from cria.planner import _clean_step
         step = {"outcome": "Read the Ada Handle API documentation",
-                "description": "read_file(path='./tmp/read-only/search.txt')"}
+                "description": "read_file(path='./tmp/reference/search.txt')"}
         self.assertEqual(_clean_step(step), "Read the Ada Handle API documentation")
 
     def test_an_unknown_key_is_still_read(self):

@@ -241,7 +241,10 @@ _SEARCH_MAX_RESULTS = 20
 def _synthetic_tools() -> dict[str, dict]:
     """The synthetic tool SCHEMAS cria advertises and lowers. Model-facing DESCRIPTIONS live in
     prompts/tool_descs.txt (tunable without a restart, like every other model-facing string)."""
-    d = prompts.load_map("tool_descs")
+    # {{SPILL_DIR}} is filled from the ONE owner of the name (webfetch.SPILL_DIR) rather than
+    # spelled in the prompt: a model-facing path that drifts from the real one sends the coder
+    # to a file that is not there.
+    d = {k: prompts.fill(v, spill_dir=webfetch.SPILL_DIR) for k, v in prompts.load_map("tool_descs").items()}
 
     def fn(name, description, props, required):
         return {"type": "function", "function": {

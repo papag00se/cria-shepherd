@@ -635,7 +635,7 @@ class GateTests(unittest.TestCase):
         # cria did NOT spill this one (no note_search_spill), so it must NOT send the model to a file
         # it never wrote — gate_search runs before the routing split, and a harness-native search
         # never spills. It points at the conversation instead.
-        self.assertNotIn("./tmp/read-only", r)
+        self.assertNotIn("./tmp/reference", r)
         self.assertIn("already in this conversation", r)
         # ...and when cria DID spill, it names the real file and how to read it. "its results are
         # still above" was a lie either way: spilled results are explicitly NOT inlined.
@@ -665,7 +665,7 @@ class GateTests(unittest.TestCase):
 
     def test_a_spilled_doc_is_not_refetched_after_the_result_is_compacted_away(self):
         # MEASURED (live run 0727-104845): the coder fetched a 154KB docs page, cria saved it IN FULL
-        # to ./tmp/read-only/ and said "do NOT re-fetch the whole url" — then the harness compacted
+        # to ./tmp/reference/ and said "do NOT re-fetch the whole url" — then the harness compacted
         # that result out of the conversation, the repeat guard went quiet because it keys on
         # visibility, and the coder re-fetched the SAME url 19 times.
         # Visibility is the right gate for an ordinary fetch (if the result is gone, let it fetch
@@ -1132,7 +1132,7 @@ class SpillGrepHintTests(unittest.TestCase):
     def test_the_hint_gives_a_real_fixed_string_route_and_the_method_warning(self):
         parsed = {"openapi": "3.0.3",
                   "paths": {"/handles/{handle}": {"get": {}}, "/holders/{address}": {"get": {}}}}
-        out = wf._spill_outline(parsed, "./tmp/read-only/spec.json")
+        out = wf._spill_outline(parsed, "./tmp/reference/spec.json")
         self.assertIn("grep -n -F '/handles/{handle}'", out)
         self.assertIn("matches nothing", out)
         self.assertNotIn("FROM THAT LIST", out)

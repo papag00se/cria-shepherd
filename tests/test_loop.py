@@ -9,6 +9,7 @@ from pathlib import Path
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key)
+from cria import webfetch
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
 
@@ -409,7 +410,7 @@ class LivingPlanTests(unittest.TestCase):
         # judges it a bare command (script "1") and drops it.
         from cria.loop import reassess_remaining
         steps = reassess_remaining(
-            _Scripted([_replan(["grep -n 'resolve' ./tmp/read-only/api.handle.me_openapi.json",
+            _Scripted([_replan(["grep -n 'resolve' ./tmp/reference/api.handle.me_openapi.json",
                                 "Write the resolver using the endpoint the spec names"]),
                        _text("1"),
                        _text('{"lost": ""}')]),   # per-step: a bare grep produces no deliverable
@@ -3175,7 +3176,7 @@ class VerifyEvidenceTests(unittest.TestCase):
                 "were removed.")
         msgs = [{"role": "assistant", "tool_calls": [
                     {"id": "r1", "function": {"name": "read_file",
-                                              "arguments": '{"path":"./tmp/read-only/search-x.txt"}'}}]},
+                                              "arguments": '{"path":"./tmp/reference/search-x.txt"}'}}]},
                 {"role": "tool", "tool_call_id": "r1", "content": note},
                 {"role": "tool", "content": "real tool output"}]
         ev = _work_log(msgs)
@@ -4128,7 +4129,7 @@ class SearchJudgeTests(unittest.TestCase):
         self.assertFalse(_looks_like_url("api.handle.me handles endpoint"))   # a search phrase, not a URL
 
     # ---- the read-judge must judge the RESULTS, never cria's own envelope -------------------------
-    _SPILL_REL = "./tmp/read-only/search-ada_handles_api.txt"
+    _SPILL_REL = "./tmp/reference/search-ada_handles_api.txt"
     _REAL_RESULTS = ("20 results:\nGitHub - koralabs/api.handle.me: decentralized API for Handles\n"
                      "  https://github.com/koralabs/api.handle.me\nAdaHandle for Unity\n"
                      "  https://github.com/Odiobill/AdaHandle\n  documented at the official API swagger: "
@@ -4136,7 +4137,7 @@ class SearchJudgeTests(unittest.TestCase):
 
     def _spill_workspace(self, tmp):
         import pathlib
-        p = pathlib.Path(tmp) / "tmp" / "read-only"
+        p = pathlib.Path(tmp) / webfetch.SPILL_DIR.lstrip("./")
         p.mkdir(parents=True)
         (p / "search-ada_handles_api.txt").write_text(self._REAL_RESULTS, encoding="utf-8")
         return tmp
@@ -4144,7 +4145,7 @@ class SearchJudgeTests(unittest.TestCase):
     def _read_body(self):
         # what the coder's history really looks like: it read the spilled file, and the tool result it
         # got back is cria's spill STEER — not the results.
-        steer = ("./tmp/read-only/search-ada_handles_api.txt is a large reference document — reading it "
+        steer = ("./tmp/reference/search-ada_handles_api.txt is a large reference document — reading it "
                  "whole gets truncated, so you would miss the middle. Instead grep it for what you need.")
         return {"messages": [
             {"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"},
@@ -4202,7 +4203,7 @@ class SearchJudgeTests(unittest.TestCase):
             self._spill_workspace(tmp)
             self.assertIn("koralabs", search_file_text(tmp, self._SPILL_REL))
             self.assertEqual(search_file_text(tmp, "../../etc/passwd"), "")
-            self.assertEqual(search_file_text(tmp, "./tmp/read-only/../../../etc/passwd"), "")
+            self.assertEqual(search_file_text(tmp, "./tmp/reference/../../../etc/passwd"), "")
 
 
 class ReasonedRedirectTests(unittest.TestCase):
@@ -4915,7 +4916,7 @@ class ReplanNoiseIsVisibleTests(unittest.TestCase):
     MEASURED (run 0727-164951): the submitted plan was good — six steps covering every deliverable,
     step 2 "Create a Python function `resolve_handle(handle)` that GETs
     https://api.handle.me/handles/{handle}". Two re-derivations later (5→8, then 7→3) the running plan's
-    step 2 was the bare command `grep -n 'resolved_addresses' ./tmp/read-only/api.handle.me_openapi.json`
+    step 2 was the bare command `grep -n 'resolved_addresses' ./tmp/reference/api.handle.me_openapi.json`
     and step 3 was "Run unit tests" — a bare command and plumbing, the two categories that judge
     deletes. From the log there is no way to tell whether it ran and kept them, dropped something
     else, or never ran at all.

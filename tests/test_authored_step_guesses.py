@@ -68,7 +68,7 @@ class PhantomSystemPathTests(unittest.TestCase):
     def test_tmp_paths_are_out_of_scope(self):
         # Workspaces and spill files live under /tmp — the shape is deliberately not policed.
         self.assertEqual(
-            _phantom_system_path("read /tmp/read-only/api.handle.me_openapi.json", None), "")
+            _phantom_system_path("read /tmp/reference/api.handle.me_openapi.json", None), "")
 
 
 if __name__ == "__main__":
