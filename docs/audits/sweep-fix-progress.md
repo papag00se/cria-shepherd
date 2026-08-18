@@ -495,6 +495,26 @@ Every one of the nine is `read-only` → `read_only`. cria's generated FILENAMES
 
 **And the name is now spelled once (#23).** It had been retyped in an `execcheck` constant, two `loop.py` regexes and the model-facing tool descriptions. Four places to forget on the day somebody renames it — and a prompt pointing at a directory that no longer exists is this same bug wearing a different word. The prompt now carries a `{{SPILL_DIR}}` token filled from the owner, and a test walks every non-docstring string in `cria/` to prove no module spells it twice.
 
+## HYPOTHESES TESTED AND REFUTED (2026-08-17)
+
+Recorded because a refuted hypothesis is a place the next pass does not have to look, and because four of these were already fixed — the fix landed, the corpus still carries the wreckage from before it, and scanning the corpus finds the wreckage.
+
+**Reasoner seats losing their answers — REFUTED, the machinery works.** 766 of 4,703 non-coder calls returned no content and no tool call, which reads as a large defect. Running the real recovery over them: 598 had a complete tool call sitting in `reasoning_content`, which `massage.recover_reasoning_tool_calls` already promotes; 82 had no reasoning at all. **86 truly lost, 1.8%.** Every one of the last two days' was traced individually: each got a reasoning-off retry, a `-recover` pass, or was its session's final call. Nothing to fix.
+
+**The classifier burning its budget on thinking — ALREADY FIXED, visible in the dates.** 14 losses, all `finish_reason=length`, all on 08-12 and 08-13, none after. `classify._call` gained the reasoning-off retry on the strength of that same measurement, and the corpus shows it holding.
+
+**cria naming a command the box does not have — ALREADY FIXED, same story.** The install refusal used to answer a refused `gem install` with `bundle install --path vendor/bundle` on a box with no `bundle`. `dirguard._INSTALL_REMEDY` now picks the first route whose tools are on PATH and writes the resolved name into its own sentence. Verified live: `gem install countries` today answers with **`bundle3.2 install --path vendor/bundle`**. Hits in the corpus are all pre-fix.
+
+**cria denying the query it recommended — REFUTED, zero occurrences.** Search-deletion tells the coder *"Search instead for: X"* and the near-duplicate guard refuses re-hunts, so the two could trap it between them. Checked every session by running the real `searches_match` over every recommendation against every subsequent denial: **0 in 0 sessions.**
+
+**The coder refused a read of a system path — REAL but 2 occurrences.** `/usr/bin/bundle` and `/usr/local/bin/bundler`, each once, both the coder trying to learn what is installed. The guard exempts `/dev`, `/proc` and `/sys` as *"the OS's plumbing, not another project's files"* and a binary is arguably the same class. Not built: two occurrences is not prevalence, and loosening a safety guard on that is the wrong trade (#15, #1).
+
+**Shell writes bypassing the write-tool validator — REAL but 13 occurrences**, and eleven are test fixtures or scratch probes rather than source overwrites. Not built.
+
+**Repeated identical notes in context — REAL but small.** 24% of `checks` notes and 28% of `denied` notes in a final prompt are byte-identical repeats. The `denied` ones are tool RESULTS and belong in history — that is the record of what happened, not redundancy. Not built.
+
+**What this says.** Five hypotheses, one small real finding, nothing worth building. The obvious cria-side defects in this corpus are largely closed. The variance that is left is dominated by the run-to-run noise floor and by the ruby column's missing apt package — neither of which is a cria bug.
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.
