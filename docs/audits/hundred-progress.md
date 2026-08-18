@@ -6,6 +6,26 @@
 
 ---
 
+## THE RUBY COLUMN IS MEASURING A MISSING APT PACKAGE (2026-08-17) — needs your call
+
+`shipping-rates-rb` ends with: *"Add a third-party Ruby gem that determines whether a country is in the EU, add it to the project dependencies, and use it for the lookup."* On this box that requires archaeology no Ruby developer would recognise:
+
+```
+$ which bundle          ->  (nothing)
+$ which bundle3.2       ->  /usr/bin/bundle3.2      Bundler 2.4.19
+$ gem install countries ->  You don't have write permissions for /var/lib/gems/3.2.0
+```
+
+`ruby-full` and `ruby-rubygems` are installed; **`ruby-bundler` is not**, and that package is the only thing that provides `/usr/bin/bundle`. So every model that types the normal command gets `command not found` and has to discover a Debian-versioned binary name before it can begin the task it was actually set.
+
+**Cost, measured across every captured run: `bundle: command not found` appears in 26 of ~110 sessions**, with 105 downstream `cannot load such file` errors across 21 of them.
+
+**This is not the model failing the task, and it is not cria.** In the run I walked, the coder finished all five deliverables correctly — `>=` threshold fixed, `express` added, `zone_for` written against `Europe.is_in_eu?`, `shipping_cost` accepting both forms, README table, Gemfile — and scored 1/5 because `require 'europe'` raises `LoadError` outside `bundle3.2 exec`. The whole suite fails on the require, so every check fails at once. That is also why this cell is the noisiest in the matrix: it hinges entirely on whether a model stumbles onto `bundle3.2`.
+
+**The fix is one package, outside this repo, so it is yours to make:** `sudo apt install ruby-bundler`. I have not run it.
+
+Two things I deliberately did NOT do. Not a PATH shim from `suite/run.py` — that is cria compensating for a missing system package, which is the mitigation the doctrine forbids when a real upstream fix exists. And not mid-campaign: changing the environment between cells would void the repeat pass now running. The order is finish the repeats, install, then re-run the ruby column.
+
 ## THE NOISE FLOOR — read this before any other number in this file (2026-08-17)
 
 **A cell's score moves 20 to 50 points when nothing changes at all.** Measured over every repeat in `suite/results/results.jsonl`:

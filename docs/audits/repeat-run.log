@@ -1,0 +1,2 @@
+[20:09:28] REPEAT shipping-rates-rb x gemma4 — start
+[sampling] gemma4: coder={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  reasoner={'temperature': 1.0, 'top_p': 0.95, 'top_k': 64, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
