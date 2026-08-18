@@ -348,6 +348,30 @@ Replayed over the real forwarded call sequences with their real tool results, wi
 
 One bound was needed and is measured: the refusal trigger reads the message history, which a fire cannot flush the way the signature trigger flushes `recent_actions`, so unbounded it re-fired on every subsequent call — **14 redirects over 48 calls instead of two**. `blocked_fired_seq` holds it to one per window, which is the "one intervention consumes the evidence" rule the fire site already states in its own words.
 
+### 49. The model was handed six copies of its own file, and wrote a seventh with a new bug
+Found by the targeted post-fix re-run of `rust-toml-cli × ternary-bonsai` — and it is the reason that cell still scored 0 when every mechanism fixed for it behaved correctly.
+
+The model rewrote a 6.6 KB `main.rs` **whole, five times**, each version 99.1–99.9% identical to the one before, and every copy stayed verbatim in the working tail:
+
+| call | prompt tokens | copies of the file | bytes of payload |
+|---|---:|---:|---:|
+| 0010 | 5,223 | 0 | 0 |
+| 0014 | 8,309 | 1 | 6,570 |
+| 0020 | 12,415 | 3 | 13,195 |
+| 0021 | 14,478 | 4 | 19,835 |
+| 0022 | 16,527 | 5 | 26,462 |
+| 0023 | **21,009** | **6** | **33,103** |
+
+**The prompt quadrupled and every token of the growth is the model's own output handed back to it.** It then synthesised a sixth version carrying the type error the run died on: `.get(key)` was correct at three earlier rewrites and became `.get(key.to_string())` at the last. The unassisted run wrote the file ONCE and made three ~285-byte `edit_file` patches — 20 coder calls, 4 of 4.
+
+Nothing folded them because nothing could: `_collapse_duplicates` needs byte-identical calls and these differ by about 1%. `selfcompact` has exactly the right rule already — `write_stub_superseded`, keyed on PATH and not on content — but it runs over the compacted middle only, and all of these sat in the verbatim tail after it.
+
+**Fixed**, and it is the exception #5 names in its own words — *"repeated content may appear once with a pointer to the original"*. Only SUPERSEDED copies are stubbed; the newest write to each path stays whole, because that one is what is on disk. Tool results are never touched.
+
+**Replayed against the real call-0023 body**: six copies to two, 33,103 bytes of payload to 7,493, **35% off the whole prompt**, newest write intact.
+
+*(Landed but deliberately NOT restarted into the service: the targeted run is still going on a pinned code state, and moving it mid-run is exactly what contaminated the baseline arm. It goes live when the run ends.)*
+
 ## REPLAYED AGAINST THE REAL ARTIFACTS — every fix a capture could reach
 
 Ten of the landed fixes were driven against the actual workspace or the actual captured turn they were written for, rather than against a fixture. **Nine hold. Two did not, and both were only findable this way.**

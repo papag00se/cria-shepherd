@@ -17,3 +17,4 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [16:57:36] rust-toml-cli x ternary-bonsai — exit 0
 [16:57:36] cart-billing-go x ternary-bonsai — start
 [sampling] ternary-bonsai: coder={'temperature': 0.2, 'top_p': 0.95, 'top_k': 20, 'repeat_penalty': 1.1}  reasoner={'temperature': 0.6, 'top_p': 0.9, 'top_k': 40, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
+[milestone] 15min  score=5.0/5.0  floor=1  ok

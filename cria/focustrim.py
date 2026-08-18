@@ -371,6 +371,85 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     return out, rep
 
 
+def _stub_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
+    """A write payload that a LATER write to the same path replaced is carried once, as a pointer.
+
+    THE MODEL WAS LOOKING AT SIX COPIES OF ITS OWN FILE. Measured on the targeted post-fix re-run of
+    `rust-toml-cli x ternary-bonsai`: it rewrote a 6.6 KB `main.rs` whole, five times, each version
+    99.1–99.9% identical to the one before — and every copy stayed verbatim in the working tail. The
+    prompt went **5,223 tokens at the first write to 21,009 at the last**, and 33,103 bytes of that
+    is six near-identical versions of one file. It then synthesised a sixth that introduced the type
+    error the run died on: `.get(key)` had been right at three earlier rewrites and became
+    `.get(key.to_string())` at the last.
+
+    Nothing folded them because nothing could. `_collapse_duplicates` needs the calls to be
+    byte-identical, and these differ by about 1%. `selfcompact` has exactly the right rule already —
+    `write_stub_superseded`, keyed on PATH and not on content — but it only runs over the compacted
+    middle, and these all sat in the verbatim tail after it.
+
+    Only SUPERSEDED copies are stubbed; the newest write to each path stays whole, because that one
+    is what is on disk. #5 names this exception in its own words: "repeated content may appear once
+    with a pointer to the original"."""
+    last: dict = {}
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            path = _write_path(tc)
+            if path:
+                last[path] = i
+    if not last:
+        return messages, 0
+    out, stubbed = [], 0
+    for i, m in enumerate(messages):
+        calls = m.get("tool_calls") if isinstance(m, dict) and m.get("role") == "assistant" else None
+        if not calls:
+            out.append(m)
+            continue
+        new_calls, touched = [], False
+        for tc in calls:
+            path = _write_path(tc)
+            if not path or last.get(path) == i:
+                new_calls.append(tc)
+                continue
+            fn = tc.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                new_calls.append(tc)
+                continue
+            hit = False
+            for key in ("content", "contents", "new_string", "patch"):
+                v = args.get(key)
+                if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
+                    args[key] = prompts.fill(prompts.load_map("compact_view")["write_stub_superseded"],
+                                             chars=str(len(v)), path=path)
+                    hit = True
+            if hit:
+                touched, stubbed = True, stubbed + 1
+                new_calls.append({**tc, "function": {**fn, "arguments": json.dumps(args)}})
+            else:
+                new_calls.append(tc)
+        out.append({**m, "tool_calls": new_calls} if touched else m)
+    return (out if stubbed else messages), stubbed
+
+
+def _write_path(tc: dict) -> str:
+    """The path a write-ish tool call targets, or ""."""
+    fn = tc.get("function") or {}
+    if fn.get("name") not in ("write_file", "create_file", "edit_file", "apply_patch"):
+        return ""
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except ValueError:
+        return ""
+    return str((args or {}).get("path") or (args or {}).get("file_path") or "") if isinstance(args, dict) else ""
+
+
+# Below this a payload is not worth a pointer — the stub would be as long as the thing it replaces.
+_STUB_MIN_CHARS = 400
+
+
 def trim(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     """Focus the outbound view. Returns (messages, report) — the SAME list object (no copy) when
     nothing is trimmed."""
@@ -378,6 +457,9 @@ def trim(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         return messages, TrimReport()
     out, rep_a = _collapse_duplicates(messages)
     out, rep_b = _squash_failures(out)
+    out, superseded = _stub_superseded_writes(out)
+    rep_b = TrimReport(dropped_calls=rep_b.dropped_calls, dropped_msgs=rep_b.dropped_msgs,
+                       squashed_runs=rep_b.squashed_runs + superseded)
     total = TrimReport(
         dropped_calls=rep_a.dropped_calls + rep_b.dropped_calls,
         dropped_msgs=rep_a.dropped_msgs + rep_b.dropped_msgs,
