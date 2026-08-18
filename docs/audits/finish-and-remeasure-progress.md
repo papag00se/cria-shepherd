@@ -8,9 +8,9 @@ Started at `721fa51`.
 
 | item | what settled it | state |
 |---|---|---|
-| 1a periodic step check shares a counter with the gate | 21 events on the box, **every one at `turns=12`**, at most one per session | **landed `d3aa04a`** |
+| 1a periodic step check shares a counter with the gate | 21 events on the box, **every one at `turns=12`**, at most one per session | **landed `883de0c`** |
 | 1b ecosystem discovery is manifest-only | the gate calls `select_completion_probes`, not `discover` — and it composes `pytest -q` on the exact seed the claim named | **refuted** |
-| 1c the gate re-runs the suite in the live workspace | bound what the second run CAN DO, not what gets copied | **landed `0c95404`** |
+| 1c the gate re-runs the suite in the live workspace | bound what the second run CAN DO, not what gets copied | **landed `8791a49`** |
 
 ### 1a — confirmed, and the mechanism was not the one filed
 
@@ -79,6 +79,6 @@ Not started.
 
 - `721fa51` — goal opened. Seven fixes landed in the prior session; the two ruby cells and three plumbing items remained.
 - `1b05cfd` — `cria.service` restarted onto it; `shipping-rates-rb × ternary-bonsai` launched.
-- `d3aa04a` — 1a landed: the periodic step check outlives its first fire.
+- `883de0c` — 1a landed: the periodic step check outlives its first fire.
 - 1b refuted: the gate's Python test floor composes `pytest -q` on the seed the claim named.
-- `0c95404` — 1c landed: the offline leg runs with the workspace read-only.
+- `8791a49` — 1c landed: the offline leg runs with the workspace read-only.
