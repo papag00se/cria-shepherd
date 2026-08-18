@@ -9,9 +9,15 @@ from pathlib import Path
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key)
-from cria import webfetch
+from cria import prompts, webfetch
+
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
+
+# The canned redirect's own closing words, read from the template rather than retyped — a test that
+# hardcodes a prompt's wording asserts a copy, and the copy goes stale the next time the prompt is
+# edited (suite/replay_logic.py enforces the same rule for the replay checks).
+_CANNED_TAIL = prompts.load("redirect_canned").split("}}")[-1].strip().rsplit(". ", 1)[-1]
 
 
 class _NullRlog:
@@ -2385,7 +2391,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
-        self.assertIn("very similar actions", coder.last_user())  # canned fallback
+        self.assertIn(_CANNED_TAIL, coder.last_user())            # canned fallback
         self.assertIn("no error-class", coder.last_user().lower())    # clean-checks truth included
 
     def test_canned_redirect_foregrounds_the_failing_check(self):
@@ -2404,9 +2410,9 @@ class RepetitionRedirectTests(unittest.TestCase):
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         nudge = coder.last_user()
         self.assertIn("GROUND TRUTH", nudge)                              # the failing check is present
-        self.assertIn("very similar actions", nudge)                 # and so is the repetition framing
+        self.assertIn(_CANNED_TAIL, nudge)                          # and so is the repetition framing
         # the ground truth LEADS — it comes before the 'you repeated' text, not buried after it
-        self.assertLess(nudge.index("GROUND TRUTH"), nudge.index("very similar actions"))
+        self.assertLess(nudge.index("GROUND TRUTH"), nudge.index(_CANNED_TAIL))
 
     def test_varying_args_do_not_trip(self):
         ws = self._ws()
@@ -2685,7 +2691,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         with mock.patch("cria.loop.probegate.plan_gate", side_effect=OSError("unreadable")):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.redirect", rlog.kinds())        # canned, not silent
-        self.assertIn("very similar actions", coder.last_user())
+        self.assertIn(_CANNED_TAIL, coder.last_user())
 
     def test_shell_native_writes_are_progress(self):
         # The coder writes via heredoc/redirect instead of write_file: still progress, so the

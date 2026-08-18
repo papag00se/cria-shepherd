@@ -578,7 +578,39 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     body = block_findings(report)
     if body is None:
         return None
-    return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report)
+    # THE ROOT, OR THE NOTE IS THE OLD FALSE ONE. `dependency_note` picks the "not installed
+    # anywhere" wording only when `install_landed` returns a definite False, and that needs a
+    # workspace to look at. This call passed none, so the default `""` made `install_landed`
+    # return None on every gate, the `<eco>_none` branch was unreachable, and the coder kept
+    # getting the sentence the branch exists to replace: "a gem installed with --install-dir is
+    # not on the load path by default". Walked twice before the branch was written and once after
+    # (#11b — a mechanism that cannot observe the thing it is asked about must not answer as if it
+    # had). The sibling caller in writeproxy passed the root all along; this one was missed, and
+    # the test for the branch called `dependency_line` directly, so it stepped over the gap.
+    return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report, report_root(report))
+
+
+def report_root(report: "ProbeReport") -> str:
+    """The workspace the probes in ``report`` ran in — "" when the report cannot say.
+
+    NOT A PARAMETER, ON PURPOSE. `dependency_note` needs a root to ask the disk whether an install
+    actually landed, and it used to take one: `writeproxy` passed it, the gate path did not, so
+    `install_landed` returned None on every gate, the "not installed anywhere" branch was
+    unreachable, and the coder kept getting the sentence that branch exists to replace. A value two
+    callers must remember to pass is a value one caller will forget — and the test for the branch
+    called `dependency_line` directly, so it stepped over the gap rather than catching it.
+
+    cria was holding the fact the whole time: it composed every probe in this report and set
+    `working_dir` on each one. Reading it from the report makes the note's reach a property of the
+    report instead of a promise about call sites (#23, one owner).
+
+    First probe wins; they share a workspace by construction, and a report with no probes has no
+    workspace to name."""
+    for c in getattr(report, "selected", None) or []:
+        d = str(getattr(c, "working_dir", "") or "")
+        if d:
+            return d
+    return ""
 
 
 def dependency_line(eco: str, workspace_root: str) -> str:

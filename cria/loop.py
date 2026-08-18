@@ -198,6 +198,17 @@ class GuardState:
     # 14 redirects over 48 calls instead of one. One intervention consumes the evidence.
     blocked_fired_seq: int = -10_000
     repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
+    # WHICH TRIGGER FIRED, AND WHAT IT COUNTED. Two routes reach the redirect — the same action
+    # seen N times, and cria REFUSING N calls — and they used to share one sentence and one
+    # hardcoded 3. Walked on shipping-rates-rb x ternary-bonsai: the refusal route fired, and cria
+    # told its own steer author "It keeps repeating the SAME action 3x without the outcome
+    # changing: exec_command {which bundler ...}" about a command the coder had issued ONCE. The
+    # author wrote that back as "you've already confirmed they're unavailable (three failed
+    # attempts)" and, on that premise, ordered the coder to hardcode data the task forbids
+    # hardcoding in those words. A count cria reports must be a count cria measured (#12), and a
+    # sentence must describe the trigger that actually fired (#5b).
+    repeat_kind: str = ""     # "repetition" | "refusal" — which route tripped
+    repeat_count: int = 0     # what that route actually observed
     redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
@@ -5408,8 +5419,37 @@ def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
                 # The line below already clips this same string to 120 chars for cria's OWN log. It
                 # was bounded for the record and unbounded for the model.
                 gs.repeat_action = _clip(f"{name} {args}", REPEAT_ACTION_CHARS)
-                rlog.emit("loop.repetition", step=step, tool=name,
-                          count=REPEAT_FINGERPRINT_N, args=_clip(args, 120))
+                # THE MEASURED NUMBER, NOT THE THRESHOLD. `matches + 1` is how many times this
+                # action was seen in the window; `blocked` is how many calls cria refused. Emitting
+                # the constant instead was rule 12's exact shape — a metric surfaced from the
+                # trigger rather than the event — and it is the same substitution that put a false
+                # "3x" in front of the steer author.
+                gs.repeat_kind = "refusal" if blocked_fires else "repetition"
+                gs.repeat_count = blocked if blocked_fires else matches + 1
+                rlog.emit("loop.repetition", step=step, tool=name, trigger=gs.repeat_kind,
+                          count=gs.repeat_count, args=_clip(args, 120))
+
+
+def _repeat_observation(gs: GuardState) -> dict:
+    """The tokens the redirect needs to describe WHAT CRIA SAW — one owner, so the two render sites
+    cannot drift and neither can invent a number.
+
+    `observed` is a whole clause rather than a count, because the two routes are not the same fact:
+    one saw an action repeated, the other saw cria refuse calls. "in a row" is dropped from both —
+    the repetition route is windowed, not consecutive, so it was never true there either.
+
+    A route that somehow set no kind gets the vaguest honest wording and no number at all. Saying
+    less is allowed; saying a number cria did not count is not (#5b)."""
+    n, kind = gs.repeat_count, gs.repeat_kind
+    if kind == "refusal" and n:
+        observed = (f"{n} of your recent calls were refused, so none of them ran"
+                    if n > 1 else "your last call was refused, so it did not run")
+    elif kind == "repetition" and n:
+        observed = (f"you have taken the same action {n} times in this window"
+                    if n > 1 else "you have taken this action before in this window")
+    else:
+        observed = "you are not getting a new outcome from these actions"
+    return {"observed": observed, "repeat_action": gs.repeat_action}
 
 
 # How much of the repeated action the redirect quotes back. Enough to IDENTIFY it (tool + path +
@@ -5478,7 +5518,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             rlog.emit("loop.redirect_probe", step=step)
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
         gs.nudge_reason = prompts.render(
-            "redirect_canned", repeat_action=gs.repeat_action, ground_truth="")
+            "redirect_canned", ground_truth="", **_repeat_observation(gs))
         gs.steer_source = "repetition guard"
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
@@ -6119,8 +6159,8 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
     just the 'you repeated an action, do something different' steer."""
     gt = guard_ground_truth(outcome)
     return prompts.render(
-        "redirect_canned", repeat_action=gs.repeat_action,
-        ground_truth=(f"{gt}\n\n" if gt else ""))
+        "redirect_canned", ground_truth=(f"{gt}\n\n" if gt else ""),
+        **_repeat_observation(gs))
 
 
 # ---- ONE reasoned steer author behind EVERY detector. A detector (repetition / wheel-spin / thrash /
@@ -6132,8 +6172,18 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
 # One-line description of WHAT tripped, per condition — the only condition-specific text. Grounded in gs
 # so the reasoner knows the concrete signal; the rest of the bundle (session/disk/truth) is uniform.
 _STEER_TRIGGER = {
+    # THE SENTENCE THE STEER AUTHOR READS AS ESTABLISHED FACT. It hardcoded the threshold and the
+    # word "repeating" for BOTH routes into this detector, so a fire on cria's own refusal count
+    # was reported as an action repeated three times. Walked: the coder had issued that command
+    # ONCE, the author wrote back "you've already confirmed they're unavailable (three failed
+    # attempts)", and on that premise ordered a hardcode the task forbids. This seat is the one
+    # place a false count does the most damage, because whatever it says arrives as evidence.
     "repetition": lambda gs, step: (
-        f"It keeps repeating the SAME action {REPEAT_FINGERPRINT_N}× without the outcome changing: {gs.repeat_action}"),
+        f"cria REFUSED {gs.repeat_count} of its recent calls, so none of them ran — the most "
+        f"recent was: {gs.repeat_action}"
+        if gs.repeat_kind == "refusal" else
+        f"It has taken the SAME action {gs.repeat_count or REPEAT_FINGERPRINT_N}× in this window "
+        f"without the outcome changing: {gs.repeat_action}"),
     "wheel_spin": lambda gs, step: (
         f"It has rewritten the file `{gs.spin_path}` at least {WHEEL_SPIN_WRITES} times with varying "
         f"content and it still is not converging."),

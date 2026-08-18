@@ -31,7 +31,7 @@ import tempfile
 import unittest
 
 from cria import prompts, probeparse
-from cria.proberun import dependency_line
+from cria.proberun import dependency_line, report_root as proberun_root
 
 
 class _Project:
@@ -138,6 +138,63 @@ class TheSearchIsBoundedTests(unittest.TestCase):
         workspace on every failing check is not free."""
         with _Project(files=["a/b/c/d/e/node_modules/x/index.js"]) as root:
             self.assertFalse(probeparse.install_landed("node", root))
+
+
+class TheGatePathReachesTheDiskTests(unittest.TestCase):
+    """THE GAP THE ORIGINAL TESTS STEPPED OVER. Every test above calls `dependency_line` with a root
+    handed to it, so all of them passed while the path that actually ships — `completion_block_nudge`
+    on a gate outcome — called `dependency_note` with no root at all. `install_landed` then returned
+    None on every gate, the "not installed anywhere" branch was unreachable, and the coder kept
+    getting the false sentence for the entire life of the fix.
+
+    A test written to the FUNCTION cannot catch that. These are written to the PATH."""
+
+    def _report(self, root, message):
+        """A gate report shaped exactly as the real one: a Test probe that ran in `root` and came
+        back with a LoadError finding."""
+        import pathlib as _pl
+
+        from cria import probediscovery, probeparse, proberun
+        cand = probediscovery.ProbeCandidate(
+            kind=probediscovery.ProbeKind.Test, command=["rake", "test"],
+            working_dir=_pl.Path(root), confidence=100, expected_value=100,
+            cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
+            may_need_services=False, reason="test")
+        res = proberun.ProbeResult(command="rake test", exit_code=1, summary=message,
+                                   findings=[probeparse.Finding(file="lib/shipping/rates.rb",
+                                                                line=1, message=message)])
+        return proberun.ProbeReport(project_type=["ruby"], selected=[cand], results=[res])
+
+    def test_the_root_comes_from_the_report_not_a_parameter(self):
+        with _Project(files=["Gemfile"]) as root:
+            self.assertEqual(proberun_root(self._report(root, "x")), root)
+
+    def test_an_empty_report_names_no_workspace(self):
+        from cria import proberun
+        self.assertEqual(proberun_root(proberun.ProbeReport()), "")
+
+    def test_the_gate_note_reads_the_disk(self):
+        """The whole point: no caller passes a root, and the note is still the true one."""
+        from cria import proberun
+        with _Project(files=["Gemfile"]) as root:
+            said = proberun.completion_block_nudge(
+                self._report(root, "cannot load such file -- countries (LoadError)")) or ""
+            self.assertIn("not installed anywhere", said)
+            self.assertNotIn("installed with --install-dir", said)
+
+    def test_after_a_real_install_the_gate_note_flips(self):
+        from cria import proberun
+        with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
+            said = proberun.completion_block_nudge(
+                self._report(root, "cannot load such file -- countries (LoadError)")) or ""
+            self.assertIn("installed with --install-dir", said)
+
+    def test_no_caller_passes_a_workspace_root(self):
+        """If a root ever becomes a parameter again, the gap comes back with it."""
+        import inspect
+        from cria import proberun
+        sig = inspect.signature(proberun.completion_block_nudge)
+        self.assertNotIn("workspace_root", sig.parameters)
 
 
 if __name__ == "__main__":
