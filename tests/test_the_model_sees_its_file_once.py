@@ -16,9 +16,12 @@ identical to the one before, and every copy stayed verbatim in the working tail:
     call 0023  21,009                 6          33,103
 
 The prompt quadrupled, and every token of the growth is the model's own output handed back to it. It
-then wrote a sixth version that introduced the type error the run died on: `.get(key)` was right at
-three earlier rewrites and became `.get(key.to_string())` at the last. Compare the unassisted run,
-which wrote the file ONCE and then made three ~285-byte `edit_file` patches — 20 coder calls, 4 of 4.
+then wrote a sixth version. NOTE, because the first write-up of this got it wrong: all five
+versions were compiled afterwards and none of them builds — four fail `E0277: the trait bound
+String: Borrow<&str> is not satisfied` at the same line, the last `E0308`. The rewriting did not
+destroy working code; the same typing bug survived every attempt. What it did do is spend the run
+and fill the prompt. Compare the unassisted arm, which wrote the file ONCE, made three ~285-byte
+`edit_file` patches, and finished 4 of 4.
 
 NOTHING FOLDED THEM BECAUSE NOTHING COULD. `_collapse_duplicates` needs byte-identical calls and
 these differ by about 1%. `selfcompact` already has the right rule — `write_stub_superseded`, keyed
