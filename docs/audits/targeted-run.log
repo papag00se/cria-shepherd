@@ -82,3 +82,24 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [battery] refreshed docs/audits/battery-report.md
 [18:08:41] shipping-rates-rb x gemma4 — exit 0
 [18:08:41] TARGETED RUN COMPLETE — 5 cells
+[18:19:29] RETEST rust-toml-cli x ternary-bonsai — start
+[sampling] ternary-bonsai: coder={'temperature': 0.2, 'top_p': 0.95, 'top_k': 20, 'repeat_penalty': 1.1}  reasoner={'temperature': 0.6, 'top_p': 0.9, 'top_k': 40, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
+[milestone] 15min  score=4.0/4.0  floor=1  ok
+[milestone] 30min  score=4.0/4.0  floor=2  ok
+{
+ "run_id": "rust-toml-cli_ternary-bonsai_codex_poff_1787015969",
+ "terminal": "exited",
+ "success": true,
+ "score": 4.0,
+ "wall_seconds": 2478.5,
+ "calls": 54,
+ "avg_tok_s": 35.3
+}
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[19:01:11] RETEST rust-toml-cli x ternary-bonsai — exit 0
+[19:01:11] RETEST shipping-rates-rb x ternary-bonsai — start
+[sampling] ternary-bonsai: coder={'temperature': 0.2, 'top_p': 0.95, 'top_k': 20, 'repeat_penalty': 1.1}  reasoner={'temperature': 0.6, 'top_p': 0.9, 'top_k': 40, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
+[milestone] 15min  score=0.0/5.0  floor=1  MISS
+[milestone] recheck score=0.0  CONFIRMED MISS

@@ -437,6 +437,25 @@ The coder did not copy. It wrote its own summary — `// Value enum variants:`, 
 
 The fix as landed is still strictly better than what it replaced (it exempts verbatim quotes of any tool result, not only of cria's own parsed shape blocks). It just does not reach this case. **The grounded alternative is not text similarity at all: cria knows the step in flight, and a READING step produces no files by its own prompt's words — so the nudge has no business firing on one.** Recorded, not built: it gates an existing mechanism on plan state, and that is a design call.
 
+### 51. The judge deciding whether the task was FINISHED was shown every failure and never the pass
+Watched live on the retest of `rust-toml-cli × ternary-bonsai`, and it is why that cell banked 4/4 at fifteen minutes and ran another twenty-six.
+
+`_gate_notes` had three wordings — `red`, `testless`, `skipped` — **all of them failures** — and returned nothing at all on a clean gate, on the rule *"never a doubt-hedge on a clean run"*. That rule is right for the CODER, which must not be taught to distrust a pass. It is wrong for the seat deciding whether the work is done, where the current pass is the load-bearing fact.
+
+cria knew the gate was green. It said so to the coder in the same breath it told the judge nothing:
+
+> `⟦ctx:steer⟧ The repo's automated checks pass, **but** a completion check could not confirm the task is finished.`
+
+What the judge got instead was `_work_log(keep_checks=True)` — every check result of the whole run, including an `unclosed delimiter at src/main.rs:184` from calls 0018–0023 that had long been fixed. Its tools are `list_dir`, `read_file`, `verdict`; it can run nothing. So it read the current file, saw valid Rust, and talked itself out of it — *"the actual compilation fails — indicating either stale build artifacts or a hidden character issue"* — and returned `satisfied: false`.
+
+**Fixed** by stating the pass as ground truth, with the freshness caveat the judge needed: *"That is a live result, not a claim from the transcript — older check output above may predate edits that have since been made."*
+
+**A tool was considered and rejected.** Giving the judge a `check_build_and_tests` call puts GATHERING behind the model's judgement, and the failure being fixed is a weak model not doing the obvious thing (#8: deterministic code gathers, the reasoner judges). cria already holds the fact at that exact moment — the completion gate has just run.
+
+**And the green goes LAST.** The first cut returned it above the skipped-tests disclosure, which would have reported a plain pass over a run that skipped tests — the vacuous green the other wordings exist to catch. Order is red → testless → skipped → green, gated on `last_gate_ran` and `gate_fresh` so cria never claims a pass it cannot vouch for now (#5b, #11b).
+
+*(On heavy toolchains: checked, and the light path already exists — for Rust cria composes `cargo check` as a Cheap probe, "fast and read-only", ahead of clippy and the test run. The lost time in that cell was not a slow build; the judge ran nothing at all.)*
+
 ## SELF-AUDIT AGAINST `docs/principles.md`
 
 Asked of the day's own work, not of the code it was fixing. Five things failed the rules and were changed; the honest weak spots that remain are named at the end.

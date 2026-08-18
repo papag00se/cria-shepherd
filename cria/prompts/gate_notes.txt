@@ -12,3 +12,21 @@
 red = [GROUND TRUTH] The repo's own checks are currently FAILING:\n{{FINDINGS}}\nThese ran over the whole repository. Judge whether the task can be finished with them in this state.
 testless = [GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran). If this task required tests, green does NOT verify them; judge accordingly.
 skipped = [GROUND TRUTH] The test run reported {{COUNT}} test(s) SKIPPED. A skipped test verified NOTHING — if the task required a live/real check and the skipped tests are those checks, green does NOT verify them; read the skipped tests' own skip conditions before treating this as done.
+# THE GREEN IS A FACT TOO, and withholding it is not silence — it is a biased sample. The other
+# three wordings here are all failures, and `_gate_notes` returned NOTHING on a clean gate, on the
+# rule "never a doubt-hedge on a clean run". That rule is right for the CODER, which must not be
+# taught to distrust a pass. This seat is deciding whether the task is FINISHED, and for that
+# question the current pass is the load-bearing fact.
+#
+# What it cost, watched live on the targeted re-run of `rust-toml-cli x ternary-bonsai`: the model
+# declared done at call 0032 with the gate green. The judge was handed `_work_log(keep_checks=True)`
+# — every check result of the whole run, including an `unclosed delimiter at src/main.rs:184` from
+# calls 0018-0023 that had long been fixed — and nothing saying the checks now pass. It has no tool
+# that can run anything. It read the current file, saw valid Rust, and talked itself out of it:
+# "the actual compilation fails — indicating either stale build artifacts or a hidden character
+# issue". Verdict: not satisfied. The cell had 4/4 at the fifteen-minute milestone and ran another
+# twenty-six minutes.
+#
+# ONLY WHEN IT IS TRUE NOW. `gate_fresh` is false the moment the workspace may have moved under the
+# reading, and a stale green is the one thing worse than no green (#5b).
+green = [GROUND TRUTH] The repo's own checks were run against the workspace as it stands and reported no error-class problems. That is a live result, not a claim from the transcript — older check output above may predate edits that have since been made.

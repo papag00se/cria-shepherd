@@ -6055,6 +6055,17 @@ def _gate_notes(sess) -> str:
     skipped = getattr(sess, "last_gate_skipped", 0)
     if skipped:
         return "\n\n" + prompts.fill(lines["skipped"], count=str(skipped))
+    # …AND THE GREEN, LAST, for the seat deciding whether the work is FINISHED. Last because every
+    # disclosure above it describes a pass that does not mean what it looks like — a red gate, a run
+    # that executed no tests, a run that skipped some — and each of those must win over a plain
+    # "it passed". See the prompt file for the run this cost.
+    #
+    # Gated on the gate having actually RUN and still being fresh: `gate_fresh` goes false the moment
+    # the workspace may have moved under the reading, and a green cria cannot vouch for right now is
+    # worse than none (#5b, #11b).
+    if (getattr(sess, "last_gate_ran", False) and getattr(sess, "gate_fresh", False)
+            and lines.get("green")):
+        return "\n\n" + lines["green"]
     return ""
 
 
