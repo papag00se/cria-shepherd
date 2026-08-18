@@ -65,6 +65,19 @@ Both run at `1b05cfd`, one code state; `cria.service` was restarted onto it at 2
 
 Environment: `preflight.py` READY, `suite/tasks` clean, live service reachable. `/usr/bin/bundle` now exists (`ruby-bundler`), so these two cells are a changed **environment** as well as changed code.
 
+**What this task actually requires, measured on this box before the cells were read.** The prompt's last line is *"Add a third-party Ruby gem that determines whether a country is in the EU, add it to the project dependencies, and use it for the lookup"* — so an install is not optional, it is deliverable 4's only route.
+
+```
+bundle install                       ->  FAILS  (no write permission on /var/lib/gems/3.2.0)
+gem install countries                ->  FAILS  (same)
+bundle install --path vendor/bundle  ->  WORKS  (3 gems, 22 s)
+bundle exec ruby -e "require 'countries'; puts ISO3166::Country.new('DE').in_eu?"  ->  true
+```
+
+**The task is passable in four commands, and nothing leaked into a shared gem home.** `ruby-bundler` fixed the `bundle: command not found` half; the remaining obstacle is ordinary Unix permissions on a system Ruby, which every Ruby developer meets and which bundler's own error names explicitly. Deliberately NOT changed: making `/var/lib/gems` writable, or setting a global bundler path, would be altering the machine to make a task easier to pass.
+
+That reframes what the walk is looking for on this cell. Not "can the model install a gem" — it can — but **whether anything cria says about the install is true**, since the previous ruby walk found cria describing an install that had never happened and ruling out the step that had failed.
+
 ## Step 3 — walk
 
 Findings go to `docs/audits/finish-and-remeasure-walk.md`. Not started.
