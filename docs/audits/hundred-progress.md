@@ -42,13 +42,31 @@ Five cells, chosen where a fix was landed AND the baseline proves the model can 
 
 | cell | cycle 4 | unassisted | the fixes it tests | post-fix |
 |---|---:|---:|---|---:|
-| rust-toml-cli × ternary-bonsai | 5% | **100%** | reading step a docs page can close (#47), file-only rustc spans (#34), prescribes-on-paths (#36), orienter (#21/#37), nudge off a reading step (#48) | — |
+| rust-toml-cli × ternary-bonsai | 5% | **100%** | reading step a docs page can close (#47), file-only rustc spans (#34), prescribes-on-paths (#36), orienter (#21/#37), nudge off a reading step (#48) | **0/4** — every fix fired, see below |
 | cart-billing-go × ternary-bonsai | 15% | **100%** | repeat-fold exempts writers (#25), identical-edit names the right argument (#26), prescribes shape filter | — |
 | shipping-rates-rb × ternary-bonsai | 10% | 20% | refusal-count redirect (#46), install-loop flush (#31), "already installed" (#30), dependency note asks the disk (#39) | — |
 | feed-pipeline-java × gemma4 | 10% | **100%** | wide degenerate check (#24), abort notice stops guessing | — |
 | shipping-rates-rb × gemma4 | 25% | 80% | install remedy, dead-stream clock (#45), refusal redirect (#46), dependency note (#39) | — |
 
 **What would count as the fixes working:** four of these five were destroyed from a working state, so the bar is the baseline column, not the cycle-4 column. `shipping-rates-rb × ternary-bonsai` is the one cell whose baseline is also poor — there the question is only whether cria stops making it worse.
+
+### Cell 1 — `rust-toml-cli × ternary-bonsai`: the fixes worked and the cell still scored 0
+
+**Every mechanism behaved.** `loop.reading_step_cleared: 1` — the reading step CLEARED, which it never did in cycle 4, where 20 of 21 coder turns were pinned to it. `loop.steer_prescribes_broken: 0` (no directive killed), `loop.unexecuted_write: 0` (no false nudge; cycle 4 had one), `rumination.abort: 0`. The gate ran and `⟦ctx:checks⟧` carried the real compiler error — `error[E0308]: mismatched types` at `src/main.rs:12:33` — into coder prompts 0014, 0015, 0021 and 0023.
+
+So cria said the true thing, at the right time, four times, and got out of the way. **The model wrote `current.get(key.to_string())` where `get` wants `&str`, and never fixed it.**
+
+**The comparison that matters is not the final score, it is the clock:**
+
+| arm | final | wall | calls | score at 15 min |
+|---|---:|---:|---:|---:|
+| unassisted | 4/4 | 50.7 | 21 | **3.0** |
+| cycle 4 | 0/4 | 15.9 | 33 | 0.0 |
+| post-fix | 0/4 | 15.8 | 22 | 0.0 |
+
+**The baseline had three of four deliverables inside the same fifteen minutes, on the same number of calls.** So this is not cria stealing turns — both arms got ~21 calls into the window. It is that the program written under cria was worse, and four reports of its own compiler error did not fix it.
+
+What that rules out: the five mechanisms fixed for this cell were not the binding constraint. What it does not establish: why the program is worse. One run is one sample of a stochastic process at temperature 0.2, and the honest next step is the remaining four cells before any conclusion.
 
 **What this cannot tell us:** five cells is not the matrix, and a single run per cell is one sample of a stochastic process. A gain here is evidence the mechanism changed, not proof the campaign moved. The full cycle 5 is what settles that.
 
