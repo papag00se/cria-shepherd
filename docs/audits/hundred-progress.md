@@ -22,9 +22,11 @@ $ gem install countries ->  You don't have write permissions for /var/lib/gems/3
 
 **This is not the model failing the task, and it is not cria.** In the run I walked, the coder finished all five deliverables correctly — `>=` threshold fixed, `express` added, `zone_for` written against `Europe.is_in_eu?`, `shipping_cost` accepting both forms, README table, Gemfile — and scored 1/5 because `require 'europe'` raises `LoadError` outside `bundle3.2 exec`. The whole suite fails on the require, so every check fails at once. That is also why this cell is the noisiest in the matrix: it hinges entirely on whether a model stumbles onto `bundle3.2`.
 
-**The fix is one package, outside this repo, so it is yours to make:** `sudo apt install ruby-bundler`. I have not run it.
+**FIXED 2026-08-17 20:35** — `sudo apt install ruby-bundler` (2.4.20-1). `/usr/bin/bundle` now exists, Bundler 2.4.20. Operator's directive: making this machine complete was already authorised, no permission needed.
 
-Two things I deliberately did NOT do. Not a PATH shim from `suite/run.py` — that is cria compensating for a missing system package, which is the mitigation the doctrine forbids when a real upstream fix exists. And not mid-campaign: changing the environment between cells would void the repeat pass now running. The order is finish the repeats, install, then re-run the ruby column.
+**Consequence for the repeat pass now running:** its first cell (`shipping-rates-rb × gemma4`) ran BEFORE the install and its third (`shipping-rates-rb × qwen35`) will run after. Those two are not comparable to each other or to anything earlier; the ruby column needs a clean re-run once the pass finishes. Every non-ruby cell is unaffected.
+
+What was NOT done, and should not be: a PATH shim from `suite/run.py`. That is cria compensating for a missing system package while a real upstream fix exists — the mitigation the doctrine forbids.
 
 ## THE NOISE FLOOR — read this before any other number in this file (2026-08-17)
 
