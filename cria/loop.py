@@ -5888,6 +5888,19 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     return findings or None
 
 
+def _gate_test_green(outcome) -> bool:
+    """Did the gate's TEST probe exit 0? The offline leg only runs after a green test probe, so this
+    is what separates "the leg declined because there was nothing to compare" from "the leg could not
+    be set up at all" — the second being the one that needs an operator's eyes."""
+    report = getattr(outcome, "report", None)
+    if report is None:
+        return False
+    for cand, res in zip(report.selected or [], report.results or []):
+        if cand.kind is probegate.probediscovery.ProbeKind.Test:
+            return res.exit_code == 0
+    return False
+
+
 def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
     """``interpret_gate`` for every caller, with the two things that must never be silent.
 
@@ -5905,6 +5918,13 @@ def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
         rlog.emit("loop.gate_refused", level="warn", reason=outcome.refused)
     if outcome.swept:
         rlog.emit("loop.gate_swept", paths=len(outcome.swept), sample=outcome.swept[:5])
+    if outcome.offline_ran is not None:
+        # Operator-facing only, like the refusal above. A gate whose test probe went green and whose
+        # network-off leg printed nothing has silently lost the one instrument that tells a mocked
+        # suite from a real one — and the leg is gated on a capability probe that performs a bind
+        # mount, which is precisely the shape that cost a whole arm before.
+        rlog.emit("loop.gate_offline", ran=outcome.offline_ran,
+                  test_green=_gate_test_green(outcome))
     return outcome
 
 

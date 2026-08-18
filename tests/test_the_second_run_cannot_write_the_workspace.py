@@ -166,5 +166,67 @@ class ThereIsNoWritableFallbackTests(unittest.TestCase):
             self.assertEqual(ws.run_leg(["echo", "RAN"], "__cria_test_ec=1; ").strip(), "")
 
 
+
+class ALostInstrumentIsAnEventTests(unittest.TestCase):
+    """The leg is now guarded by a capability probe that performs a BIND MOUNT, and this repo has
+    already lost a whole 24-cell arm to a verb Codex's sandbox disliked — silently, because a refused
+    exec returns no section markers and that reads exactly like "no gate was composed" (see
+    `read_gate`). Measured on the preserved rollouts: **82 of 94 real gate results carried an offline
+    section**, so the namespace itself is fine under the harness; what is new is the mount. If it is
+    ever refused, the gate keeps working and only the instrument disappears — which is the safe
+    direction and the invisible one. So it is recorded (#12)."""
+
+    def _interpret(self, script_result, *, with_test=True):
+        from cria import probegate
+        plan = probegate.GatePlan(workspace="/tmp")
+        cands = []
+        if with_test:
+            cands.append(probediscovery.ProbeCandidate(
+                kind=probediscovery.ProbeKind.Test, command=["pytest"],
+                working_dir=pathlib.Path("/tmp"), confidence=1, expected_value=1,
+                cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
+                may_need_services=False, reason="t"))
+        else:
+            cands.append(probediscovery.ProbeCandidate(
+                kind=probediscovery.ProbeKind.Lint, command=["ruff"],
+                working_dir=pathlib.Path("/tmp"), confidence=1, expected_value=1,
+                cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
+                may_need_services=False, reason="t"))
+        plan.candidates = cands
+        return probegate.interpret_gate(plan, script_result)
+
+    GREEN = "___CRIA_GATE_probe-0___\n2 passed\nEXIT:0\n"
+
+    def test_a_leg_that_came_back_is_recorded_as_such(self):
+        out = self._interpret(self.GREEN + "___CRIA_GATE_offline___\n2 passed\nEXIT:0\n")
+        self.assertIs(out.offline_ran, True)
+
+    def test_a_leg_that_printed_nothing_is_recorded_as_such(self):
+        self.assertIs(self._interpret(self.GREEN).offline_ran, False)
+
+    def test_a_gate_with_no_test_probe_says_nothing_either_way(self):
+        """None, not False: there was no leg to lose."""
+        self.assertIsNone(self._interpret(self.GREEN, with_test=False).offline_ran)
+
+    def test_it_reaches_the_log_with_whether_the_test_probe_was_green(self):
+        """Green test probe + no offline section is the alarming combination — the leg was DUE and
+        did not appear. Red + none is ordinary: there was nothing to compare."""
+        from cria import loop
+
+        class _Rlog:
+            def __init__(self): self.events = []
+            def emit(self, name, **k): self.events.append((name, k))
+
+        from cria import probegate
+        plan = probegate.GatePlan(workspace="/tmp")
+        plan.candidates = [probediscovery.ProbeCandidate(
+            kind=probediscovery.ProbeKind.Test, command=["pytest"],
+            working_dir=pathlib.Path("/tmp"), confidence=1, expected_value=1,
+            cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
+            may_need_services=False, reason="t")]
+        rlog = _Rlog()
+        loop.read_gate(plan, self.GREEN, rlog)
+        ev = dict(next(k for n, k in rlog.events if n == "loop.gate_offline"))
+        self.assertEqual(ev, {"ran": False, "test_green": True})
 if __name__ == "__main__":
     unittest.main()

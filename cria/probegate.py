@@ -88,6 +88,13 @@ class GateOutcome:
     #                                            not a pass: without this, a truncated gate read clean
     refused: str = ""  # the harness REFUSED to run the gate (sandbox policy) — its own words, for the log
     swept: list = field(default_factory=list)  # untracked paths the probes created, removed by sweep_litter
+    # DID THE NETWORK-OFF LEG COME BACK? None = it was never composed (no Test probe). False = it was
+    # composed and printed nothing, which means the guard in front of it declined — the online run was
+    # red, or the kernel/harness refused the namespace. That second case is the one worth seeing: the
+    # leg is guarded by a capability probe that performs a BIND MOUNT, and this repo has already lost a
+    # whole 24-cell arm to a verb Codex's sandbox disliked, silently. #12 — a lost instrument is an
+    # event, not an absence.
+    offline_ran: "bool | None" = None
 
 
 def _marker(section_id: str) -> str:
@@ -1030,6 +1037,9 @@ def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
         results.append(proberun.interpret_probe_output(
             c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S))
     out.report = ProbeReport(project_type=[], selected=list(plan.candidates), results=results)
+
+    if any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
+        out.offline_ran = bool(sections.get("offline", "").strip())
 
     out.git_state = sections.get("git", "").strip().splitlines()[-1].strip() if sections.get("git") else ""
     return out
