@@ -7,7 +7,18 @@
 # installed, `require` failing, and twenty minutes spent on the package manager instead of the task.
 # Each line says WHERE the ecosystem looks, because "install it" was never the missing step.
 
-ruby = Note: `{{NAME}}` is installed nowhere ruby is looking. A gem installed with --install-dir is not on the load path by default — set GEM_HOME to that directory when you run, or add its `lib` directory to $LOAD_PATH from your code. Fix the loading; the code that uses it is not what failed here.
+ruby = Note: `{{NAME}}` did not load. A gem installed with --install-dir is not on the load path by default — add its `lib` directory to $LOAD_PATH from your code, or set GEM_HOME to that directory when you run. Fix the loading; the code that uses it is not what failed here.
+
+# …and the same fact for a project whose gems came from BUNDLER, which cria reads off the disk
+# (probeparse.install_flavour) rather than assuming. The line above names --install-dir, and on
+# `shipping-rates-rb x ternary-bonsai` it was appended to a bundler project's failing `bundle exec
+# rake test`: no --install-dir install had happened in that run, `minitest` WAS on the plain-ruby
+# load path (5.16.3, proved by the model's own probe one call later), and the remedy it prescribed
+# — "set GEM_HOME to that directory" — is where the model's `Dir[ENV["GEM_HOME"], …]` came from.
+# That line raises TypeError with GEM_HOME unset and aborted `rake test` until it was backed out.
+# The model's own reasoning had the right answer — "bundler isolates gems and doesn't include
+# system-installed gems like minitest" — and it deferred to cria's note anyway.
+ruby_bundler = Note: `{{NAME}}` did not load. This project's gems are installed with bundler, and a bundler install is only on the load path under bundler — `require "bundler/setup"` at the top of the file that needs it, or run the command under `bundle exec`. If `{{NAME}}` is not in the `Gemfile`, that is the reason: a gem outside the bundle is invisible to it even when it is installed on this machine.
 
 python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). Fix the import path; the code that uses it is not what failed here.
 

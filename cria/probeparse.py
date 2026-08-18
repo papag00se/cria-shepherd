@@ -1195,6 +1195,38 @@ _INSTALL_EVIDENCE = {
 }
 
 
+# HOW an ecosystem's dependencies were installed here, when the tree says so unambiguously. The
+# note beside a failed require describes a mechanism, and describing the wrong one sends the coder at
+# the wrong thing: on `shipping-rates-rb x ternary-bonsai` the --install-dir sentence — "set GEM_HOME
+# to that directory" — was appended to a BUNDLER project's failing `bundle exec rake test`, and the
+# coder wrote `Dir[ENV["GEM_HOME"], …]`, which raises TypeError with GEM_HOME unset and aborted
+# `rake test` until it backed the line out. cria had the answer on disk the whole time.
+#
+# Only where the evidence can mean one thing. `.bundle/config` and `Gemfile.lock` are written by
+# bundler and by nothing else; `vendor/bundle/gems/` (with no `ruby/<abi>/` layer) is the tree
+# `gem install --install-dir vendor/bundle` builds and the one bundler does NOT. Anything else, and
+# any ecosystem with no entry here, answers "" — no flavour, keep the general sentence (#3).
+_INSTALL_FLAVOUR = {
+    "ruby": (("bundler", ("Gemfile.lock", ".bundle/config")),
+             ("install_dir", ("vendor/bundle/gems",))),
+}
+
+
+def install_flavour(eco: str, workspace_root: str) -> str:
+    """Which install mechanism this project's tree records — "" when cria cannot say.
+
+    Read off disk, never assumed (#8). Suffixes a prompt key: `ruby` + `bundler` selects the
+    `ruby_bundler` line when one exists, and falls back to the general line when it does not, so
+    adding an ecosystem here is additive and adding a flavour is one prompt row."""
+    if not workspace_root or not os.path.isdir(workspace_root):
+        return ""
+    for flavour, marks in _INSTALL_FLAVOUR.get(eco, ()):
+        for mark in marks:
+            if os.path.exists(os.path.join(workspace_root, mark)):
+                return flavour
+    return ""
+
+
 def install_landed(eco: str, workspace_root: str) -> bool | None:
     """Has an install into this project actually landed? ``None`` when cria cannot tell.
 

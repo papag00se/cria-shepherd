@@ -75,11 +75,56 @@ class TheWorldIsAskedBeforeItIsDescribedTests(unittest.TestCase):
     def test_after_a_real_install_the_load_path_advice_returns(self):
         """It is the right advice then, and this is the case it was written for. Note what stands for
         an install: a lock FILE, or a vendor tree with a file actually in it — see
-        test_an_empty_tree_is_not_an_install."""
+        test_an_empty_tree_is_not_an_install.
+
+        WHICH load-path advice depends on WHICH install, and cria reads that off the disk too since
+        2026-08-18 (probeparse.install_flavour). A `Gemfile.lock` is bundler's; a bare
+        `vendor/bundle/gems/` tree with no lock is `gem install --install-dir`'s. Both get a
+        load-path sentence; they get different ones, because the two mechanisms are reached
+        differently and naming the wrong one sent a coder after GEM_HOME — see
+        test_the_bundler_case_does_not_prescribe_GEM_HOME below."""
         with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
-            self.assertIn("installed with --install-dir", line("ruby", root))
+            self.assertIn("only on the load path under bundler", line("ruby", root))
         with _Project(files=["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]) as root:
             self.assertIn("installed with --install-dir", line("ruby", root))
+
+    def test_the_bundler_case_does_not_prescribe_GEM_HOME(self):
+        """THE MEASURED COST. `shipping-rates-rb x ternary-bonsai`: the --install-dir sentence was
+        appended to a BUNDLER project's failing `bundle exec rake test` — no --install-dir install
+        had happened in that run — and its remedy, "set GEM_HOME to that directory", is where the
+        coder's `Dir[ENV["GEM_HOME"], Dir.pwd]` came from. That raises TypeError with GEM_HOME unset
+        and aborted `rake test` until the coder backed it out. Its own reasoning had the right answer
+        first — "bundler isolates gems and doesn't include system-installed gems like minitest" — and
+        it deferred to cria's note anyway."""
+        with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
+            said = line("ruby", root, name="minitest/autorun")
+            self.assertNotIn("GEM_HOME", said)
+            self.assertNotIn("--install-dir", said)
+            # …and it says the thing the model actually needed, which cria had withheld
+            self.assertIn("not in the `Gemfile`", said)
+
+    def test_the_opener_no_longer_claims_ruby_cannot_see_it(self):
+        """"is installed nowhere ruby is looking" was a claim cria never checked, and in the walked
+        run it was false: `ruby -e 'require "minitest"'` printed 5.16.3. The gem was exactly where
+        plain ruby looks and missing only from the bundle. What survives is what the checker's output
+        established — the require failed."""
+        for files in (["Gemfile", "Gemfile.lock"],
+                      ["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]):
+            with self.subTest(files=files[-1]):
+                with _Project(files=files) as root:
+                    said = line("ruby", root)
+                    self.assertNotIn("installed nowhere ruby is looking", said)
+                    self.assertIn("did not load", said)
+
+    def test_a_flavour_cria_cannot_read_keeps_the_general_line(self):
+        """#3: no evidence, no claim. A ruby project with an install cria can see but no marker
+        saying HOW keeps the sentence that was there before."""
+        from cria import probeparse
+        with _Project(files=["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]) as root:
+            self.assertEqual(probeparse.install_flavour("ruby", root), "install_dir")
+        with _Project(files=["Cargo.toml"]) as root:
+            self.assertEqual(probeparse.install_flavour("rust", root), "")
+        self.assertEqual(probeparse.install_flavour("ruby", ""), "")
 
     def test_an_empty_tree_is_not_an_install(self):
         """THE REPLAY. Cell 13's real workspace holds `vendor/bundle/gems/eu_countries/` — ten
@@ -187,6 +232,18 @@ class TheGatePathReachesTheDiskTests(unittest.TestCase):
         with _Project(files=["Gemfile", "Gemfile.lock"]) as root:
             said = proberun.completion_block_nudge(
                 self._report(root, "cannot load such file -- countries (LoadError)")) or ""
+            self.assertIn("only on the load path under bundler", said)
+            self.assertNotIn("not installed anywhere", said)
+
+    def test_the_gate_note_reads_the_INSTALL_MECHANISM_off_the_disk_too(self):
+        """The same gap, one level down: the root reaches `dependency_line`, and `dependency_line`
+        then has to ask which install put the gems there rather than assume `--install-dir`."""
+        from cria import proberun
+        # NOTE the gem name: `countries` would be suppressed here, because the fixture's tree
+        # contains `countries.rb` and cria leaves a name that resolves to a workspace file alone.
+        with _Project(files=["Gemfile", "vendor/bundle/gems/countries-1.0/lib/countries.rb"]) as root:
+            said = proberun.completion_block_nudge(
+                self._report(root, "cannot load such file -- unaccent (LoadError)")) or ""
             self.assertIn("installed with --install-dir", said)
 
     def test_no_caller_passes_a_workspace_root(self):

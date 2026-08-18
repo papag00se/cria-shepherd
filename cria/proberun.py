@@ -662,6 +662,12 @@ def dependency_line(eco: str, workspace_root: str) -> str:
     words = prompts.load_map("dependency_note")
     if probeparse.install_landed(eco, workspace_root) is False and f"{eco}_none" in words:
         return words[f"{eco}_none"]
+    # …and when something DID land, say which mechanism put it there rather than assuming one. The
+    # general line names `--install-dir`, and appending that to a bundler project sent a coder after
+    # GEM_HOME and broke its Rakefile — see probeparse.install_flavour.
+    flavour = probeparse.install_flavour(eco, workspace_root)
+    if flavour and f"{eco}_{flavour}" in words:
+        return words[f"{eco}_{flavour}"]
     return words[eco]
 
 

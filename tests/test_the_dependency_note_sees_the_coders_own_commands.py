@@ -12,6 +12,11 @@ comes through.
 
 ONLY THE MOST RECENT occurrence is annotated. Putting the same paragraph in the window 39 times is
 noise on a signal the model has already read (#3), and the latest one is the turn it can act on.
+
+The opener these assertions quote changed on 2026-08-18, from "is installed nowhere ruby is looking"
+to "did not load". The old one was a claim cria had not checked and that was measurably false in the
+walked run — `minitest` was on the plain-ruby load path, 5.16.3, and missing only from the bundle.
+What survives is what the checker's own output established: the require failed.
 """
 
 import pathlib
@@ -33,7 +38,7 @@ NODE = "Error: Cannot find module 'commander'"
 class TheCodersOwnFailureIsLabelledTests(unittest.TestCase):
     def test_the_measured_case(self):
         out = writeproxy.represent_inbound([tool(RUBY)])
-        self.assertIn("is installed nowhere ruby is looking", out[0]["content"])
+        self.assertIn("`countries` did not load", out[0]["content"])
 
     def test_the_checkers_own_line_is_kept(self):
         out = writeproxy.represent_inbound([tool(RUBY)])
@@ -48,14 +53,14 @@ class TheCodersOwnFailureIsLabelledTests(unittest.TestCase):
     def test_only_the_most_recent_is_annotated(self):
         msgs = [tool(RUBY), tool(RUBY), tool(RUBY)]
         out = writeproxy.represent_inbound(msgs)
-        noted = [m for m in out if "installed nowhere" in m["content"]]
+        noted = [m for m in out if "did not load" in m["content"]]
         self.assertEqual(len(noted), 1)
         self.assertIs(noted[0], out[-1])
 
     def test_it_is_not_appended_twice(self):
         once = writeproxy.represent_inbound([tool(RUBY)])
         twice = writeproxy.represent_inbound(once)
-        self.assertEqual(twice[0]["content"].count("installed nowhere"), 1)
+        self.assertEqual(twice[0]["content"].count("did not load"), 1)
 
 
 class WhereItStaysSilentTests(unittest.TestCase):

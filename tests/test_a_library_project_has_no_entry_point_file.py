@@ -63,44 +63,68 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
     """`gem_bundler` told the model how to INSTALL and not how to REACH what it installed. Every
     other route in that file carries both halves — pip names the interpreter to run, npm says the
     install is what your code will load, and `gem_direct`, two lines below, explains the load path.
-    A bundler `--path` install is visible only under bundler, so a bare `ruby -Ilib` still raises
-    LoadError — including for a test file the model did not write and cannot add a require to."""
+
+    AND THEN IT REACHED FOR THE WRONG HALF. From 0d2fec4 to 2026-08-18 the route told the coder to
+    run `bundle install --path vendor/bundle` and then unshift
+    `vendor/bundle/gems/<gem>-<version>/lib`. Bundler writes `vendor/bundle/ruby/<abi>/gems/…`;
+    `vendor/bundle/gems` does not exist. Measured in a clean project:
+
+        bundle install --path vendor/bundle   ->  vendor/bundle/ruby/3.2.0/gems/countries-8.1.0
+        ls vendor/bundle/gems                 ->  No such file or directory
+
+    That path is `gem install --install-dir`'s, i.e. the OTHER route's, where it is correct. It only
+    became reachable when ruby-bundler was installed, because `dirguard._INSTALL_REMEDY` takes the
+    first route whose tool is on PATH — installing an apt package flipped cria onto a route carrying
+    a different route's path. Walked on `shipping-rates-rb x ternary-bonsai`: the coder pasted the
+    dead path into its library file and spent the tail of the run debugging around a no-op line."""
 
     def route(self, key):
         from cria import prompts
         return prompts.load_map("install_remedy")[key]
 
-    def test_it_says_the_install_is_only_reachable_under_bundler(self):
-        """The CONSTRAINT must still be stated — that is what makes the remedy make sense. It used
-        to be checked by looking for the word "exec", back when the remedy was `bundle exec`; the
-        remedy is now a load-path line and the route recommends no exec at all, so the assertion is
-        on the fact rather than on the old wording."""
+    def test_it_never_names_a_directory_bundler_does_not_create(self):
+        """The whole defect in one assertion. `--path vendor/bundle` produces
+        `vendor/bundle/ruby/<abi>/gems/`, so any sentence naming `vendor/bundle/gems` is describing a
+        tree that will not be there."""
+        self.assertNotIn("vendor/bundle/gems", self.route("gem_bundler"))
+
+    def test_it_does_not_claim_a_bare_ruby_cannot_see_the_install(self):
+        """It said: "That install is reachable only under bundler — anything started as plain `ruby`
+        still fails to require it." Measured, in a clean project with `require "bundler/setup"` at
+        the top of the library:
+
+            ruby -Ilib -e 'require "shipping/rates"'                    ->  true
+            (cd /tmp && ruby -I$D/lib -e 'require "shipping/rates"')    ->  LoadError
+            (cd /tmp && BUNDLE_GEMFILE=$D/Gemfile ruby …)               ->  true
+
+        It works from the project directory and fails only from elsewhere. And every check in
+        `suite/tasks/shipping-rates-rb/verify.py` runs `subprocess.run(cmd, cwd=ws)` — the project
+        directory. The premise that "the checks that judge a library do not start where the Gemfile
+        is" is false for this verifier."""
         text = self.route("gem_bundler").lower()
-        self.assertIn("reachable only under bundler", text)
-        self.assertTrue("plain `ruby`" in text or "without bundler" in text,
-                        "the route never says a bare ruby cannot see it")
+        self.assertNotIn("reachable only under bundler", text)
+        self.assertNotIn("still fails to require it", text)
 
-    def test_it_names_the_route_that_MEASURED_five_of_five(self):
-        """`bundler/setup` is not the answer; `$LOAD_PATH.unshift ... __dir__` is, and the baseline
-        arm proved it. qwen35 with assists OFF scored **5/5** on shipping-rates-rb — including
-        `hidden_contract`, the check that runs a test file cria never sees — with exactly this at the
-        top of its library:
+    def test_it_names_the_route_that_WAS_VERIFIED_BY_RUNNING_IT(self):
+        """THE TIE-BREAK, because this file used to assert the opposite and the reversal is the
+        point. `0d2fec4` demoted `require "bundler/setup"` to "the weaker version" on the strength of
+        a 5/5-vs-2/5 comparison **across different runs** — and the measured noise floor at identical
+        code is 25 points, more than one check. That is not evidence.
 
-            require "rubygems"
-            $LOAD_PATH.unshift File.expand_path("../../vendor/bundle/gems/countries-8.1.0/lib", __dir__)
-            $LOAD_PATH.unshift File.expand_path("../../vendor/bundle/gems/unaccent-0.4.0/lib", __dir__)
-
-        Note the second line: it unshifted the TRANSITIVE dependency too. Against that, the
-        counterfactual on cycle 4 cell 1 — the same task with `require "bundler/setup"` and a
-        corrected require name — scored 2/5 and `hidden_contract` still failed. `__dir__` resolves
-        from the file, so it survives a runner started anywhere; `bundler/setup` needs the process to
-        start where the Gemfile is."""
+        `f2b8b5b`, later, established the opposite by running it, and its wording is still in the
+        test below: `bundler/setup` "was verified by running it rather than recalled: a
+        `--path vendor/bundle` install plus that one first line passes all three shapes the verifier
+        uses". So the file has been asserting both conclusions at once — the invented path leading,
+        the verified line demoted at the end. Running it settles it, twice now; a score delta below
+        the floor settles nothing."""
         text = self.route("gem_bundler")
-        self.assertIn("$LOAD_PATH.unshift", text)
-        self.assertIn("__dir__", text)
-        self.assertIn("INCLUDING the ones it pulled in", text)   # the transitive dep
-        self.assertLess(text.index("$LOAD_PATH.unshift"), text.index("bundler/setup"),
-                        "the route that measured 5/5 must lead")
+        self.assertIn('require "bundler/setup"', text)
+        self.assertNotIn("$LOAD_PATH.unshift", text)
+        self.assertNotIn("weaker version", text)
+
+    def test_it_says_what_a_process_started_elsewhere_needs(self):
+        """The one true half of the old constraint, kept — and answered rather than restated."""
+        self.assertIn("BUNDLE_GEMFILE", self.route("gem_bundler"))
 
     def test_it_names_the_one_line_that_makes_it_reachable(self):
         """STATING THE CONSTRAINT IS NOT ANSWERING IT. The route said the install is reachable only
@@ -118,7 +142,7 @@ class TheRubyInstallRouteIsReachableTests(unittest.TestCase):
         `ruby -Ilib -Itest -e`. It is a fact about bundler, named without naming any gem (#20)."""
         text = self.route("gem_bundler")
         self.assertIn("before the gem require", text)
-        self.assertIn("does not matter who launches it or from where", text)
+        self.assertIn("tests and scripts you did not write", text)
 
     def test_the_direct_route_answers_it_in_code_too(self):
         """GEM_HOME is an environment variable, and the tests that judge the deliverable are launched
