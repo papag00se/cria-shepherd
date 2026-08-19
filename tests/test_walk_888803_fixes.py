@@ -468,23 +468,71 @@ class TheToolTestIsGroundedInTheUserAndTheCodeTests(unittest.TestCase):
         self.assertEqual(self.planner.step_names_tool("Finish edit_file.py", "", self.d), "")
 
 
+class _PSCRlog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
+
+    def kinds(self):
+        return [k for k, _ in self.events]
+
+
+class _PSCReasoner:
+    """A scripted reasoner_chat: the critic verdict every call returns."""
+
+    def __init__(self, done=True, reason="looks done"):
+        self._done, self._reason = done, reason
+
+    def __call__(self, body, rlog):
+        return json.dumps({"choices": [{"message": {"content": json.dumps(
+            {"done": self._done, "reason": self._reason})}}]}).encode()
+
+
 class ThePeriodicStepCheckIsObserveOnlyTests(unittest.TestCase):
     """It asks and records; it does not move the plan. New authority over when a plan advances, whose
     documented predecessor turned a 1.0 into a 0.0, and which has never run live."""
 
-    def test_the_method_records_rather_than_advances(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._periodic_step_check)
-        self.assertIn("observe_only=True", src)
-        self.assertIn("OBSERVE-ONLY", src)
-        # No advance in the CODE. The one mention left is the note saying what would flip it.
-        code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
-        self.assertNotIn("self._advance(", code)
+    def _loop_and_sess(self, done):
+        item = loop.PlanItem("step 1")
+        plan = loop.Plan(id="20260101T000000-abcd1234", task="build it",
+                         created="2026-01-01T00:00:00+00:00", items=[item, loop.PlanItem("step 2")])
+        ctx = loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=_PSCReasoner(done=done),
+                               runs_dir="")
+        drv = loop.Loop(ctx)
+        sess = loop.PlanSession(plan=plan)
+        sess.drive_count = 12  # first cadence tick — STEP_CHECK_EVERY
+        return drv, sess, item
 
-    def test_it_still_says_what_it_saw(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._periodic_step_check)
-        self.assertIn("loop.periodic_step_check", src)
+    def test_the_check_records_the_verdict_but_never_advances_the_step(self):
+        drv, sess, item = self._loop_and_sess(done=True)
+        rlog = _PSCRlog()
+        result = drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
+        # OBSERVE-ONLY: no advance dict returned, and the step it judged DONE is still open —
+        # the loop's own plan state must be untouched by a critic call that only measures.
+        self.assertIsNone(result)
+        self.assertFalse(item.done)
+        self.assertEqual(sess.plan.current(), item)
+        # It still SAID what it saw — silence on a guard that only measures is indistinguishable
+        # from one that never ran, so the measurement events are non-negotiable.
+        self.assertIn("loop.periodic_step_check", rlog.kinds())
+
+    def test_a_satisfied_verdict_is_still_only_recorded(self):
+        drv, sess, item = self._loop_and_sess(done=True)
+        rlog = _PSCRlog()
+        drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
+        sat = [kw for k, kw in rlog.events if k == "loop.periodic_step_satisfied"]
+        self.assertTrue(sat, "a DONE verdict must still be logged, even though it cannot act")
+        self.assertTrue(sat[0]["observe_only"])
+        self.assertFalse(item.done)  # said satisfied, but the plan did not move
+
+    def test_a_not_done_verdict_records_nothing_extra_and_still_does_not_advance(self):
+        drv, sess, item = self._loop_and_sess(done=False)
+        rlog = _PSCRlog()
+        drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
+        self.assertNotIn("loop.periodic_step_satisfied", rlog.kinds())
+        self.assertFalse(item.done)
 
 
 class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
@@ -609,18 +657,37 @@ class TheSupervisorIsWatchedTooTests(unittest.TestCase):
     5.5-minute endgame producing nothing."""
 
     def test_the_reasoner_endpoint_is_wired_to_the_watched_call(self):
-        src = pathlib.Path("cria/server.py").read_text()
-        self.assertIn('reasoner_chat=_ep("reasoner").chat_watched,', src)
-        self.assertNotIn('reasoner_chat=_ep("reasoner").chat,', src)
+        from cria.config import Backend, Config, LoggingConfig, Role, RoutingConfig, ServerConfig
+        from cria.events import EventLog
+        from cria.server import CriaServer
+        from cria.upstream import Upstream
 
-    def test_the_backstop_does_not_need_a_watcher_to_fire(self):
-        import inspect
-        from cria import upstream
-        src = inspect.getsource(upstream.Upstream.chat_watched)
-        i = src.index("degenerate_tail")
-        # the backstop must not sit inside the `if watch is not None` arm
-        self.assertNotIn("if watch is not None", src[:i].rsplit("\n", 6)[-1])
-        self.assertIn("aborted is None and rumination.degenerate_tail", src)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cfg = Config(
+            server=ServerConfig(host="127.0.0.1", port=0),
+            logging=LoggingConfig(dir=tmp.name, capture_dir=tmp.name, console=False),
+            routing=RoutingConfig(backends={"local": Backend("local")},
+                                  roles={"coder": Role("coder", "local"), "reasoner": Role("reasoner", "local")},
+                                  failover={"coding": ("coder",)}),
+        )
+        log = EventLog(dir=cfg.logging.dir, console=False)
+        self.addCleanup(log.close)
+        srv = CriaServer(cfg, log, Upstream(cfg.upstream.base_url))
+        self.addCleanup(srv.server_close)
+
+        # Bound-method identity — proves the ACTUAL callable the loop was built with, not a
+        # source line that could say the right thing while a reformat/typo left it un-wired.
+        self.assertIs(srv.loop._ctx.reasoner_chat.__func__, Upstream.chat_watched)
+        self.assertIsNot(srv.loop._ctx.reasoner_chat.__func__, Upstream.chat)
+
+    # The claim "the degenerate-run backstop fires even with watch=None" (the walk's actual
+    # finding — the reasoner had no protection because chat_watched's caller passed no watcher)
+    # is already driven end-to-end, with a real streamed runaway and no `watch` argument, by
+    # tests/test_upstream.py::ChatWatchedTests::test_degenerate_tool_arg_runaway_is_aborted —
+    # confirmed by breaking the guard (nesting it inside `if watch is not None`) and watching
+    # that test go red. A second version reading chat_watched's source for the same fact would
+    # be a duplicate of a good test, so none is added here.
 
     def test_a_degenerate_tail_is_still_what_it_detects(self):
         from cria import rumination
@@ -894,10 +961,29 @@ class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
         self.assertEqual(self._run("unset __cria_test_ec; ").strip(), "")
 
     def test_the_gate_script_saves_the_exit_code_for_it(self):
-        import inspect
+        """The three tests above assert what the offline leg does with `__cria_test_ec` once it is
+        set; this is the other half — `plan_gate`'s OWN composed script is what has to set it, from
+        the real test probe's real exit code, not a value a fixture hands it. Run the actual script
+        end to end and read the variable back out, rather than reading the assignment's own text."""
+        import re
 
         from cria import probegate
-        self.assertIn("__cria_test_ec=$__cria_ec", inspect.getsource(probegate.plan_gate))
+
+        def _test_ec(body):
+            t = tempfile.mkdtemp()
+            with open(os.path.join(t, "pyproject.toml"), "w") as f:
+                f.write("[tool.pytest.ini_options]\n")
+            with open(os.path.join(t, "test_x.py"), "w") as f:
+                f.write(body)
+            plan = probegate.plan_gate(t)
+            script = plan.script + "\necho FINAL_TEST_EC=$__cria_test_ec"
+            proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=120)
+            m = re.search(r"FINAL_TEST_EC=(-?\d+)", proc.stdout)
+            self.assertIsNotNone(m, proc.stdout)
+            return int(m.group(1))
+
+        self.assertEqual(_test_ec("def test_ok():\n    assert True\n"), 0)
+        self.assertNotEqual(_test_ec("def test_fails():\n    assert False\n"), 0)
 
 
 if __name__ == "__main__":

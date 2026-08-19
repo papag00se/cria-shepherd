@@ -8,28 +8,33 @@ key added to the tuple would have shipped, which is the precise failure the modu
 and the shape principle 24 is about: the invariant belongs at the wire, driven from one list.
 """
 
+import json
 import unittest
 
 from cria import bodykeys
 
 
-class TheListIsTheLeverTests(unittest.TestCase):
-    def test_the_wire_strips_every_key_in_ALL(self):
-        import inspect
-        from cria import upstream
-        src = inspect.getsource(upstream.Upstream._prep)
-        self.assertIn("bodykeys.ALL", src,
-                      "_prep must drive off the list, not hand-written pops")
+class _Rlog:
+    def emit(self, kind, **kw):
+        pass
 
-    def test_a_body_carrying_every_internal_key_ships_none_of_them(self):
+
+class TheListIsTheLeverTests(unittest.TestCase):
+    def test_the_wire_strips_every_internal_key_for_real(self):
+        """Drives the REAL `_prep` on a body carrying every key in `bodykeys.ALL`, and reads the
+        bytes it actually put on the wire. A prior version of this test simulated the transform
+        itself (popped the keys with its own loop, then checked its own pop worked) and would have
+        passed no matter what `_prep` did — the self-serving shape the code-health lens exists to
+        catch, paired with a sibling that only read the source line calling `bodykeys.ALL`."""
         from cria import upstream
-        up = upstream.Upstream.__new__(upstream.Upstream)
-        out = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        up = upstream.Upstream("http://x", context_window=49152)  # pinned window — no /props probe
+        body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
         for k in bodykeys.ALL:
-            out[k] = "internal"
-        for k in bodykeys.ALL:                      # the transform _prep applies, in isolation
-            out.pop(k, None)
+            body[k] = "internal"
+        raw, _sent_estimate, _capture_path = up._prep(body, False, _Rlog())
+        out = json.loads(raw)
         self.assertEqual(set(out) & set(bodykeys.ALL), set())
+        self.assertEqual(out["messages"], [{"role": "user", "content": "hi"}])  # real content untouched
 
     def test_every_named_key_is_in_ALL(self):
         """A key defined and left out of the tuple is the same silent leak, one step earlier."""

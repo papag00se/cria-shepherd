@@ -173,12 +173,30 @@ class TheStatusDecidesTheDiagnosisTests(unittest.TestCase):
         self.assertEqual(f, "")
 
 
+class _Sess:
+    def __init__(self, fetched_pages, workspace_root):
+        self.fetched_pages = fetched_pages
+        self.workspace_root = workspace_root
+
+
 class WiringTests(unittest.TestCase):
-    def test_the_fetch_ground_truth_carries_it(self):
-        import inspect
-        src = inspect.getsource(loop._fetch_ground_truth)
-        self.assertIn("_route_mismatch_fact", src)
-        self.assertIn("workspace_root", src)
+    """``_fetch_ground_truth`` is the caller `_route_mismatch_fact` actually runs behind in
+    production (loop.py's coder frame) — it must fold the mismatch fact into the ledger text it
+    hands the coder, and it must carry the session's REAL ``workspace_root`` through (not a blank
+    one), since the mismatch only fires once the coder's own source names the host."""
+
+    def test_the_fetch_ground_truth_carries_the_mismatch_and_the_workspace_root(self):
+        with _WS(("resolve_handle.py", 'API_BASE = "https://api.handle.me"\n')) as ws:
+            out = loop._fetch_ground_truth(CODER_403, _Sess(dict(LEDGER), ws))
+        self.assertIn("User-Agent", out)
+        self.assertIn("HTTP 403", out)
+        self.assertIn("api.handle.me", out)
+
+    def test_a_blank_workspace_root_never_fires_the_mismatch(self):
+        # Proves workspace_root really travels: with none passed, `_fetch_ground_truth` cannot
+        # tie the bare 403 to a host, so the mismatch fact must be absent from its output.
+        out = loop._fetch_ground_truth(CODER_403, _Sess(dict(LEDGER), ""))
+        self.assertNotIn("User-Agent", out)
 
 
 if __name__ == "__main__":

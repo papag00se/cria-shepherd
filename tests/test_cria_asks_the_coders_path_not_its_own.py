@@ -148,13 +148,23 @@ class InstallAdviceIsJudgedOnTheCodersPathTests(unittest.TestCase):
 
 
 class RoutingKeepsItsOwnPathTests(unittest.TestCase):
-    def test_cli_availability_still_answers_for_crias_process(self):
-        """cria spawns these itself; the coder's path would advertise an unrunnable backend."""
-        import inspect
+    """cria spawns these itself; the coder's path would advertise an unrunnable backend."""
 
+    def test_cli_availability_answers_from_crias_own_path(self):
         from cria import routing
-        self.assertIn("shutil.which", inspect.getsource(routing._cli_available))
-        self.assertNotIn("toolpath", inspect.getsource(routing._cli_available))
+        with mock.patch.object(routing.shutil, "which",
+                                lambda b: "/usr/bin/" + b if b == "fake-cli" else None):
+            self.assertTrue(routing._cli_available("fake-cli"))
+            self.assertFalse(routing._cli_available("other-cli"))
+
+    def test_it_ignores_the_coders_path_entirely(self):
+        """The coder's oracle says YES; cria's own says NO. If the coder's path ever leaked in
+        here, this is the case that would flip — a backend cria cannot actually spawn would be
+        advertised as available and then fail at call time."""
+        from cria import routing
+        with mock.patch.object(toolpath, "which", lambda b: "/home/u/.local/bin/" + b), \
+             mock.patch.object(routing.shutil, "which", return_value=None):
+            self.assertFalse(routing._cli_available("fake-cli"))
 
 
 if __name__ == "__main__":

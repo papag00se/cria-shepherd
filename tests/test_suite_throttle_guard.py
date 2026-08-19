@@ -68,20 +68,45 @@ class ThrottleDetection(unittest.TestCase):
 
 
 class PreflightRefuses(unittest.TestCase):
-    def test_a_non_200_live_service_blocks_READY(self):
-        import inspect
+    """Drives the real ``main()`` end to end — its exit code IS the operator-facing readiness
+    signal (``sys.exit(0 if ready else 1)``), stronger than reading the lines that compute
+    ``ready``: a source match proves the words are written, never that the process actually
+    exits non-zero when a declared service is down.
+
+    Tool/site-packages probing is isolated out (``TOOLS={}``, no stale installs) so only the
+    live-service dimension the walk is actually about can move the verdict."""
+
+    def _run(self, status):
+        import contextlib
         import importlib
+        import io
+        from unittest import mock
         pf = importlib.import_module("preflight")
-        src = inspect.getsource(pf.main)
-        self.assertIn("live_services()", src)
-        self.assertIn("st != 200", src)
-        self.assertIn("ready = False", src)
+        buf = io.StringIO()
+        with mock.patch.object(pf, "live_services",
+                               return_value=[("ada-handles", "https://api.handle.me", status)]), \
+             mock.patch.object(pf, "TOOLS", {}), \
+             mock.patch.object(pf, "stale_suite_installs", return_value=[]), \
+             mock.patch("sys.argv", ["preflight"]), \
+             contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit) as cm:
+                pf.main()
+        return cm.exception.code, buf.getvalue()
+
+    def test_a_non_200_live_service_blocks_READY(self):
+        code, out = self._run(403)
+        self.assertEqual(code, 1)
+        self.assertIn("NOT READY", out)
+
+    def test_a_200_live_service_does_not_block(self):
+        code, out = self._run(200)
+        self.assertEqual(code, 0)
+        self.assertIn("READY", out)
+        self.assertNotIn("NOT READY", out)
 
     def test_the_reason_tells_the_operator_what_to_do(self):
-        import inspect
-        import importlib
-        src = inspect.getsource(importlib.import_module("preflight").main)
-        self.assertIn("wait and retry", src)
+        _code, out = self._run(403)
+        self.assertIn("wait and retry", out)
 
 
 class ProbeMustNotBlockEverything(unittest.TestCase):

@@ -101,14 +101,54 @@ def wrote(path, content):
 
 class WiringTests(unittest.TestCase):
     def test_the_gate_passes_its_reasoner_through(self):
-        import inspect
-        src = inspect.getsource(loop._grounded_steer_or_none)
-        self.assertIn("_dictates_code(directive, ask)", src)
+        """Driven for real: the `ask` handed to `_grounded_steer_or_none` must be the one
+        `_dictates_code` actually calls, carrying the SAME directive — proven with a marker only
+        the real wiring could have carried into the question."""
+        asked = {}
+
+        def ask(system, user):
+            asked["system"] = system
+            return "DICTATES"
+
+        directive = 'UNSTUCK UNIQUE_MARKER_ABC pytest.register_pytest_mark("live")'
+        loop._grounded_steer_or_none(directive, "evidence", _Rlog(), ask=ask)
+        self.assertIn("UNIQUE_MARKER_ABC", asked.get("system", ""))
 
     def test_author_steer_supplies_one_on_both_of_its_paths(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertEqual(src.count("ask=_steer_ask"), 2)   # tooled path and plain path
+        """BOTH internal branches (tooled — a real workspace_root — and toolless) must hand
+        `_grounded_steer_or_none` a REAL reasoner-backed ask, not None, so a code-shaped
+        conclusion still gets the one-question check on either path. Proven by driving each
+        branch end to end and watching the dictates-code question actually fire, carrying the
+        directive's own marker — a call that could only happen with a live ask wired in."""
+        import json as _json
+        import tempfile
+
+        def reasoner(diagnose_reply, seen):
+            def chat(body, rlog):
+                sysm = body["messages"][0].get("content", "")
+                if "DIRECTIVE:" in sysm:
+                    seen["dictates_check_ran"] = True
+                    seen["marker_seen"] = "UNIQUE_MARKER_XYZ" in sysm
+                    return _json.dumps({"choices": [{"message": {"content": "DESCRIBES"}}]}).encode()
+                return _json.dumps({"choices": [{"message": {"content": diagnose_reply}}]}).encode()
+            return chat
+
+        gs = loop.GuardState()
+        body = {"messages": [{"role": "user", "content": "build it"}], "tools": []}
+        diagnose = 'UNSTUCK UNIQUE_MARKER_XYZ pytest.register_pytest_mark("live")'
+
+        seen_toolless = {}
+        loop.author_steer(reasoner(diagnose, seen_toolless), None, "", gs, body, _Rlog(),
+                          condition="wheel_spin")
+        self.assertTrue(seen_toolless.get("dictates_check_ran"), "toolless path never asked")
+        self.assertTrue(seen_toolless.get("marker_seen"))
+
+        seen_tooled = {}
+        with tempfile.TemporaryDirectory() as ws:
+            loop.author_steer(reasoner(diagnose, seen_tooled), None, ws, gs, body, _Rlog(),
+                              condition="wheel_spin")
+        self.assertTrue(seen_tooled.get("dictates_check_ran"), "tooled path never asked")
+        self.assertTrue(seen_tooled.get("marker_seen"))
 
     def test_a_DICTATES_steer_is_still_delivered_not_dropped(self):
         """The operator's 2026-08-04 ruling stands: the steer SHIPS. The drop's harm evidence came
@@ -190,18 +230,35 @@ class ACutReplyIsNotADirectiveTests(unittest.TestCase):
     a prompt asking for "a SHORT directive (under 120 words)". The real directive was sitting in the
     discarded reasoning_content."""
 
-    def test_the_tooled_author_path_drops_a_cut_reply(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn("massage.is_truncated(comp)", src)
+    def test_the_tooled_author_path_drops_a_cut_reply_and_traces_it(self):
+        """Driven end to end: a reply that hits finish_reason=length on the tooled branch must be
+        dropped (never delivered as a directive) and the drop must be traced, never silent."""
+        import json as _json
+        import tempfile
 
-    def test_it_is_traced_never_silent(self):
-        import inspect
-        self.assertIn("loop.steer_truncated", inspect.getsource(loop.author_steer))
+        def chat(body, rlog):
+            return _json.dumps({"choices": [{"message": {"content": "half a directive that never fin"},
+                                            "finish_reason": "length"}]}).encode()
+
+        gs = loop.GuardState()
+        body = {"messages": [{"role": "user", "content": "build it"}], "tools": []}
+        rlog = _Rlog()
+        with tempfile.TemporaryDirectory() as ws:
+            out = loop.author_steer(chat, None, ws, gs, body, rlog, condition="wheel_spin")
+        self.assertIsNone(out)
+        self.assertIn("loop.steer_truncated", [k for k, _ in rlog.events])
 
     def test_the_toolless_sibling_still_has_its_own_guard(self):
-        import inspect
-        self.assertIn("massage.is_truncated", inspect.getsource(loop.summarize))
+        """`summarize` — the primitive the toolless branch calls — refuses a reply cut at the
+        output cap on its OWN, rather than depending on the tooled branch's check."""
+        import json as _json
+
+        def chat(body, rlog):
+            return _json.dumps({"choices": [{"message": {"content": "partial nonsense"},
+                                            "finish_reason": "length"}]}).encode()
+
+        out = loop.summarize(chat, None, "sys", "user", _Rlog(), phase="x", retry_off=False)
+        self.assertEqual(out, "")
 
 
 class ARuminatingReplyIsNotADirectiveTests(unittest.TestCase):
@@ -235,10 +292,29 @@ class ARuminatingReplyIsNotADirectiveTests(unittest.TestCase):
         self.assertFalse(loop._ruminating_reply(varied))
 
     def test_both_author_branches_drop_it_and_trace_it(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertEqual(src.count("_ruminating_reply("), 2)   # tooled + toolless branch
-        self.assertIn("loop.steer_degenerate", src)
+        """Both the tooled and toolless branches must run the SAME rumination check — a periodic
+        repetition of one block dropped, and the drop traced — driven end to end on each branch
+        rather than counted as mentions of the detector's name in the source."""
+        import json as _json
+        import tempfile
+
+        def chat(body, rlog):
+            return _json.dumps({"choices": [{"message": {"content": self._PARA * 30},
+                                            "finish_reason": "stop"}]}).encode()
+
+        gs = loop.GuardState()
+        body = {"messages": [{"role": "user", "content": "build it"}], "tools": []}
+
+        rlog_toolless = _Rlog()
+        out_toolless = loop.author_steer(chat, None, "", gs, body, rlog_toolless, condition="wheel_spin")
+        self.assertIsNone(out_toolless)
+        self.assertIn("loop.steer_degenerate", [k for k, _ in rlog_toolless.events])
+
+        rlog_tooled = _Rlog()
+        with tempfile.TemporaryDirectory() as ws:
+            out_tooled = loop.author_steer(chat, None, ws, gs, body, rlog_tooled, condition="wheel_spin")
+        self.assertIsNone(out_tooled)
+        self.assertIn("loop.steer_degenerate", [k for k, _ in rlog_tooled.events])
 
 
 class TheTriggerIsNotSpelledInPythonTests(unittest.TestCase):

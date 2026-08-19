@@ -121,10 +121,24 @@ class BlindnessIsNotEvidenceTests(unittest.TestCase):
 class OneOwnerPerQuestionTests(unittest.TestCase):
     def test_the_tally_is_asked_rather_than_a_second_phrase_table(self):
         """A per-runner list of "zero tests" phrasings beside the per-runner tally table would be the
-        same table twice, and the second copy is the one that goes stale."""
-        import inspect
-        src = inspect.getsource(proberun._tally_says_zero)
-        self.assertIn("tally", src)
+        same table twice, and the second copy is the one that goes stale. Proven by making the
+        PARSED tally and the raw summary text disagree: `_tally_says_zero` must follow the tally
+        alone — a second phrase table scanning the summary would answer the other way in both
+        directions below."""
+        def _result(summary, tally):
+            return proberun.ProbeResult(command="x", exit_code=0, summary=summary, tally=tally)
+
+        # A tally that says zero, inside a summary that reads like a real passing run: only a
+        # phrase-table reading the prose would be fooled into saying "tests ran" here.
+        zero_tally_upbeat_summary = _result("15 tests ran successfully, all green!", "0f/0p")
+        self.assertTrue(proberun._tally_says_zero(zero_tally_upbeat_summary))
+
+        # No tally parsed at all (an unrecognized runner) — even summary text that reads like zero
+        # tests ran must NOT be treated as evidence; only a real parsed tally may (#11b, #2). A
+        # phrase table scanning the summary would answer True here; the tally alone answers False.
+        unparsed_but_zero_looking_summary = _result("0 tests, nothing ran", "")
+        self.assertFalse(proberun._tally_says_zero(unparsed_but_zero_looking_summary))
+
         self.assertEqual(len(proberun._ZERO_TEST_MARKERS), 1)   # only the runner that prints no count
 
     def test_the_marker_list_holds_only_runners_with_no_tally(self):
