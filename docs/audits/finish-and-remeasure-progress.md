@@ -184,6 +184,8 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 | 6 | rust-toml-cli × gemma4 | **4/4** | full marks, 33 calls |
 | 7 | shipping-rates-rb × qwen35 | **1/5** | killed at 30 min, 218 calls |
 | 8 | cart-billing-go × qwen35 | **5/5** | full marks |
+| 9 | orders-api-py × qwen35 | **4/4** | full marks, 246 calls |
+| 10 | feed-pipeline-java × qwen35 | **0/5** | killed at 15 min — `mvn compile` failed, `cannot find symbol` at `Importer.java:124`. **Below its own range** (last five: 5, 2, 5, 4, 3), so this one is a candidate regression and goes on the walk list. Nothing cria-side looks wrong in its capture: no refusals, no errors, gate ran twice, seeding fired once and the judge needed only **2** inspection rounds against the usual six. |
 
 ### The gemma4 arm, complete — and what it does and does not say
 
