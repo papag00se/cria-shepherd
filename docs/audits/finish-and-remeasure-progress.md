@@ -185,7 +185,25 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 | 7 | shipping-rates-rb × qwen35 | **1/5** | killed at 30 min, 218 calls |
 | 8 | cart-billing-go × qwen35 | **5/5** | full marks |
 | 9 | orders-api-py × qwen35 | **4/4** | full marks, 246 calls |
+| 11 | handles-cli-node × qwen35 | **4/4** | full marks, ran to the 60-min budget, 307 calls |
+| 12 | rust-toml-cli × qwen35 | **4/4** | full marks |
+| 13 | shipping-rates-rb × ternary-bonsai | **1/5** | killed at 30 min |
 | 10 | feed-pipeline-java × qwen35 | **0/5** | killed at 15 min — `mvn compile` failed, `cannot find symbol` at `Importer.java:124`. **Below its own range** (last five: 5, 2, 5, 4, 3), so this one is a candidate regression and goes on the walk list. Nothing cria-side looks wrong in its capture: no refusals, no errors, gate ran twice, seeding fired once and the judge needed only **2** inspection rounds against the usual six. |
+
+### Two arms complete — the totals are flat-to-down and the maxed count is up
+
+| model | arm total, previous three passes | now | cells at 100%, then → now |
+|---|---|---|---|
+| gemma4 | 15, 13, 23 of 27 | **22** | 2, 2, 2 → **5** |
+| qwen35 | 24, 22, 21 of 27 | **18** | 5, 4, 2 → **4** |
+
+**gemma4's total is flat (22 vs 23). qwen35's is down 3 (18 vs 21).** Both arms gained maxed cells.
+
+The consistent shape across twelve cells is **more all-or-nothing**: more cells taking everything, more taking nothing. That is a coherent thing for this batch of fixes to have done — several of them removed cria assertions that were nudging a coder off a working state — but it is equally the shape of variance, and two arms cannot separate those. The ternary-bonsai and nemotron arms are the test.
+
+qwen35's drop is carried almost entirely by one cell, `feed-pipeline-java` at 0/5, which is below its own range and already on the walk list.
+
+**`shipping-rates-rb` has now failed under all three models tried** — 0/5, 1/5, 1/5. It is the only cell that has never cleared in this pass.
 
 ### The gemma4 arm, complete — and what it does and does not say
 
