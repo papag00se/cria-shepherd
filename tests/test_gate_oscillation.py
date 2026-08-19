@@ -1,4 +1,5 @@
 """An ALTERNATION between two finding-sets defeats every "same as last time" check cria has."""
+import json
 import unittest
 
 from cria import loop, prompts
@@ -63,8 +64,41 @@ class NotePropertyTests(unittest.TestCase):
 
 class RideAlongTests(unittest.TestCase):
     def test_the_note_never_replaces_the_checker_findings(self):
-        # It is APPENDED to the reason, so the checker's own words stay first and whole.
-        import inspect
-        src = inspect.getsource(loop.Loop._renudge)
-        self.assertIn('reason = reason + "\\n\\n" + sess.oscillation_note', src)
-        self.assertIn('sess.oscillation_note = ""', src)   # consumed → fires once, not forever
+        """Driven through the real _renudge -> _work path: the coder's ACTUAL next turn must carry
+        the checker's own words first and whole, with the note appended after — and the note must
+        not still be sitting on the session afterward (consumed → fires once, not forever)."""
+        import tempfile
+
+        from cria.loop import Loop, LoopContext, PlanSession
+        from cria.plan import Plan, PlanItem
+
+        class _Rlog:
+            def emit(self, *a, **k):
+                pass
+
+        class _Planner:
+            def plan_for(self, *a, **k):
+                return None
+
+        sent = []
+
+        def coder(body, rlog):
+            sent.append(body["messages"][-1]["content"])
+            return json.dumps({"choices": [{"message": {"role": "assistant",
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"}}]}}]}).encode()
+
+        ctx = LoopContext(planner=_Planner(), coder_chat=coder, reasoner_chat=None, runs_dir="",
+                          workspace_root=tempfile.mkdtemp())
+        run = Loop(ctx)
+        plan = Plan(id="x", task="build it", created="c", items=[PlanItem("step 1")])
+        sess = PlanSession(plan=plan)
+        note = "This finding-set has traded places with another before; a smaller change may serve better."
+        sess.oscillation_note = note
+        reason = "test.py:5: undefined name 'self'"
+        run._renudge(sess, "k", {"messages": [{"role": "user", "content": "build it"}], "tools": []},
+                     reason, _Rlog())
+        self.assertTrue(sent, "the coder was never re-driven")
+        last = sent[-1]
+        self.assertIn(reason + "\n\n" + note, last)   # checker's words first and whole, note after
+        self.assertEqual(sess.oscillation_note, "")     # consumed

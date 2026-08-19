@@ -10,7 +10,6 @@ content and asked for something different, so the only thing left to vary was th
 The emit on the very next line already clipped the same string to 120 chars for cria's own log. It
 was bounded for the record and unbounded for the model.
 """
-import inspect
 import unittest
 
 from cria import loop, prompts
@@ -21,10 +20,21 @@ class RepeatActionIsBoundedTests(unittest.TestCase):
         self.assertTrue(0 < loop.REPEAT_ACTION_CHARS <= 400)
 
     def test_the_quoted_action_is_clipped_where_it_is_set(self):
-        src = inspect.getsource(loop._refusals_in_window)
-        self.assertIn("REPEAT_ACTION_CHARS)", src)
-        self.assertIn("_clip(", src)
-        self.assertNotIn('last = f"{fn.get(', src)
+        """Driven through the real _refusals_in_window: a refused 3.2KB write must come back
+        bounded, at the one place that decides what the redirect quotes."""
+        from cria import denial
+        body = "x" * 3200
+        messages = [
+            {"role": "assistant", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "write_file",
+                 "arguments": '{"path": "handle_resolver.py", "content": "%s"}' % body}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": denial.mark("outside the workspace")},
+        ]
+        n, last = loop._refusals_in_window(messages)
+        self.assertEqual(n, 1)
+        self.assertLess(len(last), 400)
+        self.assertNotIn(body, last)
+        self.assertIn("handle_resolver.py", last)   # bounded, not blank — the path still survives
 
     def test_a_3kb_write_cannot_be_re_supplied_through_the_redirect(self):
         body = "x" * 3200

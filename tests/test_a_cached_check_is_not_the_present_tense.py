@@ -130,8 +130,29 @@ class TheAuthorIsToldHowOldTheBlockIsTests(unittest.TestCase):
         self.assertIn("not as it is now", line)
 
     def test_the_author_call_fills_it(self):
-        import inspect
-        self.assertIn("checks_age=", inspect.getsource(loop))
+        """Driven through the real author_steer: a file written AFTER the gate ran must show up in
+        the age line the reasoner actually reads, not just be spelled as a keyword in the source."""
+        import json as _json
+
+        class _Rlog:
+            def __init__(self):
+                self.events = []
+
+            def emit(self, kind, **kw):
+                self.events.append((kind, kw))
+
+        sent = []
+
+        def reasoner(body, _rlog):
+            sent.append(body["messages"][-1]["content"])
+            return _json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        msgs = [{"role": "user", "content": "t"}, gate("cart.go:12: undefined: foo"), wrote("cart.go")]
+        loop.author_steer(reasoner, None, None, loop.GuardState(), {"messages": msgs, "tools": []},
+                          _Rlog(), condition="thrash", truth_text="cart.go:12: undefined: foo")
+        self.assertTrue(sent, "the reasoner was never called")
+        self.assertIn("not as it is now", sent[-1])
+        self.assertIn("cart.go", sent[-1])
 
     def test_the_ordering_of_authority_is_otherwise_unchanged(self):
         """The 1-5 ranking is load-bearing; only the caveat on #1 moved."""

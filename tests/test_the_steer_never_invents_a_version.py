@@ -123,12 +123,13 @@ class TheShapeIsNotOneEcosystemTests(unittest.TestCase):
 
 
 class ItIsPartOfTheGroundingFamilyTests(unittest.TestCase):
-    def test_it_runs_inside_the_one_grounding_gate(self):
-        """Every steer path funnels through `_grounded_steer_or_none`; adding the check anywhere else
-        would give one door a rule the others lack (#23)."""
-        import inspect
-        self.assertIn("_invented_version(directive, evidence)",
-                      inspect.getsource(loop._grounded_steer_or_none))
+    """Every steer path funnels through `_grounded_steer_or_none`; adding the check anywhere else
+    would give one door a rule the others lack (#23). That the invented-version check runs INSIDE
+    this shared gate — not bolted on somewhere only some callers reach — is what
+    TheInventedVersionIsRefusedTests already proves: `steer()` calls nothing but
+    `_grounded_steer_or_none`, and every invented-version directive it feeds that function comes back
+    None. There is no way for those tests to pass unless the check lives in this exact function, so a
+    second, source-reading version of the same claim here would only restate it."""
 
     def test_it_returns_a_safe_null_not_a_reworded_steer(self):
         """#4: no fallback. The version IS the instruction, so a directive with it stripped out says

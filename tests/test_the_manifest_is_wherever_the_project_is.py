@@ -62,9 +62,12 @@ POM = "<project><artifactId>feed</artifactId></project>\n"
 
 class OneOwnerForWhereTheProjectIsTests(unittest.TestCase):
     def test_it_reads_the_inventory(self):
-        import inspect
-        self.assertIn("probediscovery.inventory",
-                      inspect.getsource(execcheck.manifest_commands))
+        """The measured incident itself: a Cargo.toml one directory down from root — `cargo new
+        toml-cli` — must still be found. Reading root only (the original bug) finds nothing here."""
+        with _Workspace({"toml-cli/Cargo.toml": CARGO, "toml-cli/src/main.rs": "fn main() {}\n"}) as root:
+            out = execcheck.manifest_commands(root)
+        self.assertIn("cargo run", out)
+        self.assertIn("cargo test", out)
 
 
 if __name__ == "__main__":
