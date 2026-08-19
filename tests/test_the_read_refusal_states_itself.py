@@ -30,7 +30,10 @@ from cria import prompts, writeproxy
 
 
 class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
-    STEERS = ("large_read_steer", "large_range_steer")
+    # `spill_read_steer` is the SIBLING fix (`_spill_read_command`) — it got this right first, and
+    # is included here so the same four behavioural checks below prove it is still consistent with
+    # the two fixed after it, rather than checking a docstring sentence survives.
+    STEERS = ("large_read_steer", "large_range_steer", "spill_read_steer")
 
     def test_neither_steer_predicts_a_truncation(self):
         for name in self.STEERS:
@@ -68,13 +71,6 @@ class TheGapThatMadeItFalseTests(unittest.TestCase):
         sentence would have been true near the boundary; they are an order of magnitude apart."""
         observed_cut_bytes = 20707 * 4
         self.assertLess(writeproxy.READ_INLINE_MAX * 5, observed_cut_bytes)
-
-    def test_the_sibling_fix_is_still_in_place(self):
-        """`_spill_read_command` got this right first. Its reasoning is the reason these two are
-        now consistent with it rather than contradicting it."""
-        import inspect
-        src = inspect.getsource(writeproxy._spill_read_command)
-        self.assertIn("claim about cria dressed as a claim about the world", src)
 
 
 class TheRefusalStillRefusesTests(unittest.TestCase):

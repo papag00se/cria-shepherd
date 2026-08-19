@@ -210,10 +210,17 @@ class TheBoundIsTotalTokensNotPromptTokensTests(unittest.TestCase):
 
     def test_the_density_calibration_still_reads_the_prompt_count(self):
         """Density is real prompt ÷ estimated prompt. Feeding it the total would poison the ratio
-        the floor budgets with."""
-        import inspect
-        src = inspect.getsource(Upstream._calibrate)
-        self.assertIn("tokenratio.record(model, prompt_tokens, estimate)", src)
+        the floor budgets with — behavioural: the event the learner emits carries exactly what it
+        was fed, so a code path that swapped in total_tokens would show 32000, not 2000, here."""
+        from cria import tokenratio
+        tokenratio.reset()
+        up = self._fallen_back()
+        rlog = _Rlog()
+        up._calibrate("calib-test-model", {"prompt_tokens": 2000, "completion_tokens": 30000,
+                                           "total_tokens": 32000}, 500, rlog)
+        calibrated = rlog.first("context.calibrated")
+        self.assertIsNotNone(calibrated, "the shift from the 1.8 default must be notable at these numbers")
+        self.assertEqual(calibrated["real"], 2000)
 
     def test_a_configured_window_is_authoritative(self):
         up = Upstream("http://x", context_window=49152)
@@ -250,12 +257,29 @@ class TheCoderIsToldSomethingActionableTests(unittest.TestCase):
         self.assertNotIn("almost always means", t)
 
     def test_the_guard_selects_it_before_the_others(self):
-        import inspect
+        """Behavioural: a turn whose marker claims BOTH window_exhausted and dead_stream (a shape
+        that should never happen, but proves the selection order when it does) must be read as the
+        window guard, not the dead-stream one — and get that guard's own notice, not the other's."""
+        from cria import bodykeys, loop, prompts
 
-        from cria import loop
-        src = inspect.getsource(loop.guard_rumination)
-        self.assertIn("rumination_guard_window", src)
-        self.assertLess(src.index("window_exhausted"), src.index("dead_stream"))
+        def _ruminating_both():
+            return {"choices": [{"message": {"role": "assistant", "content": ""},
+                                 "finish_reason": "rumination"}],
+                    bodykeys.RUMINATION: {"window_exhausted": True, "dead_stream": True,
+                                          "room": 100, "frames": 90, "chunks": 5}}
+
+        calls = []
+
+        def coder_chat(body, rlog):
+            calls.append(body)
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"},
+                                            "finish_reason": "stop"}]}).encode()
+
+        rlog = _Rlog()
+        loop.guard_rumination(_ruminating_both(), {"messages": [{"role": "user", "content": "hi"}]},
+                              coder_chat, rlog)
+        self.assertEqual(rlog.first("loop.rumination")["guard"], "window_exhausted")
+        self.assertEqual(calls[0]["messages"][-1]["content"], prompts.load("rumination_guard_window"))
 
     def test_it_never_names_the_shim_to_the_model(self):
         import re

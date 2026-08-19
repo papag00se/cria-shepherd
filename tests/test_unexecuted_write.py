@@ -65,23 +65,48 @@ class BoundTests(unittest.TestCase):
         self.assertNotIn("cria", text.lower())
         self.assertIn("write tool call", text)
 
-    def test_the_counter_resets_each_step(self):
-        import inspect
-        src = inspect.getsource(loop.Loop)
-        self.assertIn("sess.unexecuted_nudges = 0", src)
+    def test_the_counter_resets_when_a_step_advances(self):
+        """Driven for real: a step that just advanced must not carry a stale nudge count into the
+        next one."""
+        from test_loop import _body, _ctx, _plan, _Recorder, _Rlog, _toolcall
+        sess = loop.PlanSession(plan=_plan(2))
+        sess.unexecuted_nudges = 2
+        L = loop.Loop(_ctx(_Recorder([_toolcall()]), None, _plan(2)))
+        L._advance(sess, "k", _body(), 1, 2, _Rlog())
+        self.assertEqual(sess.unexecuted_nudges, 0)
 
 
 class BothPathsTests(unittest.TestCase):
     """A coder-turn guard that lands in one driver half and misses the other is the divergence
-    that killed the search-escape on the live path. Both halves, or neither."""
+    that killed the search-escape on the live path. Both halves, or neither — driven for real
+    rather than grepped, so a rename or refactor of either half cannot silently disarm it."""
 
-    def test_the_check_is_in_BOTH_driver_halves(self):
-        import inspect
-        for fn in (loop.Loop._work_item, loop.Loop._gate_single_done):
-            with self.subTest(fn=fn.__name__):
-                src = inspect.getsource(fn)
-                self.assertIn("unexecuted_write(", src)
-                self.assertIn("MAX_UNEXECUTED_NUDGES", src)
+    PASTE = ("Here is the script:\n\n```python\n"
+             + "\n".join(f"line_{i} = {i}" for i in range(20)) + "\n```\n")
+
+    def _pasted_file_completion(self):
+        return {"choices": [{"message": {"role": "assistant", "content": self.PASTE},
+                             "finish_reason": "stop"}]}
+
+    def test_the_multi_step_driver_catches_a_pasted_file(self):
+        from test_loop import _body, _ctx, _plan, _Recorder, _Rlog
+        rlog = _Rlog()
+        L = loop.Loop(_ctx(_Recorder([self._pasted_file_completion()]), None, _plan(2)))
+        L._store.put("k", loop.PlanSession(plan=_plan(2)))
+        L.drive(_body(), "k", None, rlog)
+        self.assertIn("loop.unexecuted_write", rlog.kinds())
+        self.assertGreaterEqual(L._store.get("k").unexecuted_nudges, 1)
+
+    def test_the_plan_off_driver_catches_a_pasted_file(self):
+        from cria.loop import _plan_off_session, _synthetic_plan
+        from test_loop import _body, _ctx, _Recorder, _Rlog
+        rlog = _Rlog()
+        L = loop.Loop(_ctx(_Recorder([self._pasted_file_completion()]), None))
+        sess = _plan_off_session(_synthetic_plan("build an ada handle resolver"), "")
+        L._store.put("sid:k", sess)
+        L.drive(_body(), "sid:k", None, rlog)
+        self.assertIn("loop.unexecuted_write", rlog.kinds())
+        self.assertGreaterEqual(sess.unexecuted_nudges, 1)
 
 
 class NestedFenceTests(unittest.TestCase):

@@ -14,12 +14,15 @@ Base-rated across every captured critic approval (n=106 with a workspace and a p
 fires ONCE, on exactly that verdict, with no false positives. Offered as evidence, not enforced as a
 gate — deterministic code gathers, the reasoner judges.
 """
-import inspect
+import json
 import os
 import tempfile
 import unittest
 
 from cria import groundtruth, loop, prompts
+from cria.loop import Loop
+
+from test_loop import _ctx, _Rlog
 
 
 class AbsentLiteralTests(unittest.TestCase):
@@ -72,12 +75,36 @@ class ItIsEvidenceNotAGateTests(unittest.TestCase):
         self.assertIn("Decide for yourself", t)
 
     def test_verify_appends_it_as_evidence_and_does_not_branch_on_it(self):
-        src = inspect.getsource(loop.Loop._verify)
-        self.assertIn("groundtruth.absent_step_literals(item, workspace_root)", src)
-        self.assertIn('labels["absent_literals"]', src)
-        # no early return / forced verdict on it
-        i = src.index("absent_step_literals")
-        self.assertNotIn("return False", src[i:i + 400])
+        """Driven for real, the measured case (mellum2 3/4): the artifact exists but neither
+        quoted literal is in it, AND the critic itself approves anyway. Two claims, one fixture —
+        the evidence reaches the critic's prompt, and its presence does not force a verdict: the
+        critic's own DONE is what comes back, not an overridden one."""
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "live_test.py"), "w") as f:
+            f.write("import sys\nprint(sys.argv[1])\n")
+        replies = [
+            {"choices": [{"message": {"content": json.dumps(
+                {"done": True, "reason": "it exists and works", "proposed_fix": ""})}}]},
+            {"choices": [{"message": {"content": json.dumps({"consistent": True, "why": ""})}}]},
+        ]
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(body)
+            return json.dumps(replies[min(len(calls) - 1, len(replies) - 1)]).encode()
+
+        L = Loop(_ctx(None, chat, None))
+        item = ("Write live_test.py: a standalone script that calls the real API to resolve the "
+                "handle 'goose' and 'papagoose' and prints the results.")
+        ok, reason = L._verify(item, "coder summary", "", "", _Rlog(), workspace_root=d)
+        self.assertTrue(ok, "the critic's own DONE must not be overridden by the evidence alone")
+        prompt = calls[0]["messages"][-1]["content"]
+        # the FILLED evidence fragment, not just the literals — those two words are ALSO in the
+        # raw step text, so checking for them alone would not distinguish "evidence appended" from
+        # "the step was merely restated".
+        self.assertIn("the step quotes 'goose', 'papagoose', and live_test.py does not contain "
+                     "them anywhere", prompt)
+        self.assertIn("not a verdict", prompt)        # the "evidence, not a gate" framing rode with it
 
     def test_it_reads_the_disk_not_a_claim(self):
         doc = groundtruth.absent_step_literals.__doc__

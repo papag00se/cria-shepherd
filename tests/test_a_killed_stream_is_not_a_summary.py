@@ -113,13 +113,29 @@ class RealAnswersAreUntouchedTests(unittest.TestCase):
 
 
 class ItIsTheSameRuleAsTheSteerPathTests(unittest.TestCase):
-    def test_both_read_the_same_two_markers(self):
-        import inspect
-        for fn in (loop.summarize, loop._steer_from_reasoning):
-            with self.subTest(fn=fn.__name__):
-                src = inspect.getsource(fn)
-                self.assertIn("bodykeys.RUMINATION", src)
-                self.assertIn('"rumination"', src)
+    """summarize's refusal is proven above (TheCorpseIsRefusedTests). _steer_from_reasoning shares
+    the SAME rule — driven here directly rather than grepped, on the two markers separately: the
+    rumination flag alone, and the finish_reason spelling alone (mirroring the two summarize tests
+    above)."""
+
+    STUCK_REASONING = "I am stuck and cannot proceed; the tests keep failing the same way"
+
+    def test_the_steer_rescue_refuses_the_rumination_flag_alone(self):
+        comp = {"choices": [{"message": {"content": "ON_TRACK",
+                                         "reasoning_content": self.STUCK_REASONING},
+                             "finish_reason": "stop"}],
+                bodykeys.RUMINATION: {"degenerate": True}}
+        rlog = _Rlog()
+        self.assertIsNone(loop._steer_from_reasoning(comp, "ON_TRACK", lambda s: "do X now", rlog))
+        self.assertIn("loop.steer_rescue_skipped", rlog.names())
+
+    def test_the_steer_rescue_refuses_the_finish_reason_spelling_alone(self):
+        comp = {"choices": [{"message": {"content": "ON_TRACK",
+                                         "reasoning_content": self.STUCK_REASONING},
+                             "finish_reason": "rumination"}]}
+        rlog = _Rlog()
+        self.assertIsNone(loop._steer_from_reasoning(comp, "ON_TRACK", lambda s: "do X now", rlog))
+        self.assertIn("loop.steer_rescue_skipped", rlog.names())
 
 
 if __name__ == "__main__":

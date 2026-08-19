@@ -4345,12 +4345,13 @@ class SingleItemMethodTests(unittest.TestCase):
         # THE "both paths" INVARIANT (this is the regression guard for the search-escape divergence): a
         # coder-turn guard added to _coder_turn reaches BOTH halves. If a future edit re-inlines a coder
         # call in one half, a new guard could silently miss it again — this catches that.
-        import inspect
         # _work delegates the actual coder work to _work_item (the completion path splits off first to run
         # the whole-task satisfaction critic); the coder call lives in _work_item.
+        # A namespace check on the compiled bytecode, not a source-text search: immune to a comment
+        # merely mentioning "_coder_turn", and it is what actually determines whether the call happens.
         for method in ("_work_item", "_drive_single_item", "_gate_single_done"):
-            src = inspect.getsource(getattr(Loop, method))
-            self.assertIn("_coder_turn", src, f"{method} must route its coder call through _coder_turn")
+            names = getattr(Loop, method).__code__.co_names
+            self.assertIn("_coder_turn", names, f"{method} must route its coder call through _coder_turn")
 
     # ---- _reasoned_reanchor ------------------------------------------------------------------
     def test_reasoned_reanchor_authors_else_canned(self):
@@ -5347,15 +5348,39 @@ class ApprovePathConfirmTests(unittest.TestCase):
         of the tool-call template it has just used five times, so it emits another one) and answers a
         bare word 10/10. zaya1 is the mirror — JSON 4/4, word 1/4. So the simple shape is a second
         attempt keyed on an UNREADABLE reply, never the standing ask, and nothing keys on which model
-        is loaded."""
-        import inspect
-        from cria import loop as L
-        src = inspect.getsource(L._confirm_completion)
-        self.assertIn("answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT", src)
-        self.assertNotIn("answer_now=verifytools.ANSWER_NOW_CONSISTENT", src)
-        # ...and a caller that offers no simple shape still gets exactly ONE forced round.
-        loop_src = inspect.getsource(L._judge_completion)
-        self.assertIn("2 if answer_now_simple else 1", loop_src)
+        is loaded.
+
+        Driven for real: a judge that never answers readably (every reply carries leaked tool-call
+        debris) is forced through the escalation, and the ask TEXT at each forced round is read off
+        the outgoing request — not grepped from the source."""
+        import tempfile
+        from cria import loop as L, verifytools
+
+        def _leaked_text_chat():
+            calls = []
+
+            def chat(body, rlog):
+                calls.append(body)
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "<tool_call>garbled nonsense"}}]}).encode()
+            return chat, calls
+
+        # _confirm_completion's own ask: the FIRST forced round must be the GENERIC closer (it
+        # passes no `answer_now`), and only the SECOND is the confirm judge's simple one-word ask.
+        with tempfile.TemporaryDirectory() as ws:
+            Path(ws, "a.py").write_text("x = 1\n")
+            chat, calls = _leaked_text_chat()
+            L._confirm_completion("Write a.py", "reason", ws, chat, None, _Rlog(), phase="test")
+        self.assertEqual(len(calls), 3, "one real ask, then exactly two forced rounds")
+        self.assertNotEqual(calls[1]["messages"][-1]["content"], verifytools.ANSWER_NOW_CONSISTENT,
+                            "the STANDING (first-forced) ask must be the generic closer")
+        self.assertEqual(calls[2]["messages"][-1]["content"], verifytools.ANSWER_NOW_CONSISTENT,
+                         "the confirm judge's simple ask is the SECOND attempt")
+
+        # ...and a caller that offers no simple shape at all gets exactly ONE forced round, not two.
+        chat2, calls2 = _leaked_text_chat()
+        L._judge_completion(chat2, None, "system", "user", _Rlog(), phase="critic", workspace_root="")
+        self.assertEqual(len(calls2), 2, "bounded to one forced round with no simple shape offered")
 
     def test_the_confirm_reads_a_one_word_verdict_AND_still_reads_json(self):
         """Measured on real captured forced-answer rounds: the confirm judge answers a JSON demand
