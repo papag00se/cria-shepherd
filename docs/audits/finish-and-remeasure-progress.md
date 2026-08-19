@@ -188,6 +188,7 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 | 11 | handles-cli-node × qwen35 | **4/4** | full marks, ran to the 60-min budget, 307 calls |
 | 12 | rust-toml-cli × qwen35 | **4/4** | full marks |
 | 13 | shipping-rates-rb × ternary-bonsai | **1/5** | killed at 30 min |
+| 14 | cart-billing-go × ternary-bonsai | **2/5** | killed at 45 min. Its own stray `debug2_test.go` does not compile (`too many errors`), which takes the build down and three checks with it — `rounding_fixed_everywhere` reports the cart total as **48.58, the wanted value**, and fails only because the hidden cases cannot build. The model's litter, not cria's. History 5, 5, 1, 1, 5, 5, 2 — bimodal, and 2 sits between its two modes. |
 | 10 | feed-pipeline-java × qwen35 | **0/5** | killed at 15 min — `mvn compile` failed, `cannot find symbol` at `Importer.java:124`. **Below its own range** (last five: 5, 2, 5, 4, 3), so this one is a candidate regression and goes on the walk list. Nothing cria-side looks wrong in its capture: no refusals, no errors, gate ran twice, seeding fired once and the judge needed only **2** inspection rounds against the usual six. |
 
 ### Two arms complete — the totals are flat-to-down and the maxed count is up
