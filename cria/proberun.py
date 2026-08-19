@@ -809,10 +809,24 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c | tr -cd '0-9'); "
         f"if [ \"$__cria_n\" -le {budget} ]; then "
         f"printf '%s\\n' \"$__cria_out\"; "
-        f"else printf '%s' \"$__cria_out\" | head -c {half}; "
-        f"printf '\\n...[middle %d bytes elided; head+tail kept so an early failure survives]...\\n' "
+        # WHOLE LINES ON BOTH SIDES OF THE CUT. `head -c`/`tail -c` slice mid-token, and the two
+        # halves then read as ONE record. Walked on `shipping-rates-rb x ternary-bonsai` 1787111689,
+        # where the model was handed a failure block headed `test_zone_for_non_eu_country_is_
+        # international`, carrying a US country object, ending in GERMANY's data, attributed to
+        # `test_zone_for_eu_member_is_eu` — the head of error 1 spliced to the tail of error 5, under
+        # the label "the checker's OWN message and the line it flagged". The join was invisible
+        # because the cut landed inside `"subregio` / `ec"=>"10.38…`.
+        #
+        # A shortened record is missing information; a spliced one is information that was never
+        # true. `sed '$d'` drops the head's trailing partial line and `sed '1d'` drops the tail's
+        # leading partial line, so neither side can contain a token the tool never printed. It costs
+        # at most one whole line per side and it is language-agnostic — no runner's format is parsed
+        # here (#20).
+        f"else printf '%s' \"$__cria_out\" | head -c {half} | sed '$d'; "
+        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous; "
+        f"they are the START and the END of the output with the middle removed]...\\n' "
         f"\"$((__cria_n - {budget}))\"; "
-        f"printf '%s' \"$__cria_out\" | tail -c {half}; printf '\\n'; fi; "
+        f"printf '%s' \"$__cria_out\" | tail -c {half} | sed '1d'; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
 
