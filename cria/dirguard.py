@@ -185,7 +185,10 @@ _INSTALL_REMEDY = (
     # fallback the box actually supports, and it says how to make the gem LOADABLE — installing to
     # vendor/bundle without putting it on the load path is the failure that cost a 100% ruby run.
     (re.compile(r"\bgem\s+install", re.I),
-     (("gem_bundler", ("bundle",)), ("gem_direct", ("gem",)))),
+     # `ruby` joins bundler's needs because the route now names a one-off `<ruby> -e` command, and a
+     # route may only print a binary cria has actually resolved (#5b — the whole reason `{{TOOL}}`
+     # tokens exist). A ruby project without ruby on PATH has bigger problems than this sentence.
+     (("gem_bundler", ("bundle", "ruby")), ("gem_direct", ("gem",)))),
     (re.compile(r"\bcargo\s+install", re.I),
      (("cargo_add", ("cargo",)),)),
     (re.compile(r"\bgo\s+install", re.I),

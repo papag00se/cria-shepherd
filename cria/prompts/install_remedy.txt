@@ -17,6 +17,17 @@
 # apt, dnf, brew and pacman are handled — they install to the machine and have no project-local
 # form, so no route is invented for them (#3).
 #
+# …AND HOW TO RUN A ONE-OFF COMMAND UNDER IT. The routes explain how to make a LIBRARY FILE
+# loadable, which is what the tests run against. A coder checking something with a throwaway
+# `ruby -e` / `python -c` goes through no library file and loads none of the install — and
+# nothing here said so. Walked on `shipping-rates-rb x ternary-bonsai` 1787111689: the coder
+# invented `BUNDLE_PATH=./vendor/bundle ruby -e "require 'countries'"`, got the same LoadError
+# eight times, and the one time it typed `bundle exec` it worked — with the working form still
+# in its own history.
+# MEASURED before adding it (#15): across 139 captured sessions, 49 — **35%** — show a bare
+# `-e`/`-c` one-liner co-occurring with a load error. Only the two ecosystems whose install is
+# project-local and needs a launcher; node resolves from ./node_modules with no wrapper.
+#
 # AND A ROUTE MUST NOT NAME A PATH ITS OWN COMMAND DOES NOT CREATE. `gem_bundler` told the coder to
 # run `bundle install --path vendor/bundle` and then unshift `vendor/bundle/gems/<gem>-<version>/lib`.
 # Bundler writes `vendor/bundle/ruby/<abi>/gems/…`; `vendor/bundle/gems` does not exist. That path
@@ -30,11 +41,11 @@
 # WORKS, and every check in shipping-rates-rb/verify.py runs `subprocess.run(cmd, cwd=ws)` — the
 # project directory. It fails only from elsewhere, which BUNDLE_GEMFILE answers.
 
-pip_venv = First check whether you need it at all: the package may already be importable, and `pip install -e .` or `pip install .` installs YOUR OWN project, which your script and tests do not need. If a third-party package really is missing, install it into the project: `{{PYTHON3}} -m venv .venv && ./.venv/bin/pip install <pkg>`, then run with `./.venv/bin/python`.
+pip_venv = First check whether you need it at all: the package may already be importable, and `pip install -e .` or `pip install .` installs YOUR OWN project, which your script and tests do not need. If a third-party package really is missing, install it into the project: `{{PYTHON3}} -m venv .venv && ./.venv/bin/pip install <pkg>`, then run with `./.venv/bin/python`. That applies to a one-off check too — `{{PYTHON3}} -c "..."` uses the system interpreter and will not see it.
 
 npm_local = Drop the global flag: `{{NPM}} install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
 
-gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`.
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`. A one-off command that does NOT go through your library file — `{{RUBY}} -e "..."` to check something — loads none of it: put `{{BUNDLE}} exec` in front of that one.
 
 gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable FROM YOUR CODE — `$LOAD_PATH.unshift` the gem's `lib` directory at the top of your library file, so it is on the load path for anything that requires it. Setting `GEM_HOME=vendor/bundle` only covers commands you launch yourself; tests and scripts you did not write are run without it, and those are what will be run against your code.
 

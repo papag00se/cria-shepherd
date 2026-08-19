@@ -37,7 +37,9 @@ def _with_tools(*present):
 
 class ARouteIsOnlyOfferedIfItsToolExistsTests(unittest.TestCase):
     def test_bundler_present_gets_the_bundler_route(self):
-        with _with_tools("bundle", "gem"):
+        # `ruby` is one of that route's needs since 2026-08-19 — it names a one-off `<ruby> -e`
+        # command, and a route may only print a binary cria resolved (#5b).
+        with _with_tools("bundle", "gem", "ruby"):
             self.assertIn("bundle install --path vendor/bundle",
                           dirguard._local_install_advice("gem install countries"))
 

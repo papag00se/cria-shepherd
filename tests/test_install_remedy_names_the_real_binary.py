@@ -24,19 +24,24 @@ class RouteNamesTheDiscoveredBinary(unittest.TestCase):
         dirguard.toolpath.which, dirguard._versioned_variant = self._which, self._variant
 
     def _box(self, present: dict):
-        """A box where `present` maps a plain name to the executable actually on PATH."""
+        """A box where `present` maps a plain name to the executable actually on PATH.
+
+        NOTE `ruby` is now one of `gem_bundler`'s needs: the route names a one-off `<ruby> -e`
+        command, and a route may only print a binary cria has actually resolved (#5b — the whole
+        reason the `{{TOOL}}` tokens exist). A fixture without it falls through to `gem_direct`,
+        which is correct behaviour and not what these tests are about."""
         dirguard.toolpath.which = lambda n: n if present.get(n) == n else None
         dirguard._versioned_variant = lambda n: present.get(n) if present.get(n) != n else None
 
     def test_the_versioned_name_reaches_the_sentence(self):
         """FAILS BEFORE: the advice said `bundle install`, a command this box cannot run."""
-        self._box({"bundle": "bundle3.2", "gem": "gem"})
+        self._box({"bundle": "bundle3.2", "gem": "gem", "ruby": "ruby"})
         advice = dirguard._local_install_advice("gem install countries")
         self.assertIn("bundle3.2 install --path vendor/bundle", advice)
         self.assertNotIn("`bundle install", advice)
 
     def test_a_plain_name_is_left_alone(self):
-        self._box({"bundle": "bundle", "gem": "gem"})
+        self._box({"bundle": "bundle", "gem": "gem", "ruby": "ruby"})
         self.assertIn("`bundle install --path vendor/bundle`",
                       dirguard._local_install_advice("gem install countries"))
 
