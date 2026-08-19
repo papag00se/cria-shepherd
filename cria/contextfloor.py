@@ -155,8 +155,14 @@ def _msg_text(m: dict) -> str:
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}
         a = fn.get("arguments")
-        parts.append(a if isinstance(a, str) else json.dumps(a or ""))
-        parts.append(fn.get("name") or "")
+        a = a if isinstance(a, str) else json.dumps(a or "")
+        # READABLE, because this text has two readers. Counting tokens does not care about order,
+        # but the compaction note's bullets are `digest_reduce`d from this same string and go to the
+        # MODEL — and appending the name after the arguments rendered them as
+        # `• {"path":"spec/shipping_spec.rb"}read_file`, walked on `shipping-rates-rb x
+        # ternary-bonsai` 1787111689. `name(args)` costs the same handful of punctuation tokens and
+        # reads as what it is.
+        parts.append(f"{fn.get('name') or '?'}({a})")
     return "".join(parts)
 
 
@@ -644,6 +650,21 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     if files:
         parts.append("Files modified in them (still on disk — re-read one if you need its current "
                      "contents): " + ", ".join(files) + ".")
+    # …AND SAY IT EVEN WHEN THE DROPPED TURNS ONLY READ. The line above fires only when the dropped
+    # span itself contains a WRITE, but staleness does not depend on that: a turn that merely READ a
+    # file is summarised here with that file's contents, and any LATER turn can have rewritten it.
+    #
+    # Walked on `shipping-rates-rb x ternary-bonsai` 1787111689. Four times in the run's last
+    # stretch this note carried the STARTING `rates.rb` — no express zone, no `zone_for`, and the
+    # `>` the model had fixed in its first edit — under the heading "Summary of what those turns
+    # contained", at the top of the prompt. Three of the four had no caveat at all, because those
+    # dropped spans held only reads. The model was chasing a stale-state bug at the time.
+    #
+    # The caveat is unconditional because it is unconditionally true: this note describes the PAST.
+    if digests:
+        parts.append("Everything above describes turns that have already happened. Where it quotes a "
+                     "file, that is what the file said THEN — the workspace has moved on since, and "
+                     "read_file is the only current answer.")
     return {"role": "user", "content": "\n".join(parts)}
 
 
