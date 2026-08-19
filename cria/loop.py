@@ -527,7 +527,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             # The careful pass may answer through the verdict tool — same channel it inspects on.
             # The toolless retry has no channel to answer on but text, and declares no key.
             verdict_key="" if reasoning_off else "satisfied",
-            capped=capped,
+            capped=capped, seed_files=True,
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
@@ -817,7 +817,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       workspace_root: str = "", max_tokens: int = 8192,
                       force_think_off: bool = False, transcript: list | None = None,
                       answer_now: str | None = None, answer_now_simple: str | None = None,
-                      verdict_key: str = "", capped: list | None = None) -> dict:
+                      verdict_key: str = "", capped: list | None = None,
+                      seed_files: bool = False) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -833,6 +834,28 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         {"role": "user", "content": user},
     ]
     inspectable = bool(workspace_root) and os.path.isdir(workspace_root)
+    # HAND IT THE FILES RATHER THAN MAKE IT ASK. The loop below is the judge naming one file, cria
+    # reading it, and the whole conversation being re-sent — 1,511 rounds across the captures, 87% of
+    # them fetching exactly one file, at a cost that grows with every round (47K -> 62K -> 83K ->
+    # 102K chars on one measured steer, its last call alone 247 seconds). Gathering facts is
+    # deterministic code's job; judging them is the reasoner's (#8). The tools stay: this covers the
+    # newest files under a budget, not the repository, and the block names anything it could not fit.
+    # OPT-IN, and the steer author deliberately does not opt in. `6726b8a` removed inlined contents
+    # from THAT seat after a 57K curl'd spec went in twice under two path spellings — 115K of a 210K
+    # prompt, in a composed two-message call the context floor has no turns to drop from, and the
+    # reasoner died four times. Its answer was a LIST plus tools, and it measured out at 210K -> 89K
+    # chars with zero dead calls. That decision stands where it was made. What is different for a
+    # JUDGE is the bound: whole files under JUDGE_FILE_BUDGET, canonical paths so one file cannot
+    # arrive twice, dependency trees already folded out, and anything that does not fit NAMED rather
+    # than cut — so the 57K spec would be skipped and pointed at, not inlined.
+    if inspectable and seed_files:
+        seeded = groundtruth.files_for_a_judge(workspace_root)
+        if seeded:
+            # BEFORE the question, not after it. The files are context; the thing being asked has to
+            # be the last thing read. (It also keeps `messages[-1]` the prompt every caller and test
+            # reasonably expects it to be.)
+            messages.insert(1, {"role": "user", "content": seeded})
+            rlog.emit("loop.judge_files_seeded", phase=phase, chars=len(seeded))
     rounds = 0
     forced_rounds = 0
     while True:
@@ -3542,7 +3565,7 @@ class Loop:
                 self._ctx.reasoner_chat, role, system, user, rlog,
                 phase="critic" + ("-noreason" if reasoning_off else ""),
                 workspace_root="" if reasoning_off else workspace_root,
-                force_think_off=reasoning_off)
+                seed_files=True, force_think_off=reasoning_off)
             vtext = _completion_text(comp)
             if role is not None:
                 vtext = role.clean_content(vtext)  # drop leaked reasoning when off

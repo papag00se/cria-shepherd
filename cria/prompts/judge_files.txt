@@ -1,0 +1,5 @@
+# The workspace files handed to a JUDGE up front, so it does not spend a model call per file asking
+# for them. Parsed by prompts.load_map. See groundtruth.files_for_a_judge for the budget and why.
+header = ⟦ctx:files⟧ THE CONTENTS OF THE {{COUNT}} MOST RECENTLY CHANGED FILES IN THE WORKSPACE, read from disk just now. This is what is actually there, not a claim by anyone. Judge against these rather than asking for them again.
+file = ----- {{PATH}} -----\n{{BODY}}
+skipped = NOT INCLUDED ABOVE (too large to fit alongside the rest, so they are named instead of cut): {{PATHS}}. Use read_file if you need one of them.

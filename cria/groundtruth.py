@@ -255,6 +255,70 @@ def _fold_install_prefixes(entries):
     return kept, [(m, p, c) for p, (m, c) in sorted(buckets.items())]
 
 
+# How much of the workspace a JUDGE is handed outright, before it starts asking for files.
+# A third of `verifytools.VERIFY_MAX_CHARS`, so the inspection loop keeps most of its budget for
+# whatever this does not cover.
+#
+# WHY IT EXISTS. The judge's inspection is a tool-use loop: it names one file, cria reads it, the
+# whole conversation is re-sent, repeat. Measured across every captured session: 1,511 rounds, 87%
+# of them fetching exactly ONE file — and the cost is quadratic, because round 4 re-sends everything
+# rounds 1-3 read. One steer's loop grew 47K -> 62K -> 83K -> 102K chars and its final call alone
+# took 247 SECONDS. That is a reasoner doing fact-gathering, which is deterministic code's job (#8).
+#
+# BOUNDED BY THE WORK, NOT BY THE REPO. Newest-first is the inventory's own order and dependency
+# trees are already folded out of it, so a ten-thousand-file monorepo where the session touched three
+# files yields those three files. Measured over the captures: a session writes a median of 2 distinct
+# files, p90 4, max 5.
+#
+# WHOLE FILES ONLY. A file that does not fit is not included and is NAMED as not included — cria
+# never hands a model half a file (#5), and a judge told which files it has NOT been given knows to
+# go and read them. The tools stay available either way.
+JUDGE_FILE_BUDGET = 20_000
+
+
+def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
+    """The newest files in the workspace, whole, up to ``budget`` — "" when there is no workspace.
+
+    Same walk, same exclusions and same newest-first order as :func:`workspace_inventory`, because
+    they answer the same question one level apart: that one says what exists, this one says what is
+    in it. Binary and unreadable files are skipped silently (they are still in the listing)."""
+    if not root or not os.path.isdir(root):
+        return ""
+    labels = prompts.load_map("judge_files")
+    entries: list[tuple[float, str, int]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _INVENTORY_EXCLUDE)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
+    entries, _folded = _fold_install_prefixes(entries)
+    entries.sort(key=lambda e: (-e[0], e[1]))
+
+    shown: list[str] = []
+    skipped: list[str] = []
+    spent = 0
+    for _mtime, rel, size in entries:
+        if size > budget - spent:
+            skipped.append(rel)
+            continue
+        try:
+            body = open(os.path.join(root, rel), encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue      # binary or unreadable: it is in the listing, it is not quotable here
+        spent += len(body)
+        shown.append(prompts.fill(labels["file"], path=rel, body=body))
+    if not shown:
+        return ""
+    out = prompts.fill(labels["header"], count=str(len(shown))) + "\n\n" + "\n\n".join(shown)
+    if skipped:
+        out += "\n\n" + prompts.fill(labels["skipped"], paths=", ".join(sorted(skipped)))
+    return out
+
+
 def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
     evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
