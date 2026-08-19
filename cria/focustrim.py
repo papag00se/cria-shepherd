@@ -419,11 +419,19 @@ def _stub_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
                 new_calls.append(tc)
                 continue
             hit = False
-            for key in ("content", "contents", "new_string", "patch"):
+            # `old_string` belongs here for the same reason the rest do: this whole call is
+            # superseded. Leaving it out rendered a stale edit as the BEFORE text in full and the
+            # AFTER text as a pointer, so every seat asked whether the coder is looping was shown no
+            # diff — the judgement it exists to make. Walked on `shipping-rates-rb x ternary-bonsai`
+            # 1787111689, where the reasoner's whole view of the run's edits was old_string after
+            # old_string with every new_string elided.
+            for key in ("content", "contents", "new_string", "patch", "old_string"):
                 v = args.get(key)
                 if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
-                    args[key] = prompts.fill(prompts.load_map("compact_view")["write_stub_superseded"],
-                                             chars=str(len(v)), path=path)
+                    words = prompts.load_map("compact_view")
+                    args[key] = prompts.fill(
+                        words["write_stub_replaced" if key == "old_string" else "write_stub_superseded"],
+                        chars=str(len(v)), path=path)
                     hit = True
             if hit:
                 touched, stubbed = True, stubbed + 1

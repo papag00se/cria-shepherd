@@ -16,3 +16,10 @@ write_stub_refused = [elided {{CHARS}} chars — this write was REFUSED (see the
 # carried six of them for a single Ruby file at four different byte counts, and at most one could be
 # true (#5b).
 write_stub_superseded = [elided {{CHARS}} chars — an EARLIER version of {{PATH}}, replaced by a later write in this session; read_file for what is actually on disk now]
+# THE OTHER HALF OF AN EDIT. The key lists carried `new_string` and not `old_string`, so a
+# historical edit reached its reader as the BEFORE text in full and the AFTER text as a
+# pointer — every seat asked to judge whether the coder is looping was shown no diff, which is
+# exactly the judgement it was convened to make (walked on shipping-rates-rb x ternary-bonsai
+# 1787111689). Both halves are equally historical; both get a pointer. Worded separately
+# because a replaced fragment is not "an earlier version of the file" — it is a piece of one.
+write_stub_replaced = [elided {{CHARS}} chars — the text this edit replaced in {{PATH}}; read_file for what is actually on disk now]

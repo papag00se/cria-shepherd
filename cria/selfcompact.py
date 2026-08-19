@@ -472,7 +472,12 @@ def strip_frame_echo(summary: str, ask: str = "") -> str:
 # (content it emitted, now durably on disk) — tool RESULTS the model read are never touched
 # (never-truncate). Mirrors writeproxy's write-tool names; a test asserts sync.
 _WRITE_TOOL_NAMES = ("write_file", "edit_file")
-_WRITE_ARG_KEYS = ("content", "new_string")
+# `old_string` is here for the same reason the others are: the whole call is historical. Leaving
+# it out rendered a past edit as the BEFORE in full and the AFTER as a pointer — the reader
+# saw what the code used to be and never what it became. It gets its own wording (see
+# compact_view.write_stub_replaced) because a replaced fragment is not a version of the file.
+_WRITE_ARG_KEYS = ("content", "new_string", "old_string")
+_REPLACED_ARG_KEYS = ("old_string",)
 _STUB_MIN_CHARS = 400
 
 
@@ -556,8 +561,11 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
         for key in _WRITE_ARG_KEYS:
             v = args.get(key)
             if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
-                args[key] = prompts.fill(prompts.load_map("compact_view")[stub_key],
-                                         chars=str(len(v)), path=path)
+                # A replaced FRAGMENT gets its own sentence — calling it "an earlier version of
+                # <path>" would be a small false fact about what the model is looking at.
+                words = prompts.load_map("compact_view")
+                use = "write_stub_replaced" if key in _REPLACED_ARG_KEYS and stub_key != "write_stub_refused" else stub_key
+                args[key] = prompts.fill(words[use], chars=str(len(v)), path=path)
                 touched = True
         if touched:
             changed = True
