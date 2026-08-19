@@ -59,12 +59,14 @@ class TheFamilyIsRecognisedByShapeTests(unittest.TestCase):
                 self.assertIsNotNone(found)
                 self.assertEqual(found["name"], n)
 
-    def test_container_exec_needs_no_special_case(self):
-        import inspect
-
-        from cria import loop
-        self.assertNotIn('| {"container.exec"}', inspect.getsource(loop))
-
+    # A dedicated "container.exec needs no special case in loop" test used to pin the exact old
+    # bug's spelling (`assertNotIn('| {"container.exec"}', ...)`). That claim is now covered twice
+    # over: recognizing "container.exec" by shape alone is proven above
+    # (test_every_harness_shell_is_the_family, which includes it in HARNESS_SHELLS), and the
+    # broader "no module hand-rolls its own name set" invariant — which catches ANY reintroduced
+    # special case, not just this one's exact old spelling — is OneOwnerTests below. Verified by
+    # reintroducing the old-shaped special case (`name in SHELL_TOOL_NAMES | {"container.exec"}`)
+    # into cria/loop.py: OneOwnerTests.test_no_module_keeps_its_own_name_set alone catches it.
 
 class NothingElseIsSweptInTests(unittest.TestCase):
     """Every tool name that appears in cria's captures, plus the ones it drops on purpose."""

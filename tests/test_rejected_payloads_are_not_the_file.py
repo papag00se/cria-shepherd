@@ -89,13 +89,21 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
 
     def test_no_dead_attribute_probe_remains(self):
         """`hasattr(editrecovery, "is_edit_failure")` guarded a name that has never existed, so the
-        fallback WAS the rule — a mitigation for a problem that isn't there (#4)."""
+        fallback WAS the rule — a mitigation for a problem that isn't there (#4). No input can
+        exercise this (the attribute is always absent, so a reintroduced guard would be dead code
+        either way) — genuinely structural, so this checks the parsed AST for a `hasattr(...)` call
+        rather than searching source text, which cannot be fooled by the function's own docstring
+        narrating the removed pattern in prose (that prose literally contains the string
+        'hasattr(editrecovery, "is_edit_failure")' — a text search has to dodge its own evidence)."""
+        import ast
         import inspect
+        import textwrap
         from cria import editrecovery
         self.assertFalse(hasattr(editrecovery, "is_edit_failure"))
-        code = [ln for ln in inspect.getsource(writeproxy._failed_edit_ids).splitlines()
-                if not ln.strip().startswith(("#", '"""')) and "is_edit_failure" not in ln.strip('" ')]
-        self.assertFalse([ln for ln in code if "hasattr(" in ln])
+        tree = ast.parse(textwrap.dedent(inspect.getsource(writeproxy._failed_edit_ids)))
+        calls = [n for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "hasattr"]
+        self.assertEqual(calls, [], "a hasattr(...) guard has crept back into _failed_edit_ids")
 
 
 if __name__ == "__main__":

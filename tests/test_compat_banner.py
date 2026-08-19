@@ -160,14 +160,22 @@ class SpentOnPrintNotOnBuildTests(unittest.TestCase):
     returning a completion goes through), and the flag is spent at the moment the lines are
     prepended."""
 
-    def test_the_flag_is_not_spent_by_building(self):
-        import inspect
+    def test_the_flag_is_not_spent_when_lines_are_empty(self):
+        """The flag is set AFTER the lines are known non-empty, on the way out — not before. A
+        loaded model whose /props answer the banner has nothing to say about (no recognizable
+        template) must leave the one shot unspent, the same as the no-loaded-model case below."""
+        import types as _t
         from cria import server
         h = next(v for v in vars(server).values()
                  if isinstance(v, type) and hasattr(v, "_take_connect_lines"))
-        src = inspect.getsource(h._take_connect_lines)
-        # the flag is set AFTER the lines are known non-empty, on the way out
-        self.assertLess(src.index("if not lines:"), src.index("_connect_done = True"))
+        up = _t.SimpleNamespace(props=lambda r: {"unrelated": 1}, loaded_model=lambda r: "qwen35_9b_q6")
+        fake = _t.SimpleNamespace(server=_t.SimpleNamespace(
+            _connect_done=False, router=None, upstream=up,
+            cfg=_t.SimpleNamespace(routing=_t.SimpleNamespace(roles={}))))
+        fake._coder_endpoint = lambda: h._coder_endpoint(fake)
+        rlog = _t.SimpleNamespace(emit=lambda *a, **k: None)
+        self.assertEqual(h._take_connect_lines(fake, rlog), [])
+        self.assertFalse(fake.server._connect_done, "an empty banner must not spend the one shot")
 
     def test_there_is_exactly_one_emitter(self):
         import inspect
@@ -184,12 +192,19 @@ class SpentOnPrintNotOnBuildTests(unittest.TestCase):
 
     def test_it_asks_the_CODERs_endpoint_not_the_shared_default(self):
         """A role may carry its own base_url, so the shared upstream can be a different server than
-        the one doing the work (#5b)."""
-        import inspect
+        the one doing the work (#5b). Give the router a coder-specific endpoint that differs from
+        the shared default and confirm that is the one returned."""
+        import types as _t
         from cria import server
         h = next(v for v in vars(server).values()
                  if isinstance(v, type) and hasattr(v, "_coder_endpoint"))
-        self.assertIn('endpoint_for("coder")', inspect.getsource(h._coder_endpoint))
+        coder_specific = _t.SimpleNamespace(name="CODER_SPECIFIC")
+        shared_default = _t.SimpleNamespace(name="SHARED_DEFAULT")
+        router = _t.SimpleNamespace(
+            endpoint_for=lambda role: coder_specific if role == "coder" else shared_default)
+        fake = _t.SimpleNamespace(server=_t.SimpleNamespace(router=router, upstream=shared_default))
+        fake._coder_endpoint = lambda: h._coder_endpoint(fake)
+        self.assertIs(fake._coder_endpoint(), coder_specific)
 
     def test_no_loaded_model_means_no_banner_rather_than_a_config_label(self):
         import types as _t

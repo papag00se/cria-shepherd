@@ -48,8 +48,45 @@ class AskEchoTests(unittest.TestCase):
 
 
 class WiringTests(unittest.TestCase):
-    def test_both_call_sites_pass_their_own_ask(self):
-        import inspect
-        src = inspect.getsource(selfcompact.compact)
-        self.assertIn('strip_frame_echo(summarize(summarizable), prompts.load("selfcompact_summary"))', src)
-        self.assertIn('strip_frame_echo(refold(combined), prompts.load("selfcompact_refold"))', src)
+    """Drive compact() end to end and prove each of its TWO summarizing call sites strips echoes of
+    its OWN ask — not the other one's. A swapped ask (summarize compared against the refold prompt,
+    or vice versa) would let that call's own echo leak straight into the rollup, since the two asks
+    share no sentence."""
+
+    def _msgs(self):
+        return [{"role": "system", "content": "sys"}] + [
+            {"role": "assistant", "content": "y" * 200} for _ in range(50)]
+
+    def test_the_summarize_call_site_strips_its_own_ask(self):
+        summary_ask = prompts.load("selfcompact_summary")
+        echo = selfcompact._ask_sentences(summary_ask)[0]
+        real = "The coder fetched the spec and found GET /handles/{handle}."
+
+        def summarize(mm):
+            return echo + "\n" + real
+
+        state = selfcompact.CompactState()
+        _, state, applied = selfcompact.compact(
+            self._msgs(), summarize, state, trigger_tokens=10, keep_tail_tokens=10, refold=None)
+        self.assertTrue(applied)
+        self.assertNotIn(echo, state.summary)
+        self.assertIn(real, state.summary)
+
+    def test_the_refold_call_site_strips_its_own_ask(self):
+        # A rolling summary already near/over REFOLD_TOKENS, so even a small new increment pushes the
+        # combined text over the threshold and triggers the refold tier.
+        refold_ask = prompts.load("selfcompact_refold")
+        echo = selfcompact._ask_sentences(refold_ask)[0]
+        real = "The rolled-up summary now covers steps 1 through 9."
+
+        def refold(text):
+            return echo + "\n" + real
+
+        state = selfcompact.CompactState(summary="z" * 30000, covered=2)
+        _, state, applied = selfcompact.compact(
+            self._msgs(), lambda mm: "plain new delta, no echo", state,
+            trigger_tokens=10, keep_tail_tokens=10, recompact_tokens=1,
+            refold=refold, refold_tokens=6000)
+        self.assertTrue(applied)
+        self.assertNotIn(echo, state.summary)
+        self.assertIn(real, state.summary)

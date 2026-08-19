@@ -1,8 +1,50 @@
 """The 'task is finished but the session cannot stop' off-ramp must run on BOTH driver paths."""
-import inspect
+import json
 import unittest
+import unittest.mock
 
 from cria import loop
+from cria.loop import Loop, LoopContext, PlanSession
+from cria.plan import Plan, PlanItem
+
+
+class _RLog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
+
+
+class _Planner:
+    def __init__(self, plan):
+        self._plan = plan
+
+    def plan_for(self, messages, rlog, prior_work="", rewrite_summary=""):
+        return self._plan
+
+
+def _plan(n=1):
+    return Plan(id="20260707T0000-abcd1234", task="build it", created="2026-07-07T00:00:00+00:00",
+                items=[PlanItem(f"step {i+1}") for i in range(n)])
+
+
+_SHELL = {"type": "function", "function": {"name": "shell",
+          "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
+
+
+def _toolcall():
+    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}}]}
+
+
+def _body():
+    return {"messages": [{"role": "user", "content": "build an ada handle resolver"}],
+            "tools": [_SHELL], "stream": True}
+
+
+def _coder(body, rlog):
+    return json.dumps(_toolcall()).encode()
 
 
 class PathCoverageTests(unittest.TestCase):
@@ -15,20 +57,30 @@ class PathCoverageTests(unittest.TestCase):
     def test_the_check_is_a_shared_method_not_inlined_in_one_driver(self):
         self.assertTrue(hasattr(loop.Loop, "_periodic_satisfaction"))
 
-    def test_BOTH_drivers_call_it(self):
-        # _work_item drives a REAL plan's step; _drive_single_item drives the synthetic one-item
-        # plan that plan-off becomes. Both must offer the off-ramp.
-        for driver in ("_drive_single_item", "_work_item"):
-            src = inspect.getsource(getattr(loop.Loop, driver))
-            with self.subTest(driver=driver):
-                self.assertIn("_periodic_satisfaction", src,
-                              f"{driver} never runs the 'is the task done?' check")
+    def test_BOTH_drivers_call_it_with_the_right_plan_off_flag(self):
+        # _work_item drives a REAL plan's step (plan_off=False); _drive_single_item drives the
+        # synthetic one-item plan that plan-off becomes (plan_off=True). Both must offer the
+        # off-ramp, and each must identify itself correctly — spy on the shared method and drive
+        # both halves for real rather than searching either driver's source for the call.
+        calls = []
 
-    def test_the_plan_on_driver_is_the_one_that_regressed(self):
-        # Name the specific path, so deleting the plan-ON call fails loudly rather than silently
-        # restoring the 145-turn hang.
-        self.assertIn("plan_off=False", inspect.getsource(loop.Loop._work_item))
-        self.assertIn("plan_off=True", inspect.getsource(loop.Loop._drive_single_item))
+        def spy(self, sess, body, rlog, *, plan_off, blocked):
+            calls.append(plan_off)
+            return None
+
+        with unittest.mock.patch.object(Loop, "_periodic_satisfaction", spy):
+            ctx = LoopContext(planner=_Planner(_plan(2)), coder_chat=_coder, reasoner_chat=_coder,
+                              runs_dir="")
+            sess = PlanSession(plan=_plan(2))
+            Loop(ctx)._work_item(sess, "k", _body(), _RLog(), sess.plan.items[0], 1)
+
+            ctx2 = LoopContext(planner=_Planner(_plan(1)), coder_chat=_coder, reasoner_chat=_coder,
+                               planner_enabled=False, runs_dir="")
+            sess2 = PlanSession(plan=_plan(1), synthetic=True)
+            Loop(ctx2)._drive_single_item(sess2, _body(), "sid:x", _RLog())
+
+        self.assertEqual(calls, [False, True],
+                         "_work_item must pass plan_off=False, _drive_single_item plan_off=True")
 
 
 class DueScheduleTests(unittest.TestCase):
