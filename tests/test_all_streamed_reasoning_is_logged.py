@@ -194,11 +194,14 @@ class TheDeadStreamClockIsGoneTests(unittest.TestCase):
         self.assertFalse(hasattr(upstream, "DEAD_STREAM_SECONDS"))
 
     def test_the_operators_own_timeout_is_still_the_backstop(self):
-        """principle 6 names timeout_seconds as one of the three; it is the operator's to set."""
-        import inspect
+        """principle 6 names timeout_seconds as one of the three; it is the operator's to set. The
+        real field, not a source-text search that a comment or an unrelated string could also
+        satisfy."""
+        import dataclasses
 
         from cria import config
-        self.assertIn("timeout_seconds", inspect.getsource(config))
+        self.assertIn("timeout_seconds",
+                      [f.name for f in dataclasses.fields(config.UpstreamConfig)])
 
 
 if __name__ == "__main__":

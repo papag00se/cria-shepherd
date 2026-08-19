@@ -11,9 +11,11 @@ cria's steers hardened that into "the test runner's DNS is broken". The fact's o
 exists because "four separate steers instead told the coder the sandbox blocked the network" — and
 from this call site it could never have prevented that.
 """
+import json
 import unittest
 
 from cria import loop
+from tests.test_loop import _SHELL, _Recorder, _Rlog, _ctx, _plan, _single_loop, _synth, _toolcall
 
 
 class _Sess:
@@ -42,11 +44,28 @@ class TheAnchorCarriesTheMismatchTests(unittest.TestCase):
         self.assertNotIn("SAME HOST", anchor["content"])
 
     def test_both_coder_call_sites_pass_the_messages(self):
-        import inspect
-        src = inspect.getsource(loop)
-        self.assertNotIn("_fetched_facts_anchor(sess)\n", src,
-                         "a call site is still passing no messages")
-        self.assertGreaterEqual(src.count("_fetched_facts_anchor(sess, "), 2)
+        """Both real driver call sites — not just the function in isolation — must hand it the
+        coder's OWN turn history, or the mismatch fact this file exists for reaches only cria's
+        internal readers (reasoner prompts) and never the coder that needs it. Drive both."""
+        rec = _Recorder([_toolcall()])
+        l = loop.Loop(_ctx(rec, None))
+        sess = loop.PlanSession(plan=_plan(2))
+        sess.fetched_pages = _Sess.fetched_pages
+        item = sess.plan.items[0]
+        l._work_item(sess, "k", {"messages": CODER_403 + [{"role": "user", "content": "go"}],
+                                 "tools": [_SHELL]}, _Rlog(), item, 1)
+        sent = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("SAME HOST", sent)
+
+        rec2 = _Recorder([_toolcall()])
+        l2 = _single_loop(rec2)
+        sess2 = _synth()
+        sess2.fetched_pages = _Sess.fetched_pages
+        body2 = {"messages": CODER_403 + [{"role": "user", "content": "go"}],
+                "tools": [_SHELL], "stream": True}
+        l2._drive_single_item(sess2, body2, "sid:x", _Rlog())
+        sent2 = json.dumps(rec2.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("SAME HOST", sent2)
 
     def test_the_ledger_itself_is_unaffected(self):
         anchor = loop._fetched_facts_anchor(_Sess(), CODER_403)

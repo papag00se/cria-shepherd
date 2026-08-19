@@ -24,6 +24,7 @@ The second is the worse of the two because it FEEDS BACK — cria's wrong answer
 for cria's next wrong answer. So cria's own prior output is now marked in the transcript, and the
 prompt ranks its sections by authority instead of merely naming them.
 """
+import json
 import re
 import unittest
 
@@ -31,6 +32,11 @@ from cria import loop, prompts, selfcompact
 
 TOOL_SHAPES = re.compile(r"\b\w+\(\{|\bexec_command\(|\bedit_file\(|\bwrite_file\(")
 OUTPUT_TEMPLATE = re.compile(r"Chunk ID:|Process exited with code|Wall time:|Original token count:")
+
+
+class _NullRlog:
+    def emit(self, *a, **k):
+        pass
 
 SESSION = [
     {"role": "user", "content": "Resolve an Ada Handle to a Cardano address."},
@@ -143,10 +149,25 @@ class ThePromptRanksItsSourcesTests(unittest.TestCase):
 
 class TheSteerAuthorUsesBothTests(unittest.TestCase):
     def test_the_session_is_defanged_and_marked(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn("defang=True", src)
-        self.assertIn("_mark_own_notes(", src)
+        """Drive the real author with the measured SESSION shape (tool-call syntax + envelope) and a
+        prior cria note in it, and check what actually reaches the reasoner: no imitable syntax, and
+        the prior note labelled unreliable."""
+        from cria.loop import GuardState, author_steer
+
+        calls = []
+
+        def reasoner_chat(b, r):
+            calls.append(b)
+            return json.dumps({"choices": [{"message": {"content": "some steer"}}]}).encode()
+
+        from cria.indicators import SENTINEL
+        history = SESSION + [{"role": "user", "content": f"{SENTINEL} steered the coder — flail"}]
+        author_steer(reasoner_chat, None, None, GuardState(), {"messages": history, "tools": []},
+                    _NullRlog(), condition="wheel_spin")
+        sent = json.dumps(calls[-1].get("messages", calls[-1]))
+        self.assertIsNone(TOOL_SHAPES.search(sent))
+        self.assertIsNone(OUTPUT_TEMPLATE.search(sent))
+        self.assertIn("EARLIER NOTE FROM THIS SYSTEM", sent)
 
 
 class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):

@@ -134,22 +134,53 @@ class ThePlannerGetsTheSummaryNotTheTaskTests(unittest.TestCase):
 
 
 class ItIsWiredIntoTheDriverTests(unittest.TestCase):
-    def test_the_planner_call_uses_the_picker(self):
-        import inspect
+    """Drive the real continuation branch of ``_drive_locked``: a Codex-shaped compaction (same
+    root, shorter history) on a session ``_drive_locked`` has never seen before (no live
+    PlanSession — the shape is primed directly on the store, which is what a completed/evicted
+    session plus a resumed harness conversation looks like)."""
 
-        from cria import loop
-        src = inspect.getsource(loop.Loop._drive_locked)
-        self.assertIn("_rewrite_summary_text(messages, root_text)", src)
-        self.assertNotIn("rewrite_summary=root_text", src)
+    def _drive_continuation(self):
+        from cria.loop import CONTINUATION_MARKER, Loop, _history_root
+        from tests.test_loop import _ctx, _Rlog, _SHELL
+
+        class _Class:
+            def __init__(self, task_type="coding", engagement="task"):
+                self.task_type = task_type
+                self.engagement = engagement
+
+        root = "Make these four changes to the orders service: 1. Add …"
+        _root_text, root_fp = _history_root([{"role": "user", "content": root}])
+        coder = lambda b, r: b"{}"
+
+        l = Loop(_ctx(coder, None))
+        sk = "sid:x1"
+        l._store.observe_shape(sk, root_fp, 40)  # prime a longer prior history under this root
+
+        messages = [
+            {"role": "user", "content": root},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": f"{CONTINUATION_MARKER} Earlier in THIS session you added "
+                                        "the GET /orders/{id} route in orders/api.py; the DELETE "
+                                        "route is still missing."},
+        ]
+        body = {"messages": messages, "tools": [_SHELL]}
+        l._drive_locked(body, sk, _Class(), _Rlog())
+        return l
+
+    def test_the_planner_call_uses_the_picker(self):
+        """The planner must be told the RE-ANCHORED continuation, not the raw root task — handing
+        it the root asks it to re-plan the whole job, the one thing a continuation exists to avoid."""
+        l = self._drive_continuation()
+        self.assertIn("DELETE route is still missing", l._ctx.planner.rewrite_summary_seen)
+        self.assertNotIn("Make these four changes", l._ctx.planner.rewrite_summary_seen)
 
     def test_the_prior_work_uses_it_too(self):
         """The coder's protected context and the planner's frame must be the same text — handing
         the planner the summary and the coder the task is how the two disagree."""
-        import inspect
-
-        from cria import loop
-        src = inspect.getsource(loop.Loop._drive_locked)
-        self.assertIn("prior_work=briefing or summary_text", src)
+        l = self._drive_continuation()
+        sess = l._store.get("sid:x1")
+        self.assertIn("DELETE route is still missing", sess.prior_work)
+        self.assertNotIn("Make these four changes", sess.prior_work)
 
 
 if __name__ == "__main__":

@@ -62,13 +62,65 @@ class TheRetryIsGroundedLikeTheFirstPassTests(unittest.TestCase):
     """THE LIVE ONE."""
 
     def test_the_retry_passes_the_disk_and_the_plan(self):
-        import inspect
+        """The disk half is fully live: a real file on disk shows up in the retry's request, proven
+        below. The gate-plan half is threaded too, but a RAW gate blob never survives
+        ``_compaction_transcript``'s anchor filter to reach a point where the plan could change the
+        retry's OUTPUT (see ``WhyItIsInertTodayTests`` below and this module's own docstring — the
+        same "0 of 70" fact). What IS observable, and checked here: the retry actually CALLS
+        ``_session_gate_plan`` for this session — the original bug was composing the retry with
+        neither fact threaded through at all."""
+        import json
+        import os
+        from types import SimpleNamespace
+        from unittest import mock
 
         from cria import server as srv
-        src = inspect.getsource(srv._harden_compaction_reply)
-        window = src[src.index("_compaction_transcript("):][:400]
-        self.assertIn("workspace_inventory", window)
-        self.assertIn("_session_gate_plan", window)
+
+        class _Provider:
+            calls = []
+
+            @staticmethod
+            def chat(pb, rlog):
+                _Provider.calls.append(pb)
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "recovered briefing"}}]})
+
+        class _Srv:
+            class cfg:
+                class routing:
+                    roles = {}
+
+        class _NullRlog:
+            def emit(self, *a, **k):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "resolve_handle.py"), "w") as f:
+                f.write("x = 1\n")
+            plan = probegate.GatePlan(workspace=tmp, candidates=[cand(ProbeKind.BuildCheck)])
+            sess = SimpleNamespace(gate_plan=plan, last_gate_flag="")
+            _Srv.loop = SimpleNamespace(_store=SimpleNamespace(get=lambda k: sess))
+
+            msgs = transcript(gate_blob(WARNINGS_ONLY, 1))
+            msgs[0] = {**msgs[0], "content": msgs[0]["content"]
+                      + f"\n<environment_context><cwd>{tmp}</cwd></environment_context>"}
+            comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}  # empty → retry
+
+            gate_plan_calls = []
+            real_session_gate_plan = srv._session_gate_plan
+
+            def _spy(server, sk):
+                gate_plan_calls.append(sk)
+                return real_session_gate_plan(server, sk)
+
+            with mock.patch.object(srv, "_session_gate_plan", _spy):
+                srv._harden_compaction_reply(comp, {"messages": msgs}, provider=_Provider,
+                                             server=_Srv, rlog=_NullRlog())
+
+            self.assertEqual(len(_Provider.calls), 1)
+            retry_text = json.dumps(_Provider.calls[0]["messages"])
+            self.assertIn("resolve_handle.py", retry_text)  # the disk inventory reached the retry
+            self.assertTrue(gate_plan_calls, "the retry never asked for this session's gate plan")
 
     def test_the_session_key_is_derived_once(self):
         """It was computed inside the retry branch and again in the appendix branch. Two derivations
@@ -186,6 +238,14 @@ class TheStoreLookupTests(unittest.TestCase):
 
 class TheLoopPathHandsOverItsSessionPlanTests(unittest.TestCase):
     def test_self_compact_passes_it(self):
+        """Structural, and deliberately so: driving ``_self_compact`` with a raw gate blob in the
+        rolled-up middle (verified by hand, both with and without a large filler transcript around
+        it) never lands a trace of it in what reaches the summarizer — ``compact()`` itself strips
+        the harness-compaction anchor markers before the messages become ``mm``, the same "0 of 70"
+        fact this module's docstring already states for the two documented callers. There is no
+        reachable input that makes this line's OUTPUT differ, which is exactly why the module
+        docstring calls this half "NOT LIVE": kept for one-owner consistency across the four
+        ``clean_gate_results`` callers, not because a fixture could ever observe it firing here."""
         import inspect
 
         from cria import loop

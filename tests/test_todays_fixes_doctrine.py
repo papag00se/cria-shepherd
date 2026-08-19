@@ -10,9 +10,11 @@ violates one fails here instead of in a run.
 # outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
 
 import inspect
+import json
 import unittest
 
 from cria import execcheck, loop, prompts
+from tests.test_loop import _SHELL, _Recorder, _Rlog, _ctx, _plan, _single_loop, _synth, _toolcall
 
 TODAYS_PROMPTS = ("step_repair_note", "steer_checks_repeat", "gate_oscillating",
                   "external_install_refusal")
@@ -23,11 +25,15 @@ class Rule17_ModelNeverSeesCria(unittest.TestCase):
     noun makes a weak model meta-reason about the mechanism instead of coding."""
 
     def test_no_prompt_shipped_today_names_it(self):
+        # The raw file text IS what reaches the model — prompts.load()/render() strip nothing (a
+        # '#' line is a real comment only for the load_map() family, a different set of files).
+        # An earlier version of this test filtered out '#'-prefixed lines before searching, which
+        # would have HIDDEN a real leak in one of these four files: none currently start a line
+        # with '#', but nothing stops one from being added and silently reaching the model while
+        # this test looked away.
         for name in TODAYS_PROMPTS:
             with self.subTest(prompt=name):
-                body = "\n".join(l for l in prompts.load(name).splitlines()
-                                 if not l.lstrip().startswith("#"))
-                self.assertNotIn("cria", body.lower())
+                self.assertNotIn("cria", prompts.load(name).lower())
 
 
 class Rule96_NeverSpeakOverATool(unittest.TestCase):
@@ -38,8 +44,15 @@ class Rule96_NeverSpeakOverATool(unittest.TestCase):
         self.assertIn("x.py:1: E999 boom", out)
 
     def test_the_oscillation_note_rides_WITH_the_findings_never_instead(self):
-        src = inspect.getsource(loop.Loop._renudge)
-        self.assertIn("reason + ", src)       # appended to the checker's reason, not replacing it
+        rec = _Recorder([_toolcall()])
+        l = loop.Loop(_ctx(rec, None))
+        sess = loop.PlanSession(plan=_plan(2))
+        sess.oscillation_note = "this has recurred 3 times"
+        l._renudge(sess, "k", {"messages": [{"role": "user", "content": "resolve"}], "tools": [_SHELL]},
+                  "checker findings: x.py:1: E999 boom", _Rlog())
+        sent = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("x.py:1: E999 boom", sent)          # the checker's own findings, whole
+        self.assertIn("this has recurred 3 times", sent)  # ...WITH the oscillation note, not instead
 
 
 class Rule2Corollary_CriaAuthorsNoWork(unittest.TestCase):
@@ -97,16 +110,53 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
     while the reasoner kept being given them. cria held them the whole time."""
 
     def test_the_plan_ON_driver_injects_it(self):
-        self.assertIn("_fetched_facts_anchor", inspect.getsource(loop.Loop._work_item))
+        rec = _Recorder([_toolcall()])
+        l = loop.Loop(_ctx(rec, None))
+        sess = loop.PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"https://api.handle.me/openapi.json":
+                              (200, "/handles/{handle}, /holders/{address}")}
+        item = sess.plan.items[0]
+        l._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve a handle"}],
+                                 "tools": [_SHELL]}, _Rlog(), item, 1)
+        sent = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("/handles/{handle}", sent)   # the real endpoint reaches the coder...
 
     def test_the_plan_OFF_driver_injects_it_TOO(self):
-        self.assertIn("_fetched_facts_anchor", inspect.getsource(loop.Loop._drive_single_item))
+        rec = _Recorder([_toolcall()])
+        l = _single_loop(rec)
+        sess = _synth()
+        sess.fetched_pages = {"https://api.handle.me/openapi.json":
+                              (200, "/handles/{handle}, /holders/{address}")}
+        body = {"messages": [{"role": "user", "content": "resolve a handle"}],
+                "tools": [_SHELL], "stream": True}
+        l._drive_single_item(sess, body, "sid:x", _Rlog())
+        sent = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
+        self.assertIn("/handles/{handle}", sent)   # ...on the plan-off path too
 
     def test_both_place_it_in_the_protected_head(self):
         # After the system message(s): always visible, never the oldest droppable turn.
-        for fn in (loop.Loop._work_item, loop.Loop._drive_single_item):
-            with self.subTest(fn=fn.__name__):
-                self.assertIn("_insert_after_system", inspect.getsource(fn))
+        from cria import selfcompact
+
+        rec = _Recorder([_toolcall()])
+        l = loop.Loop(_ctx(rec, None))
+        sess = loop.PlanSession(plan=_plan(2))
+        sess.fetched_pages = {"u": (200, "/h")}
+        l._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve"}],
+                                 "tools": [_SHELL]}, _Rlog(), sess.plan.items[0], 1)
+        msgs = rec.bodies[-1]["messages"]
+        sys_idx = max(i for i, m in enumerate(msgs) if m["role"] == "system")
+        self.assertIn(selfcompact.FACTS_MARKER, msgs[sys_idx + 1].get("content") or "")
+
+        rec2 = _Recorder([_toolcall()])
+        l2 = _single_loop(rec2)
+        sess2 = _synth()
+        sess2.fetched_pages = {"u": (200, "/h")}
+        body2 = {"messages": [{"role": "user", "content": "resolve"}],
+                "tools": [_SHELL], "stream": True}
+        l2._drive_single_item(sess2, body2, "sid:x", _Rlog())
+        msgs2 = rec2.bodies[-1]["messages"]
+        sys_idx2 = max(i for i, m in enumerate(msgs2) if m["role"] == "system")
+        self.assertIn(selfcompact.FACTS_MARKER, msgs2[sys_idx2 + 1].get("content") or "")
 
     def test_an_empty_ledger_injects_nothing(self):
         # A task with no web_fetch (a bash/git chore) must not gain an empty block.
