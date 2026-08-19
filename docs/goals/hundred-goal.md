@@ -33,7 +33,7 @@ python3 suite/cycle_run.py              # all 24 cells, ~8 h
 python3 suite/cycle_run.py --start 12   # resume after a kill
 ```
 
-One cell at a time, task-major. The driver sets the arm, restarts cria, runs the cell, restores the flag. **It imposes no wall clock of its own** — the suite already owns one, 15 minutes per deliverable from each task's `meta.toml`, and a second one on top only kills the long cells.
+One cell at a time, task-major. The driver sets the arm, restarts cria, runs the cell, restores the flag. **It imposes no wall clock of its own** — the suite already owns one, 15 minutes per deliverable from each task's `meta.toml`, and a second one on top only kills the long cells. The pacing floor is not checked until the SECOND mark (30 minutes, two deliverables): the first interval is the one a run cannot pace, and killing there kills runs that are only starting.
 
 **Before the first cell, check the environment is clean.** Contamination has cost this campaign more than any cria bug:
 

@@ -11,8 +11,11 @@ Two pacing modes:
   * flat (default) — one HARD 30-minute wall, scored once at the end.
   * `--milestone-minutes N` — N minutes per deliverable, with the workspace scored at every N-minute
     mark and a floor that climbs by one each time. A run that keeps delivering earns the whole
-    budget; a stalled one is killed after the first interval instead of burning the full wall. Which
-    deliverable lands first does not matter — only the count does.
+    budget; a stalled one is killed early instead of burning the full wall. Which deliverable lands
+    first does not matter — only the count does. Scoring STARTS at the second mark (2N minutes,
+    floor 2): the first interval carries everything a run does once, before any deliverable can be
+    finished, so judging it there kills runs that are merely starting. See
+    FIRST_MILESTONE_INTERVAL.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -58,6 +61,14 @@ CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
 WALL_SECONDS = int(os.environ.get("SUITE_WALL_MINUTES", "30")) * 60
+# The first milestone a run must clear. The floors are one deliverable per interval, and the FIRST
+# interval is the one a run cannot pace: it holds everything that happens once — reading the task,
+# listing the workspace, reading the files it names, the first build, the first failing test — before
+# any deliverable can possibly be finished. Judged at one interval it reads as a stall; the same run
+# judged at two is on pace. Operator, 2026-08-19: give the first two deliverables 30 minutes between
+# them and skip the 15-minute wall entirely. The total budget is unchanged — one interval per
+# deliverable — so nothing is bought here except not killing a run for its slow first step.
+FIRST_MILESTONE_INTERVAL = 2
 KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
@@ -395,7 +406,7 @@ def main() -> None:
     if milestone_s:
         # One interval per deliverable, so a run that earns every milestone gets the full budget.
         wall = milestone_s * deliverable_count(task_dir)
-    next_check = milestone_s
+    next_check = milestone_s * FIRST_MILESTONE_INTERVAL   # the 1st interval is not judged; see above
     terminal = "exited"
     while proc.poll() is None:
         elapsed = time.time() - t0
