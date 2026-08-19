@@ -117,12 +117,36 @@ class WhatCriaCanStillSayTests(unittest.TestCase):
         self.assertEqual(webfetch._doc_format('{\n  "paths": {}\n}'), "JSON")
 
 
-class TheCallersPassTheParseTests(unittest.TestCase):
-    def test_yaml_is_no_longer_a_possible_answer(self):
-        import inspect
-        body = inspect.getsource(webfetch._doc_format)
-        code = body[body.index('"""', body.index('"""') + 3) + 3:]
-        self.assertNotIn("YAML", code)
+class YamlIsNoLongerAPossibleAnswerTests(unittest.TestCase):
+    """Asserted against INPUTS rather than against the function's source text.
+
+    The first version of this searched `_doc_format`'s body for the string "YAML". That passes
+    forever once the word is gone, whatever the function does — and it fails the day someone renames
+    a variable. What actually has to hold is that no document produces the answer, so the documents
+    are what this asks."""
+
+    CANDIDATES = (
+        SPILLED_RUBYDOC,                                   # the walked incident: flattened HTML
+        "---\nopenapi: 3.0.0\npaths:\n  /handles/{handle}:\n    get: {}\n",   # a REAL yaml spec
+        "swagger: '2.0'\nhost: api.handle.me\n",           # yaml with no document marker
+        "Note:\nthe first line of prose that ends in a colon\n",
+        "RubyDoc.info:\nClass: ISO3166::Country\n",
+    )
+
+    def test_no_document_is_ever_called_yaml(self):
+        for doc in self.CANDIDATES:
+            with self.subTest(head=doc.splitlines()[0][:40]):
+                self.assertNotEqual(webfetch._doc_format(doc), "YAML")
+
+    def test_a_real_yaml_document_gets_silence_not_a_guess(self):
+        """Even a genuine YAML document: whatever the source was, a doc that PARSED is written to
+        the spill file as pretty JSON, so "YAML" was never true of the bytes cria describes. Silence
+        is the honest answer (#3), and the caller renders no format sentence at all."""
+        self.assertEqual(webfetch._doc_format("openapi: 3.0.0\npaths: {}\n"), "")
+
+    def test_the_two_answers_that_survive_still_answer(self):
+        self.assertEqual(webfetch._doc_format('{"paths": {}}'), "JSON")
+        self.assertEqual(webfetch._doc_format("<!doctype html><html>"), "HTML")
 
 
 if __name__ == "__main__":
