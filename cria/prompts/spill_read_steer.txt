@@ -1,2 +1,2 @@
 {{PATH}} is a large reference document — larger than can be returned in one read, so nothing is shown.{{FORMAT}}
-{{OUTLINE}}Read it deliberately instead: grep the file for what you need (grep -n on {{PATH}}), or read a specific line range with read_file start_line/end_line.
+{{EXTENT}}{{OUTLINE}}Read it deliberately instead: grep the file for what you need (grep -n on {{PATH}}), or read a specific line range with read_file start_line/end_line.

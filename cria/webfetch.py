@@ -466,6 +466,38 @@ def _doc_format(content: str) -> str:
     return ""
 
 
+def spill_reading_hint(path: str, limit: int) -> str:
+    """"It is N lines; start_line=1 end_line=M fits in one read." — or "" when cria has no such doc.
+
+    THE REFUSAL WAS UNACTIONABLE FOR EXACTLY THE DOCUMENTS THAT NEED READING. It says "grep the file
+    for what you need, or read a specific line range", and for a doc with no parsed structure the
+    outline slot beside it is empty — so the coder is told to grep with nothing to grep FOR, and to
+    pick a range with no idea how many lines exist or how big a range would fit.
+
+    Walked on `shipping-rates-rb x ternary-bonsai` 1787111689 and again on the run before it: the
+    coder asked for the spilled rubydoc page ONCE, got "nothing is shown", and never touched the file
+    again in either run. The page defines `in_eu?`; the coder guessed `eu_member?`, which does not
+    exist, and that guess is the whole `country_zone_mapping` failure.
+
+    Both numbers are facts cria already holds — the document is in `_DOC_CACHE`, which is where the
+    format and the outline beside this sentence come from. Nothing is measured on the filesystem and
+    nothing is guessed: no cached doc, no sentence (#5b)."""
+    for url, cached in _DOC_CACHE.items():
+        if os.path.basename(_spill_name(url)) != os.path.basename(os.path.normpath((path or "").strip())):
+            continue
+        body = _greppable(cached[2], cached[3], cached[1])
+        lines = body.count("\n") + 1
+        if lines < 2 or not body:
+            return ""
+        # Proportional, then rounded DOWN — a range cria promises fits has to fit.
+        fits = max(1, int(lines * limit / max(len(body), 1)))
+        if fits >= lines:
+            return ""      # the whole thing would fit; the refusal is not about size then
+        return prompts.fill(prompts.load_map("webfetch_guards")["spill_extent"],
+                            lines=f"{lines:,}", fits=str(fits))
+    return ""
+
+
 def format_for_spill_path(path: str) -> str:
     """The sniffed format of the spilled doc at ``path`` — "" when it is not cached (rule 5b: cria
     states the format it has actually seen, never a guess from the file extension)."""

@@ -23,3 +23,11 @@ search_spill = web_search "{{QUERY}}" — results saved to {{TARGET}} (each resu
 # Same repeat, but cria never spilled these results to a file (a harness-native search) — so they are
 # in the conversation, not on disk. Naming a spill path here pointed at a file that was never written.
 search_repeat_inline = You already ran web_search "{{PRIOR}}", which is near-identical to "{{QUERY}}". Its results are already in this conversation above — use them, make a MAJOR change to the query, or web_fetch a specific URL.{{DOMAIN_STEER}}
+
+# HOW BIG IT IS AND WHAT WILL FIT — the two facts that make the refusal beside it actionable.
+# Without them the coder is told to grep a document it cannot see the shape of, and to choose a
+# line range with no idea how many lines exist. Measured twice on shipping-rates-rb x
+# ternary-bonsai: the coder asked once, was refused, and never opened the file again — the file
+# that defines the method it then guessed wrong. Both numbers come from the cached document
+# (webfetch.spill_reading_hint); with no cached doc there is no sentence.
+spill_extent = It is {{LINES}} lines — read_file with start_line=1 end_line={{FITS}} fits in one read, and you can page on from there.

@@ -745,8 +745,14 @@ def _spill_read_command(path: str) -> str:
     # (rule 5b — no outline is invented); the steer's own instructions stand without it. The EDIT
     # refusal names no content, so it takes no outline — which is why it renders without one above.
     fmt = webfetch.format_for_spill_path(path)
+    # …AND HOW BIG IT IS. "grep it, or read a line range" is unactionable without the document's
+    # extent: measured twice on `shipping-rates-rb x ternary-bonsai`, the coder asked once, was
+    # refused, and never opened the file again — the file that defines the method it then guessed
+    # wrong. See webfetch.spill_reading_hint; "" when cria holds no such doc.
+    extent = webfetch.spill_reading_hint(path, READ_INLINE_MAX)
     steer = prompts.render("spill_read_steer", path=path,
                            format=(f" It is {fmt}." if fmt else ""),
+                           extent=(f" {extent}\n" if extent else ""),
                            outline=webfetch.outline_for_spill_path(path))
     # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.
     # So does the not-there branch now: it used to printf bash's own phrasing, which exits non-zero
