@@ -178,7 +178,18 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 |---|---|---|---|
 | 1 | shipping-rates-rb × gemma4 | **0/5** | killed at 15 min. Chose `eu_countries` — the broken gem — so every check dies on one `require`. This cell's last six runs read 1, 4, 0, 1, 4, 0: it genuinely oscillates, and 0 is inside its own range. |
 | 2 | cart-billing-go × gemma4 | **5/5** | exited on its own. |
-| 3 | orders-api-py × gemma4 | running | |
+| 3 | orders-api-py × gemma4 | **4/4** | full marks, exited on its own, 97 calls |
+| 4 | feed-pipeline-java × gemma4 | **5/5** | full marks, exited on its own, 35 calls |
+| 5 | handles-cli-node × gemma4 | running | |
+
+**Through the noise floor, four cells in:** three at 100%, one at 0, and **nothing has moved by more than one check** except `shipping-rates-rb`. That cell's last six runs read 1, 4, 0, 1, 4, 0 — comparing it against the immediately previous run means comparing against a cherry-picked high; against the run before that it is 1 → 0, which is inside the floor. Bimodal, not regressed.
+
+| cell | now | prev | last five | verdict |
+|---|---|---|---|---|
+| shipping-rates-rb × gemma4 | 0/5 | 4 | 1, 4, 0, 1, 4 | down 4 — but see above |
+| cart-billing-go × gemma4 | 5/5 | 5 | 4, 5, 4, 5, 5 | `~` |
+| orders-api-py × gemma4 | 4/4 | 3 | 4, 4, 0, 4, 3 | `~` |
+| feed-pipeline-java × gemma4 | 5/5 | 5 | 0, 0, 0, 5, 5 | `~` |
 
 **No fault from the new code so far.** Zero tracebacks in the cycle log, zero error-level events, and every new mechanism is firing: `loop.judge_files_seeded` 5, `loop.gate_offline` 17, `loop.steer_dictated_code` **2** — that last one is the Ruby fix working, since the detector logged one event in the entire previous run and could not see a Ruby call at all.
 
