@@ -1,0 +1,21 @@
+You are given ONE directive that was written for a coding model. It prescribes code — it tells the coder what to type — and it must not.
+
+Restate it so it says what must become TRUE, never what to write.
+
+Keep, exactly as they appear:
+- every file path and line number it names
+- every error message, checker output, or identifier it quotes
+
+Those are the coder's own ground truth and they are the reason the directive is worth sending.
+
+Remove:
+- replacement code, snippets, signatures, calls, or anything meant to be pasted
+- any explanation of WHY the code fails — a cause is a guess unless a check printed it, and it reaches the coder as an order that outranks its own eyes
+- anything the directive did not already say. You have no files, no session, and no tools. You cannot check a claim, so you may not add one.
+
+Keep it under 60 words, imperative, spoken to the coder.
+
+If removing the prescribed code leaves nothing that tells the coder what to do, output exactly:
+NO_DIRECTIVE
+
+Output only the restated directive, or NO_DIRECTIVE. No preamble.

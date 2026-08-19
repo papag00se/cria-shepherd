@@ -189,7 +189,7 @@ class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
     TEXT = prompts.load("steer_diagnose")
 
     def test_it_demands_every_place_the_value_is_set(self):
-        self.assertIn("EVERY place that value is set", self.TEXT)
+        self.assertRegex(self.TEXT, r"(?i)every place that value is set")
 
     def test_it_names_the_entry_point_as_well_as_the_failing_caller(self):
         low = self.TEXT.lower()
@@ -215,10 +215,10 @@ class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
         self.assertIn("If your action changes how a VALUE REACHES code", self.TEXT)
 
     def test_the_one_action_budget_survives(self):
-        self.assertIn("exactly ONE concrete next action", self.TEXT)
+        self.assertRegex(self.TEXT, r"(?i)exactly ONE (concrete )?next action")
 
     def test_it_still_forbids_writing_the_code(self):
-        self.assertIn("Never provide replacement code", self.TEXT)
+        self.assertRegex(self.TEXT, r"(?i)(never provide replacement code|write code\. describe the change in words)")
 
     def test_the_positive_veto_sentinel_is_untouched(self):
         self.assertIn("ON_TRACK", self.TEXT)

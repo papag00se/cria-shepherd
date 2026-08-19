@@ -160,22 +160,40 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(out)                                   # delivered, never None
         self.assertIn("loop.steer_dictated_code", [k for k, _ in rlog.events])
 
-    def test_the_prose_survives_and_the_invented_call_does_not(self):
+    def test_an_invented_call_is_RESTATED_not_hollowed(self):
         """The ruling's own reasoning, enforced. It turned on SIGHTED versus BLIND dictation, so the
         question is not "does this contain code" but "did the author read it or invent it" — and
-        cria holds what it OBSERVED (tool results + bytes the coder wrote; see loop._observed_code,
-        which is the haystack now — the composed prompt was carrying the coder's own prose).
+        cria holds what it OBSERVED (tool results + bytes the coder wrote; see loop._observed_code).
 
         REAL_DICTATION is the measured example: `pytest.register_pytest_mark("live")` is not a real
-        function, and it reached a coder because it sat inline in prose with no fence. The diagnosis
-        around it is correct and worth keeping."""
+        function, and it reached a coder because it sat inline in prose with no fence.
+
+        WHAT CHANGED ON 2026-08-19: the invention used to be replaced in place with a marker and the
+        rest shipped. That leaves an imperative missing its operands — walked on rust-toml-cli x
+        ternary-bonsai call 0015, which came out as "Change [code removed] to [code removed]". The
+        directive is now RESTATED by a blind rewriter, or refused. See
+        tests/test_a_prescription_is_restated_not_hollowed.py."""
+        rlog = _Rlog()
+        restated = "Register the `live` marker the warning names, then re-run the tests."
+
+        def ask(system, user):
+            return restated if "prescribes code" in system else "DICTATES"
+
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog, ask=ask,
+                                           messages=[tool_result("PytestUnknownMarkWarning: live")])
+        self.assertEqual(out, restated)                        # a whole sentence, not a hole
+        self.assertNotIn("register_pytest_mark", out)          # the invention is gone
+        self.assertNotIn("code removed", out)                  # ...and so is the marker debris
+        self.assertTrue([e for e in rlog.events if e[0] == "loop.steer_restate"])
+
+    def test_a_prescription_the_rewriter_cannot_save_is_refused(self):
+        """Every other guard in this function returns None. This one used to be the exception."""
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
-                                           ask=lambda s, u: "DICTATES",
+                                           ask=lambda s, u: "NO_DIRECTIVE" if "prescribes code" in s
+                                           else "DICTATES",
                                            messages=[tool_result("PytestUnknownMarkWarning: live")])
-        self.assertIn("unknown mark named live", out)          # the diagnosis survives
-        self.assertNotIn("register_pytest_mark", out)          # the invention does not
-        self.assertIn("code removed", out)                     # and the removal is disclosed
+        self.assertIsNone(out)
 
     def test_a_quote_of_something_cria_showed_the_author_survives(self):
         """The case the ladder passes were built on: a steer quoting the coder's own failing line.
@@ -204,13 +222,18 @@ class WiringTests(unittest.TestCase):
         {...})? ... That seems odd" and cria's steer ordered exactly that. Prose is not observation."""
         rlog = _Rlog()
         directive = 'Replace the handler line with return self._send(201, {"error": "internal"})'
+        restated = "Make orders/app.py:54 stop returning 500 on that exception, then re-run the tests."
+
+        def ask(system, user):
+            return restated if "prescribes code" in system else "DICTATES"
+
         out = loop._grounded_steer_or_none(
-            directive, "unused", rlog, ask=lambda s, u: "DICTATES",
+            directive, "unused", rlog, ask=ask,
             messages=[tool_result("orders/app.py:54: 500 returned on exception"),
                       {"role": "assistant",
                        "content": 'return self._send(201, {"error": "internal"})? That seems odd.'}])
-        self.assertNotIn("_send(201", out)
-        self.assertIn("code removed", out)
+        self.assertNotIn("_send(201", out)          # the coder's musing did not ground it
+        self.assertEqual(out, restated)             # ...and what ships is a whole sentence
 
     def test_with_nothing_observed_nothing_is_stripped(self):
         """cria cannot call code invented when it has nothing to check against."""

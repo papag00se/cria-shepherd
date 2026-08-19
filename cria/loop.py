@@ -6541,7 +6541,26 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     (:func:`_drop_harness_frame`) — that is the coder's FRAME, not part of what the coder DID, and the
     reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
     the curation the note above warns against. Grounded in what actually happened (and no longer padded
-    with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see."""
+    with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see.
+
+    WHY TWO OF THE PROMPT'S RULES EXIST. `prompts/steer_diagnose.txt` carries them as plain
+    instructions; the measurements behind them live here, because a prompt file is model-facing text
+    and `prompts.load` ships every byte of it — an anecdote in there is tokens the coder's supervisor
+    pays for on every steer, and the operator's read (2026-08-19) was that it belongs in the code.
+
+    * "Do not choose the IMPLEMENTATION." Directives that picked the approach cost nine checks. One
+      told the coder to hand-roll a list the task had EXPLICITLY forbidden hand-rolling; another told
+      it to add a dependency the task had asked it to remove. The coder built exactly what the
+      directive said instead of what was asked, both times.
+    * "Do not state a CAUSE you have not verified." Measured across twenty-four such directives, the
+      coder's own reading was right and the directive was wrong EVERY time. A sentence beginning
+      "because" about something the author never opened arrives as an order that outranks the coder's
+      own eyes, and the coder obeys it.
+
+    Neither rule is self-enforcing — `steer_diagnose.txt` forbade replacement code, and on
+    rust-toml-cli x ternary-bonsai (2026-08-19, call 0015) the author wrote three snippets anyway.
+    What stopped it was `_dictates_code` + `_strip_invented_code`, in code. The prompt states the
+    intent; the guards are what hold."""
     # SILENCE OVER A SECOND OPINION ON THE SAME FACTS. If the repo's checks have not moved since the
     # last steer, the previous directive did not land — and a small reasoner asked to explain the same
     # output again does not repeat itself, it re-guesses. Measured over 24 runs: 36% of every steer
@@ -7166,6 +7185,35 @@ def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
     return "\n".join(out), stripped
 
 
+# The restater's refusal. A POSITIVE sentinel, never the lexical negation of the trigger: a weak
+# model asked to answer "NOT_DICTATES" emits it for the wrong reason (#21).
+_NO_DIRECTIVE = "NO_DIRECTIVE"
+
+
+def _restate_without_code(directive: str, ask, rlog) -> str | None:
+    """``directive`` said again without the code it prescribed — or None to refuse it whole.
+
+    THE REWRITER IS BLIND ON PURPOSE. It is handed the directive and nothing else: no session, no
+    evidence, no workspace, no tools. That is the safety property — a rewriter with context could
+    substitute one invention for another, and this one holds no facts to substitute. The most it can
+    do is say less than it was given.
+
+    Bounded to ONE attempt. If what comes back still dictates code, or is the refusal sentinel, or
+    is empty, the answer is None and the caller drops the steer — the same ending every other guard
+    in :func:`_grounded_steer_or_none` reaches, rather than the hollowed sentence the strip left."""
+    if ask is None or not (directive or "").strip():
+        return None
+    out = strip_think(ask(prompts.load("steer_restate"), directive) or "").strip()
+    if not out or _NO_DIRECTIVE in out.upper():
+        rlog.emit("loop.steer_restate", level="info", kept=False, reason="nothing left")
+        return None
+    if _dictates_code(out, ask):      # it did it again — one attempt, then silence (#3)
+        rlog.emit("loop.steer_restate", level="info", kept=False, reason="still dictates")
+        return None
+    rlog.emit("loop.steer_restate", level="info", kept=True, chars=len(out))
+    return out
+
+
 def _dictates_code(directive: str, ask=None) -> bool:
     """True when the directive hands the coder CODE TO COPY rather than a description of the change.
 
@@ -7477,9 +7525,34 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         # …AGAINST WHAT CRIA OBSERVED, not against the prompt. The prompt carries the coder's own
         # prose, which made a line the coder only believed count as one cria had seen.
         kept, stripped = _strip_invented_code(directive, _observed_code(messages))
-        rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
-                  stripped=stripped, head=_clip(directive, 120))
-        directive = kept
+        if stripped:
+            # A HOLLOWED SENTENCE IS WORSE THAN NO SENTENCE. Stripping is right when the code was
+            # QUOTED — "this line of yours fails" survives losing nothing. It is wrong when the code
+            # was PRESCRIBED, because the sentence was built around it. Walked on
+            # rust-toml-cli x ternary-bonsai (2026-08-19) call 0015, which came out of the strip as
+            #     "**Line 12**: [code removed] fails because TOML tables use `String` keys, not
+            #      `&str`. Change to [code removed]."
+            # — an imperative with both of its operands deleted, and the WRONG CAUSE left standing.
+            # That is the half that does the damage: measured across twenty-four such directives the
+            # coder's own reading was right and the directive was wrong every time.
+            #
+            # So the directive is REWRITTEN by a reasoner rather than mutilated by a regex — and the
+            # rewriter is given the directive AND NOTHING ELSE. No session, no evidence, no tools.
+            # It cannot introduce a fact because it holds none; the most it can do is say less.
+            # Prevalence, before building it (#15): of 100 dictated steers in the captures, 66 lost
+            # ZERO spans — those are the sighted "quoting the coder's own line" case the 2026-08-04
+            # ruling protects, and they never reach here. This path is the other 34.
+            restated = _restate_without_code(kept, ask, rlog)
+            if restated is None:
+                rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
+                          stripped=stripped, reason="prescription",
+                          head=_clip(directive, 120))
+                return None       # refused whole, like every other guard in this function
+            directive = restated
+        else:
+            rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
+                      stripped=0, head=_clip(directive, 120))
+            directive = kept
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None

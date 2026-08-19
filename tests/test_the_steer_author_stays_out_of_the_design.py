@@ -1,5 +1,11 @@
 """The two most expensive things a directive did, both now forbidden at the author.
 
+**THE PROSE WAS REWRITTEN ON 2026-08-19** (operator: "that whole steer_diagnose could be written
+better without anecdotes"). Every rule below survives; the two measurements moved into
+`loop.author_steer`'s docstring, because `prompts.load` ships the whole file to the model and an
+anecdote there is tokens the supervisor pays on every steer. These tests now anchor on the RULE
+rather than on one spelling of it — pinning the sentence made them change-detectors on a prose file.
+
 **It chose the implementation — 15 occurrences, 9 lost checks, the most of any single mechanism in
 the assisted-arm walk.** The supervisor restated the job in its own words and the coder built the
 restatement. The task said *"don't hand-roll the EU member list; lean on something maintained"*; the
@@ -33,7 +39,11 @@ class TheAuthorMayNotPickTheApproachTests(unittest.TestCase):
         self.body = prompts.load("steer_diagnose")
 
     def test_it_is_told_not_to_choose_the_implementation(self):
-        self.assertIn("Do not choose the IMPLEMENTATION", self.body)
+        """Anchored on the RULE, not on one spelling of it. The first version pinned the exact
+        sentence, so rewriting the prompt for clarity failed the test without changing what it
+        forbids — a change-detector on a prose file."""
+        self.assertRegex(self.body, r"(?i)(not|never)[^.]{0,80}choose the implementation"
+                                    r"|MUST NOT:[\s\S]{0,400}?choose the implementation")
 
     def test_it_names_the_choices_that_are_not_its_to_make(self):
         for choice in ("library", "data structure", "flag", "output format", "file to create"):
@@ -43,9 +53,17 @@ class TheAuthorMayNotPickTheApproachTests(unittest.TestCase):
     def test_it_says_where_those_choices_do_belong(self):
         self.assertRegex(self.body, r"belong to the TASK or to the coder")
 
-    def test_the_rule_carries_its_evidence(self):
-        """A rule with its incident attached survives the next person who thinks it is fussy."""
-        self.assertIn("nine checks", self.body)
+    def test_the_rule_carries_its_evidence_IN_THE_CODE(self):
+        """A rule with its incident attached survives the next person who thinks it is fussy — but
+        the incident belongs in the CODE, not in the prompt. `prompts.load` ships every byte to the
+        model, so an anecdote there is tokens the supervisor pays for on every steer (operator,
+        2026-08-19). The measurement lives in `author_steer`'s docstring; the prompt states the rule.
+        """
+        import inspect
+        from cria import loop
+        doc = inspect.getdoc(loop.author_steer) or ""
+        self.assertIn("nine checks", doc)
+        self.assertNotIn("nine checks", self.body)
 
 
 class TheAuthorMayNotInventACauseTests(unittest.TestCase):
@@ -53,18 +71,22 @@ class TheAuthorMayNotInventACauseTests(unittest.TestCase):
         self.body = prompts.load("steer_diagnose")
 
     def test_it_is_told_not_to_state_an_unverified_cause(self):
-        self.assertIn("Do not state a CAUSE you have not verified", self.body)
+        self.assertRegex(self.body, r"(?i)\bcause\b[^.]*\byou have not verified\b")
 
     def test_it_is_given_what_to_say_instead(self):
         """A prohibition with no replacement is a prohibition a weak model routes around."""
         self.assertIn("Report what a check printed", self.body)
         self.assertIn("name the next thing to look at", self.body)
 
-    def test_the_identify_rule_now_asks_for_a_quote_not_an_explanation(self):
-        self.assertIn("by quoting it, not by explaining it", self.body)
+    def test_the_identify_rule_asks_for_a_quote_not_an_explanation(self):
+        self.assertRegex(self.body, r"(?i)quote it; do not describe it|quoting it, not by explaining it")
 
-    def test_the_rule_carries_its_evidence(self):
-        self.assertIn("twenty-four", self.body)
+    def test_the_rule_carries_its_evidence_IN_THE_CODE(self):
+        import inspect
+        from cria import loop
+        doc = inspect.getdoc(loop.author_steer) or ""
+        self.assertIn("twenty-four", doc)
+        self.assertNotIn("twenty-four", self.body)
 
 
 class WhatTheAuthorMayStillDoTests(unittest.TestCase):
@@ -74,13 +96,16 @@ class WhatTheAuthorMayStillDoTests(unittest.TestCase):
         self.body = prompts.load("steer_diagnose")
 
     def test_it_still_must_give_one_concrete_next_action(self):
-        self.assertIn("Give exactly ONE concrete next action", self.body)
+        self.assertRegex(self.body, r"(?i)exactly ONE (concrete )?next action")
 
     def test_it_still_may_quote_a_real_error_or_a_line_it_read(self):
-        self.assertIn("Quoting a real error or a line you actually read is not writing code", self.body)
+        """The prohibition on writing code must not swallow quoting the error — that is the one
+        thing the directive most needs to do."""
+        self.assertRegex(self.body,
+                         r"(?i)quoting a real error[^.]*is not writing code")
 
     def test_it_still_redirects_to_a_missing_deliverable(self):
-        self.assertIn("explicitly redirect it to that deliverable", self.body)
+        self.assertRegex(self.body, r"(?i)(redirect it to|send it to) that deliverable")
 
     def test_it_still_has_its_positive_veto(self):
         """ON_TRACK, never the negation of the trigger (#21)."""
