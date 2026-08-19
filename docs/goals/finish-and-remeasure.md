@@ -88,7 +88,17 @@ A fix that did not behave is a finding. So is a fix that caused something new.
 
 ---
 
-## Step 4 — fix until both cells read 100%
+## Step 4 — DROPPED (operator, 2026-08-19)
+
+**This step is no longer part of the goal.** It is kept here rather than deleted so the reasoning survives.
+
+It asked for `shipping-rates-rb` to read 100% twice at one commit. Across the pass that followed it read 0/5, 1/5, 1/5 and 1/5 under four different models, and the causes were isolated by hand: a `require "bundler/setup"` the model guarded into a no-op, and `eu_countries`, a gem whose first line requires a name nothing on this box provides — chosen independently in three separate runs. Neither is cria's.
+
+The BASE/CRIA comparison run alongside it produced better work than chasing one cell to 100% would have: it found that cria is a **wash** across 28 paired cells (median 75% both arms), that the assists proposed for deletion fire just as often in the runs that reach 100%, and that the real defect is assists which never let go — a research step that never clears averages 24% against 55% for one that does.
+
+What follows from the walk continues under its own steam. Step 5 is unaffected.
+
+## Step 4 (original text, superseded)
 
 Six questions per item, from `hundred-goal.md` Phase 4. Then a test that fails before and passes after, named for the behaviour, with the incident in its docstring. `python3 -m pytest` green. Commit and push per item. Restart `cria.service`. Re-run the cell.
 

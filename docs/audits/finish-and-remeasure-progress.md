@@ -150,7 +150,9 @@ One correction to a number I stated: `JUDGE_FILE_BUDGET` is 20,000 characters of
 
 Findings go to `docs/audits/finish-and-remeasure-walk.md`. Not started.
 
-## Step 4 — fix to 100% — **THE OPEN ITEM**, and the cause is now isolated
+## Step 4 — **DROPPED** (operator, 2026-08-19). What follows is the diagnosis as it stood when it was dropped.
+
+## Step 4 — was: fix to 100%, and the cause is now isolated
 
 `shipping-rates-rb` has failed under all three models in this pass — 0/5, 1/5, 1/5 — and **every one of them dies on the same line**: `kernel_require.rb: cannot load such file`. It is the only cell that has never cleared.
 
