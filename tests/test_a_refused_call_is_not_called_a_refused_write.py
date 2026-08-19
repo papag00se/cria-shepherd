@@ -101,24 +101,33 @@ class TheSelectionIsDrivenByWhetherThereWasAWriteTests(unittest.TestCase):
                 self.assertIn(prompts.load_map("call_refused")[key][:60], sent)
                 self.assertEqual(rlog.wording(), key)
 
-    def test_the_guard_consults_the_write_path_before_choosing(self):
-        import inspect
-
-        from cria import loop
-        src = inspect.getsource(loop.guard_truncation)
-        self.assertIn("was_write", src)
-        self.assertIn('"truncated_call"', src)
-        # the write wordings must be reachable only through was_write
-        after = src[src.index("was_write ="):]
-        self.assertIn('if was_write else "truncated_call"', after)
+    # test_the_guard_consults_the_write_path_before_choosing (formerly here, source-text on
+    # guard_truncation for "was_write" / '"truncated_call"') is REDUNDANT with the three behaviour
+    # tests just above (test_a_cut_off_non_write_call_is_called_a_refused_CALL,
+    # test_a_cut_off_write_is_still_called_a_refused_WRITE,
+    # test_a_self_cut_write_keeps_its_own_wording): all three already drive guard_truncation and
+    # assert the wording it picks — the write-path-first selection this source check pinned by
+    # spelling. Removed rather than kept as a weaker duplicate.
 
     def test_a_mid_write_cut_seen_on_any_pass_still_counts_as_a_write(self):
         """The retry can succeed at finding the path on pass 1 and lose it on pass 2 — the closing
-        message must still describe what actually happened."""
-        import inspect
+        message must still describe what actually happened, not just the LAST pass. Drive it: pass
+        1 is a write cut off, pass 2 is a DIFFERENT (non-write) cut-off call, and the guard runs out
+        of retries there — the wording must still be the write refusal, not the call refusal."""
+        write_cut = _cut("write_file", '{"path": "cart.go", "content": "package cart')
+        call_cut = _cut("exec_command", '{"cmd": "go test ./')  # pass 2: cut off, but NOT a write
+        responses = [call_cut]
+
+        def coder_chat(b, r):
+            return json.dumps(responses.pop(0)).encode()
+
         from cria import loop
-        src = inspect.getsource(loop.guard_truncation)
-        self.assertIn("_last_write_path_seen = _last_write_path_seen or path is not None", src)
+        rlog = _Rlog()
+        body = {"messages": [{"role": "user", "content": "do it"}]}
+        loop.guard_truncation(write_cut, body, coder_chat, rlog, step=1)
+        self.assertEqual(rlog.wording(), "truncated_write",
+                         "pass 1 proved a write was in flight; losing the path on the retry must "
+                         "not downgrade the refusal to a plain call")
 
 
 if __name__ == "__main__":

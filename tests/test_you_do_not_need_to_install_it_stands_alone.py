@@ -86,10 +86,15 @@ class TheToolFactStandsAloneTests(unittest.TestCase):
 
 class OnlyOneOfThemCanSpeakTests(unittest.TestCase):
     def test_the_composer_returns_the_fact_instead_of_appending_to_it(self):
-        import inspect
-        src = inspect.getsource(dirguard._INSTALL_REMEDY_FN) \
-            if hasattr(dirguard, "_INSTALL_REMEDY_FN") else inspect.getsource(dirguard)
-        self.assertIn("if here:\n                    return here", src)
+        """`_INSTALL_REMEDY_FN` has never existed on `dirguard` — that `hasattr` guard always fell
+        through to scanning the WHOLE module's source, which could pass on an unrelated match
+        anywhere in the file and could not prove anything about the real composer,
+        `_local_install_advice`. Drive it directly instead."""
+        if not dirguard._resolved_tool("bundle"):
+            self.skipTest("bundler is not installed on this box")
+        said = dirguard._local_install_advice("gem install bundler")
+        self.assertIn("You do not need to install it", said)
+        self.assertNotIn("Install it into the project instead", said)
 
     def test_already_here_only_fires_for_the_routes_own_tool(self):
         """Its trigger IS the reason the route does not apply — worth pinning, because if this ever

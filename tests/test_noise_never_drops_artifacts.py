@@ -31,9 +31,12 @@ The fix is the question, not a fifth pattern: the judge is now told the invarian
 See docs/principles.md #9, corollary.
 """
 import inspect
+import json
 import unittest
 
 from cria import loop, prompts
+from cria.config import Role
+from tests.test_loop import _Rlog, _Scripted, _replan, _text
 
 
 class TheInvariantIsStatedToTheJudge(unittest.TestCase):
@@ -60,14 +63,46 @@ class NoRegexGuardRemains(unittest.TestCase):
         self.assertFalse(hasattr(loop, "_AUTHORS_FILE"))
         self.assertFalse(hasattr(loop, "step_authors_artifact"))
 
+    def _role(self):
+        return Role(name="reasoner", backend="local")
+
     def test_reassess_does_not_second_guess_the_judge_with_a_pattern(self):
-        src = inspect.getsource(loop.reassess_remaining)
-        self.assertNotIn("step_authors_artifact", src)
-        self.assertNotIn("protected", src)
+        """The retired guard vetoed the judge's decision by SHAPE — an authoring verb near a
+        filename — on step text just like this one, the SECOND of its own three measured false
+        positives (see this file's own docstring: "MISSED 'Write a live test file (e.g.,
+        test_live_resolve.py)'" is the mirror image — the shape triggered wrongly both ways
+        because it was never the right signal). Drive the real function: when the reasoner marks a
+        step noise, it must actually go — no deterministic keyword override survives to keep it."""
+        steps = loop.reassess_remaining(
+            _Scripted([_replan(["Write a live test file (e.g., test_live_resolve.py)",
+                                "Write unit tests"]),
+                       _text("1"), _text('{"lost": ""}')]),
+            self._role(), "resolve an Ada Handle", "- researched", "- old", "ev", _Rlog())
+        self.assertFalse(any("live test file" in s for s in steps),
+                         "an authoring-verb-near-filename step must be droppable by the judge alone")
+        self.assertTrue(any("unit tests" in s for s in steps))
 
     def test_the_reasoned_deliverables_brake_still_backs_it_up(self):
-        self.assertIn("missing_deliverables(", inspect.getsource(loop.reassess_remaining))
+        """The regex guard is gone; THIS backs the invariant up now — a tail whose drop would lose
+        a deliverable the task asked for is REFUSED (the plan stays untouched), never silently
+        shipped. Same shape as two of the measured incidents: unit tests + live test dropped
+        together in one re-derivation."""
+        out = loop.reassess_remaining(
+            _Scripted([_replan(["Write resolve_handle.py"]), _text("NONE"),
+                       _text(json.dumps({"missing": ["unit tests", "live test"]}))]),
+            self._role(), "script + unit tests + live test", "",
+            "- write script\n- write tests\n- write live test", "ev", _Rlog())
+        self.assertIsNone(out, "a tail that drops deliverables must be refused, not shipped")
 
     def test_the_dropped_step_logging_stays(self):
-        # It is what made every one of these findings measurable within a single run.
-        self.assertIn("dropped_steps=", inspect.getsource(loop))
+        # It is what made every one of these findings measurable within a single run — the FIELD,
+        # not just the count. Drive a real noise-drop and read it off the event.
+        rlog = _Rlog()
+        loop.reassess_remaining(
+            _Scripted([_replan(["grep -n 'resolve' ./tmp/reference/api.handle.me_openapi.json",
+                                "Write the resolver using the endpoint the spec names"]),
+                       _text("1"), _text('{"lost": ""}')]),
+            self._role(), "resolve via api.handle.me", "- researched", "- old", "ev", rlog)
+        events = [kw for k, kw in rlog.events if k == "loop.replan_noise"]
+        self.assertTrue(events, "the noise-drop event never fired")
+        self.assertIn("grep", events[0].get("dropped_steps", ""))

@@ -95,12 +95,29 @@ class TheHintIsCarriedNotTheTransformTests(unittest.TestCase):
         strictly better implementation fail: the wire now strips every cria-internal key from
         `bodykeys.ALL` in one loop, so the hint is removed by the list rather than by name. Pinning
         an instance where the rule is about a class is how a guard passes while the rule ships
-        broken — see tests/test_no_internal_key_reaches_the_wire.py."""
+        broken — see tests/test_no_internal_key_reaches_the_wire.py.
+
+        Drive the real wire (`Upstream._prep`) instead of grepping it: the hint must both trigger
+        the merge AND never reach the outbound JSON."""
+        import json
+
         from cria import bodykeys
-        src = inspect.getsource(upstream.Upstream._prep)
-        self.assertIn("massage.merge_for_alternation", src)   # the transform is still AT the wire
-        self.assertIn(massage.MERGE_TURNS_KEY, bodykeys.ALL)  # and the hint is in the stripped set
-        self.assertIn("bodykeys.ALL", src)
+
+        class _NullRlog:
+            def emit(self, *a, **k):
+                pass
+
+        self.assertIn(massage.MERGE_TURNS_KEY, bodykeys.ALL)  # the hint is in the stripped set
+        up = upstream.Upstream("http://x", context_window=8192)
+        # A body that genuinely needs the merge — a bare user turn tacked on after the tool result,
+        # same shape guard_rumination/guard_truncation append (two "user side" turns in a row).
+        msgs = _dup_history() + [{"role": "user", "content": "that write was cut off"}]
+        self.assertFalse(_alternates(msgs), "precondition: this body does not alternate unmerged")
+        body = {"model": "m", "messages": msgs, massage.MERGE_TURNS_KEY: True}
+        raw, _sent_estimate, _capture_path = up._prep(body, True, _NullRlog())
+        out = json.loads(raw)
+        self.assertNotIn(massage.MERGE_TURNS_KEY, out)         # the hint never reaches the API...
+        self.assertTrue(_alternates(out["messages"]))          # ...and the merge it requested ran
 
     def test_the_merge_is_the_last_message_transform(self):
         """If a transform is ever added after it, the bug comes straight back."""

@@ -72,12 +72,17 @@ class DigestTests(unittest.TestCase):
 
 class WiringTests(unittest.TestCase):
     def test_the_context_floor_digest_uses_it(self):
-        import inspect
-
+        """digest_reduce is lossless-first; content_reduce word-strips prose. Drive the real note
+        builder with the SAME corruption-prone text DigestTests uses, diluted by enough other
+        dropped content that the budget lets it survive whole (a lone short turn is capped to a
+        share of its OWN size regardless of the overall budget — see _note_cost_bound), and check
+        it does survive — not stripped."""
         from cria import contextfloor
-        src = inspect.getsource(contextfloor._compacted_note)
-        self.assertIn("digest_reduce(text, _sniff_content_type(text), per_turn)", src)
-        self.assertNotIn("content_reduce(text, _sniff_content_type(text), per_turn)", src)
+        fillers = [{"role": "user", "content": "y" * 200} for _ in range(20)]
+        msgs = fillers + [{"role": "user", "content": DigestTests.ASK}]
+        note = contextfloor._compacted_note(msgs, len(msgs), 100_000)["content"]
+        self.assertIn(DigestTests.ASK, note)                       # verbatim — digest_reduce's contract
+        self.assertNotIn("The request above what WORK", note)      # content_reduce's corruption, absent
 
 
 class RepeatCollapseTests(unittest.TestCase):
@@ -170,8 +175,19 @@ class SearchSpillTests(unittest.TestCase):
         self.assertIsNone(planner_tools._spill_search("q", "x" * 9000, None))
 
     def test_the_dispatch_passes_the_scratchpad_through(self):
-        import inspect
+        """execute_tool must hand its scratchpad through to _web_search, or a result list large
+        enough to spill has nowhere to spill to and rides the context in full — the exact
+        9,269-character contamination this file's own docstring measures. Drive the real dispatch
+        with a mocked search backend and check the spill actually happens."""
+        import tempfile
+        import unittest.mock
 
         from cria import planner_tools
-        self.assertIn("_web_search(args, search_key, recent_searches, facts, scratch)",
-                      inspect.getsource(planner_tools.execute_tool))
+        results = [{"title": f"Findable Title {i}", "url": f"https://example.com/{i}",
+                   "description": "z" * 300} for i in range(20)]
+        d = tempfile.mkdtemp()
+        with unittest.mock.patch.object(planner_tools, "brave_search", return_value=results):
+            out = planner_tools.execute_tool("web_search", {"query": "q"}, "/tmp", "sk", [], None,
+                                             scratch=d)
+        self.assertIn("Findable Title 0", out.text)   # the titles still ride inline...
+        self.assertNotIn("zzzzzzzz", out.text)          # ...the snippet bodies spilled to disk
