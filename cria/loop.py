@@ -8382,6 +8382,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     the guards are NOT gated behind the planner; only plan-authored guidance is."""
     attempt = 0
     conv = list(body.get("messages") or [])
+    _last_notice = None   # the guard notice this loop appended, so a retry REPLACES it
     while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
         v = coder.get(bodykeys.RUMINATION) or {}
         attempt += 1
@@ -8408,12 +8409,24 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # THREE detectors abort a turn now, and a third failure gets a third notice for the reason
         # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
         # or to stop repeating a passage, would name a behaviour that did not happen (5b).
-        conv = conv + [{"role": "user", "content": (
+        notice = {"role": "user", "content": (
             prompts.load("rumination_guard_window") if v.get("window_exhausted") else
             prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
             prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),
-                           tokens=v.get("reasoning_tokens", "many")))}]
+                           tokens=v.get("reasoning_tokens", "many")))}
+        # ONE NOTICE, REPLACED — never a stack. Each retry used to APPEND, so attempt 3 carried three
+        # copies of the same paragraph and the prompt grew with every failure. Walked on
+        # `shipping-rates-rb x ternary-bonsai` 1787111689, whose last four calls all died the same
+        # way: at `coder-s1-focus3` the model was reading the identical instruction three times over,
+        # and the system prompt and tool list between focus2 and focus3 were byte-identical — three
+        # full re-prefills that changed nothing but the length.
+        #
+        # Repetition is not emphasis (#3), and for the two failures that are ABOUT running out of
+        # room — window_exhausted and dead_stream — a longer prompt makes the next attempt more
+        # likely to fail the same way, not less.
+        conv = (conv[:-1] if attempt > 1 and conv and conv[-1] is _last_notice else conv) + [notice]
+        _last_notice = notice
         rlog.phase = f"{phase}-focus{attempt}"
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
