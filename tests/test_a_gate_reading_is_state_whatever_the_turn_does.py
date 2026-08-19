@@ -28,11 +28,15 @@ the second red arm — a check that RAN and exited non-zero with nothing parseab
 kept `completion_block_nudge` for the STEP verdict; only the recorded state uses the fuller reading.
 """
 
+import json
+import os
+import tempfile
 import unittest
 
 from cria import loop, proberun
-from cria.loop import GuardState, gate_error_text, record_gate_state
-from cria.probegate import GateOutcome
+from cria.loop import GuardState, Loop, LoopContext, gate_error_text, record_gate_state
+from cria.plan import Plan, PlanItem
+from cria.probegate import GateOutcome, SECTION_PREFIX, SECTION_SUFFIX
 
 
 class _Report:
@@ -158,36 +162,45 @@ class TheRednessDecisionHasOneOwnerTests(unittest.TestCase):
         self.assertFalse(hasattr(loop, "gate_findings_text"))
 
     def test_both_failure_classes_are_surfaced_together(self):
-        """A located finding and a check that failed with nothing parseable are not alternatives."""
-        import inspect
-        src = inspect.getsource(gate_error_text)
-        self.assertIn("findings and failed", src)
+        """A located finding and a check that failed with nothing parseable are not alternatives.
+
+        Covered end to end, with real content (not a source snippet), by
+        tests/test_gate_never_denies_a_line_it_parsed.py::GateErrorTextTests — in particular
+        test_both_present_says_neither_is_the_whole_story, which is the exact incident this
+        docstring names (Importer.java:96 + a failed `mvn -q compile` in the same reading)."""
+        import unittest.mock as mock
+        with mock.patch.object(proberun, "completion_block_nudge", lambda *a, **k: "Importer.java:96 cannot find symbol"), \
+             mock.patch.object(proberun, "failed_unparsed_probes", lambda *a, **k: ["$ mvn -q compile — exited 1"]):
+            out = gate_error_text(outcome())
+        self.assertIn("Importer.java:96", out)
+        self.assertIn("mvn -q compile", out)
 
     def test_no_reader_writes_the_state_inline_any_more(self):
+        """Each reader delegates to the shared mirror rather than keeping its own copy of the
+        assignment. Checked by AST rather than string search — a reformatted line, or a comment that
+        happens to quote the old assignment (this file's own module docstring does, twice), must not
+        be able to fool it either way."""
+        import ast
         import inspect
+        import textwrap
+
+        def calls_the_owner(fn) -> bool:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                      and n.func.id == "record_gate_state" for n in ast.walk(tree))
+
+        def assigns_state_inline(fn) -> bool:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            return any(isinstance(t, ast.Attribute) and t.attr == "last_gate_red"
+                      for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                      for t in node.targets)
+
         for fn in (loop.guard_gate_verdict, loop.guard_probe_steer, loop.Loop._verify_after_probe,
                    loop.guard_periodic_result):
             with self.subTest(fn=fn.__name__):
-                src = inspect.getsource(fn)
-                self.assertIn("record_gate_state(", src)
-                self.assertNotIn("last_gate_red = True", src)
-                self.assertNotIn("last_gate_red = False", src)
-
-    def test_the_plan_on_step_verdict_is_unchanged(self):
-        """Only the recorded STATE uses the fuller reading. The step still advances or holds on
-        completion_block_nudge, exactly as before — that was not measured and is not changed."""
-        import inspect
-        src = inspect.getsource(loop.Loop._verify_after_probe)
-        self.assertIn("nudge = proberun.completion_block_nudge(outcome.report)", src)
-        self.assertIn("passed=nudge is None", src)
-
-    def test_the_stall_comparison_reads_the_previous_flag(self):
-        """The mirror now runs BEFORE the stall check, so comparing against the live field would
-        compare the new flag with itself and report a stall on every red gate."""
-        import inspect
-        src = inspect.getsource(loop.Loop._verify_after_probe)
-        self.assertIn("prev_flag = sess.last_gate_flag", src)
-        self.assertIn("if nudge and nudge == prev_flag:", src)
+                self.assertTrue(calls_the_owner(fn), f"{fn.__name__} never calls record_gate_state")
+                self.assertFalse(assigns_state_inline(fn),
+                                 f"{fn.__name__} still assigns last_gate_red itself")
 
 
 class _Rlog:
@@ -199,6 +212,138 @@ class _Rlog:
 
     def kinds(self):
         return [k for k, _ in self.events]
+
+
+class _Scripted:
+    """Returns canned completions in order; repeats the last when exhausted."""
+
+    def __init__(self, responses):
+        self._r = list(responses)
+
+    def __call__(self, body, rlog):
+        r = self._r.pop(0) if len(self._r) > 1 else self._r[0]
+        return json.dumps(r).encode()
+
+
+class _Recorder(_Scripted):
+    """Like _Scripted, but remembers what it was handed — so a test can read what the coder was told."""
+
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.bodies = []
+
+    def __call__(self, body, rlog):
+        self.bodies.append(body)
+        return super().__call__(body, rlog)
+
+    def last_user(self):
+        return self.bodies[-1]["messages"][-1]["content"]
+
+
+class _Planner:
+    def __init__(self, plan):
+        self._plan = plan
+
+    def plan_for(self, messages, rlog, prior_work="", rewrite_summary=""):
+        return self._plan
+
+
+class _Classification:
+    engagement = "task"
+    task_type = "coding"
+    cached = False
+
+
+_SHELL = {"type": "function", "function": {"name": "shell",
+          "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
+
+
+def _plan(n=1):
+    return Plan(id="20260707T0000-abcd1234", task="build it", created="2026-07-07T00:00:00+00:00",
+                items=[PlanItem(f"step {i + 1}") for i in range(n)])
+
+
+def _ctx(coder, reasoner, plan, workspace_root):
+    return LoopContext(planner=_Planner(plan), coder_chat=coder, reasoner_chat=reasoner, runs_dir="",
+                       workspace_root=workspace_root)
+
+
+def _body():
+    return {"messages": [{"role": "user", "content": "build a resolver"}], "tools": [_SHELL], "stream": True}
+
+
+def _body_with_probe(call_id, output):
+    b = _body()
+    b["messages"] = b["messages"] + [{"role": "tool", "tool_call_id": call_id, "content": output}]
+    return b
+
+
+def _tc_id(completion):
+    return completion["choices"][0]["message"]["tool_calls"][0]["id"]
+
+
+def _toolcall():
+    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}}]}
+
+
+def _done(text="looks done"):
+    return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+
+
+def _verdict(done=True, reason="ok"):
+    return {"choices": [{"message": {"content": json.dumps({"done": done, "reason": reason})}}]}
+
+
+def _ws():
+    t = tempfile.mkdtemp()
+    with open(os.path.join(t, "x.py"), "w") as f:
+        f.write("print(1)\n")
+    with open(os.path.join(t, "pyproject.toml"), "w") as f:
+        f.write("[tool.pytest.ini_options]\n")
+    return t
+
+
+def _gate_result(floor_exit=0, probe_body=None):
+    # Same shape as GateFlowTests._gate_result in test_loop.py: candidate order for the _ws fixture is
+    # [compileall(SyntaxCheck), TOML(SyntaxCheck), pyflakes(Lint), pytest(Test)].
+    P, S = SECTION_PREFIX, SECTION_SUFFIX
+    parts = [f"{P}probe-0{S}",
+             "EXIT:0" if floor_exit == 0 else '  File "x.py", line 3\nSyntaxError: bad\nEXIT:1',
+             f"{P}probe-1{S}", "EXIT:0",
+             f"{P}probe-2{S}", "EXIT:0"]
+    if probe_body is not None:
+        parts += [f"{P}probe-3{S}", probe_body]
+    parts += [f"{P}git{S}", "abc"]
+    return "\n".join(parts)
+
+
+class TheStallComparisonReadsThePreviousFlagTests(unittest.TestCase):
+    """`_verify_after_probe` captures `prev_flag` BEFORE `record_gate_state` overwrites it, because
+    the stall signal is "the same finding as last time" — comparing the fresh flag against itself
+    would always be true, and would fire the FIRST time a red gate is ever read, not the second.
+
+    Driven through the real Loop, not the source: the same red finding, twice in a row, must stay
+    silent on stall the first time and only fire it the second. This is also the plan-on step-verdict
+    path (the RED gate keeps holding the step, via completion_block_nudge, exactly as before) — the
+    coder is re-driven with the exact SyntaxError text on both turns, proving the wiring survived."""
+
+    def test_no_stall_on_the_first_red_reading_only_the_second(self):
+        ws = _ws()
+        coder = _Recorder([_toolcall(), _done()])   # keeps claiming done, never actually fixes it
+        reasoner = _Scripted([_verdict(True)])
+        run = Loop(_ctx(coder, reasoner, _plan(1), ws))
+        rlog = _Rlog()
+        c = run.drive(_body(), "k", _Classification(), rlog)
+        c = run.drive(_body(), "k", _Classification(), rlog)             # claims done → gate probe
+        same = _gate_result(floor_exit=1)
+        c = run.drive(_body_with_probe(_tc_id(c), same), "k", _Classification(), rlog)  # 1st red
+        self.assertNotIn("loop.gate_stalled", rlog.kinds())
+        self.assertIn("loop.step_incomplete", rlog.kinds())
+        self.assertIn("SyntaxError", coder.last_user())          # the step still holds on the finding
+        c = run.drive(_body_with_probe(_tc_id(c), same), "k", _Classification(), rlog)  # 2nd red, SAME finding
+        self.assertIn("loop.gate_stalled", rlog.kinds())
+        self.assertIn("SyntaxError", coder.last_user())
 
 
 class TheWheelSpinMetricIsAMeasurementTests(unittest.TestCase):

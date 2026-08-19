@@ -26,9 +26,41 @@ code alone and say why the report is wrong. And when the judge named no gap at a
 work", a concrete finding nobody had made (#5b).
 """
 
+import json
 import unittest
+from unittest import mock
 
 from cria import prompts
+from cria.config import Role
+from cria.loop import Loop, LoopContext, PlanSession
+from cria.plan import Plan, PlanItem
+
+
+class _Rlog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
+
+    def kinds(self):
+        return [k for k, _ in self.events]
+
+
+def _loop(reasoner_chat):
+    ctx = LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=reasoner_chat,
+                      reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")
+    return Loop(ctx)
+
+
+def _session(n_items=1):
+    plan = Plan(id="x", task="build the thing", created="c",
+                items=[PlanItem(f"step {i + 1}") for i in range(n_items)])
+    return PlanSession(plan=plan)
+
+
+def _body():
+    return {"messages": [{"role": "user", "content": "build the thing"}], "tools": []}
 
 
 class TheReportIsAttributedNotCommandedTests(unittest.TestCase):
@@ -77,14 +109,32 @@ class TheBlockIsStillClosedTests(unittest.TestCase):
             with self.subTest(slot=slot):
                 self.assertIn(slot, self.body)
 
-    def test_the_critic_still_has_no_once_bound(self):
-        """e0da427 removed it after a false 'done' shipped a dropped requirement."""
-        import inspect
+    def test_the_done_critiqued_bound_never_came_back(self):
+        """e0da427 removed a `done_critiqued` once-bound field after a false 'done' shipped a
+        dropped requirement. Checked against the real session fields, not a name search — a
+        renamed bound with the same intent would slip past a string search either way."""
+        import dataclasses
+        names = {f.name for f in dataclasses.fields(PlanSession)}
+        self.assertNotIn("done_critiqued", names)
 
-        from cria import loop
-        src = inspect.getsource(loop.Loop._done_critic_reason)
-        self.assertNotIn("done_critiqued", src)
-        self.assertIn("NO once-bound", src)
+    def test_the_critic_runs_on_every_green_done_no_once_bound(self):
+        """cria never lets a still-incomplete task exit early on the strength of an EARLIER green
+        'done' — the critic judges every single one. Driven twice on the same session: a once-bound
+        would answer the second call without ever calling the reasoner again."""
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(1)
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"satisfied": False, "reason": "still missing X"})}}]}).encode()
+
+        run = _loop(chat)
+        sess = _session()
+        r1 = run._done_critic_reason(sess, _body(), _Rlog())
+        r2 = run._done_critic_reason(sess, _body(), _Rlog())
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(r1, "still missing X")
+        self.assertEqual(r2, "still missing X")
 
 
 class NoGapNamedMeansNoGapClaimedTests(unittest.TestCase):
@@ -99,13 +149,20 @@ class NoGapNamedMeansNoGapClaimedTests(unittest.TestCase):
         self.assertIn("a check that actually runs", text)
 
     def test_both_call_sites_use_the_one_owner(self):
-        import inspect
+        """The plan-off critic (_done_critic_reason) and its plan-ON parity sibling
+        (_reopen_if_unsatisfied) must fall back to the SAME text when the judge names no gap —
+        driven end to end, not counted in the source, so a copy that drifted (or a third call site
+        that never adopted the owner) shows up as a text mismatch rather than a matching count."""
+        from cria import loop as loopmod
 
-        from cria import loop
-        for fn in (loop.Loop._done_critic_reason,):
-            self.assertIn('prompts.load("done_no_named_gap")', inspect.getsource(fn))
-        self.assertEqual(
-            inspect.getsource(loop).count('prompts.load("done_no_named_gap")'), 2)
+        def blank_verdict(*a, **kw):
+            return False, "", ""
+
+        with mock.patch.object(loopmod, "judge_satisfaction", blank_verdict):
+            plan_off = _loop(None)._done_critic_reason(_session(1), _body(), _Rlog())
+            plan_on = _loop(None)._reopen_if_unsatisfied(_session(2), _body(), _Rlog())
+        self.assertEqual(plan_off, plan_on)
+        self.assertEqual(plan_off, prompts.load("done_no_named_gap"))
 
     def test_the_prompt_file_carries_no_comment_the_model_would_read(self):
         """prompts.load returns the file whole — a `#` note would ship to the model."""

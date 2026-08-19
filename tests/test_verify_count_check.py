@@ -16,7 +16,9 @@ Re-scored against every archived ada-handles 4/4: 7 of 9 are unaffected; that ru
 """
 import importlib.util
 import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "ada_verify", pathlib.Path(__file__).resolve().parent.parent
@@ -52,9 +54,28 @@ class PositiveCountTests(unittest.TestCase):
                 self.assertTrue(V.positive_count(f"{self.ADDR} {self.STAKE} total_handles={n}"))
 
     def test_the_cli_check_uses_it(self):
-        import inspect
-        self.assertIn("positive_count(out)", inspect.getsource(V.main))
-        self.assertNotIn('re.search(r"\\d+", out)', inspect.getsource(V.main))
+        """Driven through the real `main`, not its source: an address+holder output with no
+        LABELLED count is exactly the shape the old `re.search(r"\\d+", out)` scored for free (the
+        address's own digits satisfy a bare digit search) — it must now score resolver_cli False,
+        and the same output WITH a labelled count must still score True.
+
+        subprocess execution and the network-touching live-test probes are the two things a test
+        genuinely can't have here; the branch under test (which count-check gates the CLI score) is
+        real and unmocked."""
+        t = tempfile.mkdtemp()
+        (pathlib.Path(t) / "resolver.py").write_text("print('placeholder')\n")
+        out = {"value": ""}
+
+        def fake_run(cmd, cwd, timeout=V.TIMEOUT):
+            return (5, "no tests ran") if "pytest" in cmd else (0, out["value"])
+
+        with mock.patch.object(V, "run", fake_run), \
+             mock.patch.object(V._liveprobe, "live_file_check", lambda ws: (False, "skip")), \
+             mock.patch.object(V._liveprobe, "readme_live_probe", lambda ws: (False, "skip")):
+            out["value"] = f"resolved: {self.ADDR}\nholder: {self.STAKE}\n"   # address+holder, no count
+            self.assertFalse(V.main(pathlib.Path(t))["parts"]["resolver_cli"]["ok"])
+            out["value"] = f"resolved: {self.ADDR}\nholder: {self.STAKE}\ntotal handles: 15\n"
+            self.assertTrue(V.main(pathlib.Path(t))["parts"]["resolver_cli"]["ok"])
 
 
 class TheLabelIsWhatMakesItACountTests(unittest.TestCase):
@@ -106,8 +127,16 @@ class TheLabelIsWhatMakesItACountTests(unittest.TestCase):
         self.assertFalse(V.positive_count('{"total_handles": 0}'))
 
     def test_there_is_only_one_owner_of_this_question(self):
-        """Two verifiers answered it differently and the weaker one scored the ladder's main task."""
+        """Two verifiers answered it differently and the weaker one scored the ladder's main task.
+        The identity check alone would miss a SHADOWED local copy (a dead `def positive_count`
+        whose binding a later `from _handles_verify import positive_count` overwrites) — so the
+        module is also parsed for a second module-level definition, by AST rather than a text
+        search that a docstring merely mentioning "def positive_count" could trip."""
+        import ast
         import inspect
         from _handles_verify import positive_count as shared
         self.assertIs(V.positive_count, shared)
-        self.assertNotIn("def positive_count", inspect.getsource(V))
+        tree = ast.parse(inspect.getsource(V))
+        defs = [n.name for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "positive_count"]
+        self.assertEqual(defs, [])

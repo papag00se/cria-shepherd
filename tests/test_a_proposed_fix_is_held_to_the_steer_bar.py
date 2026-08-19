@@ -125,17 +125,61 @@ class WhatDidNotChangeTests(unittest.TestCase):
 class EveryJudgeSiteIsWiredTests(unittest.TestCase):
     def test_all_four_call_sites_pass_the_evidence(self):
         """Four seats reach the coder with a proposed fix. A guard on three of them is the shape
-        this codebase keeps regressing into."""
-        import inspect
-        src = inspect.getsource(loop)
-        calls = [ln for ln in src.splitlines() if "_verdict_nudge(" in ln and "def " not in ln]
-        self.assertEqual(len(calls), 4, calls)
-        joined = src
-        for ln in calls:
-            i = joined.index(ln.strip())
-            with self.subTest(call=ln.strip()[:60]):
-                self.assertIn("evidence=user", joined[i:i + 200])
-                self.assertIn("rlog=rlog", joined[i:i + 200])
+        this codebase keeps regressing into. Driven end to end: judge_satisfaction's careful pass AND
+        its reasoning-off retry, then Loop._verify's careful pass AND its retry — the four real
+        production call sites, not four lines in the source. `_verdict_nudge` is patched to a
+        recorder so each real caller's actual kwargs are inspected."""
+        import json as _json
+        from unittest import mock
+
+        from cria.config import Role
+        from cria.loop import Loop, LoopContext
+
+        def content(text):
+            return _json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+
+        def role():
+            return Role(name="reasoner", backend="local")
+
+        def a_loop(chat):
+            ctx = LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=chat,
+                              reasoner_role=role(), runs_dir="")
+            return Loop(ctx)
+
+        calls = []
+
+        def fake_nudge(obj, done, routes="", **kw):
+            calls.append(kw)
+            return "STUBBED"
+
+        with mock.patch.object(loop, "_verdict_nudge", fake_nudge):
+            def chat_careful_sat(body, rlog):
+                return content(_json.dumps({"satisfied": False, "reason": "x"}))
+            loop.judge_satisfaction("t", "e", chat_careful_sat, role(), _Rlog())
+
+            def chat_retry_sat(body, rlog):
+                if rlog.phase == "satisfaction":
+                    return content("I am thinking it over without a verdict")
+                return content(_json.dumps({"satisfied": False, "reason": "y"}))
+            loop.judge_satisfaction("t", "e", chat_retry_sat, role(), _Rlog())
+
+            def chat_careful_verify(body, rlog):
+                return content(_json.dumps({"done": False, "reason": "not done"}))
+            a_loop(chat_careful_verify)._verify("write the DELETE route", "did it", "",
+                                                "the coder ran tests", _Rlog())
+
+            def chat_retry_verify(body, rlog):
+                if rlog.phase == "critic":
+                    return content("thinking without a verdict")
+                return content(_json.dumps({"done": False, "reason": "still not done"}))
+            a_loop(chat_retry_verify)._verify("write the DELETE route", "did it", "",
+                                              "the coder ran tests", _Rlog())
+
+        self.assertEqual(len(calls), 4)
+        for kw in calls:
+            with self.subTest(kw=list(kw)):
+                self.assertTrue((kw.get("evidence") or "").strip(), "evidence not passed")
+                self.assertIsNotNone(kw.get("rlog"), "rlog not passed")
 
     def test_no_reasoner_is_spent_on_it(self):
         """Asserted by handing it an `ask` that EXPLODES. The first version searched the source for

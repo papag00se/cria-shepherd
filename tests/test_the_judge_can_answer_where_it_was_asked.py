@@ -174,15 +174,61 @@ class TheCoderToolBlockCarriesNoTemplateTests(unittest.TestCase):
 
 
 class ThePolicyIsUnchangedTests(unittest.TestCase):
+    def _tools_offered(self, reasoning_off):
+        """Drive the real careful/toolless passes and read what actually reached the wire."""
+        import tempfile
+        sent = []
+
+        def chat(body, _rlog):
+            sent.append(body)
+            return json.dumps({"choices": [{"message": {"content":
+                '{"satisfied": false, "reason": "x"}'}}]}).encode()
+
+        with tempfile.TemporaryDirectory() as ws:
+            loop._satisfaction_verdict("sys", "usr", chat, self._role(), Rlog(),
+                                       reasoning_off=reasoning_off, workspace_root=ws)
+        return [t["function"]["name"] for t in sent[0].get("tools") or []]
+
+    def _role(self):
+        from cria.config import Role
+        return Role(name="reasoner", backend="local")
+
     def test_the_toolless_retry_declares_no_key(self):
+        """The careful pass is offered the inspection tools plus its own verdict tool; the toolless
+        retry is offered NONE — no channel to answer on but text, and no key to declare."""
+        self.assertEqual(self._tools_offered(reasoning_off=True), [])
+        careful = self._tools_offered(reasoning_off=False)
+        self.assertIn("verdict", careful)
+        self.assertIn("read_file", careful)
+
+    def test_the_verdict_key_itself_is_cleared_for_the_retry(self):
+        """The tools-offered check above can't see this on its own: `_satisfaction_verdict` ALSO
+        zeroes `workspace_root` for the toolless retry, so today no tool is ever offered there
+        regardless of `verdict_key` — this specific ternary is currently unreachable from any input
+        (the guard the process doc names for keeping a source check). It stays defensive: if the
+        workspace_root zeroing is ever relaxed, a wrong key here would silently reopen the tool
+        channel a toolless pass has nothing to answer on."""
         import inspect
         src = inspect.getsource(loop._satisfaction_verdict)
         self.assertIn('verdict_key="" if reasoning_off else "satisfied"', src)
 
     def test_the_retry_still_only_confirms_not_satisfied(self):
-        import inspect
-        src = inspect.getsource(loop.judge_satisfaction)
-        self.assertIn("competent to REJECT, not to APPROVE", src)
+        """A 'satisfied' that exists ONLY because the careful (reasoning-ON) pass failed to parse is
+        downgraded — the toolless retry may confirm NOT-done, never approve. Driven end to end: the
+        careful pass answers unparseable prose, the retry answers 'satisfied: true', and the overall
+        verdict must still fail closed."""
+        def chat(body, rlog):
+            if rlog.phase == "satisfaction":   # the careful pass: role-plays instead of answering
+                return json.dumps({"choices": [{"message": {"content":
+                    "Let me think about whether this task is really finished."}}]}).encode()
+            return json.dumps({"choices": [{"message": {"content":
+                json.dumps({"satisfied": True, "reason": "looks done"})}}]}).encode()
+
+        rlog = Rlog()
+        ok, reason, _fix = loop.judge_satisfaction("build the thing", "wrote main.py", chat,
+                                                    self._role(), rlog)
+        self.assertIs(ok, False)
+        self.assertIn("loop.satisfaction_failclosed", [k for k, _ in rlog.events])
 
 
 if __name__ == "__main__":

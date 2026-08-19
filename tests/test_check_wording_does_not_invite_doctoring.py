@@ -14,7 +14,7 @@
 """
 import unittest
 
-from cria import prompts, probegate, prompts
+from cria import prompts
 
 CHECK_TEXTS = ("block_nudge_preamble", "steer_checks_repeat")
 
@@ -31,12 +31,14 @@ class SmallestChangeTests(unittest.TestCase):
                 self.assertIn("is not a fix", prompts.load(name))
 
     def test_the_findings_block_emitted_from_CODE_says_it_too(self):
-        import inspect
-        src = inspect.getsource(probegate)
-        self.assertNotIn("smallest change that clears it:", src)
-        # RENDERED, not the source. This clause moved out of probegate.py into
-        # prompts/checks_error_class.txt with the seeded-test rule as one owner — the inline copy was
-        # the one that shipped (3,254 prompts) and the one an update had missed.
+        """RENDERED, not the source. This clause moved out of probegate.py into
+        prompts/checks_error_class.txt with the seeded-test rule as one owner — the inline copy was
+        the one that shipped (3,254 prompts) and the one an update had missed. (A source-text check
+        for the old phrase was dropped from here: it now survives only in this file's own explanatory
+        comment about the incident, so `assertNotIn` on the module's source was checking a comment,
+        not a code path — and would break the moment that comment gets reworded, for no behavioral
+        reason. The rendered assertion below is the actual claim and is strictly stronger: it proves
+        the CURRENT wording ships, not merely that one old spelling is absent.)"""
         out = prompts.render("checks_error_class", findings="x.py:1: boom")
         self.assertIn("changing the test so it stops asking is not a fix", out)
         self.assertIn("already in the repository", out)   # …and now it says WHICH tests

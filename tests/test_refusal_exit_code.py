@@ -53,8 +53,6 @@ class OneOwnerTests(unittest.TestCase):
                 self.fail(f"a refusal still bypasses _refusal_command: {line.strip()}")
 
     def test_every_guard_goes_through_it(self):
-        import inspect
-        src = inspect.getsource(writeproxy.translate_outbound)
         # +1: edit_file with no new_string. +1: write_file with no content.
         # +2 (2026-08-04): write/edit with no usable PATH — malformed-argument calls used to fall
         # through un-lowered and draw the harness's opaque "unsupported call" reply.
@@ -63,7 +61,16 @@ class OneOwnerTests(unittest.TestCase):
         # holds their exit-code contract.)
         # +1 (2026-08-05, nemotron poff 1785946072): write content that is fused-call protocol
         # debris — the soup cria once wrote as a file named `tests`, blocking the real directory.
-        self.assertEqual(src.count("_refusal_command("), 10)
+        #
+        # AST rather than a text count: a docstring or comment that happened to spell
+        # "_refusal_command(" would inflate a raw substring count without adding a real call site.
+        import ast
+        import inspect
+        tree = ast.parse(inspect.getsource(writeproxy.translate_outbound))
+        calls = sum(1 for n in ast.walk(tree)
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "_refusal_command")
+        self.assertEqual(calls, 10)
 
     @staticmethod
     def _lower_fetch(result):

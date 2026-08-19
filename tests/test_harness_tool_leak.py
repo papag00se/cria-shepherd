@@ -17,7 +17,6 @@ the resulting errors and the run scored 0/4.
 The replanner's own system prompt already says "Any tool list you are shown belongs to the coder, so
 the steps you write are things IT can do". A prompt is a request, not an enforcement.
 """
-import inspect
 import unittest
 
 from cria import loop, urlgrounding
@@ -160,16 +159,43 @@ class NoiseDropVisibilityTests(unittest.TestCase):
     captures to reconstruct.
     """
 
+    # Asymmetric on purpose: a dropped/kept swap must be visible in the counts, not just coincide.
+    STEPS = ["Write unit tests for the resolver", "grep -n 'resolved_addresses' out.txt",
+             "pip install requests"]
+
+    def _event(self):
+        """Drive the real noise-drop path end to end and return the loop.replan_noise event's
+        kwargs. Each reasoner call is answered by its own distinguishing SYSTEM prompt — the step
+        re-derivation, the noise judgment (drop the bare grep command), and the per-drop
+        deliverable-loss check (says nothing is lost, so the drop is not refused). Nothing here
+        reads loop's source; a rename or reflow of the emit call can't touch it."""
+        import json as _json
+        from cria.config import Role
+
+        def content(text):
+            return _json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+
+        def reasoner(body, rlog):
+            system = body["messages"][0]["content"]
+            if "You maintain a LIVING plan" in system:
+                return content(_json.dumps({"steps": self.STEPS}))
+            if "the list of step numbers at the bottom" in system:
+                return content("2, 3")   # drop steps 2 and 3 (1-based) — the bare shell commands
+            if "the JSON verdict at the bottom" in system:
+                return content(_json.dumps({"lost": ""}))
+            return content("")        # coverage check etc: safe null
+
+        rlog = _Rlog()
+        loop.reassess_remaining(reasoner, Role(name="reasoner", backend="local"),
+                                "build a handle resolver", "wrote resolve_handle.py",
+                                "write the README", "evidence", rlog)
+        return next(kw for k, kw in rlog.events if k == "loop.replan_noise")
+
     def test_the_event_now_carries_the_dropped_step_text(self):
-        src = inspect.getsource(loop)
-        i = src.index('rlog.emit("loop.replan_noise"')
-        window = src[i:i + 320]
-        self.assertIn("dropped_steps=", window)
-        self.assertIn("cleaned[i]", window, "log the step TEXT, not the index")
+        """Measured gap: 156 fires, 75 with a real drop, and none of them said WHICH step went."""
+        self.assertIn("resolved_addresses", self._event()["dropped_steps"])
 
     def test_it_still_reports_the_counts(self):
-        src = inspect.getsource(loop)
-        i = src.index('rlog.emit("loop.replan_noise"')
-        window = src[i:i + 320]
-        self.assertIn("dropped=len(drop)", window)
-        self.assertIn("kept=len(kept)", window)
+        ev = self._event()
+        self.assertEqual(ev["dropped"], 2)
+        self.assertEqual(ev["kept"], 1)
