@@ -1,5 +1,10 @@
 # Finish what the walk opened, then re-measure everything
 
+> **RETIRED — operator, 2026-08-19.** Steps 1–3 completed (two plumbing items landed, one refuted; both cells run; both walked). **Steps 4 and 5 are dropped as goals.** The 24-cell pass launched under step 5 is still running to completion and its cells are still being reported one at a time — but finishing it is no longer a goal condition, and nothing is owed at the end of it.
+>
+> What replaced this document: the BASE/CRIA comparison in [`../audits/base-vs-cria-footgun-patterns.md`](../audits/base-vs-cria-footgun-patterns.md), and the queued changes it produced — remove the repetition steer, take the research step out of the plan items, and re-cut the milestone wall. Everything below is kept for its reasoning, not as instructions.
+
+
 **The job, in order, and none of it is optional:**
 
 1. Close the three open plumbing items — each needs a specific piece of evidence, named below.
