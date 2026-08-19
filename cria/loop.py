@@ -403,6 +403,29 @@ _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this befor
 # spiral at different rates; either set to 0 DISABLES it.
 
 
+def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red: bool) -> str:
+    """WHICH condition is holding the satisfaction check back this turn — "" when none is.
+
+    Returns a name rather than a bool so the skip event can say why (#12). The order is reporting
+    order only; any one of them is enough to skip, and the first named is the one recorded.
+
+    `gate_red` is the one that LATCHES, and that is what made this worth naming. It is set by
+    `record_gate_state` when a gate RAN and found problems, and only a later gate that runs and comes
+    back genuinely clean clears it — a gate that could not run leaves it exactly as it was. So a
+    session whose checks are red early stays blocked until a clean gate happens to land, and on
+    rust-toml-cli x ternary-bonsai (2026-08-19) none ever did: 34 due drives, all skipped, while the
+    workspace sat at three of four deliverables with a README that was never written."""
+    if steer:
+        return "steer"
+    if rewritten:
+        return "history-rewritten"
+    if done_probe:
+        return "done-probe-in-flight"
+    if gate_red:
+        return "gate-red"
+    return ""
+
+
 def periodic_check_due(drive_count: int, start: int, every: int, last_ran: int = -1) -> bool:
     """Is a periodic check due? Measured from when it last RAN, never from an absolute modulo.
 
@@ -2484,7 +2507,8 @@ class Loop:
         # and zero satisfaction checks where four were due.
         done_now = self._periodic_satisfaction(
             sess, body, rlog, plan_off=False,
-            blocked=bool(sess.nudge_reason or sess.done_probe or sess.last_gate_red))
+            blocked=_satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
+                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red))
         if done_now is not None:
             return done_now
         framed = dict(body)
@@ -3561,9 +3585,17 @@ class Loop:
             # "it fired once in 86 calls" could not be told from "it was only due once" without
             # reconstructing the drive sequence by hand from the captures afterwards (#12). A lost
             # opportunity is an event, and counting them is how the modulo defect was found.
+            #
+            # …AND IT MUST NAME WHICH BLOCKER. The event said THAT the check was skipped and not WHY,
+            # so `blocked` was a single opaque bit over four independent conditions. Walked on
+            # rust-toml-cli x ternary-bonsai (2026-08-19): 50 skips, 34 of them on drives where the
+            # check was genuinely due, and answering "which flag" took reading the gate events, the
+            # probe events and three call sites by hand. A metric must come from the authoritative
+            # event (#12) — the caller now says which condition it saw.
             if rlog is not None:
                 rlog.emit("loop.satisfaction_blocked", drive=sess.drive_count,
-                          last_ran=sess.satisfaction_last_drive, plan_off=plan_off)
+                          last_ran=sess.satisfaction_last_drive, plan_off=plan_off,
+                          why=blocked if isinstance(blocked, str) else "unnamed")
             return None            # BEFORE anything else — see test_blocked_short_circuits
         if not periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
                                       self._ctx.satisfaction_check_every,
@@ -3726,7 +3758,8 @@ class Loop:
         # PERIODIC SATISFACTION CHECK — the off-ramp for a session that finished but cannot stop.
         done_now = self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
-            blocked=bool(steer is not None or rewritten or sess.done_probe or sess.last_gate_red))
+            blocked=_satisfaction_blocker(steer=steer, rewritten=rewritten,
+                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red))
         if done_now is not None:
             return done_now
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
