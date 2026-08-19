@@ -13,6 +13,8 @@ These rules come from failures traced to exact causes. Evidence lives in [`audit
 ### 1. Every assist can become a footgun
 A weak model cannot distinguish cria injections from its own reasoning. Every injected string is another possible falsehood. Before adding an assist, ask how it can mislead. Default to removal; additions require strong justification.
 
+**An assist outlives its cause.** Each one was built for a defect that was real at the time. Fix the defect upstream — better context shaping, a truer prompt, a floor that catches it earlier — and the assist keeps firing against a world that no longer needs it, where its only remaining effect is to mislead. So an assist is re-measured against the system it runs in NOW, not the one it was born in. The test is not "was this justified when written" but "does removing it today cost anything". Measure both arms before answering: an assist that fires just as often in the runs that succeed is not what is making them succeed.
+
 ### 2. Interventions are additive, regression-only, and cria never AUTHORS work
 Intervene only to prevent existing progress from regressing. Deletion, redirection, and blocking a first attempt can trap loops.
 
